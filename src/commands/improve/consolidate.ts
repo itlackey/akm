@@ -14,7 +14,7 @@ import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
+// Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import {
@@ -25,7 +25,17 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
-import { type DedupConfig, runDeterministicDedup } from "./dedup";
+import { cacheHash, type DedupConfig, runDeterministicDedup, stripFrontmatterBody } from "./dedup";
+import {
+  type AntiCollapseConfig,
+  checkGenerationGuard,
+  checkLexicalDiversity,
+  computeMergedGeneration,
+  type HomeostaticDemotionConfig,
+  readAssetGeneration,
+  runHomeostaticDemotion,
+  shouldSkipHotProbationInLlm,
+} from "./homeostatic";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
@@ -33,8 +43,11 @@ export { hasSupersededStatus, validateProposalFrontmatter };
 
 import {
   type ConsolidationJudgedRow,
+  type Database,
+  getBodyEmbeddings,
   getConsolidationJudgedMap,
   openStateDatabase,
+  upsertBodyEmbeddings,
   upsertConsolidationJudged,
 } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -55,7 +68,7 @@ import {
 } from "../../indexer/db/db";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
-import { cosineSimilarity, embedBatch } from "../../llm/embedder";
+import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -184,6 +197,60 @@ export interface ConsolidateResult {
   planned?: ConsolidateOperation[];
   warnings: string[];
   durationMs: number;
+  /**
+   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
+   * these are health VIEWS of the pipeline, not truth sources. Omitted on the
+   * early-exit paths (no memories, all judged-unchanged) to keep the envelope
+   * tidy.
+   */
+  perfTelemetry?: ConsolidatePerfTelemetry;
+}
+
+/**
+ * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
+ * All fields are optional so existing callers that spread ConsolidateResult
+ * can adopt the shape incrementally.
+ */
+export interface ConsolidatePerfTelemetry {
+  /**
+   * Pool size BEFORE the judged-state cache narrowing step.
+   * Measures the raw candidate set loaded from disk this run.
+   */
+  dedupPoolSize?: number;
+  /**
+   * Pool size AFTER judged-cache and limit filtering — the memories actually
+   * sent to the LLM for a fresh judgment. `dedupPoolSize − llmPoolSize` is
+   * the effective judgedCacheSkipped + limit-capped count.
+   */
+  llmPoolSize?: number;
+  /**
+   * Memories skipped because the judged-state cache recorded them as
+   * unchanged since the last LLM judgment. 0 when judgedCache is disabled.
+   * Health threshold: >95% hits on an incremental run (warm cache).
+   */
+  judgedCacheSkipped?: number;
+  /**
+   * Wall-clock milliseconds spent in the embedding stage (both cluster
+   * reordering and dedup cosine path). Extracted from timing around embedBatch
+   * calls so the LLM wall-clock accounts only for LLM calls.
+   */
+  embedMs?: number;
+  /**
+   * Number of body-embedding cache hits (content_hash found in body_embeddings).
+   * Healthy incremental run: >95% hits once the cache is warm.
+   */
+  embedCacheHits?: number;
+  /**
+   * Number of body-embedding cache misses (content_hash not found; embedBatch
+   * was called). High misses signal a cold cache or high corpus churn.
+   */
+  embedCacheMisses?: number;
+  /**
+   * Fraction of the run budget consumed by consolidation alone:
+   * `consolidation.durationMs / budgetMs`. Values >1.0 mean this consolidation
+   * pass alone exceeded the caller's declared budget — a SIGTERM risk signal.
+   */
+  estimatedBudgetFractionUsed?: number;
 }
 
 /** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
@@ -250,6 +317,29 @@ export interface AkmConsolidateOptions {
    * containing improve run.
    */
   sourceRun?: string;
+  /**
+   * AbortSignal from the caller's budget controller (e.g. `improve.ts`
+   * `budgetAbortController`). When aborted the consolidation loop breaks cleanly
+   * after completing the current chunk, commits work done, and returns with a
+   * `partial_timeout` outcome note in `warnings`. The signal is also forwarded
+   * to `embedBatch` and `runDeterministicDedup` so mid-embedding aborts are
+   * handled gracefully. Absent = run without a budget limit.
+   */
+  signal?: AbortSignal;
+  /**
+   * Fallback p90 wall-clock time per consolidation chunk in seconds, used for
+   * cold-start budget estimation when `signal` is provided. Defaults to 30 s
+   * when absent. Callers (improve.ts) can pass the profile's
+   * `p90ChunkSecondsDefault` config value here.
+   */
+  p90ChunkSecondsDefault?: number;
+  /**
+   * Total run budget in milliseconds (from `akmImprove`'s `timeoutMs`).
+   * When provided, `perfTelemetry.estimatedBudgetFractionUsed` is populated so
+   * the health report can flag >1.0 (consolidation alone exceeded the budget).
+   * Absent = `estimatedBudgetFractionUsed` is omitted from perf telemetry.
+   */
+  runBudgetMs?: number;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -522,8 +612,28 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
  *   - Embedding requests fail (fail-open).
  *   - There are fewer than 3 memories (no benefit to reordering).
  */
-async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmConfig): Promise<MemoryEntry[]> {
-  if (memories.length < 3 || !config.embedding) return memories;
+/** WS-5 embedding telemetry returned alongside cluster results. */
+interface ClusterEmbedTelemetry {
+  embedMs: number;
+  cacheHits: number;
+  cacheMisses: number;
+}
+
+async function clusterMemoriesBySimilarity(
+  memories: MemoryEntry[],
+  config: AkmConfig,
+  stateDb?: Database,
+): Promise<{ ordered: MemoryEntry[]; embedTelemetry: ClusterEmbedTelemetry }> {
+  const noTelemetry: ClusterEmbedTelemetry = { embedMs: 0, cacheHits: 0, cacheMisses: 0 };
+  if (memories.length < 3 || !config.embedding) return { ordered: memories, embedTelemetry: noTelemetry };
+
+  // WS-3a: cluster uses description+tags as the embedding input (NOT the raw
+  // body) — this is intentionally different from the dedup/body cache because
+  // the clustering goal is semantic grouping, not dedup twin detection.
+  // The body_embeddings cache is keyed by cacheHash(body); clustering inputs
+  // are keyed by cacheHash(description+tags text). Re-use the same table with
+  // a distinct hash so the two lookup sets never collide.
+  const modelId = resolveEmbeddingModelId(config.embedding);
 
   const texts = memories.map((m) => {
     const parts: string[] = [];
@@ -532,14 +642,91 @@ async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmC
     return parts.join(". ") || m.name;
   });
 
-  let embeddings: number[][] | null = null;
-  try {
-    embeddings = await embedBatch(texts, config.embedding);
-  } catch {
-    // Fail open: embedding failures degrade gracefully to original order.
-    return memories;
+  // Compute content hashes for the cluster texts (not bodies — different input).
+  const contentHashes = texts.map((t) => createHash("sha256").update(t, "utf8").digest("hex"));
+
+  // WS-5: track embed cache hits/misses for perf telemetry.
+  let embedMs = 0;
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
+  let cachedVecs = new Map<string, number[]>();
+  if (stateDb) {
+    try {
+      cachedVecs = getBodyEmbeddings(stateDb, contentHashes, modelId);
+    } catch {
+      // Fail open.
+      cachedVecs = new Map();
+    }
   }
-  if (!embeddings || embeddings.length !== memories.length) return memories;
+
+  const missIndices: number[] = [];
+  const missTexts: string[] = [];
+  for (let i = 0; i < texts.length; i++) {
+    if (!cachedVecs.has(contentHashes[i] as string)) {
+      missIndices.push(i);
+      missTexts.push(texts[i] as string);
+      cacheMisses++;
+    } else {
+      cacheHits++;
+    }
+  }
+
+  let missVecs: number[][] = [];
+  if (missTexts.length > 0) {
+    const embedStart = Date.now();
+    try {
+      missVecs = await embedBatch(missTexts, config.embedding);
+    } catch {
+      // Fail open: embedding failures degrade gracefully to original order.
+      return { ordered: memories, embedTelemetry: { embedMs, cacheHits, cacheMisses } };
+    } finally {
+      embedMs += Date.now() - embedStart;
+    }
+    // Upsert newly computed vectors into the cache.
+    if (stateDb && missVecs.length === missTexts.length) {
+      try {
+        const toUpsert = missIndices.map((idx, pos) => ({
+          contentHash: contentHashes[idx] as string,
+          embedding: missVecs[pos] as number[],
+          modelId,
+        }));
+        upsertBodyEmbeddings(stateDb, toUpsert);
+      } catch {
+        // Fail open: cache write errors are non-fatal.
+      }
+    }
+  }
+
+  // Assemble the full embedding array in memories order.
+  let embeddings: number[][] | null = null;
+  {
+    const assembled: number[][] = [];
+    let ok = true;
+    for (let i = 0; i < memories.length; i++) {
+      const hash = contentHashes[i] as string;
+      const cached = cachedVecs.get(hash);
+      if (cached) {
+        assembled.push(cached);
+        continue;
+      }
+      const missPos = missIndices.indexOf(i);
+      const vec = missPos >= 0 ? missVecs[missPos] : undefined;
+      if (vec) {
+        assembled.push(vec);
+      } else {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && assembled.length === memories.length) {
+      embeddings = assembled;
+    }
+  }
+
+  const embedTelemetry: ClusterEmbedTelemetry = { embedMs, cacheHits, cacheMisses };
+
+  if (!embeddings || embeddings.length !== memories.length) return { ordered: memories, embedTelemetry };
 
   // Greedy nearest-neighbour chain.
   const used = new Array<boolean>(memories.length).fill(false);
@@ -567,7 +754,7 @@ async function clusterMemoriesBySimilarity(memories: MemoryEntry[], config: AkmC
     current = bestIdx;
   }
 
-  return ordered;
+  return { ordered, embedTelemetry };
 }
 
 // ── Chunk helpers ────────────────────────────────────────────────────────────
@@ -620,7 +807,9 @@ export function buildChunkPrompt(
     }
     const parsed = parseFrontmatter(body);
     const isHot = parsed.data.captureMode === "hot";
-    const bodyHash = createHash("sha256").update(parsed.content.trim(), "utf8").digest("hex");
+    // Use cacheHash (case-preserving stripped body) to match the domain used
+    // by loadPendingConsolidateProposalHashes and the body-embedding cache.
+    const bodyHash = cacheHash(body);
     const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
     annotationsByIndex.push({ isHot, isAlreadyQueued, body });
     if (isHot) hotRefs.push(`memory:${m.name}`);
@@ -667,10 +856,10 @@ export function buildChunkPrompt(
 /**
  * Precompute body-hashes of all currently-pending consolidate proposals so
  * the per-chunk prompt can annotate memories whose body would just produce
- * a deterministic `dedup_pending_proposal` skip. Hash domain matches the
- * dedup site at ~line 1510 (sha256 over the post-frontmatter content,
- * trimmed). Empty set on any read/parse error — fail-safe to "annotate
- * nothing" so the LLM still proposes, just slightly more wastefully.
+ * a deterministic `dedup_pending_proposal` skip. Uses `cacheHash` (case-
+ * preserving stripped body) — the same domain used by the body-embedding
+ * cache and `computeMemoryContentHash`. Empty set on any read/parse error
+ * — fail-safe to "annotate nothing" so the LLM still proposes.
  */
 function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
   const hashes = new Set<string>();
@@ -678,8 +867,7 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
     const pending = listProposals(stashDir, { status: "pending" }).filter((p) => p.source === "consolidate");
     for (const p of pending) {
       try {
-        const body = parseFrontmatter(p.payload.content).content.trim();
-        hashes.add(createHash("sha256").update(body, "utf8").digest("hex"));
+        hashes.add(cacheHash(p.payload.content));
       } catch {
         // skip malformed payloads — they can't dedup anyway
       }
@@ -986,6 +1174,33 @@ function backupFile(filePath: string, backupDir: string, name: string): void {
   }
 }
 
+// ── WS-3b: Generation frontmatter injection ───────────────────────────────────
+
+/**
+ * Inject `generation` (and optionally `source_refs`) into merged content.
+ * generation = max(sourceGenerations) + 1.
+ * Fails open — returns original content if frontmatter can't be parsed.
+ */
+function injectGenerationFrontmatter(
+  mergedContent: string,
+  sourceGenerations: number[],
+  allParticipants: string[],
+): string {
+  try {
+    const parsed = parseFrontmatter(mergedContent);
+    const updatedFm: Record<string, unknown> = {
+      ...(parsed.data as Record<string, unknown>),
+      generation: computeMergedGeneration(sourceGenerations),
+    };
+    if (!updatedFm.source_refs) {
+      updatedFm.source_refs = allParticipants;
+    }
+    return assembleAssetFromString(serializeFrontmatter(updatedFm), parsed.content);
+  } catch {
+    return mergedContent; // fail open
+  }
+}
+
 // ── Archive helper (P1-B: soft-invalidation) ─────────────────────────────────
 
 /**
@@ -1075,11 +1290,10 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 // ── Judged-state cache (#581) ────────────────────────────────────────────────
 
 /**
- * Stable content hash for a memory file used by the judged-state cache (#581).
- * Hashes the frontmatter-stripped, trimmed body — matching the dedup / pending
- * proposal hash domain elsewhere in this file (sha256 over post-frontmatter
- * content). Two memories that differ only in noise frontmatter (`updated:`
- * timestamps, `inferenceProcessed:` flags) therefore hash identically, so a
+ * Stable content hash for a memory file used by the judged-state cache (#581)
+ * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts:
+ * sha256 of the case-preserving stripped body. Two memories that differ only
+ * in frontmatter (`updated:`, `inferenceProcessed:`) hash identically, so a
  * cosmetic frontmatter touch never forces a needless re-judge — only a body
  * change does. Returns `undefined` on any read/parse error so callers fail
  * open (treat the memory as un-cached → it stays in the LLM pool).
@@ -1087,8 +1301,7 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 function computeMemoryContentHash(filePath: string): string | undefined {
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    const body = parseFrontmatter(raw).content.trim();
-    return createHash("sha256").update(body, "utf8").digest("hex");
+    return cacheHash(raw);
   } catch {
     return undefined;
   }
@@ -1126,6 +1339,35 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const warnings: string[] = [];
   checkForIncompleteJournal(stashDir, opts.recoveryMode ?? "abort", warnings);
 
+  // WS-3a: open one state.db handle shared by the body-embedding cache (dedup
+  // + cluster) and the judged-state cache. All callers in the function body
+  // receive this handle; it is closed in the `finally` block below.
+  // Fail-open: any open error leaves it `undefined` and all cache paths skip.
+  let sharedStateDb: Database | undefined;
+  try {
+    sharedStateDb = openStateDatabase();
+  } catch {
+    // State DB unavailable → skip the embedding cache for this run.
+  }
+
+  try {
+    return await akmConsolidateInner(opts, config, stashDir, startMs, sourceRun, warnings, sharedStateDb);
+  } finally {
+    sharedStateDb?.close();
+  }
+}
+
+// Inner implementation — all early-return paths are here; sharedStateDb is
+// closed by the outer finally in `akmConsolidate`.
+async function akmConsolidateInner(
+  opts: AkmConsolidateOptions,
+  config: import("../../core/config/config").AkmConfig,
+  stashDir: string,
+  startMs: number,
+  sourceRun: string,
+  warnings: string[],
+  sharedStateDb: Database | undefined,
+): Promise<ConsolidateResult> {
   let memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
   // Pre-flight: filter out stale DB entries whose files no longer exist on
@@ -1141,6 +1383,63 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
   memories = memories.filter((m) => fs.existsSync(m.filePath));
 
+  // ── WS-3b Step 0a: Homeostatic demotion ────────────────────────────────────
+  // DEFAULT OFF. Before any LLM merge, demote retrievalSalience in state.db
+  // for stale/low-value assets so the merge pool is bounded and high-SNR.
+  // Demotion is state.db-only (file content untouched); re-promotable on
+  // re-retrieval. Only fires when `homeostaticDemotion.enabled === true`.
+  const homeostaticConfig: HomeostaticDemotionConfig =
+    (config.profiles?.improve?.default?.processes?.consolidate?.homeostaticDemotion as
+      | HomeostaticDemotionConfig
+      | undefined) ?? {};
+  if (homeostaticConfig.enabled && sharedStateDb) {
+    const demotionResult = runHomeostaticDemotion(sharedStateDb, homeostaticConfig);
+    if (demotionResult.demoted > 0) {
+      warnings.push(
+        `Homeostatic demotion: demoted retrievalSalience for ${demotionResult.demoted} stale asset(s) before merge pool assembly.`,
+      );
+    }
+    warnings.push(...demotionResult.warnings);
+  }
+
+  // ── WS-3b Step 0c: Filter hot-probation assets from LLM merge pool ─────────
+  // Hot-probation assets (system-generated, not yet graduated from intake pass)
+  // are processed by the dedup pre-pass but excluded from the LLM clustering.
+  // This prevents noisy extractions from polluting LLM context. The dedup pass
+  // below still runs against them so they're cleaned up deterministically.
+  // DEFAULT OFF — only active when `processes.extract.hotProbation.enabled === true`
+  // (the flag that causes extract to tag new extractions as hot-probation).
+  // Without that flag no assets will ever carry the hot-probation marker, so
+  // running the filter loop would be pure unnecessary I/O over the full corpus.
+  const hotProbationEnabled =
+    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
+      ?.enabled === true;
+  let hotProbationCount = 0;
+  if (hotProbationEnabled) {
+    const hotProbationMemories: typeof memories = [];
+    const nonProbationMemories: typeof memories = [];
+    for (const m of memories) {
+      try {
+        const raw = fs.readFileSync(m.filePath, "utf8");
+        const parsed = parseFrontmatter(raw);
+        if (shouldSkipHotProbationInLlm(parsed.data as Record<string, unknown>)) {
+          hotProbationMemories.push(m);
+          hotProbationCount++;
+        } else {
+          nonProbationMemories.push(m);
+        }
+      } catch {
+        nonProbationMemories.push(m); // fail open
+      }
+    }
+    if (hotProbationCount > 0) {
+      warnings.push(
+        `Hot-probation: ${hotProbationCount} hot-probation asset(s) routed to dedup-only pass (excluded from LLM merge pool).`,
+      );
+      memories = nonProbationMemories;
+    }
+  }
+
   // ── Deterministic dedup pre-pass (#617) ─────────────────────────────────────
   // Cheap, no-LLM fast path that collapses the obvious near-duplicates
   // (`.derived` ↔ origin pairs + content twins) BEFORE the embedding-clustered
@@ -1154,18 +1453,25 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   let dedupCollapsed = 0;
   if (opts.dedup?.enabled && !opts.dryRun) {
     const dedupTimestamp = timestampForFilename();
-    const dedupResult = await runDeterministicDedup(stashDir, opts.dedup, config, (variantFilePath, variantName) => {
-      archiveMemory(
-        variantFilePath,
-        stashDir,
-        `memory:${variantName}`,
-        "collapsed by deterministic dedup pre-pass",
-        -1,
-        undefined,
-        warnings,
-      );
-      backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
-    });
+    const dedupResult = await runDeterministicDedup(
+      stashDir,
+      opts.dedup,
+      config,
+      (variantFilePath, variantName) => {
+        archiveMemory(
+          variantFilePath,
+          stashDir,
+          `memory:${variantName}`,
+          "collapsed by deterministic dedup pre-pass",
+          -1,
+          undefined,
+          warnings,
+        );
+        backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
+      },
+      opts.signal,
+      sharedStateDb,
+    );
     dedupCollapsed = dedupResult.collapsed;
     warnings.push(...dedupResult.warnings);
     if (dedupResult.consumedRefs.length > 0) {
@@ -1219,6 +1525,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
   }
 
+  // WS-5 perf telemetry accumulators. These are collected throughout the run and
+  // merged into `perfTelemetry` on the final ConsolidateResult.
+  // `dedupPoolSize` = memories entering judgedCache narrowing (after dedup+incremental+limit).
+  // `judgedCacheSkipped` = memories skipped by the cache.
+  // `llmPoolSize` = memories actually sent to the LLM.
+  // `embedMs/cacheHits/cacheMisses` = accumulated from clusterMemoriesBySimilarity.
+  const perfMs = { dedupPoolSize: memories.length, judgedCacheSkipped: 0 };
+
   // ── Judged-state cache narrowing (#581) ─────────────────────────────────────
   // DEFAULT OFF. When enabled, skip every memory whose current content hash
   // equals the hash recorded the last time the consolidate LLM judged it
@@ -1237,18 +1551,31 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
     let cachedMap = new Map<string, ConsolidationJudgedRow>();
     {
-      let stateDb: ReturnType<typeof openStateDatabase> | undefined;
-      try {
-        stateDb = openStateDatabase();
-        cachedMap = getConsolidationJudgedMap(
-          stateDb,
-          memories.map((m) => `memory:${m.name}`),
-        );
-      } catch {
-        // State DB unavailable → fail open: judge the full pool this run.
-        cachedMap = new Map();
-      } finally {
-        stateDb?.close();
+      // Use the shared state.db handle if available; open a local one otherwise.
+      const dbForJudged = sharedStateDb;
+      if (dbForJudged) {
+        try {
+          cachedMap = getConsolidationJudgedMap(
+            dbForJudged,
+            memories.map((m) => `memory:${m.name}`),
+          );
+        } catch {
+          cachedMap = new Map();
+        }
+      } else {
+        let localDb: ReturnType<typeof openStateDatabase> | undefined;
+        try {
+          localDb = openStateDatabase();
+          cachedMap = getConsolidationJudgedMap(
+            localDb,
+            memories.map((m) => `memory:${m.name}`),
+          );
+        } catch {
+          // State DB unavailable → fail open: judge the full pool this run.
+          cachedMap = new Map();
+        } finally {
+          localDb?.close();
+        }
       }
     }
     const beforeCount = memories.length;
@@ -1261,6 +1588,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       return !(cached !== undefined && cached.content_hash === cur);
     });
     const skipped = beforeCount - memories.length;
+    perfMs.judgedCacheSkipped = skipped; // WS-5 perf telemetry
     if (skipped > 0) {
       warnings.push(
         `Judged-state cache: skipped ${skipped} memor${skipped === 1 ? "y" : "ies"} judged-unchanged (no LLM); ${memories.length} remain for judging.`,
@@ -1334,17 +1662,71 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.target ?? stashDir;
 
+  // WS-5: capture llmPoolSize = memories entering the LLM (after all filtering).
+  const llmPoolSize = memories.length;
+
   // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
   // This ensures that semantically similar memories land in the same LLM
   // context window, allowing the model to detect and merge duplicates that
   // would otherwise be split across chunks and survive indefinitely.
   // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
   // Fails open: if embeddings are unavailable or fail, original order is used.
-  const clusteredMemories = await clusterMemoriesBySimilarity(memories, config);
+  const { ordered: clusteredMemories, embedTelemetry } = await clusterMemoriesBySimilarity(
+    memories,
+    config,
+    sharedStateDb,
+  );
+
+  // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
+  // A small fraction (default 5%) of the pool is shuffled into random positions
+  // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
+  // entrenchment where only the most-retrieved assets ever get consolidated.
+  // DEFAULT OFF — gated on antiCollapse.enabled.
+  let finalClusteredMemories = clusteredMemories;
+  {
+    const antiCollapseForCluster: AntiCollapseConfig =
+      (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+    if (antiCollapseForCluster.enabled && clusteredMemories.length > 2) {
+      const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
+      const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
+      // Pick `randomCount` positions to inject random (un-clustered) members.
+      // Use a seeded-ish shuffle: sort by hash of the name so it's deterministic
+      // per run but not strictly similarity-driven.
+      const shuffled = [...clusteredMemories].sort((a, b) => {
+        // Deterministic shuffle: compare sha256-ish (use name hash as proxy).
+        const ha = a.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        const hb = b.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        return ha - hb;
+      });
+      const randomSlice = shuffled.slice(0, randomCount);
+      const randomSet = new Set(randomSlice.map((m) => m.name));
+      // Insert random members at intervals through the clustered sequence.
+      const withRandom: MemoryEntry[] = [];
+      const interval = Math.max(2, Math.floor(clusteredMemories.length / randomCount));
+      let randomIdx = 0;
+      for (let i = 0; i < clusteredMemories.length; i++) {
+        const m = clusteredMemories[i];
+        if (m && !randomSet.has(m.name)) withRandom.push(m);
+        if (i > 0 && i % interval === 0 && randomIdx < randomSlice.length) {
+          const r = randomSlice[randomIdx++];
+          if (r) withRandom.push(r);
+        }
+      }
+      // Append any remaining random members not yet inserted.
+      while (randomIdx < randomSlice.length) {
+        const r = randomSlice[randomIdx++];
+        if (r) withRandom.push(r);
+      }
+      finalClusteredMemories = withRandom;
+      warnings.push(
+        `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
+      );
+    }
+  }
 
   const chunks: MemoryEntry[][] = [];
-  for (let i = 0; i < clusteredMemories.length; i += chunkSize) {
-    chunks.push(clusteredMemories.slice(i, i + chunkSize));
+  for (let i = 0; i < finalClusteredMemories.length; i += chunkSize) {
+    chunks.push(finalClusteredMemories.slice(i, i + chunkSize));
   }
 
   // 2026-05-27 prompt-context fix: precompute body-hashes of pending
@@ -1354,6 +1736,42 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // 4h on this user's stack. See
   // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
   const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
+
+  // ── Cold-start budget estimation ─────────────────────────────────────────────
+  // Estimate wall-clock cost BEFORE issuing any LLM calls. When a signal is
+  // provided and the estimated cost exceeds ~60% of the remaining budget we
+  // auto-reduce the pool and log the reduction so the run never starts work
+  // it cannot finish (avoiding SIGTERM mid-LLM-call).
+  //
+  // Formula: chunks.length × p90_chunk_seconds. The p90 comes from
+  // `opts.p90ChunkSecondsDefault` (caller-supplied, typically from the profile
+  // config); absent = 30 s (conservative default matching a medium local LLM).
+  //
+  // "Remaining budget" is read from a custom property on the AbortSignal if
+  // the caller (improve.ts) has attached one. Without it no auto-reduction
+  // fires but the check is still cheap to run.
+  if (chunks.length > 10 && opts.signal) {
+    const p90Chunk = opts.p90ChunkSecondsDefault ?? 30;
+    const estimatedSeconds = chunks.length * p90Chunk;
+    // remainingBudgetMs is a non-standard extension set by improve.ts when it
+    // creates the budget AbortController. Undefined = no budget information.
+    const budgetMs = (opts.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
+    if (budgetMs !== undefined && budgetMs > 0) {
+      const remainingSeconds = budgetMs / 1000;
+      if (estimatedSeconds > remainingSeconds * 0.6) {
+        const safeCaps = Math.max(1, Math.floor((remainingSeconds * 0.6) / p90Chunk));
+        const removedChunks = chunks.length - safeCaps;
+        if (removedChunks > 0) {
+          const msg =
+            `[consolidate] cold-start budget: estimated ${estimatedSeconds.toFixed(0)}s > 60% of remaining ${remainingSeconds.toFixed(0)}s; ` +
+            `reducing pool from ${chunks.length} to ${safeCaps} chunks (${removedChunks} deferred to next run).`;
+          warn(msg);
+          warnings.push(msg);
+          chunks.splice(safeCaps);
+        }
+      }
+    }
+  }
 
   warn(
     `[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
@@ -1433,6 +1851,20 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const ABORT_FAILURE_RATE = 0.5;
 
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    // Budget-signal check: break cleanly before the next LLM call if the
+    // caller's budget has been exhausted. Commits work done so far.
+    if (opts.signal?.aborted) {
+      const skipped = chunks.length - chunkIdx;
+      const msg = `[consolidate] budget signal aborted before chunk ${chunkIdx + 1}/${chunks.length}; ${skipped} chunk(s) not processed (partial_timeout — work done so far committed).`;
+      warn(msg);
+      warnings.push(msg);
+      // Account for memories in unprocessed chunks.
+      for (let i = chunkIdx; i < chunks.length; i++) {
+        failedChunkMemories += (chunks[i] as MemoryEntry[]).length;
+      }
+      break;
+    }
+
     // Abort if failure rate >= 50% over at least 4 processed chunks.
     if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
       const failureRate = totalChunksFailed / totalChunksProcessed;
@@ -1627,26 +2059,36 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // contributed no entries to `judgedOutcomeByName`, so a transient LLM outage
   // never caches a memory as judged.
   if (judgedCacheEnabled && !opts.dryRun && judgedOutcomeByName.size > 0) {
-    let stateDb: ReturnType<typeof openStateDatabase> | undefined;
-    try {
-      stateDb = openStateDatabase();
+    // Use the shared state.db handle; open a local one as fallback.
+    const doRecord = (db: ReturnType<typeof openStateDatabase>) => {
       const judgedAt = new Date(startMs).toISOString();
       for (const [name, outcome] of judgedOutcomeByName) {
         const hash = currentHashByName.get(name);
-        // No readable hash → cannot key the cache entry; leave un-cached so the
-        // memory is re-judged next run (correctness over throughput).
         if (hash === undefined) continue;
-        upsertConsolidationJudged(stateDb, {
+        upsertConsolidationJudged(db, {
           entryKey: `memory:${name}`,
           contentHash: hash,
           judgedAt,
           outcome,
         });
       }
-    } catch (e) {
-      warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-    } finally {
-      stateDb?.close();
+    };
+    if (sharedStateDb) {
+      try {
+        doRecord(sharedStateDb);
+      } catch (e) {
+        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
+      }
+    } else {
+      let localDb: ReturnType<typeof openStateDatabase> | undefined;
+      try {
+        localDb = openStateDatabase();
+        doRecord(localDb);
+      } catch (e) {
+        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
+      } finally {
+        localDb?.close();
+      }
     }
   }
 
@@ -1854,7 +2296,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         emitMergeFailureSkips(mergeResult.error);
         continue;
       }
-      const mergedContent = mergeResult.content;
+      let mergedContent = mergeResult.content;
 
       // Validate frontmatter of merged content — must have a `---` block
       // with at minimum a `description` field. We parse via the hand-rolled
@@ -1910,6 +2352,66 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         );
         emitMergeFailureSkips("merge_participant_blocked");
         continue;
+      }
+
+      // WS-3b: Anti-collapse generation guard (step 8a).
+      // DEFAULT OFF. When antiCollapse.enabled, refuse to merge two assets both
+      // above generation N (default 2). This prevents the pipeline from
+      // building ever-deeper LLM-merged trees that lose the source fidelity
+      // of the original episodes.
+      const antiCollapseConfig: AntiCollapseConfig =
+        (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ??
+        {};
+      if (antiCollapseConfig.enabled) {
+        const allParticipants = [op.primary, ...op.secondaries];
+        const sourceGenerations = allParticipants.map((ref) => {
+          const e = memoryByRef.get(ref);
+          if (!e) return 0;
+          try {
+            const raw = fs.readFileSync(e.filePath, "utf8");
+            const parsed = parseFrontmatter(raw);
+            return readAssetGeneration(parsed.data as Record<string, unknown>);
+          } catch {
+            return 0;
+          }
+        });
+
+        const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
+        if (generationCheck.refused) {
+          warnings.push(`Merge: ${generationCheck.reason}`);
+          emitMergeFailureSkips("merge_generation_guard");
+          continue;
+        }
+
+        // WS-3b: Lexical diversity check (step 8b).
+        // Low n-gram diversity ⇒ likely correlated-extraction artifact; raise merge threshold.
+        if (antiCollapseConfig.lexicalDiversityCheck !== false) {
+          const bodies = allParticipants
+            .map((ref) => {
+              const e = memoryByRef.get(ref);
+              if (!e) return "";
+              try {
+                const raw = fs.readFileSync(e.filePath, "utf8");
+                return stripFrontmatterBody(raw);
+              } catch {
+                return "";
+              }
+            })
+            .filter((b) => b.length > 0);
+
+          const diversityCheck = checkLexicalDiversity(bodies, antiCollapseConfig);
+          if (diversityCheck.lowDiversity) {
+            // Low-diversity cluster: just warn (don't refuse merge since the dedup
+            // path handles exact twins). The warning surfaces in health telemetry.
+            warnings.push(
+              `Merge: cluster around ${op.primary} has low lexical diversity (${diversityCheck.diversity?.toFixed(2) ?? "?"} < 0.30) — likely correlated extraction; merge proceeds but review is recommended.`,
+            );
+          }
+        }
+
+        // Inject generation counter into merged content frontmatter (step 8a).
+        // merged.generation = max(sourceGenerations) + 1.
+        mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, allParticipants);
       }
 
       // Backup secondaries before deleting
@@ -2126,13 +2628,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       //       is the load-bearing content, so dedup must hash on body only.
       //   (b) A prior run created a proposal for the same body under a
       //       different knowledgeRef slug.
-      const bodyHash = createHash("sha256").update(sourceBody, "utf8").digest("hex");
+      // Use cacheHash (case-preserving stripped body) to match the canonical
+      // hash domain used by the body-embedding cache and pending-proposal set.
+      const bodyHash = cacheHash(sourceBody);
       const allPendingConsolidateProposals = listProposals(stashDir, { status: "pending" }).filter(
         (p) => p.source === "consolidate",
       );
       const contentDupProposal = allPendingConsolidateProposals.find((p) => {
-        const otherBody = parseFrontmatter(p.payload.content).content.trim();
-        return createHash("sha256").update(otherBody, "utf8").digest("hex") === bodyHash;
+        return cacheHash(p.payload.content) === bodyHash;
       });
       if (contentDupProposal) {
         warnings.push(
@@ -2264,36 +2767,23 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   cleanupJournal(stashDir, timestamp);
 
-  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90).
-  // C-5 / #391: emit an `archive_cleanup` event before each deletion so the
-  // audit trail records what was lost. Outbox pattern (EIP, Hohpe-Woolf) —
-  // any event that is recorded must be queryable; silent deletes are an anti-pattern.
-  const archiveDir = path.join(stashDir, ".akm", "archive");
-  if (fs.existsSync(archiveDir)) {
-    const retentionMs = (config.archiveRetentionDays ?? 90) * 86_400_000;
-    const cutoff = Date.now() - retentionMs;
-    for (const fname of fs.readdirSync(archiveDir)) {
-      const fp = path.join(archiveDir, fname);
-      try {
-        const stat = fs.statSync(fp);
-        if (stat.mtimeMs < cutoff) {
-          // Emit event before deletion so the record survives the purge.
-          appendEvent({
-            eventType: "archive_cleanup",
-            metadata: {
-              file: fname,
-              filePath: fp,
-              ageMs: Date.now() - stat.mtimeMs,
-              retentionMs,
-            },
-          });
-          fs.unlinkSync(fp);
-        }
-      } catch {
-        /* ignore race conditions */
-      }
-    }
+  // [signoff 2026-06-15] TTL archive cleanup machinery RETIRED (WS-3a).
+  // The elaborate archiveRetentionDays / archive-dir scan existed only to satisfy
+  // the old irrecoverability constraint. Stashes are now git-backed, so git
+  // history is the recovery path — no bespoke archive TTL needed. Any files in
+  // .akm/archive/ will stay there harmlessly until the operator prunes them with
+  // `git rm` or `find .akm/archive -mtime +90 -delete`. Changed N files this
+  // run; recover any via `git show <sha>:<path>` or `git restore <path>`.
+  if (merged > 0 || deleted > 0 || dedupCollapsed > 0) {
+    const totalChanged = merged + deleted + dedupCollapsed;
+    warnings.push(
+      `Changed ${totalChanged} file(s) this run. Recover any via git if needed (git history is the backstop).`,
+    );
   }
+
+  const runDurationMs = Date.now() - startMs;
+  const budgetFraction =
+    opts.runBudgetMs !== undefined && opts.runBudgetMs > 0 ? runDurationMs / opts.runBudgetMs : undefined;
 
   return {
     schemaVersion: 1 as const,
@@ -2317,7 +2807,16 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     mergedSecondaries,
     failedChunkMemories,
     warnings,
-    durationMs: Date.now() - startMs,
+    durationMs: runDurationMs,
+    perfTelemetry: {
+      dedupPoolSize: perfMs.dedupPoolSize,
+      llmPoolSize,
+      judgedCacheSkipped: perfMs.judgedCacheSkipped,
+      embedMs: embedTelemetry.embedMs,
+      embedCacheHits: embedTelemetry.cacheHits,
+      embedCacheMisses: embedTelemetry.cacheMisses,
+      ...(budgetFraction !== undefined ? { estimatedBudgetFractionUsed: budgetFraction } : {}),
+    },
   };
 }
 

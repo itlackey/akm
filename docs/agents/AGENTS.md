@@ -116,3 +116,7 @@ akm history --ref <ref>                        # Per-asset state-change trail
 ```
 
 Run `akm -h` for the full command reference.
+
+## Workmaps
+
+- For curate-specific implementation and test context, read `docs/agents/curate-workmap.md` before changing `akm curate` behavior.

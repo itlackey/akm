@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How the Brain Processes Information</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap');
+
+  :root {
+    --bg: #0a0c14;
+    --surface: #111420;
+    --border: #1e2235;
+    --text: #e8eaf2;
+    --dim: #6b7099;
+    --sense:   #4fc3f7;
+    --attn:    #f7c948;
+    --encode:  #a78bfa;
+    --emotion: #f87171;
+    --sleep:   #34d399;
+    --ltm:     #60a5fa;
+    --pattern: #fb923c;
+    --know:    #e879f9;
+    --arrow:   #2d3258;
+    --glow-size: 0 0 18px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    padding: 40px 24px 60px;
+    overflow-x: hidden;
+  }
+
+  /* Subtle grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 52px;
+  }
+  header .eyebrow {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 12px;
+  }
+  header h1 {
+    font-size: clamp(22px, 4vw, 38px);
+    font-weight: 800;
+    letter-spacing: -.02em;
+    line-height: 1.1;
+    background: linear-gradient(135deg, #e8eaf2 0%, #a0a8d0 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  header p {
+    margin-top: 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--dim);
+    max-width: 520px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.7;
+  }
+
+  /* ─── DIAGRAM ─── */
+  .diagram {
+    max-width: 900px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* Phase rows alternate layout */
+  .phase {
+    display: grid;
+    grid-template-columns: 1fr 44px 1fr;
+    align-items: start;
+    gap: 0 0;
+    position: relative;
+    margin-bottom: 0;
+  }
+  .phase.right { direction: rtl; }
+  .phase.right > * { direction: ltr; }
+
+  /* Node card */
+  .node {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    position: relative;
+    overflow: hidden;
+    transition: transform .2s, box-shadow .2s;
+    cursor: default;
+  }
+  .node::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--c);
+    box-shadow: var(--glow-size) var(--c);
+  }
+  .node:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+
+  .node-tag {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--c);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .node-tag::before {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: 0 0 6px var(--c);
+    flex-shrink: 0;
+  }
+  .node h2 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  .node p {
+    font-family: 'DM Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--dim);
+  }
+  .node .brain-region {
+    margin-top: 10px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--c);
+    opacity: .7;
+    font-style: italic;
+  }
+
+  /* Sub-nodes (e.g. sleep phases) */
+  .sub-nodes {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .sub-node {
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    flex: 1;
+    min-width: 110px;
+  }
+  .sub-node h3 {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--c);
+    margin-bottom: 4px;
+  }
+  .sub-node p {
+    font-size: 10.5px;
+  }
+
+  /* Connector column */
+  .connector {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 36px;
+  }
+  .connector .line {
+    width: 2px;
+    flex: 1;
+    min-height: 40px;
+    background: linear-gradient(to bottom, var(--from), var(--to));
+    position: relative;
+  }
+  .connector .arrow {
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 9px solid var(--to);
+    margin-top: -1px;
+  }
+
+  /* Horizontal divider arrows between phases */
+  .phase-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .phase-arrow span { opacity: .5; }
+  .phase-arrow .arr {
+    font-size: 18px;
+    color: var(--ca);
+    text-shadow: 0 0 10px var(--ca);
+    line-height: 1;
+  }
+
+  /* Legend */
+  .legend {
+    max-width: 900px;
+    margin: 40px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: .05em;
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: 0 0 6px var(--c);
+    flex-shrink: 0;
+  }
+
+  /* Animate in */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .node { animation: fadeUp .5s both; }
+  .node:nth-of-type(1) { animation-delay: .05s; }
+  .node:nth-of-type(2) { animation-delay: .15s; }
+
+  .phase:nth-child(1) .node { animation-delay: .1s; }
+  .phase:nth-child(2) .node { animation-delay: .2s; }
+  .phase:nth-child(3) .node { animation-delay: .3s; }
+  .phase:nth-child(4) .node { animation-delay: .4s; }
+  .phase:nth-child(5) .node { animation-delay: .5s; }
+  .phase:nth-child(6) .node { animation-delay: .6s; }
+  .phase:nth-child(7) .node { animation-delay: .7s; }
+  .phase:nth-child(8) .node { animation-delay: .8s; }
+
+  /* Empty placeholder cell */
+  .empty { min-height: 10px; }
+
+  /* ─── VERTICAL FLOW ─── */
+  .flow {
+    max-width: 900px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+
+  /* Spine line */
+  .flow::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(
+      to bottom,
+      var(--sense) 0%,
+      var(--attn) 14%,
+      var(--encode) 28%,
+      var(--emotion) 40%,
+      var(--sleep) 54%,
+      var(--ltm) 68%,
+      var(--pattern) 82%,
+      var(--know) 100%
+    );
+    opacity: .25;
+    transform: translateX(-50%);
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 80px 1fr;
+    align-items: stretch;
+    gap: 0;
+    position: relative;
+  }
+
+  /* Left / right cards */
+  .row .left  { padding-right: 18px; display: flex; align-items: center; justify-content: flex-end; }
+  .row .right { padding-left: 18px;  display: flex; align-items: center; }
+  .row .mid   { display: flex; flex-direction: column; align-items: center; position: relative; }
+
+  /* Spine segment */
+  .row .mid .seg {
+    flex: 1;
+    width: 2px;
+    background: var(--c);
+    opacity: .45;
+    min-height: 20px;
+  }
+  .row .mid .dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 2px solid var(--c);
+    box-shadow: 0 0 10px var(--c);
+    z-index: 1;
+    flex-shrink: 0;
+  }
+
+  /* Horizontal connector from dot to card */
+  .row .left  .hcon { width: 18px; height: 2px; background: var(--c); opacity: .45; flex-shrink: 0; }
+  .row .right .hcon { width: 18px; height: 2px; background: var(--c); opacity: .45; flex-shrink: 0; }
+  .row .left  { gap: 0; }
+
+  /* Full-width node (sleep) */
+  .row.full { grid-template-columns: 1fr; }
+  .row.full .full-pad { padding: 0 0 0 0; }
+
+  footer {
+    text-align: center;
+    margin-top: 48px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: .1em;
+    opacity: .5;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Neuroscience · Cognitive Architecture</div>
+  <h1>How the Brain Turns Perception<br>into Knowledge</h1>
+  <p>A high-level map of the neural workflow — from raw sensory signal to consolidated long-term memory, pattern abstraction, and functional understanding.</p>
+</header>
+
+<div class="flow">
+
+  <!-- 1. Sensory Input -->
+  <div class="row" style="--c: var(--sense);">
+    <div class="left">
+      <div class="node" style="--c: var(--sense); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 01</div>
+        <h2>Sensory Perception</h2>
+        <p>Raw signals arrive from all five senses simultaneously — light, sound, pressure, chemical gradients. Each sense has dedicated receptor cells that transduce physical stimuli into electrical nerve impulses.</p>
+        <div class="brain-region">↳ Eyes · Ears · Skin · Nose · Tongue → Cranial nerves</div>
+      </div>
+      <div class="hcon"></div>
+    </div>
+    <div class="mid">
+      <div class="seg"></div>
+      <div class="dot"></div>
+      <div class="seg"></div>
+    </div>
+    <div class="right">
+      <div class="hcon"></div>
+      <div class="node" style="--c: var(--sense); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 01b</div>
+        <h2>Sensory Buffer</h2>
+        <p>Signals are held in ultra-short-term sensory registers (iconic / echoic memory) for ~250ms–2s. This is a pre-conscious holding area — most of this stream is immediately discarded.</p>
+        <div class="brain-region">↳ Primary sensory cortices (V1, A1, S1)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow label -->
+  <div style="display:flex;align-items:center;justify-content:center;padding:10px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;gap:8px;">
+    <span style="color:var(--attn);text-shadow:0 0 8px var(--attn);font-size:16px;">↓</span>
+    <span>Thalamic relay · Attentional filtering</span>
+    <span style="color:var(--attn);text-shadow:0 0 8px var(--attn);font-size:16px;">↓</span>
+  </div>
+
+  <!-- 2. Attention + Working Memory -->
+  <div class="row" style="--c: var(--attn);">
+    <div class="left">
+      <div class="hcon"></div><!-- right side has the card, left is empty -->
+    </div>
+    <div class="mid">
+      <div class="seg"></div>
+      <div class="dot"></div>
+      <div class="seg"></div>
+    </div>
+    <div class="right">
+      <div class="hcon"></div>
+      <div class="node" style="--c: var(--attn); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 02</div>
+        <h2>Attention Gate &amp; Working Memory</h2>
+        <p>The thalamus acts as a relay and gating station. The prefrontal cortex selects what gets elevated to conscious focus. Selected content enters working memory — the brain's "RAM" — capable of holding ~4 items at once for active manipulation.</p>
+        <div class="brain-region">↳ Thalamus · Prefrontal Cortex · Anterior Cingulate</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:center;padding:10px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;gap:8px;">
+    <span style="color:var(--emotion);text-shadow:0 0 8px var(--emotion);font-size:16px;">↓</span>
+    <span>Emotional salience tagging runs in parallel</span>
+    <span style="color:var(--emotion);text-shadow:0 0 8px var(--emotion);font-size:16px;">↓</span>
+  </div>
+
+  <!-- 3. Encoding — two parallel tracks -->
+  <div class="row" style="--c: var(--encode);">
+    <div class="left">
+      <div class="node" style="--c: var(--encode); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 03a · Hippocampal Encoding</div>
+        <h2>Short-Term Consolidation</h2>
+        <p>The hippocampus binds disparate cortical signals into a single "episode" — binding who, what, where, and when into a coherent memory trace. This binding is fragile and requires rehearsal or emotional weight to persist.</p>
+        <div class="brain-region">↳ Hippocampus · Entorhinal Cortex</div>
+      </div>
+      <div class="hcon"></div>
+    </div>
+    <div class="mid">
+      <div class="seg"></div>
+      <div class="dot"></div>
+      <div class="seg"></div>
+    </div>
+    <div class="right">
+      <div class="hcon"></div>
+      <div class="node" style="--c: var(--emotion); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 03b · Emotional Tagging</div>
+        <h2>Amygdala Salience Marking</h2>
+        <p>The amygdala assigns an emotional weight (fear, reward, novelty) to each experience in real time. High-salience events trigger norepinephrine &amp; cortisol release — chemically marking the memory as "important, keep this."</p>
+        <div class="brain-region">↳ Amygdala · Locus Coeruleus · VTA (dopamine)</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:center;padding:10px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;gap:8px;">
+    <span style="color:var(--sleep);text-shadow:0 0 8px var(--sleep);font-size:16px;">↓</span>
+    <span>Offline processing during sleep</span>
+    <span style="color:var(--sleep);text-shadow:0 0 8px var(--sleep);font-size:16px;">↓</span>
+  </div>
+
+  <!-- 4. Sleep — full width -->
+  <div style="max-width:900px;margin:0 auto 0;width:100%;padding:0;">
+    <div class="node" style="--c: var(--sleep); width: 100%;">
+      <div class="node-tag">Stage 04 · Offline Consolidation</div>
+      <h2>Sleep — The Memory Compiler</h2>
+      <p style="margin-bottom: 14px;">Sleep is not passive. It is when the brain performs its most critical integration work — replaying, compressing, and transferring the day's experiences into stable long-term storage. This happens across two distinct sleep architectures:</p>
+      <div class="sub-nodes">
+        <div class="sub-node" style="--c: var(--sleep);">
+          <h3>NREM / Slow-Wave Sleep</h3>
+          <p>Hippocampal "sharp-wave ripples" replay compressed sequences of the day's episodes. These fire in sync with cortical slow oscillations, transferring episodic traces to distributed neocortical storage. Declarative memory consolidation happens here.</p>
+        </div>
+        <div class="sub-node" style="--c: var(--sleep);">
+          <h3>REM Sleep · Dreaming</h3>
+          <p>The prefrontal cortex largely disengages. The brain free-associates across loosely related memory traces — testing novel connections between disparate concepts. Emotional tone is stripped from memories (amygdala dampened by serotonin withdrawal). Dreams may be the subjective experience of this associative cross-indexing.</p>
+        </div>
+        <div class="sub-node" style="--c: var(--sleep);">
+          <h3>Glymphatic Clearance</h3>
+          <p>Cerebrospinal fluid flushes the interstitial space of metabolic waste (including amyloid-β). Sleep deprivation disrupts this — accumulation impairs both encoding and retrieval the next day.</p>
+        </div>
+      </div>
+      <div class="brain-region" style="margin-top:12px;">↳ Hippocampus → Neocortex transfer · Thalamo-cortical spindles · Brainstem (REM atonia)</div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:center;padding:10px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;gap:8px;">
+    <span style="color:var(--ltm);text-shadow:0 0 8px var(--ltm);font-size:16px;">↓</span>
+    <span>Synaptic weight changes via LTP/LTD</span>
+    <span style="color:var(--ltm);text-shadow:0 0 8px var(--ltm);font-size:16px;">↓</span>
+  </div>
+
+  <!-- 5. Long-Term Memory -->
+  <div class="row" style="--c: var(--ltm);">
+    <div class="left">
+      <div class="node" style="--c: var(--ltm); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 05a · Explicit Memory</div>
+        <h2>Declarative Memory Storage</h2>
+        <p>Episodic memories (events) and semantic memories (facts, concepts) are stored as distributed patterns of synaptic weights across association cortices. There is no single "storage location" — a memory is a reconstruction each time it is recalled.</p>
+        <div class="brain-region">↳ Temporal · Parietal · Frontal association cortices</div>
+      </div>
+      <div class="hcon"></div>
+    </div>
+    <div class="mid">
+      <div class="seg"></div>
+      <div class="dot"></div>
+      <div class="seg"></div>
+    </div>
+    <div class="right">
+      <div class="hcon"></div>
+      <div class="node" style="--c: var(--ltm); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 05b · Implicit Memory</div>
+        <h2>Procedural &amp; Implicit Storage</h2>
+        <p>Skills, habits, and conditioned responses bypass the hippocampus entirely. Repeated motor sequences are "compiled" into the basal ganglia and cerebellum — becoming automatic, fast, and largely inaccessible to verbal introspection.</p>
+        <div class="brain-region">↳ Basal Ganglia (habits) · Cerebellum (motor) · Striatum</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:center;padding:10px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;gap:8px;">
+    <span style="color:var(--pattern);text-shadow:0 0 8px var(--pattern);font-size:16px;">↓</span>
+    <span>Cross-episodic abstraction · Schema formation</span>
+    <span style="color:var(--pattern);text-shadow:0 0 8px var(--pattern);font-size:16px;">↓</span>
+  </div>
+
+  <!-- 6. Pattern Recognition -->
+  <div class="row" style="--c: var(--pattern);">
+    <div class="left">
+      <div class="hcon"></div>
+    </div>
+    <div class="mid">
+      <div class="seg"></div>
+      <div class="dot"></div>
+      <div class="seg"></div>
+    </div>
+    <div class="right">
+      <div class="hcon"></div>
+      <div class="node" style="--c: var(--pattern); max-width: 360px; width: 100%;">
+        <div class="node-tag">Stage 06</div>
+        <h2>Pattern Recognition &amp; Schema Formation</h2>
+        <p>As memories accumulate and overlap, the brain extracts statistical regularities. Individual episodes are compressed into abstract schemas — generalized templates of "how the world works." New information is rapidly assimilated if it fits an existing schema; schemas update slowly under repeated contradiction.</p>
+        <div class="brain-region">↳ Medial Prefrontal Cortex · Neocortical hierarchies · Default Mode Network</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:center;padding:10px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;gap:8px;">
+    <span style="color:var(--know);text-shadow:0 0 8px var(--know);font-size:16px;">↓</span>
+    <span>Retrieval · Application · Prediction</span>
+    <span style="color:var(--know);text-shadow:0 0 8px var(--know);font-size:16px;">↓</span>
+  </div>
+
+  <!-- 7. Functional Knowledge -->
+  <div style="max-width:900px;margin:0 auto;width:100%;">
+    <div class="node" style="--c: var(--know); width: 100%;">
+      <div class="node-tag">Stage 07 · Output Layer</div>
+      <h2>Functional Knowledge &amp; Predictive Modeling</h2>
+      <p style="margin-bottom: 14px;">The end state is not passive storage — it is an active predictive model of the world. The brain constantly generates predictions about incoming sensory data and only updates when those predictions are violated (prediction error signals). Knowledge manifests as:</p>
+      <div class="sub-nodes">
+        <div class="sub-node" style="--c: var(--know);">
+          <h3>Conceptual Understanding</h3>
+          <p>Flexible, context-independent knowledge that can be reasoned about, communicated, and transferred to novel domains.</p>
+        </div>
+        <div class="sub-node" style="--c: var(--know);">
+          <h3>Skilled Performance</h3>
+          <p>Automatized procedural sequences that execute rapidly and accurately below the threshold of conscious attention.</p>
+        </div>
+        <div class="sub-node" style="--c: var(--know);">
+          <h3>Predictive Intuition</h3>
+          <p>Pattern-matched fast heuristics — "gut feeling" — that compress years of accumulated schema into near-instant recognition and judgment.</p>
+        </div>
+      </div>
+      <div class="brain-region" style="margin-top:12px;">↳ Prefrontal Cortex (executive function) · Default Mode Network (self-modeling) · Dopamine system (prediction error / reward)</div>
+    </div>
+  </div>
+
+  <!-- Feedback loop note -->
+  <div style="max-width:900px;margin:16px auto 0;text-align:center;font-family:'DM Mono',monospace;font-size:10.5px;color:var(--dim);line-height:1.7;padding:16px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.02);">
+    <span style="color:var(--know);text-shadow:0 0 6px var(--know);">⟳</span>
+    &nbsp; This is a closed loop, not a pipeline. Every act of retrieval slightly rewrites the memory (reconsolidation). 
+    New perception is constantly filtered through existing schemas. Prediction errors drive learning. 
+    The "output" of Stage 07 feeds directly back into Stage 02 as a top-down attentional prior — 
+    we literally perceive through the lens of what we already know.
+  </div>
+
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--sense);"></div> Sensory Processing</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--attn);"></div> Attention / Working Memory</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--encode);"></div> Hippocampal Encoding</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--emotion);"></div> Emotional Salience</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--sleep);"></div> Sleep Consolidation</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--ltm);"></div> Long-Term Memory</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--pattern);"></div> Pattern / Schema</div>
+  <div class="legend-item"><div class="legend-dot" style="--c:var(--know);"></div> Functional Knowledge</div>
+</div>
+
+<footer>Based on current consensus models in cognitive neuroscience · For educational purposes</footer>
+
+</body>
+</html>

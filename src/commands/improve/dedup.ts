@@ -43,8 +43,10 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig } from "../../core/config/config";
+import type { Database } from "../../core/state-db";
+import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import { cosineSimilarity, embedBatch } from "../../llm/embedder";
+import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 
 /** Default strict cosine floor — high enough to skip distinct-but-related memories. */
 export const DEFAULT_DEDUP_COSINE_THRESHOLD = 0.97;
@@ -52,6 +54,16 @@ export const DEFAULT_DEDUP_COSINE_THRESHOLD = 0.97;
 export interface DedupConfig {
   enabled?: boolean;
   cosineThreshold?: number;
+  /**
+   * Maximum pool size for the O(n²) cosine-similarity twin compare.
+   * When the judged-cache-miss pool exceeds this limit only the first
+   * `cosineCandidateLimit` items (sorted lexicographically, which is the
+   * deterministic canonical order) are cosine-compared. Exact-hash matches
+   * still run over the full pool regardless. Default: 500 (~125 K comparisons,
+   * ≈ 0.1 s on modern hardware). At pools > ~1 k, consider switching to
+   * sqlite-vec KNN (tier C, 0.10+).
+   */
+  cosineCandidateLimit?: number;
 }
 
 /** A single memory file loaded from the stash for the dedup pre-pass. */
@@ -98,26 +110,52 @@ export interface DedupResult {
 }
 
 /**
+ * Strip frontmatter from raw memory content, returning the body text trimmed.
+ * Case and whitespace are preserved — this is the shared primitive used by
+ * both hash wrappers below. Falls back to `raw.trim()` on unparseable
+ * frontmatter (consistent with the pre-existing load-time hot guard).
+ */
+export function stripFrontmatterBody(raw: string): string {
+  try {
+    return parseFrontmatter(raw).content.trim();
+  } catch {
+    return raw.trim();
+  }
+}
+
+/**
  * Normalize a memory body for content-twin equality. Strips frontmatter,
  * lowercases, trims, and collapses all runs of whitespace to a single space so
  * trivial reformatting (extra blank lines, trailing spaces, case) does not
  * defeat the hash. Deterministic and pure.
+ *
+ * Use this for the DEDUP path only (exact-twin detection). For the change-
+ * detection / embedding-cache path use `cacheHash` instead.
  */
 export function normalizeMemoryBody(raw: string): string {
-  let body = raw;
-  try {
-    body = parseFrontmatter(raw).content;
-  } catch {
-    // Unparseable frontmatter: fall back to the raw string. The hot guard at
-    // load time refuses to collapse such files anyway, so this only affects
-    // hash bucketing of already-excluded entries.
-    body = raw;
-  }
-  return body.trim().toLowerCase().replace(/\s+/g, " ");
+  return stripFrontmatterBody(raw).toLowerCase().replace(/\s+/g, " ");
 }
 
-function bodyHashOf(normalizedBody: string): string {
-  return createHash("sha256").update(normalizedBody, "utf8").digest("hex");
+/**
+ * Hash used for content-twin detection: lowercase + whitespace-collapsed body.
+ * Two memories that differ only in case or whitespace produce the same hash
+ * and are considered identical twins. Use this key for the dedup buckets.
+ */
+export function dedupHash(raw: string): string {
+  return createHash("sha256").update(normalizeMemoryBody(raw), "utf8").digest("hex");
+}
+
+/**
+ * Hash used for change-detection and the body-embedding cache: case-/whitespace-
+ * preserving stripped body. Two memories with the same wording but different
+ * casing produce DIFFERENT hashes here, which is intentional — we embed the
+ * exact text and cache by its precise content.
+ *
+ * This is the `content_hash` stored in `body_embeddings` and
+ * `consolidation_judged`. Do NOT reuse the `dedupHash` for those tables.
+ */
+export function cacheHash(raw: string): string {
+  return createHash("sha256").update(stripFrontmatterBody(raw), "utf8").digest("hex");
 }
 
 /**
@@ -154,12 +192,15 @@ export function loadDedupMemories(stashDir: string): DedupMemory[] {
       derivedFrom: typeof fm.derivedFrom === "string" ? (fm.derivedFrom as string) : undefined,
       raw,
       normalizedBody,
-      bodyHash: bodyHashOf(normalizedBody),
+      bodyHash: dedupHash(raw),
       hot: fm.captureMode === "hot",
     });
   }
   return out;
 }
+
+/** Default cap on the O(n²) cosine-compare pool size. */
+export const DEFAULT_COSINE_CANDIDATE_LIMIT = 500;
 
 /**
  * Build the deterministic collapse plan. Pure over (memories, similarities,
@@ -173,9 +214,10 @@ export function loadDedupMemories(stashDir: string): DedupMemory[] {
  *   - Class 1 (`.derived` ↔ origin) is matched first so a derived child is
  *     always folded into its origin (never the reverse, never twin-matched).
  */
+
 export function planDedup(
   memories: DedupMemory[],
-  opts: { cosineThreshold: number; embeddings?: Map<string, number[]> },
+  opts: { cosineThreshold: number; embeddings?: Map<string, number[]>; cosineCandidateLimit?: number },
 ): DedupPlan {
   const collapses: DedupCollapse[] = [];
   const warnings: string[] = [];
@@ -249,8 +291,18 @@ export function planDedup(
   // Cosine twins (only when embeddings are available). O(n²) over the still-
   // unconsumed non-derived pool; deterministic greedy: for each canonical in
   // sorted order, claim every unconsumed later memory whose similarity ≥ floor.
+  // The pool is capped at `cosineCandidateLimit` (default 500) to bound the
+  // O(n²) cost (~0.1 s at 500; ~3 s at 2.6 k; ~85 s at 13 k). Exact-hash
+  // matches above always run over the full pool and are unaffected.
   if (opts.embeddings) {
-    const pool = remaining.filter((m) => !consumed.has(m.name));
+    const limit = opts.cosineCandidateLimit ?? DEFAULT_COSINE_CANDIDATE_LIMIT;
+    const fullPool = remaining.filter((m) => !consumed.has(m.name));
+    const pool = fullPool.length > limit ? fullPool.slice(0, limit) : fullPool;
+    if (fullPool.length > limit) {
+      warnings.push(
+        `dedup: cosine compare pool (${fullPool.length}) exceeds cosineCandidateLimit (${limit}); capping to first ${limit} memories (exact-hash matches unaffected).`,
+      );
+    }
     for (let i = 0; i < pool.length; i++) {
       const canonical = pool[i] as DedupMemory;
       if (consumed.has(canonical.name)) continue;
@@ -378,17 +430,29 @@ export function applyDedupPlan(
  *
  * `onArchive` lets the caller archive/back up each dropped variant before
  * deletion (consolidate.ts wires this to its existing archive helper).
+ *
+ * `signal` (optional): an AbortSignal forwarded from the caller's budget
+ * controller. When aborted before the embedding call the function returns a
+ * no-op result immediately; the signal is also forwarded into `embedBatch`
+ * so a mid-embedding abort is handled cleanly.
  */
 export async function runDeterministicDedup(
   stashDir: string,
   dedupConfig: DedupConfig | undefined,
   akmConfig: AkmConfig,
   onArchive?: (variantFilePath: string, variantName: string) => void,
+  signal?: AbortSignal,
+  /** Optional open state.db handle for the body-embedding cache (WS-3a). */
+  stateDb?: Database,
 ): Promise<DedupResult> {
   if (!dedupConfig?.enabled) {
     return { collapsed: 0, consumedRefs: [], warnings: [] };
   }
+  if (signal?.aborted) {
+    return { collapsed: 0, consumedRefs: [], warnings: ["dedup: aborted before start"] };
+  }
   const threshold = dedupConfig.cosineThreshold ?? DEFAULT_DEDUP_COSINE_THRESHOLD;
+  const candidateLimit = dedupConfig.cosineCandidateLimit ?? DEFAULT_COSINE_CANDIDATE_LIMIT;
 
   const memories = loadDedupMemories(stashDir);
   if (memories.length === 0) {
@@ -397,16 +461,77 @@ export async function runDeterministicDedup(
 
   // Embed only when embeddings are configured — exact-hash collapse still works
   // without them. Fail-open: any embedding error degrades to hash-only matching.
+  // NOTE: embedBatch embeds the case-preserving stripped body (cacheHash domain),
+  // not the lowercase dedupHash body, so dedup cosine and the body_embeddings
+  // cache share the same canonical embedding input.
   let embeddings: Map<string, number[]> | undefined;
   if (akmConfig.embedding) {
     try {
       const eligible = memories.filter((m) => !m.hot);
-      const texts = eligible.map((m) => m.normalizedBody || m.name);
-      const vecs = await embedBatch(texts, akmConfig.embedding);
-      if (vecs && vecs.length === eligible.length) {
-        embeddings = new Map();
+      // Use the case-preserving stripped body for embeddings (matching cacheHash
+      // canonical input) so the embedding cache can be shared with consolidate.
+      const modelId = resolveEmbeddingModelId(akmConfig.embedding);
+
+      // WS-3a: body-embedding cache — look up all content_hashes in one query,
+      // embed only the misses, then upsert the new vectors in one transaction.
+      const contentHashes = eligible.map((m) => cacheHash(m.raw));
+      const hashToName = new Map<string, string>();
+      for (let i = 0; i < eligible.length; i++) {
+        hashToName.set(contentHashes[i] as string, (eligible[i] as DedupMemory).name);
+      }
+
+      let cachedVecs = new Map<string, number[]>();
+      if (stateDb) {
+        try {
+          cachedVecs = getBodyEmbeddings(stateDb, contentHashes, modelId);
+        } catch {
+          // Fail open: cache read errors degrade to full embed.
+          cachedVecs = new Map();
+        }
+      }
+
+      const missIndices: number[] = [];
+      const missTexts: string[] = [];
+      for (let i = 0; i < eligible.length; i++) {
+        const hash = contentHashes[i] as string;
+        if (!cachedVecs.has(hash)) {
+          missIndices.push(i);
+          missTexts.push(stripFrontmatterBody((eligible[i] as DedupMemory).raw) || (eligible[i] as DedupMemory).name);
+        }
+      }
+
+      let missVecs: number[][] = [];
+      if (missTexts.length > 0) {
+        missVecs = await embedBatch(missTexts, akmConfig.embedding, signal);
+        // Upsert new vectors into cache.
+        if (stateDb && missVecs.length === missTexts.length) {
+          try {
+            const toUpsert = missIndices.map((idx, pos) => ({
+              contentHash: contentHashes[idx] as string,
+              embedding: missVecs[pos] as number[],
+              modelId,
+            }));
+            upsertBodyEmbeddings(stateDb, toUpsert);
+          } catch {
+            // Fail open: cache write errors are non-fatal.
+          }
+        }
+      }
+
+      // Assemble the full embeddings map (cache hits + freshly embedded misses).
+      if (missVecs.length === missTexts.length || cachedVecs.size > 0) {
+        embeddings = new Map<string, number[]>();
+        // Add cache hits.
         for (let i = 0; i < eligible.length; i++) {
-          embeddings.set((eligible[i] as DedupMemory).name, vecs[i] as number[]);
+          const hash = contentHashes[i] as string;
+          const cached = cachedVecs.get(hash);
+          if (cached) embeddings.set((eligible[i] as DedupMemory).name, cached);
+        }
+        // Add freshly embedded misses.
+        for (let pos = 0; pos < missIndices.length; pos++) {
+          const idx = missIndices[pos] as number;
+          const vec = missVecs[pos];
+          if (vec) embeddings.set((eligible[idx] as DedupMemory).name, vec);
         }
       }
     } catch {
@@ -414,7 +539,7 @@ export async function runDeterministicDedup(
     }
   }
 
-  const plan = planDedup(memories, { cosineThreshold: threshold, embeddings });
+  const plan = planDedup(memories, { cosineThreshold: threshold, embeddings, cosineCandidateLimit: candidateLimit });
   if (plan.collapses.length === 0) {
     return { collapsed: 0, consumedRefs: [], warnings: plan.warnings };
   }

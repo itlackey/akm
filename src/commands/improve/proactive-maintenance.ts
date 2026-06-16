@@ -28,37 +28,16 @@
  */
 
 import type { ImproveEligibleRef } from "../../core/improve-types";
+import { computeSalience } from "./salience";
 
 /** One day in milliseconds. */
 const DAY_MS = 86_400_000;
-
-/**
- * Importance multipliers by asset type. Higher = more worth maintaining. These
- * are the design defaults; callers may override any subset via config.
- */
-export const DEFAULT_IMPORTANCE_WEIGHTS: Readonly<Record<string, number>> = Object.freeze({
-  skill: 1.5,
-  agent: 1.5,
-  command: 1.3,
-  workflow: 1.3,
-  lesson: 1.2,
-  knowledge: 1.0,
-  script: 0.9,
-  memory: 0.7,
-});
 
 /** Default staleness gate: an asset is due when last reflected > this many days ago (or never). */
 export const DEFAULT_DUE_DAYS = 30;
 
 /** Default bound on how many assets the selector surfaces per run. */
 export const DEFAULT_MAX_PER_RUN = 25;
-
-/**
- * Half-life (days) for the recency-of-use decay term. An asset used today
- * contributes a full recency multiplier; one unused for one half-life
- * contributes half. Mirrors the validated prototype (21 days).
- */
-const RECENCY_HALFLIFE_DAYS = 21;
 
 /** Lower bound on size used in the cost denominator so tiny files don't divide by ~0. */
 const SIZE_FLOOR_BYTES = 200;
@@ -93,8 +72,6 @@ export interface ProactiveSelectorParams {
   dueDays?: number;
   /** Top-N bound. Default {@link DEFAULT_MAX_PER_RUN}. */
   maxPerRun?: number;
-  /** Importance weights by type; merged over {@link DEFAULT_IMPORTANCE_WEIGHTS}. */
-  importanceWeights?: Record<string, number>;
   /** Injectable clock (ms). Defaults to `Date.now()`. */
   now?: number;
 }
@@ -106,9 +83,7 @@ export interface ProactiveScoredRef {
   staleDays: number;
   neverReflected: boolean;
   retrievalFreq: number;
-  recencyDecay: number;
   sizeBytes: number;
-  importance: number;
   priority: number;
   due: boolean;
 }
@@ -133,10 +108,9 @@ function refType(ref: string): string {
 /**
  * Score and select due assets for proactive maintenance.
  *
- * Priority formula (mirrors the validated prototype):
- *
- *   priority = (importance × log(1 + retrievalFreq) × (0.1 + 0.5^(useAgeDays/21)))
- *              / log10(max(size, 200))
+ * Priority: delegates to `computeSalience(...).rankScore` (WS-1 unified salience
+ * vector). The ranking key is therefore identical to every other selector that
+ * uses salience — a single formula governs attention across the whole improve loop.
  *
  * DUE gate: an asset is eligible only if it was never reflected OR last
  * reflected/distilled more than `dueDays` ago. The same gate doubles as the
@@ -148,7 +122,6 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
   const now = params.now ?? Date.now();
   const dueDays = params.dueDays ?? DEFAULT_DUE_DAYS;
   const maxPerRun = params.maxPerRun ?? DEFAULT_MAX_PER_RUN;
-  const weights: Record<string, number> = { ...DEFAULT_IMPORTANCE_WEIGHTS, ...(params.importanceWeights ?? {}) };
 
   const scored: ProactiveScoredRef[] = [];
 
@@ -169,21 +142,17 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
     // DUE / rotation gate.
     const due = neverReflected || staleDays > dueDays;
 
-    // Retrieval frequency + recency decay.
+    // Retrieval frequency (for salience inputs).
     const retrievalFreq = params.retrievalCounts.get(ref) ?? 0;
     const lastUse = params.lastUseMs?.get(ref) ?? 0;
-    const useAgeDays = lastUse > 0 ? (now - lastUse) / DAY_MS : 9999;
-    const recencyDecay = 0.1 + 0.5 ** (useAgeDays / RECENCY_HALFLIFE_DAYS);
 
-    // Size proxy (cost): larger assets are slightly deprioritized, but only by
-    // log10 so a big-but-hot asset is never starved.
+    // Size proxy (cost): kept for salience input — computeSalience applies
+    // the log10 denominator internally.
     let sizeBytes = params.sizeBytesOf?.(candidate) ?? 0;
     if (!sizeBytes || sizeBytes < 0) sizeBytes = SIZE_FLOOR_BYTES;
-    const sizeProxy = Math.max(SIZE_FLOOR_BYTES, sizeBytes);
 
-    const importance = weights[type] ?? 1.0;
-
-    const priority = (importance * Math.log(1 + retrievalFreq) * recencyDecay) / Math.log10(sizeProxy);
+    // Unified priority via WS-1 salience vector (replaces the old inline formula).
+    const priority = computeSalience({ ref, type, retrievalFreq, lastUseMs: lastUse, sizeBytes, now }).rankScore;
 
     scored.push({
       ref: candidate,
@@ -191,9 +160,7 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
       staleDays,
       neverReflected,
       retrievalFreq,
-      recencyDecay,
       sizeBytes,
-      importance,
       priority,
       due,
     });

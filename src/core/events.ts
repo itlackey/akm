@@ -95,6 +95,20 @@ export type EventType =
    * maxThreshold}`.
    */
   | "calibration_autotune"
+  /**
+   * WS-1 forgetting-safety rank-change report (plan §WS-1 step 7). Emitted once
+   * per improve run on the second and subsequent runs, when the stash-wide rank
+   * comparison can be made. Metadata carries `{stashSize, totalChanged,
+   * forgettingCandidates, topDrops}`. See `buildRankChangeReport` in salience.ts.
+   */
+  | "improve_salience_rank_change"
+  /**
+   * WS-1 first-run marker. Emitted on the very first improve run when the
+   * asset_salience table is empty — no pre-existing baseline exists to compare
+   * against (the old combinedEligibilityScore ordering was not captured in state.db).
+   * Metadata carries `{candidateCount, note}`.
+   */
+  | "improve_salience_first_run"
   | string;
 
 export interface AppendEventInput {

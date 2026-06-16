@@ -32,17 +32,31 @@ import { assertNever } from "./assert";
  *   - `"high-retrieval"` — P0-A fallback: zero-feedback but frequently
  *                          retrieved (the reactive retrieval-spike lane).
  *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
- *   - `"scope"`          — explicit `--scope <ref>` bypass (user intent wins).
- *   - `"unknown"`        — origin lane could not be determined. NOT a silent
- *                          alias for `signal-delta`; only used when the lane
- *                          genuinely cannot be attributed.
+ *   - `"scope"`              — explicit `--scope <ref>` bypass (user intent wins).
+ *   - `"forgetting-safety"` — WS-1 protective consolidation: asset fell from
+ *                             top-200 to below position 500 in the stash-wide
+ *                             salience ranking (scenario B rank-change report).
+ *                             Force-included for one consolidation pass regardless
+ *                             of cooldown / signal-delta status so it is not
+ *                             silently dropped from the candidate pool.
+ *   - `"unknown"`            — origin lane could not be determined. NOT a silent
+ *                              alias for `signal-delta`; only used when the lane
+ *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive`.
+ * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
+ * `forgetting-safety`.
  * A ref with real feedback is attributed to feedback even if it was also due
  * for proactive maintenance.
  */
-export type EligibilitySource = "signal-delta" | "high-retrieval" | "proactive" | "scope" | "unknown";
+export type EligibilitySource =
+  | "signal-delta"
+  | "high-retrieval"
+  | "proactive"
+  | "scope"
+  | "forgetting-safety"
+  | "exploration"
+  | "unknown";
 
 export interface ImproveEligibleRef {
   ref: string;
@@ -61,17 +75,6 @@ export interface ImproveEligibleRef {
    * {@link EligibilitySource} for the lane vocabulary and precedence rule.
    */
   eligibilitySource?: EligibilitySource;
-  /**
-   * #614 — feedback attention lane routed by the SIGN of net valence, set only
-   * when the `symmetricValence` improve-profile flag is enabled and the asset
-   * carries a strong (|valence| ≥ threshold) feedback signal:
-   *   - `"fix"`       — net-negative feedback dominates (needs correction).
-   *   - `"reinforce"` — net-positive feedback dominates (reinforce the win).
-   * Absent under the default (legacy negative-only) ranking, and absent for
-   * weak / mixed feedback. Orthogonal to {@link eligibilitySource} (which lane
-   * SELECTED the asset); this records what the feedback is SAYING about it.
-   */
-  feedbackLane?: "fix" | "reinforce";
 }
 
 /**

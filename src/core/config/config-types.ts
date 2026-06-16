@@ -245,6 +245,13 @@ export interface ImproveProcessConfig {
   dedup?: {
     enabled?: boolean;
     cosineThreshold?: number;
+    /**
+     * Maximum pool size for the O(n²) cosine-similarity twin compare.
+     * Only the first `cosineCandidateLimit` memories (sorted lexicographically)
+     * are cosine-compared; exact-hash matches still run over the full pool.
+     * Default 500 (~125 K comparisons, ≈ 0.1 s). Raise with care — cost is O(n²).
+     */
+    cosineCandidateLimit?: number;
   };
   /**
    * Judged-state cache for the `consolidate` process (#581). When `enabled`,
@@ -322,14 +329,6 @@ export interface ImproveProcessConfig {
    */
   maxPerRun?: number;
   /**
-   * Proactive-maintenance selector (Layer 2): optional override of the
-   * importance multiplier applied per asset type in the composite priority.
-   * Merged over the built-in defaults (skill/agent 1.5, command/workflow 1.3,
-   * lesson 1.2, knowledge 1.0, script 0.9, memory 0.7) — supply only the types
-   * you want to change. Only meaningful on the `proactiveMaintenance` process.
-   */
-  importanceWeights?: Record<string, number>;
-  /**
    * Full-corpus scan for the `graphExtraction` process.
    * When `true`, graph extraction runs on ALL stash files instead of only
    * the files touched by actionable refs in the current run.
@@ -372,6 +371,83 @@ export interface ImproveProcessConfig {
     profile?: string;
     timeoutMs?: number | null;
   };
+  /**
+   * Fallback p90 wall-clock time per consolidation chunk in seconds, used for
+   * cold-start budget estimation when no telemetry history exists. The actual
+   * p90 is derived from observed run durations once sufficient history
+   * accumulates; this value is only used on the very first run. Default 30 s.
+   * Only meaningful on the `consolidate` process.
+   */
+  p90ChunkSecondsDefault?: number;
+  /**
+   * WS-3b: Homeostatic demotion (step 0a). Before any LLM merge, demote
+   * `retrievalSalience` (state.db only — file content untouched) for
+   * stale/low-value assets so the merge pool is bounded and high-SNR.
+   * Re-promotable on re-retrieval. Default OFF. Only meaningful on the
+   * `consolidate` process.
+   */
+  homeostaticDemotion?: {
+    enabled?: boolean;
+    /** Days since last retrieval to consider an asset stale. Default 30. */
+    staleDays?: number;
+    /** Multiplicative demotion factor on retrievalSalience (0–1). Default 0.5. */
+    demotionFactor?: number;
+  };
+  /**
+   * WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
+   * body embedding is within epsilon of an existing derived-layer lesson/knowledge
+   * node, mark it schema-consistent and lower its priority. Default OFF.
+   * Only meaningful on the `consolidate` and `extract` processes.
+   */
+  schemaSimilarity?: {
+    enabled?: boolean;
+    /** Cosine similarity epsilon above which a candidate is schema-consistent. Default 0.85. */
+    epsilon?: number;
+    /** Multiplicative factor applied to candidate confidence when schema-consistent. Default 0.5. */
+    confidencePenalty?: number;
+  };
+  /**
+   * WS-3b: Hot-probation intake buffer (#604). New system-generated extractions
+   * enter `captureMode: hot-probation` and spend ONE consolidation cycle in
+   * probation before promotion; dedup + quality second-pass runs against them.
+   * Default OFF. Only meaningful on the `extract` process.
+   */
+  hotProbation?: {
+    enabled?: boolean;
+  };
+  /**
+   * WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
+   * from collapsing too aggressively and losing diversity.
+   * Default OFF. Only meaningful on the `consolidate` process.
+   */
+  antiCollapse?: {
+    enabled?: boolean;
+    /** Refuse to merge two assets both above this generation. Default 2. */
+    maxGeneration?: number;
+    /** Low n-gram diversity ⇒ raise merge threshold. Default true when enabled. */
+    lexicalDiversityCheck?: boolean;
+    /** Fraction of pool to fill with random (non-similar) clusters. Default 0.05. */
+    randomClusterFraction?: number;
+  };
+  /**
+   * WS-3b: CLS (Complementary Learning System) interleaving (step 9).
+   * distill/memoryInference prompts include embedding-retrieved adjacent
+   * lessons/knowledge to prevent catastrophic interference. Default OFF.
+   * Only meaningful on `distill` and `memoryInference` processes.
+   */
+  cls?: {
+    enabled?: boolean;
+    /** Number of adjacent lessons/knowledge to include in prompts. Default 3. */
+    adjacentCount?: number;
+  };
+  /**
+   * WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
+   * checks it against its cited source memories; a contradiction flag forces human
+   * review. Default OFF. Only meaningful on the `distill` process.
+   */
+  fidelityCheck?: {
+    enabled?: boolean;
+  };
 }
 
 export interface ImproveProfileConfig {
@@ -401,7 +477,7 @@ export interface ImproveProfileConfig {
      * reflected > `dueDays` ago) into the reflect/distill candidate set so stable
      * high-value assets get refreshed on a schedule even without new feedback.
      * Opt-in (default DISABLED). Knobs: `enabled`, `dueDays` (30),
-     * `maxPerRun`/`limit` (25), `importanceWeights`.
+     * `maxPerRun`/`limit` (25).
      */
     proactiveMaintenance?: ImproveProcessConfig;
   };
@@ -587,19 +663,30 @@ export interface ImproveConfig {
    */
   eventRetentionDays?: number;
   /**
-   * #612 — auto-accept gate calibration + bounded, opt-in threshold auto-tune.
+   * #612 / WS-4 — auto-accept gate calibration + bounded, opt-in per-phase
+   * threshold auto-tune.
    *
    * Calibration (the reliability summary on `akm health`) is always computed
    * from gate decisions; this block controls only the OPT-IN threshold
    * auto-tune. DEFAULT OFF: absent — or `autoTune: false` — means the gate
    * threshold is never adjusted and behaviour is byte-identical to today.
+   *
+   * WS-4 change: thresholds are now persisted PER PHASE in state.db (keyed by
+   * phase label). `makeGateConfig` reads the stored value and falls back to
+   * `globalThreshold` when none exists yet. The auto-tune ceiling is bounded at
+   * `maxThreshold` (default 85) to prevent the gate converging to pure
+   * exploitation.
    */
   calibration?: {
     /** Master switch for the bounded threshold auto-tune. Default false (parity). */
     autoTune?: boolean;
     /** Lower bound (0-100) the tuned threshold may never drop below. */
     minThreshold?: number;
-    /** Upper bound (0-100) the tuned threshold may never rise above. */
+    /**
+     * Upper bound (0-100) the tuned threshold may never rise above.
+     * WS-4 default: 85 (prevents gate converging to pure exploitation and
+     * shutting down novelty / exploration throughput).
+     */
     maxThreshold?: number;
     /** Maximum adjustment magnitude (points) applied in one tune step. */
     maxStep?: number;
@@ -607,6 +694,48 @@ export interface ImproveConfig {
     minSamples?: number;
     /** Target realized accept rate in [0, 1]. Default 0.9. */
     targetAcceptRate?: number;
+  };
+  /**
+   * WS-4 — Exploration budget: a fixed fraction of proposals per run are
+   * accepted regardless of confidence to prevent the gate converging to pure
+   * exploitation (which would shut down Gap-3/Gap-4 novelty and recreate the
+   * throughput collapse this work exists to fix).
+   *
+   * DEFAULT OFF: absent means no exploration budget is applied.
+   * Exploration-promoted proposals are logged with
+   * `eligibilitySource = "exploration"` and are NOT subject to auto-tune.
+   */
+  exploration?: {
+    /**
+     * Fraction of proposals per run to accept as exploration regardless of
+     * confidence. Default 0.05 (5%). Range [0, 1].
+     */
+    budgetFraction?: number;
+    /**
+     * When true, exploration budget is active. Default false (parity).
+     * Set to true to enable the exploration lane.
+     */
+    enabled?: boolean;
+  };
+  /**
+   * WS-2 (#613) — salience-weight configuration.
+   *
+   * Controls whether the WS-2 outcome-weight term (`w_o = 0.15`) is active in
+   * the salience projection.
+   *
+   * **DEFAULT OFF** (`outcomeWeightEnabled` absent or `false`): the projection
+   * uses WS-1 weights (`w_e=0.30, w_r=0.70`, `w_o=0`) so ranking is unchanged
+   * from the WS-1 baseline. Set to `true` only after running the Part-V
+   * measurement protocol (`scripts/akm-eval` + health report) and confirming
+   * that throughput quality has not regressed.
+   */
+  salience?: {
+    /**
+     * Enable the WS-2 outcome-weight term in the salience projection.
+     * When `true`, weights shift to `w_e=0.25, w_o=0.15, w_r=0.60`.
+     * Default: `false` (parity — WS-1 weights `w_e=0.30, w_r=0.70`).
+     */
+    outcomeWeightEnabled?: boolean;
   };
 }
 

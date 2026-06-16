@@ -567,6 +567,187 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+
+  // ── Migration 008 — body_embeddings ─────────────────────────────────────────
+  //
+  // cacheHash-keyed body-embedding cache (WS-3a). Stores the embedding of the
+  // case-preserving stripped body so the dedup pre-pass and the consolidation
+  // clustering step share one computed vector per unique body, eliminating
+  // redundant embedding calls across runs.
+  //
+  // Design:
+  //   - PK is the `cacheHash` (sha256 of the stripped, case-preserving body).
+  //   - `embedding` is a raw BLOB storing a Float32 array (384 floats × 4 B =
+  //     1 536 B per entry for the default bge-small-en-v1.5 model; ~20 MB at
+  //     13 k memories). This matches the native wire format and avoids JSON
+  //     round-trip overhead.
+  //   - `model_id` is MANDATORY. On mismatch (model changed) the entire table
+  //     is dropped and rebuilt — stale vectors from the wrong metric space would
+  //     produce silent cosine errors.
+  //   - `created_at` is an INTEGER Unix ms timestamp for lazy orphan purges.
+  //
+  // Writes: one bulk `WHERE content_hash IN (…)` lookup → embed only misses →
+  // upsert all results in one transaction per run.
+  //
+  // TTL: no automatic row deletion. Orphaned rows for bodies no longer in the
+  // stash stay until an operator prunes them. The table is ~1.5 KB per row
+  // (~20 MB at 13 k memories — acceptable).
+  {
+    id: "008-body-embeddings",
+    up: `
+      CREATE TABLE IF NOT EXISTS body_embeddings (
+        content_hash TEXT    PRIMARY KEY,
+        embedding    BLOB    NOT NULL,
+        model_id     TEXT    NOT NULL,
+        created_at   INTEGER NOT NULL
+      );
+    `,
+  },
+
+  // ── Migration 009 — asset_salience (WS-1 salience vector) ───────────────────
+  //
+  // Per-asset salience vector persisted in state.db (canonical store).
+  //
+  // Three independently-stored, independently-decayable sub-scores:
+  //   encoding_salience  — intrinsic importance (Gap 1; v1 = type-weight stub).
+  //   outcome_salience   — differential usefulness (WS-2; 0 until that lands).
+  //   retrieval_salience — frequency × recency (the decayable term).
+  //
+  // Plus the scalar projection for ranking:
+  //   rank_score = (w_e·encoding + w_o·outcome + w_r·retrieval) × sizePenalty,
+  //   normalized [0,1]. Every selector reads rank_score; individual sub-scores
+  //   are available for telemetry and per-dimension thresholding.
+  //
+  // Plasticity column:
+  //   consecutive_no_ops INTEGER — number of consecutive improve cycles where
+  //     this asset produced a no-op (reflect/distill produced no change).
+  //     Dampens CONSOLIDATION-SELECTION only — intentionally NOT applied to
+  //     rank_score (stable assets stay retrievable but skip LLM merge passes).
+  //
+  // updated_at is an INTEGER Unix-ms timestamp for recency queries.
+  //
+  // The canonical store is state.db, not frontmatter.  An optional frontmatter
+  // mirror of the stable encodingSalience is allowed for portability (#608).
+  //
+  // TTL: rows are overwritten on every run; orphaned rows for deleted assets
+  // accumulate harmlessly until an operator prunes them.
+  {
+    id: "009-asset-salience",
+    up: `
+      CREATE TABLE IF NOT EXISTS asset_salience (
+        asset_ref          TEXT    PRIMARY KEY,
+        encoding_salience  REAL    NOT NULL DEFAULT 0.5,
+        outcome_salience   REAL    NOT NULL DEFAULT 0.0,
+        retrieval_salience REAL    NOT NULL DEFAULT 0.0,
+        rank_score         REAL    NOT NULL DEFAULT 0.0,
+        consecutive_no_ops INTEGER NOT NULL DEFAULT 0,
+        updated_at         INTEGER NOT NULL DEFAULT 0
+      );
+
+      -- Hot path: sort / filter by rank_score for selector queries.
+      CREATE INDEX IF NOT EXISTS idx_asset_salience_rank
+        ON asset_salience(rank_score DESC);
+    `,
+  },
+
+  // ── Migration 010 — asset_outcome (WS-2 outcome loop) ───────────────────────
+  //
+  // Per-asset outcome loop persisted in state.db (S2 seam, WS-2).
+  //
+  // Stores the differential "was this retrieval useful" signal so the salience
+  // vector's `outcomeSalience` sub-score (WS-1 `W_OUTCOME` term) is non-zero.
+  //
+  // Columns:
+  //   asset_ref TEXT PK             — `type:name` asset ref (FK to asset_salience).
+  //   last_retrieved_at INTEGER     — Unix-ms of the most recent retrieval.
+  //   retrieval_count INTEGER       — total retrieval count from the index DB.
+  //   expected_retrieval_rate REAL  — EMA-smoothed expected count per cycle.
+  //   negative_feedback_count INTEGER — cumulative negative-feedback events.
+  //   accepted_change_count INTEGER — cumulative accepted proposals.
+  //   review_pressure INTEGER       — #613 pressure counter: repeated low-satisfaction
+  //                                   retrievals increment it; feeds outcomeSalience.
+  //   outcome_score REAL            — differential outcome signal (can be negative).
+  //   updated_at INTEGER            — Unix-ms timestamp of last update.
+  //
+  // Design:
+  //   - outcome_score is differential (prediction-error shaped), NOT a raw count,
+  //     so it rewards assets that are retrieved MORE than their rolling mean AND
+  //     accepted for change when retrieved. See outcome-loop.ts for the formula.
+  //   - review_pressure (#613): repeated negative-feedback retrievals raise it,
+  //     non-negative cycles decay it. Never mutates asset content directly.
+  //   - warm_start: seeded from utility EMA at row creation, clipped to [0, 0.3]
+  //     so the first negative delta does not cause a spurious rank inversion.
+  //   - Orphaned rows (deleted assets) accumulate harmlessly; operators can prune
+  //     with `DELETE FROM asset_outcome WHERE updated_at < ?` if desired.
+  {
+    id: "010-asset-outcome",
+    up: `
+      CREATE TABLE IF NOT EXISTS asset_outcome (
+        asset_ref                TEXT    PRIMARY KEY,
+        last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+        retrieval_count          INTEGER NOT NULL DEFAULT 0,
+        expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+        negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+        accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+        review_pressure          INTEGER NOT NULL DEFAULT 0,
+        outcome_score            REAL    NOT NULL DEFAULT 0.0,
+        updated_at               INTEGER NOT NULL DEFAULT 0
+      );
+
+      -- Hot path: sort assets by review_pressure DESC for #613 admission.
+      CREATE INDEX IF NOT EXISTS idx_asset_outcome_review_pressure
+        ON asset_outcome(review_pressure DESC);
+
+      -- Secondary: sort by outcome_score DESC for outcomeSalience reads.
+      CREATE INDEX IF NOT EXISTS idx_asset_outcome_score
+        ON asset_outcome(outcome_score DESC);
+    `,
+  },
+  // ── Migration 011 — asset_salience: homeostatic_demoted_at column ─────────────
+  //
+  // WS-3b step 0a (homeostatic demotion). Records the last time `retrievalSalience`
+  // was demoted for this asset so:
+  //   (a) Each run can identify assets that have been demoted but not yet
+  //       re-retrieved (they stay in the demoted state until a retrieval
+  //       re-promotes them via `upsertAssetSalience`).
+  //   (b) The homeostatic pass can log "N assets demoted this run".
+  //
+  // NULL = never demoted (or was re-promoted after last demotion, since a fresh
+  // `upsertAssetSalience` call clears the flag by updating retrieval_salience
+  // from live data rather than the demoted value — the column is informational,
+  // not the canonical source of the salience value).
+  {
+    id: "011-asset-salience-homeostatic-demoted-at",
+    up: `
+      ALTER TABLE asset_salience ADD COLUMN homeostatic_demoted_at INTEGER DEFAULT NULL;
+    `,
+  },
+  // ── Migration 012 — improve_gate_thresholds (WS-4 per-phase threshold store) ─
+  //
+  // Persists the auto-tuned accept-gate threshold PER PHASE so that each phase
+  // (reflect, distill, extract, consolidate) maintains its own calibrated
+  // threshold rather than sharing a single global `options.autoAccept`.
+  //
+  // Schema:
+  //   phase TEXT PK        — phase label, e.g. "reflect", "distill", "extract",
+  //                          "consolidate".
+  //   threshold INTEGER    — tuned threshold (0-100), matches the integer
+  //                          scale used everywhere else in the gate pipeline.
+  //   updated_at INTEGER   — Unix milliseconds of the last update.
+  //
+  // `makeGateConfig` reads the stored threshold for its phase (falling back to
+  // the caller-supplied `globalThreshold` when no row exists yet). WS-4's
+  // `persistPhaseThreshold` writes it after each auto-tune step.
+  {
+    id: "012-improve-gate-thresholds",
+    up: `
+      CREATE TABLE IF NOT EXISTS improve_gate_thresholds (
+        phase       TEXT    NOT NULL PRIMARY KEY,
+        threshold   INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /**
@@ -945,6 +1126,33 @@ export function listProposalGateDecisions(db: Database): NonNullable<Proposal["g
   }
   decisions.sort((a, b) => new Date(a.decidedAt).getTime() - new Date(b.decidedAt).getTime());
   return decisions;
+}
+
+// ── WS-4: Per-phase gate threshold store (Migration 012) ─────────────────────
+
+/**
+ * Read the persisted auto-tuned threshold for a gate phase.
+ *
+ * Returns `undefined` when no row exists yet (first run, or the phase has
+ * never been tuned). The caller falls back to the global `options.autoAccept`
+ * in that case.
+ */
+export function getPhaseThreshold(db: Database, phase: string): number | undefined {
+  const row = db.prepare("SELECT threshold FROM improve_gate_thresholds WHERE phase = ?").get(phase) as
+    | { threshold: number }
+    | undefined;
+  return row?.threshold;
+}
+
+/**
+ * Persist the auto-tuned threshold for a gate phase.
+ * Uses INSERT OR REPLACE so the call is idempotent (upsert semantics).
+ */
+export function persistPhaseThreshold(db: Database, phase: string, threshold: number): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO improve_gate_thresholds (phase, threshold, updated_at)
+     VALUES (?, ?, ?)`,
+  ).run(phase, Math.round(threshold), Date.now());
 }
 
 /**
@@ -1695,6 +1903,100 @@ export function upsertConsolidationJudged(
       (entry_key, content_hash, judged_at, outcome)
     VALUES (?, ?, ?, ?)
   `).run(input.entryKey, input.contentHash, input.judgedAt, input.outcome);
+}
+
+// ── body_embeddings table helpers (WS-3a) ────────────────────────────────────
+
+/**
+ * Raw SQLite row shape for the `body_embeddings` table.
+ * `embedding` is stored as a BLOB (raw Float32 bytes); callers convert to/from
+ * `number[]` via `embeddingToBlob` / `blobToEmbedding`.
+ */
+export interface BodyEmbeddingRow {
+  content_hash: string;
+  embedding: Uint8Array; // raw Float32 bytes from SQLite BLOB
+  model_id: string;
+  created_at: number;
+}
+
+/**
+ * Convert a `number[]` embedding vector to the `Float32Array` byte
+ * representation stored in the `body_embeddings.embedding` BLOB column.
+ */
+export function embeddingToBlob(vec: number[]): Uint8Array {
+  const f32 = new Float32Array(vec);
+  return new Uint8Array(f32.buffer);
+}
+
+/**
+ * Convert the raw `Uint8Array` bytes from the `body_embeddings.embedding`
+ * BLOB column back to a `number[]` embedding vector.
+ */
+export function blobToEmbedding(blob: Uint8Array): number[] {
+  // SQLite BLOB columns are returned as Uint8Array; re-interpret as Float32.
+  const f32 = new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
+  return Array.from(f32);
+}
+
+/**
+ * Bulk-fetch cached body embeddings for a set of content hashes.
+ * Returns a Map keyed by `content_hash` (embedding decoded to `number[]`).
+ * Empty input → empty map (no query issued).
+ *
+ * If the stored `model_id` does not match `expectedModelId` the entire table
+ * is cleared (drop-all on model mismatch) and an empty map is returned so
+ * callers re-embed everything on this run.
+ */
+export function getBodyEmbeddings(
+  db: Database,
+  contentHashes: readonly string[],
+  expectedModelId: string,
+): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  if (contentHashes.length === 0) return out;
+
+  // Model-id mismatch: vectors are in the wrong metric space — drop all rows.
+  const firstRow = db.prepare("SELECT model_id FROM body_embeddings LIMIT 1").get() as { model_id: string } | undefined;
+  if (firstRow && firstRow.model_id !== expectedModelId) {
+    db.exec("DELETE FROM body_embeddings");
+    return out;
+  }
+
+  // SQLite has a ~999 param ceiling; chunk if needed.
+  const CHUNK = 500;
+  for (let i = 0; i < contentHashes.length; i += CHUNK) {
+    const chunk = contentHashes.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT content_hash, embedding FROM body_embeddings WHERE content_hash IN (${placeholders})`)
+      .all(...chunk) as Array<{ content_hash: string; embedding: Uint8Array }>;
+    for (const row of rows) {
+      out.set(row.content_hash, blobToEmbedding(row.embedding));
+    }
+  }
+  return out;
+}
+
+/**
+ * Upsert body-embedding rows in a single transaction.
+ * Each entry maps a `cacheHash` → `number[]` vector. `model_id` is stored
+ * so a future model change can trigger a drop-all purge.
+ */
+export function upsertBodyEmbeddings(
+  db: Database,
+  entries: Array<{ contentHash: string; embedding: number[]; modelId: string }>,
+): void {
+  if (entries.length === 0) return;
+  const now = Date.now();
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO body_embeddings (content_hash, embedding, model_id, created_at)
+    VALUES (?, ?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const { contentHash, embedding, modelId } of entries) {
+      stmt.run(contentHash, embeddingToBlob(embedding), modelId, now);
+    }
+  })();
 }
 
 // ── registry_index_cache (goes in index.db, not state.db) ───────────────────

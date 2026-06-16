@@ -115,6 +115,17 @@ describe("gateDecisionsToSamples", () => {
     expect(samples[1]?.outcome).toBe("auto-rejected");
   });
 
+  test("excludes exploration-budget promotions (no reliability signal; exempt from auto-tune)", () => {
+    const samples = gateDecisionsToSamples([
+      { outcome: "auto-accepted", reason: "above-threshold", confidence: 0.92, decidedAt: "2026-06-10T00:00:00Z" },
+      // exploration-budget: accepted regardless of confidence → must NOT pollute calibration
+      { outcome: "auto-accepted", reason: "exploration-budget", confidence: 0.4, decidedAt: "2026-06-10T00:00:00Z" },
+      { outcome: "auto-accepted", reason: "exploration-budget", confidence: 0.1, decidedAt: "2026-06-10T00:00:00Z" },
+    ]);
+    expect(samples).toHaveLength(1);
+    expect(samples[0]?.confidence).toBe(0.92);
+  });
+
   test("applies the [since, until) window on decidedAt", () => {
     const decisions = [
       { outcome: "auto-accepted" as const, reason: "x", confidence: 0.9, decidedAt: "2026-06-01T00:00:00Z" },

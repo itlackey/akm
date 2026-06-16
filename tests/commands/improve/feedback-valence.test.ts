@@ -7,21 +7,12 @@
  * sort. Pure scoring; no storage. Covers:
  *   - symmetry: equal-magnitude strong-positive vs strong-negative rank
  *     comparably (neither is ignored),
- *   - utility remains the primary ordering factor,
  *   - lane routing (high-negative → fix, high-positive → reinforce),
- *   - deterministic sort,
- *   - legacy negative-only parity.
+ *   - deterministic score.
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  combinedEligibilityScore,
-  computeValenceScore,
-  FEEDBACK_WEIGHT,
-  negativeOnlyRatio,
-  STRONG_VALENCE_THRESHOLD,
-  UTILITY_WEIGHT,
-} from "../../../src/commands/improve/feedback-valence";
+import { computeValenceScore, STRONG_VALENCE_THRESHOLD } from "../../../src/commands/improve/feedback-valence";
 
 describe("computeValenceScore — symmetric magnitude", () => {
   test("no feedback => zero attention, no lane", () => {
@@ -65,82 +56,5 @@ describe("computeValenceScore — symmetric magnitude", () => {
     const s = computeValenceScore({ positive: -5, negative: -5 });
     expect(s.attention).toBe(0);
     expect(s.lane).toBeNull();
-  });
-});
-
-describe("combinedEligibilityScore — utility dominant", () => {
-  test("weights utility above feedback", () => {
-    expect(UTILITY_WEIGHT).toBeGreaterThan(FEEDBACK_WEIGHT);
-  });
-
-  test("a higher-utility asset outranks a lower-utility one with maxed feedback", () => {
-    // Asset A: high utility, no feedback. Asset B: low utility, full attention.
-    const aScore = combinedEligibilityScore(0.9, 0);
-    const bScore = combinedEligibilityScore(0.3, 1);
-    // utility is the primary factor: A (0.63) still beats B (0.51).
-    expect(aScore).toBeGreaterThan(bScore);
-  });
-
-  test("among equal-utility assets, stronger |valence| ranks higher", () => {
-    const strong = combinedEligibilityScore(0.5, computeValenceScore({ positive: 10, negative: 0 }).attention);
-    const weak = combinedEligibilityScore(0.5, computeValenceScore({ positive: 2, negative: 3 }).attention);
-    expect(strong).toBeGreaterThan(weak);
-  });
-
-  test("strong-positive and strong-negative with equal utility rank comparably", () => {
-    const posScore = combinedEligibilityScore(0.5, computeValenceScore({ positive: 8, negative: 0 }).attention);
-    const negScore = combinedEligibilityScore(0.5, computeValenceScore({ positive: 0, negative: 8 }).attention);
-    // Neither is ignored — symmetric magnitude gives them the SAME composite.
-    expect(posScore).toBe(negScore);
-  });
-});
-
-describe("negativeOnlyRatio — legacy parity", () => {
-  test("strong positive yields zero (the old blind spot)", () => {
-    expect(negativeOnlyRatio({ positive: 10, negative: 0 })).toBe(0);
-  });
-
-  test("matches negative proportion", () => {
-    expect(negativeOnlyRatio({ positive: 1, negative: 3 })).toBeCloseTo(0.75, 10);
-  });
-
-  test("no feedback yields zero", () => {
-    expect(negativeOnlyRatio({ positive: 0, negative: 0 })).toBe(0);
-  });
-});
-
-describe("deterministic sort with symmetric valence", () => {
-  type Item = { ref: string; utility: number; counts: { positive: number; negative: number } };
-
-  function sortItems(items: Item[]): string[] {
-    return [...items]
-      .sort((a, b) => {
-        const sa = combinedEligibilityScore(a.utility, computeValenceScore(a.counts).attention);
-        const sb = combinedEligibilityScore(b.utility, computeValenceScore(b.counts).attention);
-        if (sb !== sa) return sb - sa;
-        return a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0;
-      })
-      .map((i) => i.ref);
-  }
-
-  const items: Item[] = [
-    { ref: "skill:b", utility: 0.5, counts: { positive: 0, negative: 0 } },
-    { ref: "skill:a", utility: 0.5, counts: { positive: 0, negative: 0 } },
-    { ref: "skill:hot-pos", utility: 0.5, counts: { positive: 9, negative: 0 } },
-    { ref: "skill:hot-neg", utility: 0.5, counts: { positive: 0, negative: 9 } },
-  ];
-
-  test("identical scores break ties by ref string, stable across input order", () => {
-    const forward = sortItems(items);
-    const reversed = sortItems([...items].reverse());
-    expect(forward).toEqual(reversed);
-  });
-
-  test("equal-magnitude pos/neg are adjacent and tie-broken deterministically", () => {
-    const order = sortItems(items);
-    // hot-neg and hot-pos both have attention 1 → identical composite; ref
-    // string tie-break puts hot-neg before hot-pos. The two no-feedback assets
-    // follow, ordered a before b.
-    expect(order).toEqual(["skill:hot-neg", "skill:hot-pos", "skill:a", "skill:b"]);
   });
 });

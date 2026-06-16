@@ -164,6 +164,11 @@ export const ImproveProcessConfigSchema = z
       .object({
         enabled: z.boolean().optional(),
         cosineThreshold: z.number().min(0).max(1).optional(),
+        // WS-3a: maximum pool size for the O(n²) cosine-similarity twin compare.
+        // Only the first `cosineCandidateLimit` memories are cosine-compared;
+        // exact-hash matches still run over the full pool. Default 500. Raise
+        // with care — cost is O(n²).
+        cosineCandidateLimit: z.number().int().positive().optional(),
       })
       .strict()
       .optional(),
@@ -204,9 +209,6 @@ export const ImproveProcessConfigSchema = z
     // proactiveMaintenance process: top-N bound per run (default 25). Alias for
     // `limit`; `maxPerRun` wins when both are set.
     maxPerRun: positiveInt.optional(),
-    // proactiveMaintenance process: optional per-type importance overrides,
-    // merged over the built-in defaults. Only meaningful on `proactiveMaintenance`.
-    importanceWeights: z.record(z.string().min(1), z.number()).optional(),
     // MemoryInference process: minimum pending memory count to run the pass.
     minPendingCount: z.number().int().min(0).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate
@@ -224,6 +226,90 @@ export const ImproveProcessConfigSchema = z
     // #561 — minimum session duration in minutes for session indexing. 0
     // disables the gate. Absent = default 5. Only meaningful on `extract`.
     minSessionDuration: z.number().min(0).optional(),
+    // Consolidate process: fallback p90 wall-clock time per consolidation chunk
+    // in seconds, used for cold-start budget estimation when no telemetry
+    // history exists. The actual p90 is derived from observed run durations
+    // once sufficient history accumulates; this value is only used on the very
+    // first run. Default 30 s. Only meaningful on the `consolidate` process.
+    p90ChunkSecondsDefault: z.number().finite().positive().optional(),
+    // WS-3b: Homeostatic demotion (step 0a). Before any LLM merge, demote
+    // retrievalSalience for stale/low-value assets so the merge pool is bounded
+    // and high-SNR. Demotion is state.db-only (file content untouched);
+    // re-promotable on re-retrieval. Default OFF. Only meaningful on the
+    // `consolidate` process.
+    homeostaticDemotion: z
+      .object({
+        enabled: z.boolean().optional(),
+        // Minimum days since last retrieval to consider an asset stale (default 30).
+        staleDays: z.number().int().min(0).optional(),
+        // Demotion factor: multiply retrievalSalience by this when stale (default 0.5).
+        demotionFactor: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
+    // body embedding is within epsilon of an existing derived-layer lesson/knowledge
+    // node, mark it schema-consistent and lower its priority. Default OFF.
+    // Only meaningful on the `consolidate` and `extract` processes.
+    schemaSimilarity: z
+      .object({
+        enabled: z.boolean().optional(),
+        // Epsilon: cosine similarity threshold above which a candidate is schema-consistent
+        // (default 0.85 — looser than dedup's 0.97 since we want to catch conceptual overlap).
+        epsilon: z.number().min(0).max(1).optional(),
+        // Multiplicative factor applied to candidate confidence when schema-consistent.
+        // Default 0.5 — halves the confidence so schema-consistent candidates are less likely
+        // to pass the quality gate and create redundant stash entries.
+        confidencePenalty: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Hot-probation intake buffer (step 0c, #604). New system-generated
+    // extractions enter captureMode: hot-probation and spend ONE consolidation
+    // cycle in probation. Dedup + quality second-pass runs before promotion.
+    // Default OFF. Only meaningful on the `extract` process.
+    hotProbation: z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
+    // from collapsing too aggressively and losing diversity.
+    //   - maxGeneration: refuse to merge two assets both above this generation (default 2).
+    //   - lexicalDiversityCheck: low n-gram diversity ⇒ raise merge threshold.
+    //   - randomClusterFraction: occasional random (non-similar) cluster in pool (default 0.05).
+    // Default OFF. Only meaningful on the `consolidate` process.
+    antiCollapse: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxGeneration: z.number().int().min(1).optional(),
+        lexicalDiversityCheck: z.boolean().optional(),
+        randomClusterFraction: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: CLS (Complementary Learning System) interleaving (step 9).
+    // distill/memoryInference prompts include embedding-retrieved existing adjacent
+    // lessons/knowledge to prevent catastrophic interference with prior generalizations.
+    // Default OFF. Only meaningful on `distill` and `memoryInference` processes.
+    cls: z
+      .object({
+        enabled: z.boolean().optional(),
+        // Number of adjacent lessons/knowledge to include in prompts (default 3).
+        adjacentCount: z.number().int().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
+    // check it against its cited source memories; a contradiction flag forces
+    // human review. Default OFF. Only meaningful on `distill` process.
+    fidelityCheck: z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),
@@ -454,17 +540,20 @@ const ImproveUtilityDecaySchema = z
   })
   .strict();
 
-// #612 — auto-accept gate calibration + bounded, opt-in threshold auto-tune.
-// DEFAULT OFF: when absent (or `autoTune: false`) no tuning occurs, so the gate
-// behaves byte-identically to today. Bounds are validated but inert until the
-// operator opts in.
+// #612 / WS-4 — auto-accept gate calibration + bounded, opt-in per-phase
+// threshold auto-tune. DEFAULT OFF: when absent (or `autoTune: false`) no
+// tuning occurs, so the gate behaves byte-identically to today.
+// WS-4 adds: per-phase persistence (state.db) + auto-tune ceiling default 85.
 const ImproveCalibrationSchema = z
   .object({
     /** Master switch for the bounded threshold auto-tune. Default false (parity). */
     autoTune: z.boolean().optional(),
     /** Lower bound (0-100) the tuned threshold may never drop below. */
     minThreshold: z.number().int().min(0).max(100).optional(),
-    /** Upper bound (0-100) the tuned threshold may never rise above. */
+    /**
+     * Upper bound (0-100) the tuned threshold may never rise above.
+     * WS-4 default: 85 (prevents gate converging to pure exploitation).
+     */
     maxThreshold: z.number().int().min(0).max(100).optional(),
     /** Maximum adjustment magnitude (points) applied in one tune step. */
     maxStep: positiveInt.optional(),
@@ -475,11 +564,41 @@ const ImproveCalibrationSchema = z
   })
   .strict();
 
+// WS-4 — exploration budget: a fixed fraction of proposals accepted per run
+// regardless of confidence. DEFAULT OFF.
+const ImproveExplorationSchema = z
+  .object({
+    /**
+     * Enable the exploration budget lane. Default false (parity).
+     * When true, a fraction of proposals are accepted regardless of confidence.
+     */
+    enabled: z.boolean().optional(),
+    /**
+     * Fraction of proposals per run to accept as exploration [0, 1].
+     * Default 0.05 (5%). Clamped to [0, 1] at read time.
+     */
+    budgetFraction: z.number().finite().min(0).max(1).optional(),
+  })
+  .strict();
+
+const ImproveSalienceSchema = z
+  .object({
+    /**
+     * WS-2 Part-V gate: enable the outcome-weight term in the salience projection.
+     * Default false (parity — WS-1 weights w_e=0.30, w_r=0.70 until Part-V confirms
+     * no regression). Set to true after running scripts/akm-eval + health report.
+     */
+    outcomeWeightEnabled: z.boolean().optional(),
+  })
+  .strict();
+
 export const ImproveConfigSchema = z
   .object({
     utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     calibration: ImproveCalibrationSchema.optional(),
+    exploration: ImproveExplorationSchema.optional(),
+    salience: ImproveSalienceSchema.optional(),
   })
   .strict();
 

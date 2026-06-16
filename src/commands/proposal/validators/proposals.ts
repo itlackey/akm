@@ -234,7 +234,9 @@ export interface ProposalGateDecision {
    * Short machine-stable reason token chosen by the gate that recorded the
    * decision. The vocabulary actually persisted today:
    *
-   *   - improve gate: `above-threshold`, `below-threshold`, `no-confidence`.
+   *   - improve gate: `above-threshold`, `below-threshold`, `no-confidence`,
+   *     `exploration-budget` (WS-4 — promoted regardless of confidence; excluded
+   *     from auto-tune calibration).
    *   - drain/triage gate: `empty-diff`, `max-diff-lines`, `min-content-lines`,
    *     `policy-accept`, `mid-band`, `possible-dup`, `no-judge-configured`,
    *     `judgment-accept`, `judgment-reject`.

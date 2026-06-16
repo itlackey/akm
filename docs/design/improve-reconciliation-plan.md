@@ -18,6 +18,38 @@
 > replacement are now **adopted** (git history is the recovery backstop), retiring
 > the old archive/TTL machinery.
 
+## Implementation status
+
+> **Note (2026-06-16):** the per-work-stream commit SHAs below predate the rebase
+> onto `main` (which absorbed PR #622, curate improvements) and were **rewritten**
+> by it — the work is fully intact, only the hashes changed. For current hashes
+> use `git log origin/main..feat/improve-reconciliation`. SHAs are kept here as a
+> historical record of what landed in each work-stream, not as live references.
+
+| Work-stream | Status | Commits | Review | Escalation | Notes |
+|---|---|---|---|---|---|
+| WS-0 extract-capture (#619) | done | 6904606f, a36142d1 | pass / confirmed-green | none | Prompt fix closes non-schema-LLM gap; types, schema, parser, persistence were already correct. |
+| WS-3a consolidation pipeline (#619) | done | 68467d56 | pass / confirmed-green | none | Fixed Zod schema rejection (cosineCandidateLimit + p90ChunkSecondsDefault) and added behavioral cache-wiring tests; curate-command baseline changes folded in (hygiene smell, non-blocking). |
+| WS-1 salience vector (#618) | done | c7db502a, a182f037, bc99cc57, 03652977, d4bef793, ddcb1957, 09f63cba, 5b522737, d3733862, 12bf2ec7, 889dda29, a316697b, 98c74a34 (13 commits) | pass / confirmed-green | 2 rounds / clean | All 8 plan steps implemented; 3 review-blocker fixes landed (stash-wide rank comparison, first-run marker, retrieval coverage for feedback-bearing refs); 5900 tests 0 fail. Non-blocking notes: orphaned `getRankScoresByRefs` export, step-7 cutover comparison absent (data constraint, not a gap), plasticity dampener correctly wired to the reflect/distill eligibility sort (where no-ops originate) — `akmConsolidate`'s pool is independently bounded by WS-3b homeostatic demotion (resolved, see WS-1 step 8 disambiguation). T0 measurement deferred to WS-2 per plan language. |
+| WS-2 outcome loop (#613) | done | 48db9fec, 208b81b6, 74a3d56f, 178e6ae4, e9a9091e, f9f24a32, a88452c2, 24c66c43, 4d66e42f, 24c11485, 0134a8b5 (11 commits) | pass / confirmed-green | none | `asset_outcome` table (Migration 010) + differential prediction-error outcome signal; `outcomeSalience` wired into salience vector; `review_pressure` column persisted+indexed; `computeProxyAdequacy` health surfacing. `outcomeWeightEnabled` flag is **default-off** (Part-V gate) — `w_o` activates only when enabled in config. Stale W_OUTCOME=0.0 and WS-2-HOOK markers removed. 5995 tests, 0 failures. Non-blocking: docstring inversion in `computeProxyAdequacy` prose (threshold logic is correct); `outcomeWeightEnabled` ships WS-1 parity weights by default (more conservative than literal plan, correct call); `review_pressure` admission wiring deferred to §Part-VI follow-on (data capture is in place). |
+| WS-3b intake+homeostatic (#604) | done | 79ffc63a, 25bd69ba, 183e06cc | pass / confirmed-green | none | Hot-probation gated behind `processes.extract.hotProbation.enabled` (default-off). **Manual testing found the 0b schema-similarity gate was built but never wired** — fixed: `isSchemaConsistent` is now invoked at extract intake via `applySchemaSimilarityPenalty` (homeostatic.ts), default-off, with 7 direct unit tests of the penalty effect. Lever = candidate `confidence` (no `encodingSalience` exists at the candidate stage — see step-0b disambiguation). |
+| WS-4 CHANGE-gate coherence | done | 48c34741 | pass / confirmed-green | none | Per-phase calibration isolation fix: `maybeAutoTuneThreshold` now filters by `gate === improve:${phase}` before computing calibration summary; regression test added (per-phase calibration isolation). Steps 3/6 (dedup archival route + archive TTL removal) are genuine WS-4 remainder coupled to WS-3 archive machinery — not in scope of this fix, not yet done. |
+| WS-5 attribution/observability | done | fde3c3f4 | pass / confirmed-green | none | Scoped coverage.acceptedProposals to health window via since/until filter on computeDenominatorFixedCoverage (post-fetch, matching oracle pattern); both call sites updated; new window-exclusion test added. Minor gap: upper-bound branch (updatedAt >= until) has no direct test — not a correctness defect. |
+
+### Branch scope — `feat/improve-reconciliation` (as of 2026-06-15)
+
+**True scope:** 26 commits, **36 files**, +4546/−577 lines vs `main`. This branch carries WS-0, WS-3a, and WS-1 together — it is **not a WS-1-only branch**.
+
+**Co-mingled work-streams:**
+- **WS-0** (extract-capture, #619): commits 6904606f, a36142d1 — `extract.ts`, `extract-prompt.ts`, `src/assets/prompts/extract-session.md`, extract tests.
+- **WS-3a** (consolidation core, #619): commit 68467d56 + prior fix-ups — `consolidate.ts`, `dedup.ts`, `embedder.ts`, `local.ts`, `state-db.ts`, body-embedding cache tests.
+- **WS-1** (salience vector, #618): 14 commits (c7db502a … 4c40a303) — `salience.ts`, `improve.ts`, `proactive-maintenance.ts`, `feedback-valence.ts`, salience tests.
+
+**Consequence:** a reviewer who sees "12 files / WS-1" in an earlier status report should treat that as stale. The actual diff is 36 files spanning three work-streams. WS-1 commits cannot be cherry-picked or merged in isolation without also bringing WS-0/WS-3a, because `salience.ts` depends on state-db migrations and embedder batching that WS-3a introduced, and `improve.ts` integrates across all three seams.
+
+**Promotion strategy — merge as a unit:**
+This branch will be merged to `main` as one unit (all three work-streams together) after WS-1 review passes. Rationale: the three work-streams are semantically independent (each addresses a different seam) but **share runtime dependencies** introduced on this branch (body-embedding cache table, batched local embedder, `computeSalience` reading from the same state-db the WS-3a migration adds). Splitting them onto separate branches would require either duplicating the shared infrastructure commits or creating a stacked-branch dependency chain that is harder to review than a single coherent merge. The merge PR description must list all three work-streams, their commits, and the 36-file / +4546/−577 scope so reviewers have the full picture.
+
 ## Part I — How it went off course (the explanation)
 
 The brain-analysis doc states it plainly (§"How this session's work maps"): the
@@ -142,7 +174,8 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 5. **Remove the dangling `feedbackLane`** (never read). Lane-aware reflect/distill routing is filed as 0.10+, not silently folded.
 6. **Migration + versioning `[rev]`:** removing `symmetricValence` changes default behavior. Warn if present, CHANGELOG migration line, regen `schemas/akm-config.json` via `bun scripts/gen-config-schema.ts`, update round-trip tests. Ship behind 0.10, not a patch.
 7. **`[exp]` One-time forgetting-safety migration:** before the new ranking becomes default, emit a **rank-change distribution** report; assets in the old top-200 that fall below ~position 500 are flagged "potential forgetting candidates" and get one consolidation pass before cutover (prevents silent catastrophic forgetting from the formula change).
-8. **`[exp]` Plasticity:** track `consecutive_no_ops` per asset; assets no-op'd N consecutive cycles get a *consolidation-selection* dampener — **intentionally NOT applied to `rankScore`**, so a stable asset stays fully retrievable while stopping from consuming repeated LLM merge attempts. (One INTEGER column; the cost is trivial — keep it in WS-1 rather than deferring.)
+8. **`[exp]` Plasticity:** track `consecutive_no_ops` per asset; assets no-op'd N consecutive cycles get a selection dampener — **intentionally NOT applied to `rankScore`**, so a stable asset stays fully retrievable while it stops consuming repeated expensive LLM attempts. (One INTEGER column; cost trivial — in WS-1.)
+   **Disambiguation (resolved during implementation):** "consolidation-selection" here means the **reflect/distill eligibility ordering** (which assets are chosen for the per-asset improvement LLM pass) — that is where the no-op signal *originates* (no-change reflect / quality-rejected distill) and where the expensive work is gated (`improve.ts` `effectiveScore`). It is deliberately **not** wired to `akmConsolidate` (the cluster-merge/dedup phase): the no-op counter is the wrong signal for dedup, and that phase's pool is independently bounded by the WS-3b Step-0a homeostatic `retrievalSalience` demotion (`consolidate.ts:1386`). So the two selection points each use their semantically-correct signal — nothing is left unhandled.
 
 ### WS-2 — Unify the OUTCOME loop (S2) — differential, not raw
 **Splinter:** verdict (population) + #612 calibration + #613, disjoint.
@@ -192,6 +225,15 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
   `schema-consistent` and lower its priority; only schema-inconsistent/contradicting
   candidates get full `encodingSalience`. One embedding lookup; relieves dedup
   pressure *before* it accumulates.
+  **Lever disambiguation (resolved during implementation):** at the *extract
+  candidate* stage there is **no `encodingSalience` to reduce** — encodingSalience
+  is keyed by asset_ref in state.db and only exists once the asset is persisted, so
+  the available per-candidate lever is the candidate's **`confidence`** (which flows
+  into the auto-accept gate). The wired gate (`applySchemaSimilarityPenalty`,
+  `homeostatic.ts`) therefore multiplies a schema-consistent candidate's
+  `confidence` by `confidencePenalty` (default 0.5), routing redundant candidates
+  toward deferral — the practical realization of "lower priority" at intake.
+  Default-off (`schemaSimilarity.enabled`); strictly parity-preserving when off.
 - **0c Hot-probation intake buffer (#604):** new system-generated extractions
   enter a `captureMode: hot-probation` state and spend **one consolidation cycle**
   in probation before promotion to the main stash; during that cycle the dedup +
@@ -222,6 +264,8 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 9. **`[exp]` Derived-layer interleaving (CLS):** `distill`/`memoryInference` prompts must include a sample of existing **semantically-adjacent** lessons/knowledge (embedding-retrieved), not just new episodes — prevents the derived layer overwriting prior generalizations (catastrophic interference). One-line prompt change, no schema impact.
 10. **`[exp]` Distill→source fidelity:** after a distill proposal, check it against its cited source memories; a contradiction flag forces human review (not auto-accept). Surface lessons with broken/empty `source_refs` as a degradation signal.
 11. distill→lessons otherwise unchanged. Gap 4 (recombination) future (two-pass, Part II). **`[exp]` Pipeline-order check:** brain order is consolidate(merge)→distill, but the pipeline runs `reflect→distill→consolidate`, so distill processes un-deduped near-duplicates (inflates LLM cost + spawns near-duplicate lessons). **Decision item (not open-ended "evaluate"):** during WS-3, either reorder to `extract → consolidate → distill → memoryInference → graphExtraction`, OR record the concrete `reflect`/`distill` dependency that blocks the reorder in this doc — one of the two outcomes is a WS-3 completion criterion, so it can't be silently skipped.
+
+> **WS-4 remainder (from WS-4 implementation):** Steps 3 (route dedup archival through the gate) and 6 (remove `consolidate.ts:2267-2290` archive/TTL machinery) are not yet done — both are coupled to WS-3 archive machinery and must be completed before WS-4 is fully closed.
 
 ### WS-4 — CHANGE-gate coherence (S4) + calibration reroute
 `[rev]` **Real work, not "mostly verification."**

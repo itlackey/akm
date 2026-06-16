@@ -46,10 +46,17 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
+import { embed } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
+import {
+  applySchemaSimilarityPenalty,
+  buildHotProbationFrontmatter,
+  loadDerivedLayerEmbeddings,
+  type SchemaSimilarityConfig,
+} from "./homeostatic";
 import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";
 import {
   buildSessionSummaryPrompt,
@@ -160,6 +167,19 @@ export interface AkmExtractOptions {
    * LLM/network call. When session indexing is disabled this is never invoked.
    */
   generateSessionSummary?: SessionSummaryGenerator;
+  /**
+   * WS-3b Step-0b test seam: pre-loaded derived-layer embeddings to use in
+   * place of opening index.db. When provided with `schemaSimilarity.enabled`,
+   * the gate checks these vectors without any I/O. Tests inject synthetic
+   * vectors here to exercise the penalty path without a real index.
+   */
+  schemaSimilarityEmbeddings?: Array<{ ref: string; embedding: number[] }>;
+  /**
+   * Test seam: inject the candidate-body embedding function used by the
+   * schema-similarity gate, so the penalty branch is exercisable without a live
+   * embedding model. Production leaves this undefined and uses the real `embed`.
+   */
+  schemaSimilarityEmbedFn?: (text: string) => Promise<number[]>;
 }
 
 export interface ExtractedSessionResult {
@@ -265,6 +285,15 @@ function buildCandidateProposal(
   if (candidate.type === "lesson" && candidate.when_to_use) {
     fm.when_to_use = candidate.when_to_use;
   }
+  // #615 WS-0: preserve ordered-action + outcome data in frontmatter so the data
+  // survives even if source transcripts are not re-extractable later. The
+  // procedural-compilation feature (detection/compilation) is deferred to 0.10+.
+  if (candidate.orderedActions && candidate.orderedActions.length > 0) {
+    fm.orderedActions = candidate.orderedActions;
+    if (candidate.outcomeData) {
+      fm.outcomeData = candidate.outcomeData;
+    }
+  }
   const content = assembleAsset(fm, candidate.body);
   return { ref, content, description };
 }
@@ -295,6 +324,12 @@ async function processSession(
     minDurationMinutes: number;
     generate: SessionSummaryGenerator;
   },
+  schemaSimilarityCtx: {
+    config: SchemaSimilarityConfig;
+    derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
+    embeddingConfig: AkmConfig["embedding"];
+    embedFn?: (text: string) => Promise<number[]>;
+  } | null,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -437,12 +472,33 @@ async function processSession(
     };
   }
 
+  // WS-3b step 0c: hot-probation intake buffer (#604).
+  // When enabled, system-generated extractions enter captureMode: hot-probation
+  // so they spend ONE consolidation cycle in probation before the deterministic
+  // dedup+quality pass promotes them. Default OFF.
+  const hotProbationEnabled =
+    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
+      ?.enabled === true;
+
   for (const candidate of payload.candidates) {
     if (dryRun) {
       proposalIds.push(`dry-run:${candidate.type}:${candidate.name}`);
       continue;
     }
     try {
+      // WS-3b Step-0b: schema-similarity intake gate. When enabled and the
+      // candidate is a lesson/knowledge whose body embedding is within ε of an
+      // existing derived-layer node, down-prioritize by multiplying confidence by
+      // the penalty. PARITY: schemaSimilarityCtx is null when the flag is off →
+      // applySchemaSimilarityPenalty returns the original confidence untouched and
+      // never embeds. (Logic lives in homeostatic.ts so it is unit-testable.)
+      const gateResult = await applySchemaSimilarityPenalty(candidate, schemaSimilarityCtx, (text) =>
+        schemaSimilarityCtx?.embedFn
+          ? schemaSimilarityCtx.embedFn(text)
+          : embed(text, schemaSimilarityCtx?.embeddingConfig),
+      );
+      const effectiveConfidence = gateResult.effectiveConfidence;
+      if (gateResult.warning) warn(gateResult.warning);
       const { ref, content, description } = buildCandidateProposal(candidate, sessionRef);
       const result = createProposal(
         stashDir,
@@ -455,9 +511,22 @@ async function processSession(
             frontmatter: {
               description,
               ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
-              ...(typeof candidate.confidence === "number" ? { confidence: candidate.confidence } : {}),
+              ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
               sources: [`session:${sessionRef.harness}:${sessionRef.sessionId}`],
               evidence: candidate.evidence,
+              // #615 WS-0: mirror ordered-action + outcome data in the proposal
+              // frontmatter record so downstream tooling can read it without
+              // re-parsing the content body. Omitted when not present.
+              ...(candidate.orderedActions && candidate.orderedActions.length > 0
+                ? { orderedActions: candidate.orderedActions }
+                : {}),
+              ...(candidate.outcomeData ? { outcomeData: candidate.outcomeData } : {}),
+              // WS-3b step 0c: tag system-generated extractions as hot-probation
+              // when the feature is enabled. The consolidation pass will exclude
+              // them from the LLM merge pool until the intake dedup+quality pass
+              // runs against them. User-explicit `akm remember` (captureMode: hot)
+              // is unaffected — this only applies to extract-generated proposals.
+              ...(hotProbationEnabled ? buildHotProbationFrontmatter() : {}),
             },
           },
         },
@@ -737,6 +806,28 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     }
   }
 
+  // WS-3b Step-0b: schema-similarity intake gate.
+  // Load derived-layer (lesson/knowledge) embeddings once per run, but ONLY
+  // when the gate is enabled in config. When disabled (the default) this block
+  // is fully skipped and schemaSimilarityCtx stays null → byte-identical to
+  // prior behaviour.
+  const schemaSimilarityCfg = extractProcess?.schemaSimilarity as SchemaSimilarityConfig | undefined;
+  let schemaSimilarityCtx: {
+    config: SchemaSimilarityConfig;
+    derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
+    embeddingConfig: AkmConfig["embedding"];
+    embedFn?: (text: string) => Promise<number[]>;
+  } | null = null;
+  if (schemaSimilarityCfg?.enabled === true) {
+    const derivedEmbeddings = options.schemaSimilarityEmbeddings ?? loadDerivedLayerEmbeddings();
+    schemaSimilarityCtx = {
+      config: schemaSimilarityCfg,
+      derivedEmbeddings,
+      embeddingConfig: config.embedding,
+      embedFn: options.schemaSimilarityEmbedFn,
+    };
+  }
+
   for (const summary of candidates) {
     // Skip-tracking: if this session was already processed AND no new events
     // have arrived since (live endedAt <= recorded endedAt), don't burn an LLM
@@ -784,6 +875,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         maxTotalChars,
         minContentChars,
         sessionIndexing,
+        schemaSimilarityCtx,
       );
       sessions.push(result);
       if (result.skipped) skippedCount += 1;

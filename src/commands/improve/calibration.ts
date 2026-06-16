@@ -163,6 +163,12 @@ export function summarizeCalibration(samples: CalibrationSample[]): CalibrationS
  * are excluded (no realized accept/reject signal). The window filter uses each
  * decision's `decidedAt` timestamp; decisions with an unparseable timestamp are
  * kept only when no window is supplied.
+ *
+ * Exploration-budget promotions (`reason === "exploration-budget"`) are EXCLUDED:
+ * they are accepted regardless of confidence, so they carry no reliability signal
+ * about the gate threshold. Counting them would inflate the apparent accept-rate
+ * and bias the auto-tuner downward — they are exempt from auto-tune by design
+ * (WS-4 exploration budget).
  */
 export function gateDecisionsToSamples(
   decisions: Array<ProposalGateDecision | undefined>,
@@ -174,6 +180,7 @@ export function gateDecisionsToSamples(
   for (const decision of decisions) {
     if (!decision) continue;
     if (decision.outcome !== "auto-accepted" && decision.outcome !== "auto-rejected") continue;
+    if (decision.reason === "exploration-budget") continue;
     const confidence = decision.confidence;
     if (typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) continue;
     if (sinceMs !== undefined || untilMs !== undefined) {

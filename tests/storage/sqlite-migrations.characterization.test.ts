@@ -73,6 +73,11 @@ describe("SQLite migration runner characterization", () => {
         "005-proposal-fs-imports",
         "006-proposals-pending-ref-source",
         "007-consolidation-judged",
+        "008-body-embeddings",
+        "009-asset-salience",
+        "010-asset-outcome",
+        "011-asset-salience-homeostatic-demoted-at",
+        "012-improve-gate-thresholds",
       ]);
 
       // The set of durable objects the migrations create.
@@ -82,6 +87,7 @@ describe("SQLite migration runner characterization", () => {
       expect(names).toContain("table:task_history");
       expect(names).toContain("table:schema_migrations");
       expect(names).toContain("table:consolidation_judged");
+      expect(names).toContain("table:body_embeddings");
 
       // Lock the exact DDL snapshot so any drift in the produced schema fails.
       expect(snap).toMatchSnapshot();

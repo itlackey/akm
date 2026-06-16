@@ -24,7 +24,7 @@
 
 import type { EmbeddingConnectionConfig } from "../core/config/config";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "./embedders/cache";
-import { isTransformersAvailable, LocalEmbedder } from "./embedders/local";
+import { DEFAULT_LOCAL_MODEL, isTransformersAvailable, LocalEmbedder } from "./embedders/local";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
@@ -92,7 +92,8 @@ export async function embed(
 /**
  * Generate embeddings for multiple texts in batch.
  * Uses the OpenAI-compatible batch API for remote endpoints (batches of 100).
- * Falls back to sequential embedding for the local transformer pipeline.
+ * Uses the LocalEmbedder.embedBatch path for the local transformer pipeline,
+ * which processes texts in chunks of 32 for genuine batched inference.
  */
 export async function embedBatch(
   texts: string[],
@@ -105,8 +106,13 @@ export async function embedBatch(
     return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal);
   }
 
-  // Local transformer: process sequentially (pipeline handles one at a time)
+  // Local transformer: use the batched path (chunks of 32 via LocalEmbedder).
+  // When a localModel override is set we cannot share the singleton (which uses
+  // the default model), so fall back to per-text embedWithModel in that case.
   const localModel = embeddingConfig?.localModel;
+  if (!localModel) {
+    return getLocalEmbedder().embedBatch(texts, signal);
+  }
   const results: EmbeddingVector[] = [];
   for (const text of texts) {
     if (signal?.aborted) {
@@ -124,6 +130,24 @@ export async function embedBatch(
 // facade and its `@huggingface/transformers` import chain. Re-export
 // preserves the existing public API.
 export { cosineSimilarity } from "./embedders/types";
+
+// ── Model ID resolution ─────────────────────────────────────────────────────
+
+/**
+ * Derive a stable string identifier for the embedding model in use.
+ * This is the `model_id` stored in `body_embeddings` (and used for the
+ * drop-all-on-mismatch purge when the model changes).
+ *
+ * Rules:
+ *   - Remote endpoint: use `config.model` (the API-level model name).
+ *   - Local transformers: use `config.localModel ?? DEFAULT_LOCAL_MODEL`.
+ *   - No config: use `DEFAULT_LOCAL_MODEL` (the shared singleton model).
+ */
+export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionConfig): string {
+  if (!embeddingConfig) return DEFAULT_LOCAL_MODEL;
+  if (hasRemoteEndpoint(embeddingConfig)) return embeddingConfig.model ?? "remote";
+  return embeddingConfig.localModel ?? DEFAULT_LOCAL_MODEL;
+}
 
 // ── Availability check ──────────────────────────────────────────────────────
 

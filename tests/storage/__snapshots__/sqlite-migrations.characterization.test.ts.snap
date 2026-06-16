@@ -10,8 +10,37 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "005-proposal-fs-imports",
     "006-proposals-pending-ref-source",
     "007-consolidation-judged",
+    "008-body-embeddings",
+    "009-asset-salience",
+    "010-asset-outcome",
+    "011-asset-salience-homeostatic-demoted-at",
+    "012-improve-gate-thresholds",
   ],
   "schema": [
+    {
+      "name": "idx_asset_outcome_review_pressure",
+      "sql": 
+"CREATE INDEX idx_asset_outcome_review_pressure
+        ON asset_outcome(review_pressure DESC)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_asset_outcome_score",
+      "sql": 
+"CREATE INDEX idx_asset_outcome_score
+        ON asset_outcome(outcome_score DESC)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_asset_salience_rank",
+      "sql": 
+"CREATE INDEX idx_asset_salience_rank
+        ON asset_salience(rank_score DESC)"
+,
+      "type": "index",
+    },
     {
       "name": "idx_events_ref",
       "sql": "CREATE INDEX idx_events_ref  ON events(ref)",
@@ -132,6 +161,50 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "type": "index",
     },
     {
+      "name": "asset_outcome",
+      "sql": 
+"CREATE TABLE asset_outcome (
+        asset_ref                TEXT    PRIMARY KEY,
+        last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+        retrieval_count          INTEGER NOT NULL DEFAULT 0,
+        expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+        negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+        accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+        review_pressure          INTEGER NOT NULL DEFAULT 0,
+        outcome_score            REAL    NOT NULL DEFAULT 0.0,
+        updated_at               INTEGER NOT NULL DEFAULT 0
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "asset_salience",
+      "sql": 
+"CREATE TABLE asset_salience (
+        asset_ref          TEXT    PRIMARY KEY,
+        encoding_salience  REAL    NOT NULL DEFAULT 0.5,
+        outcome_salience   REAL    NOT NULL DEFAULT 0.0,
+        retrieval_salience REAL    NOT NULL DEFAULT 0.0,
+        rank_score         REAL    NOT NULL DEFAULT 0.0,
+        consecutive_no_ops INTEGER NOT NULL DEFAULT 0,
+        updated_at         INTEGER NOT NULL DEFAULT 0
+      , homeostatic_demoted_at INTEGER DEFAULT NULL)"
+,
+      "type": "table",
+    },
+    {
+      "name": "body_embeddings",
+      "sql": 
+"CREATE TABLE body_embeddings (
+        content_hash TEXT    PRIMARY KEY,
+        embedding    BLOB    NOT NULL,
+        model_id     TEXT    NOT NULL,
+        created_at   INTEGER NOT NULL
+      )"
+,
+      "type": "table",
+    },
+    {
       "name": "consolidation_judged",
       "sql": 
 "CREATE TABLE consolidation_judged (
@@ -171,6 +244,17 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         source_run       TEXT,
         metadata_json    TEXT    NOT NULL DEFAULT '{}',
         PRIMARY KEY (harness, session_id)
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "improve_gate_thresholds",
+      "sql": 
+"CREATE TABLE improve_gate_thresholds (
+        phase       TEXT    NOT NULL PRIMARY KEY,
+        threshold   INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
       )"
 ,
       "type": "table",

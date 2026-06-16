@@ -68,15 +68,6 @@ export interface ValenceScore {
 }
 
 /**
- * The legacy negative-only attention ratio: `negative / (positive + negative)`.
- * Preserves byte-identical behaviour when symmetric valence is disabled.
- */
-export function negativeOnlyRatio(counts: FeedbackCounts): number {
-  const total = counts.positive + counts.negative;
-  return total > 0 ? counts.negative / total : 0;
-}
-
-/**
  * Compute the symmetric-valence attention score for one asset's feedback.
  *
  * Deterministic: depends only on the integer counts. No clock, no randomness.
@@ -99,15 +90,4 @@ export function computeValenceScore(counts: FeedbackCounts): ValenceScore {
   }
 
   return { valence, magnitude, attention: magnitude, lane };
-}
-
-/**
- * The combined eligibility score: utility dominant + feedback attention.
- *
- * `feedbackTerm` is the negative-only ratio (legacy) or the symmetric
- * |valence| magnitude (when enabled). Utility keeps the {@link UTILITY_WEIGHT}
- * share so it remains the primary ordering factor in either mode.
- */
-export function combinedEligibilityScore(utility: number, feedbackTerm: number): number {
-  return utility * UTILITY_WEIGHT + feedbackTerm * FEEDBACK_WEIGHT;
 }
