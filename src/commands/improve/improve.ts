@@ -3095,7 +3095,8 @@ async function runImprovePreparationStage(args: {
   // quality gate are deferred pending owner sign-off. Full measurement requires a
   // before/after `akm health` report. Owner-acknowledged deferral: WS-2 landing
   // will re-introduce outcome salience and trigger the full re-tuning pass at that
-  // time. See WS-2-HOOK in salience.ts.
+  // time. salience.ts already accepts outcomeSalience directly as an input
+  // (see SalienceInputs.outcomeSalience); no separate hook is needed.
   //
   // Forgetting-safety collection: populated inside scenario B below, consumed
   // after the try/catch to union candidates into mergedRefs before the sort.
