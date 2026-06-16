@@ -29,8 +29,11 @@ import {
   resetConsecutiveNoOps,
   upsertAssetSalience,
   W_ENCODING,
+  W_ENCODING_PARITY,
   W_OUTCOME,
+  W_OUTCOME_PARITY,
   W_RETRIEVAL,
+  W_RETRIEVAL_PARITY,
 } from "../../../src/commands/improve/salience";
 import { openStateDatabase } from "../../../src/core/state-db";
 
@@ -57,6 +60,40 @@ describe("WS-1/WS-2 weight contract", () => {
     // The constant reflects the WS-2 opt-in target. The weight is only
     // applied in the rankScore projection when outcomeWeightEnabled=true.
     expect(W_OUTCOME).toBe(0.15);
+  });
+
+  test("W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY = 1.0", () => {
+    expect(W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY).toBeCloseTo(1.0, 9);
+  });
+
+  test("parity constants reflect WS-1 two-way split (w_e=0.30, w_r=0.70, w_o=0)", () => {
+    expect(W_ENCODING_PARITY).toBe(0.3);
+    expect(W_OUTCOME_PARITY).toBe(0);
+    expect(W_RETRIEVAL_PARITY).toBe(0.7);
+  });
+
+  test("default-off ranking uses parity constants (no bare literals in else branch)", () => {
+    // With outcomeWeightEnabled absent (default), rankScore must match the
+    // formula using parity constants. Verify by computing with high outcomeSalience:
+    // the outcome term must be zeroed (W_OUTCOME_PARITY=0).
+    const vHigh = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 5,
+      lastUseMs: NOW,
+      outcomeSalience: 1.0,
+      now: NOW,
+    });
+    const vZero = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 5,
+      lastUseMs: NOW,
+      outcomeSalience: 0,
+      now: NOW,
+    });
+    // rankScore must be identical since W_OUTCOME_PARITY=0 zeros the outcome term.
+    expect(vHigh.rankScore).toBe(vZero.rankScore);
   });
 });
 

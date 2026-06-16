@@ -89,6 +89,27 @@ if (Math.abs(W_ENCODING + W_OUTCOME + W_RETRIEVAL - 1.0) > 1e-9) {
   );
 }
 
+// ── WS-1 parity weights ───────────────────────────────────────────────────────
+//
+// These constants reflect the default WS-1 parity weights used when
+// `outcomeWeightEnabled` is false/absent (the default). They preserve the
+// WS-1 two-way split (w_e=0.30, w_r=0.70) with w_o=0 so outcome does not
+// affect rankScore until the operator opts in after the Part-V baseline run.
+//
+// Named here (rather than inline literals in the else branch) so a future
+// re-tune has a single source of truth and the sum-to-1 guard below catches
+// any accidental mis-edit.
+export const W_ENCODING_PARITY = 0.3; // WS-1 parity encoding weight
+export const W_OUTCOME_PARITY = 0; // WS-1 parity outcome weight (0 = disabled)
+export const W_RETRIEVAL_PARITY = 0.7; // WS-1 parity retrieval weight
+
+// Startup guard: parity triple must also sum to 1.0 (±ε).
+if (Math.abs(W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY - 1.0) > 1e-9) {
+  throw new Error(
+    `salience.ts: W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY must equal 1.0 (got ${W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY})`,
+  );
+}
+
 // ── Type-importance stubs (Gap 1 placeholder until #608 lands) ────────────────
 //
 // encodingSalience v1 = a fixed weight by asset type, so the vector is seeded
@@ -283,9 +304,9 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   } else {
     // WS-1 parity (default): w_o=0, redistribute to WS-1 proportions.
     // Original WS-1 split was w_e=0.30, w_r=0.70.
-    we = 0.3;
-    wo = 0;
-    wr = 0.7;
+    we = W_ENCODING_PARITY;
+    wo = W_OUTCOME_PARITY;
+    wr = W_RETRIEVAL_PARITY;
   }
 
   const rawRankScore = (we * encoding + wo * outcome + wr * retrieval) * sizePenalty;
