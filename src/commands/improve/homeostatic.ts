@@ -249,6 +249,56 @@ export function isSchemaConsistent(
 }
 
 /**
+ * WS-3b Step-0b: apply the schema-similarity intake gate to one extract
+ * candidate. Pure/deterministic given `embedText`, so it is directly unit
+ * testable without the full extract→LLM harness.
+ *
+ * Returns the (possibly penalised) effective confidence plus a `penalised` flag
+ * and an optional human-readable `warning`. Parity guarantees:
+ *  - `ctx === null` (gate disabled / default-off)  → no change, never embeds.
+ *  - empty `derivedEmbeddings`                      → no change, never embeds.
+ *  - candidate type not lesson/knowledge            → no change, never embeds.
+ *  - embed throws                                   → fail open (no change), warns.
+ */
+export async function applySchemaSimilarityPenalty(
+  candidate: { type: string; name: string; body: string; confidence?: number },
+  ctx: { config: SchemaSimilarityConfig; derivedEmbeddings: Array<{ ref: string; embedding: number[] }> } | null,
+  embedText: (text: string) => Promise<number[]>,
+): Promise<{ effectiveConfidence: number | undefined; penalised: boolean; warning?: string }> {
+  const baseConfidence = typeof candidate.confidence === "number" ? candidate.confidence : undefined;
+  if (ctx === null || ctx.derivedEmbeddings.length === 0) {
+    return { effectiveConfidence: baseConfidence, penalised: false };
+  }
+  if (candidate.type !== "lesson" && candidate.type !== "knowledge") {
+    return { effectiveConfidence: baseConfidence, penalised: false };
+  }
+  try {
+    const candidateVec = await embedText(candidate.body);
+    const check = isSchemaConsistent(candidateVec, ctx.derivedEmbeddings, ctx.config);
+    if (check.consistent) {
+      const penalty = ctx.config.confidencePenalty ?? DEFAULT_SCHEMA_CONFIDENCE_PENALTY;
+      return {
+        effectiveConfidence: (baseConfidence ?? 1.0) * penalty,
+        penalised: true,
+        warning:
+          `[extract] schema-consistent candidate ${candidate.type}:${candidate.name} ` +
+          `(sim=${check.similarity?.toFixed(3)} vs ${check.matchedRef}) — confidence penalised ×${penalty}`,
+      };
+    }
+    return { effectiveConfidence: baseConfidence, penalised: false };
+  } catch (embedErr) {
+    // Fail open: embed errors must never abort extraction.
+    return {
+      effectiveConfidence: baseConfidence,
+      penalised: false,
+      warning:
+        `[extract] schema-similarity embed failed for ${candidate.type}:${candidate.name} — skipping gate: ` +
+        (embedErr instanceof Error ? embedErr.message : String(embedErr)),
+    };
+  }
+}
+
+/**
  * Load persisted body embeddings for all indexed **derived-layer**
  * (lesson + knowledge) entries from index.db. Returns an empty array when
  * the DB is unavailable, empty, or the embeddings table has no entries for

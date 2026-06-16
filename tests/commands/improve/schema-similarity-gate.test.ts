@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { akmExtract } from "../../../src/commands/improve/extract";
 import {
+  applySchemaSimilarityPenalty,
   DEFAULT_SCHEMA_CONFIDENCE_PENALTY,
   DEFAULT_SCHEMA_SIMILARITY_EPSILON,
   isSchemaConsistent,
@@ -362,4 +363,101 @@ describe("akmExtract — memory-type candidate bypass", () => {
     },
     TIMEOUT_MS,
   );
+});
+
+// ── applySchemaSimilarityPenalty — the wired gate effect (unit) ───────────────
+// These exercise the actual penalty wiring deterministically (the full
+// extract→LLM harness produces no candidates with a fake chat, which is why the
+// effect must be tested at this seam rather than through akmExtract).
+describe("applySchemaSimilarityPenalty", () => {
+  const derived = [{ ref: "lesson:existing", embedding: VEC_A }];
+  const ctxOn = { config: { enabled: true, epsilon: 0.85, confidencePenalty: 0.5 }, derivedEmbeddings: derived };
+
+  test("schema-consistent lesson candidate → confidence multiplied by the penalty", async () => {
+    const r = await applySchemaSimilarityPenalty(
+      { type: "lesson", name: "redundant", body: "dup", confidence: 0.8 },
+      ctxOn,
+      async () => VEC_A, // candidate embeds to the same vector → sim 1.0 ≥ ε → consistent
+    );
+    expect(r.penalised).toBe(true);
+    expect(r.effectiveConfidence).toBeCloseTo(0.4, 10); // 0.8 × 0.5
+    expect(r.warning).toContain("penalised");
+  });
+
+  test("dissimilar candidate → no penalty, original confidence preserved", async () => {
+    const r = await applySchemaSimilarityPenalty(
+      { type: "lesson", name: "novel", body: "new", confidence: 0.8 },
+      ctxOn,
+      async () => VEC_B, // orthogonal → sim ≈ 0 < ε → not consistent
+    );
+    expect(r.penalised).toBe(false);
+    expect(r.effectiveConfidence).toBe(0.8);
+  });
+
+  test("default penalty (0.5) applied when confidencePenalty omitted; missing confidence treated as 1.0", async () => {
+    const r = await applySchemaSimilarityPenalty(
+      { type: "knowledge", name: "k", body: "dup" },
+      { config: { enabled: true, epsilon: 0.85 }, derivedEmbeddings: derived },
+      async () => VEC_A,
+    );
+    expect(r.penalised).toBe(true);
+    expect(r.effectiveConfidence).toBeCloseTo(DEFAULT_SCHEMA_CONFIDENCE_PENALTY, 10); // 1.0 × 0.5
+  });
+
+  test("PARITY: ctx null → no embed, original confidence preserved", async () => {
+    let embedCalls = 0;
+    const r = await applySchemaSimilarityPenalty(
+      { type: "lesson", name: "x", body: "b", confidence: 0.8 },
+      null,
+      async () => {
+        embedCalls += 1;
+        return VEC_A;
+      },
+    );
+    expect(r.penalised).toBe(false);
+    expect(r.effectiveConfidence).toBe(0.8);
+    expect(embedCalls).toBe(0);
+  });
+
+  test("PARITY: empty derived embeddings → no embed, no penalty", async () => {
+    let embedCalls = 0;
+    const r = await applySchemaSimilarityPenalty(
+      { type: "lesson", name: "x", body: "b", confidence: 0.8 },
+      { config: { enabled: true }, derivedEmbeddings: [] },
+      async () => {
+        embedCalls += 1;
+        return VEC_A;
+      },
+    );
+    expect(r.penalised).toBe(false);
+    expect(embedCalls).toBe(0);
+  });
+
+  test("memory-type candidate bypasses the gate (no embed)", async () => {
+    let embedCalls = 0;
+    const r = await applySchemaSimilarityPenalty(
+      { type: "memory", name: "m", body: "b", confidence: 0.7 },
+      ctxOn,
+      async () => {
+        embedCalls += 1;
+        return VEC_A;
+      },
+    );
+    expect(r.penalised).toBe(false);
+    expect(r.effectiveConfidence).toBe(0.7);
+    expect(embedCalls).toBe(0);
+  });
+
+  test("fail-open: embed error → no penalty, original confidence, warning surfaced", async () => {
+    const r = await applySchemaSimilarityPenalty(
+      { type: "lesson", name: "x", body: "b", confidence: 0.8 },
+      ctxOn,
+      async () => {
+        throw new Error("embed boom");
+      },
+    );
+    expect(r.penalised).toBe(false);
+    expect(r.effectiveConfidence).toBe(0.8);
+    expect(r.warning).toContain("embed failed");
+  });
 });

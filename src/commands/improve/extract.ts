@@ -52,9 +52,8 @@ import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import {
+  applySchemaSimilarityPenalty,
   buildHotProbationFrontmatter,
-  DEFAULT_SCHEMA_CONFIDENCE_PENALTY,
-  isSchemaConsistent,
   loadDerivedLayerEmbeddings,
   type SchemaSimilarityConfig,
 } from "./homeostatic";
@@ -175,6 +174,12 @@ export interface AkmExtractOptions {
    * vectors here to exercise the penalty path without a real index.
    */
   schemaSimilarityEmbeddings?: Array<{ ref: string; embedding: number[] }>;
+  /**
+   * Test seam: inject the candidate-body embedding function used by the
+   * schema-similarity gate, so the penalty branch is exercisable without a live
+   * embedding model. Production leaves this undefined and uses the real `embed`.
+   */
+  schemaSimilarityEmbedFn?: (text: string) => Promise<number[]>;
 }
 
 export interface ExtractedSessionResult {
@@ -323,6 +328,7 @@ async function processSession(
     config: SchemaSimilarityConfig;
     derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
     embeddingConfig: AkmConfig["embedding"];
+    embedFn?: (text: string) => Promise<number[]>;
   } | null,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
@@ -480,41 +486,19 @@ async function processSession(
       continue;
     }
     try {
-      // WS-3b Step-0b: schema-similarity intake gate.
-      // When enabled and the candidate type is lesson/knowledge, check whether
-      // the candidate body embedding is within ε of an existing derived-layer
-      // node. If so, down-prioritize by multiplying confidence by the penalty.
-      // PARITY: schemaSimilarityCtx is null when the flag is off → no effect.
-      let effectiveConfidence: number | undefined =
-        typeof candidate.confidence === "number" ? candidate.confidence : undefined;
-      if (
-        schemaSimilarityCtx !== null &&
-        schemaSimilarityCtx.derivedEmbeddings.length > 0 &&
-        (candidate.type === "lesson" || candidate.type === "knowledge")
-      ) {
-        try {
-          const candidateVec = await embed(candidate.body, schemaSimilarityCtx.embeddingConfig);
-          const check = isSchemaConsistent(
-            candidateVec,
-            schemaSimilarityCtx.derivedEmbeddings,
-            schemaSimilarityCtx.config,
-          );
-          if (check.consistent) {
-            const penalty = schemaSimilarityCtx.config.confidencePenalty ?? DEFAULT_SCHEMA_CONFIDENCE_PENALTY;
-            effectiveConfidence = (effectiveConfidence ?? 1.0) * penalty;
-            warn(
-              `[extract] schema-consistent candidate ${candidate.type}:${candidate.name} ` +
-                `(sim=${check.similarity?.toFixed(3)} vs ${check.matchedRef}) — confidence penalised ×${penalty}`,
-            );
-          }
-        } catch (embedErr) {
-          // Fail open: embed errors must never abort the extraction.
-          warn(
-            `[extract] schema-similarity embed failed for ${candidate.type}:${candidate.name} — skipping gate:`,
-            embedErr instanceof Error ? embedErr.message : String(embedErr),
-          );
-        }
-      }
+      // WS-3b Step-0b: schema-similarity intake gate. When enabled and the
+      // candidate is a lesson/knowledge whose body embedding is within ε of an
+      // existing derived-layer node, down-prioritize by multiplying confidence by
+      // the penalty. PARITY: schemaSimilarityCtx is null when the flag is off →
+      // applySchemaSimilarityPenalty returns the original confidence untouched and
+      // never embeds. (Logic lives in homeostatic.ts so it is unit-testable.)
+      const gateResult = await applySchemaSimilarityPenalty(candidate, schemaSimilarityCtx, (text) =>
+        schemaSimilarityCtx?.embedFn
+          ? schemaSimilarityCtx.embedFn(text)
+          : embed(text, schemaSimilarityCtx?.embeddingConfig),
+      );
+      const effectiveConfidence = gateResult.effectiveConfidence;
+      if (gateResult.warning) warn(gateResult.warning);
       const { ref, content, description } = buildCandidateProposal(candidate, sessionRef);
       const result = createProposal(
         stashDir,
@@ -832,6 +816,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     config: SchemaSimilarityConfig;
     derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
     embeddingConfig: AkmConfig["embedding"];
+    embedFn?: (text: string) => Promise<number[]>;
   } | null = null;
   if (schemaSimilarityCfg?.enabled === true) {
     const derivedEmbeddings = options.schemaSimilarityEmbeddings ?? loadDerivedLayerEmbeddings();
@@ -839,6 +824,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       config: schemaSimilarityCfg,
       derivedEmbeddings,
       embeddingConfig: config.embedding,
+      embedFn: options.schemaSimilarityEmbedFn,
     };
   }
 
