@@ -71,6 +71,12 @@ export interface HealthHtmlReportOptions {
 
 const esc = escapeHtml;
 
+/** Emit a <time> element that the browser's JS will reformat to the viewer's local timezone. */
+function isoTimeTag(iso: string): string {
+  const fallback = iso.slice(0, 16).replace("T", " ");
+  return `<time data-iso="${esc(iso)}">${esc(fallback)}</time>`;
+}
+
 function num(value: number): string {
   return Math.round(value).toLocaleString("en-US");
 }
@@ -446,7 +452,7 @@ export function buildHealthHtmlReplacements(
   // ── Meta (collect.py steps 10-11) ──────────────────────────────────────────
   const sinceIso = result.since;
   const reportDate = sinceIso.slice(0, 10);
-  const sinceHuman = sinceIso ? `${sinceIso.slice(0, 16).replace("T", " ")} UTC → now` : `last ${opts.window}`;
+  const sinceHuman = sinceIso ? `${isoTimeTag(sinceIso)} → now` : `last ${esc(opts.window)}`;
   const reportTitle = reportDate ? `AKM Health Report — ${reportDate}` : "AKM Health Report";
   const lastRun = runs[runs.length - 1];
   const generatedAt = lastRun ? lastRun.completedAt || lastRun.startedAt || sinceIso : sinceIso;
@@ -464,9 +470,7 @@ export function buildHealthHtmlReplacements(
     Number.isFinite(latestRunMs) && Number.isFinite(generatedMs) ? Math.max(0, generatedMs - latestRunMs) : 0;
   const isStale =
     totalRuns === 0 || (Number.isFinite(latestRunMs) && Number.isFinite(sinceMs) && idleTailMs > STALE_MS);
-  const latestRunHuman = lastRun
-    ? `${(lastRun.completedAt || lastRun.startedAt).slice(0, 16).replace("T", " ")} UTC`
-    : "—";
+  const latestRunHuman = lastRun ? isoTimeTag(lastRun.completedAt || lastRun.startedAt) : "—";
 
   // ── Status badges ──────────────────────────────────────────────────────────
   const badgeByStatus = {
@@ -520,7 +524,7 @@ export function buildHealthHtmlReplacements(
   const snapRows = latest
     ? [
         li("Run id", `<code>${esc(latest.id.slice(0, 28))}</code>`),
-        li("Completed", `${esc((latest.completedAt || latest.startedAt).slice(0, 16).replace("T", " "))} UTC`),
+        li("Completed", isoTimeTag(latest.completedAt || latest.startedAt)),
         li("Status", latest.ok ? "✅ ok" : "❌ failed"),
         li("Wall time", fmtMs(latest.wallTimeMs)),
         li("Reflect ok/fail", `${latest.reflectOk} / ${latest.reflectFailed}`),
@@ -583,7 +587,7 @@ export function buildHealthHtmlReplacements(
   // ── Freshness line ─────────────────────────────────────────────────────────
   const freshnessHtml = `<div class="freshness${isStale ? " stale" : ""}">${
     isStale ? "⚠️ Stale: " : ""
-  }Latest run ${esc(latestRunHuman)} &nbsp;·&nbsp; generated ${esc(generatedAt)}${
+  }Latest run ${latestRunHuman} &nbsp;·&nbsp; generated ${isoTimeTag(generatedAt)}${
     isStale ? " — no recent activity (newest run older than the 6h freshness threshold)." : "."
   }</div>`;
 
@@ -989,28 +993,20 @@ export function buildHealthHtmlReplacements(
       ? proposals
           .map((p, i) => {
             const tagCls = p.source === "extract" ? "tag-extract" : "tag-consolidate";
-            const ts = p.createdAt.slice(0, 16).replace("T", " ");
             return (
               `<tr><td>${i + 1}</td><td><code>${esc(p.ref)}</code></td>` +
               `<td><span class="tag ${tagCls}">${esc(p.source)}</span></td>` +
-              `<td>${esc(ts)}</td></tr>`
+              `<td>${isoTimeTag(p.createdAt)}</td></tr>`
             );
           })
           .join("\n")
       : '<tr><td colspan="4" style="text-align:center;color:var(--muted);">No pending proposals</td></tr>';
 
-  // ── Commands used ──────────────────────────────────────────────────────────
-  const commandsHtml = [
-    `      <div><span>akm health --since=${esc(opts.window)} --group-by run --format json</span></div>`,
-    `      <div><span>akm health --since=${esc(opts.window)} --window-compare=${esc(opts.compare)} --format json</span></div>`,
-    "      <div><span>akm proposal list</span></div>",
-  ].join("\n");
-
   return {
     "%%ECHARTS_TAG%%": buildEchartsTag(opts),
     "%%REPORT_TITLE%%": esc(reportTitle),
     "%%WINDOW%%": esc(opts.window),
-    "%%SINCE_HUMAN%%": esc(sinceHuman),
+    "%%SINCE_HUMAN%%": sinceHuman,
     "%%RUN_COUNT%%": num(totalRuns),
     "%%STATUS_BADGE_HTML%%": `${statusBadge}\n    ${failBadge}`,
     "%%EXEC_SUMMARY_HTML%%": execSummary,
@@ -1023,7 +1019,6 @@ export function buildHealthHtmlReplacements(
     "%%ACTION_ITEMS_HTML%%": actionItemsHtml,
     "%%PROPOSAL_ROWS_HTML%%": proposalRowsHtml,
     "%%PROPOSAL_COUNT%%": String(proposals.length),
-    "%%COMMANDS_HTML%%": commandsHtml,
     "%%GENERATED_AT%%": esc(generatedAt),
     "%%AKM_VERSION%%": esc(pkgVersion),
   };

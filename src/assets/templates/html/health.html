@@ -237,13 +237,6 @@
       font-size: 11px; background: var(--surface2);
       padding: 2px 6px; border-radius: 4px; color: var(--accent); word-break: break-all;
     }
-    .command-block {
-      background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
-      padding: 12px 16px; font-family: 'SFMono-Regular', Consolas, monospace;
-      font-size: 12px; color: var(--muted); line-height: 1.8; overflow-x: auto;
-    }
-    .command-block span { color: var(--accent); }
-
     /* ── Footer ─────────────────────────────────────────────────────────── */
     footer {
       border-top: 1px solid var(--border); padding: 14px 32px;
@@ -317,7 +310,7 @@
       <option value="failed">failed</option>
     </select>
 
-    <div class="filter-note">Filters affect charts and the Last 10 Runs table.</div>
+    <div class="filter-note">Filters affect charts and the Recent Runs table.</div>
   </div>
 
   <!-- Charts -->
@@ -391,14 +384,14 @@
     </div>
   </div>
 
-  <!-- Last 10 runs -->
+  <!-- Recent runs -->
   <div class="section">
-    <h2>Last 10 Runs</h2>
+    <h2>Recent Runs</h2>
     <div class="summary-table">
       <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Started (UTC)</th><th>Task</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
+          <tr><th>Started</th><th>Task</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
         </thead>
         <tbody id="lastRunsTable"></tbody>
       </table>
@@ -406,19 +399,11 @@
     </div>
   </div>
 
-  <!-- Command set -->
-  <div class="section">
-    <h2>Command Set Used</h2>
-    <div class="command-block">
-      %%COMMANDS_HTML%%
-    </div>
-  </div>
-
 </main>
 
 <footer>
   <span>AKM v%%AKM_VERSION%% &nbsp;·&nbsp; Window: %%WINDOW%% &nbsp;·&nbsp; %%REPORT_TITLE%%</span>
-  <span>Generated %%GENERATED_AT%%</span>
+  <span>Generated <time data-iso="%%GENERATED_AT%%">%%GENERATED_AT%%</time></span>
 </footer>
 
 <script>
@@ -441,10 +426,10 @@ const toMin = ms => ms ? +(ms / 60000).toFixed(2) : 0;
 function makeXLabels(rs) {
   return rs.map(r => {
     const d = new Date(r.startedAt);
-    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(d.getUTCDate()).padStart(2, '0');
-    const hh = String(d.getUTCHours()).padStart(2, '0');
-    const mi = String(d.getUTCMinutes()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
     return `${mm}-${dd} ${hh}:${mi}`;
   });
 }
@@ -687,13 +672,15 @@ function renderLlmStages() {
   });
 }
 
-// ── Last 10 runs table ────────────────────────────────────────────────────────
+// ── Recent runs table ─────────────────────────────────────────────────────────
 function renderLastRuns(rs) {
 const tbody = document.getElementById('lastRunsTable');
 tbody.innerHTML = '';
-rs.slice(-10).forEach(r => {
+[...rs].reverse().forEach(r => {
   const tr = document.createElement('tr');
-  const ts  = new Date(r.startedAt).toISOString().replace('T', ' ').slice(0, 16);
+  const d = new Date(r.startedAt);
+  const pad = n => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const dur = r.wallTimeMs ? (r.wallTimeMs / 60000).toFixed(1) + 'm' : '—';
   const task = r.taskId || 'manual';
   const badge = r.ok
@@ -727,6 +714,17 @@ document.getElementById('taskFilter').addEventListener('change', updateFilteredV
 document.getElementById('statusFilter').addEventListener('change', updateFilteredViews);
 renderLlmStages();
 updateFilteredViews();
+
+// Reformat server-rendered ISO timestamps to the viewer's local timezone.
+(function() {
+  const pad = n => String(n).padStart(2, '0');
+  document.querySelectorAll('time[data-iso]').forEach(el => {
+    const d = new Date(el.dataset.iso);
+    if (!isNaN(d)) {
+      el.textContent = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+  });
+})();
 </script>
 </body>
 </html>

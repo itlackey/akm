@@ -105,8 +105,8 @@ describe("akm health --format html", () => {
     }
     expect(stdout).toContain('<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>');
     expect(stdout).not.toMatch(/%%[A-Z_]+%%/);
-    // Default compare window is 24h.
-    expect(stdout).toContain("--window-compare=24h");
+    // Default compare window is 24h — surfaced in exec summary.
+    expect(stdout).toContain("Trend vs prior 24h");
   });
 
   test("--compare overrides the trend window and --output writes the file", async () => {
@@ -117,7 +117,7 @@ describe("akm health --format html", () => {
     expect([0, 4]).toContain(code);
     expect(stdout.trim()).toBe("");
     const html = fs.readFileSync(out, "utf8");
-    expect(html).toContain("--window-compare=7d");
+    expect(html).toContain("Trend vs prior 7d");
     expect(html).toContain("AKM Health Report");
   });
 

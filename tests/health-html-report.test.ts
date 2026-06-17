@@ -110,11 +110,9 @@ describe("buildHealthHtmlReplacements", () => {
     const templateTokens = new Set(fs.readFileSync(resolveTemplatePath("health"), "utf8").match(/%%[A-Z_]+%%/g) ?? []);
     const replacementTokens = new Set(Object.keys(replacements));
 
-    // 19 tokens: the legacy ADVISORY_CARDS_HTML + WATCH_ITEMS_HTML pair was
-    // replaced by the merged ACTION_ITEMS_HTML; the report overhaul added
-    // LLM_BY_STAGE_JSON (per-stage chart), SLICE_OPTIONS_HTML (window-derived
-    // filter slices), and AKM_VERSION (header + footer version stamp).
-    expect(replacementTokens.size).toBe(19);
+    // 18 tokens: COMMANDS_HTML was removed when the "Command Set Used" section
+    // was dropped from the report. Previously 19.
+    expect(replacementTokens.size).toBe(18);
     expect([...replacementTokens].sort()).toEqual([...templateTokens].sort());
     expect(replacementTokens.has("%%OVERALL_STATUS%%")).toBe(false);
     expect(replacementTokens.has("%%ACTION_ITEMS_HTML%%")).toBe(true);

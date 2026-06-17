@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.18] — 2026-06-17
+
+### Changed
+
+- **Health report: Recent Runs table now shows all filtered runs in descending order** (newest first) instead of capping at the last 10.
+- **Health report: Removed "Command Set Used" section.**
+- **Health report: All timestamps now display in the viewer's local timezone** (chart axis labels, runs table, freshness line, executive summary, footer). Server-rendered ISO strings are wrapped in `<time data-iso>` elements and converted to local time by client-side JS on page load.
+
 ### Changed (migration required)
 
 - **WS-2 outcome loop (#613) — default-off weight change (state.db migration 010).**
