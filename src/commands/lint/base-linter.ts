@@ -335,7 +335,13 @@ function extractFrontmatterRefs(data: Record<string, unknown>, body: string): st
   if (innerData) {
     const fromInner = readRefsArray(innerData.refs);
     if (fromInner !== null) return fromInner;
+    // Session-checkpoint bodies are raw transcripts; ref-shaped tokens in the
+    // body are literals (grep patterns, JSON, tool output), not live refs.
+    // Return [] so missing-ref skips the body scan entirely.
+    if (typeof innerData.akm_memory_kind === "string") return [];
   }
+  // Same guard for outer frontmatter (e.g. opencode session files).
+  if (typeof data.akm_memory_kind === "string") return [];
   return null;
 }
 
