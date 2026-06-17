@@ -2701,31 +2701,51 @@ async function runImprovePreparationStage(args: {
   // (FEEDBACK_SIGNAL_WINDOW_DAYS / feedbackSinceCutoff are already defined in
   // Phase 2 above for the signal-delta gate; we reuse them here.)
 
-  // Pre-compute feedback summary per ref in a single pass so we don't issue
-  // two readEvents({type:"feedback", ref}) per asset (one for signal filtering,
-  // one for ratio computation).
+  // Pre-compute feedback summary per ref in a SINGLE bulk read so we don't
+  // open state.db once per asset (which caused 5000+ accumulated FDs and a
+  // 2-hour runaway on a 13K-asset stash). Pattern mirrors buildLatestFeedbackTsMap
+  // above: one readEvents() call fetches ALL feedback events, then we aggregate
+  // in-memory by ref — O(1) DB opens regardless of candidate set size.
   // Cover processableRefs *and* the deferred noFeedbackPool so utility/feedback
   // ratios are available for any noFeedbackPool ref that P0-A rescues below.
+  //
+  // Behavioral note: positive/negative COUNTS are all-time (same as the old
+  // per-ref readEvents call which had no `since` filter); hasSignal is bounded
+  // to feedbackSinceCutoff (same as the old inline `(e.ts ?? "") >= cutoff` guard).
   const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
-  for (const candidate of [...processableRefs, ...noFeedbackPool]) {
-    if (feedbackSummary.has(candidate.ref)) continue;
-    const { events } = readEvents({ type: "feedback", ref: candidate.ref });
-    let hasSignal = false;
-    let positive = 0;
-    let negative = 0;
-    for (const e of events) {
-      if (
-        !hasSignal &&
-        (e.ts ?? "") >= feedbackSinceCutoff &&
-        e.metadata !== undefined &&
-        (typeof e.metadata.signal === "string" || typeof e.metadata.note === "string")
-      ) {
-        hasSignal = true;
+  {
+    const feedbackCandidateSet = new Set([...processableRefs, ...noFeedbackPool].map((r) => r.ref));
+    if (feedbackCandidateSet.size > 0) {
+      // Fetch ALL feedback events in one query (no ref filter, no since filter =
+      // single full table scan). Filtering per-ref in memory avoids N sequential
+      // state.db opens — the dominant FD-leak path on large stashes.
+      const { events: allFeedbackEvents } = readEvents({ type: "feedback" }, eventsCtx);
+      for (const e of allFeedbackEvents) {
+        const ref = e.ref;
+        if (!ref || !feedbackCandidateSet.has(ref)) continue;
+        const entry = feedbackSummary.get(ref) ?? { hasSignal: false, positive: 0, negative: 0 };
+        const meta = e.metadata as { signal?: unknown; note?: unknown } | undefined;
+        // hasSignal: only count feedback events within the 30-day window.
+        if (
+          !entry.hasSignal &&
+          (e.ts ?? "") >= feedbackSinceCutoff &&
+          meta !== undefined &&
+          (typeof meta.signal === "string" || typeof meta.note === "string")
+        ) {
+          entry.hasSignal = true;
+        }
+        // positive/negative: all-time counts (no since filter, matching prior behaviour).
+        if (meta?.signal === "positive") entry.positive++;
+        else if (meta?.signal === "negative") entry.negative++;
+        feedbackSummary.set(ref, entry);
       }
-      if (e.metadata?.signal === "positive") positive++;
-      else if (e.metadata?.signal === "negative") negative++;
+      // Ensure every candidate has an entry (even refs with zero feedback events).
+      for (const ref of feedbackCandidateSet) {
+        if (!feedbackSummary.has(ref)) {
+          feedbackSummary.set(ref, { hasSignal: false, positive: 0, negative: 0 });
+        }
+      }
     }
-    feedbackSummary.set(candidate.ref, { hasSignal, positive, negative });
   }
 
   const signalFiltered = processableRefs.filter((candidate) => feedbackSummary.get(candidate.ref)?.hasSignal === true);
