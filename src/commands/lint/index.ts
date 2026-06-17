@@ -29,6 +29,7 @@ export interface AkmLintOptions {
   fix?: boolean;
   dir?: string;
   config?: AkmConfig;
+  typeFilter?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -110,7 +111,9 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
   const fixed: LintIssue[] = [];
   const flagged: LintIssue[] = [];
 
-  for (const subdir of STASH_SUBDIRS) {
+  const dirsToScan = options.typeFilter ? STASH_SUBDIRS.filter((d) => d === options.typeFilter) : STASH_SUBDIRS;
+
+  for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
     // Tasks are .yml files; everything else is .md
     const files = subdir === "tasks" ? collectYamlFiles(dirPath) : collectMarkdownFiles(dirPath);
@@ -123,7 +126,9 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
         if (entry.isDirectory()) {
           const subdirIssues = linter.lintDirectory(path.join(dirPath, entry.name), stashRoot);
           for (const issue of subdirIssues) {
-            if (issue.fixed) {
+            // Tristate-safe: only `true` counts as fixed; `false` and "failed"
+            // are both flagged.
+            if (issue.fixed === true) {
               fixed.push(issue);
             } else {
               flagged.push(issue);
@@ -134,6 +139,8 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
     }
 
     for (const filePath of files) {
+      // Skip registry-cached read-only files — --fix must not mutate them.
+      if (filePath.includes("/.cache/") || filePath.includes("/registry/")) continue;
       const relPath = path.relative(stashRoot, filePath);
       let raw: string;
       try {
@@ -168,9 +175,10 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
         if (isFileDeletion(issue)) {
           fileDeleted = true;
           fixed.push(issue);
-        } else if (issue.fixed) {
+        } else if (issue.fixed === true) {
           fixed.push(issue);
         } else {
+          // fixed === false (not fixable / no fix requested) or "failed" (fix attempted but threw)
           flagged.push(issue);
         }
       }
@@ -185,15 +193,25 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
   // findings go into `flagged`, never `fixed`.
   const envRoots = [stashRoot, ...extraStashRoots];
   for (const root of envRoots) {
-    const dir = path.join(root, "env");
-    if (!fs.existsSync(dir)) continue;
-    for (const envPath of collectEnvFiles(dir)) {
-      const baseName = path.basename(envPath, ".env");
-      // "default" (or empty) maps to ".env" → env:default
-      const ref = baseName === "" ? "env:default" : `env:${baseName}`;
-      const relPath = path.relative(root, envPath);
-      for (const issue of checkEnvForDangerousKeys(envPath, relPath, ref)) {
-        flagged.push(issue);
+    // The `env` assets live under `env/` (ref prefix `env:`); whole-file
+    // `secret` assets live under `secrets/` (canonical ref prefix `secret:`,
+    // singular). Map the scan directory to its canonical ref prefix so the
+    // finding's `Ref:` field matches what `akm show`/`akm secret` accept.
+    for (const { scanSubdir, refPrefix } of [
+      { scanSubdir: "env", refPrefix: "env" },
+      { scanSubdir: "secrets", refPrefix: "secret" },
+    ]) {
+      const dir = path.join(root, scanSubdir);
+      if (!fs.existsSync(dir)) continue;
+      for (const envPath of collectEnvFiles(dir)) {
+        const baseName = path.basename(envPath, ".env");
+        // A dotfile literally named `.env` has an empty baseName — use the full
+        // basename so it doesn't collide with `default.env` → refPrefix:default.
+        const ref = baseName === "" ? `${refPrefix}:.env` : `${refPrefix}:${baseName}`;
+        const relPath = path.relative(root, envPath);
+        for (const issue of checkEnvForDangerousKeys(envPath, relPath, ref)) {
+          flagged.push(issue);
+        }
       }
     }
   }

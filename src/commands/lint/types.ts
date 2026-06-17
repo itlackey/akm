@@ -12,13 +12,15 @@ export type LintIssueType =
   | "missing-skill-md"
   | "invalid-task-yaml"
   | "missing-ref"
-  | "dangerous-vault-key";
+  | "dangerous-vault-key"
+  | "invalid-workflow-structure";
 
 export interface LintIssue {
   file: string;
   issue: LintIssueType;
   detail: string;
-  fixed: boolean;
+  /** `true` = fix applied; `false` = not fixable or no fix requested; `"failed"` = fix attempted but threw. */
+  fixed: boolean | "failed";
 }
 
 export interface LintContext {
@@ -32,6 +34,12 @@ export interface LintContext {
   stashRoot: string;
   /** Additional stash roots (secondary sources) for cross-stash ref resolution. */
   extraStashRoots?: string[];
+  /**
+   * M8: Per-file rule suppression. List of issue type strings to skip for this file.
+   * Populated from the `lint_skip:` frontmatter key (YAML array of strings).
+   * Example: `lint_skip: [missing-ref, stale-path]`
+   */
+  lintSkip?: string[];
 }
 
 export interface AssetLinter {

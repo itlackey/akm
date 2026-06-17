@@ -158,15 +158,24 @@ export const lintCommand = defineCommand({
       description: "Exit non-zero when summary.flagged > 0 (CI-friendly). Default: exit 0 regardless of findings.",
       default: false,
     },
+    type: {
+      type: "string",
+      description: "Only lint assets of this type (e.g. workflows, tasks, memories)",
+      default: undefined,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const result = akmLint({
         fix: args.fix ?? false,
         dir: getStringArg(args, "dir"),
+        typeFilter: getStringArg(args, "type"),
       });
       output("lint", result);
-      if (args["fail-on-flagged"] && result.summary.flagged > 0) process.exit(EXIT_GENERAL);
+      if (args["fail-on-flagged"] && result.summary.flagged > 0) {
+        process.exitCode = EXIT_GENERAL;
+        return;
+      }
     });
   },
 });

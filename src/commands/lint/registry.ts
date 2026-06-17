@@ -21,8 +21,11 @@ const LINTERS: AssetLinter[] = [
   new KnowledgeLinter(),
   new SkillLinter(),
   new TaskLinter(),
-  new DefaultLinter(),
 ];
+
+// Single shared DefaultLinter instance — used both as the explicit "lessons"
+// handler and as the fallback for any unrecognised asset type.
+const DEFAULT_LINTER = new DefaultLinter();
 
 const LINTER_MAP = new Map<string, AssetLinter>();
 for (const linter of LINTERS) {
@@ -30,8 +33,8 @@ for (const linter of LINTERS) {
     LINTER_MAP.set(t, linter);
   }
 }
-
-const DEFAULT_LINTER = new DefaultLinter();
+// Register "lessons" explicitly so there is only one DefaultLinter instance.
+LINTER_MAP.set("lessons", DEFAULT_LINTER);
 
 /**
  * Return the appropriate linter for the given stash subdirectory name.

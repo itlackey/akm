@@ -39,7 +39,7 @@ function buildFixtureStash(root: string): void {
   touch(path.join(root, "workflows", "release-train.md"));
   touch(path.join(root, "knowledge", "release-notes.md"));
   touch(path.join(root, "lessons", "no-fine-tuning.md"));
-  touch(path.join(root, "tasks", "ship-0.8.0.md"));
+  touch(path.join(root, "tasks", "ship-0.8.0.yml"));
   touch(path.join(root, "wikis", "akm-internals.md"));
   touch(path.join(root, "agents", "release-captain.md"));
   touch(path.join(root, "commands", "akm-sync.md"));

@@ -167,6 +167,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
   const realDebug = console.debug;
   const realExit = process.exit;
   const realArgv = process.argv;
+  const realExitCode = process.exitCode;
 
   // Several commands (and helpers like `parseAllFlagValues` in
   // src/cli/shared.ts) read `process.argv` DIRECTLY rather than the citty-parsed
@@ -247,6 +248,16 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       stderr += `${error instanceof Error ? error.message : String(error)}\n`;
     }
   } finally {
+    // If the command set process.exitCode without calling process.exit() (deferred
+    // exit pattern used to allow stdout flush before terminating), pick it up here
+    // so the captured code reflects the intended exit status. Only act when the
+    // exitCode was changed by the command (differs from the saved value before the
+    // run), to avoid picking up stale values from prior parallel tests.
+    const pendingExitCode = typeof process.exitCode === "number" ? process.exitCode : undefined;
+    if (code === 0 && pendingExitCode != null && pendingExitCode !== 0 && pendingExitCode !== realExitCode) {
+      code = pendingExitCode;
+    }
+    process.exitCode = realExitCode;
     process.stdout.write = realStdoutWrite;
     process.stderr.write = realStderrWrite;
     console.log = realLog;

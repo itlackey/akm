@@ -38,7 +38,7 @@ export class MemoryLinter extends BaseLinter {
             file: ctx.relPath,
             issue: "orphaned-stub",
             detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-            fixed: false,
+            fixed: "failed",
           });
         }
         // Signal caller to skip remaining checks via a sentinel issue

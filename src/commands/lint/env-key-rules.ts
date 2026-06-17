@@ -26,6 +26,7 @@
  *   FP and bypass with `--allow-insecure` after review.
  */
 
+import fs from "node:fs";
 import { listKeys } from "../env/env";
 import type { LintIssue } from "./types";
 
@@ -129,16 +130,47 @@ export function isDangerousVaultKey(key: string): boolean {
  * @param vaultRef   Human-readable vault ref (e.g. `"vault:prod"`) shown in
  *                   the finding message.
  */
+/** Suppression comment token checked case-insensitively on the preceding non-empty line. */
+const SUPPRESSION_COMMENT = "# akm-lint-ok: dangerous-vault-key";
+
+/**
+ * Returns the set of keys suppressed by an inline `# akm-lint-ok: dangerous-vault-key`
+ * comment on the line immediately preceding the key assignment in the `.env` file.
+ */
+function collectSuppressedKeys(vaultPath: string): Set<string> {
+  const suppressed = new Set<string>();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(vaultPath, "utf8");
+  } catch {
+    return suppressed;
+  }
+  const lines = raw.split(/\r?\n/);
+  let prevNonEmpty = "";
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    const keyMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    if (keyMatch && prevNonEmpty.toLowerCase() === SUPPRESSION_COMMENT) {
+      suppressed.add(keyMatch[1]);
+    }
+    prevNonEmpty = trimmed;
+  }
+  return suppressed;
+}
+
 export function checkVaultForDangerousKeys(vaultPath: string, relPath: string, vaultRef: string): LintIssue[] {
   const { keys } = listKeys(vaultPath);
+  const suppressed = collectSuppressedKeys(vaultPath);
   const issues: LintIssue[] = [];
 
   for (const key of keys) {
     if (!isDangerousVaultKey(key)) continue;
+    if (suppressed.has(key)) continue;
     issues.push({
       file: relPath,
       issue: "dangerous-vault-key",
-      detail: `Env key \`${key}\` can be used to hijack process execution when injected via \`akm env run\`. Ref: ${vaultRef}. Review this file before running \`akm env run\` commands against untrusted stashes.`,
+      detail: `Env key \`${key}\` can be used to hijack process execution when injected via \`akm env run\`. Ref: ${vaultRef}. Review this file before running \`akm env run\` commands against untrusted stashes. (suppress with: ${SUPPRESSION_COMMENT} on previous line)`,
       fixed: false,
     });
   }

@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import { parseWorkflow } from "../../workflows/parser";
 import { BaseLinter } from "./base-linter";
 import type { LintContext, LintIssue } from "./types";
 
@@ -37,7 +38,7 @@ export class WorkflowLinter extends BaseLinter {
             file: ctx.relPath,
             issue: "placeholder-stub",
             detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-            fixed: false,
+            fixed: "failed",
           });
         }
         return issues;
@@ -48,6 +49,30 @@ export class WorkflowLinter extends BaseLinter {
         detail: `placeholder text: "${placeholderMatch}"`,
         fixed: false,
       });
+    }
+
+    const isReadOnly = ctx.filePath.includes("/.cache/") || ctx.filePath.includes("/registry/");
+    if (!isReadOnly) {
+      try {
+        const result = parseWorkflow(ctx.raw, { path: ctx.filePath });
+        if (!result.ok) {
+          for (const err of result.errors ?? []) {
+            issues.push({
+              file: ctx.relPath,
+              issue: "invalid-workflow-structure",
+              detail: err.message ?? String(err),
+              fixed: false,
+            });
+          }
+        }
+      } catch (e) {
+        issues.push({
+          file: ctx.relPath,
+          issue: "invalid-workflow-structure",
+          detail: `workflow parser error: ${e instanceof Error ? e.message : String(e)}`,
+          fixed: false,
+        });
+      }
     }
 
     return issues;

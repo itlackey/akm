@@ -41,7 +41,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getAssetTypes, resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
-import { findSafeInsertionPoint } from "./markdown-insertion";
+import { findFenceRegions, findSafeInsertionPoint } from "./markdown-insertion";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -70,14 +70,24 @@ function checkUnquotedColon(frontmatterText: string | null): string | null {
 }
 
 function fixUnquotedColon(raw: string): string {
-  return raw.replace(/^(description:\s*)(.*)/m, (_match, prefix, value) => {
-    const trimmed = value.trim();
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-      return _match;
-    }
-    const escaped = trimmed.replace(/"/g, '\\"');
-    return `${prefix}"${escaped}"`;
-  });
+  const lines = raw.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return raw;
+  const closeIdx = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  if (closeIdx === -1) return raw;
+  for (let i = 1; i < closeIdx; i++) {
+    const m = lines[i].match(/^(description:\s*)(.*)/);
+    if (!m) continue;
+    const prefix = m[1];
+    const value = m[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+    )
+      continue;
+    lines[i] = `${prefix}"${value.replace(/"/g, '\\"')}"`;
+    break;
+  }
+  return lines.join("\n");
 }
 
 function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: string | null): boolean {
@@ -86,22 +96,44 @@ function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: str
 
 function fixMissingUpdated(raw: string, mtime: Date): string {
   const dateStr = formatDate(mtime);
-  return raw.replace(/^(---\n[\s\S]*?)\n---/m, `$1\nupdated: ${dateStr}\n---`);
+  const lines = raw.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return raw;
+  const closeIdx = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  if (closeIdx === -1) return raw;
+  lines.splice(closeIdx, 0, `updated: ${dateStr}`);
+  return lines.join("\n");
 }
 
 // ── stale-path helpers ────────────────────────────────────────────────────────
 
-function checkStalePath(body: string): string | null {
-  const pathRe = /\/home\/[^\s"'`)\]>,]+/g;
+function checkStalePath(body: string): string[] {
+  const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
   let match: RegExpExecArray | null;
+  const stale: string[] = [];
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = pathRe.exec(body)) !== null) {
     const candidate = match[0];
     if (!fs.existsSync(candidate)) {
-      return candidate;
+      stale.push(candidate);
     }
   }
-  return null;
+  return stale;
+}
+
+// ── fence-strip helper ────────────────────────────────────────────────────────
+
+/**
+ * Returns `body` with all fenced code block lines replaced by empty strings,
+ * so that ref-shaped tokens inside ``` examples are not flagged as broken refs.
+ */
+function stripFencedBlocks(body: string): string {
+  const lines = body.split(/\r?\n/);
+  const regions = findFenceRegions(lines);
+  if (regions.length === 0) return body;
+  for (const { start, end } of regions) {
+    for (let i = start; i <= end; i++) lines[i] = "";
+  }
+  return lines.join("\n");
 }
 
 // ── missing-ref helpers ───────────────────────────────────────────────────────
@@ -135,17 +167,16 @@ const REF_RE = new RegExp(`(?:^|[\\s\`"'(])((${buildRefTypeAlternation()}):[^\\s
  * preserved to keep pre-0.9 behaviour byte-identical:
  *   - `script`: returns null (scripts live in nested dirs with arbitrary
  *     extensions — unresolvable by the slug-based walker, as the contract pins).
- *   - `task`: the registry stores tasks as `<id>.yml`, but the missing-ref
- *     linter has always resolved `task:` refs against `tasks/<id>.md`; that
- *     behaviour is held constant here (non-env/secret behaviour is unchanged).
+ *   - `task`: M1 fix — tasks are stored as `<id>.yml` on disk, so resolve
+ *     `task:` refs against `tasks/<id>.yml` to match actual on-disk layout.
  *
  * Exported for contract testing — see header CONTRACT block.
  */
 export function refToRelPath(refType: string, refName: string): string | null {
   // script is intentionally unresolvable (contract-pinned).
   if (refType === "script") return null;
-  // Preserve the legacy `.md` resolution for tasks.
-  if (refType === "task") return path.join(TYPE_DIRS.task ?? "tasks", `${refName}.md`);
+  // M1: tasks are stored as .yml on disk; resolve task: refs against tasks/<id>.yml.
+  if (refType === "task") return path.join(TYPE_DIRS.task ?? "tasks", `${refName}.yml`);
 
   const typeDir = TYPE_DIRS[refType];
   if (!typeDir) return null; // unknown type — skip
@@ -178,9 +209,10 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
       try {
         const knowledgeDir = path.join(root, "knowledge");
         if (fs.existsSync(knowledgeDir) && fs.statSync(knowledgeDir).isDirectory()) {
-          const entries = fs.readdirSync(knowledgeDir);
+          const entries = fs.readdirSync(knowledgeDir, { withFileTypes: true });
           for (const entry of entries) {
-            const subPath = path.join(knowledgeDir, entry, `${refName}.md`);
+            if (!entry.isDirectory()) continue;
+            const subPath = path.join(knowledgeDir, entry.name, `${refName}.md`);
             if (fs.existsSync(subPath)) return true;
           }
         }
@@ -217,9 +249,11 @@ function checkMissingRefs(
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
   let match: RegExpExecArray | null;
   const re = new RegExp(REF_RE.source, REF_RE.flags);
+  // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
+  const scanBody = stripFencedBlocks(body);
 
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = re.exec(body)) !== null) {
+  while ((match = re.exec(scanBody)) !== null) {
     const fullRef = match[1]; // e.g. "workflow:foo" or "local//workflow:foo"
 
     // Skip shell variables: memory:$(cmd) or knowledge:${VAR}
@@ -254,6 +288,11 @@ function checkMissingRefs(
 
     // Skip placeholder/incomplete refs: single character slug or "**"
     if (refName.length <= 1 || refName === "**") {
+      continue;
+    }
+
+    // Skip template placeholder refs like skill:<name> or workflow:<my-workflow>
+    if (refName.startsWith("<") || refName.includes("<")) {
       continue;
     }
 
@@ -386,6 +425,44 @@ export abstract class BaseLinter implements AssetLinter {
   abstract lint(ctx: LintContext): LintIssue[];
 
   /**
+   * Check for missing `name` or `type` fields in frontmatter.
+   *
+   * Returns a detail string if fields are absent/empty, `null` if all present.
+   */
+  protected checkMissingNameOrType(data: Record<string, unknown>, frontmatterText: string | null): string | null {
+    if (!frontmatterText) return null;
+    const missingFields: string[] = [];
+    if (!("name" in data) || !data.name) missingFields.push("name");
+    if (!("type" in data) || !data.type) missingFields.push("type");
+    if (missingFields.length === 0) return null;
+    return `missing fields: ${missingFields.join(", ")}`;
+  }
+
+  /**
+   * Validate that the `type` field value is one of an allowed set.
+   *
+   * Returns a detail string if the value is present but invalid, `null` if valid or absent.
+   */
+  protected checkInvalidTypeValue(data: Record<string, unknown>, allowedTypes: readonly string[]): string | null {
+    if (!("type" in data) || !data.type) return null; // absent — covered by checkMissingNameOrType
+    const value = String(data.type);
+    if (allowedTypes.includes(value)) return null;
+    return `type field has invalid value '${value}'; expected one of: ${allowedTypes.join(", ")}`;
+  }
+
+  /**
+   * Derive a URL-safe slug from a file path.
+   */
+  protected suggestSlug(filePath: string): string {
+    return path
+      .basename(filePath, ".md")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  /**
    * Insert one or more lines into a markdown body at a safe location.
    *
    * "Safe" means: not inside a markdown table, HTML table, fenced code block,
@@ -420,30 +497,42 @@ export abstract class BaseLinter implements AssetLinter {
     let currentRaw = ctx.raw;
     let modified = false;
 
+    // M8: Parse lint_skip from frontmatter for per-file rule suppression.
+    // Accept both an array (`lint_skip: [missing-ref, stale-path]`) and a
+    // single scalar (`lint_skip: missing-ref`). Non-string entries are coerced
+    // and trimmed so loosely-typed YAML still gates correctly.
+    const rawLintSkip = ctx.data?.lint_skip;
+    const lintSkip: string[] = (Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : [])
+      .map((v) => String(v).trim())
+      .filter(Boolean);
+    const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
+
     // ── 1. unquoted-colon ──────────────────────────────────────────────────
-    const unquotedColonDetail = checkUnquotedColon(ctx.frontmatter);
-    if (unquotedColonDetail) {
-      if (ctx.fix) {
-        currentRaw = fixUnquotedColon(currentRaw);
-        modified = true;
-        issues.push({
-          file: ctx.relPath,
-          issue: "unquoted-colon",
-          detail: unquotedColonDetail,
-          fixed: true,
-        });
-      } else {
-        issues.push({
-          file: ctx.relPath,
-          issue: "unquoted-colon",
-          detail: unquotedColonDetail,
-          fixed: false,
-        });
+    if (shouldRun("unquoted-colon")) {
+      const unquotedColonDetail = checkUnquotedColon(ctx.frontmatter);
+      if (unquotedColonDetail) {
+        if (ctx.fix) {
+          currentRaw = fixUnquotedColon(currentRaw);
+          modified = true;
+          issues.push({
+            file: ctx.relPath,
+            issue: "unquoted-colon",
+            detail: unquotedColonDetail,
+            fixed: true,
+          });
+        } else {
+          issues.push({
+            file: ctx.relPath,
+            issue: "unquoted-colon",
+            detail: unquotedColonDetail,
+            fixed: false,
+          });
+        }
       }
-    }
+    } // end shouldRun("unquoted-colon")
 
     // ── 2. missing-updated ─────────────────────────────────────────────────
-    if (checkMissingUpdated(ctx.data, ctx.frontmatter)) {
+    if (shouldRun("missing-updated") && checkMissingUpdated(ctx.data, ctx.frontmatter)) {
       if (ctx.fix) {
         let mtime: Date;
         try {
@@ -476,14 +565,23 @@ export abstract class BaseLinter implements AssetLinter {
     }
 
     // ── 3. stale-path ──────────────────────────────────────────────────────
-    const stalePathMatch = checkStalePath(ctx.body);
-    if (stalePathMatch) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "stale-path",
-        detail: `nonexistent path: ${stalePathMatch}`,
-        fixed: false,
-      });
+    // M3: checkStalePath returns all stale matches; push one issue per path.
+    // M4: Also scan ctx.frontmatter for stale paths (absolute paths in frontmatter).
+    if (shouldRun("stale-path")) {
+      const staleInBody = checkStalePath(ctx.body);
+      const staleInFrontmatter = ctx.frontmatter ? checkStalePath(ctx.frontmatter) : [];
+      for (const candidate of [...staleInBody, ...staleInFrontmatter]) {
+        // M4: Suggest portable replacement when path is under stashRoot.
+        const portableHint = candidate.startsWith(ctx.stashRoot)
+          ? ` (portable form: $AKM_STASH_DIR${candidate.slice(ctx.stashRoot.length)})`
+          : "";
+        issues.push({
+          file: ctx.relPath,
+          issue: "stale-path",
+          detail: `nonexistent path: ${candidate}${portableHint}`,
+          fixed: false,
+        });
+      }
     }
 
     // ── 4. missing-ref ─────────────────────────────────────────────────────
@@ -501,16 +599,18 @@ export abstract class BaseLinter implements AssetLinter {
     // still run `checkMissingRefs` against the array itself to catch
     // refs that were valid at capture time but later removed from the
     // stash.
-    const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
-    const refSource = explicitRefs !== null ? explicitRefs.join("\n") : ctx.body;
-    const missingRefs = checkMissingRefs(refSource, ctx.stashRoot, ctx.extraStashRoots);
-    for (const { ref, resolvedRelPath } of missingRefs) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "missing-ref",
-        detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
-        fixed: false,
-      });
+    if (shouldRun("missing-ref")) {
+      const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
+      const refSource = explicitRefs !== null ? explicitRefs.join("\n") : ctx.body;
+      const missingRefs = checkMissingRefs(refSource, ctx.stashRoot, ctx.extraStashRoots);
+      for (const { ref, resolvedRelPath } of missingRefs) {
+        issues.push({
+          file: ctx.relPath,
+          issue: "missing-ref",
+          detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
+          fixed: false,
+        });
+      }
     }
 
     return issues;

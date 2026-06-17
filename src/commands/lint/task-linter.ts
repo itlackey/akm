@@ -35,9 +35,9 @@ export class TaskLinter extends BaseLinter {
       missing.push("schedule");
     }
 
-    // enabled: must be present (boolean — value of false is valid)
-    if (!("enabled" in ctx.data)) {
-      missing.push("enabled");
+    // enabled: must be present AND a boolean (value of false is valid, but "yes" / 1 are not)
+    if (!("enabled" in ctx.data) || typeof ctx.data.enabled !== "boolean") {
+      missing.push("enabled (must be a boolean)");
     }
 
     // At least one of: prompt, workflow, or command
