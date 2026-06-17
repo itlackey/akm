@@ -146,7 +146,12 @@ export const lintCommand = defineCommand({
       "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths). Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
-    fix: { type: "boolean", description: "Apply auto-fixes in place", default: false },
+    fix: {
+      type: "boolean",
+      alias: "auto-fix",
+      description: "Apply auto-fixes in place (alias: --auto-fix)",
+      default: false,
+    },
     dir: { type: "string", description: "Override stash root directory (default: from config)" },
     "fail-on-flagged": {
       type: "boolean",

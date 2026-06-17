@@ -26,7 +26,15 @@ export function parseMarkdownToc(content: string): KnowledgeToc {
   const parsed = parseFrontmatter(content);
   const start = parsed.frontmatter ? parsed.bodyStartLine - 1 : 0;
 
+  let inFence = false;
   for (let i = start; i < lines.length; i++) {
+    // Track fenced code blocks (``` or ~~~) so headings inside them are skipped.
+    if (/^\s*(`{3,}|~{3,})/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+
     const match = lines[i].match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       headings.push({

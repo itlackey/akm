@@ -148,3 +148,27 @@ test("formatToc handles empty headings", () => {
   expect(output).toContain("no headings found");
   expect(output).toContain("5 lines total");
 });
+
+test("parseMarkdownToc skips headings inside fenced code blocks", () => {
+  const doc = `# Real Heading
+
+\`\`\`markdown
+# Fake Heading Inside Fence
+
+## Also Fake
+\`\`\`
+
+## Real Section
+
+\`\`\`
+# Another Fake
+\`\`\`
+
+### Real Subsection
+`;
+  const toc = parseMarkdownToc(doc);
+  expect(toc.headings.length).toBe(3);
+  expect(toc.headings[0]).toEqual({ level: 1, text: "Real Heading", line: 1 });
+  expect(toc.headings[1]).toEqual({ level: 2, text: "Real Section", line: 9 });
+  expect(toc.headings[2]).toEqual({ level: 3, text: "Real Subsection", line: 15 });
+});
