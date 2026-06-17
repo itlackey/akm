@@ -1542,7 +1542,7 @@ async function akmConsolidateInner(
   // EVERY surviving memory (whether or not the cache is on) so the post-LLM
   // recording step can upsert judged state without re-reading the files; when
   // the cache is off it stays empty and the recording step is a no-op.
-  const judgedCacheEnabled = opts.judgedCache?.enabled === true;
+  const judgedCacheEnabled = opts.judgedCache?.enabled !== false;
   const currentHashByName = new Map<string, string>();
   if (judgedCacheEnabled) {
     for (const m of memories) {
@@ -1611,6 +1611,12 @@ async function akmConsolidateInner(
         durationMs: Date.now() - startMs,
       };
     }
+  }
+
+  if (opts.limit === undefined && memories.length > 150) {
+    warnings.push(
+      `Consolidation: pool has ${memories.length} memories and no limit is set. Consider adding a limit to your consolidate config to prevent timeouts on slow LLM endpoints.`,
+    );
   }
 
   if (opts.limit !== undefined && memories.length > opts.limit) {

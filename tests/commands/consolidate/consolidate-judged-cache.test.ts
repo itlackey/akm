@@ -10,8 +10,9 @@
  * hash) re-enters the pool.
  *
  * GATE: behind `processes.consolidate.judgedCache.enabled` → mapped onto the
- * `akmConsolidate({ judgedCache })` option (DEFAULT FALSE). With the cache OFF,
- * behaviour is byte-identical to today.
+ * `akmConsolidate({ judgedCache })` option (DEFAULT TRUE). Pass
+ * `{ enabled: false }` to opt out. With the cache OFF, behaviour is
+ * byte-identical to a full-pool run.
  *
  * The LLM transport is stubbed via `mock.module` so no network is touched and
  * we can count judge calls. A module-level `stubMode` switches the stub between
@@ -120,19 +121,23 @@ describe("#581 consolidate judged-state cache", () => {
     expect(chatCalls).toBe(1);
   });
 
-  test("cache OFF (default): every run judges the full pool (no skipping)", async () => {
+  test("cache OFF (explicit): every run judges the full pool (no skipping)", async () => {
     writeMemory("alpha", "Alpha body content.");
     writeMemory("beta", "Beta body content.");
 
-    // No judgedCache option → default OFF.
-    const first = await akmConsolidate({ stashDir, target: stashDir, config: CONFIG });
+    // Explicit enabled:false → cache disabled, full pool judged every run.
+    const first = await akmConsolidate({ stashDir, target: stashDir, config: CONFIG, judgedCache: { enabled: false } });
     expect(first.processed).toBe(2);
     expect(chatCalls).toBe(1);
 
-    // Second run with the cache OFF re-judges everything — byte-identical to
-    // today's behaviour (no judged-unchanged skipping).
+    // Second run with the cache explicitly OFF re-judges everything.
     chatCalls = 0;
-    const second = await akmConsolidate({ stashDir, target: stashDir, config: CONFIG });
+    const second = await akmConsolidate({
+      stashDir,
+      target: stashDir,
+      config: CONFIG,
+      judgedCache: { enabled: false },
+    });
     expect(second.processed).toBe(2);
     expect(chatCalls).toBe(1);
   });
