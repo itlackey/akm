@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
+const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
 const CLI_TIMEOUT_MS = 30_000;
