@@ -250,7 +250,11 @@ async function updateRegistryEntry(
 
   const installedEntry: InstalledStashEntry = {
     id: synced.id,
-    source: synced.source,
+    // Preserve the original source classification. syncFromRef() re-derives the
+    // source type from the ref scheme (e.g. "github:" → source: "github"), but
+    // an update should not reclassify an existing entry. A writable entry stored
+    // as source: "git" would fail config validation if rewritten to "github".
+    source: entry.source,
     ref: synced.ref,
     artifactUrl: synced.artifactUrl,
     resolvedVersion: synced.resolvedVersion,

@@ -19,6 +19,7 @@ import { addStash } from "../src/commands/sources/source-manage";
 import { loadConfig, saveConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import * as gitProvider from "../src/sources/providers/git";
+import * as syncFromRefModule from "../src/sources/providers/sync-from-ref";
 
 const createdTmpDirs: string[] = [];
 
@@ -397,5 +398,66 @@ describe("issue #19: akm update website sources", () => {
       writable: false,
     });
     syncSpy.mockRestore();
+  });
+});
+
+// ── Regression: update preserves source classification for writable github: entries ──
+
+describe("update preserves entry.source for writable installed entries", () => {
+  test("updating a github: entry stored as source:git preserves source:git and writable:true", async () => {
+    const stashRoot = createTmpDir("akm-qa-writable-stash-");
+    makeStashDir(stashRoot);
+    const cacheDir = createTmpDir("akm-qa-writable-cache-");
+
+    saveConfig({
+      semanticSearchMode: "off",
+      installed: [
+        {
+          id: "github:dimm-city/agent-stash",
+          source: "git",
+          ref: "github:dimm-city/agent-stash",
+          artifactUrl: "https://github.com/dimm-city/agent-stash.git",
+          stashRoot,
+          cacheDir,
+          installedAt: "2026-04-22T16:39:07.564Z",
+          writable: true,
+          resolvedRevision: "abc123",
+        },
+      ],
+    });
+
+    // syncFromRef for a github: ref returns source: "github" — this is what
+    // triggered the bug: updateRegistryEntry was using synced.source ("github")
+    // instead of entry.source ("git"), causing the validator to reject writable:true.
+    const syncSpy = spyOn(syncFromRefModule, "syncFromRef").mockResolvedValue({
+      id: "github:dimm-city/agent-stash",
+      source: "github",
+      ref: "github:dimm-city/agent-stash",
+      artifactUrl: "https://github.com/dimm-city/agent-stash.git",
+      contentDir: stashRoot,
+      cacheDir,
+      extractedDir: stashRoot,
+      syncedAt: new Date().toISOString(),
+      resolvedRevision: "def456",
+    });
+
+    let result: Awaited<ReturnType<typeof akmUpdate>>;
+    try {
+      result = await akmUpdate({ target: "github:dimm-city/agent-stash", stashDir });
+    } finally {
+      syncSpy.mockRestore();
+    }
+
+    expect(result).toBeDefined();
+
+    const config = loadConfig();
+    const entry = config.installed?.find((e) => e.id === "github:dimm-city/agent-stash");
+    expect(entry).toBeDefined();
+    // source must remain "git" — not reclassified to "github"
+    expect(entry?.source).toBe("git");
+    // writable must survive the update
+    expect(entry?.writable).toBe(true);
+    // revision should be updated
+    expect(entry?.resolvedRevision).toBe("def456");
   });
 });
