@@ -195,32 +195,19 @@ describe("akm feedback", () => {
     expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
   });
 
-  test("stale feedback reindexes inline instead of spawning a competing background writer", async () => {
+  test("feedback on an unindexed asset fails fast with a clear error instead of triggering a slow reindex", async () => {
     writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha body.\n");
     await buildIndex();
 
+    // beta.md exists on disk but was NOT indexed — feedback must fail quickly
+    // rather than triggering a blocking inline reindex (which was causing 3+ min
+    // runtimes). The user should run `akm index` to pick up new assets first.
     writeFile(path.join(stashDir, "memories", "beta.md"), "---\ndescription: beta memory\n---\nBeta body.\n");
 
     const result = await runCli(["feedback", "memory:beta", "--positive", "--format=json"]);
-    expect(result.status).toBe(0);
-    expect(parseJsonOutput(result)).toMatchObject({
-      ok: true,
-      ref: "memory:beta",
-      signal: "positive",
-    });
-
-    expect(fs.existsSync(path.join(getDataDir(), "akm-index-background.pid"))).toBe(false);
-
-    const db = openDatabase(getDbPath());
-    try {
-      expect(findEntryIdByRef(db, "memory:beta")).toEqual(expect.any(Number));
-
-      const feedbackEvent = db
-        .prepare("SELECT signal FROM usage_events WHERE event_type = 'feedback' AND entry_ref = ?")
-        .get("memory:beta") as { signal: string } | undefined;
-      expect(feedbackEvent?.signal).toBe("positive");
-    } finally {
-      closeDatabase(db);
-    }
+    expect(result.status).toBe(2); // UsageError exit code
+    const parsed = parseJsonOutput(result);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error ?? parsed.message ?? "").toMatch(/not in the index/i);
   });
 });

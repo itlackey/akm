@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.19] — 2026-06-17
+
+### Fixed
+
+- **`akm feedback` now completes in ~0.3s** (was 3+ minutes). Root cause: the command was calling `ensureIndex` with `mode: "blocking"` inside `withIndexWriterLease`, triggering a full reindex on every feedback call. Fix: removed the `ensureIndex` call entirely (feedback only needs the index to exist, not be current — a stale index is fine for ref lookup); removed the application-level writer lock (SQLite WAL + `busy_timeout=30s` handles concurrent access with `akm improve`); added a fast DB-exists guard with a clear error for first-time users.
+- **`akm health --format html` now completes in ~11s** (was ~18s). Root cause: `akmHealth()` was called twice — once for the main result and once to get `deltas`. Fix: merged into a single call passing both `groupBy: "run"` and `windowCompare` together.
+
 ## [0.9.0-beta.18] — 2026-06-17
 
 ### Changed

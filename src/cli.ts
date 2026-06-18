@@ -380,9 +380,9 @@ const healthCommand = defineCommand({
         // 24h default made a `--since 7d` report compare its 7-day totals against
         // a 24-hour prior window, producing meaningless deltas.
         const compare = args.compare ?? windowCompareRaw ?? args.since ?? "24h";
-        const result = akmHealth({ since: args.since, groupBy: "run" });
+        const result = akmHealth({ since: args.since, groupBy: "run", windowCompare: compare });
         resultStatus = result.status;
-        const deltas = akmHealth({ since: args.since, windowCompare: compare }).deltas;
+        const deltas = result.deltas;
         const { buildHealthHtmlReplacements } = await import("./commands/health/html-report");
         const { listPendingProposals } = await import("./commands/proposal/proposal");
         const replacements = buildHealthHtmlReplacements(result, {

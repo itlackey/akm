@@ -12,6 +12,7 @@ import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
+import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import {
   applyFeedbackToUtilityScore,
@@ -20,9 +21,6 @@ import {
   getEntryFilePathById,
   openExistingDatabase,
 } from "../indexer/db/db";
-import { ensureIndex } from "../indexer/ensure-index";
-import { withIndexWriterLease } from "../indexer/index-writer-lock";
-import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
@@ -246,53 +244,63 @@ export const feedbackCommand = defineCommand({
       };
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
-      const utilityResult = await withIndexWriterLease({ purpose: "feedback-write" }, async () => {
-        // Feedback is itself an index.db writer, so it must not spawn a detached
-        // reindex and then compete with it for the same database file.
-        const sources = resolveSourceEntries();
-        if (sources.length > 0) {
-          await ensureIndex(sources[0].path, { mode: "blocking" });
-        }
+      // Feedback only needs the index to exist, not to be current. A stale index
+      // is fine — the ref lookup works against any populated DB. We do NOT call
+      // ensureIndex here: it either blocks (3+ min inline reindex) or spawns a
+      // background process that holds the writer lock, causing the feedback write
+      // to spin-wait for the full reindex duration. If the DB is absent we give a
+      // clear error below rather than silently triggering a rebuild.
+      if (!fs.existsSync(getDbPath())) {
+        throw new UsageError(
+          "Index not found. Run 'akm index' first to build the index before recording feedback.",
+          "MISSING_REQUIRED_ARGUMENT",
+          "akm index",
+        );
+      }
 
-        let scopedUtilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-        const db = openExistingDatabase();
+      // Feedback writes exactly 2 rows (usage_events + utility_score). SQLite
+      // WAL mode + busy_timeout=30s handles concurrent access with an ongoing
+      // `akm improve` run without needing the application-level writer lock.
+      // The lock was originally needed to prevent feedback from racing a
+      // background reindex it spawned — now that ensureIndex is removed, holding
+      // the lock only causes feedback to block for the full improve run duration.
+      let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+      const db = openExistingDatabase();
+      try {
+        const entryId = findEntryIdByRef(db, ref);
+        if (entryId === undefined) {
+          throw new UsageError(
+            `Ref "${ref}" is not in the index. ` +
+              "Run 'akm search' to verify the asset exists, then 'akm index' if it was recently added.",
+          );
+        }
+        // Persist the feedback signal into usage_events. For positive signals,
+        // the EMA utility score is updated immediately on the next read path.
+        // For negative signals, the score is adjusted the next time `akm index`
+        // runs — the signal is durable in the DB but does NOT suppress ranking
+        // in search results until after reindexing.
+        insertUsageEvent(db, {
+          event_type: "feedback",
+          entry_ref: ref,
+          entry_id: entryId,
+          signal,
+          metadata: metadataStr,
+        });
+
+        // Apply feedback-derived utility score adjustment immediately so that
+        // positive/negative signals influence search ranking without requiring
+        // a full reindex. We query the total accumulated feedback counts from
+        // usage_events so the delta reflects the entire signal history.
+        // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
         try {
-          const entryId = findEntryIdByRef(db, ref);
-          if (entryId === undefined) {
-            throw new UsageError(
-              `Ref "${ref}" is not in the index. ` +
-                "Run 'akm search' to verify the asset exists, then 'akm index' if it was recently added.",
-            );
-          }
-          // Persist the feedback signal into usage_events. For positive signals,
-          // the EMA utility score is updated immediately on the next read path.
-          // For negative signals, the score is adjusted the next time `akm index`
-          // runs — the signal is durable in the DB but does NOT suppress ranking
-          // in search results until after reindexing.
-          insertUsageEvent(db, {
-            event_type: "feedback",
-            entry_ref: ref,
-            entry_id: entryId,
-            signal,
-            metadata: metadataStr,
-          });
-
-          // Apply feedback-derived utility score adjustment immediately so that
-          // positive/negative signals influence search ranking without requiring
-          // a full reindex. We query the total accumulated feedback counts from
-          // usage_events so the delta reflects the entire signal history.
-          // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
-          try {
-            const { pos, neg } = countFeedbackSignals(db, entryId);
-            scopedUtilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
-          } catch {
-            // best-effort — feedback recording succeeds even if utility update fails
-          }
-        } finally {
-          closeDatabase(db);
+          const { pos, neg } = countFeedbackSignals(db, entryId);
+          utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
+        } catch {
+          // best-effort — feedback recording succeeds even if utility update fails
         }
-        return scopedUtilityResult;
-      });
+      } finally {
+        closeDatabase(db);
+      }
 
       appendEvent({
         eventType: "feedback",
