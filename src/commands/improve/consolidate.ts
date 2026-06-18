@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { parse as yamlParse } from "yaml";
+import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -344,29 +345,7 @@ export interface AkmConsolidateOptions {
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
 
-const CONSOLIDATE_SYSTEM_PROMPT = `You are the akm consolidate assistant analyzing memory assets.
-
-Rules:
-1. MERGE: Two or more memories are substantially duplicated or closely related → propose merging. Return the primary ref to keep and secondary refs to delete. Do NOT include mergedContent — the merge will be executed in a separate step.
-2. DELETE: Memory is clearly outdated, contradicted, or redundant → propose deletion. NEVER propose delete for memories annotated \`(captureMode: hot)\` — they are user-explicit and only the user can retire them. The downstream guard will refuse these regardless, so proposing them just wastes tokens.
-3. PROMOTE: Memory expresses a stable, reusable fact suitable as a \`knowledge:\` asset → propose promotion. Do NOT delete the source memory. NEVER propose promote / merge / contradict for memories annotated \`(already queued)\` — they have a pending proposal whose body matches; a duplicate will be deterministically dropped, so proposing them just wastes tokens.
-4. CONTRADICT: Two memories make mutually exclusive factual claims about the same subject (e.g. "always use VPN" vs "VPN is optional") → mark the older or less authoritative one as contradicted. This writes a contradictedBy edge so the belief-resolution SCC algorithm can resolve the conflict. Do NOT delete contradicted memories — let the belief resolver decide.
-5. KEEP: Memory is unique and current → omit from output.
-
-Return ONLY JSON (no prose, no code fences):
-{
-  "operations": [
-    { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize", "confidence": 0.95 },
-    { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>", "confidence": 0.90 },
-    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>", "description": "<one sentence describing the new knowledge asset>", "confidence": 0.92 },
-    { "op": "contradict", "ref": "memory:<name>", "contradictedByRef": "memory:<name>", "reason": "<brief reason>", "confidence": 0.88 }
-  ],
-  "warnings": ["<optional concerns>"]
-}
-
-For every operation, emit a \`confidence\` field in [0, 1] expressing your certainty that the operation is correct and safe. Use 0.95+ only when evidence is unambiguous. Omit the field rather than guessing if you are uncertain.
-
-When the merged content includes an \`updated\` frontmatter field, the value MUST be a real ISO date string (e.g. \`updated: 2026-05-20\`). NEVER emit \`updated: today\`, \`updated: {today}\`, \`updated: {today: null}\`, \`updated: now\`, or any other literal placeholder/template-variable. If you do not have a real source-of-truth date, OMIT the \`updated\` field entirely — the post-processor will not invent one for you.`;
+const CONSOLIDATE_SYSTEM_PROMPT = consolidateSystemPrompt;
 
 /**
  * JSON Schema for structured consolidate plans (PR 1 of the asset-writers
@@ -2730,6 +2709,22 @@ async function akmConsolidateInner(
         pushSkipReason("promote", op.ref, "promote_create_failed");
       }
     } else if (op.op === "contradict") {
+      // Confidence gate: surface-level topic overlap causes false positives
+      // (investigation 2026-06-18). Require ≥0.92 confidence before writing
+      // contradiction edges. Missing confidence field defaults to 1.0 for
+      // backward compatibility with responses that predate this field.
+      const opConfidence =
+        typeof (op as { confidence?: number }).confidence === "number"
+          ? (op as { confidence: number }).confidence
+          : 1.0;
+      if (opConfidence < 0.92) {
+        warnings.push(
+          `Contradict: confidence ${opConfidence.toFixed(2)} below 0.92 threshold for ${op.ref} <-> ${op.contradictedByRef} — skipping.`,
+        );
+        pushSkipReason("contradict", op.ref, "contradict_low_confidence");
+        continue;
+      }
+
       // C-3 / #382: Write contradictedBy edges so resolveFamilyContradictions
       // (the SCC resolver in memory-improve.ts) has edges to work on.
       // Zep arXiv:2501.13956 §3 — unified belief-revision with contradiction edges.
@@ -3411,8 +3406,8 @@ async function generateMergedContent(
       }
       normalizeUpdatedField(repairedFmData);
       const repairedYaml = serializeFrontmatter(repairedFmData);
-      const bodyPart = mergedFm.content ?? "";
-      return { content: `---\n${repairedYaml}\n---\n${bodyPart}` };
+      const bodyPart = typeof mergedFm.content === "string" ? mergedFm.content : "";
+      return { content: assembleAssetFromString(repairedYaml, bodyPart) };
     }
   } catch {
     // parseFrontmatter failures are non-fatal — allow the merge to proceed.

@@ -46,6 +46,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import stalenessDetectSystemPrompt from "../../assets/prompts/staleness-detect-system.md" with { type: "text" };
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
@@ -396,12 +397,7 @@ function pickSimilar(candidate: CandidateMemory, all: MemorySnapshot[]): MemoryS
 
 // ── LLM dispatch ────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT =
-  "You are a belief-state classifier for a memory store. Given a candidate memory and a list of more-recent similar memories from the same store, decide whether the candidate is still current or has been superseded.\n\n" +
-  "Respond on the first line with exactly YES or NO.\n" +
-  "If YES, the second line MUST be of the form `SUPERSEDED_BY: <ref>` where <ref> is the exact ref of the superseding memory from the list provided. Do NOT invent refs.\n" +
-  "If NO, do not include any additional lines.\n" +
-  "No prose, no preamble, no markdown.";
+const SYSTEM_PROMPT = stalenessDetectSystemPrompt;
 
 async function askValidator(
   connection: import("../../core/config/config").LlmConnectionConfig,

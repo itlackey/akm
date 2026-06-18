@@ -5,27 +5,20 @@
 /**
  * Shared frontmatter parsing utilities.
  *
- * Provides a single, canonical YAML-subset frontmatter parser used by both
- * the stash open logic and the metadata generator.
+ * Uses the `yaml` library for all YAML parsing so that the full YAML spec
+ * (block scalars, multi-line strings, nested objects, flow sequences, escape
+ * sequences) is handled correctly without a brittle hand-rolled state machine.
  */
 
+import { parse as yamlParse } from "yaml";
+
 /**
- * Parse YAML-subset frontmatter from a Markdown (or similar) string.
+ * Parse YAML frontmatter from a Markdown (or similar) string.
  *
  * Returns the parsed key-value data and the remaining body content.
- *
- * **Limitations**: This is a hand-rolled YAML-subset parser with intentional
- * constraints for simplicity and safety:
- * - **Top-level values**: string, boolean, and number scalars are supported,
- *   as well as top-level list-valued keys using YAML block sequences
- *   (`- item`) or flow arrays (`[a, b, c]`).
- * - **List item types**: list items must be scalar values and may be strings,
- *   booleans, or numbers.
- * - **No nested objects beyond one level**: Only a single level of indented
- *   key-value pairs is supported.
- * - **Block scalars**: `|` (literal), `|-` (strip), and `|+` (keep) block
- *   scalars are supported for multi-line string values as emitted by the
- *   `yaml` library's `stringify`.
+ * Delegates all YAML parsing to the `yaml` library; the only responsibility
+ * of this function is extracting the `---…---` block and normalizing the
+ * parsed result (e.g. converting YAML timestamp values to ISO date strings).
  */
 export function parseFrontmatter(raw: string): {
   data: Record<string, unknown>;
@@ -38,150 +31,24 @@ export function parseFrontmatter(raw: string): {
     return { data: {}, content: raw, frontmatter: null, bodyStartLine: 1 };
   }
 
-  const data: Record<string, unknown> = {};
-  let currentKey: string | null = null;
-  /**
-   * "scalar" | "list" | "object" | "pending" | "block" —
-   * "pending" means empty value, mode determined by next line.
-   * "block" means we are accumulating lines for a `|`-block scalar.
-   */
-  let mode: "scalar" | "list" | "object" | "pending" | "block" = "scalar";
-  let nested: Record<string, unknown> | null = null;
-  let currentList: unknown[] | null = null;
-  /** Lines collected while in "block" mode. */
-  let blockLines: string[] | null = null;
-  /** Block scalar chomping: "clip" (|), "strip" (|-), "keep" (|+). */
-  let blockChomping: "clip" | "strip" | "keep" = "clip";
-
-  const flushPending = () => {
-    // Called when we start a new top-level key and the previous key was still "pending".
-    // An empty-value key followed by another top-level key means it was an empty scalar.
-    if (mode === "pending" && currentKey !== null) {
-      data[currentKey] = "";
-    }
-  };
-
-  const flushBlock = () => {
-    // Commit the accumulated block-scalar lines to `data[currentKey]`.
-    if (mode !== "block" || currentKey === null || blockLines === null) return;
-    // De-indent: strip the common 2-space prefix `yaml.stringify` emits.
-    const deindented = blockLines.map((l) => (l.startsWith("  ") ? l.slice(2) : l));
-    // Chomping: apply trailing-newline policy.
-    // "clip" (|): single trailing newline.
-    // "strip" (|-): no trailing newline.
-    // "keep" (|+): keep all trailing newlines as-is.
-    if (blockChomping === "keep") {
-      data[currentKey] = deindented.join("\n");
-    } else if (blockChomping === "strip") {
-      data[currentKey] = deindented.join("\n").replace(/\n+$/, "");
-    } else {
-      // "clip": exactly one trailing newline
-      data[currentKey] = `${deindented.join("\n").replace(/\n+$/, "")}\n`;
-    }
-  };
-
-  for (const line of parsedBlock.frontmatter.split(/\r?\n/)) {
-    // If we are in block-scalar mode, collect indented lines or end the block.
-    if (mode === "block") {
-      if (line.startsWith("  ") || line === "") {
-        // Continuation of the block scalar (indented content or blank line).
-        (blockLines as string[]).push(line);
-        continue;
+  let data: Record<string, unknown> = {};
+  if (parsedBlock.frontmatter.trim()) {
+    try {
+      const parsed = yamlParse(parsedBlock.frontmatter) as unknown;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        // Normalize Date objects: the yaml "core" schema parses YYYY-MM-DD
+        // literals as JS Date instances. Convert them back to ISO date strings
+        // to preserve the string type that callers (and yaml.stringify on write)
+        // expect.
+        data = normalizeYamlValues(parsed as Record<string, unknown>) as Record<string, unknown>;
       }
-      // Non-indented line ends the block scalar — flush and fall through to
-      // parse the new line as a top-level key.
-      flushBlock();
-      mode = "scalar";
-      blockLines = null;
-    }
-
-    // Block-sequence item: "- value" or "  - value" (optional 2-space indent)
-    // Only match when the current key is in list or pending mode.
-    const seqItem = line.match(/^(?: {2})?- (.*)$/);
-    if (seqItem && currentKey !== null && (mode === "list" || mode === "pending")) {
-      if (mode === "pending") {
-        // First block-sequence item after an empty-value key — switch to list mode
-        currentList = [];
-        data[currentKey] = currentList;
-        mode = "list";
-      }
-      (currentList as unknown[]).push(parseYamlScalar(seqItem[1].trim()));
-      continue;
-    }
-
-    // Plain-style multi-line scalar continuation: a 2-space-indented line that
-    // is not a sequence item or nested key. YAML plain scalars fold newlines
-    // into a single space, so we append with a space. This handles LLM-emitted
-    // descriptions like:
-    //   description: Use 4-colon outer containers when mixing
-    //     nesting depths in markdown-it-container plugins.
-    // Without this, only the first line is captured and the truncation
-    // heuristic wrongly flags it as cut off mid-sentence.
-    if (mode === "scalar" && currentKey !== null && /^ {2}\S/.test(line)) {
-      data[currentKey] = `${String(data[currentKey])} ${line.trim()}`;
-      continue;
-    }
-
-    // Indented nested key-value (object under a key with empty value)
-    const indented = line.match(/^ {2}(\w[\w-]*):\s*(.+)$/);
-    if (indented && currentKey !== null && (mode === "object" || mode === "pending")) {
-      if (mode === "pending") {
-        // First indented k-v after an empty-value key — switch to object mode
-        nested = {};
-        data[currentKey] = nested;
-        mode = "object";
-      }
-      (nested as Record<string, unknown>)[indented[1]] = parseYamlScalar(indented[2].trim());
-      continue;
-    }
-
-    // Top-level key (possibly with inline value)
-    const top = line.match(/^(\w[\w-]*):\s*(.*)$/);
-    if (!top) {
-      continue;
-    }
-
-    // Starting a new top-level key — flush any pending empty-value key
-    flushPending();
-
-    currentKey = top[1];
-    const value = top[2].trim();
-
-    if (value === "|" || value === "|-" || value === "|+") {
-      // Block scalar header — collect subsequent indented lines.
-      mode = "block";
-      blockLines = [];
-      blockChomping = value === "|-" ? "strip" : value === "|+" ? "keep" : "clip";
-      nested = null;
-      currentList = null;
-    } else if (value === "") {
-      // Defer mode decision until we see the next line
-      mode = "pending";
-      nested = null;
-      currentList = null;
-      // Don't store anything yet — flushPending will set "" if no continuation
-    } else if (value.startsWith("[") && value.endsWith("]")) {
-      // Inline flow array: tags: [ops, networking]
-      mode = "list";
-      nested = null;
-      currentList = null;
-      currentList = parseFlowArray(value);
-      data[currentKey] = currentList;
-    } else {
-      mode = "scalar";
-      nested = null;
-      currentList = null;
-      data[currentKey] = parseYamlScalar(value);
+    } catch {
+      // Malformed YAML (e.g. unterminated quotes from LLM output corruption).
+      // Fall back to line-by-line best-effort extraction so callers still get
+      // whatever scalar values they can rather than a completely empty record.
+      data = parseFrontmatterLenient(parsedBlock.frontmatter);
     }
   }
-
-  // Flush any in-progress block scalar at end of frontmatter.
-  if (mode === "block") {
-    flushBlock();
-  }
-
-  // Flush the last key if it was still pending (empty value, no continuation)
-  flushPending();
 
   return {
     data,
@@ -192,12 +59,61 @@ export function parseFrontmatter(raw: string): {
 }
 
 /**
- * Parse a YAML flow array string like `[a, b, c]` into an array of scalars.
+ * Normalize YAML-parsed values to match expected AKM frontmatter types.
+ *
+ * Two conversions:
+ * 1. `Date` → YYYY-MM-DD string: the yaml "core" schema parses bare date
+ *    scalars like `2026-06-18` as JS Date instances. AKM frontmatter treats
+ *    `updated:` and similar fields as plain strings.
+ * 2. `null` → `""`: the yaml library parses empty-value keys (`key:` with no
+ *    value) as `null`, but AKM callers historically received `""` from the
+ *    hand-rolled parser. Convert to preserve backward compatibility.
  */
-function parseFlowArray(value: string): unknown[] {
-  const inner = value.slice(1, -1).trim();
-  if (!inner) return [];
-  return inner.split(",").map((item) => parseYamlScalar(item.trim()));
+function normalizeYamlValues(value: unknown): unknown {
+  if (value instanceof Date) {
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  if (value === null) return "";
+  if (Array.isArray(value)) return value.map(normalizeYamlValues);
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, normalizeYamlValues(v)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Best-effort line-by-line frontmatter extraction for malformed YAML.
+ *
+ * Used as a fallback when yaml.parse throws (e.g. unterminated quotes from LLM
+ * output corruption). Extracts simple `key: value` scalar pairs only — nested
+ * objects and sequences are skipped. Values that are individually parseable by
+ * yaml are normalized; otherwise stored as raw strings.
+ */
+function parseFrontmatterLenient(frontmatter: string): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const m = line.match(/^([\w][\w-]*):\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1];
+    const rawValue = (m[2] ?? "").trim();
+    try {
+      const singleEntry = yamlParse(`k: ${rawValue}`) as unknown;
+      if (singleEntry !== null && typeof singleEntry === "object" && !Array.isArray(singleEntry)) {
+        const v = (singleEntry as Record<string, unknown>).k;
+        data[key] = v === null || v === undefined ? "" : v;
+      } else {
+        data[key] = rawValue;
+      }
+    } catch {
+      data[key] = rawValue;
+    }
+  }
+  return data;
 }
 
 export function parseFrontmatterBlock(
@@ -207,15 +123,26 @@ export function parseFrontmatterBlock(
   // The closing --- may be preceded by \r\n; capture and strip trailing \r
   // from the frontmatter block so key parsing sees clean LF-terminated lines.
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
-  if (!match) return null;
-  // Strip any \r characters from the frontmatter block to normalise CRLF → LF
-  const frontmatter = match[1].replace(/\r/g, "");
-  const content = match[2];
-  return {
-    frontmatter,
-    content,
-    bodyStartLine: countLines(raw.slice(0, match[0].length - match[2].length)) + 1,
-  };
+  if (match) {
+    // Strip any \r characters from the frontmatter block to normalise CRLF → LF
+    const frontmatter = match[1].replace(/\r/g, "");
+    const content = match[2];
+    return {
+      frontmatter,
+      content,
+      bodyStartLine: countLines(raw.slice(0, match[0].length - match[2].length)) + 1,
+    };
+  }
+  // Empty frontmatter (---\n---): the content-bearing regex above requires at
+  // least one character between the fences. Handle the degenerate case so
+  // callers can reconstruct `---\nkey: val\n---\n\nbody` from a previously
+  // empty-frontmatter file without corrupting it by wrapping the entire raw
+  // string as body content.
+  const emptyMatch = raw.match(/^---\r?\n---(?:\r\n|\r|\n)([\s\S]*)$/);
+  if (emptyMatch) {
+    return { frontmatter: "", content: emptyMatch[1], bodyStartLine: 3 };
+  }
+  return null;
 }
 
 function countLines(text: string): number {
@@ -224,7 +151,13 @@ function countLines(text: string): number {
 }
 
 /**
- * Parse a simple YAML scalar value (string, boolean, or number).
+ * Parse a YAML scalar value (string, boolean, or number).
+ *
+ * For quoted strings (single or double), delegates to the `yaml` library so
+ * escape sequences are handled correctly per spec. The previous hand-rolled
+ * `slice(1, -1)` only stripped one layer of quoting and left inner quotes and
+ * escape sequences as literal characters in the stored value, causing visible
+ * corruption when `yaml.stringify` re-quoted them on the next write.
  */
 export function parseYamlScalar(value: string): unknown {
   if (value === "") return "";
@@ -233,6 +166,12 @@ export function parseYamlScalar(value: string): unknown {
   const asNumber = Number(value);
   if (!Number.isNaN(asNumber)) return asNumber;
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    try {
+      const parsed = yamlParse(value) as unknown;
+      if (typeof parsed === "string") return parsed;
+    } catch {
+      // Fall through to raw slice on malformed YAML — better than throwing.
+    }
     return value.slice(1, -1);
   }
   return value;

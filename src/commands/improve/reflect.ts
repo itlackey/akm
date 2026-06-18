@@ -557,6 +557,24 @@ function splitFrontmatter(raw: string): { fmText: string | null; body: string } 
 }
 
 /**
+ * Strip an LLM-appended duplicate frontmatter block from a body string.
+ *
+ * When the LLM echoes the original source file verbatim after its rewrite,
+ * the resulting body contains a second `---...---` YAML block. We detect it
+ * by requiring BOTH a balanced fence (opening + closing `---`) AND YAML-like
+ * `key: value` content inside, so legitimate Markdown thematic breaks and
+ * code-fence examples are never truncated.
+ */
+function stripAppendedFrontmatter(body: string): string {
+  const fencePattern = /\n---\r?\n([\s\S]*?)\n---\r?\n/;
+  const match = body.match(fencePattern);
+  if (!match) return body;
+  // Only strip when the captured block looks like YAML frontmatter.
+  if (!/^\w[\w-]*:/m.test(match[1])) return body;
+  return body.slice(0, body.indexOf(match[0])).replace(/\s+$/, "");
+}
+
+/**
  * Reflect post-processor — enforces the safety rails described at the top of
  * this file:
  *
@@ -631,7 +649,7 @@ function sanitizeReflectPayload(
     }
   }
 
-  const cleanedBody = rawLlmBody.replace(/^\s+/, "");
+  const cleanedBody = stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, ""));
 
   // Size guard — only when source body is meaningfully large. The pure
   // predicate lives in `core/proposal-quality-validators` so the same check

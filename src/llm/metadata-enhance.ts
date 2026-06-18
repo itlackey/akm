@@ -10,12 +10,13 @@
  * transport client in `client.ts`.
  */
 
+import metadataEnhanceSystemPrompt from "../assets/prompts/metadata-enhance-system.md" with { type: "text" };
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import type { StashEntry } from "../indexer/passes/metadata";
 import { chatCompletion, parseJsonResponse } from "./client";
 import { tryLlmFeature } from "./feature-gate";
 
-const SYSTEM_PROMPT = `You are a metadata generator for a developer asset registry. Given a script/skill/command/agent entry, generate improved metadata. Respond with ONLY valid JSON, no markdown fencing.`;
+const SYSTEM_PROMPT = metadataEnhanceSystemPrompt;
 
 export type EnhancedMetadata = { description?: string; searchHints?: string[]; tags?: string[] };
 

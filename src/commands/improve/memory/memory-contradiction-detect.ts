@@ -37,6 +37,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import contradictionJudgeTemplate from "../../../assets/prompts/contradiction-judge.md" with { type: "text" };
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
@@ -57,6 +58,14 @@ const MAX_FAMILY_SIZE = 8;
  * families. Prevents runaway LLM usage on stashes with many memories.
  */
 const MAX_PAIRS_PER_RUN = 20;
+
+/**
+ * Minimum confidence required to write a contradiction edge. Below this
+ * threshold the LLM may be flagging topic-overlap rather than genuine logical
+ * exclusivity (investigation 2026-06-18). Absent confidence fields default to
+ * 1.0 for backward compatibility with older judge responses.
+ */
+const CONTRADICT_CONFIDENCE_THRESHOLD = 0.92;
 
 /**
  * Truncation limit for memory body content sent to the LLM judge.
@@ -88,34 +97,13 @@ interface DerivedMemoryEntry {
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 function buildContradictionJudgePrompt(a: DerivedMemoryEntry, b: DerivedMemoryEntry): string {
-  return [
-    "You are evaluating two derived memory entries to determine if they contain",
-    "directly contradictory factual claims about the same subject.",
-    "",
-    "Memory A:",
-    `Ref: ${a.ref}`,
-    `Description: ${a.description || "(none)"}`,
-    "Content:",
-    "```",
-    a.body.slice(0, BODY_TRUNCATION),
-    "```",
-    "",
-    "Memory B:",
-    `Ref: ${b.ref}`,
-    `Description: ${b.description || "(none)"}`,
-    "Content:",
-    "```",
-    b.body.slice(0, BODY_TRUNCATION),
-    "```",
-    "",
-    "Answer ONLY with valid JSON — no prose, no code fences:",
-    '{"contradicts": true|false, "reason": "<one sentence explaining why or why not>"}',
-    "",
-    "A contradiction means the memories make mutually exclusive factual claims about the",
-    "same topic (e.g. Memory A says 'always use VPN' while Memory B says 'VPN is optional').",
-    "If the memories are complementary, about different topics, or one supersedes the other",
-    "without direct conflict, return false.",
-  ].join("\n");
+  return contradictionJudgeTemplate
+    .replace("{{A_REF}}", a.ref)
+    .replace("{{A_DESCRIPTION}}", a.description || "(none)")
+    .replace("{{A_BODY}}", a.body.slice(0, BODY_TRUNCATION))
+    .replace("{{B_REF}}", b.ref)
+    .replace("{{B_DESCRIPTION}}", b.description || "(none)")
+    .replace("{{B_BODY}}", b.body.slice(0, BODY_TRUNCATION));
 }
 
 // ── Filesystem helpers ────────────────────────────────────────────────────────
@@ -300,15 +288,28 @@ export async function detectAndWriteContradictions(
 
         if (!judgeResult) continue; // Feature gate disabled or LLM call failed.
 
-        let parsed: { contradicts: boolean; reason?: string } | null | undefined = null;
+        let parsed: { contradicts: boolean; confidence?: number; reason?: string } | null | undefined = null;
         try {
-          parsed = parseEmbeddedJsonResponse<{ contradicts: boolean; reason?: string }>(judgeResult);
+          parsed = parseEmbeddedJsonResponse<{ contradicts: boolean; confidence?: number; reason?: string }>(
+            judgeResult,
+          );
         } catch {
           result.warnings.push(`Could not parse contradiction judge response for pair ${a.ref} / ${b.ref}`);
           continue;
         }
 
         if (!parsed?.contradicts) continue;
+
+        // Confidence gate: absent field defaults to 1.0 (backward compat with
+        // pre-confidence responses). Do NOT default to 0 — that would silently
+        // disable all detection during the rollout period.
+        const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 1.0;
+        if (confidence < CONTRADICT_CONFIDENCE_THRESHOLD) {
+          result.warnings.push(
+            `Pair ${a.ref} / ${b.ref}: confidence ${confidence.toFixed(2)} below ${CONTRADICT_CONFIDENCE_THRESHOLD} threshold — skipped.`,
+          );
+          continue;
+        }
 
         // Write contradiction edges: both members get contradictedBy pointing to each other.
         try {

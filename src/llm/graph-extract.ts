@@ -22,6 +22,7 @@
  * straight through.
  */
 
+import systemPromptTemplate from "../assets/prompts/graph-extract-system.md" with { type: "text" };
 import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" with { type: "text" };
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
@@ -52,8 +53,7 @@ const MAX_ENTITIES_PER_ASSET = 32;
 /** Hard cap on relations returned per asset. */
 const MAX_RELATIONS_PER_ASSET = 32;
 
-const SYSTEM_PROMPT =
-  "You extract a knowledge graph from developer notes. Return ONLY valid JSON — no prose, no markdown fences, no preamble.";
+const SYSTEM_PROMPT = systemPromptTemplate;
 
 const USER_PROMPT_PREFIX = userPromptTemplate
   .replace("{{MAX_ENTITIES}}", String(MAX_ENTITIES_PER_ASSET))

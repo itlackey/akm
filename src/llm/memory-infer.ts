@@ -20,6 +20,8 @@
  * straight through.
  */
 
+import memoryInferSystemPrompt from "../assets/prompts/memory-infer-system.md" with { type: "text" };
+import memoryInferUserPrompt from "../assets/prompts/memory-infer-user.md" with { type: "text" };
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { warn } from "../core/warn";
@@ -29,16 +31,9 @@ import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 /** Hard cap on body chars sent to the model — pragmatic and matches `runLlmEnrich`. */
 const MAX_BODY_CHARS = 4000;
 
-const SYSTEM_PROMPT =
-  "You compress a developer memory into one high-signal derived memory for later retrieval. " +
-  "Return only valid JSON. No prose outside the JSON object. No markdown fences.";
+const SYSTEM_PROMPT = memoryInferSystemPrompt;
 
-const USER_PROMPT_PREFIX = `Compress the memory below into one derived memory. Output ONLY JSON:
-{"title":"short title string","description":"one sentence summary string","tags":["tag1","tag2"],"searchHints":["search phrase 1","search phrase 2"],"content":"2-3 sentence compressed body preserving key facts verbatim"}
-Rules: be specific, no vague generalizations, preserve key facts (names/versions/paths/config keys verbatim), merge related points, 3-8 tags, 3-6 searchHints. The content field must be a plain string with 2-3 sentences.
-
-Memory:
-`;
+const USER_PROMPT_PREFIX = memoryInferUserPrompt;
 
 export interface DerivedMemoryDraft {
   title: string;

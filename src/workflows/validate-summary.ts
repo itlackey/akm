@@ -18,6 +18,7 @@
  * @module workflows/validate-summary
  */
 
+import validateSummaryJudgePrompt from "../assets/prompts/validate-summary-judge.md" with { type: "text" };
 import { parseJsonResponse } from "../core/parse";
 
 export interface ValidateSummaryInput {
@@ -48,14 +49,7 @@ export interface ValidateSummaryResult {
  */
 export type SummaryJudge = (prompt: { system: string; user: string }) => Promise<string>;
 
-const JUDGE_SYSTEM =
-  "You are a strict completion auditor for a software workflow engine. " +
-  "Given a step's completion criteria and a summary of the work an agent claims to have done, " +
-  "judge whether the summary provides concrete evidence that EVERY criterion is satisfied. " +
-  "Be skeptical: vague, hand-wavy, or unsubstantiated claims do NOT satisfy a criterion. " +
-  'Respond with ONLY a JSON object: {"complete": boolean, "missing": string[], "feedback": string}. ' +
-  '"missing" lists the exact criteria that are not yet satisfied; "feedback" is a short directive ' +
-  "telling the agent what to finish or fix. No prose, no markdown fences.";
+const JUDGE_SYSTEM = validateSummaryJudgePrompt;
 
 function buildUserPrompt(input: ValidateSummaryInput): string {
   const criteria = input.completionCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n");

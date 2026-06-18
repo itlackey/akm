@@ -582,10 +582,17 @@ function markParentProcessed(parent: MemoryRecord): void {
     return;
   }
 
-  const updatedFm: Record<string, unknown> = { ...parent.data, [FM_INFERENCE_PROCESSED]: true };
   const block = parseFrontmatterBlock(raw);
-  const body = block?.content ?? raw;
-  const next = assembleAsset(updatedFm, body);
+  if (!block) {
+    // Cannot safely rewrite malformed frontmatter — skip marking so the memory
+    // is retried on the next run once the frontmatter is repaired. Writing with
+    // `body = raw` would wrap the entire file (including the bad frontmatter)
+    // in a new block, producing a duplicate-frontmatter corruption.
+    warn(`memory inference: skipping markParentProcessed for ${parent.filePath} — could not parse frontmatter block`);
+    return;
+  }
+  const updatedFm: Record<string, unknown> = { ...parent.data, [FM_INFERENCE_PROCESSED]: true };
+  const next = assembleAsset(updatedFm, block.content);
   try {
     fs.writeFileSync(parent.filePath, next, "utf8");
   } catch (err) {
