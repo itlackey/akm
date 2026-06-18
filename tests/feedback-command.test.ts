@@ -4,7 +4,7 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
 import { getDataDir, getDbPath } from "../src/core/paths";
-import { closeDatabase, findEntryIdByRef, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, openDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { runCliCapture } from "./_helpers/cli";
