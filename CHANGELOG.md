@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.20] — 2026-06-18
+
+### Fixed
+
+- **`akm update --all` no longer fails for writable `github:` entries stored as `source:"git"`**. `updateRegistryEntry` was using `synced.source` (re-derived from the ref scheme as `"github"`) instead of the existing `entry.source`, causing the config validator to reject `writable:true` on every update cycle.
+
 ## [0.9.0-beta.19] — 2026-06-17
 
 ### Fixed
