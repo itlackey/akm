@@ -118,15 +118,28 @@ function installSuiteWideSandbox(): void {
   delete process.env.AKM_VERBOSE;
   delete process.env.AKM_LLM_API_KEY;
   delete process.env.AKM_EMBED_API_KEY;
-  process.on("exit", () => {
-    if (suiteSandboxRoot) {
-      try {
-        fs.rmSync(suiteSandboxRoot, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup; ignore.
-      }
+  // Teardown must fire on signal-kills too, not just clean exit. A worker that
+  // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being
+  // reaped) otherwise leaks its entire `akm-test-suite-*` root under /tmp — the
+  // accumulation that filled tmpfs with tens of thousands of husks. SIGKILL is
+  // uncatchable, so the stale-husk sweep in scripts/sweep-test-tmp.ts is the
+  // backstop for that case.
+  const removeSuiteRoot = (): void => {
+    if (!suiteSandboxRoot) return;
+    try {
+      fs.rmSync(suiteSandboxRoot, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; ignore.
     }
-  });
+  };
+  process.on("exit", removeSuiteRoot);
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      removeSuiteRoot();
+      // Re-raise default behaviour with the conventional 128+signo code.
+      process.exit(sig === "SIGINT" ? 130 : sig === "SIGTERM" ? 143 : 129);
+    });
+  }
 }
 
 installSuiteWideSandbox();
