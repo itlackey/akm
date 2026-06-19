@@ -324,6 +324,16 @@ export const ImproveProcessConfigSchema = z
     // hypothesis is promoted to a lesson. Default 2. Only meaningful on
     // `recombine`.
     confirmThreshold: z.number().int().min(1).optional(),
+    // #615 — procedural process: minimum number of distinct assets sharing the
+    // same successful normalized ordered-action sequence before it is compiled
+    // into a workflow proposal. Default 3. Only meaningful on `procedural`.
+    minRecurrence: z.number().int().min(2).optional(),
+    // #615 — procedural process: hard cap on workflow proposals emitted per run
+    // (one bounded LLM call each). Default 3. Only meaningful on `procedural`.
+    maxProposalsPerRun: positiveInt.optional(),
+    // #615 — procedural process: asset type a compiled sequence is emitted as.
+    // Reserved; v1 always emits "workflow". Only meaningful on `procedural`.
+    emitAs: z.enum(["workflow", "skill"]).optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),
@@ -352,6 +362,7 @@ const ImproveProfileProcessesSchema = z
     triage: ImproveProcessConfigSchema.optional(),
     proactiveMaintenance: ImproveProcessConfigSchema.optional(),
     recombine: ImproveProcessConfigSchema.optional(),
+    procedural: ImproveProcessConfigSchema.optional(),
   })
   .passthrough()
   .superRefine((val, ctx) => {

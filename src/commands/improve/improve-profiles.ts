@@ -70,6 +70,10 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   // generalization. Opt-in (default off); enable per-profile with an explicit
   // `processes.recombine.enabled: true`.
   recombine: false,
+  // #615 procedural-compilation pass — detects recurring successful ordered
+  // action sequences and compiles them into workflow proposals. Opt-in (default
+  // off); enable per-profile with an explicit `processes.procedural.enabled: true`.
+  procedural: false,
 };
 
 /**

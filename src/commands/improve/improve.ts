@@ -19,6 +19,7 @@ import type {
   ImproveActionResult,
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
+  ProceduralCompilationResult,
   RecombineResult,
 } from "../../core/improve-types";
 import { classifyImproveAction } from "../../core/improve-types";
@@ -107,6 +108,7 @@ import {
   updateAssetOutcome,
 } from "./outcome-loop";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
+import { akmProcedural } from "./procedural";
 import { akmRecombine } from "./recombine";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import {
@@ -290,6 +292,12 @@ export interface AkmImproveOptions {
    */
   recombineFn?: typeof akmRecombine;
   /**
+   * #615: injectable procedural-compilation pass seam for tests. When omitted,
+   * the real {@link akmProcedural} runs (gated on the opt-in `procedural` process
+   * being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
+   */
+  proceduralFn?: typeof akmProcedural;
+  /**
    * Phase 4A: injectable staleness-detection pass for tests. When omitted, the
    * real `runStalenessDetectionPass` runs (which is itself a no-op unless
    * `features.index.staleness_detection` is enabled).
@@ -459,6 +467,8 @@ interface ImprovePostLoopResult {
   stalenessDetection?: StalenessDetectionResult;
   /** #609: result of the opt-in recombine / synthesize pass, when it ran. */
   recombination?: RecombineResult;
+  /** #615: result of the opt-in procedural-compilation pass, when it ran. */
+  proceduralCompilation?: ProceduralCompilationResult;
 }
 
 interface ImproveMaintenanceResult {
@@ -1487,6 +1497,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       gateAutoAcceptedCount: postLoopGateCount,
       gateAutoAcceptFailedCount: postLoopGateFailedCount,
       recombination,
+      proceduralCompilation,
     } = await runImprovePostLoopStage({
       scope,
       options,
@@ -1567,6 +1578,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
       ...(stalenessDetection ? { stalenessDetection } : {}),
       ...(recombination ? { recombination } : {}),
+      ...(proceduralCompilation ? { proceduralCompilation } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
@@ -4512,10 +4524,41 @@ async function runImprovePostLoopStage(args: {
     }
   }
 
+  // #615 — procedural-compilation pass. Detects recurring successful ordered
+  // action sequences and compiles them into workflow proposals. Opt-in: gated
+  // on the `procedural` process being enabled, whole-stash / type scope (never
+  // `ref`), and not a dry run. Mirrors the recombine opt-in wiring.
+  let proceduralCompilation: ProceduralCompilationResult | undefined;
+  if (
+    primaryStashDir &&
+    improveProfile &&
+    resolveProcessEnabled("procedural", improveProfile) &&
+    scope.mode !== "ref" &&
+    !options.dryRun
+  ) {
+    const proceduralFn = options.proceduralFn ?? akmProcedural;
+    try {
+      proceduralCompilation = await proceduralFn({
+        stashDir: primaryStashDir,
+        config: options.config ?? loadConfig(),
+        ...(options.runId ? { sourceRun: options.runId } : {}),
+        ...(budgetSignal ? { signal: budgetSignal } : {}),
+        ...(options.autoAccept !== undefined ? { autoAccept: options.autoAccept } : {}),
+        eligibilitySource: "procedural",
+        ...(eventsCtx ? { ctx: eventsCtx } : {}),
+        minRecurrence: improveProfile.processes?.procedural?.minRecurrence,
+        maxProposalsPerRun: improveProfile.processes?.procedural?.maxProposalsPerRun,
+      });
+    } catch (e) {
+      allWarnings.push(`procedural: ${String(e)}`);
+    }
+  }
+
   return {
     allWarnings,
     deadUrls,
     ...(recombination ? { recombination } : {}),
+    ...(proceduralCompilation ? { proceduralCompilation } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
     ...(maintenanceResult.stalenessDetection ? { stalenessDetection: maintenanceResult.stalenessDetection } : {}),

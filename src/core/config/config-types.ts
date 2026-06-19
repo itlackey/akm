@@ -493,6 +493,26 @@ export interface ImproveProcessConfig {
    * `recombine` process.
    */
   confirmThreshold?: number;
+  /**
+   * #615 — procedural-compilation pass: minimum number of distinct assets that
+   * must share the SAME successful normalized ordered-action sequence before it
+   * is compiled into a workflow proposal. Default 3. Only meaningful on the
+   * `procedural` process.
+   */
+  minRecurrence?: number;
+  /**
+   * #615 — procedural pass: hard cap on the number of workflow proposals emitted
+   * per run (one bounded LLM call each). Clusters are ranked by member-count
+   * desc and the top N are kept. Default 3. Only meaningful on the `procedural`
+   * process.
+   */
+  maxProposalsPerRun?: number;
+  /**
+   * #615 — procedural pass: asset type a compiled sequence is emitted as.
+   * Reserved; v1 always emits `"workflow"` (the `"skill"` alternative is
+   * deferred). Only meaningful on the `procedural` process.
+   */
+  emitAs?: "workflow" | "skill";
 }
 
 export interface ImproveProfileConfig {
@@ -533,6 +553,14 @@ export interface ImproveProfileConfig {
      * Opt-in (default DISABLED).
      */
     recombine?: ImproveProcessConfig;
+    /**
+     * #615 — procedural-compilation pass. Detects recurring successful ordered
+     * action sequences (the same normalized step list appearing >=
+     * `minRecurrence` times with a non-failure outcome) and compiles each into a
+     * `type: workflow` proposal through the normal queue + quality gate.
+     * Opt-in (default DISABLED).
+     */
+    procedural?: ImproveProcessConfig;
   };
   autoAccept?: number;
   limit?: number;

@@ -67,6 +67,7 @@ export type EligibilitySource =
   | "replay"
   | "exploration"
   | "recombine"
+  | "procedural"
   | "unknown";
 
 export interface ImproveEligibleRef {
@@ -193,6 +194,28 @@ export interface RecombineResult {
   /** Number of relatedness clusters that reached the LLM induction step. */
   clustersFormed: number;
   /** Number of `type: hypothesis` proposals queued through the normal queue. */
+  proposalsEmitted: number;
+  /** Number of clusters whose LLM returned a justified null (no proposal). */
+  nullsReturned: number;
+  /** Wall-clock duration of the pass in milliseconds. */
+  durationMs: number;
+  /** Non-fatal warnings accumulated during the pass. */
+  warnings: string[];
+}
+
+/**
+ * #615 — outcome of the procedural-compilation pass. Emitted on
+ * {@link AkmImproveResult.proceduralCompilation} when the (opt-in) pass runs.
+ */
+export interface ProceduralCompilationResult {
+  schemaVersion: 1;
+  /** False when the run aborted early (e.g. budget signal already fired). */
+  ok: boolean;
+  /** Number of indexed entries scanned for an `orderedActions` sequence. */
+  sequencesScanned: number;
+  /** Number of recurring-sequence clusters that reached the LLM compilation step. */
+  clustersFormed: number;
+  /** Number of `type: workflow` proposals queued through the normal queue. */
   proposalsEmitted: number;
   /** Number of clusters whose LLM returned a justified null (no proposal). */
   nullsReturned: number;
@@ -334,6 +357,12 @@ export interface AkmImproveResult {
    * omitted entirely otherwise to keep the envelope tidy.
    */
   recombination?: RecombineResult;
+  /**
+   * #615 — procedural-compilation pass outcome. Present only when the opt-in
+   * `procedural` process is enabled and the run was whole-stash / type scope;
+   * omitted entirely otherwise to keep the envelope tidy.
+   */
+  proceduralCompilation?: ProceduralCompilationResult;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and

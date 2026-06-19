@@ -122,6 +122,13 @@ export type EventType =
    */
   | "recombine_invoked"
   /**
+   * #615 — emitted once per procedural-compilation cluster. Metadata carries
+   * `{groupKey, memberCount, outcome:
+   * 'queued'|'null_returned'|'skipped'|'quality_rejected'|'invalid_workflow',
+   * proposalId?, reason?, skipReason?, sourceRun}`.
+   */
+  | "procedural_compiled"
+  /**
    * #626 — emitted once per extract run when the pre-LLM triage gate is enabled
    * and evaluated at least one session. Counts-only metadata: `{evaluated,
    * passed, triagedOut, sourceRun}` (aggregated, never per-session).
