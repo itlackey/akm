@@ -1309,12 +1309,18 @@ function searchBlobVec(db: Database, queryEmbedding: EmbeddingVector, k: number)
 
 // ── FTS5 search ─────────────────────────────────────────────────────────────
 
-export function searchFts(db: Database, query: string, limit: number, entryType?: string): DbSearchResult[] {
+export function searchFts(
+  db: Database,
+  query: string,
+  limit: number,
+  entryType?: string,
+  excludeTypes?: string[],
+): DbSearchResult[] {
   const ftsQuery = sanitizeFtsQuery(query);
   if (!ftsQuery) return [];
 
   // Try the exact AND query first
-  const exactResults = runFtsQuery(db, ftsQuery, limit, entryType);
+  const exactResults = runFtsQuery(db, ftsQuery, limit, entryType, excludeTypes);
   if (exactResults.length > 0) return exactResults;
 
   // Exact match returned zero results — try prefix fallback.
@@ -1324,7 +1330,7 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   const prefixQuery = buildPrefixQuery(ftsQuery);
   if (!prefixQuery) return [];
 
-  return runFtsQuery(db, prefixQuery, limit, entryType);
+  return runFtsQuery(db, prefixQuery, limit, entryType, excludeTypes);
 }
 
 /**
@@ -1351,9 +1357,21 @@ function buildPrefixQuery(ftsQuery: string): string | null {
   return prefixTokens.join(" ");
 }
 
-function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: string): DbSearchResult[] {
+function runFtsQuery(
+  db: Database,
+  ftsQuery: string,
+  limit: number,
+  entryType?: string,
+  excludeTypes?: string[],
+): DbSearchResult[] {
   let sql: string;
   let params: unknown[];
+
+  // #627 — exclude-type clause. Only applies on the untyped ('any') path; an
+  // explicit include filter (entryType) already narrows to a single type, so
+  // exclusion is redundant there. An empty list skips the clause entirely
+  // (never emit `NOT IN ()`, which is a SQL error / always-false).
+  const excludes = excludeTypes && excludeTypes.length > 0 ? excludeTypes : [];
 
   // Join on integer entry_id directly (no CAST needed; we store integer)
   // Use bm25() with per-column weights: entry_id(0), name(10), description(5), tags(3), hints(2), content(1)
@@ -1370,16 +1388,19 @@ function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: 
     `;
     params = [ftsQuery, entryType, limit];
   } else {
+    const excludeClause = excludes.length > 0 ? `AND e.entry_type NOT IN (${excludes.map(() => "?").join(", ")})` : "";
     sql = `
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
              bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
       FROM entries_fts f
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?
+        ${excludeClause}
       ORDER BY bm25Score, e.id ASC
       LIMIT ?
     `;
-    params = [ftsQuery, limit];
+    // Param order: MATCH, then the NOT IN values, then LIMIT.
+    params = [ftsQuery, ...excludes, limit];
   }
 
   try {
@@ -1471,14 +1492,21 @@ function parseEntryRows(rows: Array<Record<string, unknown>>, context: string): 
   return entries;
 }
 
-export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[] {
+export function getAllEntries(db: Database, entryType?: string, excludeTypes?: string[]): DbIndexedEntry[] {
   let sql: string;
   let params: unknown[];
+
+  // #627 — exclude-type clause applies only on the untyped ('any') path. Empty
+  // list skips the clause (never `NOT IN ()`).
+  const excludes = excludeTypes && excludeTypes.length > 0 ? excludeTypes : [];
 
   if (entryType && entryType !== "any") {
     sql =
       "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries WHERE entry_type = ?";
     params = [entryType];
+  } else if (excludes.length > 0) {
+    sql = `SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries WHERE entry_type NOT IN (${excludes.map(() => "?").join(", ")})`;
+    params = [...excludes];
   } else {
     sql = "SELECT id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text FROM entries";
     params = [];

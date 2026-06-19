@@ -127,6 +127,12 @@ export async function searchLocal(input: {
    * preserves prior behavior for the unnamed default search path.
    */
   restrictToSources?: boolean;
+  /**
+   * #627 — when true, re-include the asset types normally hidden from the
+   * default (untyped) path via `config.search.defaultExcludeTypes` (notably
+   * `session`). No effect when an explicit `--type` is supplied.
+   */
+  includeExcludedTypes?: boolean;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -141,6 +147,7 @@ export async function searchLocal(input: {
   const includeProposed = input.includeProposed === true;
   const beliefFilter = input.beliefFilter ?? "all";
   const restrictToSources = input.restrictToSources === true;
+  const includeExcludedTypes = input.includeExcludedTypes === true;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -214,6 +221,7 @@ export async function searchLocal(input: {
       includeProposed,
       beliefFilter,
       restrictToSources,
+      includeExcludedTypes,
     );
     return {
       hits,
@@ -247,6 +255,7 @@ async function searchDatabase(
   includeProposed = false,
   beliefFilter: BeliefFilterMode = "all",
   restrictToSources = false,
+  includeExcludedTypes = false,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -254,12 +263,19 @@ async function searchDatabase(
 }> {
   const hasSearchableTokens = query.length > 0 && sanitizeFtsQuery(query).length > 0;
 
+  // #627 — resolve the default type-exclusion policy. It applies ONLY on the
+  // untyped ('any') path and only when the caller did not opt back in via
+  // `includeExcludedTypes`. When the config key is ABSENT a built-in default of
+  // ['session'] is applied; an explicit empty list disables exclusion.
+  const defaultExcludes =
+    searchType === "any" && !includeExcludedTypes ? (config.search?.defaultExcludeTypes ?? ["session"]) : [];
+
   // Empty queries — including ones that sanitize down to no searchable FTS
   // tokens such as "." — should enumerate matching entries instead of
   // returning an empty result set from FTS.
   if (!hasSearchableTokens) {
     const typeFilter = searchType === "any" ? undefined : searchType;
-    const allEntries = getAllEntries(db, typeFilter);
+    const allEntries = getAllEntries(db, typeFilter, defaultExcludes);
     // Deduplicate by file path — multiple entries can share the same file
     const seenFilePaths = new Set<string>();
     const uniqueEntries = allEntries.filter((ie) => {
@@ -314,7 +330,7 @@ async function searchDatabase(
   const typeFilter = searchType === "any" ? undefined : searchType;
   const tEmbed0 = Date.now();
   const embeddingPromise = tryVecScores(db, query, limit * 3, config);
-  const ftsResults = searchFts(db, query, limit * 3, typeFilter);
+  const ftsResults = searchFts(db, query, limit * 3, typeFilter, defaultExcludes);
   const embeddingScores = await embeddingPromise;
   const embedMs = Date.now() - tEmbed0;
 
@@ -339,6 +355,11 @@ async function searchDatabase(
     embedScoreMap,
     getEntryById: (id) => getEntryById(db, id) ?? undefined,
     typeFilter,
+    // #627 — also exclude default-hidden types from the vector-only branch so a
+    // session asset that is a top-k vector neighbor (but not an FTS match) does
+    // not leak into default ('any') results. defaultExcludes is already []
+    // unless this is the untyped path without includeExcludedTypes.
+    excludeTypes: defaultExcludes,
   });
 
   // ── Scoring Phase ──────────────────────────────────────────────────────

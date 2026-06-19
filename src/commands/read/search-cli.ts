@@ -70,6 +70,12 @@ export const searchCommand = defineJsonCommand({
         "Disable the automatic project-context ranking boost (also disabled by AKM_DISABLE_PROJECT_CONTEXT=1).",
       default: false,
     },
+    "include-sessions": {
+      type: "boolean",
+      description:
+        "Include session assets (excluded from default search results via config.search.defaultExcludeTypes).",
+      default: false,
+    },
   },
   async run({ args }) {
     const query = (args.query ?? "").trim();
@@ -90,6 +96,7 @@ export const searchCommand = defineJsonCommand({
     const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
+    const includeSessions = getHyphenatedBoolean(args, "include-sessions");
     // --no-project-context sets env so searchDatabase picks it up without
     // threading the flag through the entire call stack.
     if (noProjectContext) process.env.AKM_DISABLE_PROJECT_CONTEXT = "1";
@@ -101,6 +108,7 @@ export const searchCommand = defineJsonCommand({
       filters,
       includeProposed,
       belief,
+      includeSessions,
       eventSource: resolveEventSource(),
     });
     output("search", result);

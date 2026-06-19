@@ -533,6 +533,7 @@ const SearchGraphBoostSchema = z
 export const SearchConfigSchema = z
   .object({
     minScore: nonNegativeNumber.optional(),
+    defaultExcludeTypes: z.array(nonEmptyString).optional(),
     curateRerank: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     graphBoost: SearchGraphBoostSchema.optional(),
   })

@@ -3291,6 +3291,13 @@
           "type": "number",
           "minimum": 0
         },
+        "defaultExcludeTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "curateRerank": {
           "type": "object",
           "properties": {
@@ -6764,6 +6771,13 @@
             "minScore": {
               "type": "number",
               "minimum": 0
+            },
+            "defaultExcludeTypes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "curateRerank": {
               "type": "object",

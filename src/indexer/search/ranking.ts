@@ -76,9 +76,20 @@ export function combineSearchScores(options: {
   embedScoreMap: Map<number, number>;
   getEntryById: (id: number) => { entry: StashEntry; filePath: string } | undefined;
   typeFilter?: string;
+  /**
+   * #627 — types excluded from the default (untyped 'any') path. The FTS and
+   * enumerate paths apply this at the SQL layer, but vector-only neighbors are
+   * re-added here straight from `embedScoreMap` (filtered only by `typeFilter`,
+   * which is `undefined` on the 'any' path). Without this filter a `session`
+   * asset that is a top-k vector neighbor but NOT an FTS match would leak into
+   * default results whenever an embedding provider is configured (the default
+   * `semanticSearchMode: 'auto'` production config). Empty list = no exclusion.
+   */
+  excludeTypes?: string[];
 }): RankedEntryInput[] {
   const FTS_WEIGHT = 0.7;
   const VEC_WEIGHT = 0.3;
+  const excludeTypeSet = options.excludeTypes && options.excludeTypes.length > 0 ? new Set(options.excludeTypes) : null;
   const scored: RankedEntryInput[] = [];
   const seenIds = new Set<number>();
 
@@ -100,6 +111,8 @@ export function combineSearchScores(options: {
     const found = options.getEntryById(id);
     if (!found) continue;
     if (options.typeFilter && found.entry.type !== options.typeFilter) continue;
+    // #627 — drop vector-only neighbors whose type is excluded on the default path.
+    if (excludeTypeSet?.has(found.entry.type)) continue;
     scored.push({
       id,
       entry: found.entry,

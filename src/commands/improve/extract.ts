@@ -66,6 +66,7 @@ import {
   sessionMeetsDurationGate,
   writeSessionAsset,
 } from "./session-asset";
+import { resolveTriageConfig, scoreSessionTriage } from "./triage";
 
 /** Default minimum session duration (minutes) for session indexing (#561). */
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
@@ -193,7 +194,7 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short";
+  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short" | "triaged_out";
   /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
   sessionAssetRef?: string;
   /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
@@ -319,6 +320,9 @@ async function processSession(
   timeoutMs: number,
   maxTotalChars: number | undefined,
   minContentChars: number,
+  // #626 — pre-LLM heuristic triage gate. Default-off (enabled:false) takes the
+  // exact pre-change path (no scorer call, no new skipReason).
+  triage: { enabled: boolean; minScore: number },
   sessionIndexing: {
     enabled: boolean;
     minDurationMinutes: number;
@@ -376,6 +380,31 @@ async function processSession(
       skipped: true,
       skipReason: "too_short",
     };
+  }
+
+  // #626 — pre-LLM heuristic triage gate. Runs AFTER minContentChars + the
+  // already-extracted skip check (both in the caller / above), BEFORE the
+  // extraction prompt and the session-asset write. When the session scores below
+  // the configured threshold we triage it out: no chat() call, no session asset,
+  // no proposals. Pure-heuristic — zero added LLM cost. Default-off → skipped.
+  if (triage.enabled) {
+    const t = scoreSessionTriage(data, triage.minScore);
+    if (!t.pass) {
+      return {
+        sessionId: sessionRef.sessionId,
+        harness: harness.name,
+        candidateCount: 0,
+        proposalIds: [],
+        preFilter: {
+          inputCount: filtered.stats.inputCount,
+          outputCount: filtered.stats.outputCount,
+          truncatedCount: filtered.stats.truncatedCount,
+        },
+        warnings: [],
+        skipped: true,
+        skipReason: "triaged_out",
+      };
+    }
   }
 
   const prompt = buildExtractPrompt({ data, events: filtered.events, inlineRefs: data.inlineRefs });
@@ -672,6 +701,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // Default discovery window — process config can override the built-in 24h.
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
 
+  // #626 — resolve the triage gate config once per run. Default-off → the
+  // per-session path never calls the scorer and emits no telemetry.
+  const triage = resolveTriageConfig(extractProcess);
+
   // #561 — resolve session-indexing config. Default ON: we only reach this code
   // when `session_extraction` is enabled AND an LLM is configured (both checked
   // above), so defaulting on costs nothing offline (the summary call fails open)
@@ -778,6 +811,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const sessions: ExtractedSessionResult[] = [];
   let processedCount = 0;
   let skippedCount = 0;
+  // #626 — per-run triage aggregation counters (counts-only telemetry, AC4).
+  let triageEvaluated = 0;
+  let triagePassed = 0;
+  let triagedOut = 0;
   const allProposalIds: string[] = [];
   const topLevelWarnings: string[] = [];
   const chat = options.chat ?? chatCompletion;
@@ -874,10 +911,27 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         timeoutMs,
         maxTotalChars,
         minContentChars,
+        triage,
         sessionIndexing,
         schemaSimilarityCtx,
       );
       sessions.push(result);
+      // #626 — triage aggregation. A session reached the triage gate only when it
+      // was NOT already preempted by an earlier skip (read_failed / too_short /
+      // already_extracted handled above the processSession call). When triage is
+      // enabled, processSession either triages-out (skipReason 'triaged_out') or
+      // proceeds past the gate — both count as "evaluated".
+      if (triage.enabled) {
+        const preemptedBeforeTriage =
+          result.skipReason === "read_failed" ||
+          result.skipReason === "too_short" ||
+          result.skipReason === "already_extracted";
+        if (!preemptedBeforeTriage) {
+          triageEvaluated += 1;
+          if (result.skipReason === "triaged_out") triagedOut += 1;
+          else triagePassed += 1;
+        }
+      }
       if (result.skipped) skippedCount += 1;
       else processedCount += 1;
       allProposalIds.push(...result.proposalIds);
@@ -948,6 +1002,24 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     } catch {
       // best-effort close
     }
+  }
+
+  // #626 — counts-only triage telemetry (AC4). Exactly ONE aggregated event per
+  // run, emitted only when the gate was enabled and actually evaluated at least
+  // one session. No per-session events (avoids the log-spam the issue warns of).
+  if (triage.enabled && triageEvaluated > 0) {
+    appendEvent(
+      {
+        eventType: "extract_triaged",
+        metadata: {
+          evaluated: triageEvaluated,
+          passed: triagePassed,
+          triagedOut,
+          sourceRun,
+        },
+      },
+      options.ctx,
+    );
   }
 
   return {

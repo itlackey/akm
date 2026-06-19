@@ -416,6 +416,19 @@ export interface ImproveProcessConfig {
     enabled?: boolean;
   };
   /**
+   * #626: Pre-LLM heuristic triage gate. When enabled, a pure deterministic
+   * scorer decides BEFORE the extraction LLM call whether a session carries
+   * enough signal (decision/outcome/error markers, tool-use / edit / commit
+   * density, substantive-turn ratio) to be worth extracting; low-signal sessions
+   * are skipped (skipReason 'triaged_out') at zero LLM cost.
+   * Default OFF. Only meaningful on the `extract` process.
+   */
+  triage?: {
+    enabled?: boolean;
+    /** Minimum total heuristic score to PASS. Default 2 (DEFAULT_TRIAGE_MIN_SCORE). */
+    minScore?: number;
+  };
+  /**
    * WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
    * from collapsing too aggressively and losing diversity.
    * Default OFF. Only meaningful on the `consolidate` process.
@@ -842,6 +855,16 @@ export interface AkmConfig {
   search?: {
     /** Minimum score floor for semantic-only hits. Default: 0.2. Set to 0 to disable. */
     minScore?: number;
+    /**
+     * #627 — asset types excluded from default (untyped) `akm search` / `akm
+     * curate` results. When the key is ABSENT a built-in default of
+     * `['session']` is applied in code (sessions pollute default results). An
+     * explicit empty list `[]` disables exclusion = pre-#627 behavior. The
+     * exclusion is a pure query-layer policy — it never applies when an
+     * explicit `--type` is supplied, and `akm search --include-sessions`
+     * re-includes excluded types on the default path.
+     */
+    defaultExcludeTypes?: string[];
     /** Gates the `akm curate` LLM-rerank pass. Default: false. */
     curateRerank?: { enabled?: boolean };
     /**

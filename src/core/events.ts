@@ -121,6 +121,12 @@ export type EventType =
    * proposalId?, reason?, sourceRun}`.
    */
   | "recombine_invoked"
+  /**
+   * #626 — emitted once per extract run when the pre-LLM triage gate is enabled
+   * and evaluated at least one session. Counts-only metadata: `{evaluated,
+   * passed, triagedOut, sourceRun}` (aggregated, never per-session).
+   */
+  | "extract_triaged"
   | string;
 
 export interface AppendEventInput {

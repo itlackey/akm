@@ -69,6 +69,12 @@ export async function akmSearch(input: {
    */
   belief?: BeliefFilterMode;
   /**
+   * #627 — when true, re-include asset types normally hidden from the default
+   * (untyped) search path via `config.search.defaultExcludeTypes` (notably
+   * `session`). No effect when an explicit `type` is supplied.
+   */
+  includeSessions?: boolean;
+  /**
    * When true, skip logging usage events. Used by internal callers
    * (curate, improve context gathering) to avoid polluting user
    * search history with programmatic lookups.
@@ -168,6 +174,7 @@ export async function akmSearch(input: {
           // Without this, the index (which spans every configured source)
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
+          includeExcludedTypes: input.includeSessions === true,
         });
 
   const registryResult =
