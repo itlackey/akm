@@ -78,6 +78,7 @@ describe("SQLite migration runner characterization", () => {
         "010-asset-outcome",
         "011-asset-salience-homeostatic-demoted-at",
         "012-improve-gate-thresholds",
+        "013-extract-sessions-content-hash",
       ]);
 
       // The set of durable objects the migrations create.

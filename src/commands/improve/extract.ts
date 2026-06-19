@@ -44,10 +44,11 @@ import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integ
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
-import type { SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
+import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { embed } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
@@ -199,6 +200,13 @@ export interface ExtractedSessionResult {
   sessionAssetRef?: string;
   /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
   sessionLogPath?: string;
+  /**
+   * #602 — sha256 (hex) of the normalized session content computed at process
+   * time. Undefined only when the session failed to read (read_failed) before a
+   * hash could be computed; the caller persists `contentHash ?? null` so such
+   * rows stay eligible for retry.
+   */
+  contentHash?: string;
 }
 
 export interface AkmExtractResult {
@@ -300,6 +308,33 @@ function buildCandidateProposal(
 }
 
 /**
+ * Canonicalize a session's content into a single deterministic string for
+ * hashing (#602). Each event is rendered `<role>\n<text>` and events are joined
+ * with a NUL-delimited separator (`\n\0\n`) so event boundaries cannot be forged
+ * by text that itself contains newlines.
+ *
+ * The input is the RAW `data.events` stream — NOT the pre-filtered / truncated
+ * set — so the hash is stable across `maxTotalChars` (and any other pre-filter)
+ * config changes: changing config must NEVER change the hash (idempotency AC).
+ * `inlineRefs` and ref metadata (title, startedAt/endedAt timestamps) are
+ * deliberately EXCLUDED so clock/title churn (and an agent adding an inline
+ * `akm remember` mid-session) does not change the hash.
+ */
+function canonicalizeSessionContent(data: SessionData): string {
+  return data.events.map((e) => `${e.role ?? "unknown"}\n${e.text}`).join("\n\0\n");
+}
+
+/**
+ * sha256 (hex) of the normalized session content (#602). This is the byte-exact,
+ * clock-independent skip authority that replaced the old `session_ended_at`
+ * timestamp comparison. See {@link canonicalizeSessionContent} for exactly what
+ * is (and is not) hashed.
+ */
+export function hashSessionContent(data: SessionData): string {
+  return sha256Hex(canonicalizeSessionContent(data));
+}
+
+/**
  * Process one session through the full pipeline: read → pre-filter → LLM →
  * parse → createProposal-per-candidate. Returns the per-session result.
  *
@@ -334,6 +369,14 @@ async function processSession(
     embeddingConfig: AkmConfig["embedding"];
     embedFn?: (text: string) => Promise<number[]>;
   } | null,
+  // #602 — already-extracted skip moved INSIDE processSession: the content hash
+  // can only be computed after readSession, so the skip decision lives here. The
+  // prior row + bypass flags are threaded in from the caller. Skipping here still
+  // costs ZERO LLM calls (the expensive resource #602 protects); only the cheap
+  // file read is incurred.
+  prior: ExtractedSessionRow | undefined,
+  force: boolean,
+  singleSession: boolean,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -349,6 +392,26 @@ async function processSession(
       warnings: [`readSession failed: ${err instanceof Error ? err.message : String(err)}`],
       skipped: true,
       skipReason: "read_failed",
+    };
+  }
+
+  // #602 — content-hash skip. Computed on the RAW event stream immediately after
+  // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
+  // an unchanged session never reaches the LLM. Hash-based ⇒ clock-independent
+  // (immune to the Jun 11-12 timestamp double-extract/over-throttle bug). --force
+  // and single-session (explicit sessionId) modes bypass the skip entirely.
+  const contentHash = hashSessionContent(data);
+  if (!force && !singleSession && shouldSkipAlreadyExtractedSession(prior, contentHash)) {
+    return {
+      sessionId: sessionRef.sessionId,
+      harness: harness.name,
+      candidateCount: 0,
+      proposalIds: [],
+      preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+      warnings: [`already extracted (content unchanged) at ${prior?.processed_at}; pass --force to re-process`],
+      skipped: true,
+      skipReason: "already_extracted",
+      contentHash,
     };
   }
 
@@ -379,6 +442,7 @@ async function processSession(
       warnings: [],
       skipped: true,
       skipReason: "too_short",
+      contentHash,
     };
   }
 
@@ -403,6 +467,7 @@ async function processSession(
         warnings: [],
         skipped: true,
         skipReason: "triaged_out",
+        contentHash,
       };
     }
   }
@@ -461,6 +526,7 @@ async function processSession(
       warnings: ["session_extraction feature returned empty (disabled / timeout / error)"],
       skipped: true,
       skipReason: "llm_unavailable",
+      contentHash,
     };
   }
 
@@ -497,6 +563,7 @@ async function processSession(
         truncatedCount: filtered.stats.truncatedCount,
       },
       warnings,
+      contentHash,
       ...sessionAsset,
     };
   }
@@ -603,6 +670,7 @@ async function processSession(
       truncatedCount: filtered.stats.truncatedCount,
     },
     warnings,
+    contentHash,
     ...sessionAsset,
   };
 }
@@ -866,26 +934,11 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   }
 
   for (const summary of candidates) {
-    // Skip-tracking: if this session was already processed AND no new events
-    // have arrived since (live endedAt <= recorded endedAt), don't burn an LLM
-    // call. --force or single-session mode (explicit sessionId) bypasses.
+    // #602 — the already-extracted skip moved INTO processSession (the content
+    // hash needs the session body, only available after readSession). The prior
+    // row + bypass flags are threaded through; an unchanged session returns
+    // skipReason 'already_extracted' WITHOUT any LLM call.
     const prior = seenMap.get(summary.sessionId);
-    if (!options.force && !options.sessionId && shouldSkipAlreadyExtractedSession(prior, summary.endedAt)) {
-      sessions.push({
-        sessionId: summary.sessionId,
-        harness: harness.name,
-        candidateCount: 0,
-        proposalIds: [],
-        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
-        warnings: [
-          `already extracted at ${prior?.processed_at}; pass --force to re-process or wait until the session has new content`,
-        ],
-        skipped: true,
-        skipReason: "already_extracted",
-      });
-      skippedCount += 1;
-      continue;
-    }
 
     // Per-run cap on LLM-processed sessions (skip-tracked seen sessions above
     // don't count). Single-session / --force modes bypass the cap (explicit
@@ -914,6 +967,9 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         triage,
         sessionIndexing,
         schemaSimilarityCtx,
+        prior,
+        options.force === true,
+        typeof options.sessionId === "string" && options.sessionId.length > 0,
       );
       sessions.push(result);
       // #626 — triage aggregation. A session reached the triage gate only when it
@@ -936,10 +992,12 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       else processedCount += 1;
       allProposalIds.push(...result.proposalIds);
 
-      // Persist outcome so the next run skips this session unless new events
-      // arrive. We only track non-dry-run paths — dry-run is for inspection
-      // and should never poison the seen-table.
-      if (trackingEnabled && stateDb && !dryRun) {
+      // Persist outcome so the next run skips this session unless its content
+      // changes. We only track non-dry-run paths — dry-run is for inspection
+      // and should never poison the seen-table. #602: an `already_extracted`
+      // skip is a no-op (the row already carries the matching hash), so don't
+      // re-write it — that keeps `processed_at` stable across unchanged runs.
+      if (trackingEnabled && stateDb && !dryRun && result.skipReason !== "already_extracted") {
         try {
           const outcome: ExtractedSessionRow["outcome"] = result.skipped
             ? result.skipReason === "read_failed" || result.skipReason === "exception"
@@ -958,6 +1016,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
             proposalCount: result.proposalIds.length,
             rationale: result.rationaleIfEmpty ?? null,
             sourceRun,
+            // #602 — persist the freshly computed content hash so the NEXT run
+            // can compare byte-for-byte. read_failed (before hash) → null, which
+            // keeps the row eligible for retry (matches failed-row semantics).
+            contentHash: result.contentHash ?? null,
             metadata: {
               preFilterInputCount: result.preFilter.inputCount,
               preFilterOutputCount: result.preFilter.outputCount,
@@ -1060,9 +1122,15 @@ export interface CountNewExtractCandidatesOptions {
  * logic in {@link akmExtract} so the `#554 minNewSessions` gate in `improve`
  * can decide whether the extract pass is worth running before any work begins.
  *
- * A session is a "new candidate" when it is in the `since` window AND it would
- * not be skipped by {@link shouldSkipAlreadyExtractedSession} (i.e. it has never
- * been extracted, or new events have arrived since it was last extracted).
+ * #602 — this gate is intentionally CHEAP: it does NOT read session bodies, so
+ * it cannot compute the content hash that {@link shouldSkipAlreadyExtractedSession}
+ * now uses. It therefore uses a CONSERVATIVE row-presence approximation: a
+ * session counts as "new" when there is NO prior row OR the prior row's
+ * `content_hash` is null (never-seen or backfill-eligible). A prior row WITH a
+ * non-null content_hash counts as NOT new — it MIGHT have changed, but the
+ * precise per-session hash check happens downstream in processSession, so an
+ * over-/under-count here only affects whether the pass RUNS, never whether a
+ * changed session is actually re-processed.
  */
 export function countNewExtractCandidates(config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
   const extractProcess = config.profiles?.improve?.default?.processes?.extract;
@@ -1102,7 +1170,10 @@ export function countNewExtractCandidates(config: AkmConfig, options: CountNewEx
 
       for (const summary of candidates) {
         const prior = seenMap.get(summary.sessionId);
-        if (shouldSkipAlreadyExtractedSession(prior, summary.endedAt)) continue;
+        // #602 row-presence approximation (see fn doc): a prior row WITH a
+        // non-null content_hash is treated as not-new here; everything else
+        // (never-seen, or null-hash backfill-eligible) counts as new.
+        if (prior && prior.content_hash != null) continue;
         total += 1;
       }
     }

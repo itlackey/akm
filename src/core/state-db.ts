@@ -748,6 +748,26 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  // ── Migration 013 — extract_sessions_seen: content_hash column (#602) ────────
+  //
+  // Replaces the brittle timestamp-based incrementality (`session_ended_at`,
+  // compared against the live session metadata) with a content hash. The old
+  // clock/timestamp logic caused the Jun 11-12 double-extract + over-throttle
+  // incident (clock skew / out-of-order endedAt both double-processed AND
+  // over-suppressed sessions). The hash makes the skip decision byte-exact and
+  // clock-independent.
+  //
+  // Additive ADD COLUMN (migration-safe; mirrors migration 011's style). All
+  // pre-existing rows read back `content_hash = NULL`, which the skip logic
+  // treats as "seen before content-hash tracking existed → process once to
+  // backfill", after which the row gets a real hash and becomes hash-stable.
+  // Never mutate migration 004 (the original table) — this column is appended.
+  {
+    id: "013-extract-sessions-content-hash",
+    up: `
+      ALTER TABLE extract_sessions_seen ADD COLUMN content_hash TEXT DEFAULT NULL;
+    `,
+  },
 ];
 
 /**
@@ -1725,13 +1745,23 @@ export interface ExtractedSessionRow {
   /** sourceRun id for PROV-DM traceability. */
   source_run: string | null;
   metadata_json: string;
+  /**
+   * sha256 (hex) of the normalized session content at processing time. NULL for
+   * rows written before #602 (migration 013) or when content was unavailable —
+   * treated as a forced one-time reprocess to backfill the hash, after which the
+   * row becomes hash-stable. This — not `session_ended_at` — is the skip
+   * authority (#602).
+   */
+  content_hash: string | null;
 }
 
 /**
  * Record (or update) one session's extract outcome. INSERT-OR-REPLACE so the
- * row reflects the most recent run; downstream skip-logic compares
- * `session_ended_at` against the live session metadata to decide if anything
- * new arrived since `processed_at`.
+ * row reflects the most recent run. The `content_hash` persisted here is what
+ * the NEXT run compares against (#602): a byte-identical session is skipped, a
+ * changed session is re-processed, and a NULL-backfill row becomes hash-stable
+ * after its one reprocess. `session_ended_at` is still written for
+ * telemetry/forensics but is no longer the skip authority.
  */
 export function upsertExtractedSession(
   db: Database,
@@ -1746,6 +1776,8 @@ export function upsertExtractedSession(
     rationale?: string | null;
     sourceRun?: string | null;
     metadata?: Record<string, unknown>;
+    /** sha256 (hex) of the normalized session content, or null when unavailable. */
+    contentHash: string | null;
   },
 ): void {
   const endedAtIso =
@@ -1755,8 +1787,9 @@ export function upsertExtractedSession(
   db.prepare(`
     INSERT OR REPLACE INTO extract_sessions_seen
       (harness, session_id, processed_at, session_ended_at, outcome,
-       candidate_count, proposal_count, rationale, source_run, metadata_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       candidate_count, proposal_count, rationale, source_run, metadata_json,
+       content_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.harness,
     input.sessionId,
@@ -1768,6 +1801,7 @@ export function upsertExtractedSession(
     input.rationale ?? null,
     input.sourceRun ?? null,
     JSON.stringify(input.metadata ?? {}),
+    input.contentHash,
   );
 }
 
@@ -1813,32 +1847,26 @@ export function getExtractedSessionsMap(
 }
 
 /**
- * Decide whether a session should be skipped because the extractor has
- * already processed it AND nothing has changed since. The "anything new since
- * last extract?" rule is: the live `sessionEndedAtMs` is strictly later than
- * the recorded `session_ended_at`. Same-or-earlier endedAt means we'd be
- * re-processing the exact same content for no gain.
+ * Decide whether a session should be skipped because the extractor has already
+ * processed BYTE-IDENTICAL content (#602). The skip authority is the content
+ * hash, NOT `session_ended_at` — this is clock-independent, so it is immune to
+ * the clock-skew / out-of-order-endedAt problems that caused the Jun 11-12
+ * double-extract + over-throttle incident.
  *
- * Returns:
- *   - `false` — no prior row, or session has new content since last extract.
- *     The caller should process it.
- *   - `true`  — the session was already processed and hasn't been updated.
- *     The caller should skip.
+ * Rules:
+ *   - no prior row              → `false` (never seen → process; AC3).
+ *   - prior.content_hash == null → `false` (legacy / hash-less row → process
+ *     exactly once to backfill the hash, then it becomes hash-stable; AC4).
+ *   - hashes equal              → `true`  (unchanged content → skip; AC1).
+ *   - hashes differ             → `false` (changed content → re-process; AC2).
  */
 export function shouldSkipAlreadyExtractedSession(
   prior: ExtractedSessionRow | undefined,
-  liveSessionEndedAtMs: number | undefined,
+  currentContentHash: string,
 ): boolean {
   if (!prior) return false;
-  // No live timestamp → can't tell if anything's new. Be conservative and
-  // skip — the operator can pass --force later if we add it.
-  if (typeof liveSessionEndedAtMs !== "number" || !Number.isFinite(liveSessionEndedAtMs)) {
-    return true;
-  }
-  const priorMs = prior.session_ended_at ? Date.parse(prior.session_ended_at) : Number.NaN;
-  if (!Number.isFinite(priorMs)) return false;
-  // Re-process when there's new content; skip when the session is unchanged.
-  return liveSessionEndedAtMs <= priorMs;
+  if (prior.content_hash == null) return false;
+  return prior.content_hash === currentContentHash;
 }
 
 // ── consolidation_judged (judged-state cache, #581) ─────────────────────────
