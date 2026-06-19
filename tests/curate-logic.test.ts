@@ -225,6 +225,45 @@ describe("curateSearchResults", () => {
     ]);
   });
 
+  test("collapses multi-segment skill paths (e.g. system-ops/docker-homelab)", async () => {
+    const result = await curateSearchResults(
+      "docker homelab",
+      searchResponse({
+        hits: [
+          stashHit({
+            type: "skill",
+            name: "system-ops/docker-homelab",
+            ref: "skill:system-ops/docker-homelab",
+            path: "/tmp/1",
+            score: 1,
+          }),
+          stashHit({
+            type: "knowledge",
+            name: "skills/system-ops/docker-homelab/references/containers",
+            ref: "knowledge:skills/system-ops/docker-homelab/references/containers",
+            path: "/tmp/2",
+            score: 0.95,
+          }),
+          stashHit({
+            type: "knowledge",
+            name: "skills/system-ops/docker-homelab/references/homelab-stacks",
+            ref: "knowledge:skills/system-ops/docker-homelab/references/homelab-stacks",
+            path: "/tmp/3",
+            score: 0.9,
+          }),
+        ],
+      }),
+      4,
+    );
+
+    expect(result.items).toHaveLength(1);
+    const first = result.items[0] as Record<string, unknown>;
+    expect(first.ref).toBe("skill:system-ops/docker-homelab");
+    expect(Array.isArray(first.supportRefs)).toBe(true);
+    const supportRefs = first.supportRefs as Array<{ ref: string }>;
+    expect(supportRefs.map((s) => s.ref)).toContain("knowledge:skills/system-ops/docker-homelab/references/containers");
+  });
+
   test("keeps the narrow child reference as the top-level family representative", async () => {
     const result = await curateSearchResults(
       "docker compose reference",

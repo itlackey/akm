@@ -453,7 +453,7 @@ function getCurateFamily(ref: string): CurateFamily | undefined {
       return { key: parsed.name, role: "root" };
     }
     if (parsed.type !== "knowledge") return undefined;
-    const match = /^skills\/([^/]+)\/references\/(.+)$/.exec(parsed.name);
+    const match = /^skills\/(.+?)\/references\/(.+)$/.exec(parsed.name);
     if (!match) return undefined;
     return {
       key: match[1],
@@ -611,7 +611,7 @@ function preferBroadRootRepresentative(
   const first = selected[0];
   if (!first) return { selected, supportRefsByRef };
 
-  const match = /^knowledge:skills\/([^/]+)\/references\/([^/]+(?:\/[^/]+)*)$/.exec(first.ref);
+  const match = /^knowledge:skills\/(.+?)\/references\/(.+)$/.exec(first.ref);
   if (!match) return { selected, supportRefsByRef };
 
   const lower = query.toLowerCase();
