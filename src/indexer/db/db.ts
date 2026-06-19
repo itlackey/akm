@@ -53,8 +53,16 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 18;
+// NOTE: do NOT bump DB_VERSION for graph-schema changes. A DB_VERSION mismatch
+// triggers handleVersionUpgrade()'s NUCLEAR drop of the ENTIRE index — entries,
+// embeddings, FTS, and the llm_enrichment_cache — forcing every user to re-embed
+// their whole corpus on upgrade. The graph tables are derived and cheap to
+// rebuild, so graph re-keying is migrated in a TARGETED, graph-only path
+// (migrateGraphFilesSchema) that leaves entries + embeddings untouched.
+export const DB_VERSION = 17;
 export const EMBEDDING_DIM = 384;
+// #624-P1: graph_files re-keyed to (stash_root, file_path, body_hash). Bumped 3→4
+// as a marker; the actual migration is the targeted drop in migrateGraphFilesSchema.
 export const GRAPH_SCHEMA_VERSION = 4;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -396,6 +404,13 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
   // graph_file_entities and graph_file_relations carry (stash_root, file_path,
   // body_hash) and declare a composite FK -> graph_files ON DELETE CASCADE so
   // child rows are removed when a graph_files row is replaced.
+  //
+  // #624-P1 targeted migration: an existing DB may still hold the OLD graph_files
+  // (entry_id PK). SQLite can't ALTER a primary key, so we must DROP + recreate —
+  // but ONLY the 3 graph tables, never the index/embeddings. Run BEFORE the
+  // CREATE TABLE IF NOT EXISTS below so the new schema is what gets built.
+  migrateGraphFilesSchema(db);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS graph_meta (
       stash_root          TEXT PRIMARY KEY,
@@ -890,6 +905,45 @@ function ensureDerivedFromColumn(db: Database): void {
     // Index creation is idempotent on its own; safe to call unconditionally.
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_derived_from ON entries(derived_from)");
   }, "entries table may not exist on a brand-new DB before CREATE — caller is responsible");
+}
+
+/**
+ * #624-P1 targeted graph-schema migration.
+ *
+ * graph_files was re-keyed from `entry_id INTEGER PRIMARY KEY REFERENCES
+ * entries(id)` to a self-contained `(stash_root, file_path, body_hash)` PK.
+ * SQLite cannot ALTER a primary key, so an existing DB carrying the OLD shape
+ * must have the graph tables DROPPED and recreated.
+ *
+ * Crucially this is GRAPH-SCOPED: it drops ONLY graph_files / its child tables
+ * (and graph_meta so stale counts reset), never the index / embeddings /
+ * enrichment cache. The graph is derived data — it is repopulated by the next
+ * graph-extraction pass — so the cost is nil, and users keep their (expensive)
+ * embeddings instead of being forced into a full re-embed by a DB_VERSION bump.
+ *
+ * Detection: the old schema has an `entry_id` column on graph_files. Fresh DBs
+ * (no graph_files yet) and already-migrated DBs (no entry_id column) are no-ops.
+ * Runs in ensureSchema() BEFORE the graph CREATE TABLE IF NOT EXISTS block so the
+ * subsequent CREATE builds the new schema. Idempotent.
+ */
+function migrateGraphFilesSchema(db: Database): void {
+  bestEffort(() => {
+    const cols = db.prepare("PRAGMA table_info(graph_files)").all() as Array<{ name: string }>;
+    // No graph_files table (fresh DB) → empty → no-op. Already migrated (no
+    // entry_id column) → no-op. Only the legacy entry_id-keyed shape is dropped.
+    const isLegacyShape = cols.some((c) => c.name === "entry_id");
+    if (!isLegacyShape) return;
+    // Drop children before parent (defensive even with CASCADE). graph_meta is
+    // independent (stash_root key) but we reset it so stale entity counts don't
+    // outlive the dropped rows.
+    db.exec("DROP TABLE IF EXISTS graph_file_relations");
+    db.exec("DROP TABLE IF EXISTS graph_file_entities");
+    db.exec("DROP TABLE IF EXISTS graph_files");
+    db.exec("DROP TABLE IF EXISTS graph_meta");
+    warn(
+      "[akm] graph index re-keyed (#624) — graph tables reset; they repopulate on the next graph-extraction pass. Index + embeddings untouched.",
+    );
+  }, "graph_files may not exist on a brand-new DB before CREATE — caller is responsible");
 }
 
 /**

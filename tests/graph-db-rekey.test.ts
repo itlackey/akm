@@ -332,13 +332,16 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   });
 
   // AC#5 — version + graph-schema lock --------------------------------------
-  test("AC#5: DB_VERSION is 18, GRAPH_SCHEMA_VERSION is 4, and the graph DDL is the new shape", () => {
-    expect(DB_VERSION).toBe(18);
+  // The graph re-key is migrated via a TARGETED graph-only path, NOT a DB_VERSION
+  // bump (a bump would nuke the entire index + embeddings via handleVersionUpgrade).
+  // So DB_VERSION must stay 17; GRAPH_SCHEMA_VERSION 4 marks the new graph shape.
+  test("AC#5: DB_VERSION stays 17 (no nuclear bump), GRAPH_SCHEMA_VERSION is 4, graph DDL is the new shape", () => {
+    expect(DB_VERSION).toBe(17);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
 
     const db = openDatabase(tmpDbPath());
     try {
-      expect(getMeta(db, "version")).toBe(String(18));
+      expect(getMeta(db, "version")).toBe(String(17));
 
       // Lock the three graph table DDLs to the new (composite-key) shape.
       const ddl = (
@@ -356,6 +359,68 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
       expect(joined).toMatch(/PRIMARY KEY \(stash_root, file_path, body_hash\)/);
       expect(joined).toMatch(/REFERENCES graph_files\(stash_root, file_path, body_hash\)/);
       expect(joined).toMatch(/ON DELETE CASCADE/);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  // AC#6 — THE SAFETY GUARANTEE: upgrading a legacy (entry_id-keyed) DB must
+  // recreate ONLY the graph tables and PRESERVE entries + embeddings. A
+  // DB_VERSION bump would instead nuke the whole index (handleVersionUpgrade
+  // drops entries + embeddings + enrichment cache), forcing a full re-embed —
+  // catastrophic for users. This locks the targeted graph-only migration.
+  test("AC#6: legacy entry_id graph schema migrates WITHOUT dropping entries/embeddings", () => {
+    const dbPath = tmpDbPath();
+    let db = openDatabase(dbPath);
+    try {
+      // Seed real index content that must survive: an entry + its embedding.
+      const file = path.join(STASH, "keepme.md");
+      const entryId = seedEntry(db, file, "keepme");
+      db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(
+        entryId,
+        new Uint8Array([1, 2, 3, 4]),
+      );
+
+      // Downgrade the graph tables to the LEGACY entry_id-keyed shape to simulate
+      // an existing pre-#624 database, and drop a graph row into it.
+      db.exec("DROP TABLE IF EXISTS graph_file_relations");
+      db.exec("DROP TABLE IF EXISTS graph_file_entities");
+      db.exec("DROP TABLE IF EXISTS graph_files");
+      db.exec(`
+        CREATE TABLE graph_files (
+          entry_id   INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+          stash_root TEXT NOT NULL,
+          file_path  TEXT NOT NULL,
+          file_order INTEGER NOT NULL,
+          file_type  TEXT NOT NULL,
+          body_hash  TEXT NOT NULL,
+          status     TEXT NOT NULL DEFAULT 'extracted'
+        );
+      `);
+      db.prepare(
+        "INSERT INTO graph_files (entry_id, stash_root, file_path, file_order, file_type, body_hash) VALUES (?, ?, ?, 0, 'memory', 'h')",
+      ).run(entryId, STASH, file);
+      expect(tableInfoColumns(db, "graph_files")).toContain("entry_id");
+      // Version is the SAME (17) — no nuclear upgrade path; the graph migration
+      // must fire on schema shape, independent of DB_VERSION.
+      expect(getMeta(db, "version")).toBe(String(17));
+      closeDatabase(db);
+
+      // Reopen → ensureSchema → migrateGraphFilesSchema runs.
+      db = openDatabase(dbPath);
+
+      // The graph table is now the NEW shape (legacy row dropped — derived data).
+      expect(tableInfoColumns(db, "graph_files")).not.toContain("entry_id");
+      expect(tableInfoColumns(db, "graph_files")).toContain("body_hash");
+
+      // THE GUARANTEE: the entry and its embedding are UNTOUCHED (no re-embed).
+      const entryCount = (db.prepare("SELECT COUNT(*) c FROM entries").get() as { c: number }).c;
+      expect(entryCount).toBe(1);
+      const embRow = db.prepare("SELECT embedding FROM embeddings WHERE id = ?").get(entryId) as
+        | { embedding: Uint8Array }
+        | undefined;
+      expect(embRow).toBeDefined();
+      expect(Array.from(embRow?.embedding ?? [])).toEqual([1, 2, 3, 4]);
     } finally {
       closeDatabase(db);
     }
