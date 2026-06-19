@@ -1488,6 +1488,31 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
   return parseEntryRows(rows, "getAllEntries");
 }
 
+/**
+ * #609 — read graph entities (normalized) for a set of entry ids. Used by the
+ * recombine pass to cluster memories by shared graph entity ("graph"
+ * relatedness source). Returns a map of `entry_id -> entity_norm[]`. Entries
+ * with no graph entities (graph extraction has not run, or the file produced
+ * no entities) are simply absent from the map — callers must fail open
+ * (fall back to tag relatedness) when the map is empty.
+ */
+export function getEntitiesByEntryIds(db: Database, entryIds: number[]): Map<number, string[]> {
+  const result = new Map<number, string[]>();
+  if (entryIds.length === 0) return result;
+  const placeholders = entryIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT entry_id, entity_norm FROM graph_file_entities WHERE entry_id IN (${placeholders}) ORDER BY entry_id, entity_order`,
+    )
+    .all(...(entryIds as SqlValue[])) as Array<{ entry_id: number; entity_norm: string }>;
+  for (const row of rows) {
+    const list = result.get(row.entry_id);
+    if (list) list.push(row.entity_norm);
+    else result.set(row.entry_id, [row.entity_norm]);
+  }
+  return result;
+}
+
 export function findEntryIdByRef(db: Database, ref: string): number | undefined {
   const parsed = parseAssetRef(ref);
   const nameVariants = [parsed.name];

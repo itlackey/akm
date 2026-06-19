@@ -23,7 +23,7 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectOptions, AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { getAssetSalience, getConsecutiveNoOps, upsertAssetSalience } from "../../../src/commands/improve/salience";
 import { saveConfig } from "../../../src/core/config/config";
-import { readEvents } from "../../../src/core/events";
+import { appendEvent, readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -733,5 +733,330 @@ describe("#608 high-salience admission gate", () => {
       // Not selected at all — expected when both high-salience and proactive are gated out.
       expect(capturedEligibility.has("skill:gated-skill")).toBe(false);
     }
+  });
+});
+
+// ── #610: bounded replay budget ───────────────────────────────────────────────
+//
+// RED-step tests for the additive replay-budget selection lane. The feature does
+// not exist yet (no `improve.salience.replayBudget` config key, no `'replay'`
+// eligibility lane), so every assertion here MUST fail until #610 lands.
+//
+// Observability model (mirrors the #608 high-salience tests above):
+//   - A ref that enters the per-ref loop fires EITHER reflectFn (reflect-eligible)
+//     OR distillFn (distill-only). Both spies receive `eligibilitySource`.
+//   - We capture the union of (reflect ∪ distill) calls = the effective loopRefs,
+//     keyed by ref → eligibilitySource. That is the test's view of `loopRefs`.
+//
+// `replayBudget` is not yet on the config type, so we construct config objects
+// through a small caster that injects the key without an excess-property error.
+
+/** Build an AkmConfig with an arbitrary `improve.salience` block (incl. not-yet-typed keys). */
+function configWithSalience(
+  salience: Record<string, unknown>,
+  opts?: { proactive?: boolean },
+): import("../../../src/core/config/config").AkmConfig {
+  const base = minimalConfig() as unknown as Record<string, unknown>;
+  return {
+    ...base,
+    profiles: {
+      improve: {
+        default: {
+          processes: {
+            consolidate: { enabled: false },
+            memoryInference: { enabled: false },
+            graphExtraction: { enabled: false },
+            extract: { enabled: false },
+            // Default OFF so only the replay lane can rescue zero-feedback refs,
+            // unless a test explicitly opts proactive back in.
+            proactiveMaintenance: { enabled: opts?.proactive ?? false },
+          },
+        },
+      },
+    },
+    improve: { salience },
+  } as unknown as import("../../../src/core/config/config").AkmConfig;
+}
+
+/** Seed a zero-feedback salience row with an explicit rank_score + consecutive_no_ops. */
+function seedSalience(ref: string, rankScore: number, noOps: number): void {
+  const db = openStateDatabase();
+  try {
+    upsertAssetSalience(db, ref, { encoding: 0.5, outcome: 0, retrieval: 0, rankScore });
+    if (noOps > 0) {
+      db.prepare(`UPDATE asset_salience SET consecutive_no_ops = ? WHERE asset_ref = ?`).run(noOps, ref);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Run akmImprove and capture every ref that entered the loop along with the
+ * eligibilitySource the loop dispatched it under (via reflect OR distill spy).
+ * Refs are processed with no_change reflect + quality_rejected distill so the
+ * run does no real work but still exercises the full selection path.
+ */
+async function runAndCaptureLanes(opts: {
+  stash: string;
+  config: import("../../../src/core/config/config").AkmConfig;
+  limit?: number;
+  scope?: string;
+  requireFeedbackSignal?: boolean;
+}): Promise<Map<string, string | undefined>> {
+  const lanes = new Map<string, string | undefined>();
+  await akmImprove({
+    scope: (opts.scope ?? "skill") as never,
+    stashDir: opts.stash,
+    config: opts.config,
+    ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+    ...(opts.requireFeedbackSignal !== undefined ? { requireFeedbackSignal: opts.requireFeedbackSignal } : {}),
+    ...noopIndexFns,
+    reflectFn: async (o: AkmReflectOptions) => {
+      lanes.set(o.ref ?? "", o.eligibilitySource);
+      return noChangeReflect(o.ref ?? "");
+    },
+    distillFn: async (o) => {
+      // distill-only refs never hit reflect — record their lane too, but never
+      // overwrite a reflect-recorded lane for the same ref.
+      if (!lanes.has(o.ref ?? "")) lanes.set(o.ref ?? "", o.eligibilitySource);
+      return qualityRejectedDistill(o.ref ?? "");
+    },
+  });
+  return lanes;
+}
+
+/**
+ * Record fresh negative feedback for a ref so it qualifies via the signal-delta
+ * lane. The improve signal-delta gate (improve.ts ~2730) trips when a `feedback`
+ * event within the window carries a string `signal` (or `note`) in its metadata.
+ */
+function recordFreshFeedback(ref: string): void {
+  appendEvent({ eventType: "feedback", ref, metadata: { signal: "negative", note: "test feedback" } });
+}
+
+describe("#610 bounded replay budget", () => {
+  // ── AC1: a top-salience ref is revisited with ZERO reactive signal ──────────
+  test("AC1: zero-feedback, zero-retrieval, high-rank ref is selected with eligibilitySource='replay'", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "replay-target", "A high-value but quiet skill.");
+    await buildIndex(stash);
+
+    // No feedback, no retrieval events. Pre-seed a high rank_score, no-ops=0.
+    seedSalience("skill:replay-target", 0.9, 0);
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 1 }),
+    });
+
+    expect(lanes.has("skill:replay-target")).toBe(true);
+    expect(lanes.get("skill:replay-target")).toBe("replay");
+  });
+
+  // ── AC1-cooldown-bypass: replay is added AFTER cooldown/signal partitioning ──
+  test("AC1-cooldown-bypass: replay selects a ref even when it is on reflect cooldown", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "cooldown-target", "Recently reflected, now quiet.");
+    await buildIndex(stash);
+
+    seedSalience("skill:cooldown-target", 0.9, 0);
+
+    // Put the ref on reflect cooldown: a recent reflect proposal with no newer
+    // feedback means signal-delta partitioning would route it to the no-op pool.
+    appendEvent({
+      eventType: "reflect_invoked",
+      ref: "skill:cooldown-target",
+      metadata: { source: "test", eligibilitySource: "proactive" },
+    });
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 1 }),
+    });
+
+    // Replay bypasses cooldown/signal-delta gates exactly like forgetting-safety.
+    expect(lanes.has("skill:cooldown-target")).toBe(true);
+    expect(lanes.get("skill:cooldown-target")).toBe("replay");
+  });
+
+  // ── AC2: replays are additive — never reduce the fresh (--limit) count ──────
+  test("AC2: replay slice is additive on top of the --limit fresh slice", async () => {
+    const stash = isolatedStash();
+    const N = 2; // fresh refs that qualify via signal-delta
+    const M = 2; // zero-feedback high-rank refs eligible for replay
+    const freshNames = ["fresh-a", "fresh-b"];
+    const replayNames = ["replay-x", "replay-y"];
+
+    for (const name of [...freshNames, ...replayNames]) {
+      writeSkill(stash, name, `Body for ${name}.`);
+    }
+    await buildIndex(stash);
+
+    // Fresh refs get fresh feedback → signal-delta lane.
+    for (const name of freshNames) recordFreshFeedback(`skill:${name}`);
+    // Replay refs: zero feedback, high rank, not converged.
+    for (const name of replayNames) seedSalience(`skill:${name}`, 0.9, 0);
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: M }),
+      limit: N, // limit applies to FRESH refs only
+    });
+
+    const nonReplay = [...lanes.entries()].filter(([, src]) => src !== "replay");
+    const replay = [...lanes.entries()].filter(([, src]) => src === "replay");
+
+    // All N fresh refs survive the limit; replay is additive (N + min(M,budget)).
+    expect(nonReplay.length).toBe(N);
+    for (const name of freshNames) expect(lanes.has(`skill:${name}`)).toBe(true);
+    expect(replay.length).toBe(Math.min(M, M));
+    expect(lanes.size).toBe(N + Math.min(M, M));
+  });
+
+  // ── AC2-budget-cap: budget caps replay-lane count, fresh count unchanged ────
+  test("AC2-budget-cap: replayBudget=2 with 5 candidates admits exactly 2 replay refs", async () => {
+    const stash = isolatedStash();
+    const freshNames = ["cap-fresh-a"];
+    const candidateNames = ["cap-r1", "cap-r2", "cap-r3", "cap-r4", "cap-r5"];
+
+    for (const name of [...freshNames, ...candidateNames]) {
+      writeSkill(stash, name, `Body for ${name}.`);
+    }
+    await buildIndex(stash);
+
+    for (const name of freshNames) recordFreshFeedback(`skill:${name}`);
+    // 5 distinct rank scores so ordering is deterministic.
+    const ranks = [0.95, 0.9, 0.85, 0.8, 0.75];
+    candidateNames.forEach((name, i) => {
+      seedSalience(`skill:${name}`, ranks[i] ?? 0.5, 0);
+    });
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 2 }),
+      limit: 1,
+    });
+
+    const nonReplay = [...lanes.entries()].filter(([, src]) => src !== "replay");
+    const replay = [...lanes.entries()].filter(([, src]) => src === "replay");
+
+    expect(replay.length).toBe(2); // cap honored
+    expect(nonReplay.length).toBe(1); // fresh count unchanged
+  });
+
+  // ── AC3: default (replayBudget unset / 0) reproduces current behavior ────────
+  test("AC3: replayBudget=0 admits no replay refs (default = pre-#610 behavior)", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "quiet-skill", "Zero-feedback high-rank skill.");
+    await buildIndex(stash);
+
+    seedSalience("skill:quiet-skill", 0.9, 0);
+
+    // Run A: explicit replayBudget=0.
+    const lanesZero = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 0 }),
+    });
+    // Run B: replayBudget unset entirely (true default).
+    const lanesUnset = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({}),
+    });
+
+    // No 'replay' lane appears in either run; the quiet ref is not selected.
+    expect([...lanesZero.values()]).not.toContain("replay");
+    expect([...lanesUnset.values()]).not.toContain("replay");
+    expect(lanesZero.has("skill:quiet-skill")).toBe(false);
+    expect(lanesUnset.has("skill:quiet-skill")).toBe(false);
+  });
+
+  // ── Convergence skip: converged (no_ops >= threshold) refs are NOT replayed ─
+  test("converged ref (consecutive_no_ops >= threshold) is skipped even with budget remaining", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "conv-a", "Not converged.");
+    writeSkill(stash, "conv-b", "Converged to no_change.");
+    await buildIndex(stash);
+
+    seedSalience("skill:conv-a", 0.9, 0); // eligible for replay
+    seedSalience("skill:conv-b", 0.9, 3); // SALIENCE_NO_OP_DAMPEN_THRESHOLD → converged
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 2 }),
+    });
+
+    const replay = [...lanes.entries()].filter(([, src]) => src === "replay").map(([ref]) => ref);
+
+    expect(replay).toContain("skill:conv-a");
+    expect(replay).not.toContain("skill:conv-b");
+    expect(replay.length).toBe(1); // budget=2, but only 1 non-converged candidate
+  });
+
+  // ── Replay candidate ordering: top rank_score wins, ref-string tie-break ────
+  test("replay selects the highest rank_score candidate first (budget=1)", async () => {
+    const stash = isolatedStash();
+    for (const name of ["ord-hi", "ord-mid", "ord-lo"]) {
+      writeSkill(stash, name, `Body for ${name}.`);
+    }
+    await buildIndex(stash);
+
+    seedSalience("skill:ord-hi", 0.9, 0);
+    seedSalience("skill:ord-mid", 0.8, 0);
+    seedSalience("skill:ord-lo", 0.7, 0);
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 1 }),
+    });
+
+    const replay = [...lanes.entries()].filter(([, src]) => src === "replay").map(([ref]) => ref);
+
+    expect(replay).toEqual(["skill:ord-hi"]);
+  });
+
+  // ── No double-selection: a stronger lane keeps its label; budget spent elsewhere ─
+  test("a ref already chosen via signal-delta is NOT relabelled 'replay' and budget goes to a different ref", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "dual-qual", "Qualifies via both feedback and high rank.");
+    writeSkill(stash, "pure-replay", "Qualifies only via replay.");
+    await buildIndex(stash);
+
+    // dual-qual: fresh feedback (signal-delta) AND high rank (replay-eligible).
+    recordFreshFeedback("skill:dual-qual");
+    seedSalience("skill:dual-qual", 0.95, 0);
+    // pure-replay: zero feedback, slightly lower rank.
+    seedSalience("skill:pure-replay", 0.9, 0);
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 1 }),
+    });
+
+    // dual-qual keeps the stronger reactive lane.
+    expect(lanes.get("skill:dual-qual")).toBe("signal-delta");
+    // The single replay budget is spent on the OTHER ref, not the already-selected one.
+    expect(lanes.get("skill:pure-replay")).toBe("replay");
+    const replay = [...lanes.entries()].filter(([, src]) => src === "replay");
+    expect(replay.length).toBe(1);
+  });
+
+  // ── scope-ref guard: explicit single-ref runs never inject replay refs ──────
+  test("scope.mode==='ref' (--scope <ref>) does not inject any 'replay'-lane refs", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "scoped", "The explicitly scoped ref.");
+    writeSkill(stash, "would-replay", "A high-rank ref that must NOT be pulled in.");
+    await buildIndex(stash);
+
+    seedSalience("skill:would-replay", 0.9, 0);
+
+    const lanes = await runAndCaptureLanes({
+      stash,
+      config: configWithSalience({ replayBudget: 5 }),
+      scope: "skill:scoped",
+    });
+
+    expect([...lanes.values()]).not.toContain("replay");
+    expect(lanes.has("skill:would-replay")).toBe(false);
   });
 });

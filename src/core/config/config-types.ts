@@ -448,6 +448,38 @@ export interface ImproveProcessConfig {
   fidelityCheck?: {
     enabled?: boolean;
   };
+  /**
+   * #609 — recombine / synthesize pass: minimum number of related memories a
+   * cluster must contain before it is eligible for an LLM generalization call.
+   * Clusters below this size are skipped (no LLM call). Default 3. Only
+   * meaningful on the `recombine` process.
+   */
+  minClusterSize?: number;
+  /**
+   * #609 — recombine pass: hard cap on the number of clusters processed (one
+   * bounded LLM call each) per run. Bounds cost on stashes with many shared
+   * tags. Clusters are ranked by member-count desc and the top N are kept.
+   * Default 5. Only meaningful on the `recombine` process.
+   */
+  maxClustersPerRun?: number;
+  /**
+   * #609 — recombine pass: relatedness signal used to form clusters.
+   *   - `"tags"`  — group memories by each shared frontmatter tag.
+   *   - `"graph"` — group by shared graph entity (`graph_file_entities`);
+   *                 falls back to tags when the graph table is empty.
+   *   - `"both"`  — union of the two grouping keys.
+   * Clustering is by RELATEDNESS, never embedding similarity. Default `"tags"`.
+   * Only meaningful on the `recombine` process.
+   */
+  relatednessSource?: "tags" | "graph" | "both";
+  /**
+   * #609 — recombine pass: number of consecutive runs a `type: hypothesis`
+   * generalization must be re-induced before a later confirmation run may
+   * promote it to a `type: lesson`. The first pass NEVER emits a lesson
+   * directly (two-pass contract). Default 2. Only meaningful on the
+   * `recombine` process.
+   */
+  confirmThreshold?: number;
 }
 
 export interface ImproveProfileConfig {
@@ -480,6 +512,14 @@ export interface ImproveProfileConfig {
      * `maxPerRun`/`limit` (25).
      */
     proactiveMaintenance?: ImproveProcessConfig;
+    /**
+     * #609 — recombine / synthesize pass. Clusters memories by relatedness
+     * (shared tags / graph entities) and issues one bounded LLM call per
+     * cluster to induce a cross-episodic generalization, emitting it as a
+     * `type: hypothesis` proposal through the normal queue + quality gate.
+     * Opt-in (default DISABLED).
+     */
+    recombine?: ImproveProcessConfig;
   };
   autoAccept?: number;
   limit?: number;
@@ -742,6 +782,14 @@ export interface ImproveConfig {
      * admitted up to 10% of `maxPerRun`. Default 0.75. Set to 1.0 to disable.
      */
     salienceThreshold?: number;
+    /**
+     * Per-run additive replay budget (#610). Up to this many top-salience refs are
+     * revisited even with no feedback/retrieval and regardless of cooldown.
+     * Additive on top of --limit (never steals fresh work). Refs that converged to
+     * no_change (consecutive_no_ops >= dampener threshold) are skipped.
+     * Default 0 = current behavior (no replay).
+     */
+    replayBudget?: number;
   };
 }
 

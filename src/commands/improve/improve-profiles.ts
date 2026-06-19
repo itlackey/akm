@@ -66,6 +66,10 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   // stale high-value assets on a schedule. Enable per-profile with an explicit
   // `processes.proactiveMaintenance.enabled: true`.
   proactiveMaintenance: false,
+  // #609 recombine / synthesize pass — whole-corpus cross-episodic
+  // generalization. Opt-in (default off); enable per-profile with an explicit
+  // `processes.recombine.enabled: true`.
+  recombine: false,
 };
 
 /**

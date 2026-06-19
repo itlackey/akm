@@ -109,6 +109,18 @@ export type EventType =
    * Metadata carries `{candidateCount, note}`.
    */
   | "improve_salience_first_run"
+  /**
+   * #610 — bounded replay budget selection. Emitted once per improve run when a
+   * replay budget is configured. Metadata carries `{count, budget,
+   * convergedSkipped, candidatePool}` (aggregated, never per-ref).
+   */
+  | "improve_replay_selected"
+  /**
+   * #609 — emitted once per recombine cluster. Metadata carries `{signal,
+   * memberCount, outcome: 'queued'|'null_returned'|'skipped'|'quality_rejected',
+   * proposalId?, reason?, sourceRun}`.
+   */
+  | "recombine_invoked"
   | string;
 
 export interface AppendEventInput {

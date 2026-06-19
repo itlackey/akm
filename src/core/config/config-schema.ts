@@ -310,6 +310,20 @@ export const ImproveProcessConfigSchema = z
       })
       .strict()
       .optional(),
+    // #609 — recombine process: minimum related-memory cluster size before an
+    // LLM generalization call. Default 3. Only meaningful on `recombine`.
+    minClusterSize: z.number().int().min(2).optional(),
+    // #609 — recombine process: hard cap on clusters processed per run (one
+    // bounded LLM call each). Default 5. Only meaningful on `recombine`.
+    maxClustersPerRun: positiveInt.optional(),
+    // #609 — recombine process: relatedness signal used to form clusters
+    // (tags | graph | both). Clustering is by relatedness, never embedding
+    // similarity. Default "tags". Only meaningful on `recombine`.
+    relatednessSource: z.enum(["tags", "graph", "both"]).optional(),
+    // #609 — recombine process: consecutive re-inductions required before a
+    // hypothesis is promoted to a lesson. Default 2. Only meaningful on
+    // `recombine`.
+    confirmThreshold: z.number().int().min(1).optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),
@@ -337,6 +351,7 @@ const ImproveProfileProcessesSchema = z
     validation: ImproveProcessConfigSchema.optional(),
     triage: ImproveProcessConfigSchema.optional(),
     proactiveMaintenance: ImproveProcessConfigSchema.optional(),
+    recombine: ImproveProcessConfigSchema.optional(),
   })
   .passthrough()
   .superRefine((val, ctx) => {
@@ -362,6 +377,7 @@ const ImproveProfileProcessesSchema = z
       "extract",
       "triage",
       "proactiveMaintenance",
+      "recombine",
     ]);
     for (const k of Object.keys(raw)) {
       if (!allowed.has(k)) {
@@ -595,6 +611,12 @@ const ImproveSalienceSchema = z
      * Default 0.75. Set to 1.0 to disable the lane entirely.
      */
     salienceThreshold: z.number().min(0).max(1).optional(),
+    /**
+     * Per-run additive replay budget (#610). Up to this many top-salience refs are
+     * revisited even with no reactive signal and regardless of cooldown. Additive
+     * on top of --limit. Default 0 = no replay.
+     */
+    replayBudget: z.number().int().min(0).optional(),
   })
   .strict();
 

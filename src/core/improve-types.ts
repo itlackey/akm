@@ -39,13 +39,21 @@ import { assertNever } from "./assert";
  *                             Force-included for one consolidation pass regardless
  *                             of cooldown / signal-delta status so it is not
  *                             silently dropped from the candidate pool.
+ *   - `"replay"`             — #610 bounded replay budget: a top-salience ref
+ *                              revisited even with zero reactive signal and
+ *                              regardless of cooldown. The WEAKEST lane — it never
+ *                              relabels a ref another lane already chose, and its
+ *                              selection is strictly ADDITIVE on top of `--limit`
+ *                              (never steals fresh work). Converged refs
+ *                              (consecutive_no_ops >= dampener threshold) are skipped.
  *   - `"unknown"`            — origin lane could not be determined. NOT a silent
  *                              alias for `signal-delta`; only used when the lane
  *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
  * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `high-salience` >
- * `proactive` > `forgetting-safety`.
+ * `proactive` > `forgetting-safety` > `replay`. Replay is weakest so it never
+ * relabels a ref another lane already chose.
  * A ref with real feedback is attributed to feedback even if it was also due
  * for proactive maintenance.
  */
@@ -56,7 +64,9 @@ export type EligibilitySource =
   | "proactive"
   | "scope"
   | "forgetting-safety"
+  | "replay"
   | "exploration"
+  | "recombine"
   | "unknown";
 
 export interface ImproveEligibleRef {
@@ -170,6 +180,26 @@ export interface ImproveMemoryCleanupResult {
   transitionLogPath?: string;
   transitionLogEntries?: number;
   warnings?: string[];
+}
+
+/**
+ * #609 — outcome of the recombine / synthesize pass. Emitted on
+ * {@link AkmImproveResult.recombination} when the (opt-in) pass runs.
+ */
+export interface RecombineResult {
+  schemaVersion: 1;
+  /** False when the run aborted early (e.g. budget signal already fired). */
+  ok: boolean;
+  /** Number of relatedness clusters that reached the LLM induction step. */
+  clustersFormed: number;
+  /** Number of `type: hypothesis` proposals queued through the normal queue. */
+  proposalsEmitted: number;
+  /** Number of clusters whose LLM returned a justified null (no proposal). */
+  nullsReturned: number;
+  /** Wall-clock duration of the pass in milliseconds. */
+  durationMs: number;
+  /** Non-fatal warnings accumulated during the pass. */
+  warnings: string[];
 }
 
 export interface AkmImproveResult {
@@ -298,6 +328,12 @@ export interface AkmImproveResult {
    * `neverReflected` is the subset of the due pool never previously reflected.
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
+  /**
+   * #609 — recombine / synthesize pass outcome. Present only when the opt-in
+   * `recombine` process is enabled and the run was whole-stash / type scope;
+   * omitted entirely otherwise to keep the envelope tidy.
+   */
+  recombination?: RecombineResult;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and

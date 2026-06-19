@@ -19,6 +19,7 @@ import type {
   ImproveActionResult,
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
+  RecombineResult,
 } from "../../core/improve-types";
 import { classifyImproveAction } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
@@ -106,6 +107,7 @@ import {
   updateAssetOutcome,
 } from "./outcome-loop";
 import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
+import { akmRecombine } from "./recombine";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import {
   buildRankChangeReport,
@@ -282,6 +284,12 @@ export interface AkmImproveOptions {
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   memoryInferenceFn?: typeof runMemoryInferencePass;
   /**
+   * #609: injectable recombine / synthesize pass seam for tests. When omitted,
+   * the real {@link akmRecombine} runs (gated on the opt-in `recombine` process
+   * being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
+   */
+  recombineFn?: typeof akmRecombine;
+  /**
    * Phase 4A: injectable staleness-detection pass for tests. When omitted, the
    * real `runStalenessDetectionPass` runs (which is itself a no-op unless
    * `features.index.staleness_detection` is enabled).
@@ -449,6 +457,8 @@ interface ImprovePostLoopResult {
   proposalsExpired?: number;
   /** Phase 4A: result of the staleness-detection pass, when it ran. */
   stalenessDetection?: StalenessDetectionResult;
+  /** #609: result of the opt-in recombine / synthesize pass, when it ran. */
+  recombination?: RecombineResult;
 }
 
 interface ImproveMaintenanceResult {
@@ -1476,6 +1486,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       proposalsExpired,
       gateAutoAcceptedCount: postLoopGateCount,
       gateAutoAcceptFailedCount: postLoopGateFailedCount,
+      recombination,
     } = await runImprovePostLoopStage({
       scope,
       options,
@@ -1555,6 +1566,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
       ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
       ...(stalenessDetection ? { stalenessDetection } : {}),
+      ...(recombination ? { recombination } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
@@ -3423,6 +3435,107 @@ async function runImprovePreparationStage(args: {
     }
   }
 
+  // ── REPLAY SELECTION layer (#610) ─────────────────────────────────────────
+  // Bounded, ADDITIVE replay budget: up to `replayBudget` top-salience refs are
+  // revisited even with zero reactive signal (no feedback, no retrieval) and
+  // regardless of cooldown — exactly like the forgetting-safety lane, replay is
+  // injected AFTER cooldown/signal-delta partitioning so it bypasses those gates.
+  //
+  // Strictly additive: the replay slice is appended AFTER the --limit fresh slice
+  // (see the loopRefs partition below), so it can never shrink the fresh-ref set.
+  // Replay is the WEAKEST lane — it only stamps refs no other lane already claimed,
+  // and budget is spent only on refs not already in mergedRefs (so a stronger lane
+  // never has its budget wasted or its label overwritten).
+  //
+  // Default replayBudget=0 ⇒ this whole block is a no-op (no DB open, no event,
+  // no mergedRefs mutation), preserving byte-identical pre-#610 selection behavior.
+  const replayBudget = (options.config ?? loadConfig()).improve?.salience?.replayBudget ?? 0;
+  const replayRefSet = new Set<string>();
+  if (replayBudget > 0 && scope.mode !== "ref" && !options.requireFeedbackSignal) {
+    let replayDb: import("../../core/state-db").Database | undefined;
+    try {
+      replayDb = openStateDatabase(eventsCtx?.dbPath);
+      const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
+      const allRankScores = getAllRankScores(replayDb);
+      // Candidate universe = every salience row NOT already in the pool, ordered by
+      // rank_score desc with a deterministic ref-string tie-break (mirrors the main
+      // sort). Converged refs (consecutive_no_ops >= dampener threshold) are fully
+      // EXCLUDED — a stronger skip than the dampener (which only halves order).
+      let convergedSkipped = 0;
+      const candidates: Array<{ ref: string; rankScore: number }> = [];
+      for (const [ref, rankScore] of allRankScores) {
+        if (alreadyInPool.has(ref)) continue;
+        const noOps = getConsecutiveNoOps(replayDb, ref);
+        if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
+          convergedSkipped++;
+          continue;
+        }
+        candidates.push({ ref, rankScore });
+      }
+      candidates.sort((a, b) =>
+        b.rankScore !== a.rankScore ? b.rankScore - a.rankScore : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0,
+      );
+      const candidatePool = candidates.length;
+      const selected = candidates.slice(0, replayBudget);
+      const newReplayRefs: ImproveEligibleRef[] = [];
+      for (const { ref } of selected) {
+        replayRefSet.add(ref);
+        // Synthesise a stub (mirror the forgetting-safety stub). Resolve the
+        // backing file from the planned-ref pool so the downstream existsSync
+        // guard keeps the ref (a replay candidate from asset_salience whose file
+        // is gone correctly drops out). Only refs present in the indexed pool can
+        // be revisited — refs without a planned entry get no filePath and are
+        // dropped by the disk check, which is the desired behavior.
+        const planned = plannedRefs.find((p) => p.ref === ref);
+        newReplayRefs.push({
+          ref,
+          reason: "scope-type",
+          eligibilitySource: "replay",
+          ...(planned?.filePath ? { filePath: planned.filePath } : {}),
+        });
+        // Seed the salienceMap so the sort/effectiveScore can rank the replay ref.
+        if (!salienceMap.has(ref)) {
+          salienceMap.set(ref, {
+            encoding: 0,
+            outcome: 0,
+            retrieval: 0,
+            rankScore: allRankScores.get(ref) ?? 0,
+          });
+        }
+      }
+      if (newReplayRefs.length > 0) {
+        mergedRefs = dedupeRefs([...mergedRefs, ...newReplayRefs]);
+        // Replay is the WEAKEST lane: stamp 'replay' ONLY for refs not already
+        // keyed by a stronger lane.
+        for (const ref of replayRefSet) {
+          if (!eligibilitySourceByRef.has(ref)) eligibilitySourceByRef.set(ref, "replay");
+        }
+        for (const r of mergedRefs) {
+          r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
+        }
+      }
+      // Aggregated observability event (never per-ref).
+      appendEvent(
+        {
+          eventType: "improve_replay_selected",
+          ref: undefined,
+          metadata: {
+            count: newReplayRefs.length,
+            budget: replayBudget,
+            convergedSkipped,
+            candidatePool,
+          },
+        },
+        eventsCtx,
+      );
+    } catch (err) {
+      rethrowIfTestIsolationError(err);
+      // best-effort: if DB unavailable, replayRefSet stays empty
+    } finally {
+      if (replayDb) replayDb.close();
+    }
+  }
+
   // Build no-op map for consolidation-selection dampener (plan §WS-1 step 8).
   // Reads consecutive_no_ops from the SAME pinned db handle used elsewhere in
   // this function.  The effective score is used ONLY for processing/selection
@@ -3554,8 +3667,22 @@ async function runImprovePreparationStage(args: {
   }
 
   // ── Phase 5: --limit applies to the post-cooldown actionable set ──────────
+  //
+  // #610 ADDITIVITY: replay-lane refs are budgeted SEPARATELY from the --limit
+  // fresh slice. Without this split, a high-rankScore replay ref could sort above
+  // a fresh ref in the single combined slice and STEAL its slot (violating AC2).
+  // We partition into the replay lane vs the rest, apply --limit to the
+  // non-replay (fresh) refs only, then APPEND up to `replayBudget` replay refs
+  // after the fresh slice. Sort order within each partition is preserved.
+  //
+  // Default replayBudget=0 reduces this to the exact pre-#610 expression: with no
+  // replay refs, `nonReplayLoop === allLoopRefs`, so `baseLoop === old slice` and
+  // `replayLoop.slice(0, 0) === []` — byte-identical.
   const allLoopRefs = [...reflectAndDistillRefsAfterSort, ...distillOnlyRefsAfterSort];
-  const loopRefs = options.limit ? allLoopRefs.slice(0, options.limit) : allLoopRefs;
+  const replayLoop = allLoopRefs.filter((r) => r.eligibilitySource === "replay");
+  const nonReplayLoop = allLoopRefs.filter((r) => r.eligibilitySource !== "replay");
+  const baseLoop = options.limit ? nonReplayLoop.slice(0, options.limit) : nonReplayLoop;
+  const loopRefs = [...baseLoop, ...replayLoop.slice(0, replayBudget)];
 
   // Update the returned distillOnlyRefs to the sorted order so callers see the
   // ranked view (loop stage uses it as a Set so order is irrelevant, but the
@@ -3571,7 +3698,7 @@ async function runImprovePreparationStage(args: {
   }
   if (signalAndRetrievalRefs.length > 0) {
     info(
-      `[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback, ${highRetrievalRefs.length} high-retrieval)`,
+      `[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback, ${highRetrievalRefs.length} high-retrieval${replayRefSet.size > 0 ? `, ${replayRefSet.size} replay` : ""})`,
     );
   }
   if (validationFailureRefs.size > 0) {
@@ -4353,9 +4480,42 @@ async function runImprovePostLoopStage(args: {
     }
   }
 
+  // #609 — recombine / synthesize pass. Whole-corpus cross-episodic
+  // generalization. Runs in the post-loop stage under consolidate.lock (it
+  // reads the consolidated corpus and writes proposals). Opt-in: gated on the
+  // `recombine` process being enabled, whole-stash / type scope (never `ref`),
+  // and not a dry run. Mirrors the proactiveMaintenance opt-in wiring.
+  let recombination: RecombineResult | undefined;
+  if (
+    primaryStashDir &&
+    improveProfile &&
+    resolveProcessEnabled("recombine", improveProfile) &&
+    scope.mode !== "ref" &&
+    !options.dryRun
+  ) {
+    const recombineFn = options.recombineFn ?? akmRecombine;
+    try {
+      recombination = await recombineFn({
+        stashDir: primaryStashDir,
+        config: options.config ?? loadConfig(),
+        ...(options.runId ? { sourceRun: options.runId } : {}),
+        ...(budgetSignal ? { signal: budgetSignal } : {}),
+        ...(options.autoAccept !== undefined ? { autoAccept: options.autoAccept } : {}),
+        eligibilitySource: "recombine",
+        ...(eventsCtx ? { ctx: eventsCtx } : {}),
+        minClusterSize: improveProfile.processes?.recombine?.minClusterSize,
+        maxClustersPerRun: improveProfile.processes?.recombine?.maxClustersPerRun,
+        relatednessSource: improveProfile.processes?.recombine?.relatednessSource,
+      });
+    } catch (e) {
+      allWarnings.push(`recombine: ${String(e)}`);
+    }
+  }
+
   return {
     allWarnings,
     deadUrls,
+    ...(recombination ? { recombination } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
     ...(maintenanceResult.stalenessDetection ? { stalenessDetection: maintenanceResult.stalenessDetection } : {}),
