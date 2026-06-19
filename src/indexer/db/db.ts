@@ -1039,6 +1039,45 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
       "delete usage_events for entries",
     );
   }
+
+  // Explicitly delete graph_files (cascades to graph_file_entities/relations)
+  // and recompute graph_meta counts for affected stash roots.
+  //
+  // graph_files references entries(id) ON DELETE CASCADE, but graph_meta uses
+  // stash_root (a text key) with no FK — so a cascade wipe of entries silently
+  // leaves graph_meta with stale counts. Doing this explicitly here lets us
+  // recompute the correct counts before the entries rows are removed.
+  const affectedStashRoots = new Set<string>();
+  for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    bestEffort(() => {
+      const rows = db
+        .prepare(`SELECT DISTINCT stash_root FROM graph_files WHERE entry_id IN (${placeholders})`)
+        .all(...chunk) as Array<{ stash_root: string }>;
+      for (const row of rows) affectedStashRoots.add(row.stash_root);
+      db.prepare(`DELETE FROM graph_files WHERE entry_id IN (${placeholders})`).run(...chunk);
+    }, "delete graph_files for entries");
+  }
+  for (const stashRoot of affectedStashRoots) {
+    bestEffort(
+      () =>
+        db
+          .prepare(
+            `UPDATE graph_meta
+             SET extracted_files = (SELECT COUNT(*) FROM graph_files WHERE stash_root = ?),
+                 entity_count    = (SELECT COUNT(*) FROM graph_file_entities gfe
+                                    JOIN graph_files gf ON gf.entry_id = gfe.entry_id
+                                    WHERE gf.stash_root = ?),
+                 relation_count  = (SELECT COUNT(*) FROM graph_file_relations gfr
+                                    JOIN graph_files gf ON gf.entry_id = gfr.entry_id
+                                    WHERE gf.stash_root = ?)
+             WHERE stash_root = ?`,
+          )
+          .run(stashRoot, stashRoot, stashRoot, stashRoot),
+      "sync graph_meta counts after graph_files delete",
+    );
+  }
 }
 
 /**
