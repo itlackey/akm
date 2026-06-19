@@ -104,6 +104,37 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 
+  test("#609 recombine + #615 procedural are RECOGNIZED process keys (load does not throw; fields round-trip)", () => {
+    // Regression guard: each new opt-in improve process must be added to the
+    // recognized-process-key allowlist in config-schema.ts. #615 procedural was
+    // shipped without it, so enabling it in a real config hard-errored at load.
+    const config = {
+      semanticSearchMode: "off",
+      profiles: {
+        improve: {
+          default: {
+            processes: {
+              recombine: { enabled: true, minClusterSize: 3, maxClustersPerRun: 5, relatednessSource: "tags" },
+              procedural: { enabled: true, minRecurrence: 2, maxProposalsPerRun: 5 },
+            },
+          },
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    // The bug surfaced as a ConfigError thrown here for the unrecognized key.
+    expect(() => loadConfig()).not.toThrow();
+
+    const processes = loadConfig().profiles?.improve?.default?.processes as Record<string, Record<string, unknown>>;
+    expect(processes.recombine?.enabled).toBe(true);
+    expect(processes.recombine?.maxClustersPerRun).toBe(5);
+    expect(processes.procedural?.enabled).toBe(true);
+    expect(processes.procedural?.minRecurrence).toBe(2);
+    expect(processes.procedural?.maxProposalsPerRun).toBe(5);
+  });
+
   test("WS-2 salience.outcomeWeightEnabled: true survives a load→save→load round trip", () => {
     const config = {
       semanticSearchMode: "off",

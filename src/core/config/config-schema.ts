@@ -389,6 +389,7 @@ const ImproveProfileProcessesSchema = z
       "triage",
       "proactiveMaintenance",
       "recombine",
+      "procedural",
     ]);
     for (const k of Object.keys(raw)) {
       if (!allowed.has(k)) {
