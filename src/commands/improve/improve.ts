@@ -4518,6 +4518,7 @@ async function runImprovePostLoopStage(args: {
         minClusterSize: improveProfile.processes?.recombine?.minClusterSize,
         maxClustersPerRun: improveProfile.processes?.recombine?.maxClustersPerRun,
         relatednessSource: improveProfile.processes?.recombine?.relatednessSource,
+        confirmThreshold: improveProfile.processes?.recombine?.confirmThreshold,
       });
     } catch (e) {
       allWarnings.push(`recombine: ${String(e)}`);

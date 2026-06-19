@@ -55,6 +55,32 @@ export function getAvailableHarnesses(): SessionLogHarness[] {
   return HARNESSES.filter((harness) => harness.isAvailable());
 }
 
+/**
+ * A single harness's watch configuration: the harness's runtime name plus the
+ * absolute directories it writes session files under (#606). Harnesses with no
+ * roots on this machine are skipped, so every entry has at least one root.
+ */
+export interface WatchTarget {
+  harnessName: string;
+  roots: string[];
+}
+
+/**
+ * Map each available harness to its `{ harnessName, roots }` watch target,
+ * skipping harnesses that expose no roots (absent `watchRoots()` or an empty
+ * result). This is the one stable entry point the watcher uses so it never
+ * reaches into providers directly.
+ */
+export function getWatchTargets(): WatchTarget[] {
+  const targets: WatchTarget[] = [];
+  for (const harness of getAvailableHarnesses()) {
+    const roots = harness.watchRoots?.() ?? [];
+    if (roots.length === 0) continue;
+    targets.push({ harnessName: harness.name, roots });
+  }
+  return targets;
+}
+
 export function normalizeSessionTopic(text: string): string | undefined {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
   if (normalized.length < 10) return undefined;

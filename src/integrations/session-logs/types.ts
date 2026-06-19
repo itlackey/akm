@@ -120,4 +120,13 @@ export interface SessionLogHarness {
    * to obtain a valid ref.
    */
   readSession(ref: SessionRef): SessionData;
+  /**
+   * Absolute directories this harness writes session files under — the
+   * INJECTABLE seam (#606) for discovering what to watch without the watcher
+   * importing harness internals. Returns `[]` when the location is
+   * unavailable on this machine. Optional so external implementers are not
+   * broken by the addition; `getWatchTargets()` treats an absent method as
+   * `[]`.
+   */
+  watchRoots?(): string[];
 }

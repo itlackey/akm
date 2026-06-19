@@ -786,13 +786,24 @@ describe("runGraphExtractionPass — enabled", () => {
 
     await withGraphDb("invalid-prior-corrupt", (db) => {
       const filePath = path.join(tmpStash, "memories", "m1.md");
-      // Schema v2 (DB_VERSION 13+) made body_hash NOT NULL. Corrupt it with
-      // a sentinel string so the hash-equality check still misses and the
-      // pass falls back to a fresh extraction.
+      // body_hash is NOT NULL (and, since #624-P1, part of the composite PK
+      // shared with the child tables via an ON DELETE CASCADE FK). Corrupt it
+      // with a sentinel so the hash-equality check misses and the pass falls
+      // back to a fresh extraction. Update all three tables together so the
+      // composite FK stays satisfied.
+      db.prepare("PRAGMA foreign_keys = OFF").run();
       db.prepare("UPDATE graph_files SET body_hash = '__corrupt__' WHERE stash_root = ? AND file_path = ?").run(
         tmpStash,
         filePath,
       );
+      db.prepare("UPDATE graph_file_entities SET body_hash = '__corrupt__' WHERE stash_root = ? AND file_path = ?").run(
+        tmpStash,
+        filePath,
+      );
+      db.prepare(
+        "UPDATE graph_file_relations SET body_hash = '__corrupt__' WHERE stash_root = ? AND file_path = ?",
+      ).run(tmpStash, filePath);
+      db.prepare("PRAGMA foreign_keys = ON").run();
       db.prepare("DELETE FROM llm_enrichment_cache WHERE asset_ref = ?").run(filePath);
     });
 

@@ -16,9 +16,23 @@
  * Two-pass contract: the first pass ONLY ever emits `type: hypothesis`
  * proposals — never a `type: lesson`. Promotion to a lesson happens on a later
  * confirmation run once the same generalization has been re-induced
- * `confirmThreshold` times. (v1 enforces the hypothesis-only emission
- * invariant; the confirmation-count promotion is deferred — see the inline
- * NOTE at the proposal-emission site in `akmRecombine`.)
+ * `confirmThreshold` times (#625). The confirmation count is persisted in the
+ * `recombine_hypotheses` state.db table (migration 014), keyed by the
+ * deterministic `deriveRecombineLessonRef` value so re-induction of the SAME
+ * member-set maps back to the SAME row. When the count reaches the threshold,
+ * the run emits ONE `type: lesson` promotion proposal through the SAME proposal
+ * queue + quality gate (createProposal + validateProposalFrontmatter), NEVER a
+ * direct stash write, then marks the row promoted (resetting its count) so it is
+ * not re-promoted on every subsequent run. Hypotheses NOT re-induced in a run
+ * have their consecutive streak reset (decay-to-zero).
+ *
+ * NAMESPACE note: the ref stays `lesson:recombined/<slug>-<hash>` for BOTH
+ * passes. The ref is the promotion TARGET asset (a lesson in both the hypothesis
+ * and promoted states), so re-induction must map to the same ref and the ref
+ * cannot encode the proposal type. The hypothesis-vs-lesson distinction is
+ * carried ONLY by the proposal frontmatter `type` field. On promotion the prior
+ * pending `type: hypothesis` proposal for that ref is superseded (rejected) so
+ * the queue never shows two proposals for one ref.
  *
  * A justified null (the LLM determines no defensible generalization exists) is
  * an acceptable outcome: it produces no proposal and records a
@@ -35,6 +49,14 @@ import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, RecombineResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import {
+  decayUnseenRecombineHypotheses,
+  getRecombineHypothesis,
+  getStateDbPath,
+  markRecombineHypothesisPromoted,
+  openStateDatabase,
+  recordRecombineInduction,
+} from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   closeDatabase,
@@ -46,7 +68,7 @@ import {
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
-import { createProposal, isProposalSkipped } from "../proposal/validators/proposals";
+import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
 import { isConsolidationEligibleMemoryName } from "./consolidate";
 
 export type { RecombineResult } from "../../core/improve-types";
@@ -56,6 +78,8 @@ const RECOMBINE_SYSTEM_PROMPT = recombineSystemPrompt;
 const DEFAULT_MIN_CLUSTER_SIZE = 3;
 const DEFAULT_MAX_CLUSTERS_PER_RUN = 5;
 const DEFAULT_RELATEDNESS_SOURCE: "tags" | "graph" | "both" = "tags";
+/** #625 — re-induction count required before a hypothesis promotes to a lesson. */
+const DEFAULT_CONFIRM_THRESHOLD = 2;
 
 /**
  * Single bounded LLM seam. Receives the assembled cluster prompt and returns
@@ -82,6 +106,12 @@ export interface AkmRecombineOptions {
   minClusterSize?: number;
   maxClustersPerRun?: number;
   relatednessSource?: "tags" | "graph" | "both";
+  /**
+   * #625 — re-induction count at which a hypothesis promotes to a `type: lesson`
+   * proposal. Defaults to {@link DEFAULT_CONFIRM_THRESHOLD}. Threaded from
+   * `processes.recombine.confirmThreshold`.
+   */
+  confirmThreshold?: number;
 }
 
 /** A relatedness cluster: a shared signal (tag / entity) + its member entries. */
@@ -225,12 +255,24 @@ export function deriveRecombineLessonRef(cluster: MemoryCluster): string {
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  const memberKey = cluster.members
+  const memberKey = recombineMemberKey(cluster);
+  const hash = createHash("sha256").update(memberKey, "utf8").digest("hex").slice(0, 8);
+  return `lesson:recombined/${slug || "cluster"}-${hash}`;
+}
+
+/**
+ * The membership fingerprint of a cluster: its member entryKeys sorted and
+ * joined. Single source of truth shared by {@link deriveRecombineLessonRef}'s
+ * hash and the `recombine_hypotheses.member_key` column, so the table key and
+ * the ref hash always derive from the SAME member set. Adding/removing one
+ * memory yields a different fingerprint → a different ref → a fresh row (the
+ * old streak is correctly NOT inherited).
+ */
+export function recombineMemberKey(cluster: MemoryCluster): string {
+  return cluster.members
     .map((m) => m.entryKey)
     .sort()
     .join("|");
-  const hash = createHash("sha256").update(memberKey, "utf8").digest("hex").slice(0, 8);
-  return `lesson:recombined/${slug || "cluster"}-${hash}`;
 }
 
 /** Parse the raw LLM output into a generalization, or `null` for the justified-null path. */
@@ -285,6 +327,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
   const minClusterSize = opts.minClusterSize ?? DEFAULT_MIN_CLUSTER_SIZE;
   const maxClustersPerRun = opts.maxClustersPerRun ?? DEFAULT_MAX_CLUSTERS_PER_RUN;
   const relatednessSource = opts.relatednessSource ?? DEFAULT_RELATEDNESS_SOURCE;
+  const confirmThreshold = opts.confirmThreshold ?? DEFAULT_CONFIRM_THRESHOLD;
   const warnings: string[] = [];
 
   const finish = (over: Partial<RecombineResult>): RecombineResult => ({
@@ -292,6 +335,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     ok: true,
     clustersFormed: 0,
     proposalsEmitted: 0,
+    lessonsPromoted: 0,
     nullsReturned: 0,
     durationMs: Date.now() - startMs,
     warnings,
@@ -337,6 +381,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
 
   let clustersFormed = 0;
   let proposalsEmitted = 0;
+  let lessonsPromoted = 0;
   let nullsReturned = 0;
 
   const llmFn = opts.recombineLlmFn ?? resolveProductionLlmFn(config, opts.signal);
@@ -345,121 +390,206 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     return finish({ clustersFormed: 0 });
   }
 
-  for (const cluster of clusters) {
-    if (opts.signal?.aborted) {
-      warnings.push("aborted-mid-run");
-      break;
-    }
-    clustersFormed += 1;
+  // #625 — open the confirmation-count store once per run via the ctx seam,
+  // reusing a long-lived ctx.db handle when the caller provided one (mirrors
+  // proposals.ts). Only handles WE opened are closed in the finally below.
+  const ownStateDb = opts.ctx?.db ? undefined : openStateDatabase(opts.ctx?.dbPath ?? getStateDbPath());
+  const stateDb = opts.ctx?.db ?? ownStateDb;
+  // Refs re-induced (defensible generalization passed the quality gate) THIS
+  // run — everything else is decayed after the loop.
+  const seenThisRun = new Set<string>();
 
-    const prompt = buildClusterPrompt(cluster);
-    const raw = await llmFn(prompt);
-    const generalization = parseGeneralization(raw);
+  try {
+    for (const cluster of clusters) {
+      if (opts.signal?.aborted) {
+        warnings.push("aborted-mid-run");
+        break;
+      }
+      clustersFormed += 1;
 
-    if (!generalization) {
-      nullsReturned += 1;
-      appendEvent(
-        {
-          eventType: "recombine_invoked",
-          ref: deriveRecombineLessonRef(cluster),
-          metadata: {
-            signal: cluster.signature,
-            memberCount: cluster.members.length,
-            outcome: "null_returned",
-            sourceRun,
+      const prompt = buildClusterPrompt(cluster);
+      const raw = await llmFn(prompt);
+      const generalization = parseGeneralization(raw);
+
+      if (!generalization) {
+        nullsReturned += 1;
+        appendEvent(
+          {
+            eventType: "recombine_invoked",
+            ref: deriveRecombineLessonRef(cluster),
+            metadata: {
+              signal: cluster.signature,
+              memberCount: cluster.members.length,
+              outcome: "null_returned",
+              sourceRun,
+            },
           },
-        },
-        opts.ctx,
-      );
-      continue;
-    }
+          opts.ctx,
+        );
+        continue;
+      }
 
-    const lessonRef = deriveRecombineLessonRef(cluster);
-    const sourceRefs = cluster.members.map((m) => `memory:${m.entry.name}`);
+      const lessonRef = deriveRecombineLessonRef(cluster);
+      const sourceRefs = cluster.members.map((m) => `memory:${m.entry.name}`);
 
-    // Quality gate (always-run): the frontmatter description must be present
-    // and non-truncated. This runs BEFORE createProposal — never bypassed.
-    const fmCheck = validateProposalFrontmatter({ description: generalization.description });
-    if (!fmCheck.ok) {
-      appendEvent(
+      // Quality gate (always-run): the frontmatter description must be present
+      // and non-truncated. This runs BEFORE createProposal on BOTH the
+      // hypothesis and the promotion paths — never bypassed.
+      const fmCheck = validateProposalFrontmatter({ description: generalization.description });
+      if (!fmCheck.ok) {
+        appendEvent(
+          {
+            eventType: "recombine_invoked",
+            ref: lessonRef,
+            metadata: {
+              signal: cluster.signature,
+              memberCount: cluster.members.length,
+              outcome: "quality_rejected",
+              reason: fmCheck.reason,
+              sourceRun,
+            },
+          },
+          opts.ctx,
+        );
+        continue;
+      }
+
+      // A defensible generalization was produced this run — record it so it is
+      // NOT decayed by the unseen sweep below.
+      seenThisRun.add(lessonRef);
+
+      // #625 — record the re-induction and read the prior promotion state. The
+      // member key and the ref hash derive from the SAME member set, so
+      // re-induction of an identical cluster maps back to the same row.
+      const nowIso = new Date().toISOString();
+      const priorRow = stateDb ? getRecombineHypothesis(stateDb, lessonRef) : undefined;
+      const alreadyPromoted = priorRow?.promoted_at != null;
+      const count = stateDb
+        ? recordRecombineInduction(stateDb, {
+            hypothesisRef: lessonRef,
+            signature: cluster.signature,
+            memberKey: recombineMemberKey(cluster),
+            seenAt: nowIso,
+            run: sourceRun,
+          })
+        : 0;
+
+      // Promote to a `type: lesson` proposal when the confirmation streak
+      // reaches the threshold AND the hypothesis has not already been promoted.
+      const promote = stateDb != null && !alreadyPromoted && count >= confirmThreshold;
+      const proposalType = promote ? "lesson" : "hypothesis";
+
+      const frontmatter: Record<string, unknown> = {
+        type: proposalType,
+        description: generalization.description,
+        ...(generalization.when_to_use ? { when_to_use: generalization.when_to_use } : {}),
+        source_refs: sourceRefs,
+      };
+      const content = assembleContent(frontmatter, generalization.body);
+
+      if (promote && stateDb) {
+        // Supersede the prior pending `type: hypothesis` proposal for this ref so
+        // the queue never shows two proposals for one ref. The promoted lesson
+        // proposal has different content (type changed), so content-hash dedup
+        // would otherwise let both co-exist.
+        for (const stale of listProposals(stashDir, { status: "pending", ref: lessonRef }, opts.ctx)) {
+          if (stale.source === "recombine") {
+            archiveProposal(stashDir, stale.id, "rejected", "superseded by recombine lesson promotion", opts.ctx);
+          }
+        }
+      }
+
+      const proposalResult = createProposal(
+        stashDir,
         {
-          eventType: "recombine_invoked",
           ref: lessonRef,
-          metadata: {
-            signal: cluster.signature,
-            memberCount: cluster.members.length,
-            outcome: "quality_rejected",
-            reason: fmCheck.reason,
-            sourceRun,
-          },
-        },
-        opts.ctx,
-      );
-      continue;
-    }
-
-    // Two-pass guard: the first pass ALWAYS emits `type: hypothesis` (never
-    // `type: lesson`). Promotion to a lesson is a later confirmation run's job.
-    //
-    // NOTE (v1 deferral): confirmation-count tracking (re-induce N times before
-    // promoting to `type: lesson`) is deferred. The hypothesis-only emission
-    // invariant below is non-negotiable and test-locked.
-    const frontmatter: Record<string, unknown> = {
-      type: "hypothesis",
-      description: generalization.description,
-      ...(generalization.when_to_use ? { when_to_use: generalization.when_to_use } : {}),
-      source_refs: sourceRefs,
-    };
-    const content = assembleContent(frontmatter, generalization.body);
-
-    const proposalResult = createProposal(
-      stashDir,
-      {
-        ref: lessonRef,
-        source: "recombine",
-        sourceRun,
-        payload: { content, frontmatter: { description: generalization.description } },
-        eligibilitySource,
-      },
-      opts.ctx,
-    );
-
-    if (isProposalSkipped(proposalResult)) {
-      appendEvent(
-        {
-          eventType: "recombine_invoked",
-          ref: lessonRef,
-          metadata: {
-            signal: cluster.signature,
-            memberCount: cluster.members.length,
-            outcome: "skipped",
-            skipReason: proposalResult.reason,
-            sourceRun,
-          },
-        },
-        opts.ctx,
-      );
-      continue;
-    }
-
-    proposalsEmitted += 1;
-    appendEvent(
-      {
-        eventType: "recombine_invoked",
-        ref: lessonRef,
-        metadata: {
-          signal: cluster.signature,
-          memberCount: cluster.members.length,
-          outcome: "queued",
-          proposalId: proposalResult.id,
+          source: "recombine",
           sourceRun,
+          payload: { content, frontmatter: { description: generalization.description } },
+          eligibilitySource,
+          // The promotion is a distinct asset (lesson) for the same ref; force
+          // past the duplicate-pending guard (the stale hypothesis was just
+          // superseded, but force keeps the path robust to ordering).
+          ...(promote ? { force: true } : {}),
         },
-      },
-      opts.ctx,
-    );
+        opts.ctx,
+      );
+
+      if (isProposalSkipped(proposalResult)) {
+        appendEvent(
+          {
+            eventType: "recombine_invoked",
+            ref: lessonRef,
+            metadata: {
+              signal: cluster.signature,
+              memberCount: cluster.members.length,
+              outcome: "skipped",
+              skipReason: proposalResult.reason,
+              sourceRun,
+            },
+          },
+          opts.ctx,
+        );
+        continue;
+      }
+
+      if (promote && stateDb) {
+        markRecombineHypothesisPromoted(stateDb, lessonRef, nowIso);
+        lessonsPromoted += 1;
+        appendEvent(
+          {
+            eventType: "recombine_invoked",
+            ref: lessonRef,
+            metadata: {
+              signal: cluster.signature,
+              memberCount: cluster.members.length,
+              outcome: "promoted",
+              proposalId: proposalResult.id,
+              confirmationCount: count,
+              sourceRun,
+            },
+          },
+          opts.ctx,
+        );
+      } else {
+        proposalsEmitted += 1;
+        appendEvent(
+          {
+            eventType: "recombine_invoked",
+            ref: lessonRef,
+            metadata: {
+              signal: cluster.signature,
+              memberCount: cluster.members.length,
+              outcome: "queued",
+              proposalId: proposalResult.id,
+              confirmationCount: count,
+              sourceRun,
+            },
+          },
+          opts.ctx,
+        );
+      }
+    }
+
+    // #625 — decay hypotheses NOT re-induced this run (reset their consecutive
+    // streak) so confirmation is per-consecutive-run and conservative (AC4).
+    if (stateDb) {
+      const decayedCount = decayUnseenRecombineHypotheses(stateDb, sourceRun, [...seenThisRun]);
+      if (decayedCount > 0) {
+        appendEvent(
+          {
+            eventType: "recombine_invoked",
+            metadata: { outcome: "decayed", decayedCount, sourceRun },
+          },
+          opts.ctx,
+        );
+      }
+    }
+  } finally {
+    if (ownStateDb) ownStateDb.close();
   }
 
-  return finish({ clustersFormed, proposalsEmitted, nullsReturned });
+  return finish({ clustersFormed, proposalsEmitted, lessonsPromoted, nullsReturned });
 }
 
 /** Serialize frontmatter + body into a markdown asset string. */

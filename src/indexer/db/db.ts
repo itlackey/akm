@@ -53,9 +53,9 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 17;
+export const DB_VERSION = 18;
 export const EMBEDDING_DIM = 384;
-export const GRAPH_SCHEMA_VERSION = 3;
+export const GRAPH_SCHEMA_VERSION = 4;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
@@ -383,15 +383,19 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
        ON llm_enrichment_cache(updated_at);
   `);
 
-  // Graph extraction tables — schema v2 (entry_id PK).
+  // Graph extraction tables — schema v4 ((stash_root, file_path, body_hash) PK).
   //
-  // graph_files is keyed on entries.id so child tables cascade-delete cleanly
-  // when an entry is removed, and so JOINs from graph rows to entries are a
-  // direct PK lookup. (stash_root, file_path) is retained as UNIQUE so the
-  // extractor's path-based upsert still works.
+  // graph_files is self-keyed on (stash_root, file_path, body_hash) and is NO
+  // LONGER tied to entries.id. This is the #624-P1 win: deleting and
+  // re-inserting an entries row during a reindex no longer cascade-wipes the
+  // extracted graph — as long as the file's body_hash is unchanged, the graph
+  // data survives. body_hash is part of the PK so a content change yields a
+  // distinct key; a UNIQUE index on (stash_root, file_path) still enforces
+  // exactly one graph_files row per path (delete-then-insert on a hash change).
   //
-  // graph_file_entities and graph_file_relations no longer duplicate file_path;
-  // they reference entry_id and inherit stash scoping via graph_files.
+  // graph_file_entities and graph_file_relations carry (stash_root, file_path,
+  // body_hash) and declare a composite FK -> graph_files ON DELETE CASCADE so
+  // child rows are removed when a graph_files row is replaced.
   db.exec(`
     CREATE TABLE IF NOT EXISTS graph_meta (
       stash_root          TEXT PRIMARY KEY,
@@ -415,7 +419,6 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     );
 
     CREATE TABLE IF NOT EXISTS graph_files (
-      entry_id          INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
       stash_root        TEXT NOT NULL,
       file_path         TEXT NOT NULL,
       file_order        INTEGER NOT NULL,
@@ -425,26 +428,34 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
       status            TEXT NOT NULL DEFAULT 'extracted',
       reason            TEXT,
       extraction_run_id TEXT,
-      UNIQUE(stash_root, file_path)
+      PRIMARY KEY (stash_root, file_path, body_hash)
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_files_path
+      ON graph_files(stash_root, file_path);
 
     CREATE INDEX IF NOT EXISTS idx_graph_files_stash_order
       ON graph_files(stash_root, file_order);
 
     CREATE TABLE IF NOT EXISTS graph_file_entities (
-      entry_id     INTEGER NOT NULL REFERENCES graph_files(entry_id) ON DELETE CASCADE,
-      entity_order INTEGER NOT NULL,
       stash_root   TEXT NOT NULL,
+      file_path    TEXT NOT NULL,
+      body_hash    TEXT NOT NULL,
+      entity_order INTEGER NOT NULL,
       entity_norm  TEXT NOT NULL,
       entity       TEXT NOT NULL,
-      PRIMARY KEY (entry_id, entity_order)
+      PRIMARY KEY (stash_root, file_path, body_hash, entity_order),
+      FOREIGN KEY (stash_root, file_path, body_hash)
+        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
     );
 
     CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity_norm
       ON graph_file_entities(stash_root, entity_norm);
 
     CREATE TABLE IF NOT EXISTS graph_file_relations (
-      entry_id       INTEGER NOT NULL REFERENCES graph_files(entry_id) ON DELETE CASCADE,
+      stash_root     TEXT NOT NULL,
+      file_path      TEXT NOT NULL,
+      body_hash      TEXT NOT NULL,
       relation_order INTEGER NOT NULL,
       from_entity_norm TEXT NOT NULL,
       from_entity    TEXT NOT NULL,
@@ -452,7 +463,9 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
       to_entity      TEXT NOT NULL,
       relation_type  TEXT,
       confidence     REAL,
-      PRIMARY KEY (entry_id, relation_order)
+      PRIMARY KEY (stash_root, file_path, body_hash, relation_order),
+      FOREIGN KEY (stash_root, file_path, body_hash)
+        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
     );
   `);
 
@@ -1040,24 +1053,27 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
     );
   }
 
-  // Explicitly delete graph_files (cascades to graph_file_entities/relations)
-  // and recompute graph_meta counts for affected stash roots.
+  // #624-P1: graph_files is NO LONGER keyed on entries.id, so deleting an
+  // entries row must NOT wipe the extracted graph (that is the whole point —
+  // the graph survives a reindex when body_hash is unchanged). We therefore do
+  // NOT delete graph_files here. We DO, however, recompute graph_meta counts
+  // for the stash roots touched by the deleted entries so the summary numbers
+  // stay consistent with the live child rows (the counts are derived, and the
+  // entries delete may have changed which files are considered/indexed).
   //
-  // graph_files references entries(id) ON DELETE CASCADE, but graph_meta uses
-  // stash_root (a text key) with no FK — so a cascade wipe of entries silently
-  // leaves graph_meta with stale counts. Doing this explicitly here lets us
-  // recompute the correct counts before the entries rows are removed.
+  // Resolve the affected stash roots from the entries rows BEFORE deletion.
   const affectedStashRoots = new Set<string>();
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
     bestEffort(() => {
       const rows = db
-        .prepare(`SELECT DISTINCT stash_root FROM graph_files WHERE entry_id IN (${placeholders})`)
-        .all(...chunk) as Array<{ stash_root: string }>;
-      for (const row of rows) affectedStashRoots.add(row.stash_root);
-      db.prepare(`DELETE FROM graph_files WHERE entry_id IN (${placeholders})`).run(...chunk);
-    }, "delete graph_files for entries");
+        .prepare(`SELECT DISTINCT stash_dir FROM entries WHERE id IN (${placeholders})`)
+        .all(...chunk) as Array<{ stash_dir: string }>;
+      for (const row of rows) {
+        if (row.stash_dir) affectedStashRoots.add(row.stash_dir);
+      }
+    }, "resolve stash roots for graph_meta recompute");
   }
   for (const stashRoot of affectedStashRoots) {
     bestEffort(
@@ -1066,16 +1082,12 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
           .prepare(
             `UPDATE graph_meta
              SET extracted_files = (SELECT COUNT(*) FROM graph_files WHERE stash_root = ?),
-                 entity_count    = (SELECT COUNT(*) FROM graph_file_entities gfe
-                                    JOIN graph_files gf ON gf.entry_id = gfe.entry_id
-                                    WHERE gf.stash_root = ?),
-                 relation_count  = (SELECT COUNT(*) FROM graph_file_relations gfr
-                                    JOIN graph_files gf ON gf.entry_id = gfr.entry_id
-                                    WHERE gf.stash_root = ?)
+                 entity_count    = (SELECT COUNT(*) FROM graph_file_entities WHERE stash_root = ?),
+                 relation_count  = (SELECT COUNT(*) FROM graph_file_relations WHERE stash_root = ?)
              WHERE stash_root = ?`,
           )
           .run(stashRoot, stashRoot, stashRoot, stashRoot),
-      "sync graph_meta counts after graph_files delete",
+      "sync graph_meta counts after entries delete",
     );
   }
 }
@@ -1527,16 +1539,32 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
 export function getEntitiesByEntryIds(db: Database, entryIds: number[]): Map<number, string[]> {
   const result = new Map<number, string[]>();
   if (entryIds.length === 0) return result;
-  const placeholders = entryIds.map(() => "?").join(", ");
-  const rows = db
-    .prepare(
-      `SELECT entry_id, entity_norm FROM graph_file_entities WHERE entry_id IN (${placeholders}) ORDER BY entry_id, entity_order`,
-    )
-    .all(...(entryIds as SqlValue[])) as Array<{ entry_id: number; entity_norm: string }>;
-  for (const row of rows) {
-    const list = result.get(row.entry_id);
-    if (list) list.push(row.entity_norm);
-    else result.set(row.entry_id, [row.entity_norm]);
+  // #624-P1: graph_file_entities no longer carries entry_id. Re-derive the
+  // entry_id -> entity_norm[] contract by JOINing through entries on
+  // (stash_dir, file_path) -> graph_files. Chunk the IN(?) list because the
+  // recombine pass can pass 10k+ entry ids (well over the SQLite param limit).
+  for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = db
+      .prepare(
+        `SELECT e.id AS entry_id, gfe.entity_norm AS entity_norm
+           FROM entries e
+           JOIN graph_files gf
+             ON gf.stash_root = e.stash_dir AND gf.file_path = e.file_path
+           JOIN graph_file_entities gfe
+             ON gfe.stash_root = gf.stash_root
+            AND gfe.file_path = gf.file_path
+            AND gfe.body_hash = gf.body_hash
+          WHERE e.id IN (${placeholders})
+          ORDER BY e.id, gfe.entity_order`,
+      )
+      .all(...(chunk as SqlValue[])) as Array<{ entry_id: number; entity_norm: string }>;
+    for (const row of rows) {
+      const list = result.get(row.entry_id);
+      if (list) list.push(row.entity_norm);
+      else result.set(row.entry_id, [row.entity_norm]);
+    }
   }
   return result;
 }

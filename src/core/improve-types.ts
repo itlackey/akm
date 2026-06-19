@@ -195,6 +195,13 @@ export interface RecombineResult {
   clustersFormed: number;
   /** Number of `type: hypothesis` proposals queued through the normal queue. */
   proposalsEmitted: number;
+  /**
+   * #625 — number of generalizations promoted to a `type: lesson` proposal this
+   * run because their confirmation count reached `confirmThreshold`. Promotion
+   * goes through the SAME proposal queue + quality gate (never a direct stash
+   * write); a promoted run emits a lesson proposal INSTEAD of the hypothesis one.
+   */
+  lessonsPromoted: number;
   /** Number of clusters whose LLM returned a justified null (no proposal). */
   nullsReturned: number;
   /** Wall-clock duration of the pass in milliseconds. */

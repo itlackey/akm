@@ -135,6 +135,32 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(processes.procedural?.maxProposalsPerRun).toBe(5);
   });
 
+  test("#625 recombine.confirmThreshold survives a load→save→load round trip (locks second-pass consumption)", () => {
+    // No NEW config key: confirmThreshold is already in config-types + the
+    // config-schema allowlist/zod. This locks that the #625 second pass actually
+    // CONSUMES it — a profile setting it must load without throwing and survive
+    // a save→load round trip.
+    const config = {
+      semanticSearchMode: "off",
+      profiles: {
+        improve: {
+          default: {
+            processes: {
+              recombine: { enabled: true, minClusterSize: 3, confirmThreshold: 2 },
+            },
+          },
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    expect(() => loadConfig()).not.toThrow();
+
+    const processes = loadConfig().profiles?.improve?.default?.processes as Record<string, Record<string, unknown>>;
+    expect(processes.recombine?.confirmThreshold).toBe(2);
+  });
+
   test("WS-2 salience.outcomeWeightEnabled: true survives a load→save→load round trip", () => {
     const config = {
       semanticSearchMode: "off",

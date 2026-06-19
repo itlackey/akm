@@ -40,6 +40,16 @@ export class OpenCodeProvider implements SessionLogHarness {
     return fs.existsSync(this.#baseDir);
   }
 
+  /**
+   * Directory holding opencode's per-project session metadata files
+   * (`<base>/storage/session`). Returns `[]` when it does not exist on this
+   * machine. See {@link SessionLogHarness.watchRoots}.
+   */
+  watchRoots(): string[] {
+    const sessionRoot = path.join(this.#baseDir, "storage", "session");
+    return fs.existsSync(sessionRoot) ? [sessionRoot] : [];
+  }
+
   *readEvents(input: { sinceMs: number }): Iterable<SessionEvent> {
     // Legacy behavior: stream raw log lines from the top-level dir and `log/`
     // subdirectory. Kept to keep `getExecutionLogCandidates` working without

@@ -353,13 +353,18 @@ export function collectGraphRelatedHit(context: GraphBoostContext, filePath: str
  * Find graph files that share entities with the given file.
  *
  * Implementation: SQL self-join on graph_file_entities, scoped by stash_root,
- * grouped by entry_id, ordered by shared-entity count desc. Touches ~50-200
+ * grouped by file_path, ordered by shared-entity count desc. Touches ~50-200
  * rows instead of loading the entire snapshot into memory. Cold-call latency
  * drops from ~30-60ms (full snapshot parse) to ~2-5ms on typical stashes.
  *
+ * #624-P1: the graph tables are keyed on (stash_root, file_path, body_hash) —
+ * NOT entries.id — so candidates are identified by file_path (the unique index
+ * idx_graph_files_path guarantees one graph_files row per path).
+ *
  * The returned `ref` field carries the canonical asset ref (`type:name`)
- * resolved from entries.entry_key when the entry is indexed. Callers should
- * fall back to formatting `path` when `ref` is undefined (orphan graph row).
+ * resolved from entries.entry_key when the file is indexed. Callers should
+ * fall back to formatting `path` when `ref` is undefined (graph row with no
+ * matching entries row).
  */
 export function listRelatedPathsForFile(
   stashRoot: string,
@@ -379,24 +384,23 @@ export function listRelatedPathsForFile(
     return [];
   }
 
-  // Resolve target's entry_id from the stash_root + file_path. The graph rows
-  // are keyed on entry_id; without it we can't run the join.
-  let targetEntryId: number | undefined;
+  // Confirm the target file has a graph row; without it there is nothing to
+  // relate. (Identity is file_path within the stash — one row per path.)
   try {
     const row = db
-      .prepare("SELECT entry_id FROM graph_files WHERE stash_root = ? AND file_path = ? LIMIT 1")
-      .get(stashRoot, filePath) as { entry_id: number } | undefined;
-    targetEntryId = row?.entry_id;
+      .prepare("SELECT 1 AS present FROM graph_files WHERE stash_root = ? AND file_path = ? LIMIT 1")
+      .get(stashRoot, filePath) as { present: number } | undefined;
+    if (row === undefined) return [];
   } catch {
     return [];
   }
-  if (targetEntryId == null) return [];
 
   const effectiveLimit = Math.max(1, limit);
 
-  // Shared-entity count per candidate entry_id.
+  // Shared-entity count per candidate file_path. The target's entities are the
+  // rows for `filePath`; candidates are any OTHER file_path in the stash that
+  // shares a normalized entity.
   let candidateRows: Array<{
-    entry_id: number;
     file_path: string;
     file_type: string;
     shared: number;
@@ -404,101 +408,108 @@ export function listRelatedPathsForFile(
   try {
     candidateRows = db
       .prepare(
-        `SELECT gf.entry_id    AS entry_id,
-                gf.file_path   AS file_path,
+        `SELECT gf.file_path   AS file_path,
                 gf.file_type   AS file_type,
                 COUNT(*)       AS shared
             FROM graph_file_entities target
             JOIN graph_file_entities e
               ON e.stash_root = target.stash_root
              AND e.entity_norm = target.entity_norm
-             AND e.entry_id  != target.entry_id
+             AND e.file_path  != target.file_path
             JOIN graph_files gf
-              ON gf.entry_id = e.entry_id
-          WHERE target.entry_id  = ?
+              ON gf.stash_root = e.stash_root
+             AND gf.file_path = e.file_path
+             AND gf.body_hash = e.body_hash
+          WHERE target.file_path  = ?
             AND target.stash_root = ?
-          GROUP BY gf.entry_id
+          GROUP BY gf.file_path
           ORDER BY shared DESC, gf.file_path ASC
           LIMIT ?`,
       )
-      .all(targetEntryId, stashRoot, effectiveLimit) as typeof candidateRows;
+      .all(filePath, stashRoot, effectiveLimit) as typeof candidateRows;
   } catch {
     return [];
   }
 
   if (candidateRows.length === 0) return [];
 
-  const candidateIds = candidateRows.map((r) => r.entry_id);
-  const placeholders = candidateIds.map(() => "?").join(",");
+  const candidatePaths = candidateRows.map((r) => r.file_path);
+  const placeholders = candidatePaths.map(() => "?").join(",");
 
   // Pull the shared entity names (joined by normalized casing) for display.
   const sharedRows = db
     .prepare(
-      `SELECT e.entry_id AS entry_id, e.entity AS entity
+      `SELECT e.file_path AS file_path, e.entity AS entity
          FROM graph_file_entities e
          JOIN graph_file_entities target
            ON target.stash_root = e.stash_root
            AND target.entity_norm = e.entity_norm
-         WHERE e.entry_id IN (${placeholders})
-           AND target.entry_id = ?
+         WHERE e.file_path IN (${placeholders})
+           AND e.stash_root = ?
+           AND target.file_path = ?
            AND target.stash_root = ?`,
     )
-    .all(...candidateIds, targetEntryId, stashRoot) as Array<{ entry_id: number; entity: string }>;
+    .all(...candidatePaths, stashRoot, filePath, stashRoot) as Array<{ file_path: string; entity: string }>;
 
-  const sharedByEntry = new Map<number, Set<string>>();
+  const sharedByPath = new Map<string, Set<string>>();
   for (const row of sharedRows) {
-    let bucket = sharedByEntry.get(row.entry_id);
+    let bucket = sharedByPath.get(row.file_path);
     if (!bucket) {
       bucket = new Set<string>();
-      sharedByEntry.set(row.entry_id, bucket);
+      sharedByPath.set(row.file_path, bucket);
     }
     bucket.add(row.entity);
   }
 
   // Relation count for each candidate (relations where either endpoint
   // matches one of the shared entities).
-  const relationCountByEntry = new Map<number, number>();
+  const relationCountByPath = new Map<string, number>();
   const relationRows = db
     .prepare(
-      `SELECT entry_id, from_entity, to_entity
+      `SELECT file_path, from_entity, to_entity
          FROM graph_file_relations
-        WHERE entry_id IN (${placeholders})`,
+        WHERE file_path IN (${placeholders})
+          AND stash_root = ?`,
     )
-    .all(...candidateIds) as Array<{ entry_id: number; from_entity: string; to_entity: string }>;
+    .all(...candidatePaths, stashRoot) as Array<{ file_path: string; from_entity: string; to_entity: string }>;
   for (const row of relationRows) {
-    const shared = sharedByEntry.get(row.entry_id);
+    const shared = sharedByPath.get(row.file_path);
     if (!shared) continue;
     if (shared.has(row.from_entity) || shared.has(row.to_entity)) {
-      relationCountByEntry.set(row.entry_id, (relationCountByEntry.get(row.entry_id) ?? 0) + 1);
+      relationCountByPath.set(row.file_path, (relationCountByPath.get(row.file_path) ?? 0) + 1);
     }
   }
 
   // Optional: ref lookup via entries.entry_key. entry_key is stored as
   // `${stash_dir}:${type}:${name}` — strip the stash-dir prefix to get the
-  // user-facing `type:name`.
-  const refByEntryId = new Map<number, string>();
+  // user-facing `type:name`. Resolve by (stash_dir, file_path) now that the
+  // graph rows are no longer keyed on entries.id.
+  const refByPath = new Map<string, string>();
   try {
     const entryRows = db
-      .prepare(`SELECT id, entry_key, stash_dir FROM entries WHERE id IN (${placeholders})`)
-      .all(...candidateIds) as Array<{ id: number; entry_key: string; stash_dir: string }>;
+      .prepare(
+        `SELECT entry_key, stash_dir, file_path FROM entries
+          WHERE file_path IN (${placeholders}) AND stash_dir = ?`,
+      )
+      .all(...candidatePaths, stashRoot) as Array<{ entry_key: string; stash_dir: string; file_path: string }>;
     for (const row of entryRows) {
       const ref = stripStashPrefix(row.entry_key, row.stash_dir);
-      if (ref) refByEntryId.set(row.id, ref);
+      if (ref) refByPath.set(row.file_path, ref);
     }
   } catch {
     /* ignore — refs are best-effort */
   }
 
   return candidateRows.map((row) => {
-    const sharedSet = sharedByEntry.get(row.entry_id) ?? new Set<string>();
+    const sharedSet = sharedByPath.get(row.file_path) ?? new Set<string>();
     const sharedEntities = [...sharedSet].sort((a, b) => a.localeCompare(b));
-    const ref = refByEntryId.get(row.entry_id);
+    const ref = refByPath.get(row.file_path);
     return {
       ...(ref ? { ref } : {}),
       path: row.file_path,
       type: row.file_type,
       sharedEntities,
-      relationCount: relationCountByEntry.get(row.entry_id) ?? 0,
+      relationCount: relationCountByPath.get(row.file_path) ?? 0,
     };
   });
 }

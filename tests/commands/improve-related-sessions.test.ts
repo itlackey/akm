@@ -75,7 +75,15 @@ async function buildIndex(stashDir: string): Promise<void> {
   await akmIndex({ stashDir, full: true });
 }
 
-/** Insert raw graph entities for a given entry id (simulates graph extraction). */
+/**
+ * Insert raw graph entities for a file (simulates graph extraction).
+ *
+ * #624-P1: graph rows are keyed on (stash_root, file_path, body_hash), NOT
+ * entry_id. getEntitiesByEntryIds resolves entry id -> graph rows by JOINing
+ * entries(stash_dir, file_path) -> graph_files, so the file_path here must
+ * match the indexed entries row's file_path. entryId is retained in the
+ * signature (callers pass it) only to derive a stable file_order/body_hash.
+ */
 function insertGraphEntities(
   db: Database,
   entryId: number,
@@ -83,16 +91,17 @@ function insertGraphEntities(
   filePath: string,
   entities: string[],
 ): void {
+  const bodyHash = `hash-${entryId}`;
   db.prepare(
-    `INSERT OR REPLACE INTO graph_files (entry_id, stash_root, file_path, file_order, file_type, body_hash, status)
-     VALUES (?, ?, ?, ?, 'session', 'hash', 'extracted')`,
-  ).run(entryId, stashRoot, filePath, entryId);
+    `INSERT OR REPLACE INTO graph_files (stash_root, file_path, file_order, file_type, body_hash, status)
+     VALUES (?, ?, ?, 'session', ?, 'extracted')`,
+  ).run(stashRoot, filePath, entryId, bodyHash);
   let order = 0;
   for (const ent of entities) {
     db.prepare(
-      `INSERT OR REPLACE INTO graph_file_entities (entry_id, entity_order, stash_root, entity_norm, entity)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(entryId, order++, stashRoot, ent.toLowerCase(), ent);
+      `INSERT OR REPLACE INTO graph_file_entities (stash_root, file_path, body_hash, entity_order, entity_norm, entity)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(stashRoot, filePath, bodyHash, order++, ent.toLowerCase(), ent);
   }
 }
 

@@ -768,6 +768,59 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE extract_sessions_seen ADD COLUMN content_hash TEXT DEFAULT NULL;
     `,
   },
+  // ── Migration 014 — recombine_hypotheses (#625 confirmation count) ───────────
+  //
+  // Second-pass promotion ledger for the recombine pass. The first pass (#609)
+  // only ever emits `type: hypothesis` proposals; this table tracks how many
+  // CONSECUTIVE runs re-induced the SAME generalization (keyed by the
+  // deterministic `deriveRecombineLessonRef` value — a hash of the sorted
+  // member entryKeys). Once `consecutive_count >= confirmThreshold`, the run
+  // promotes the generalization to a `type: lesson` proposal (through the same
+  // proposal queue + quality gate). A hypothesis NOT re-induced in a run has its
+  // consecutive streak reset (decay-to-zero), so confirmation is per exact
+  // member-set and conservative.
+  //
+  // Indexed columns:
+  //   hypothesis_ref TEXT PK — the `lesson:recombined/<slug>-<hash>` ref; one
+  //                            row per re-inducible generalization. The ref is
+  //                            the promotion TARGET (a lesson in both the
+  //                            hypothesis and promoted states), so the ref never
+  //                            encodes the proposal type.
+  //   last_seen_at   TEXT (idx) — for forensic / pruning queries.
+  //
+  // Non-indexed columns:
+  //   signature          TEXT — the cluster's shared relatedness signal (tag /
+  //                             entity) at induction time; forensics only.
+  //   member_key         TEXT — sorted member entryKeys joined; the membership
+  //                             fingerprint behind the ref hash. Stored so a
+  //                             membership change (which yields a DIFFERENT ref)
+  //                             is auditable.
+  //   consecutive_count  INTEGER — current confirmation streak (reset on decay
+  //                                and on promotion).
+  //   first_seen_at      TEXT — ISO-8601 UTC of the first induction.
+  //   last_run           TEXT — sourceRun token of the last induction; the
+  //                             same-run idempotency guard.
+  //   promoted_at        TEXT — non-null once promoted; guards against
+  //                             double-promoting on every subsequent run.
+  //   metadata_json      TEXT — reserved for future forensics; defaults to '{}'.
+  {
+    id: "014-recombine-hypotheses",
+    up: `
+      CREATE TABLE IF NOT EXISTS recombine_hypotheses (
+        hypothesis_ref    TEXT PRIMARY KEY,
+        signature         TEXT NOT NULL,
+        member_key        TEXT NOT NULL,
+        consecutive_count INTEGER NOT NULL DEFAULT 0,
+        first_seen_at     TEXT NOT NULL,
+        last_seen_at      TEXT NOT NULL,
+        last_run          TEXT,
+        promoted_at       TEXT,
+        metadata_json     TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_recombine_hypotheses_last_seen
+        ON recombine_hypotheses(last_seen_at);
+    `,
+  },
 ];
 
 /**
@@ -1931,6 +1984,137 @@ export function upsertConsolidationJudged(
       (entry_key, content_hash, judged_at, outcome)
     VALUES (?, ?, ?, ?)
   `).run(input.entryKey, input.contentHash, input.judgedAt, input.outcome);
+}
+
+// ── recombine_hypotheses (#625 confirmation count) ──────────────────────────
+
+/**
+ * One row of the recombine confirmation ledger (migration 014). Keyed by the
+ * deterministic `deriveRecombineLessonRef` value so re-induction of the SAME
+ * member-set maps back to the SAME row across runs.
+ */
+export interface RecombineHypothesisRow {
+  /** `lesson:recombined/<slug>-<hash>` ref — the promotion target asset. */
+  hypothesis_ref: string;
+  /** The cluster's shared relatedness signal (tag / entity) at induction time. */
+  signature: string;
+  /** Sorted member entryKeys joined — the membership fingerprint. */
+  member_key: string;
+  /** Current confirmation streak (reset on decay and on promotion). */
+  consecutive_count: number;
+  /** ISO-8601 UTC of the first induction. */
+  first_seen_at: string;
+  /** ISO-8601 UTC of the most recent induction. */
+  last_seen_at: string;
+  /** sourceRun token of the last induction; same-run idempotency guard. */
+  last_run: string | null;
+  /** Non-null once promoted; guards against double-promotion. */
+  promoted_at: string | null;
+  /** Reserved forensic metadata; defaults to '{}'. */
+  metadata_json: string;
+}
+
+/**
+ * Record an induction of a recombine hypothesis and return the new consecutive
+ * count. INSERT … ON CONFLICT increments the streak, but the `last_run` guard
+ * makes a repeated call within the SAME run idempotent (no double-increment if
+ * the same ref appears twice in one run). On insert the streak starts at 1.
+ */
+export function recordRecombineInduction(
+  db: Database,
+  input: { hypothesisRef: string; signature: string; memberKey: string; seenAt: string; run: string },
+): number {
+  const row = db
+    .prepare(`
+      INSERT INTO recombine_hypotheses
+        (hypothesis_ref, signature, member_key, consecutive_count, first_seen_at, last_seen_at, last_run)
+      VALUES (?, ?, ?, 1, ?, ?, ?)
+      ON CONFLICT(hypothesis_ref) DO UPDATE SET
+        consecutive_count = consecutive_count + (CASE WHEN last_run IS excluded.last_run THEN 0 ELSE 1 END),
+        last_seen_at = excluded.last_seen_at,
+        last_run = excluded.last_run,
+        signature = excluded.signature,
+        member_key = excluded.member_key
+      RETURNING consecutive_count
+    `)
+    .get(input.hypothesisRef, input.signature, input.memberKey, input.seenAt, input.seenAt, input.run) as {
+    consecutive_count: number;
+  } | null;
+  return row?.consecutive_count ?? 0;
+}
+
+/**
+ * Fetch a single recombine hypothesis row, or `undefined` when the ref has
+ * never been induced. Normalizes bun:sqlite null → undefined like
+ * {@link getExtractedSession}.
+ */
+export function getRecombineHypothesis(db: Database, hypothesisRef: string): RecombineHypothesisRow | undefined {
+  const row = db
+    .prepare("SELECT * FROM recombine_hypotheses WHERE hypothesis_ref = ?")
+    .get(hypothesisRef) as RecombineHypothesisRow | null;
+  return row ?? undefined;
+}
+
+/**
+ * Mark a hypothesis promoted: stamp `promoted_at` and reset the consecutive
+ * count to 0, so it must re-accumulate a full confirmation streak before it can
+ * promote again. The `promoted_at` non-null state is the double-promotion guard.
+ */
+export function markRecombineHypothesisPromoted(db: Database, hypothesisRef: string, promotedAt: string): void {
+  db.prepare("UPDATE recombine_hypotheses SET promoted_at = ?, consecutive_count = 0 WHERE hypothesis_ref = ?").run(
+    promotedAt,
+    hypothesisRef,
+  );
+}
+
+/**
+ * Decay-to-zero every NON-promoted hypothesis NOT re-induced in the current run.
+ *
+ * A generalization that stops being supported by the corpus has lost its
+ * confirmation streak, so we hard-reset `consecutive_count` to 0 (the
+ * alternative — `count - 1` floored at 0 — tolerates a single noisy run but
+ * blurs the "consecutive" semantics; hard-reset is the conservative choice).
+ *
+ * Only rows whose `hypothesis_ref` is NOT in `seenRefs` AND whose `last_run` is
+ * NOT the current run are decayed. Already-promoted rows are left alone.
+ * Returns the number of rows reset.
+ */
+export function decayUnseenRecombineHypotheses(db: Database, currentRun: string, seenRefs: readonly string[]): number {
+  // Reset every eligible row, then exclude the seen refs in chunks to respect
+  // the ~999 SQLite param ceiling. With no seen refs we reset all non-promoted
+  // rows from prior runs in a single statement.
+  if (seenRefs.length === 0) {
+    const res = db
+      .prepare(
+        "UPDATE recombine_hypotheses SET consecutive_count = 0 WHERE promoted_at IS NULL AND (last_run IS NULL OR last_run != ?) AND consecutive_count != 0",
+      )
+      .run(currentRun);
+    return Number(res.changes);
+  }
+  // A single NOT IN keeps the exclusion atomic (a chunked NOT IN would let a ref
+  // excluded by one chunk still be reset by another chunk's statement). The
+  // recombine pass caps re-induced clusters at `maxClustersPerRun` (a handful),
+  // so `seenRefs` is far under SQLite's ~999 param ceiling in practice; we cap
+  // defensively and fall back to resetting all when somehow exceeded.
+  if (seenRefs.length > 900) {
+    const res = db
+      .prepare(
+        "UPDATE recombine_hypotheses SET consecutive_count = 0 WHERE promoted_at IS NULL AND (last_run IS NULL OR last_run != ?) AND consecutive_count != 0",
+      )
+      .run(currentRun);
+    return Number(res.changes);
+  }
+  const placeholders = seenRefs.map(() => "?").join(",");
+  const res = db
+    .prepare(
+      `UPDATE recombine_hypotheses SET consecutive_count = 0
+       WHERE promoted_at IS NULL
+         AND (last_run IS NULL OR last_run != ?)
+         AND consecutive_count != 0
+         AND hypothesis_ref NOT IN (${placeholders})`,
+    )
+    .run(currentRun, ...seenRefs);
+  return Number(res.changes);
 }
 
 // ── body_embeddings table helpers (WS-3a) ────────────────────────────────────

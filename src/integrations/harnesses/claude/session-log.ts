@@ -121,6 +121,17 @@ export class ClaudeCodeProvider implements SessionLogHarness {
     return fs.existsSync(claudeProjectsDir());
   }
 
+  /**
+   * Directory holding Claude Code's per-project session JSONL files
+   * (`~/.claude/projects`, honoring `AKM_CLAUDE_PROJECTS_DIR`). Returns `[]`
+   * when the directory does not exist on this machine. See {@link
+   * SessionLogHarness.watchRoots}.
+   */
+  watchRoots(): string[] {
+    const dir = claudeProjectsDir();
+    return fs.existsSync(dir) ? [dir] : [];
+  }
+
   *readEvents(input: { sinceMs: number }): Iterable<SessionEvent> {
     try {
       for (const jsonlPath of this.#walkJsonl(claudeProjectsDir())) {

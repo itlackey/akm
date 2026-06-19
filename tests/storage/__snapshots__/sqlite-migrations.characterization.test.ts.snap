@@ -16,6 +16,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "011-asset-salience-homeostatic-demoted-at",
     "012-improve-gate-thresholds",
     "013-extract-sessions-content-hash",
+    "014-recombine-hypotheses",
   ],
   "schema": [
     {
@@ -118,6 +119,14 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "sql": 
 "CREATE INDEX idx_proposals_stash_status_ref_source
         ON proposals(stash_dir, status, ref, source)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_recombine_hypotheses_last_seen",
+      "sql": 
+"CREATE INDEX idx_recombine_hypotheses_last_seen
+        ON recombine_hypotheses(last_seen_at)"
 ,
       "type": "index",
     },
@@ -306,6 +315,23 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         content          TEXT    NOT NULL DEFAULT '',
         frontmatter_json TEXT,
         metadata_json    TEXT    NOT NULL DEFAULT '{}'
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "recombine_hypotheses",
+      "sql": 
+"CREATE TABLE recombine_hypotheses (
+        hypothesis_ref    TEXT PRIMARY KEY,
+        signature         TEXT NOT NULL,
+        member_key        TEXT NOT NULL,
+        consecutive_count INTEGER NOT NULL DEFAULT 0,
+        first_seen_at     TEXT NOT NULL,
+        last_seen_at      TEXT NOT NULL,
+        last_run          TEXT,
+        promoted_at       TEXT,
+        metadata_json     TEXT NOT NULL DEFAULT '{}'
       )"
 ,
       "type": "table",

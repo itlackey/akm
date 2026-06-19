@@ -14,7 +14,7 @@ import {
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
-import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
+import { deleteStoredGraph, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 
@@ -562,8 +562,8 @@ describe("akm graph orphans (direct API)", () => {
 
 // ── Gap 3: ON DELETE CASCADE from entries → graph rows ──────────────────────
 
-describe("graph row cascade delete on entries removal", () => {
-  test("removing an entry deletes all graph_* rows for that entry", () => {
+describe("graph rows survive entries removal (#624-P1)", () => {
+  test("removing an entry PRESERVES its graph_* rows (graph is self-keyed)", () => {
     const knowledgeDir = path.join(stashDir, "knowledge");
     fs.mkdirSync(knowledgeDir, { recursive: true });
     const filePath = path.join(knowledgeDir, "cascade.md");
@@ -573,13 +573,6 @@ describe("graph row cascade delete on entries removal", () => {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     const db = openDatabase(dbPath);
     try {
-      // Defensive: confirm FK enforcement is actually on. openDatabase enables
-      // it (PRAGMA foreign_keys = ON in src/indexer/db/db.ts) but the assertion
-      // would silently pass without cascading if a future regression turned
-      // it off.
-      const fkRow = db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number };
-      if (fkRow.foreign_keys !== 1) db.exec("PRAGMA foreign_keys = ON");
-
       const entry = { name: "cascade", type: "knowledge", filename: "cascade.md" };
       upsertEntry(db, `${stashDir}:knowledge:cascade`, knowledgeDir, filePath, stashDir, entry, buildSearchText(entry));
       rebuildFts(db);
@@ -608,37 +601,35 @@ describe("graph row cascade delete on entries removal", () => {
       const entryId = entryRow?.id;
       if (entryId === undefined) throw new Error("expected entry id");
 
-      // Pre-condition: all three graph tables have rows for this entry.
-      const beforeFiles = db.prepare("SELECT COUNT(*) AS c FROM graph_files WHERE entry_id = ?").get(entryId) as {
-        c: number;
-      };
-      const beforeEntities = db
-        .prepare("SELECT COUNT(*) AS c FROM graph_file_entities WHERE entry_id = ?")
-        .get(entryId) as { c: number };
-      const beforeRelations = db
-        .prepare("SELECT COUNT(*) AS c FROM graph_file_relations WHERE entry_id = ?")
-        .get(entryId) as { c: number };
-      expect(beforeFiles.c).toBe(1);
-      expect(beforeEntities.c).toBe(2);
-      expect(beforeRelations.c).toBe(1);
+      // Pre-condition: all three graph tables have rows for this file_path.
+      const fileCount = () =>
+        (db.prepare("SELECT COUNT(*) AS c FROM graph_files WHERE file_path = ?").get(filePath) as { c: number }).c;
+      const entityCount = () =>
+        (db.prepare("SELECT COUNT(*) AS c FROM graph_file_entities WHERE file_path = ?").get(filePath) as { c: number })
+          .c;
+      const relationCount = () =>
+        (
+          db.prepare("SELECT COUNT(*) AS c FROM graph_file_relations WHERE file_path = ?").get(filePath) as {
+            c: number;
+          }
+        ).c;
+      expect(fileCount()).toBe(1);
+      expect(entityCount()).toBe(2);
+      expect(relationCount()).toBe(1);
 
-      // Cascade trigger.
+      // #624-P1: deleting the entries row must NOT wipe the graph rows. The
+      // graph is keyed on (stash_root, file_path, body_hash), with no FK back
+      // to entries(id), so it survives a reindex's delete + reinsert.
       db.prepare("DELETE FROM entries WHERE id = ?").run(entryId);
+      expect(fileCount()).toBe(1);
+      expect(entityCount()).toBe(2);
+      expect(relationCount()).toBe(1);
 
-      // Post-condition: every graph row pointing at the deleted entry is
-      // gone via cascading FKs.
-      const afterFiles = db.prepare("SELECT COUNT(*) AS c FROM graph_files WHERE entry_id = ?").get(entryId) as {
-        c: number;
-      };
-      const afterEntities = db
-        .prepare("SELECT COUNT(*) AS c FROM graph_file_entities WHERE entry_id = ?")
-        .get(entryId) as { c: number };
-      const afterRelations = db
-        .prepare("SELECT COUNT(*) AS c FROM graph_file_relations WHERE entry_id = ?")
-        .get(entryId) as { c: number };
-      expect(afterFiles.c).toBe(0);
-      expect(afterEntities.c).toBe(0);
-      expect(afterRelations.c).toBe(0);
+      // deleteStoredGraph remains the explicit full-clear path for a stash.
+      deleteStoredGraph(db, stashDir);
+      expect(fileCount()).toBe(0);
+      expect(entityCount()).toBe(0);
+      expect(relationCount()).toBe(0);
     } finally {
       closeDatabase(db);
     }
@@ -706,12 +697,12 @@ describe("replaceStoredGraph incremental upsert", () => {
       // the sentinel survives; if it's delete-and-reinserted, the
       // sentinel is wiped along with the rest of the children.
       const beforeRows = db
-        .prepare("SELECT entry_id, file_path, body_hash FROM graph_files WHERE stash_root = ?")
-        .all(stashDir) as Array<{ entry_id: number; file_path: string; body_hash: string }>;
+        .prepare("SELECT file_path, body_hash FROM graph_files WHERE stash_root = ?")
+        .all(stashDir) as Array<{ file_path: string; body_hash: string }>;
       for (const row of beforeRows) {
         db.prepare(
-          "INSERT INTO graph_file_entities (entry_id, entity_order, stash_root, entity_norm, entity) VALUES (?, ?, ?, ?, ?)",
-        ).run(row.entry_id, 99, stashDir, "__sentinel__", "__sentinel__");
+          "INSERT INTO graph_file_entities (stash_root, file_path, body_hash, entity_order, entity_norm, entity) VALUES (?, ?, ?, ?, ?, ?)",
+        ).run(stashDir, row.file_path, row.body_hash, 99, "__sentinel__", "__sentinel__");
       }
 
       replaceStoredGraph(db, {
@@ -730,8 +721,8 @@ describe("replaceStoredGraph incremental upsert", () => {
       });
 
       const afterRows = db
-        .prepare("SELECT entry_id, file_path, body_hash FROM graph_files WHERE stash_root = ?")
-        .all(stashDir) as Array<{ entry_id: number; file_path: string; body_hash: string }>;
+        .prepare("SELECT file_path, body_hash FROM graph_files WHERE stash_root = ?")
+        .all(stashDir) as Array<{ file_path: string; body_hash: string }>;
       const afterByPath = new Map(afterRows.map((r) => [r.file_path, r]));
 
       const f1After = afterByPath.get(file1Path);
@@ -754,7 +745,10 @@ describe("replaceStoredGraph incremental upsert", () => {
         .prepare(
           `SELECT gf.file_path AS file_path, gfe.entity AS entity
              FROM graph_file_entities gfe
-             JOIN graph_files gf ON gf.entry_id = gfe.entry_id
+             JOIN graph_files gf
+               ON gf.stash_root = gfe.stash_root
+              AND gf.file_path = gfe.file_path
+              AND gf.body_hash = gfe.body_hash
             WHERE gf.stash_root = ?
             ORDER BY gf.file_path, gfe.entity_order`,
         )
