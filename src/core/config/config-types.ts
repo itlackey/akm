@@ -736,6 +736,12 @@ export interface ImproveConfig {
      * Default: `false` (parity — WS-1 weights `w_e=0.30, w_r=0.70`).
      */
     outcomeWeightEnabled?: boolean;
+    /**
+     * Minimum encoding salience score for the high-salience improve lane (#608).
+     * Zero-feedback assets with `encoding_salience >= salienceThreshold` are
+     * admitted up to 10% of `maxPerRun`. Default 0.75. Set to 1.0 to disable.
+     */
+    salienceThreshold?: number;
   };
 }
 

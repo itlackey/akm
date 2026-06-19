@@ -58,7 +58,7 @@ import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString } from "../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
@@ -67,7 +67,10 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
+import { getDbPath } from "../../core/paths";
+import { openStateDatabase } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
+import { closeDatabase, getAllEntries, openDatabase } from "../../indexer/db/db";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
@@ -81,7 +84,9 @@ import {
 import { akmSearch } from "../read/search";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
+import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { buildClsContext, checkDistillFidelity } from "./homeostatic";
+import { computeSalience, upsertAssetSalience } from "./salience";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -889,13 +894,75 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // Best-effort load: when the asset is not yet indexed we still proceed —
   // the LLM is asked to distil from "available signal" (feedback alone).
   let assetContent: string | null = null;
+  let assetFilePath: string | null = null;
   try {
     const filePath = await lookup(inputRef);
     if (filePath && fs.existsSync(filePath)) {
+      assetFilePath = filePath;
       assetContent = fs.readFileSync(filePath, "utf8");
     }
   } catch {
     assetContent = null;
+  }
+
+  // ── #608: Encoding-time salience scoring ────────────────────────────────
+  // Score the source asset with the three-signal model (novelty × 0.40 +
+  // magnitude × 0.35 + predictionError × 0.25) and persist the result to:
+  //   1. The asset's frontmatter (human-readable mirror; idempotent delta gate).
+  //   2. state.db :: asset_salience (canonical; feeds improve's high-salience gate).
+  // Both writes are best-effort — a DB error never blocks distillation.
+  if (assetContent && assetFilePath) {
+    try {
+      const parsedRef = parseAssetRef(inputRef);
+      // Build bigram vocabulary from currently-indexed refs for novelty signal.
+      let existingRefVocabulary = new Set<string>();
+      try {
+        const embCfg = config?.embedding;
+        const indexDb = openDatabase(getDbPath(), embCfg?.dimension ? { embeddingDim: embCfg.dimension } : undefined);
+        try {
+          const allRefs = getAllEntries(indexDb).map((e) => e.entryKey);
+          existingRefVocabulary = buildRefVocabulary(allRefs);
+        } finally {
+          closeDatabase(indexDb);
+        }
+      } catch {
+        // Index not available — novelty defaults to type-floor.
+      }
+
+      const salienceResult = scoreEncodingSalience({
+        body: assetContent,
+        type: parsedRef.type,
+        existingRefVocabulary,
+        revisionCount: 0,
+      });
+
+      // 1. Write salience to the source asset frontmatter (idempotent).
+      const updatedContent = writeSalienceToFrontmatter(assetContent, salienceResult.score, salienceResult);
+      if (updatedContent !== assetContent) {
+        fs.writeFileSync(assetFilePath, updatedContent, "utf8");
+        assetContent = updatedContent;
+      }
+
+      // 2. Persist encoding_salience to state.db.
+      try {
+        const stateDb = openStateDatabase();
+        try {
+          const vector = computeSalience({
+            ref: inputRef,
+            type: parsedRef.type,
+            retrievalFreq: 0,
+            encodingSalience: salienceResult.score,
+          });
+          upsertAssetSalience(stateDb, inputRef, vector);
+        } finally {
+          stateDb.close();
+        }
+      } catch {
+        // State DB unavailable — frontmatter mirror is the only persistence.
+      }
+    } catch {
+      // Scoring errors never block distillation.
+    }
   }
 
   const { events } = readEventsImpl({

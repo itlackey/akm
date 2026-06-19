@@ -613,3 +613,125 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
     expect(capturedEligibility.get("skill:victim")).toBe("forgetting-safety");
   });
 });
+
+// ── Test 6: high-salience admission gate (#608) ────────────────────────────────
+//
+// Scenario:
+//   1. Write a zero-feedback skill and build the index.
+//   2. Pre-seed asset_salience with encoding_salience >= salienceThreshold.
+//   3. Run akmImprove with salienceThreshold set explicitly.
+//   4. Assert the ref is reflected with eligibilitySource='high-salience'.
+//   5. Repeat with salienceThreshold=1.0 — the same ref must NOT be selected
+//      via 'high-salience' (score < 1.0).
+
+describe("#608 high-salience admission gate", () => {
+  test("zero-feedback ref with encoding_salience >= threshold is reflected with eligibilitySource='high-salience'", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "novel-skill", "A genuinely novel skill with critical error handling.");
+    await buildIndex(stash);
+
+    // Pre-seed encoding_salience above the default threshold (0.75).
+    const dbSetup = openStateDatabase();
+    try {
+      upsertAssetSalience(dbSetup, "skill:novel-skill", {
+        encoding: 0.82,
+        outcome: 0,
+        retrieval: 0,
+        rankScore: 0.2,
+      });
+    } finally {
+      dbSetup.close();
+    }
+
+    const capturedEligibility = new Map<string, string | undefined>();
+
+    await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      // Disable proactive maintenance so only the high-salience gate can select this ref.
+      config: {
+        ...minimalConfig(),
+        profiles: {
+          improve: {
+            default: {
+              processes: {
+                consolidate: { enabled: false },
+                memoryInference: { enabled: false },
+                graphExtraction: { enabled: false },
+                extract: { enabled: false },
+                proactiveMaintenance: { enabled: false },
+              },
+            },
+          },
+        },
+        improve: { salience: { salienceThreshold: 0.75 } },
+      } as import("../../../src/core/config/config").AkmConfig,
+      ...noopIndexFns,
+      reflectFn: async (opts: AkmReflectOptions) => {
+        capturedEligibility.set(opts.ref ?? "", opts.eligibilitySource);
+        return noChangeReflect(opts.ref ?? "");
+      },
+      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
+    });
+
+    expect(capturedEligibility.has("skill:novel-skill")).toBe(true);
+    expect(capturedEligibility.get("skill:novel-skill")).toBe("high-salience");
+  });
+
+  test("salienceThreshold=1.0 disables the gate — ref with score=0.82 is NOT selected via high-salience", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "gated-skill", "A skill that should not pass a threshold of 1.0.");
+    await buildIndex(stash);
+
+    const dbSetup = openStateDatabase();
+    try {
+      upsertAssetSalience(dbSetup, "skill:gated-skill", {
+        encoding: 0.82,
+        outcome: 0,
+        retrieval: 0,
+        rankScore: 0.2,
+      });
+    } finally {
+      dbSetup.close();
+    }
+
+    const capturedEligibility = new Map<string, string | undefined>();
+
+    await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      config: {
+        ...minimalConfig(),
+        profiles: {
+          improve: {
+            default: {
+              processes: {
+                consolidate: { enabled: false },
+                memoryInference: { enabled: false },
+                graphExtraction: { enabled: false },
+                extract: { enabled: false },
+                proactiveMaintenance: { enabled: false },
+              },
+            },
+          },
+        },
+        // salienceThreshold=1.0 means only a score of exactly 1.0 would qualify — effectively disabled.
+        improve: { salience: { salienceThreshold: 1.0 } },
+      } as import("../../../src/core/config/config").AkmConfig,
+      ...noopIndexFns,
+      reflectFn: async (opts: AkmReflectOptions) => {
+        capturedEligibility.set(opts.ref ?? "", opts.eligibilitySource);
+        return noChangeReflect(opts.ref ?? "");
+      },
+      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
+    });
+
+    // With threshold=1.0, the ref must not be selected via high-salience.
+    if (capturedEligibility.has("skill:gated-skill")) {
+      expect(capturedEligibility.get("skill:gated-skill")).not.toBe("high-salience");
+    } else {
+      // Not selected at all — expected when both high-salience and proactive are gated out.
+      expect(capturedEligibility.has("skill:gated-skill")).toBe(false);
+    }
+  });
+});

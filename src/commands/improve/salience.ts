@@ -110,11 +110,12 @@ if (Math.abs(W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY - 1.0) > 
   );
 }
 
-// ── Type-importance stubs (Gap 1 placeholder until #608 lands) ────────────────
+// ── Type-importance fallback weights (#608 landed) ────────────────────────────
 //
-// encodingSalience v1 = a fixed weight by asset type, so the vector is seeded
-// at table-creation time from type alone. The full encoding-time estimator
-// (novelty/prediction-error scoring at extract) is deferred to 0.10+ (#608).
+// The real encoding salience estimator is `scoreEncodingSalience` in
+// `encoding-salience.ts` (#608). These weights are the fallback used when
+// `SalienceInputs.encodingSalience` is absent (pre-#608 assets without a
+// frontmatter `salience:` field or a state.db row seeded by distill).
 export const DEFAULT_TYPE_ENCODING_WEIGHTS: Readonly<Record<string, number>> = Object.freeze({
   skill: 0.9,
   agent: 0.9,
@@ -136,6 +137,12 @@ export interface SalienceInputs {
   ref: string;
   /** Asset type string (parsed from ref). Empty string falls back to default weight. */
   type: string;
+  /**
+   * Computed encoding salience from `scoreEncodingSalience` (#608).
+   * When provided, overrides the `DEFAULT_TYPE_ENCODING_WEIGHTS` stub.
+   * Clamped to [0, 1]. Absent means fall back to the type-weight stub.
+   */
+  encodingSalience?: number;
   /**
    * Retrieval frequency: total count of search/show/curate events for this ref.
    * From `getRetrievalCounts()` in the index DB.
@@ -188,9 +195,10 @@ export interface SalienceInputs {
 
 export interface SalienceVector {
   /**
-   * Encoding salience in [0,1] — intrinsic importance set at extract/creation.
-   * v1 stub: type-importance weight. Gap 1 / #608 will replace with a real
-   * novelty/prediction-error estimator at extract time.
+   * Encoding salience in [0,1] — intrinsic importance set at distill/creation.
+   * Real scoring from `scoreEncodingSalience` in `encoding-salience.ts` (#608).
+   * Type-weight table (`DEFAULT_TYPE_ENCODING_WEIGHTS`) is the fallback for
+   * older assets without a state.db row seeded by the distill path.
    */
   encoding: number;
   /**
@@ -221,8 +229,17 @@ export interface SalienceVector {
 export function computeSalience(inputs: SalienceInputs): SalienceVector {
   const now = inputs.now ?? Date.now();
 
-  // ── Encoding salience (Gap 1 stub) ──────────────────────────────────────────
-  const encoding = DEFAULT_TYPE_ENCODING_WEIGHTS[inputs.type] ?? DEFAULT_ENCODING_SALIENCE;
+  // ── Encoding salience ────────────────────────────────────────────────────────
+  //
+  // When `inputs.encodingSalience` is provided (computed by `scoreEncodingSalience`
+  // in encoding-salience.ts at extract/distill time, #608), use it directly.
+  // Fall back to the type-importance stub only when the caller has not yet
+  // computed a content-based score (e.g. on older assets before the first
+  // staleness refresh runs).
+  const encoding =
+    inputs.encodingSalience !== undefined
+      ? Math.min(1, Math.max(0, inputs.encodingSalience))
+      : (DEFAULT_TYPE_ENCODING_WEIGHTS[inputs.type] ?? DEFAULT_ENCODING_SALIENCE);
 
   // ── Outcome salience (WS-2 active) ────────────────────────────────────────
   //

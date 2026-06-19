@@ -589,6 +589,12 @@ const ImproveSalienceSchema = z
      * no regression). Set to true after running scripts/akm-eval + health report.
      */
     outcomeWeightEnabled: z.boolean().optional(),
+    /**
+     * Minimum encoding salience score [0, 1] for a zero-feedback asset to be
+     * admitted to the high-salience improve lane (#608).
+     * Default 0.75. Set to 1.0 to disable the lane entirely.
+     */
+    salienceThreshold: z.number().min(0).max(1).optional(),
   })
   .strict();
 

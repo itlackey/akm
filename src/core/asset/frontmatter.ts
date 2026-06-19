@@ -10,7 +10,18 @@
  * sequences) is handled correctly without a brittle hand-rolled state machine.
  */
 
-import { parse as yamlParse } from "yaml";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+
+/**
+ * Sub-signal breakdown produced by `scoreEncodingSalience` in encoding-salience.ts.
+ * Mirrored here to avoid a core → commands import. Keep in sync with
+ * `EncodingSalienceResult` in `src/commands/improve/encoding-salience.ts`.
+ */
+export interface SalienceSubSignals {
+  novelty: number;
+  magnitude: number;
+  predictionError: number;
+}
 
 /**
  * Parse YAML frontmatter from a Markdown (or similar) string.
@@ -175,4 +186,62 @@ export function parseYamlScalar(value: string): unknown {
     return value.slice(1, -1);
   }
   return value;
+}
+
+// ── Minimum score delta to trigger a frontmatter salience rewrite ─────────────
+const SALIENCE_WRITE_DELTA_THRESHOLD = 0.05;
+
+/**
+ * Idempotently write `salience` and `salienceInputs` fields into the YAML
+ * frontmatter of a raw asset string.
+ *
+ * Skips the write when the existing `salience` field differs from `score` by
+ * less than {@link SALIENCE_WRITE_DELTA_THRESHOLD}, to avoid churn for minor
+ * floating-point drift. Returns the raw string unchanged when no write is needed
+ * or when no frontmatter block is present.
+ *
+ * The `salienceInputs` field is written for auditability only; no pipeline code
+ * reads it back. `state.db :: asset_salience` is the canonical store.
+ */
+export function writeSalienceToFrontmatter(raw: string, score: number, inputs: SalienceSubSignals): string {
+  const parsed = parseFrontmatterBlock(raw);
+  if (!parsed) return raw;
+
+  const existingData = parseFrontmatter(raw).data;
+  const existingSalience = typeof existingData.salience === "number" ? existingData.salience : undefined;
+
+  if (existingSalience !== undefined && Math.abs(existingSalience - score) < SALIENCE_WRITE_DELTA_THRESHOLD) {
+    return raw;
+  }
+
+  // Parse existing frontmatter into an object, then set/overwrite salience fields.
+  let fm: Record<string, unknown> = {};
+  if (parsed.frontmatter.trim()) {
+    try {
+      const p = yamlParse(parsed.frontmatter) as unknown;
+      if (p !== null && typeof p === "object" && !Array.isArray(p)) {
+        fm = p as Record<string, unknown>;
+      }
+    } catch {
+      // Malformed YAML — rebuild from best-effort parse
+      fm = parseFrontmatterLenient(parsed.frontmatter);
+    }
+  }
+
+  fm.salience = roundTo2dp(score);
+  fm.salienceInputs = {
+    novelty: roundTo2dp(inputs.novelty),
+    magnitude: roundTo2dp(inputs.magnitude),
+    predictionError: roundTo2dp(inputs.predictionError),
+  };
+
+  const newFrontmatter = yamlStringify(fm).trimEnd();
+  const body = parsed.content;
+  // Preserve original line ending style between frontmatter and body
+  const separator = body.startsWith("\n") ? "" : "\n";
+  return `---\n${newFrontmatter}\n---\n${separator}${body}`;
+}
+
+function roundTo2dp(n: number): number {
+  return Math.round(n * 100) / 100;
 }

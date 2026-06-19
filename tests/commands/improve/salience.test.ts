@@ -635,3 +635,68 @@ describe("buildRankChangeReport — forgetting-safety", () => {
     expect(buildRankChangeReport(oldRanks, newRanks, 10, 50).forgettingCandidates).toHaveLength(1);
   });
 });
+
+// ── encodingSalience override (#608) ────────────────────────────────────────
+
+describe("computeSalience — encodingSalience override (#608)", () => {
+  test("encodingSalience override: when provided, used instead of type-weight stub", () => {
+    // memory type stub is 0.5, but override is 0.9 — encoding should reflect override
+    const v = computeSalience({
+      ref: "memory:foo",
+      type: "memory",
+      retrievalFreq: 0,
+      encodingSalience: 0.9,
+      now: NOW,
+    });
+    expect(v.encoding).toBeCloseTo(0.9, 9);
+    expect(v.encoding).not.toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.memory);
+  });
+
+  test("fallback to type-weight stub when encodingSalience is undefined (backward compat)", () => {
+    const v = computeSalience({
+      ref: "memory:foo",
+      type: "memory",
+      retrievalFreq: 0,
+      now: NOW,
+    });
+    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.memory);
+  });
+
+  test("encodingSalience override propagates into rankScore (changes ranking)", () => {
+    const withStub = computeSalience({
+      ref: "memory:foo",
+      type: "memory",
+      retrievalFreq: 0,
+      now: NOW,
+    });
+    const withOverride = computeSalience({
+      ref: "memory:foo",
+      type: "memory",
+      retrievalFreq: 0,
+      encodingSalience: 0.9,
+      now: NOW,
+    });
+    // Higher encoding → higher rankScore
+    expect(withOverride.rankScore).toBeGreaterThan(withStub.rankScore);
+  });
+
+  test("encodingSalience override is clamped to [0, 1]", () => {
+    const vHigh = computeSalience({
+      ref: "lesson:foo",
+      type: "lesson",
+      retrievalFreq: 0,
+      encodingSalience: 1.5,
+      now: NOW,
+    });
+    expect(vHigh.encoding).toBeLessThanOrEqual(1.0);
+
+    const vLow = computeSalience({
+      ref: "lesson:foo",
+      type: "lesson",
+      retrievalFreq: 0,
+      encodingSalience: -0.1,
+      now: NOW,
+    });
+    expect(vLow.encoding).toBeGreaterThanOrEqual(0.0);
+  });
+});

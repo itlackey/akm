@@ -44,14 +44,15 @@ import { assertNever } from "./assert";
  *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
- * `forgetting-safety`.
+ * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `high-salience` >
+ * `proactive` > `forgetting-safety`.
  * A ref with real feedback is attributed to feedback even if it was also due
  * for proactive maintenance.
  */
 export type EligibilitySource =
   | "signal-delta"
   | "high-retrieval"
+  | "high-salience"
   | "proactive"
   | "scope"
   | "forgetting-safety"

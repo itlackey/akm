@@ -111,6 +111,7 @@ import {
   buildRankChangeReport,
   computeSalience,
   getAllRankScores,
+  getAssetSalience,
   getConsecutiveNoOps,
   getLastUseMsByRef,
   recordNoOp,
@@ -2890,6 +2891,41 @@ async function runImprovePreparationStage(args: {
     }
   }
 
+  // ── Layer 3: HIGH-SALIENCE ADMISSION GATE (#608) ──────────────────────────
+  // Zero-feedback refs whose encoding_salience (set at distill time by
+  // scoreEncodingSalience) exceeds the configured salienceThreshold are admitted
+  // into the improve run even without retrieval or feedback signal. This rescues
+  // newly distilled assets that the stash has not yet surfaced to users.
+  //
+  // Cap: at most 10% of the effective run limit so the lane cannot crowd out
+  // reactive feedback. Requires state.db to have an asset_salience row — refs
+  // without a row (pre-#608 assets still on the type-weight stub) are skipped.
+  const highSalienceRefs: ImproveEligibleRef[] = [];
+  const salienceCfg = (options.config ?? loadConfig()).improve?.salience;
+  const salienceThreshold = salienceCfg?.salienceThreshold ?? 0.75;
+  const proactiveAndRetrievalSet = new Set([...highRetrievalRefs, ...proactiveRefs].map((r) => r.ref));
+  {
+    let dbForHighSalience: import("../../storage/database").Database | undefined;
+    try {
+      dbForHighSalience = openStateDatabase(eventsCtx?.dbPath);
+      const effectiveLimit = options.limit ?? 10;
+      const highSalienceCap = Math.max(1, Math.floor(effectiveLimit * 0.1));
+      const candidates = noFeedbackCandidates.filter((r) => !proactiveAndRetrievalSet.has(r.ref));
+      for (const r of candidates) {
+        if (highSalienceRefs.length >= highSalienceCap) break;
+        const row = getAssetSalience(dbForHighSalience, r.ref);
+        if (row && row.encoding_salience >= salienceThreshold) {
+          highSalienceRefs.push(r);
+        }
+      }
+    } catch (err) {
+      rethrowIfTestIsolationError(err);
+      // best-effort: if DB unavailable, highSalienceRefs stays empty
+    } finally {
+      if (dbForHighSalience) dbForHighSalience.close();
+    }
+  }
+
   // Record an in-memory skip action for every zero-feedback ref that the
   // partition loop deferred to P0-A but P0-A then declined (retrievalCount below
   // threshold, or a prior reflect proposal already on record). These never make
@@ -2897,7 +2933,7 @@ async function runImprovePreparationStage(args: {
   // summary. No DB event is written here — these refs carry no signal at all, so
   // there is nothing for the skip histogram to aggregate; the action log alone
   // preserves the per-ref audit trail (mirrors the fully-skipped action above).
-  const rescuedSet = new Set([...highRetrievalRefs, ...proactiveRefs].map((r) => r.ref));
+  const rescuedSet = new Set([...highRetrievalRefs, ...proactiveRefs, ...highSalienceRefs].map((r) => r.ref));
   for (const r of noFeedbackPool) {
     if (rescuedSet.has(r.ref)) continue;
     actions.push({
@@ -2917,11 +2953,17 @@ async function runImprovePreparationStage(args: {
   // usage is the gate. Run `akm feedback <ref> --positive` or retrieve assets
   // to bring them into the eligible pool.
   // Layer-2 proactive refs join the eligible set alongside feedback-signal and
-  // high-retrieval (P0-A) refs. The three sources are disjoint by construction
-  // (proactive draws from noFeedbackCandidates with the P0-A picks removed), but
-  // dedupe defensively so a ref can never enter the loop twice. `requireFeedbackSignal`
-  // still suppresses both fallback sources for callers that want feedback-only runs.
-  const signalAndRetrievalRefs = dedupeRefs([...signalFiltered, ...highRetrievalRefs, ...proactiveRefs]);
+  // high-retrieval (P0-A) refs. The four sources are disjoint by construction
+  // (proactive draws from noFeedbackCandidates with the P0-A picks removed, and
+  // high-salience draws from the remainder), but dedupe defensively so a ref can
+  // never enter the loop twice. `requireFeedbackSignal` still suppresses all
+  // fallback sources for callers that want feedback-only runs.
+  const signalAndRetrievalRefs = dedupeRefs([
+    ...signalFiltered,
+    ...highRetrievalRefs,
+    ...proactiveRefs,
+    ...highSalienceRefs,
+  ]);
   let mergedRefs =
     scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
 
@@ -2937,11 +2979,13 @@ async function runImprovePreparationStage(args: {
   // createProposal calls. See EligibilitySource for the lane vocabulary.
   //
   // Precedence (prefer the most specific reactive signal):
-  //   scope > signal-delta > high-retrieval > proactive
+  //   scope > signal-delta > high-retrieval > proactive > high-salience
   // A ref with real feedback is attributed to feedback even if it was also due
-  // for proactive maintenance. We apply lanes weakest-first so the strongest
-  // overwrites; the explicit --scope <ref> bypass wins outright (user intent).
+  // for proactive maintenance or had high encoding salience. We apply lanes
+  // weakest-first so the strongest overwrites; the explicit --scope <ref> bypass
+  // wins outright (user intent).
   const eligibilitySourceByRef = new Map<string, EligibilitySource>();
+  for (const r of highSalienceRefs) eligibilitySourceByRef.set(r.ref, "high-salience");
   for (const r of proactiveRefs) eligibilitySourceByRef.set(r.ref, "proactive");
   for (const r of highRetrievalRefs) eligibilitySourceByRef.set(r.ref, "high-retrieval");
   for (const r of signalFiltered) eligibilitySourceByRef.set(r.ref, "signal-delta");
@@ -3358,13 +3402,15 @@ async function runImprovePreparationStage(args: {
     // even when it was also due for a proactive maintenance run. signal-delta
     // overrides forgetting-safety because a ref with fresh feedback is reactive
     // and doesn't need the protective pass label for measurement purposes.
+    for (const r of highSalienceRefs) eligibilitySourceByRef.set(r.ref, "high-salience");
     for (const r of proactiveRefs) eligibilitySourceByRef.set(r.ref, "proactive");
     for (const r of highRetrievalRefs) eligibilitySourceByRef.set(r.ref, "high-retrieval");
-    // Apply forgetting-safety OVER proactive and high-retrieval (already stamped
-    // in the loop above via `eligibilitySourceByRef.set(ref, "forgetting-safety")`).
-    // No-op here: the set() calls above for proactive/high-retrieval overwrite the
+    // Apply forgetting-safety OVER proactive, high-retrieval, and high-salience
+    // (already stamped in the loop above via
+    // `eligibilitySourceByRef.set(ref, "forgetting-safety")`). No-op here: the
+    // set() calls above for proactive/high-retrieval/high-salience overwrite the
     // earlier forgetting-safety stamp — so we re-apply forgetting-safety now for
-    // those refs that are both forgetting candidates AND proactive/high-retrieval.
+    // those refs that are both forgetting candidates AND in another fallback lane.
     for (const ref of pendingForgettingRefs) {
       eligibilitySourceByRef.set(ref, "forgetting-safety");
     }
