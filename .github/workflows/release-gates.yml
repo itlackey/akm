@@ -34,7 +34,7 @@ jobs:
       - name: Integration suite (shard ${{ matrix.shard }}/4, sequential)
         env:
           SHARD: ${{ matrix.shard }}/4
-        run: bun run test:integration:shard
+        run: bash scripts/run-test-shard.sh integration
 
   # Order-dependence / flake detector: run the FULL unit suite twice in fresh
   # processes to surface leaked env / singletons / stateful DB rows. This must

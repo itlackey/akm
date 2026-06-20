@@ -48,6 +48,9 @@ All new behavior is **opt-in / default-preserving** — default runs are byte-id
   with `--parallel=1` within each shard; the matrix runs shards concurrently. The
   release gate runs the identical set of tests. Local `bun run check` defaults to
   sequential too (the only safe mode on this Bun version). Coverage unchanged.
+  Each shard runs through `scripts/run-test-shard.sh`, which retries **only on a
+  hang/timeout** (the busy-spin can rarely fire even at `--parallel=1`) and never
+  on a real test failure, so genuine red tests still fail fast and are never masked.
 
 ## [0.9.0-beta.26] — 2026-06-20
 

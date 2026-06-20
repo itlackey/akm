@@ -70,4 +70,4 @@ jobs:
       - name: Unit tests (shard ${{ matrix.shard }}/4, sequential)
         env:
           SHARD: ${{ matrix.shard }}/4
-        run: bun run test:unit:shard
+        run: bash scripts/run-test-shard.sh unit
