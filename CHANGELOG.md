@@ -38,6 +38,17 @@ All new behavior is **opt-in / default-preserving** — default runs are byte-id
   (exactly how `release.yml` runs), silently blocking every npm publish since beta.11.
   Fixed to restore to `0`. (This is why beta.26 was the first successful workflow publish.)
 
+### Changed
+
+- **CI/release tests sharded across runner jobs (~15 min → ~2 min).** Bun 1.3.x
+  in-process test parallelism (`--parallel=N`, N>1) hits an intermittent
+  `epoll_ctl EEXIST` race / busy-spin hang on the `--isolate` workers, which had
+  forced fully-sequential (`TEST_PARALLEL=1`) runs. Tests now shard across separate
+  runner jobs (each a separate process tree, so no cross-shard fd/epoll collisions)
+  with `--parallel=1` within each shard; the matrix runs shards concurrently. The
+  release gate runs the identical set of tests. Local `bun run check` defaults to
+  sequential too (the only safe mode on this Bun version). Coverage unchanged.
+
 ## [0.9.0-beta.26] — 2026-06-20
 
 ### Added
