@@ -983,6 +983,39 @@ multi-tenant / multi-agent contract; the same shape is read back by
 [Configuration → Memory scope](configuration.md#memory-scope) for the
 frontmatter schema and round-trip rules.
 
+### fact
+
+Manage **durable stash-level facts** — the `fact` asset type (durable, mostly-static
+semantic knowledge about a user, team, or project: personal details, team tool
+stacks, coding conventions / "constitution", and stash-meta). Facts live under
+`facts/<category>/<name>.md`; see the [design note](design/fact-asset-type.md).
+
+```sh
+# Hot-capture a fact (à la `akm remember`). --category is required.
+akm fact add tool-stack "We deploy on Fly.io; CI is GitHub Actions." --category team
+akm fact add writing-style "Terse, active voice, no emoji." --category personal --pinned
+akm fact add coding "2-space indent; bun-first; no default exports." --category convention --pinned
+
+# List indexed facts (optionally filtered).
+akm fact list
+akm fact list --category team
+akm fact list --pinned
+
+# Print the assembled "pinned core" — the block `akm agent` injects.
+akm fact context
+```
+
+**Categories** scope a fact: `personal`, `team`, `project`, `convention`, `meta`
+(free values are accepted but flagged by `akm lint`). `--pinned` marks a fact as
+part of the always-injected **core** — keep this set small and high-signal.
+
+**Injection.** `akm agent <profile> [<agent-ref>] --prompt "…"` prepends the
+assembled pinned-core block to the agent's system prompt, so durable facts and
+conventions are always in context. Non-pinned facts stay retrievable via
+`akm search` / `akm curate` (just-in-time). Pass `--no-facts` to `akm agent` to
+disable injection for a run. A fact with `status: stale` (or `superseded` /
+`archived`) drops out of the pinned core while remaining searchable.
+
 ### import
 
 Import a knowledge document. This writes a markdown file into `knowledge/` in

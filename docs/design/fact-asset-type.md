@@ -122,13 +122,29 @@ search hints (no new DB columns or `StashEntry` fields):
 `fact:` refs resolve automatically — the ref resolver derives its type set
 from the registry (`src/commands/lint/base-linter.ts` contract note).
 
-## Phase 2 (follow-up, not in this change)
+## Phase 2 (implemented)
 
-- Assemble the pinned-fact core and inject it into harness system prompts
-  (`src/integrations/agent/**`, per-harness builders).
-- Optional `akm fact` CLI surface and a hot-capture path (à la `akm remember`).
-- Staleness/conflict handling (`status: active|stale|superseded`), since the
-  documented failure mode of fact stores is update, not storage.
+- **Pinned-core assembly + injection.** `src/commands/fact/fact-context.ts`
+  collects every `fact` with `pinned: true` (via the indexed `pinned` search
+  hint) and assembles a category-grouped `## Stash facts` block. The
+  user-facing `akm agent` dispatch prepends this block to the system prompt
+  whenever there's a task or agent asset; opt out with `--no-facts`. Collection
+  fails soft (missing index / unreadable file → empty), so it can never block a
+  dispatch. Internal proposal-generation agents (reflect/propose/improve) do
+  **not** go through this path, so they are unaffected.
+- **`akm fact` CLI** (`src/commands/fact/fact-cli.ts`):
+  - `add <name> [body] --category <c> [--pinned] [--description ...]` —
+    hot-capture, writing `facts/<category>/<name>.md` (à la `akm remember`).
+  - `list [--category <c>] [--pinned]` — list indexed facts.
+  - `context` — print the assembled pinned core (preview / pipe into AGENTS.md).
+- **Staleness handling.** A fact with `status: stale` (or `superseded` /
+  `archived`) is excluded from the pinned core while remaining searchable —
+  authors retire a fact without deleting it.
+
+### Phase 3 (future)
+
+- Per-harness builder injection for non-`akm agent` entry points.
+- LLM-assisted fact extraction/curation and conflict reconciliation.
 
 ## Relationship to `.meta/`
 

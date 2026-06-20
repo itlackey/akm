@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { isHttpUrl, isWithin, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -133,7 +133,7 @@ export async function readKnowledgeInput(source: string): Promise<{ content: str
  * to `writeAssetToSource`.
  */
 export async function writeMarkdownAsset(options: {
-  type: "knowledge" | "memory";
+  type: "knowledge" | "memory" | "fact";
   content: string;
   name?: string;
   fallbackPrefix: string;
@@ -152,7 +152,7 @@ export async function writeMarkdownAsset(options: {
   const target = resolveWriteTarget(cfg, options.target);
   const { source, config } = target;
 
-  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
+  const typeRoot = path.join(source.path, TYPE_DIRS[options.type] ?? options.type);
   // `--name` is the flat asset name; `--path` is the subdirectory under the
   // type root. Combine them into the nested name the path resolver expects.
   const subPath = normalizeCreateSubPath(options.path);
@@ -169,8 +169,9 @@ export async function writeMarkdownAsset(options: {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
   }
   if (fs.existsSync(assetPath) && !options.force) {
+    const label = `${options.type.charAt(0).toUpperCase()}${options.type.slice(1)}`;
     throw new UsageError(
-      `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+      `${label} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
       "RESOURCE_ALREADY_EXISTS",
     );
   }
