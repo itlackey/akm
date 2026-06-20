@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.26] — 2026-06-20
+
+### Added
+
+- **#628 — configurable SQLite journal mode (`AKM_SQLITE_JOURNAL_MODE`) for network
+  filesystems.** AKM previously opened every database with `PRAGMA journal_mode = WAL`
+  unconditionally, which cannot run on a network filesystem (NFS/SMB/Azure Files) —
+  WAL's `-shm` shared-memory wal-index can't be `mmap`'d over a network mount. You can
+  now set `AKM_SQLITE_JOURNAL_MODE` to `WAL` (default), `DELETE`, or `TRUNCATE`, applied
+  at **all five** db openers (`state.db`, `index.db` ×2 paths, `workflow.db`, `logs.db`).
+  At the `WAL` default AKM auto-detects a network mount for the data dir and transparently
+  falls back to `DELETE` (rollback journal + `synchronous = FULL`) with a one-line warning;
+  invalid values warn once and fall back to `WAL`. **Default behavior is byte-identical.**
+  This lets the AKM database subtree live on a shared volume (e.g. Azure Files under
+  Azure Container Apps). New docs section "Hosting AKM databases on a network share
+  (NFS/SMB)" in `docs/configuration.md`.
+
 ## [0.9.0-beta.25] — 2026-06-19
 
 Completes the recombine / extract-efficiency / graph thread. All new improve
