@@ -257,7 +257,16 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
     if (code === 0 && pendingExitCode != null && pendingExitCode !== 0 && pendingExitCode !== realExitCode) {
       code = pendingExitCode;
     }
-    process.exitCode = realExitCode;
+    // Restore the process-wide exit code. NOTE: under `bun test`, once
+    // `process.exitCode` has been set to a non-zero number (the deferred-exit
+    // pattern in e.g. `lint --fail-on-flagged`), assigning `undefined` does NOT
+    // clear it — the runner still exits non-zero at the end. Only assigning a
+    // numeric `0` resets it. So when the captured baseline was `undefined`
+    // (the normal case: nothing had set an exit code before this run), restore
+    // to `0` rather than `undefined`. This is what makes the sequential
+    // (`TEST_PARALLEL=1`) run exit 0 even though a captured command set a
+    // deferred non-zero exit code mid-test.
+    process.exitCode = realExitCode ?? 0;
     process.stdout.write = realStdoutWrite;
     process.stderr.write = realStderrWrite;
     console.log = realLog;
