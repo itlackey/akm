@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.30] — 2026-06-20
+
+### Changed / Fixed
+
+- **#632 — recombine cluster tuning (opt-in, default-preserving).** Recombine
+  clustered memories by frontmatter tag and preferred the LARGEST buckets, so it
+  always picked the coarsest whole-stash tags (`session`/`claude`/`akm`, 63–171
+  members) and produced bland generalizations. Two new `processes.recombine` knobs:
+  `maxClusterSize` (skip clusters larger than N, so over-broad buckets no longer
+  reach/starve the largest-first slice) and `excludeTags` (tags that may never form
+  a tag cluster). Both UNSET = byte-identical to prior behavior.
+- **#633 — recombine confirmation loop fixed.** The hypothesis confirmation streak
+  was keyed on a hash of the EXACT member set, so a growing stash drifted the key
+  every run → a fresh row at count 1 → `confirmThreshold` never reached → no
+  hypothesis ever promoted to a lesson (a dead two-pass loop). A freshly-induced
+  cluster now matches an existing pending row by signature + Jaccard
+  membership-overlap (≥ 0.7) and reuses its stable ref, so the streak accumulates
+  through membership drift. First/non-overlapping induction is unchanged.
+
 ## [0.9.0-beta.29] — 2026-06-20
 
 ### Reverted
