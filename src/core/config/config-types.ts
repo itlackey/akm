@@ -337,6 +337,13 @@ export interface ImproveProcessConfig {
    */
   fullScan?: boolean;
   /**
+   * graphExtraction process: when set, rank eligible files by utility_scores
+   * DESC and process only the top-N per run (incremental high-signal-first
+   * sweep). Unset = process all eligible (current behavior). Only meaningful on
+   * graphExtraction.
+   */
+  topN?: number;
+  /**
    * Apply mode for drained proposals: `queue` stages only (never promotes),
    * `promote` accepts matching proposals (commits to git). Defaults to the
    * safe `queue`. Only meaningful on the `triage` process.
@@ -703,6 +710,12 @@ export interface IndexPassConfig {
   graphExtractionIncludeTypes?: string[];
   /** Memory bodies to batch into a single memory-inference LLM call. Default: 1. Practical range: 1–10. */
   memoryInferenceBatchSize?: number;
+  /**
+   * Opt-in (#624-P3). When true, `akm show` extracts graph data inline
+   * (timeout-bounded) and `akm curate` enqueues it for an ungraphed asset.
+   * Default: false — behavior byte-identical to today.
+   */
+  lazyGraphExtraction?: boolean;
 }
 
 /** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */

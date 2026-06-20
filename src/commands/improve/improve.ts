@@ -4730,6 +4730,9 @@ export async function runImproveMaintenancePasses(args: {
       const graphEnabled = isProcessEnabled("index", "graph_extraction", config);
       const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
       const graphExtractionFullScan = improveProfile?.processes?.graphExtraction?.fullScan === true;
+      // #624 P2: optional incremental high-signal-first cap. Unset = process all
+      // eligible (byte-identical to today; no ranking/slice).
+      const graphExtractionTopN = improveProfile?.processes?.graphExtraction?.topN;
       // Build the set of refs actually touched this run.
       const touchedRefs = new Set<string>();
       for (const r of args.actionableRefs) touchedRefs.add(r.ref);
@@ -4803,7 +4806,7 @@ export async function runImproveMaintenancePasses(args: {
               db,
               reEnrich: false,
               onProgress: progressHandler,
-              options: { candidatePaths },
+              options: { candidatePaths, ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}) },
             }),
           );
           graphExtractionDurationMs = Date.now() - extractionStart;

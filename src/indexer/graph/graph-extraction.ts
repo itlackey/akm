@@ -42,7 +42,8 @@ import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
-import { type AkmConfig, getIndexPassConfig, resolveBatchSize } from "../../core/config/config";
+import { type AkmConfig, getIndexPassConfig, loadConfig, resolveBatchSize } from "../../core/config/config";
+import { rethrowIfTestIsolationError } from "../../core/errors";
 import { warn, warnVerbose } from "../../core/warn";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from "../../llm/graph-extract";
@@ -57,7 +58,7 @@ import {
   type LlmCacheEntry,
   upsertLlmCacheEntry,
 } from "../db/db";
-import { loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
+import { drainExtractionQueue, loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
 import { deduplicateGraph } from "./graph-dedup";
@@ -164,6 +165,12 @@ export interface GraphExtractionResult {
 
 export interface GraphExtractionPassOptions {
   candidatePaths?: ReadonlySet<string>;
+  /**
+   * When set (>= 0) and a DB is available, rank eligible files by
+   * `utility_scores` DESC and process only the top-N per run (incremental
+   * high-signal-first sweep). Unset = process all eligible (current behavior).
+   */
+  topN?: number;
 }
 
 /** Progress event emitted by {@link runGraphExtractionPass}. */
@@ -234,6 +241,13 @@ function computeGraphQualityTelemetry(
 }
 
 export const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
+
+/**
+ * Max number of lazy-extraction queue rows drained per pass (#624-P3). Bounds
+ * per-run work so a large backlog is spread across runs rather than processed
+ * all at once. Generous default — the queue is normally near-empty.
+ */
+const GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT = 100;
 
 const SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES = new Set([
   "memory",
@@ -464,10 +478,31 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     return { ...EMPTY_RESULT };
   }
 
+  // #624-P3: drain the lazy-extraction queue BEFORE the ranked sweep, highest
+  // priority first. Queued paths are extracted individually (per-file merge,
+  // other files untouched) so they are processed even when they fall outside
+  // the normal candidate set. Default (empty queue) is a byte-identical no-op:
+  // drainExtractionQueue returns [] and the loop body never runs.
+  if (db) {
+    const drained = drainExtractionQueue(db, primary.path, GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT);
+    for (const queued of drained) {
+      if (signal?.aborted) break;
+      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, { config, signal });
+    }
+  }
+
   const includeTypes = getGraphExtractionIncludeTypes(config);
-  const eligible = collectEligibleFiles(primary.path, includeTypes).filter(
+  let eligible = collectEligibleFiles(primary.path, includeTypes).filter(
     (candidate) => !options.candidatePaths || options.candidatePaths.has(candidate.absPath),
   );
+  // P2 (#624): when topN is set and a DB is available, rank the (already
+  // candidate-filtered) eligible set by utility_scores DESC and keep only the
+  // top-N. Default (topN unset) is byte-identical to today — no ranking query
+  // is issued and the eligible set is untouched. Ranking composes WITH the
+  // candidatePaths filter: scoped-then-ranked-then-sliced.
+  if (db && options.topN != null && options.topN >= 0) {
+    eligible = rankCandidatesByUtility(db, eligible, primary.path).slice(0, options.topN);
+  }
   const considered = eligible.length;
   if (considered === 0) {
     const scoped = options.candidatePaths ? ` matching ${options.candidatePaths.size} candidate path(s)` : "";
@@ -864,7 +899,207 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   };
 }
 
+/**
+ * Injected LLM seam for {@link extractGraphForSingleFile}. Mirrors the shape of
+ * a single {@link graphExtract.extractGraphFromBody} result. Tests supply this
+ * directly so the per-file extractor can be exercised without a real provider.
+ */
+export type SingleFileLlmOverride = (body: string) => Promise<{
+  entities: string[];
+  relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+  confidence?: number;
+}>;
+
+/**
+ * Infer the asset type (`memory`, `knowledge`, …) for a path from the stash
+ * directory segment it lives under. Returns the matching include-type, or
+ * `undefined` when the path is not under a known graph-eligible type dir.
+ */
+function inferGraphTypeForPath(stashRoot: string, absPath: string): string | undefined {
+  const rel = path.relative(stashRoot, absPath);
+  const firstSeg = rel.split(path.sep)[0];
+  if (!firstSeg) return undefined;
+  for (const type of SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES) {
+    if (TYPE_DIRS[type] === firstSeg) return type;
+  }
+  return undefined;
+}
+
+/**
+ * #624-P3 — extract graph data for a SINGLE file and merge it into the stored
+ * graph WITHOUT clobbering other files' rows.
+ *
+ * Re-reads the body from disk at call time (the queued body_hash is NOT trusted
+ * blindly — the file may have been deleted or changed since enqueue) and skips
+ * silently (returns `false`) when the file is gone or empty. Resolves the LLM
+ * via {@link resolveIndexPassLLM} (model-available guard: returns `false` when
+ * no provider is configured) UNLESS `opts.llmOverride` is supplied, in which
+ * case the override is the extractor seam (used by tests and by callers that
+ * already hold a resolved model).
+ *
+ * Returns `true` when a graph row was written for the file, `false` on any
+ * skip (missing file, empty body, unknown type, no model, or extraction error).
+ */
+export async function extractGraphForSingleFile(
+  db: Database,
+  stashRoot: string,
+  filePath: string,
+  bodyHash?: string,
+  opts?: { llmOverride?: SingleFileLlmOverride; signal?: AbortSignal; config?: AkmConfig },
+): Promise<boolean> {
+  try {
+    // Re-read from disk — never trust a stale queued body.
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, "utf8");
+    } catch {
+      return false; // file gone / unreadable → silent skip
+    }
+    const parsed = parseFrontmatter(raw);
+    const body = parsed.content.trim();
+    if (!body) return false;
+
+    const type = inferGraphTypeForPath(stashRoot, filePath) ?? "memory";
+    const effectiveHash = bodyHash ?? computeBodyHash(body);
+
+    // Extract — via the injected seam, or the real per-asset path.
+    let extraction: { entities: string[]; relations: GraphRelation[]; confidence?: number };
+    if (opts?.llmOverride) {
+      const out = await opts.llmOverride(body);
+      extraction = {
+        entities: out.entities,
+        relations: out.relations,
+        ...(out.confidence !== undefined ? { confidence: out.confidence } : {}),
+      };
+    } else {
+      const config = opts?.config ?? loadConfig();
+      if (!isProcessEnabled("index", "graph_extraction", config)) return false;
+      const llmConfig = resolveIndexPassLLM("graph", config);
+      if (!llmConfig) return false; // model-available guard
+      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, config);
+      extraction = {
+        entities: result.entities,
+        relations: result.relations,
+        ...(result.confidence !== undefined ? { confidence: result.confidence } : {}),
+      };
+    }
+
+    const entities = [...new Set(extraction.entities.map((e) => e.trim()).filter(Boolean))];
+    const relations = extraction.relations
+      .map((r) => ({
+        from: r.from.trim(),
+        to: r.to.trim(),
+        ...(r.type ? { type: r.type.trim() } : {}),
+        ...(normalizeConfidence(r.confidence) !== undefined ? { confidence: normalizeConfidence(r.confidence) } : {}),
+      }))
+      .filter((r) => r.from && r.to);
+
+    const node: GraphFileNode = {
+      path: filePath,
+      type,
+      bodyHash: effectiveHash,
+      entities,
+      relations,
+      ...(normalizeConfidence(extraction.confidence) !== undefined
+        ? { confidence: normalizeConfidence(extraction.confidence) }
+        : {}),
+      status: entities.length > 0 ? "extracted" : "empty",
+      reason: entities.length > 0 ? "none" : "no_graph_content",
+      extractionRunId: crypto.randomUUID(),
+    };
+
+    // Merge with the previously-stored nodes, scoping the refresh to JUST this
+    // path so other files' rows are preserved (and graph_meta counts refresh).
+    const previousGraph = loadGraphFile(stashRoot, db);
+    const candidatePaths = new Set([filePath]);
+    const mergedNodes = mergeGraphNodes(previousGraph.files, [node], candidatePaths);
+    const assetRefs = mergedNodes.map((n) => n.path);
+    const deduped = deduplicateGraph(
+      mergedNodes.map((n) => ({ entities: n.entities, relations: n.relations })),
+      assetRefs,
+    );
+    const qualityExtracted = mergedNodes.filter((n) => n.status === "extracted" && n.entities.length > 0).length;
+    const quality = computeGraphQualityTelemetry(
+      mergedNodes.length,
+      qualityExtracted,
+      deduped.entities.length,
+      deduped.relations.length,
+    );
+
+    const graph: GraphFile = {
+      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+      generatedAt: new Date().toISOString(),
+      stashRoot,
+      files: mergedNodes,
+      entities: deduped.entities,
+      relations: deduped.relations,
+      quality,
+      ...(previousGraph.telemetry ? { telemetry: previousGraph.telemetry } : {}),
+    };
+
+    return writeGraphFile(stashRoot, graph, db);
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return false;
+  }
+}
+
 // ── Eligible-file detection ─────────────────────────────────────────────────
+
+/**
+ * Rank eligible graph-extraction candidates by their entry `utility_scores`,
+ * highest first, for the incremental high-signal-first sweep (P2 of #624).
+ *
+ * The join is READ-ONLY (`entries.file_path = candidate.absPath`, then
+ * `entries.id -> utility_scores.entry_id`) and does NOT re-couple the graph
+ * rows to `entries`. It reads the GLOBAL `utility_scores` table (not the
+ * per-scope `utility_scores_scoped`), so ranking is corpus-wide; `stashRoot`
+ * is accepted for call-site symmetry/future scoping but is not used to filter
+ * (the global table has no `stash_root` column).
+ *
+ * Candidates with no matching `entries` row, or an entry with no
+ * `utility_scores` row, get an effective utility of 0 (LEFT JOIN + COALESCE)
+ * and sort LAST — they are deprioritized, never dropped, so a `topN >= total`
+ * slice still includes them and they remain reachable on later runs.
+ *
+ * Ties (equal utility) break by `file_path` ASC for deterministic output.
+ * Returns a NEW array; the input is not mutated. SQLite's ~999 bound-parameter
+ * cap is respected by chunking the `IN (...)` lookup at 500.
+ *
+ * Exported for direct unit testing.
+ */
+export function rankCandidatesByUtility(db: Database, candidates: EligibleFile[], _stashRoot: string): EligibleFile[] {
+  // Cannot rank without a DB → return the input unranked rather than throw.
+  // Keeps the DB-less code path (reuse-from-memory) working when topN is set.
+  if (!db || candidates.length === 0) return candidates;
+
+  const utilityByPath = new Map<string, number>();
+  const CHUNK = 500;
+  for (let start = 0; start < candidates.length; start += CHUNK) {
+    const chunk = candidates.slice(start, start + CHUNK);
+    const paths = chunk.map((c) => c.absPath);
+    const placeholders = paths.map(() => "?").join(", ");
+    const rows = db
+      .prepare(
+        `SELECT e.file_path AS file_path, COALESCE(MAX(u.utility), 0) AS utility
+           FROM entries e
+           LEFT JOIN utility_scores u ON u.entry_id = e.id
+          WHERE e.file_path IN (${placeholders})
+          GROUP BY e.file_path`,
+      )
+      .all(...paths) as Array<{ file_path: string; utility: number }>;
+    for (const row of rows) {
+      utilityByPath.set(row.file_path, row.utility ?? 0);
+    }
+  }
+
+  return [...candidates].sort((a, b) => {
+    const ua = utilityByPath.get(a.absPath) ?? 0;
+    const ub = utilityByPath.get(b.absPath) ?? 0;
+    if (ub !== ua) return ub - ua; // utility DESC
+    return a.absPath < b.absPath ? -1 : a.absPath > b.absPath ? 1 : 0; // tie-break: path ASC
+  });
+}
 
 interface EligibleFile {
   absPath: string;

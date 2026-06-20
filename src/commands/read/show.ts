@@ -24,19 +24,23 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
 import { asNonEmptyString } from "../../core/common";
-import { loadConfig } from "../../core/config/config";
+import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
-import { findEntryIdByRef } from "../../indexer/db/db";
+import { closeDatabase, computeBodyHash, findEntryIdByRef, openExistingDatabase } from "../../indexer/db/db";
+import { hasGraphData } from "../../indexer/db/graph-db";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
+import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
 import { lookup } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent } from "../../indexer/usage/usage-events";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../indexer/walk/file-context";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { resolveIndexPassLLM } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { resolveStorageLocations } from "../../storage/locations";
 import { withIndexDb } from "../../storage/repositories/index-db";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
@@ -450,6 +454,16 @@ export async function showLocal(input: {
     (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
   }
 
+  // #624-P3: opt-in inline graph extraction. Default OFF — when the flag is
+  // unset this whole block is skipped (no hasGraphData check, no LLM call), so
+  // behavior is byte-identical to today. When ON, it extracts graph data for an
+  // ungraphed asset, but ONLY when a model is configured (model-available
+  // guard) and ALWAYS bounded by a 30s timeout so `show` can never hang. Any
+  // timeout/model-unavailable/error path returns the response unchanged.
+  if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction === true) {
+    await maybeExtractGraphInline(config, sourceStashDir, assetPath);
+  }
+
   if (input.detail === "brief") {
     return buildBriefResponse(fullResponse, assetPath);
   }
@@ -459,6 +473,60 @@ export async function showLocal(input: {
   }
 
   return fullResponse;
+}
+
+/**
+ * #624-P3 — opt-in inline graph extraction for `akm show`. Best-effort and
+ * timeout-bounded: never throws, never hangs, never mutates the response.
+ *
+ * Preconditions (caller already checked the flag): a model must be configured
+ * (model-available guard via {@link resolveIndexPassLLM}) and the asset must be
+ * ungraphed ({@link hasGraphData}). Extraction races a 30s timeout so `show`
+ * cannot block on a slow provider; any timeout/error/missing-model path is
+ * swallowed and `show` returns its already-assembled response unchanged.
+ */
+async function maybeExtractGraphInline(
+  config: ReturnType<typeof loadConfig>,
+  sourceStashDir: string,
+  assetPath: string,
+): Promise<void> {
+  try {
+    // Model-available guard — no provider configured ⇒ silent skip, no LLM call.
+    if (!resolveIndexPassLLM("graph", config)) return;
+
+    let alreadyGraphed = false;
+    let bodyHash: string | undefined;
+    try {
+      const raw = fs.readFileSync(assetPath, "utf8");
+      bodyHash = computeBodyHash(parseFrontmatter(raw).content.trim());
+    } catch {
+      return; // file gone/unreadable ⇒ nothing to extract
+    }
+
+    withIndexDb((db) => {
+      alreadyGraphed = hasGraphData(db, sourceStashDir, assetPath);
+    });
+    if (alreadyGraphed) return;
+
+    // Open the db for the async extraction ourselves: `withIndexDb` is
+    // synchronous and would close the connection the instant the async fn
+    // returns its Promise (before extraction completes). Close it explicitly
+    // after the race settles instead.
+    const db = openExistingDatabase(resolveStorageLocations().indexDb);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, 30_000);
+    });
+    try {
+      await Promise.race([extractGraphForSingleFile(db, sourceStashDir, assetPath, bodyHash, { config }), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      closeDatabase(db);
+    }
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // Any other failure: silently return the unchanged show response.
+  }
 }
 
 /**

@@ -15,13 +15,19 @@
  * `mergeCurateSearchResponses`) by importing them directly.
  */
 
+import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
+import { closeDatabase, computeBodyHash, openExistingDatabase } from "../../indexer/db/db";
+import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
+import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent } from "../../indexer/usage/usage-events";
 import { truncateDescription } from "../../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
+import { withIndexDb } from "../../storage/repositories/index-db";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -250,6 +256,11 @@ async function enrichCuratedStashHit(
     shown = undefined;
   }
 
+  // #624-P3: when lazy graph extraction is opted in, enqueue an ungraphed
+  // asset for a later pass to extract. Fire-and-forget, non-blocking, NO inline
+  // extraction and NO LLM call here. Default-off (flag unset) = byte-identical.
+  if (shown?.path) maybeEnqueueLazyGraph(shown.path);
+
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
   const mergedSupportRefs = mergeCurateSupportRefs(supportRefs, shown?.related?.hits, selectedRefs, hit.ref);
@@ -269,6 +280,43 @@ async function enrichCuratedStashHit(
     reason: buildCuratedReason(query, shown?.type ?? hit.type),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
+}
+
+/**
+ * #624-P3 — enqueue an ungraphed asset for lazy graph extraction when the
+ * `index.graph.lazyGraphExtraction` flag is on. Pure side-effect, fully
+ * best-effort: any failure (config, fs, db) is swallowed so curate never fails
+ * on it. NO LLM call and NO inline extraction — only a cheap queue insert.
+ * Default-off (flag unset) returns immediately = byte-identical behavior.
+ */
+function maybeEnqueueLazyGraph(assetPath: string): void {
+  try {
+    const config = loadConfig();
+    if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction !== true) return;
+
+    const sources = resolveSourceEntries();
+    const source = findSourceForPath(assetPath, sources);
+    const stashRoot = source?.path;
+    if (!stashRoot) return;
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(assetPath, "utf8");
+    } catch {
+      return;
+    }
+    const body = parseFrontmatter(raw).content.trim();
+    if (!body) return;
+    const bodyHash = computeBodyHash(body);
+
+    withIndexDb((db) => {
+      if (!hasGraphData(db, stashRoot, assetPath)) {
+        enqueueGraphExtraction(db, stashRoot, assetPath, bodyHash, 0);
+      }
+    });
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+  }
 }
 
 function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {

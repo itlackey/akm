@@ -271,6 +271,73 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(reloaded.improve?.exploration).toBeUndefined();
   });
 
+  test("#624 P2 graphExtraction.topN survives a load→save→load round trip (locks .strict() schema registration)", () => {
+    // RED: topN is not yet declared on ImproveProcessConfigSchema (.strict()),
+    // so a config carrying processes.graphExtraction.topN currently HARD-ERRORS
+    // at load. This test locks that the new field is registered in BOTH
+    // config-types.ts and config-schema.ts and survives the round trip.
+    const config = {
+      semanticSearchMode: "off",
+      profiles: {
+        improve: {
+          default: {
+            processes: {
+              graphExtraction: { enabled: true, topN: 50 },
+            },
+          },
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    expect(() => loadConfig()).not.toThrow();
+
+    const processes = loadConfig().profiles?.improve?.default?.processes as Record<string, Record<string, unknown>>;
+    expect(processes.graphExtraction?.topN).toBe(50);
+  });
+
+  test("#624 P3 index.graph.lazyGraphExtraction true/false both survive a load→save→load round trip", () => {
+    // RED (CLAUDE.md registration guard): lazyGraphExtraction is not yet a
+    // recognized per-pass key, so a config carrying index.graph.lazyGraphExtraction
+    // currently HARD-ERRORS at load (IndexPassConfigSchema.strict()). This locks
+    // that the new field is registered in BOTH config-types.ts (IndexPassConfig)
+    // and config-schema.ts (INDEX_PASS_KNOWN_KEYS + z.object + help string), for
+    // both `true` and `false`.
+    for (const value of [true, false]) {
+      const config = {
+        semanticSearchMode: "off",
+        index: { graph: { lazyGraphExtraction: value } },
+      } as unknown as AkmConfig;
+
+      saveConfig(config);
+      resetConfigCache();
+      expect(() => loadConfig()).not.toThrow();
+
+      const graph = loadConfig().index?.graph as Record<string, unknown> | undefined;
+      expect(graph?.lazyGraphExtraction).toBe(value);
+      resetConfigCache();
+    }
+  });
+
+  test("#624 P2 an unknown sibling of graphExtraction.topN still hard-errors at load (no passthrough hole)", () => {
+    // Negative-direction guard: adding topN must NOT open a passthrough on the
+    // graphExtraction process object — unknown sibling keys must still throw.
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        semanticSearchMode: "off",
+        profiles: {
+          improve: { default: { processes: { graphExtraction: { topN: 10, bogusGraphKey: 1 } } } },
+        },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
   test("WS-4 unknown key under improve.exploration hard-errors at load (ImproveExplorationSchema.strict())", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });

@@ -482,6 +482,22 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
       FOREIGN KEY (stash_root, file_path, body_hash)
         REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
     );
+
+    -- #624-P3: lazy graph-extraction queue. Standalone table (NO FK to
+    -- graph_files — a queued file by definition has no graph row yet).
+    -- Idempotent on (stash_root, file_path); drained highest-priority-first.
+    -- CREATE TABLE IF NOT EXISTS is the forward migration (no DB_VERSION bump).
+    CREATE TABLE IF NOT EXISTS graph_extraction_queue (
+      stash_root TEXT NOT NULL,
+      file_path  TEXT NOT NULL,
+      body_hash  TEXT NOT NULL,
+      queued_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      priority   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (stash_root, file_path)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_extraction_queue_drain
+      ON graph_extraction_queue(stash_root, priority DESC, queued_at);
   `);
 
   // #624-P1 migration step 2: copy any renamed-aside legacy graph data into the
@@ -609,6 +625,7 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   db.exec("DROP TABLE IF EXISTS index_dir_state");
   db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
   db.exec("DROP INDEX IF EXISTS idx_llm_cache_updated");
+  db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
   db.exec("DROP TABLE IF EXISTS graph_file_relations");
   db.exec("DROP TABLE IF EXISTS graph_file_entities");
   db.exec("DROP TABLE IF EXISTS graph_files");

@@ -209,6 +209,11 @@ export const ImproveProcessConfigSchema = z
     // proactiveMaintenance process: top-N bound per run (default 25). Alias for
     // `limit`; `maxPerRun` wins when both are set.
     maxPerRun: positiveInt.optional(),
+    // graphExtraction process (#624 P2): when set, rank eligible files by
+    // utility_scores DESC and process only the top-N per run (incremental
+    // high-signal-first sweep). Unset = process all eligible (current
+    // behavior). Only meaningful on `graphExtraction`.
+    topN: positiveInt.optional(),
     // MemoryInference process: minimum pending memory count to run the pass.
     minPendingCount: z.number().int().min(0).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate
@@ -673,6 +678,7 @@ const INDEX_PASS_KNOWN_KEYS = new Set([
   "graphExtractionBatchSize",
   "graphExtractionIncludeTypes",
   "memoryInferenceBatchSize",
+  "lazyGraphExtraction",
 ]);
 
 /**
@@ -703,8 +709,8 @@ export const IndexPassConfigSchema = z.preprocess(
           code: z.ZodIssueCode.custom,
           message:
             `Unknown key \`${[...(ctx.path ?? []), key].join(".")}\`. Per-pass entries support \`llm\` ` +
-            "(boolean opt-out), `graphExtractionBatchSize`, `graphExtractionIncludeTypes`, and " +
-            "`memoryInferenceBatchSize`.",
+            "(boolean opt-out), `graphExtractionBatchSize`, `graphExtractionIncludeTypes`, " +
+            "`memoryInferenceBatchSize`, and `lazyGraphExtraction`.",
         });
         return raw;
       }
@@ -724,6 +730,7 @@ export const IndexPassConfigSchema = z.preprocess(
       graphExtractionBatchSize: positiveInt.optional(),
       graphExtractionIncludeTypes: z.array(z.enum(GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED)).nonempty().optional(),
       memoryInferenceBatchSize: positiveInt.optional(),
+      lazyGraphExtraction: z.boolean().optional(),
     })
     .passthrough(),
 );

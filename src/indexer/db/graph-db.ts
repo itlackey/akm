@@ -281,6 +281,67 @@ export function hasGraphData(db: Database, stashRoot: string, filePath: string):
 }
 
 /**
+ * #624-P3 — enqueue a file for lazy graph extraction. Idempotent on the
+ * (stash_root, file_path) PK: a second enqueue refreshes body_hash + queued_at
+ * and keeps the HIGHER priority. Non-blocking, no LLM call — the queued row is
+ * drained later by the graph-extraction pass. Tolerant of a missing table /
+ * db error (best-effort), but never masks the bun-test isolation guard.
+ */
+export function enqueueGraphExtraction(
+  db: Database,
+  stashRoot: string,
+  filePath: string,
+  bodyHash: string,
+  priority = 0,
+): void {
+  try {
+    db.prepare(
+      `INSERT INTO graph_extraction_queue (stash_root, file_path, body_hash, priority)
+         VALUES (?, ?, ?, ?)
+       ON CONFLICT(stash_root, file_path) DO UPDATE SET
+         body_hash = excluded.body_hash,
+         priority  = MAX(graph_extraction_queue.priority, excluded.priority),
+         queued_at = datetime('now')`,
+    ).run(stashRoot, filePath, bodyHash, priority);
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+  }
+}
+
+/**
+ * #624-P3 — drain up to `limit` queued files for a stash, highest-priority
+ * first (then oldest queued_at). The returned rows are DELETED from the queue
+ * in the SAME transaction (SELECT-then-DELETE-by-PK), so a drain is exactly
+ * once. Tolerant of a missing table / db error (returns []), but never masks
+ * the bun-test isolation guard.
+ */
+export function drainExtractionQueue(
+  db: Database,
+  stashRoot: string,
+  limit: number,
+): Array<{ filePath: string; bodyHash: string; priority: number }> {
+  try {
+    return db.transaction(() => {
+      const rows = db
+        .prepare(
+          `SELECT file_path, body_hash, priority
+             FROM graph_extraction_queue
+             WHERE stash_root = ?
+             ORDER BY priority DESC, queued_at ASC
+             LIMIT ?`,
+        )
+        .all(stashRoot, limit) as Array<{ file_path: string; body_hash: string; priority: number }>;
+      const del = db.prepare("DELETE FROM graph_extraction_queue WHERE stash_root = ? AND file_path = ?");
+      for (const row of rows) del.run(stashRoot, row.file_path);
+      return rows.map((row) => ({ filePath: row.file_path, bodyHash: row.body_hash, priority: row.priority }));
+    })();
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return [];
+  }
+}
+
+/**
  * Scoped loader — only the graph_meta row for a stash. Used by callers that
  * only need summary numbers (e.g. `akm graph summary`).
  */
