@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.28] — 2026-06-20
+
+### Added
+
+- **#630 — `fact` asset type phase 2: pinned-core assembly + `akm fact` CLI.**
+  Phase 1 (#629) added the `fact` type; phase 2 delivers the "pinned core +
+  just-in-time retrieval" model. `collectPinnedFacts()` reads `fact` entries from
+  the index (pre-filtered on the `pinned` search hint), excludes
+  `stale`/`superseded`/`archived` facts from the core (they stay searchable), and
+  **fails soft** — a missing index or unreadable file yields an empty list, so
+  collection never blocks a dispatch. `buildPinnedFactsBlock()` assembles a
+  deterministic, category-grouped `## Stash facts` block, and `akm agent`
+  prepends it to the system prompt for user-facing runs (only when a task or agent
+  asset is present; bare interactive launches stay clean; opt out with
+  `--no-facts`). New `akm fact` CLI: `add <name> [body] --category <c> [--pinned]`
+  (hot-capture à la `akm remember`), `list [--category] [--pinned]`, and `context`
+  (print the assembled pinned core). Design note: `docs/design/fact-asset-type.md`.
+
 ## [0.9.0-beta.27] — 2026-06-20
 
 All new behavior is **opt-in / default-preserving** — default runs are byte-identical.
