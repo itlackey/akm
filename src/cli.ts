@@ -78,6 +78,7 @@ import { generateBashCompletions, installBashCompletions } from "./commands/comp
 import { configCommand } from "./commands/config-cli";
 import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
+import { factCommand } from "./commands/fact/fact-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { graphCommand } from "./commands/graph/graph-cli";
 import {
@@ -582,6 +583,7 @@ export const main = defineCommand({
     secret: secretCommand,
     wiki: wikiCommand,
     tasks: tasksCommand,
+    fact: factCommand,
   },
 });
 

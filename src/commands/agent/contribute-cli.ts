@@ -31,6 +31,7 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getHyphenatedArg } from "../../output/context";
+import { buildPinnedFactsContext } from "../fact/fact-context";
 import { akmLint } from "../lint";
 import { akmPropose } from "../proposal/propose";
 import { akmAgentDispatch } from "./agent-dispatch";
@@ -64,6 +65,11 @@ export const agentCommand = defineCommand({
         "Model override — accepts aliases (opus, sonnet, haiku) or exact platform model IDs. Overrides the model specified in the agent asset.",
     },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+    "no-facts": {
+      type: "boolean",
+      description: "Do not prepend the pinned stash facts (fact: assets with `pinned: true`) to the system prompt",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -103,6 +109,23 @@ export const agentCommand = defineCommand({
       const promptText = getStringArg(args, "prompt");
       const commandRef = getStringArg(args, "command");
       const workflowRef = getStringArg(args, "workflow");
+
+      // Phase 2: prepend the pinned-fact "core" (fact assets with
+      // `pinned: true`) to the system prompt for user-facing agent runs, so
+      // durable stash facts and conventions are always in context. Only injects
+      // when there is actually a task or agent asset — bare interactive launches
+      // (`akm agent claude`) stay clean. Opt out with --no-facts. Fails soft:
+      // buildPinnedFactsContext never throws, so fact collection can't block a
+      // dispatch.
+      if (
+        getHyphenatedArg<boolean>(args, "no-facts") !== true &&
+        (promptText ?? commandRef ?? workflowRef ?? agentRef)
+      ) {
+        const factsBlock = buildPinnedFactsContext();
+        if (factsBlock) {
+          systemPrompt = systemPrompt ? `${factsBlock}\n\n${systemPrompt}` : factsBlock;
+        }
+      }
 
       // Only build a dispatch request when there is something to dispatch — a
       // prompt, an agent asset, or a model override. When none of these are
