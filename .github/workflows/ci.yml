@@ -62,12 +62,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        # 8-way (not 4): fewer tests per shard process = less fd churn = lower
+        # Bun --isolate epoll busy-spin probability. See release.yml.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - name: Unit tests (shard ${{ matrix.shard }}/4, sequential)
+      - name: Unit tests (shard ${{ matrix.shard }}/8, sequential)
         env:
-          SHARD: ${{ matrix.shard }}/4
+          SHARD: ${{ matrix.shard }}/8
         run: bash scripts/run-test-shard.sh unit
