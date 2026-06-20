@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.25] — 2026-06-19
+
+Completes the recombine / extract-efficiency / graph thread. All new improve
+passes are **opt-in (default off)**, so default behavior is unchanged.
+
+### Added
+
+- **#606 — event-driven extract (`akm extract --watch`).** Opt-in watch mode: an
+  injectable, debounced watcher triggers extraction shortly after a session file
+  appears, with a clean `stop()` handle. The `8,28,48` cron remains the fallback;
+  no daemon is auto-launched.
+- **#625 — recombine second pass (hypothesis → lesson).** The opt-in `recombine`
+  process (#609) now consumes `confirmThreshold` (default 2): a generalization
+  re-induced that many consecutive runs is promoted from a `type: hypothesis`
+  proposal to a `type: lesson` proposal through the normal queue + quality gate
+  (never a direct stash write). Hypotheses that stop recurring decay. Backed by a
+  new `recombine_hypotheses` table in `state.db`.
+
+### Changed
+
+- **#624 (P1) — graph storage decoupled from `entries.id`.** `graph_files` is
+  re-keyed on `(stash_root, file_path, body_hash)`, so extracted graph data now
+  **survives a reindex** of unchanged files instead of being cascade-wiped. The
+  upgrade is migrated in a **targeted, graph-only path** that preserves existing
+  graph data and leaves the entry index, embeddings, FTS, and LLM-enrichment cache
+  untouched — **no full index rebuild and no re-embed** on upgrade. (P2 priority-
+  ranked extraction and P3 lazy/on-demand extraction remain deferred.)
+
+### Fixed
+
+- Graph re-key migration no longer triggers a destructive full-index rebuild: it
+  is a graph-scoped table migration (no `DB_VERSION` bump), and it **copies** the
+  existing graph rows into the new schema rather than dropping them.
+- Test-suite `/tmp` hygiene: sandbox teardown now fires on `SIGINT`/`SIGTERM`/
+  `SIGHUP` (not just clean exit), and a `sweep:tmp` step reclaims stale `akm-*`
+  sandbox dirs left by force-killed workers — eliminating the tmpfs accumulation
+  that caused intermittent `EEXIST: epoll_ctl` test flakes.
+
 ## [0.9.0-beta.20] — 2026-06-18
 
 ### Fixed
