@@ -339,7 +339,7 @@ union. The v1 contract is:
 - **Well-known types**, each with a renderer, a directory under the working
   stash, and frontmatter expectations:
   `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `workflow`,
-  `env`, `vault`, `secret`, `wiki`, `task`, `session`, and (Planned for v1)
+  `env`, `vault`, `secret`, `wiki`, `task`, `session`, `fact`, and (Planned for v1)
   `lesson`. See
   §13. The `task` type stores cron-style scheduled invocations of workflows or
   prompts; `akm tasks` registers them with the OS-native scheduler (cron /
@@ -354,7 +354,12 @@ union. The v1 contract is:
   generated, searchable record of a prior agent session, written by the
   `extract` pass to `sessions/<harness>/<id>.md`; it carries `log_path` +
   `access` frontmatter so an agent can navigate into the raw session log, and an
-  LLM `## Summary` / `## Key topics` body that is the searchable surface.
+  LLM `## Summary` / `## Key topics` body that is the searchable surface. The
+  `fact` type stores durable stash-level semantic knowledge (personal/team/project
+  details, coding conventions / "constitution", and stash-meta such as naming
+  conventions or the active-projects list); `category` scopes the fact and
+  `pinned: true` marks the small always-injected core (see
+  `docs/design/fact-asset-type.md`).
 - **Plugin-registered types** are allowed via `registerAssetType()` (see
   `src/core/asset-spec.ts`) and behave like well-known types as long as they
   register a renderer. Unknown types parse, index, and search; they render as

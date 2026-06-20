@@ -560,6 +560,48 @@ const sessionMdRenderer: AssetRenderer = {
   },
 };
 
+// ── 9. fact-md ───────────────────────────────────────────────────────────────
+
+/**
+ * Renderer for the `fact` asset type. A fact is durable stash-level semantic
+ * knowledge (personal/team/project details, coding conventions, stash-meta).
+ * It carries `category` (personal|team|project|convention|meta) and an
+ * optional `pinned` flag marking it as part of the always-injected core. The
+ * renderer surfaces a one-liner (category + pinned marker) so an agent can tell
+ * at a glance what kind of fact it is and whether it is core context.
+ */
+const factMdRenderer: AssetRenderer = {
+  name: "fact-md",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    const parsed = parseFrontmatter(ctx.content());
+    const fm = parsed.data;
+    const category = asNonEmptyString(fm.category);
+    const description = asNonEmptyString(fm.description);
+    const pinned = fm.pinned === true;
+    const headerParts = [
+      category ? `category: ${category}` : undefined,
+      pinned ? "pinned (core context)" : undefined,
+    ].filter((p): p is string => !!p);
+    const action = [
+      "Durable stash fact — apply it as background context.",
+      headerParts.length > 0 ? headerParts.join("  ") : undefined,
+    ]
+      .filter((p): p is string => !!p)
+      .join("\n");
+
+    return {
+      type: "fact",
+      name,
+      path: ctx.absPath,
+      action,
+      description,
+      content: parsed.content,
+    };
+  },
+};
+
 function applySessionMetadata(entry: StashEntry, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
@@ -585,6 +627,33 @@ function applyTocMetadata(entry: StashEntry, ctx: RenderContext): void {
     if (toc.headings.length > 0) entry.toc = toc.headings;
   } catch {
     // Non-fatal: skip TOC if file can't be read
+  }
+}
+
+/**
+ * Fact metadata: surface `category` and the `pinned` core marker as tags +
+ * search hints (no dedicated DB columns — same encoding pattern as session /
+ * task). `pinned` is mirrored to both a `pinned` tag and a `pinned` search
+ * hint so the ranking contributor can detect it and queries can target it.
+ */
+function applyFactMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
+    const tags = new Set<string>([...(entry.tags ?? []), "fact"]);
+    const hints = new Set<string>(entry.searchHints ?? []);
+    const category = asNonEmptyString(fm.category);
+    if (category) {
+      tags.add(category);
+      hints.add(`category:${category}`);
+    }
+    if (fm.pinned === true) {
+      tags.add("pinned");
+      hints.add("pinned");
+    }
+    entry.tags = Array.from(tags).filter(Boolean);
+    if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
+  } catch {
+    // Non-fatal: skip metadata extraction on parse error
   }
 }
 
@@ -745,6 +814,12 @@ registerMetadataContributor({
   contribute: (entry, ctx) => applySessionMetadata(entry, ctx.renderContext),
 });
 
+registerMetadataContributor({
+  name: "fact-md-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "fact-md",
+  contribute: (entry, ctx) => applyFactMetadata(entry, ctx.renderContext),
+});
+
 // ── Registration ─────────────────────────────────────────────────────────────
 
 /** All built-in renderers. */
@@ -762,6 +837,7 @@ const builtinRenderers: AssetRenderer[] = [
   secretFileRenderer,
   taskMdRenderer,
   sessionMdRenderer,
+  factMdRenderer,
 ];
 
 /**
@@ -780,6 +856,7 @@ export {
   agentMdRenderer,
   commandMdRenderer,
   envFileRenderer,
+  factMdRenderer,
   INTERPRETER_MAP,
   knowledgeMdRenderer,
   lessonMdRenderer,

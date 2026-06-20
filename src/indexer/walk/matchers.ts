@@ -99,6 +99,15 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     type: "session",
     test: (ext) => ext === ".md",
   },
+  {
+    // Durable stash-level facts live under `facts/<category>/<name>.md`.
+    // classifyByDirectory walks every ancestor dir, so nested category
+    // subdirs still match. Without this entry a fact file would fall through
+    // to classifyBySmartMd and be mistyped as `knowledge`.
+    dir: "facts",
+    type: "fact",
+    test: (ext) => ext === ".md",
+  },
 ];
 
 const COMMAND_PLACEHOLDER_RE = /\$ARGUMENTS|\$[123]\b/;

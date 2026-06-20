@@ -664,6 +664,7 @@ const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = [
   "lesson",
   "task",
   "wiki",
+  "fact",
 ] as const;
 
 const INDEX_PASS_PROVIDER_KEYS = new Set([

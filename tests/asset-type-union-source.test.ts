@@ -38,9 +38,11 @@ const PRE_WS7_UNION = [
  * Intentional additions to the union since the pre-WS7 baseline:
  *   - `task`  — WS7 registry/union drift fix (#490).
  *   - `session` — #561 indexes agent sessions as a first-class asset type.
- * Both are deliberate, separately-reviewed registry additions.
+ *   - `fact` — durable stash-level semantic knowledge (see
+ *     docs/design/fact-asset-type.md).
+ * All are deliberate, separately-reviewed registry additions.
  */
-const INTENTIONAL_ADDITIONS = ["session", "task"] as const;
+const INTENTIONAL_ADDITIONS = ["fact", "session", "task"] as const;
 
 describe("ASSET_TYPES is the single source of truth (derived from ASSET_SPECS)", () => {
   test("ASSET_TYPES equals the registry key set (no drift)", () => {

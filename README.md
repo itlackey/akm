@@ -103,6 +103,7 @@ See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
 | **wiki** | A page inside a multi-wiki knowledge base | `wiki:ops/runbook` |
 | **lesson** | Distilled feedback insight | `lesson:prefer-dry-run` |
 | **memory** | Recalled context from a previous session | `memory:vpn-note` |
+| **fact** | Durable stash-level fact (identity, conventions, stash-meta) | `fact:team/tool-stack` |
 
 See [docs/concepts.md](docs/concepts.md) for classification rules and the ref format.
 

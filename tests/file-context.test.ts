@@ -558,15 +558,16 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 13 built-in renderers", async () => {
+  test("getAllRenderers() returns all 14 built-in renderers", async () => {
     const all = await getAllRenderers();
-    expect(all).toHaveLength(13);
+    expect(all).toHaveLength(14);
 
     const names = all.map((r) => r.name).sort();
     expect(names).toEqual([
       "agent-md",
       "command-md",
       "env-file",
+      "fact-md",
       "knowledge-md",
       "lesson-md",
       "memory-md",

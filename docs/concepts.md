@@ -101,6 +101,7 @@ There are eleven asset types:
 | **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
 | **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |
 | **memory** | Context from external systems | Background information the agent should consider |
+| **fact** | A durable stash-level fact | Mostly-static semantic knowledge — personal/team/project details, coding conventions / "constitution", and stash-meta (naming conventions, active projects). `category` scopes it; `pinned: true` marks always-injected core context (see [design note](design/fact-asset-type.md)) |
 
 ### Classification Taxonomy
 
