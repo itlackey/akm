@@ -15,6 +15,9 @@ const TYPE_BOOST: Record<string, number> = {
   agent: 0.3,
   script: 0.2,
   knowledge: 0.22,
+  // Facts are authoritative, durable declarations about the stash — rank them
+  // alongside knowledge so they surface reliably when relevant.
+  fact: 0.22,
   memory: -0.02,
 };
 
@@ -269,6 +272,25 @@ const lessonStrengthContributor: RankingContributor = {
 };
 
 /**
+ * Pinned-fact boost.
+ *
+ * Facts marked `pinned: true` form the small always-injected "core context"
+ * (see docs/design/fact-asset-type.md). The fact metadata contributor records
+ * a `pinned` search hint; here we give those facts a modest additive boost so
+ * the core outranks ordinary facts on otherwise-equal queries. Capped small so
+ * it cannot overpower an exact-name match.
+ */
+const pinnedFactRankingContributor: RankingContributor = {
+  name: "pinned-fact-ranking",
+  appliesTo(item) {
+    return item.entry.type === "fact" && (item.entry.searchHints?.includes("pinned") ?? false);
+  },
+  adjust() {
+    return 0.15;
+  },
+};
+
+/**
  * Blend ratio for scoped vs. global utility signals.
  *
  * When a scoped row exists: `effectiveUtility = scoped * 0.7 + global * 0.3`
@@ -379,6 +401,7 @@ export const defaultRankingContributors: RankingContributor[] = [
   graphRankingContributor,
   captureModeRankingContributor,
   lessonStrengthContributor,
+  pinnedFactRankingContributor,
   projectContextRankingContributor,
 ];
 

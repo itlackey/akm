@@ -45,8 +45,9 @@ describe("getAssetTypes", () => {
     expect(types).toContain("lesson");
     expect(types).toContain("task");
     expect(types).toContain("session"); // #561
+    expect(types).toContain("fact");
     expect(types).not.toContain("vault");
-    expect(types).toHaveLength(13);
+    expect(types).toHaveLength(14);
   });
 });
 

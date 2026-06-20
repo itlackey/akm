@@ -67,6 +67,7 @@ const TYPE_HINTS: Record<string, string> = {
   script: "script assets are executable text files. Include a shebang and minimal usage comment.",
   env: "env assets are `.env` files holding a group of related CONFIGURATION for an app/service (KEY=VALUE pairs, `#` comments) — URLs, flags, and any credentials it needs. Values may or may not be sensitive; all are protected (key names discoverable, values stay on disk). Inject with `akm env run env:<name> -- <cmd>` (the safe path — values never reach stdout/your context); do NOT run `akm env export` and read its output, as that prints values. For a single sensitive value used on its own for authentication (token, key, cert) use a `secret` instead. Never echo values back to the user.",
   wiki: "wiki assets are markdown reference pages with `# Title` and structured headings.",
+  fact: "fact assets are durable stash-level facts (personal/team/project details, coding conventions, stash-meta). Frontmatter SHOULD include `description` and a `category` (personal|team|project|convention|meta); set `pinned: true` only for the small always-injected core. Keep each fact short, high-signal, and self-contained — it is durable context, not an episodic note.",
 };
 
 function hintForType(type: string): string {

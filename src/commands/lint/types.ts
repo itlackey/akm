@@ -13,7 +13,8 @@ export type LintIssueType =
   | "invalid-task-yaml"
   | "missing-ref"
   | "dangerous-vault-key"
-  | "invalid-workflow-structure";
+  | "invalid-workflow-structure"
+  | "missing-category";
 
 export interface LintIssue {
   file: string;

@@ -40,6 +40,7 @@ export const ASSET_TYPES = Object.freeze([...getAssetTypes()] as [
   "lesson",
   "task",
   "session",
+  "fact",
 ]);
 export type AkmAssetType = (typeof ASSET_TYPES)[number];
 export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);

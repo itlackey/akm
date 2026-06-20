@@ -43,6 +43,7 @@ const STASH_SUBDIRS = [
   "lessons",
   "tasks",
   "knowledge",
+  "facts",
 ] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

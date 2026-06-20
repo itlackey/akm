@@ -5,6 +5,7 @@
 import { AgentLinter } from "./agent-linter";
 import { CommandLinter } from "./command-linter";
 import { DefaultLinter } from "./default-linter";
+import { FactLinter } from "./fact-linter";
 import { KnowledgeLinter } from "./knowledge-linter";
 import { MemoryLinter } from "./memory-linter";
 import { SkillLinter } from "./skill-linter";
@@ -21,6 +22,7 @@ const LINTERS: AssetLinter[] = [
   new KnowledgeLinter(),
   new SkillLinter(),
   new TaskLinter(),
+  new FactLinter(),
 ];
 
 // Single shared DefaultLinter instance — used both as the explicit "lessons"

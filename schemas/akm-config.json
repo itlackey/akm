@@ -3554,7 +3554,8 @@
                 "workflow",
                 "lesson",
                 "task",
-                "wiki"
+                "wiki",
+                "fact"
               ]
             },
             "minItems": 1
@@ -7495,7 +7496,8 @@
                     "workflow",
                     "lesson",
                     "task",
-                    "wiki"
+                    "wiki",
+                    "fact"
                   ]
                 },
                 "minItems": 1

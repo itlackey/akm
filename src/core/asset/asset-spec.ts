@@ -181,6 +181,20 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     actionBuilder: (ref) =>
       `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
   },
+  // Durable stash-level semantic knowledge — facts about the user, team, or
+  // project (personal details, team tool stacks, coding conventions /
+  // "constitution", and stash-meta like naming conventions or the active
+  // projects list). Unlike `memory` (episodic, recency-decayed) these are
+  // mostly-static declarations meant to be reliably surfaced as context. A
+  // plain markdown spec; `category` frontmatter scopes the fact and
+  // `pinned: true` marks the small always-injected core. See
+  // docs/design/fact-asset-type.md.
+  fact: {
+    stashDir: "facts",
+    ...markdownSpec,
+    rendererName: "fact-md",
+    actionBuilder: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
+  },
 };
 
 export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;
