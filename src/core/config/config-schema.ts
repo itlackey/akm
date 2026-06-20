@@ -321,6 +321,15 @@ export const ImproveProcessConfigSchema = z
     // #609 — recombine process: hard cap on clusters processed per run (one
     // bounded LLM call each). Default 5. Only meaningful on `recombine`.
     maxClustersPerRun: positiveInt.optional(),
+    // #632 — recombine process: max members a cluster may contain before it is
+    // SKIPPED (drops bland over-broad buckets). When set, largest-first ranking
+    // no longer starves tighter clusters. Default UNSET = no cap. Only
+    // meaningful on `recombine`.
+    maxClusterSize: positiveInt.optional(),
+    // #632 — recombine process: tag values that must never form a tag cluster
+    // (generic project-wide tags). Default UNSET/[]. Only meaningful on
+    // `recombine`.
+    excludeTags: z.array(z.string().min(1)).optional(),
     // #609 — recombine process: relatedness signal used to form clusters
     // (tags | graph | both). Clustering is by relatedness, never embedding
     // similarity. Default "tags". Only meaningful on `recombine`.

@@ -483,6 +483,24 @@ export interface ImproveProcessConfig {
    */
   maxClustersPerRun?: number;
   /**
+   * #632 — recombine pass: maximum number of members a cluster may contain
+   * before it is SKIPPED. Oversized tag/entity buckets (e.g. a generic "akm"
+   * tag shared by hundreds of memories) produce bland, over-broad
+   * generalizations; capping member count keeps clusters tight. When SET, the
+   * largest-first ranking no longer starves smaller, tighter clusters (the
+   * oversized ones are dropped before ranking). UNSET = no cap = identical to
+   * the pre-#632 behaviour. Only meaningful on the `recombine` process.
+   */
+  maxClusterSize?: number;
+  /**
+   * #632 — recombine pass: tags that must NEVER form a tag-based cluster (e.g.
+   * generic project-wide tags). Memories still cluster on their OTHER tags /
+   * graph entities; only the listed tag values are dropped as cluster signals.
+   * UNSET/[] = identical to the pre-#632 behaviour. Only meaningful on the
+   * `recombine` process.
+   */
+  excludeTags?: string[];
+  /**
    * #609 — recombine pass: relatedness signal used to form clusters.
    *   - `"tags"`  — group memories by each shared frontmatter tag.
    *   - `"graph"` — group by shared graph entity (`graph_file_entities`);

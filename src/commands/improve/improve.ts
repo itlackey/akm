@@ -4661,6 +4661,9 @@ async function runImprovePostLoopStage(args: {
         maxClustersPerRun: improveProfile.processes?.recombine?.maxClustersPerRun,
         relatednessSource: improveProfile.processes?.recombine?.relatednessSource,
         confirmThreshold: improveProfile.processes?.recombine?.confirmThreshold,
+        // #632 — clustering-tuning knobs. UNSET = pre-#632 behaviour.
+        maxClusterSize: improveProfile.processes?.recombine?.maxClusterSize,
+        excludeTags: improveProfile.processes?.recombine?.excludeTags,
       });
     } catch (e) {
       allWarnings.push(`recombine: ${String(e)}`);

@@ -51,6 +51,7 @@ import type { EligibilitySource, RecombineResult } from "../../core/improve-type
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import {
   decayUnseenRecombineHypotheses,
+  findMatchingRecombineHypothesis,
   getRecombineHypothesis,
   getStateDbPath,
   markRecombineHypothesisPromoted,
@@ -80,6 +81,13 @@ const DEFAULT_MAX_CLUSTERS_PER_RUN = 5;
 const DEFAULT_RELATEDNESS_SOURCE: "tags" | "graph" | "both" = "tags";
 /** #625 — re-induction count required before a hypothesis promotes to a lesson. */
 const DEFAULT_CONFIRM_THRESHOLD = 2;
+/**
+ * #633 — Jaccard membership-overlap threshold for matching a freshly-induced
+ * hypothesis to an existing pending row under the SAME signature. A growing
+ * stash drifts the exact member set every run; an overlap >= this lets the
+ * confirmation streak keep accumulating under one row instead of resetting to 1.
+ */
+const DEFAULT_RECOMBINE_OVERLAP = 0.7;
 
 /**
  * Single bounded LLM seam. Receives the assembled cluster prompt and returns
@@ -106,6 +114,10 @@ export interface AkmRecombineOptions {
   minClusterSize?: number;
   maxClustersPerRun?: number;
   relatednessSource?: "tags" | "graph" | "both";
+  /** #632 — skip clusters larger than this. Threaded from `processes.recombine.maxClusterSize`. UNSET = no cap. */
+  maxClusterSize?: number;
+  /** #632 — tags excluded from tag clustering. Threaded from `processes.recombine.excludeTags`. UNSET/[] = none. */
+  excludeTags?: string[];
   /**
    * #625 — re-induction count at which a hypothesis promotes to a `type: lesson`
    * proposal. Defaults to {@link DEFAULT_CONFIRM_THRESHOLD}. Threaded from
@@ -154,6 +166,18 @@ export function buildRelatednessClusters(
     maxClustersPerRun: number;
     relatednessSource: "tags" | "graph" | "both";
     entityByEntryId?: Map<number, string[]>;
+    /**
+     * #632 — clusters strictly larger than this are SKIPPED (drop bland,
+     * over-broad buckets). When set, the largest-first ranking no longer
+     * starves tighter clusters (oversized ones are removed before ranking).
+     * UNSET = no cap = byte-identical to the pre-#632 behaviour.
+     */
+    maxClusterSize?: number;
+    /**
+     * #632 — tag values that must never form a tag cluster. UNSET/[] =
+     * byte-identical to the pre-#632 behaviour.
+     */
+    excludeTags?: string[];
   },
 ): MemoryCluster[] {
   // Only consolidation-eligible memories participate (exclude `.derived`).
@@ -178,19 +202,31 @@ export function buildRelatednessClusters(
   const useGraph = (opts.relatednessSource === "graph" || opts.relatednessSource === "both") && hasEntities;
   const tagsFallback = !useTags && opts.relatednessSource === "graph" && !hasEntities;
 
+  // #632 — tags excluded from tag-based clustering (applies regardless of
+  // source). UNSET/[] leaves clustering byte-identical to the pre-#632 path.
+  const excludeTags = new Set(opts.excludeTags ?? []);
+
   for (const entry of memories) {
     if (useTags || tagsFallback) {
-      for (const tag of entry.entry.tags ?? []) add(`tag:${tag}`, entry);
+      for (const tag of entry.entry.tags ?? []) {
+        if (excludeTags.has(tag)) continue;
+        add(`tag:${tag}`, entry);
+      }
     }
     if (useGraph && opts.entityByEntryId) {
       for (const ent of opts.entityByEntryId.get(entry.id) ?? []) add(`entity:${ent}`, entry);
     }
   }
 
-  // Keep only groups at or above the minimum cluster size.
+  // Keep only groups at or above the minimum cluster size. #632 — when
+  // maxClusterSize is set, also SKIP groups strictly larger than the cap so an
+  // over-broad bucket never reaches (and starves) the largest-first slice.
+  // UNSET = no upper bound = identical to the pre-#632 behaviour.
   let clusters: MemoryCluster[] = [];
   for (const [signature, members] of groups) {
-    if (members.length >= opts.minClusterSize) clusters.push({ signature, members });
+    if (members.length < opts.minClusterSize) continue;
+    if (opts.maxClusterSize != null && members.length > opts.maxClusterSize) continue;
+    clusters.push({ signature, members });
   }
 
   // De-duplicate clusters that share the exact same member set (e.g. a tag and
@@ -377,6 +413,8 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     maxClustersPerRun,
     relatednessSource,
     ...(entityByEntryId ? { entityByEntryId } : {}),
+    ...(opts.maxClusterSize != null ? { maxClusterSize: opts.maxClusterSize } : {}),
+    ...(opts.excludeTags ? { excludeTags: opts.excludeTags } : {}),
   });
 
   let clustersFormed = 0;
@@ -429,7 +467,24 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
         continue;
       }
 
-      const lessonRef = deriveRecombineLessonRef(cluster);
+      // #633 — the confirmation identity is decoupled from the EXACT member
+      // set. We first look for an existing pending hypothesis row under the
+      // SAME signature whose membership overlaps this cluster (Jaccard >=
+      // threshold) and, if found, REUSE that row's stable ref so a
+      // drifting-but-overlapping cluster keeps accumulating its streak under one
+      // row instead of spawning a fresh row (count=1) every run. With no match
+      // (first induction, or membership drifted past the overlap floor) we fall
+      // back to the deterministic member-set ref exactly as before.
+      const memberKey = recombineMemberKey(cluster);
+      const derivedRef = deriveRecombineLessonRef(cluster);
+      const matchedRow = stateDb
+        ? findMatchingRecombineHypothesis(stateDb, {
+            signature: cluster.signature,
+            memberKey,
+            minOverlap: DEFAULT_RECOMBINE_OVERLAP,
+          })
+        : undefined;
+      const lessonRef = matchedRow?.hypothesis_ref ?? derivedRef;
       const sourceRefs = cluster.members.map((m) => `memory:${m.entry.name}`);
 
       // Quality gate (always-run): the frontmatter description must be present
@@ -458,9 +513,11 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
       // NOT decayed by the unseen sweep below.
       seenThisRun.add(lessonRef);
 
-      // #625 — record the re-induction and read the prior promotion state. The
-      // member key and the ref hash derive from the SAME member set, so
-      // re-induction of an identical cluster maps back to the same row.
+      // #625/#633 — record the re-induction and read the prior promotion state.
+      // `lessonRef` is the matched row's ref (overlap match) or the freshly
+      // derived member-set ref (first/non-overlapping induction). The induction
+      // refreshes the row's `member_key` to the current membership so the
+      // overlap window slides with the drifting cluster.
       const nowIso = new Date().toISOString();
       const priorRow = stateDb ? getRecombineHypothesis(stateDb, lessonRef) : undefined;
       const alreadyPromoted = priorRow?.promoted_at != null;
@@ -468,7 +525,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
         ? recordRecombineInduction(stateDb, {
             hypothesisRef: lessonRef,
             signature: cluster.signature,
-            memberKey: recombineMemberKey(cluster),
+            memberKey,
             seenAt: nowIso,
             run: sourceRun,
           })

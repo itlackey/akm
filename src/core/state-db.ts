@@ -2043,6 +2043,57 @@ export function recordRecombineInduction(
 }
 
 /**
+ * #633 — find an existing pending (non-promoted) hypothesis row whose cluster
+ * is the SAME generalization as a newly-induced one, matched by SIGNATURE plus
+ * a Jaccard membership-overlap test, rather than an exact member-set hash.
+ *
+ * In a growing stash any added/removed memory changes the exact member set, so
+ * the ref hash (and member_key) shift every run → a fresh row at count=1 → the
+ * streak never reaches `confirmThreshold` and nothing ever promotes. Matching
+ * on overlap lets a drifting-but-stable cluster keep accumulating under one row.
+ *
+ * Returns the matched row with the HIGHEST overlap (ties broken by most-recent
+ * `last_seen_at`), or `undefined` when none clears `minOverlap`. Already-promoted
+ * rows are ignored so a confirmed lesson is not reopened by a later induction.
+ *
+ * @param memberKey  the candidate cluster's membership fingerprint
+ *                   (sorted member entryKeys joined by `|`).
+ * @param minOverlap Jaccard threshold in [0,1]; a candidate matches when
+ *                   |A∩B| / |A∪B| >= minOverlap.
+ */
+export function findMatchingRecombineHypothesis(
+  db: Database,
+  input: { signature: string; memberKey: string; minOverlap: number },
+): RecombineHypothesisRow | undefined {
+  const candidateMembers = new Set(input.memberKey.split("|").filter((m) => m.length > 0));
+  if (candidateMembers.size === 0) return undefined;
+  const rows = db
+    .prepare(
+      "SELECT * FROM recombine_hypotheses WHERE signature = ? AND promoted_at IS NULL ORDER BY last_seen_at DESC",
+    )
+    .all(input.signature) as RecombineHypothesisRow[];
+  let best: RecombineHypothesisRow | undefined;
+  let bestOverlap = -1;
+  for (const row of rows) {
+    const rowMembers = row.member_key.split("|").filter((m) => m.length > 0);
+    if (rowMembers.length === 0) continue;
+    let intersection = 0;
+    for (const m of rowMembers) {
+      if (candidateMembers.has(m)) intersection += 1;
+    }
+    const union = candidateMembers.size + rowMembers.length - intersection;
+    const overlap = union === 0 ? 0 : intersection / union;
+    // rows are ordered last_seen_at DESC, so a strict `>` keeps the most-recent
+    // row on ties.
+    if (overlap >= input.minOverlap && overlap > bestOverlap) {
+      best = row;
+      bestOverlap = overlap;
+    }
+  }
+  return best;
+}
+
+/**
  * Fetch a single recombine hypothesis row, or `undefined` when the ref has
  * never been induced. Normalizes bun:sqlite null → undefined like
  * {@link getExtractedSession}.

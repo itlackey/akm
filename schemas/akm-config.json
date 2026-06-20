@@ -384,6 +384,17 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -712,6 +723,17 @@
                       "maxClustersPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
                       },
                       "relatednessSource": {
                         "type": "string",
@@ -1042,6 +1064,17 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -1370,6 +1403,17 @@
                       "maxClustersPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
                       },
                       "relatednessSource": {
                         "type": "string",
@@ -1700,6 +1744,17 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -2028,6 +2083,17 @@
                       "maxClustersPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
                       },
                       "relatednessSource": {
                         "type": "string",
@@ -2358,6 +2424,17 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -2686,6 +2763,17 @@
                       "maxClustersPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
                       },
                       "relatednessSource": {
                         "type": "string",
@@ -3016,6 +3104,17 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -3344,6 +3443,17 @@
                       "maxClustersPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
+                      },
+                      "maxClusterSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
                       },
                       "relatednessSource": {
                         "type": "string",
@@ -4373,6 +4483,17 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -4701,6 +4822,17 @@
                           "maxClustersPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
                           },
                           "relatednessSource": {
                             "type": "string",
@@ -5031,6 +5163,17 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -5359,6 +5502,17 @@
                           "maxClustersPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
                           },
                           "relatednessSource": {
                             "type": "string",
@@ -5689,6 +5843,17 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -6017,6 +6182,17 @@
                           "maxClustersPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
                           },
                           "relatednessSource": {
                             "type": "string",
@@ -6347,6 +6523,17 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -6675,6 +6862,17 @@
                           "maxClustersPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
                           },
                           "relatednessSource": {
                             "type": "string",
@@ -7005,6 +7203,17 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -7333,6 +7542,17 @@
                           "maxClustersPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
+                          },
+                          "maxClusterSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
                           },
                           "relatednessSource": {
                             "type": "string",
@@ -8344,6 +8564,17 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "maxClusterSize": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "excludeTags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "relatednessSource": {
           "type": "string",
           "enum": [
@@ -8683,6 +8914,17 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -9011,6 +9253,17 @@
                 "maxClustersPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "relatednessSource": {
                   "type": "string",
@@ -9341,6 +9594,17 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -9669,6 +9933,17 @@
                 "maxClustersPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "relatednessSource": {
                   "type": "string",
@@ -9999,6 +10274,17 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -10327,6 +10613,17 @@
                 "maxClustersPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "relatednessSource": {
                   "type": "string",
@@ -10657,6 +10954,17 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -10985,6 +11293,17 @@
                 "maxClustersPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "relatednessSource": {
                   "type": "string",
@@ -11315,6 +11634,17 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -11643,6 +11973,17 @@
                 "maxClustersPerRun": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "maxClusterSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "relatednessSource": {
                   "type": "string",
