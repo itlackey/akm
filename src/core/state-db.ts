@@ -56,6 +56,7 @@ import path from "node:path";
 import type { Proposal } from "../commands/proposal/validators/proposals";
 import { type Database, openDatabase, type SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
+import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
 import { classifyImproveAction } from "./improve-types";
@@ -117,9 +118,7 @@ export function openStateDatabase(dbPath?: string): Database {
   const db = openDatabase(resolvedPath);
 
   // PRAGMAs must run before any DDL or DML.
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA busy_timeout = 30000");
+  applyStandardPragmas(db, { dataDir: dir });
 
   runMigrations(db);
 

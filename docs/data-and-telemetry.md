@@ -216,6 +216,7 @@ You can redirect any AKM directory to a custom path:
 |---|---|
 | `AKM_CONFIG_DIR` | Config directory (`~/.config/akm/`) |
 | `AKM_DATA_DIR` | Data directory (`~/.local/share/akm/`) |
+| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE`. Use `DELETE`/`TRUNCATE` on network filesystems (NFS/SMB) where WAL is impossible. When left at the `WAL` default, akm auto-detects a network FS for the data dir and falls back to `DELETE`. |
 | `AKM_STATE_DIR` | State directory (`~/.local/state/akm/`) |
 | `AKM_CACHE_DIR` | Cache directory (`~/.cache/akm/`) |
 | `AKM_STASH_DIR` | Default stash directory (`~/akm/`) |

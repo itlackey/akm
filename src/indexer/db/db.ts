@@ -13,6 +13,7 @@ import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
 import { type Database, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
+import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
 import { ensureUsageEventsSchema } from "../usage/usage-events";
@@ -75,9 +76,7 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
   }
 
   const db = openSqlite(resolvedPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 30000");
-  db.exec("PRAGMA foreign_keys = ON");
+  applyStandardPragmas(db, { dataDir: dir });
 
   // Try to load sqlite-vec extension
   loadVecExtension(db);
@@ -120,10 +119,9 @@ function resolveConfiguredEmbeddingDim(): number | undefined {
 
 export function openExistingDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getDbPath();
+  const dir = path.dirname(resolvedPath);
   const db = openSqlite(resolvedPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 30000");
-  db.exec("PRAGMA foreign_keys = ON");
+  applyStandardPragmas(db, { dataDir: dir });
 
   // Existing-DB callers must not mutate schema or embedding metadata on open,
   // but some paths still need write access to usage_events and other tables.

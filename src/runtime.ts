@@ -24,7 +24,7 @@
 
 import { type ChildProcess, spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, statfsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -264,6 +264,31 @@ export function resolveModule(spec: string, from: string): string {
  */
 export function getDirname(importMetaUrl: string): string {
   return path.dirname(fileURLToPath(importMetaUrl));
+}
+
+// ── Filesystem type probe ─────────────────────────────────────────────────────
+
+/**
+ * Best-effort filesystem-type probe: return the numeric `f_type` magic of the
+ * filesystem backing `path`, or `undefined` on any error (ENOENT/EPERM/
+ * unsupported). Used (via injection) by the SQLite journal-mode network-FS
+ * fallback (#628).
+ *
+ * This is a runtime primitive (a `statfs` filesystem-type probe) and therefore
+ * lives here, per the runtime boundary, even though it uses only `node:fs`. The
+ * "magic-number → is-network" classification stays a pure helper elsewhere.
+ *
+ * `fs.statfsSync` is a stable `node:fs` API (Node ≥ 18.15) and is implemented
+ * under Bun as well. It THROWS ENOENT on a non-existent path, so callers should
+ * probe an already-created directory — the swallowed error simply yields
+ * `undefined` (treated as "not network").
+ */
+export function statfsType(path: string): number | undefined {
+  try {
+    return statfsSync(path).type;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Sleep ───────────────────────────────────────────────────────────────────

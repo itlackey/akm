@@ -7,6 +7,7 @@ import path from "node:path";
 import { getWorkflowDbPath } from "../core/paths";
 import { type Database, openDatabase } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
+import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 
 /**
  * workflow.db — Durable SQLite database for workflow run state.
@@ -51,12 +52,10 @@ export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
   }
 
   const db = openDatabase(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
   // #589: 30 s busy timeout, matching index.db / state.db. Without it the
   // default is 0 ms, so any concurrent writer fails immediately with
-  // SQLITE_BUSY.
-  db.exec("PRAGMA busy_timeout = 30000");
-  db.exec("PRAGMA foreign_keys = ON");
+  // SQLITE_BUSY. #628: journal_mode is configurable via AKM_SQLITE_JOURNAL_MODE.
+  applyStandardPragmas(db, { dataDir: dir });
   ensureBaseSchema(db);
   runMigrations(db);
   return db;

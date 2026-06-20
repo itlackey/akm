@@ -691,6 +691,7 @@ and may change or be renamed without notice.
 | --- | --- | --- | --- |
 | `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) | |
 | `AKM_DATA_DIR` | Override the platform data directory. | `~/.local/share/akm` (XDG) | Set explicitly in CI if you previously relied on `AKM_CONFIG_DIR` as a data-dir fallback (removed in 0.8.0). |
+| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode applied at every db open: `WAL`, `DELETE`, or `TRUNCATE`. | `WAL` | WAL is impossible on network filesystems (NFS/SMB) — its `-shm` wal-index can't be mmap'd over a network mount. Use `DELETE` or `TRUNCATE` there. At the `WAL` default, akm probes the data dir's filesystem and auto-falls-back to `DELETE` on a detected network mount (one-line warning). Invalid values warn once and fall back to `WAL`. |
 | `AKM_STATE_DIR` | Override the platform state directory. | `~/.local/state/akm` (XDG) | |
 | `AKM_CACHE_DIR` | Override the platform cache directory. | `~/.cache/akm` (XDG) | |
 | `AKM_STASH_DIR` | Override the working stash directory. | `config.stashDir` or `~/.akm` | Per-invocation; never persisted. |
@@ -728,3 +729,73 @@ The backup is best-effort: when free space is below 1.1× the source size, or
 the destination is unwritable, akm emits a stderr warning and proceeds with
 the upgrade. Set `AKM_DB_BACKUP=0` to opt out entirely (e.g. in CI where the
 data dir is ephemeral).
+
+## Hosting AKM databases on a network share (NFS / SMB)
+
+AKM keeps its durable state in SQLite databases under `AKM_DATA_DIR`
+(`state.db`, `index.db`, `workflow.db`, `logs.db`). By default these open in
+**WAL** journal mode, which is the right choice on a local disk but **cannot
+run on a network filesystem** (NFS, SMB/CIFS, most networked Docker/Kubernetes
+volumes, Azure Files). WAL maintains a `-shm` shared-memory wal-index that every
+connection on the host must `mmap` together, and that mmap cannot be backed by a
+network mount — so a WAL database on a share fails at open with `disk I/O error`
+/ `SQLITE_IOERR_SHMMAP`, or worse, corrupts. This is the SQLite project's
+[documented position](https://sqlite.org/wal.html) ("WAL does not work over a
+network filesystem").
+
+AKM solves this with the `AKM_SQLITE_JOURNAL_MODE` knob plus automatic
+network-FS detection. **You usually do not need to set anything** — leave the
+default and AKM does the right thing.
+
+### How it works
+
+- **Auto-detect (default).** At the `WAL` default, AKM probes the filesystem
+  backing `AKM_DATA_DIR` (`statfs`). If it detects a network type (NFS, CIFS,
+  SMB2, or a FUSE network mount), it transparently falls back to **`DELETE`**
+  (rollback-journal) mode and prints a one-line warning. DELETE mode uses only
+  `fcntl` byte-range locks plus a `-journal` sidecar — no shared-memory segment —
+  so it is safe on a share.
+- **Explicit override.** Set `AKM_SQLITE_JOURNAL_MODE` to force a mode and skip
+  detection:
+
+  | Value | Use when |
+  |---|---|
+  | `WAL` (default) | Local disk. Auto-falls-back to `DELETE` on a detected network mount. |
+  | `DELETE` | A network share where you want to be explicit (or detection can't see the mount type). Rollback journal + `synchronous = FULL`. |
+  | `TRUNCATE` | Like `DELETE` but truncates the journal instead of deleting it each commit — marginally faster on some filesystems. |
+
+  Invalid values warn once and fall back to `WAL`. In `DELETE`/`TRUNCATE` mode
+  AKM also sets `PRAGMA synchronous = FULL` for extra durability on the share;
+  `busy_timeout = 30000` is kept in every mode.
+
+### Recommended setup
+
+Point `AKM_DATA_DIR` at a directory on the share. The default auto-detection
+handles the rest; set the env var explicitly only if you prefer to be certain:
+
+```sh
+# e.g. AKM data on an Azure Files / NFS mount at /mnt/op-home/data/akm
+export AKM_DATA_DIR=/mnt/op-home/data/akm
+export AKM_SQLITE_JOURNAL_MODE=DELETE   # optional — auto-detected otherwise
+akm index
+```
+
+This lets the AKM database subtree live on the same shared volume as the rest of
+your application state (the original driver for this feature was running AKM
+under OpenPalm on Azure Container Apps, whose only persistent volume option is
+Azure Files).
+
+### Important caveats
+
+- **Single host only.** SQLite over a network filesystem is safe only when a
+  single host accesses the database files. AKM is a CLI, so an interactive
+  invocation and the scheduler cron run as separate processes — that is fine on
+  one host (they coordinate through `fcntl` locks + `busy_timeout`), but do **not**
+  point two machines / replicas at the same `AKM_DATA_DIR` on a share. Pin AKM to
+  one replica. See SQLite's [Use Over a Network](https://sqlite.org/useovernet.html).
+- **NFS locking.** Some older NFS servers have broken `fcntl` file locking. NFS
+  v4.x (including Azure Files NFS v4.1) supports advisory byte-range locks and is
+  the recommended target; `DELETE` mode relies on those locks.
+- **Performance.** Rollback-journal mode + `synchronous = FULL` over a network
+  mount is slower than local WAL. Keep the data dir on the lowest-latency share
+  tier available; `index.db` rebuilds and `akm improve` runs will feel it most.

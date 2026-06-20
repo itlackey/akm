@@ -41,6 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type Database, openDatabase, type SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
+import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { getDataDir } from "./paths";
 import { getStateDbPath } from "./state-db";
 
@@ -87,9 +88,9 @@ export function openLogsDatabase(dbPath?: string): Database {
 
   const db = openDatabase(resolvedPath);
 
-  // PRAGMAs must run before any DDL or DML.
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 30000");
+  // PRAGMAs must run before any DDL or DML. foreignKeys:false preserves this
+  // opener's historical behaviour — logs.db has never enforced foreign keys.
+  applyStandardPragmas(db, { dataDir: dir, foreignKeys: false });
 
   runMigrations(db);
 

@@ -209,6 +209,8 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 
 AKM stores data locally and has **no remote telemetry**. Events, proposals, and improve history are written to `~/.local/share/akm/state.db`. Registry packages and config backups go to `~/.cache/akm/`. Nothing leaves your machine except requests to sources you explicitly configure (GitHub, npm, your own LLM endpoint).
 
+Running on a network filesystem (NFS/SMB), where SQLite's WAL mode is unsupported? Set `AKM_SQLITE_JOURNAL_MODE` (`WAL` default, or `DELETE` / `TRUNCATE`) to pick the journal mode applied at every db open. At the `WAL` default AKM auto-detects a network mount and falls back to `DELETE`. See [docs/configuration.md](docs/configuration.md) for details.
+
 See [docs/data-and-telemetry.md](docs/data-and-telemetry.md) for the complete on-disk inventory, event type reference, and instructions for inspecting or clearing local data.
 
 ## License
