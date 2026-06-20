@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.31] — 2026-06-20
+
+### Changed
+
+- **#632 — recombine now filters junk tags structurally.** Frontmatter tags that
+  are pure numbers, dates (`20260529`), short hex hashes (`002c624c`), version
+  strings (`0.8.0`, `v2`), single chars, or common English stopwords (`is`, `the`,
+  `for`, `when`, …) carry no topical signal and never form a recombine cluster.
+  Unlike `excludeTags` (a fixed project list), this catches the OPEN-ENDED junk —
+  every new date or commit hash — with no config upkeep. Exposed as `isJunkTag`.
+  On the live stash this turns the recombine cluster set from generic 66–171-member
+  buckets into tight topical clusters (`auth`, `architecture`, `patterns`, …).
+
 ## [0.9.0-beta.30] — 2026-06-20
 
 ### Changed / Fixed

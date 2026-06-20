@@ -144,6 +144,65 @@ interface Generalization {
 // ── Clustering by relatedness (NOT similarity) ────────────────────────────────
 
 /**
+ * #632 — English stopwords that occasionally leak into frontmatter tags
+ * (`is`, `the`, `for`, …). They carry no topical signal, so a cluster keyed on
+ * one is meaningless. Lowercased; matched case-insensitively.
+ */
+const JUNK_STOPWORD_TAGS = new Set([
+  "a",
+  "an",
+  "and",
+  "the",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "is",
+  "are",
+  "be",
+  "no",
+  "not",
+  "or",
+  "if",
+  "it",
+  "as",
+  "at",
+  "by",
+  "we",
+  "us",
+  "do",
+  "so",
+  "when",
+  "then",
+  "than",
+  "with",
+  "from",
+  "this",
+  "that",
+  "uses",
+  "use",
+  "via",
+]);
+
+/**
+ * #632 — a tag carries no clustering signal (and must be skipped) when it is
+ * purely a number / date / hash / version string, a single char, or a common
+ * stopword. Unlike `excludeTags` (a fixed project list), this catches the
+ * OPEN-ENDED junk — every new date or commit hash — without config upkeep.
+ */
+export function isJunkTag(tag: string): boolean {
+  const t = tag.trim().toLowerCase();
+  if (t.length <= 1) return true;
+  if (JUNK_STOPWORD_TAGS.has(t)) return true;
+  if (/^\d+$/.test(t)) return true; // pure numbers + dates: 2026, 05, 23, 20260529
+  if (/^v?\d+(?:\.\d+)+$/.test(t)) return true; // versions: 0.8.0, v1.2
+  if (/^v\d+$/.test(t)) return true; // v0, v2
+  if (/^[0-9a-f]{4,}$/.test(t) && /\d/.test(t)) return true; // short hex hashes: 002c624c, 192d
+  return false;
+}
+
+/**
  * Build relatedness clusters from the memory pool. Clustering is driven purely
  * by shared tags / graph entities — it MUST NOT use embedding similarity, so
  * textually near-identical memories that share no relatedness signal never
@@ -210,6 +269,7 @@ export function buildRelatednessClusters(
     if (useTags || tagsFallback) {
       for (const tag of entry.entry.tags ?? []) {
         if (excludeTags.has(tag)) continue;
+        if (isJunkTag(tag)) continue; // #632 — skip numeric/date/hash/version/stopword junk
         add(`tag:${tag}`, entry);
       }
     }

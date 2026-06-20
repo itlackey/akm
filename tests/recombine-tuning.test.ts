@@ -38,7 +38,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmRecombine, buildRelatednessClusters } from "../src/commands/improve/recombine";
+import { akmRecombine, buildRelatednessClusters, isJunkTag } from "../src/commands/improve/recombine";
 import { listProposals } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
@@ -176,6 +176,51 @@ describe("#632 — excludeTags", () => {
     // tag:specific (3 members) still forms.
     expect(signatures).toContain("tag:specific");
     expect(clusters.length).toBe(1);
+  });
+});
+
+// ── #632: structural junk-tag filter ────────────────────────────────────────────
+
+describe("#632 — junk tags (numeric/date/hash/version/stopword) never cluster", () => {
+  test("isJunkTag classifies open-ended junk but keeps topical tags", () => {
+    for (const junk of [
+      "2026",
+      "05",
+      "23",
+      "20260529",
+      "0.8.0",
+      "v2",
+      "v0",
+      "002c624c",
+      "192d",
+      "is",
+      "the",
+      "for",
+      "and",
+      "when",
+      "a",
+    ]) {
+      expect(isJunkTag(junk)).toBe(true);
+    }
+    for (const good of ["auth", "architecture", "patterns", "graph", "svelte", "recombine"]) {
+      expect(isJunkTag(good)).toBe(false);
+    }
+  });
+
+  test("a numeric/date tag does not form a cluster even with enough members", () => {
+    const entries: DbIndexedEntry[] = [
+      memoryEntry(1, "m-1", ["20260529", "auth"]),
+      memoryEntry(2, "m-2", ["20260529", "auth"]),
+      memoryEntry(3, "m-3", ["20260529", "auth"]),
+    ];
+    const clusters = buildRelatednessClusters(entries, {
+      minClusterSize: 3,
+      maxClustersPerRun: 5,
+      relatednessSource: "tags",
+    });
+    const signatures = clusters.map((c) => c.signature);
+    expect(signatures).not.toContain("tag:20260529");
+    expect(signatures).toContain("tag:auth");
   });
 });
 
