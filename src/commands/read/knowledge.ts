@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isHttpUrl, isWithin, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -125,9 +125,7 @@ export async function readKnowledgeInput(source: string): Promise<{ content: str
 // ── Asset writing ────────────────────────────────────────────────────────────
 
 /**
- * Write a markdown asset (knowledge, memory, or fact) to the resolved write
- * target. The type's stash subdirectory is resolved from the asset registry
- * (`TYPE_DIRS`), so adding a markdown type here needs no further changes.
+ * Write a markdown asset (knowledge or memory) to the resolved write target.
  *
  * Resolves the write target via the v1 precedence chain (`--target` →
  * `defaultWriteTarget` → working stash), validates the path is within the
@@ -135,7 +133,7 @@ export async function readKnowledgeInput(source: string): Promise<{ content: str
  * to `writeAssetToSource`.
  */
 export async function writeMarkdownAsset(options: {
-  type: "knowledge" | "memory" | "fact";
+  type: "knowledge" | "memory";
   content: string;
   name?: string;
   fallbackPrefix: string;
@@ -146,9 +144,7 @@ export async function writeMarkdownAsset(options: {
   /**
    * Optional `--path`: a relative directory under the type root in which to
    * place the asset. The filename still comes from `name` (or the content
-   * slug). e.g. for a memory `path: "personal/projects"` →
-   * `memories/personal/projects/<name>.md`; the same `path` under the `fact`
-   * type root yields `facts/personal/projects/<name>.md`.
+   * slug). e.g. `path: "personal/projects"` → `memories/personal/projects/<name>.md`.
    */
   path?: string;
 }): Promise<{ ref: string; path: string; stashDir: string }> {
@@ -156,7 +152,7 @@ export async function writeMarkdownAsset(options: {
   const target = resolveWriteTarget(cfg, options.target);
   const { source, config } = target;
 
-  const typeRoot = path.join(source.path, TYPE_DIRS[options.type] ?? options.type);
+  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
   // `--name` is the flat asset name; `--path` is the subdirectory under the
   // type root. Combine them into the nested name the path resolver expects.
   const subPath = normalizeCreateSubPath(options.path);
@@ -173,9 +169,8 @@ export async function writeMarkdownAsset(options: {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
   }
   if (fs.existsSync(assetPath) && !options.force) {
-    const label = `${options.type.charAt(0).toUpperCase()}${options.type.slice(1)}`;
     throw new UsageError(
-      `${label} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+      `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
       "RESOURCE_ALREADY_EXISTS",
     );
   }
