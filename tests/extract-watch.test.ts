@@ -53,12 +53,10 @@ class FakeClock {
     const id = this.#seq++;
     this.#timers.set(id, { id, fireAt: this.now + (ms ?? 0), fn });
     return id;
-    // biome-ignore lint/suspicious/noExplicitAny: test fake matches setTimeout shape
   }) as unknown as typeof setTimeout;
 
   readonly clearTimeoutFn = ((id?: number): void => {
     if (typeof id === "number") this.#timers.delete(id);
-    // biome-ignore lint/suspicious/noExplicitAny: test fake matches clearTimeout shape
   }) as unknown as typeof clearTimeout;
 
   /** Number of currently-pending timers (0 ⇒ nothing leaked). */

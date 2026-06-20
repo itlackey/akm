@@ -45,7 +45,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sand
 // "hashSessionContent is not a function" until the feature lands — the correct
 // RED reason (feature absent).
 const hashSessionContent = (data: SessionData): string =>
-  (extractModule as { hashSessionContent?: (d: SessionData) => string }).hashSessionContent!(data);
+  (extractModule as { hashSessionContent: (d: SessionData) => string }).hashSessionContent(data);
 
 const tempDirs: string[] = [];
 let storage: IsolatedAkmStorage;

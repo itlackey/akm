@@ -15,27 +15,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  # NOTE: `bun test --parallel=N` (N>1) is unsafe on this Bun version — it hits
+  # an intermittent epoll_ctl EEXIST race / busy-spin hang (reproduced at both
+  # parallel=12 and parallel=4). All test runs here use `--parallel=1`; the
+  # integration suite is sharded across separate runner jobs for speed. See
+  # release.yml for the full rationale.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      TEST_PARALLEL: "4"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - name: Integration suite
-        run: bun run test:integration
+      - name: Integration suite (shard ${{ matrix.shard }}/4, sequential)
+        env:
+          SHARD: ${{ matrix.shard }}/4
+        run: bun run test:integration:shard
 
-  # Order-dependence / flake detector: run the unit suite twice in fresh
-  # processes to surface leaked env / singletons / stateful DB rows. Informational
-  # (continue-on-error) — a consistently-red run signals new order-dependence.
+  # Order-dependence / flake detector: run the FULL unit suite twice in fresh
+  # processes to surface leaked env / singletons / stateful DB rows. This must
+  # run the whole suite in one process (not sharded) so cross-file order effects
+  # are exercised; it runs sequentially (--parallel=1, the default) to avoid the
+  # epoll race. Informational (continue-on-error) — a consistently-red run
+  # signals new order-dependence.
   flake-detect:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
-    env:
-      TEST_PARALLEL: "4"
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
