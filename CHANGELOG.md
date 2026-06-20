@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.27] — 2026-06-20
+
+All new behavior is **opt-in / default-preserving** — default runs are byte-identical.
+
+### Added
+
+- **#624 P2 — priority-ranked graph extraction.** `processes.graphExtraction.topN`:
+  when set, the graph-extraction pass ranks eligible files by asset utility
+  (`utility_scores`, read-only join) and processes only the top-N per run, so
+  high-value assets get graphed first instead of a ~55h full-corpus sweep. Unset
+  (default) = no ranking, byte-identical.
+- **#624 P3 — lazy on-demand graph extraction.** New `graph_extraction_queue` table
+  + `enqueueGraphExtraction`/`drainExtractionQueue`/`extractGraphForSingleFile`.
+  `akm curate` enqueues an ungraphed hit (non-blocking); `akm show` can extract a
+  missing graph inline — gated on `index.graph.lazyGraphExtraction: true`
+  (**default off**: `show` makes no LLM call by default), model-guarded, and bounded
+  by a 30s timeout so it never hangs. The pass drains the queue before the ranked
+  sweep. This **closes #624** (all three layers shipped).
+- **#616 — bounded multi-cycle phasing.** `profiles.improve.<name>.maxCycles`
+  (default 1): when > 1, the improve passes run in an N-cycle loop so gate-accepted
+  output of cycle N feeds cycle N+1 within the same run (re-running ensureIndex +
+  ref selection each cycle), stopping at a fixed point and respecting the run budget.
+  `maxCycles: 1` = byte-identical to today.
+
+### Fixed
+
+- **Release CI unblocked.** `runCliCapture` (test harness) restored `process.exitCode`
+  to a captured `undefined`, which under `bun test` does not clear a previously-set
+  non-zero exit code — so the unit suite exited 1 with 0 failures at `TEST_PARALLEL=1`
+  (exactly how `release.yml` runs), silently blocking every npm publish since beta.11.
+  Fixed to restore to `0`. (This is why beta.26 was the first successful workflow publish.)
+
 ## [0.9.0-beta.26] — 2026-06-20
 
 ### Added
