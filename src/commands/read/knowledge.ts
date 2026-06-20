@@ -125,7 +125,9 @@ export async function readKnowledgeInput(source: string): Promise<{ content: str
 // ── Asset writing ────────────────────────────────────────────────────────────
 
 /**
- * Write a markdown asset (knowledge or memory) to the resolved write target.
+ * Write a markdown asset (knowledge, memory, or fact) to the resolved write
+ * target. The type's stash subdirectory is resolved from the asset registry
+ * (`TYPE_DIRS`), so adding a markdown type here needs no further changes.
  *
  * Resolves the write target via the v1 precedence chain (`--target` →
  * `defaultWriteTarget` → working stash), validates the path is within the
@@ -144,7 +146,9 @@ export async function writeMarkdownAsset(options: {
   /**
    * Optional `--path`: a relative directory under the type root in which to
    * place the asset. The filename still comes from `name` (or the content
-   * slug). e.g. `path: "personal/projects"` → `memories/personal/projects/<name>.md`.
+   * slug). e.g. for a memory `path: "personal/projects"` →
+   * `memories/personal/projects/<name>.md`; the same `path` under the `fact`
+   * type root yields `facts/personal/projects/<name>.md`.
    */
   path?: string;
 }): Promise<{ ref: string; path: string; stashDir: string }> {
