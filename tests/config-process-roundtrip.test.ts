@@ -356,4 +356,41 @@ describe("#598 process-level config fields survive a load→save→load round tr
     resetConfigCache();
     expect(() => loadConfig()).toThrow(ConfigError);
   });
+
+  test("#616 profiles.improve.<profile>.maxCycles survives a load→save→load round trip (positiveInt)", () => {
+    // RED (#616 bounded multi-cycle phasing): maxCycles is not yet declared on
+    // ImproveProfileConfig (config-types.ts) nor ImproveProfileConfigSchema
+    // (config-schema.ts, .strict()), so a config carrying it currently
+    // HARD-ERRORS at load. This locks that the new per-profile field is
+    // registered in BOTH places and round-trips cleanly.
+    const config = {
+      semanticSearchMode: "off",
+      profiles: {
+        improve: {
+          default: { maxCycles: 3 },
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    expect(() => loadConfig()).not.toThrow();
+
+    const reloaded = loadConfig();
+    expect((reloaded.profiles?.improve?.default as { maxCycles?: number } | undefined)?.maxCycles).toBe(3);
+  });
+
+  test("#616 maxCycles=0 is rejected by the schema at load (positiveInt forbids 0/negative)", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        semanticSearchMode: "off",
+        profiles: { improve: { default: { maxCycles: 0 } } },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
 });

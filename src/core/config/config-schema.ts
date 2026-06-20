@@ -413,6 +413,10 @@ export const ImproveProfileConfigSchema = z
     processes: ImproveProfileProcessesSchema.optional(),
     autoAccept: nonNegativeNumber.optional(),
     limit: positiveInt.optional(),
+    // #616 — bounded multi-cycle phasing. Number of prep->loop->post-loop
+    // cycles per run. positiveInt forbids 0/negative. DEFAULT 1 => byte-identical
+    // single-pass behavior.
+    maxCycles: positiveInt.optional(),
     // #614 — symmetric valence weighting in the eligibility sort. When true,
     // the attention term becomes |valence| MAGNITUDE so BOTH strong positive
     // and strong negative feedback drive attention (utility stays dominant) and

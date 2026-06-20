@@ -3437,6 +3437,10 @@
                 "type": "integer",
                 "exclusiveMinimum": 0
               },
+              "maxCycles": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
               "symmetricValence": {
                 "type": "boolean"
               },
@@ -7418,6 +7422,10 @@
                     "minimum": 0
                   },
                   "limit": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "maxCycles": {
                     "type": "integer",
                     "exclusiveMinimum": 0
                   },
@@ -11723,6 +11731,10 @@
           "minimum": 0
         },
         "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "maxCycles": {
           "type": "integer",
           "exclusiveMinimum": 0
         },

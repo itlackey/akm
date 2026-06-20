@@ -572,6 +572,15 @@ export interface ImproveProfileConfig {
   autoAccept?: number;
   limit?: number;
   /**
+   * Bounded multi-cycle phasing (#616). Number of prep->loop->post-loop cycles
+   * per run. Each cycle re-runs ensureIndex + collectEligibleRefs so
+   * gate-accepted output of cycle N is selectable input to cycle N+1. DEFAULT 1
+   * => byte-identical single-pass behavior. A cycle accepting ZERO new
+   * gate-accepted proposals ends the loop (fixed-point). Budget-gated: a cycle
+   * is not started when remainingBudgetMs is exhausted.
+   */
+  maxCycles?: number;
+  /**
    * #614 — symmetric valence weighting in the improve eligibility sort. The
    * legacy ranking weights feedback NEGATIVE-ONLY (`negative / total`), so
    * strong POSITIVE feedback never drives attention. When `true`, the feedback

@@ -252,6 +252,14 @@ export interface AkmImproveResult {
     derived: number;
   };
   memoryCleanup?: ImproveMemoryCleanupResult;
+  /**
+   * #616 — number of prep->loop->post-loop cycles executed this run (>=1).
+   * Omitted-or-1 for the default single-pass run; >1 when multi-cycle phasing
+   * ran additional cycles. The loop stops at maxCycles OR at the first
+   * fixed-point cycle (zero gate-accepted proposals) OR when remainingBudgetMs
+   * is exhausted.
+   */
+  cyclesRun?: number;
   plannedRefs: ImproveEligibleRef[];
   /**
    * Refs the planner considered but excluded because every per-ref pass on

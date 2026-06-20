@@ -279,6 +279,23 @@ export interface AkmImproveOptions {
   skipIfLocked?: boolean;
   /** Named improve profile from profiles.improve or built-in profile names (default, quick, thorough, memory-focus). */
   profile?: string;
+  /**
+   * #616 — bounded multi-cycle phasing override (CLI/programmatic). Takes
+   * precedence over `profile.maxCycles`. Number of prep->loop->post-loop cycles
+   * per run; each cycle re-runs ensureIndex + collectEligibleRefs. DEFAULT 1 =>
+   * byte-identical single-pass behavior. A cycle accepting ZERO new
+   * gate-accepted proposals ends the loop (fixed-point); a cycle is not started
+   * when remainingBudgetMs is exhausted.
+   */
+  maxCycles?: number;
+  /** #616 test seam: override collectEligibleRefs (re-run each cycle). */
+  collectEligibleRefsFn?: typeof collectEligibleRefs;
+  /** #616 test seam: override runImprovePreparationStage (re-run each cycle). */
+  runImprovePreparationStageFn?: typeof runImprovePreparationStage;
+  /** #616 test seam: override runImproveLoopStage (re-run each cycle). */
+  runImproveLoopStageFn?: typeof runImproveLoopStage;
+  /** #616 test seam: override runImprovePostLoopStage (re-run each cycle). */
+  runImprovePostLoopStageFn?: typeof runImprovePostLoopStage;
   consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
   /** Number of eligible memory assets above which consolidation is forced even if the memory_consolidation feature flag is not set. Defaults to 100. */
   memoryVolumeConsolidationThreshold?: number;
@@ -1076,6 +1093,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const ensureIndexFn = options.ensureIndexFn ?? ensureIndex;
   const reindexFn = options.reindexFn ?? akmIndex;
   const drainProposalsFn = options.drainProposalsFn ?? drainProposals;
+  // #616 multi-cycle test seams. Default to the real module-local fns.
+  const collectEligibleRefsImpl = options.collectEligibleRefsFn ?? collectEligibleRefs;
+  const runImprovePreparationStageImpl = options.runImprovePreparationStageFn ?? runImprovePreparationStage;
+  const runImproveLoopStageImpl = options.runImproveLoopStageFn ?? runImproveLoopStage;
+  const runImprovePostLoopStageImpl = options.runImprovePostLoopStageFn ?? runImprovePostLoopStage;
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
@@ -1090,6 +1112,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // CLI --limit takes precedence over both.
     limit: options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit,
   };
+  // #616 — bounded multi-cycle phasing. CLI/programmatic override wins over
+  // profile.maxCycles; default 1 => single pass (byte-identical to pre-#616).
+  const maxCycles = Math.max(1, Math.trunc(options.maxCycles ?? improveProfile.maxCycles ?? 1));
   let primaryStashDir: string | undefined;
   try {
     primaryStashDir = resolveSourceEntries(options.stashDir)[0]?.path;
@@ -1137,12 +1162,109 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const lockBaseDir = primaryStashDir ? path.join(primaryStashDir, ".akm") : path.join(options.stashDir ?? ".", ".akm");
 
   const preEnsureCleanupWarnings: string[] = [];
-  let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"];
-  let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"];
-  let profileFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["profileFilteredRefs"];
+  // #616: assigned by runIndexAndCollect() (closure) so TS cannot prove definite
+  // assignment — seed with empty values; the first runIndexAndCollect() call
+  // (cycle 1, in the first try) always overwrites them before any read.
+  let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"] = [];
+  let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"] = { eligible: 0, derived: 0 };
+  let profileFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["profileFilteredRefs"] = [];
   let memoryCleanupPlan: ReturnType<typeof analyzeMemoryCleanup> | undefined;
   let guidance: string | undefined;
   let triageDrain: DrainResult | undefined;
+
+  // #616 — ensureIndex + collectEligibleRefs + memory-cleanup recompute, lifted
+  // into a helper so the SAME sequence runs once for cycle 1 (below, in the
+  // first try) and is re-run at the top of each subsequent multi-cycle cycle.
+  // Re-running ensureIndex between cycles makes cycle N's gate-promoted
+  // proposals visible to cycle N+1's collectEligibleRefs. Mutates the
+  // outer-scope plannedRefs/memorySummary/profileFilteredRefs/memoryCleanupPlan/
+  // guidance so for maxCycles:1 the body is byte-identical to pre-#616.
+  const runIndexAndCollect = async (): Promise<void> => {
+    // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
+    // query reads the `entries` table; if a DB version upgrade just dropped that
+    // table (or the index is otherwise empty), the prior run order silently
+    // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
+    // here repopulates the index first so the subsequent query sees fresh data.
+    if (primaryStashDir) {
+      // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
+      // Best-effort: a missing DB / unreadable schema is the fresh-install case
+      // and not a bug — we silently skip the probe.
+      let preEnsureEntryCount: number | undefined;
+      try {
+        const dbPath = getDbPath();
+        if (fs.existsSync(dbPath)) {
+          const probeDb = openExistingDatabase();
+          try {
+            preEnsureEntryCount = getEntryCount(probeDb);
+          } finally {
+            closeDatabase(probeDb);
+          }
+        }
+      } catch (err) {
+        rethrowIfTestIsolationError(err);
+        // best-effort; leave preEnsureEntryCount undefined
+      }
+
+      try {
+        await ensureIndexFn(primaryStashDir, { mode: "blocking" });
+      } catch (err) {
+        preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // #339 loud-fail: if the index was empty pre-ensureIndex but is now
+      // populated, a version-upgrade-triggered rebuild just happened. Surface
+      // that on stderr so the improve run is not silently masked by stale
+      // index state. Zero-before AND zero-after is the empty-stash case and
+      // is intentionally not warned (not a bug).
+      if (preEnsureEntryCount === 0) {
+        try {
+          const probeDb = openExistingDatabase();
+          let postCount = 0;
+          try {
+            postCount = getEntryCount(probeDb);
+          } finally {
+            closeDatabase(probeDb);
+          }
+          if (postCount > 0) {
+            warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
+          }
+        } catch (err) {
+          rethrowIfTestIsolationError(err);
+          // best-effort
+        }
+      }
+    }
+
+    ({ plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefsImpl(
+      scope,
+      options.stashDir,
+      improveProfile,
+    ));
+    const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
+
+    // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
+    // the SCC resolver in resolveFamilyContradictions has edges to work on.
+    // Best-effort: failures are warnings, never fatal.
+    if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
+      try {
+        // Reuse the config resolved at the top of the run instead of a second load.
+        await withLlmStage("memory-contradiction", () => detectAndWriteContradictions(primaryStashDir, _earlyConfig));
+      } catch (err) {
+        // Non-fatal: contradiction detection is a best-effort pass.
+        warn(
+          `[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
+      ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
+      : undefined;
+    guidance =
+      memorySummary.eligible > 0
+        ? "Improve folds memory cleanup into the same proposal queue: speculative promotions still go through reflect/distill proposals, while high-confidence redundant derived memories are moved into a recoverable cleanup archive instead of being left active in the stash."
+        : undefined;
+  };
 
   try {
     // #607: Per-process lock acquisition. Each process acquires only the lock(s)
@@ -1205,90 +1327,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
-    // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
-    // query reads the `entries` table; if a DB version upgrade just dropped that
-    // table (or the index is otherwise empty), the prior run order silently
-    // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
-    // here repopulates the index first so the subsequent query sees fresh data.
-    if (primaryStashDir) {
-      // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
-      // Best-effort: a missing DB / unreadable schema is the fresh-install case
-      // and not a bug — we silently skip the probe.
-      let preEnsureEntryCount: number | undefined;
-      try {
-        const dbPath = getDbPath();
-        if (fs.existsSync(dbPath)) {
-          const probeDb = openExistingDatabase();
-          try {
-            preEnsureEntryCount = getEntryCount(probeDb);
-          } finally {
-            closeDatabase(probeDb);
-          }
-        }
-      } catch (err) {
-        rethrowIfTestIsolationError(err);
-        // best-effort; leave preEnsureEntryCount undefined
-      }
-
-      try {
-        await ensureIndexFn(primaryStashDir, { mode: "blocking" });
-      } catch (err) {
-        preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      // #339 loud-fail: if the index was empty pre-ensureIndex but is now
-      // populated, a version-upgrade-triggered rebuild just happened. Surface
-      // that on stderr so the improve run is not silently masked by stale
-      // index state. Zero-before AND zero-after is the empty-stash case and
-      // is intentionally not warned (not a bug).
-      if (preEnsureEntryCount === 0) {
-        try {
-          const probeDb = openExistingDatabase();
-          let postCount = 0;
-          try {
-            postCount = getEntryCount(probeDb);
-          } finally {
-            closeDatabase(probeDb);
-          }
-          if (postCount > 0) {
-            warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
-          }
-        } catch (err) {
-          rethrowIfTestIsolationError(err);
-          // best-effort
-        }
-      }
-    }
-
-    ({ plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefs(
-      scope,
-      options.stashDir,
-      improveProfile,
-    ));
-    const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
-
-    // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
-    // the SCC resolver in resolveFamilyContradictions has edges to work on.
-    // Best-effort: failures are warnings, never fatal.
-    if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
-      try {
-        // Reuse the config resolved at the top of the run instead of a second load.
-        await withLlmStage("memory-contradiction", () => detectAndWriteContradictions(primaryStashDir, _earlyConfig));
-      } catch (err) {
-        // Non-fatal: contradiction detection is a best-effort pass.
-        warn(
-          `[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-
-    memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
-      ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
-      : undefined;
-    guidance =
-      memorySummary.eligible > 0
-        ? "Improve folds memory cleanup into the same proposal queue: speculative promotions still go through reflect/distill proposals, while high-confidence redundant derived memories are moved into a recoverable cleanup archive instead of being left active in the stash."
-        : undefined;
+    // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs (now inside the
+    // helper). Cycle 1 runs it here; subsequent multi-cycle cycles re-run it via
+    // the same helper at the top of each cycle below.
+    await runIndexAndCollect();
 
     if (options.dryRun) {
       const result: AkmImproveResult = {
@@ -1394,130 +1436,220 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       );
     }
 
-    // #607: acquire consolidate.lock for the preparation stage (consolidate,
-    // ensureIndex, extract all write index.db). Released immediately after.
-    const consolidateLPath = processLockPath(lockBaseDir, "consolidate");
-    const consolidatePrepAcquired =
-      tryAcquireProcessLock(
-        consolidateLPath,
-        PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
-        options.skipIfLocked,
-        "consolidate",
-      ) === "acquired";
-    const preparation = await runImprovePreparationStage({
-      scope,
-      options,
-      plannedRefs,
-      memoryCleanupPlan,
-      primaryStashDir,
-      memorySummary,
-      reindexFn,
-      startMs,
-      budgetMs,
-      eventsCtx,
-      initialCleanupWarnings: preEnsureCleanupWarnings,
-      improveProfile,
-      budgetSignal: budgetAbortController.signal,
-    });
-    if (consolidatePrepAcquired) releaseProcessLock(consolidateLPath);
+    // #616 — bounded multi-cycle phasing. The prep->loop->post-loop sequence is
+    // wrapped in an N-cycle loop. Each cycle re-runs ensureIndex +
+    // collectEligibleRefs (via runIndexAndCollect) so gate-accepted output of
+    // cycle N becomes selectable input to cycle N+1. The per-stage process locks
+    // (consolidate / reflect-distill) are acquired+released INSIDE each cycle,
+    // exactly as the single-pass path did. For maxCycles:1 the loop runs once and
+    // every accumulator below collapses to the single-cycle value (sum-of-one,
+    // concat-of-one, last==only) => BYTE-IDENTICAL to pre-#616.
+    //
+    // Accumulators (see CONSTRAINTS / aggregation plan in #616): SUM the count
+    // fields and durations; CONCAT the array fields; LAST-WINS for point-in-time
+    // objects (the final cycle's value reflects the converged state).
+    let cyclesRun = 0;
+    // Last-wins point-in-time values (assigned every cycle; the final cycle wins).
+    let preparation!: ImprovePreparationResult;
+    let memoryRefsForInference: Set<string> = new Set();
+    let consolidation!: ConsolidateResult;
+    let memoryInference: ImprovePostLoopResult["memoryInference"];
+    let graphExtraction: ImprovePostLoopResult["graphExtraction"];
+    let stalenessDetection: ImprovePostLoopResult["stalenessDetection"];
+    let recombination: ImprovePostLoopResult["recombination"];
+    let proceduralCompilation: ImprovePostLoopResult["proceduralCompilation"];
+    // Summed counters/durations.
+    let prepGateCount = 0;
+    let prepGateFailedCount = 0;
+    let reflectsWithErrorContext = 0;
+    let loopGateCount = 0;
+    let loopGateFailedCount = 0;
+    let postLoopGateCount = 0;
+    let postLoopGateFailedCount = 0;
+    let memoryInferenceDurationMs = 0;
+    let graphExtractionDurationMs = 0;
+    let orphansPurged: number | undefined;
+    let proposalsExpired: number | undefined;
+    // Concatenated arrays.
+    const allWarnings: string[] = [];
+    let deadUrls: ImprovePostLoopResult["deadUrls"];
+    const finalActions: ImproveActionResult[] = [];
 
-    // D6: pre-load all proposal_rejected events from the last 30 days once,
-    // so the per-asset loop can use a Map lookup instead of N DB round trips.
-    const REJECTED_PROPOSAL_WINDOW_MS = daysToMs(30);
-    const rejectedProposalSince = new Date(Date.now() - REJECTED_PROPOSAL_WINDOW_MS).toISOString();
-    const allRejectedProposalEvents = readEvents({ type: "proposal_rejected", since: rejectedProposalSince }).events;
-    const rejectedProposalsByRef = new Map<string, EventEnvelope>();
-    for (const e of allRejectedProposalEvents) {
-      if (e.ref && (!rejectedProposalsByRef.has(e.ref) || e.ts > (rejectedProposalsByRef.get(e.ref)?.ts ?? ""))) {
-        rejectedProposalsByRef.set(e.ref, e);
+    for (let cycleIndex = 0; cycleIndex < maxCycles; cycleIndex++) {
+      // #616 budget gate: never start a NEW cycle once the run's wall-clock
+      // budget is exhausted (or the run was aborted). Cycle 0 ALWAYS runs so
+      // maxCycles:1 is byte-identical regardless of budget.
+      if (cycleIndex > 0) {
+        const remaining = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
+        if (budgetAbortController.signal.aborted || (remaining !== undefined && remaining <= 0)) {
+          break;
+        }
       }
+
+      // Re-run ensureIndex + collectEligibleRefs + memory-cleanup recompute for
+      // cycles 2+ (cycle 1 already ran them in the first try above). This makes
+      // cycle N's gate-promoted proposals visible to this cycle's ref selection.
+      if (cycleIndex > 0) {
+        await runIndexAndCollect();
+        // Re-emit the profile-filtered audit summary for this cycle's selection.
+        if (profileFilteredRefs.length > 0) {
+          appendEvent(
+            {
+              eventType: "improve_skipped",
+              ref: undefined,
+              metadata: { reason: "profile_filtered_all_passes", count: profileFilteredRefs.length },
+            },
+            eventsCtx,
+          );
+        }
+      }
+
+      // #607: acquire consolidate.lock for the preparation stage (consolidate,
+      // ensureIndex, extract all write index.db). Released immediately after.
+      const consolidateLPath = processLockPath(lockBaseDir, "consolidate");
+      const consolidatePrepAcquired =
+        tryAcquireProcessLock(
+          consolidateLPath,
+          PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
+          options.skipIfLocked,
+          "consolidate",
+        ) === "acquired";
+      preparation = await runImprovePreparationStageImpl({
+        scope,
+        options,
+        plannedRefs,
+        memoryCleanupPlan,
+        primaryStashDir,
+        memorySummary,
+        reindexFn,
+        startMs,
+        budgetMs,
+        eventsCtx,
+        initialCleanupWarnings: preEnsureCleanupWarnings,
+        improveProfile,
+        budgetSignal: budgetAbortController.signal,
+      });
+      if (consolidatePrepAcquired) releaseProcessLock(consolidateLPath);
+      prepGateCount += preparation.gateAutoAcceptedCount;
+      prepGateFailedCount += preparation.gateAutoAcceptFailedCount;
+
+      // D6: pre-load all proposal_rejected events from the last 30 days once,
+      // so the per-asset loop can use a Map lookup instead of N DB round trips.
+      const REJECTED_PROPOSAL_WINDOW_MS = daysToMs(30);
+      const rejectedProposalSince = new Date(Date.now() - REJECTED_PROPOSAL_WINDOW_MS).toISOString();
+      const allRejectedProposalEvents = readEvents({ type: "proposal_rejected", since: rejectedProposalSince }).events;
+      const rejectedProposalsByRef = new Map<string, EventEnvelope>();
+      for (const e of allRejectedProposalEvents) {
+        if (e.ref && (!rejectedProposalsByRef.has(e.ref) || e.ts > (rejectedProposalsByRef.get(e.ref)?.ts ?? ""))) {
+          rejectedProposalsByRef.set(e.ref, e);
+        }
+      }
+
+      // #607: acquire reflect-distill.lock for the loop stage (reflect + distill
+      // both write proposals to state.db). Released immediately after.
+      const reflectDistillLPath = processLockPath(lockBaseDir, "reflectDistill");
+      const reflectDistillAcquired =
+        tryAcquireProcessLock(
+          reflectDistillLPath,
+          PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
+          options.skipIfLocked,
+          "reflect-distill",
+        ) === "acquired";
+      const loopResult = await runImproveLoopStageImpl({
+        scope,
+        options,
+        primaryStashDir,
+        reflectFn,
+        distillFn,
+        loopRefs: preparation.loopRefs,
+        actions: preparation.actions,
+        signalBearingSet: preparation.signalBearingSet,
+        distillCooledRefs: preparation.distillCooledRefs,
+        distillOnlyRefs: preparation.distillOnlyRefs,
+        recentErrors: preparation.recentErrors,
+        rejectedProposalsByRef,
+        utilityMap: preparation.utilityMap,
+        startMs,
+        budgetMs,
+        eventsCtx,
+        improveProfile,
+        budgetSignal: budgetAbortController.signal,
+      });
+      if (reflectDistillAcquired) releaseProcessLock(reflectDistillLPath);
+      const loopGateCountThisCycle = loopResult.gateAutoAcceptedCount;
+      reflectsWithErrorContext += loopResult.reflectsWithErrorContext;
+      loopGateCount += loopResult.gateAutoAcceptedCount;
+      loopGateFailedCount += loopResult.gateAutoAcceptFailedCount;
+      memoryRefsForInference = loopResult.memoryRefsForInference;
+
+      // #551: consolidation now runs in the preparation stage (before extract);
+      // its result and run-flag are read from `preparation`, not the post-loop.
+      consolidation = preparation.consolidation;
+
+      // #607: acquire consolidate.lock for the post-loop stage (memoryInference +
+      // graphExtraction both write index.db). Released immediately after.
+      const consolidatePostLPath = processLockPath(lockBaseDir, "consolidate");
+      const consolidatePostAcquired =
+        tryAcquireProcessLock(
+          consolidatePostLPath,
+          PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
+          options.skipIfLocked,
+          "consolidate",
+        ) === "acquired";
+      const postLoopResult = await runImprovePostLoopStageImpl({
+        scope,
+        options,
+        primaryStashDir,
+        actionableRefs: preparation.actionableRefs,
+        appliedCleanup: preparation.appliedCleanup,
+        cleanupWarnings: preparation.cleanupWarnings,
+        memoryRefsForInference,
+        reindexFn,
+        eventsCtx,
+        budgetSignal: budgetAbortController.signal,
+        improveProfile,
+        consolidationRan: preparation.consolidationRan,
+      });
+      if (consolidatePostAcquired) releaseProcessLock(consolidatePostLPath);
+      const postLoopGateCountThisCycle = postLoopResult.gateAutoAcceptedCount;
+      // Last-wins point-in-time objects.
+      memoryInference = postLoopResult.memoryInference;
+      graphExtraction = postLoopResult.graphExtraction;
+      stalenessDetection = postLoopResult.stalenessDetection;
+      recombination = postLoopResult.recombination;
+      proceduralCompilation = postLoopResult.proceduralCompilation;
+      // Summed counters/durations.
+      postLoopGateCount += postLoopResult.gateAutoAcceptedCount;
+      postLoopGateFailedCount += postLoopResult.gateAutoAcceptFailedCount;
+      memoryInferenceDurationMs += postLoopResult.memoryInferenceDurationMs;
+      graphExtractionDurationMs += postLoopResult.graphExtractionDurationMs;
+      if (postLoopResult.orphansPurged !== undefined) {
+        orphansPurged = (orphansPurged ?? 0) + postLoopResult.orphansPurged;
+      }
+      if (postLoopResult.proposalsExpired !== undefined) {
+        proposalsExpired = (proposalsExpired ?? 0) + postLoopResult.proposalsExpired;
+      }
+      // Concatenated arrays.
+      allWarnings.push(...postLoopResult.allWarnings);
+      if (postLoopResult.deadUrls !== undefined) {
+        deadUrls = [...(deadUrls ?? []), ...postLoopResult.deadUrls];
+      }
+      const maintenanceActions = postLoopResult.maintenanceActions;
+      if (maintenanceActions && maintenanceActions.length > 0) {
+        finalActions.push(...preparation.actions, ...maintenanceActions);
+      } else {
+        finalActions.push(...preparation.actions);
+      }
+
+      cyclesRun++;
+
+      // #616 fixed-point stop: a cycle that produced ZERO gate-accepted proposals
+      // (summed across prep + loop + post-loop) would feed cycle N+1 an identical
+      // ref set, so end the loop here rather than spin a pointless next cycle.
+      const gateAcceptedThisCycle =
+        preparation.gateAutoAcceptedCount + loopGateCountThisCycle + postLoopGateCountThisCycle;
+      if (gateAcceptedThisCycle === 0) break;
     }
-
-    // #607: acquire reflect-distill.lock for the loop stage (reflect + distill
-    // both write proposals to state.db). Released immediately after.
-    const reflectDistillLPath = processLockPath(lockBaseDir, "reflectDistill");
-    const reflectDistillAcquired =
-      tryAcquireProcessLock(
-        reflectDistillLPath,
-        PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
-        options.skipIfLocked,
-        "reflect-distill",
-      ) === "acquired";
-    const {
-      reflectsWithErrorContext,
-      memoryRefsForInference,
-      gateAutoAcceptedCount: loopGateCount,
-      gateAutoAcceptFailedCount: loopGateFailedCount,
-    } = await runImproveLoopStage({
-      scope,
-      options,
-      primaryStashDir,
-      reflectFn,
-      distillFn,
-      loopRefs: preparation.loopRefs,
-      actions: preparation.actions,
-      signalBearingSet: preparation.signalBearingSet,
-      distillCooledRefs: preparation.distillCooledRefs,
-      distillOnlyRefs: preparation.distillOnlyRefs,
-      recentErrors: preparation.recentErrors,
-      rejectedProposalsByRef,
-      utilityMap: preparation.utilityMap,
-      startMs,
-      budgetMs,
-      eventsCtx,
-      improveProfile,
-    });
-    if (reflectDistillAcquired) releaseProcessLock(reflectDistillLPath);
-
-    // #551: consolidation now runs in the preparation stage (before extract);
-    // its result and run-flag are read from `preparation`, not the post-loop.
-    const consolidation = preparation.consolidation;
-
-    // #607: acquire consolidate.lock for the post-loop stage (memoryInference +
-    // graphExtraction both write index.db). Released immediately after.
-    const consolidatePostLPath = processLockPath(lockBaseDir, "consolidate");
-    const consolidatePostAcquired =
-      tryAcquireProcessLock(
-        consolidatePostLPath,
-        PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
-        options.skipIfLocked,
-        "consolidate",
-      ) === "acquired";
-    const {
-      allWarnings,
-      deadUrls,
-      memoryInference,
-      graphExtraction,
-      stalenessDetection,
-      maintenanceActions,
-      memoryInferenceDurationMs,
-      graphExtractionDurationMs,
-      orphansPurged,
-      proposalsExpired,
-      gateAutoAcceptedCount: postLoopGateCount,
-      gateAutoAcceptFailedCount: postLoopGateFailedCount,
-      recombination,
-      proceduralCompilation,
-    } = await runImprovePostLoopStage({
-      scope,
-      options,
-      primaryStashDir,
-      actionableRefs: preparation.actionableRefs,
-      appliedCleanup: preparation.appliedCleanup,
-      cleanupWarnings: preparation.cleanupWarnings,
-      memoryRefsForInference,
-      reindexFn,
-      eventsCtx,
-      budgetSignal: budgetAbortController.signal,
-      improveProfile,
-      consolidationRan: preparation.consolidationRan,
-    });
-    if (consolidatePostAcquired) releaseProcessLock(consolidatePostLPath);
-
-    const finalActions =
-      maintenanceActions && maintenanceActions.length > 0
-        ? [...preparation.actions, ...maintenanceActions]
-        : preparation.actions;
 
     const result: AkmImproveResult = {
       schemaVersion: 1,
@@ -1585,11 +1717,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       reflectSkippedActions: finalActions.filter((a) => a.mode === "reflect-skipped").length,
       reflectGuardRejectedActions: finalActions.filter((a) => a.mode === "reflect-guard-rejected").length,
       ...(() => {
-        const t = preparation.gateAutoAcceptedCount + loopGateCount + postLoopGateCount;
+        const t = prepGateCount + loopGateCount + postLoopGateCount;
         return t > 0 ? { gateAutoAcceptedCount: t } : {};
       })(),
       ...(() => {
-        const f = preparation.gateAutoAcceptFailedCount + loopGateFailedCount + postLoopGateFailedCount;
+        const f = prepGateFailedCount + loopGateFailedCount + postLoopGateFailedCount;
         return f > 0 ? { gateAutoAcceptFailedCount: f } : {};
       })(),
       ...(triageDrain
@@ -1603,6 +1735,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         : {}),
       ...(preparation.proactiveMaintenance ? { proactiveMaintenance: preparation.proactiveMaintenance } : {}),
+      // #616 — report cycles run only when >1 so the default single-pass
+      // serialized envelope stays byte-identical to pre-#616 (AC1).
+      ...(cyclesRun > 1 ? { cyclesRun } : {}),
       ...(options.runId !== undefined ? { runId: options.runId } : {}),
     };
     if (!result.dryRun)
@@ -3796,6 +3931,13 @@ export interface ImproveRunContext {
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
   improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  /**
+   * #616 — run-budget abort signal (also carries a live `remainingBudgetMs`
+   * getter). Threaded in so the loop stage participates in the same cooperative
+   * budget drain as the prep/post-loop stages and so multi-cycle callers can
+   * observe abort propagation.
+   */
+  budgetSignal?: AbortSignal;
 }
 
 async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoopResult> {
