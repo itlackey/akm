@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.29] — 2026-06-20
+
+### Reverted
+
+- **#630 — `fact` asset type phase 2 reverted (#631).** The pinned-core assembly +
+  `akm fact` CLI shipped in beta.28 was reverted pending rework. Phase 1 (#629, the
+  `fact` asset type itself) remains in place.
+
 ## [0.9.0-beta.27] — 2026-06-20
 
 All new behavior is **opt-in / default-preserving** — default runs are byte-identical.
