@@ -538,6 +538,21 @@ export interface ImproveProcessConfig {
    * deferred). Only meaningful on the `procedural` process.
    */
   emitAs?: "workflow" | "skill";
+  /**
+   * #637 — improve-review subagent session detection. When a session is
+   * identified as an improve-review subagent session (via AKM_ORIGIN marker
+   * or prose-fallback), controls the behaviour:
+   *
+   * - `"shadow"` (DEFAULT): detect and tag `skipReason='improve_review'` on the
+   *   session result for audit/observability, but STILL extract (zero behaviour
+   *   change, byte-identical token spend).
+   * - `"skip"`: actually skip the session (return `{skipped:true,
+   *   skipReason:'improve_review'}`), making ZERO LLM calls for it.
+   *
+   * Absent/unset = `"shadow"` (default-preserving). Only meaningful on the
+   * `extract` process.
+   */
+  skipSelfReview?: "shadow" | "skip";
 }
 
 export interface ImproveProfileConfig {

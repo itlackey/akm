@@ -50,6 +50,12 @@ export interface SessionSummary extends SessionRef {
   projectHint?: string;
   /** Human-readable session title when the platform provides one. */
   title?: string;
+  /**
+   * Origin marker set by the extract pipeline when the first event of a session
+   * carries an AKM_ORIGIN marker or the prose-fallback markers. Used to detect
+   * improve-review subagent sessions (#637) so they can be skipped or shadow-tagged.
+   */
+  origin?: "improve-review";
 }
 
 /**

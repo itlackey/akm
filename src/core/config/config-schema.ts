@@ -348,6 +348,11 @@ export const ImproveProcessConfigSchema = z
     // #615 — procedural process: asset type a compiled sequence is emitted as.
     // Reserved; v1 always emits "workflow". Only meaningful on `procedural`.
     emitAs: z.enum(["workflow", "skill"]).optional(),
+    // #637 — improve-review subagent detection mode (extract process only).
+    // "shadow" (default): tag skipReason for audit but still extract (zero
+    // behaviour change). "skip": skip the session entirely (no LLM call).
+    // Absent = "shadow". Only meaningful on the `extract` process.
+    skipSelfReview: z.enum(["shadow", "skip"]).optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

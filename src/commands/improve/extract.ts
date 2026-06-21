@@ -195,7 +195,14 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short" | "triaged_out";
+  skipReason?:
+    | "read_failed"
+    | "llm_unavailable"
+    | "exception"
+    | "already_extracted"
+    | "too_short"
+    | "triaged_out"
+    | "improve_review";
   /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
   sessionAssetRef?: string;
   /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
@@ -377,6 +384,9 @@ async function processSession(
   prior: ExtractedSessionRow | undefined,
   force: boolean,
   singleSession: boolean,
+  // #637 — improve-review skip mode. "shadow" (default): tag skipReason but still
+  // extract. "skip": return skipped immediately. Absent/"shadow" = no behaviour change.
+  skipSelfReview: "shadow" | "skip" | undefined,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -394,6 +404,37 @@ async function processSession(
       skipReason: "read_failed",
     };
   }
+
+  // #637 — improve-review origin detection. Scan only the FIRST event's text for
+  // the AKM_ORIGIN marker (primary) or both prose-fallback markers (belt-and-suspenders
+  // for historical/un-upgraded sessions). Mid-conversation occurrences are ignored.
+  const firstEventText = data.events[0]?.text ?? "";
+  const hasOriginMarker = /^AKM_ORIGIN:\s*improve-review$/m.test(firstEventText);
+  const hasProseFallback = firstEventText.includes("Asset path:") && firstEventText.includes("Stash root:");
+  const isImproveReview = hasOriginMarker || hasProseFallback;
+  if (isImproveReview) {
+    // Set the origin field on the ref so callers / tests can observe detection.
+    data.ref.origin = "improve-review";
+    if (skipSelfReview === "skip") {
+      // Hard skip — zero LLM calls.
+      return {
+        sessionId: sessionRef.sessionId,
+        harness: harness.name,
+        candidateCount: 0,
+        proposalIds: [],
+        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+        warnings: [],
+        skipped: true,
+        skipReason: "improve_review",
+      };
+    }
+    // Shadow mode (default when skipSelfReview is absent or 'shadow'): continue
+    // processing byte-identically but tag skipReason for audit. The tag is added
+    // to the final result at the bottom via the shadowSkipReason variable.
+  }
+  // Capture the shadow tag so we can attach it to the final result.
+  const shadowSkipReason: "improve_review" | undefined =
+    isImproveReview && (skipSelfReview === "shadow" || skipSelfReview === undefined) ? "improve_review" : undefined;
 
   // #602 — content-hash skip. Computed on the RAW event stream immediately after
   // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
@@ -564,6 +605,8 @@ async function processSession(
       },
       warnings,
       contentHash,
+      // #637 shadow tag: observability only — session still extracted (no behaviour change)
+      ...(shadowSkipReason ? { skipReason: shadowSkipReason } : {}),
       ...sessionAsset,
     };
   }
@@ -671,6 +714,8 @@ async function processSession(
     },
     warnings,
     contentHash,
+    // #637 shadow tag: observability only — session still extracted (no behaviour change)
+    ...(shadowSkipReason ? { skipReason: shadowSkipReason } : {}),
     ...sessionAsset,
   };
 }
@@ -772,6 +817,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // #626 — resolve the triage gate config once per run. Default-off → the
   // per-session path never calls the scorer and emits no telemetry.
   const triage = resolveTriageConfig(extractProcess);
+
+  // #637 — resolve improve-review skip mode. Default absent = "shadow" (no
+  // behaviour change — tag only). "skip" = hard skip improve-review sessions.
+  const skipSelfReview = extractProcess?.skipSelfReview;
 
   // #561 — resolve session-indexing config. Default ON: we only reach this code
   // when `session_extraction` is enabled AND an LLM is configured (both checked
@@ -970,6 +1019,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         prior,
         options.force === true,
         typeof options.sessionId === "string" && options.sessionId.length > 0,
+        skipSelfReview,
       );
       sessions.push(result);
       // #626 — triage aggregation. A session reached the triage gate only when it

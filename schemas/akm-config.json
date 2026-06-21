@@ -422,6 +422,13 @@
                           "skill"
                         ]
                       },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
+                        ]
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -760,6 +767,13 @@
                         "enum": [
                           "workflow",
                           "skill"
+                        ]
+                      },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
                         ]
                       },
                       "applyMode": {
@@ -1102,6 +1116,13 @@
                           "skill"
                         ]
                       },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
+                        ]
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -1440,6 +1461,13 @@
                         "enum": [
                           "workflow",
                           "skill"
+                        ]
+                      },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
                         ]
                       },
                       "applyMode": {
@@ -1782,6 +1810,13 @@
                           "skill"
                         ]
                       },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
+                        ]
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -2120,6 +2155,13 @@
                         "enum": [
                           "workflow",
                           "skill"
+                        ]
+                      },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
                         ]
                       },
                       "applyMode": {
@@ -2462,6 +2504,13 @@
                           "skill"
                         ]
                       },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
+                        ]
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -2800,6 +2849,13 @@
                         "enum": [
                           "workflow",
                           "skill"
+                        ]
+                      },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
                         ]
                       },
                       "applyMode": {
@@ -3142,6 +3198,13 @@
                           "skill"
                         ]
                       },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
+                        ]
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -3480,6 +3543,13 @@
                         "enum": [
                           "workflow",
                           "skill"
+                        ]
+                      },
+                      "skipSelfReview": {
+                        "type": "string",
+                        "enum": [
+                          "shadow",
+                          "skip"
                         ]
                       },
                       "applyMode": {
@@ -4521,6 +4591,13 @@
                               "skill"
                             ]
                           },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
+                            ]
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -4859,6 +4936,13 @@
                             "enum": [
                               "workflow",
                               "skill"
+                            ]
+                          },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
                             ]
                           },
                           "applyMode": {
@@ -5201,6 +5285,13 @@
                               "skill"
                             ]
                           },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
+                            ]
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -5539,6 +5630,13 @@
                             "enum": [
                               "workflow",
                               "skill"
+                            ]
+                          },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
                             ]
                           },
                           "applyMode": {
@@ -5881,6 +5979,13 @@
                               "skill"
                             ]
                           },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
+                            ]
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -6219,6 +6324,13 @@
                             "enum": [
                               "workflow",
                               "skill"
+                            ]
+                          },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
                             ]
                           },
                           "applyMode": {
@@ -6561,6 +6673,13 @@
                               "skill"
                             ]
                           },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
+                            ]
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -6899,6 +7018,13 @@
                             "enum": [
                               "workflow",
                               "skill"
+                            ]
+                          },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
                             ]
                           },
                           "applyMode": {
@@ -7241,6 +7367,13 @@
                               "skill"
                             ]
                           },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
+                            ]
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -7579,6 +7712,13 @@
                             "enum": [
                               "workflow",
                               "skill"
+                            ]
+                          },
+                          "skipSelfReview": {
+                            "type": "string",
+                            "enum": [
+                              "shadow",
+                              "skip"
                             ]
                           },
                           "applyMode": {
@@ -8602,6 +8742,13 @@
             "skill"
           ]
         },
+        "skipSelfReview": {
+          "type": "string",
+          "enum": [
+            "shadow",
+            "skip"
+          ]
+        },
         "applyMode": {
           "type": "string",
           "enum": [
@@ -8952,6 +9099,13 @@
                     "skill"
                   ]
                 },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
+                  ]
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -9290,6 +9444,13 @@
                   "enum": [
                     "workflow",
                     "skill"
+                  ]
+                },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
                   ]
                 },
                 "applyMode": {
@@ -9632,6 +9793,13 @@
                     "skill"
                   ]
                 },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
+                  ]
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -9970,6 +10138,13 @@
                   "enum": [
                     "workflow",
                     "skill"
+                  ]
+                },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
                   ]
                 },
                 "applyMode": {
@@ -10312,6 +10487,13 @@
                     "skill"
                   ]
                 },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
+                  ]
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -10650,6 +10832,13 @@
                   "enum": [
                     "workflow",
                     "skill"
+                  ]
+                },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
                   ]
                 },
                 "applyMode": {
@@ -10992,6 +11181,13 @@
                     "skill"
                   ]
                 },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
+                  ]
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -11330,6 +11526,13 @@
                   "enum": [
                     "workflow",
                     "skill"
+                  ]
+                },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
                   ]
                 },
                 "applyMode": {
@@ -11672,6 +11875,13 @@
                     "skill"
                   ]
                 },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
+                  ]
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -12010,6 +12220,13 @@
                   "enum": [
                     "workflow",
                     "skill"
+                  ]
+                },
+                "skipSelfReview": {
+                  "type": "string",
+                  "enum": [
+                    "shadow",
+                    "skip"
                   ]
                 },
                 "applyMode": {
