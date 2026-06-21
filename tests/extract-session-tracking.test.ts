@@ -499,7 +499,11 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
     db.close();
   });
 
-  test("explicit sessionId bypasses the skip-tracking check (always processes)", async () => {
+  test("explicit sessionId RESPECTS the content-hash skip (idempotent; --force overrides)", async () => {
+    // A session-end hook firing `extract --session-id <id>` must be idempotent:
+    // if the session was already extracted and its content is unchanged, the
+    // targeted run skips (no LLM call) — exactly like discovery mode. Only
+    // --force re-extracts (covered by the sibling test below).
     const stash = makeStashDir();
     const session = fakeSession("ses_force", Date.now());
     const db = openStateDatabase(":memory:");
@@ -510,7 +514,7 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
       outcome: "no_candidates",
       candidateCount: 0,
       proposalCount: 0,
-      // Matching hash — would otherwise skip, but single-session must bypass.
+      // Matching hash — targeted single-session extract must SKIP it (no --force).
       contentHash: hashSessionContent(session),
     });
 
@@ -528,8 +532,9 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
       },
     });
 
-    expect(chatCalls).toBe(1);
-    expect(result.sessionsProcessed).toBe(1);
+    // No LLM call, session skipped as already-extracted (idempotent hook fire).
+    expect(chatCalls).toBe(0);
+    expect(result.sessionsProcessed).toBe(0);
     db.close();
   });
 

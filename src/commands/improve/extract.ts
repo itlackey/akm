@@ -377,7 +377,6 @@ async function processSession(
   // file read is incurred.
   prior: ExtractedSessionRow | undefined,
   force: boolean,
-  singleSession: boolean,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -399,10 +398,12 @@ async function processSession(
   // #602 — content-hash skip. Computed on the RAW event stream immediately after
   // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
   // an unchanged session never reaches the LLM. Hash-based ⇒ clock-independent
-  // (immune to the Jun 11-12 timestamp double-extract/over-throttle bug). --force
-  // and single-session (explicit sessionId) modes bypass the skip entirely.
+  // (immune to the Jun 11-12 timestamp double-extract/over-throttle bug). The skip
+  // applies UNIFORMLY — including explicit `--session-id` targeting (so a
+  // session-end hook firing `extract --session-id <id>` is idempotent). ONLY
+  // `--force` overrides it to re-extract a previously-extracted session.
   const contentHash = hashSessionContent(data);
-  if (!force && !singleSession && shouldSkipAlreadyExtractedSession(prior, contentHash)) {
+  if (!force && shouldSkipAlreadyExtractedSession(prior, contentHash)) {
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
@@ -976,7 +977,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         schemaSimilarityCtx,
         prior,
         options.force === true,
-        typeof options.sessionId === "string" && options.sessionId.length > 0,
       );
       sessions.push(result);
       // #626 — triage aggregation. A session reached the triage gate only when it

@@ -933,6 +933,7 @@ describe("akmExtract — profile + config resolution", () => {
     await akmExtract({
       type: "claude-code",
       sessionId: "ses_budget",
+      force: true, // re-extract the same session twice to compare prompt budgets
       stashDir: stash,
       config: configWithProfile(stash, { maxTotalChars: 1500 }),
       harnesses: [makeFakeHarness([fatSession])],
@@ -944,6 +945,7 @@ describe("akmExtract — profile + config resolution", () => {
     await akmExtract({
       type: "claude-code",
       sessionId: "ses_budget",
+      force: true, // --force overrides the content-hash skip on the second run
       stashDir: stash,
       config: configWithProfile(stash, { maxTotalChars: 100_000 }),
       harnesses: [makeFakeHarness([fatSession])],
