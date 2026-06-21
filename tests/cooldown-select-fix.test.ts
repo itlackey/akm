@@ -3,46 +3,29 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * RED tests for the SELECT-time cooldown leak (Phase 3 fix).
+ * Tests for the SELECT-time cooldown leak fix (Phase 3).
  *
- * ROOT CAUSE (summary from diagnosis):
+ * ROOT CAUSE (from diagnosis):
  *   `selectProactiveMaintenanceRefs` runs BEFORE `reflect-distill.lock` is
- *   acquired (improve.ts:3004 vs lock at improve.ts:1551).  Run B's planning
- *   builds `lastReflectTs` while Run A's reflect is still in-flight, so both
- *   runs compute `due=true` for the same ref.  Both then acquire the lock in
- *   turn and both reflect the same ref, producing a ~16x reflect storm.
+ *   acquired. Run B's planning builds `lastReflectTs` while Run A's reflect is
+ *   still in-flight, so both runs compute `due=true` for the same ref. Both
+ *   then acquire the lock in turn and reflect the same ref — a ~16x storm.
  *
- * THE FIX (minimal):
- *   Export `filterProactiveDue(selected, lastReflectTs, lastDistillTs,
- *   dueDays, now): ImproveEligibleRef[]` from proactive-maintenance.ts.
- *   The orchestrator calls this INSIDE the lock (after re-reading the
- *   timestamp maps) to drop refs that became non-due while waiting for
- *   the lock.
+ * THE FIX:
+ *   `filterProactiveDue(selected, lastReflectTs, lastDistillTs, dueDays, now)`
+ *   re-applies the DUE gate with freshly-read timestamp maps INSIDE the lock,
+ *   dropping refs that became non-due while this run waited for the lock.
  *
- * These tests drive `filterProactiveDue` directly.  They currently FAIL
- * semantically because the function is not yet exported — each test
- * catches the undefined reference and throws an assertion failure.
- * Once the function is exported and the orchestrator calls it post-lock
- * these tests will turn GREEN.
+ * These tests drive `filterProactiveDue` directly.
  */
 
 import { describe, expect, test } from "bun:test";
-import * as proactiveMod from "../src/commands/improve/proactive-maintenance";
+import {
+  DEFAULT_DUE_DAYS,
+  filterProactiveDue,
+  selectProactiveMaintenanceRefs,
+} from "../src/commands/improve/proactive-maintenance";
 import type { ImproveEligibleRef } from "../src/core/improve-types";
-
-const { DEFAULT_DUE_DAYS, selectProactiveMaintenanceRefs } = proactiveMod;
-
-// Cast so TypeScript doesn't complain about the missing export — the tests
-// explicitly verify it exists at runtime.
-const filterProactiveDue = (proactiveMod as unknown as Record<string, unknown>)["filterProactiveDue"] as
-  | ((
-      selected: ImproveEligibleRef[],
-      lastReflectTs: Map<string, string>,
-      lastDistillTs: Map<string, string>,
-      dueDays: number,
-      now: number,
-    ) => ImproveEligibleRef[])
-  | undefined;
 
 const NOW = Date.parse("2026-06-14T12:00:00.000Z");
 const DAY = 86_400_000;
@@ -59,10 +42,7 @@ function makeRef(r: string): ImproveEligibleRef {
   return { ref: r, reason: "scope-type", filePath: `/stash/${r}.md` };
 }
 
-/**
- * Helper that invokes filterProactiveDue and throws a semantic assertion
- * failure (not a TypeError) when the function doesn't exist yet.
- */
+/** Helper that invokes the post-lock re-filter with default dueDays/now. */
 function callFilter(
   selected: ImproveEligibleRef[],
   reflectTs: Map<string, string>,
@@ -70,20 +50,14 @@ function callFilter(
   dueDays: number = DEFAULT_DUE_DAYS,
   now: number = NOW,
 ): ImproveEligibleRef[] {
-  expect(
-    filterProactiveDue,
-    "filterProactiveDue must be exported from proactive-maintenance.ts (fix not yet applied)",
-  ).toBeFunction();
-  // biome-ignore lint/style/noNonNullAssertion: guarded by expect above
-  return filterProactiveDue!(selected, reflectTs, distillTs, dueDays, now);
+  return filterProactiveDue(selected, reflectTs, distillTs, dueDays, now);
 }
 
 // ---------------------------------------------------------------------------
-// RED tests: filterProactiveDue — post-lock re-filter (function not yet
-// exported → every test below fails with a semantic assertion failure)
+// filterProactiveDue — post-lock re-filter
 // ---------------------------------------------------------------------------
 
-describe("filterProactiveDue — post-lock re-filter (RED: function not yet exported)", () => {
+describe("filterProactiveDue — post-lock re-filter", () => {
   /**
    * SCENARIO A: ref selected by pre-lock planning (never reflected at that
    * time), but Run A committed reflect_invoked 3 min before Run B acquires
