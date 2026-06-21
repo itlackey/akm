@@ -182,3 +182,36 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
 
   return { selected, dueTotal, neverReflected, scored };
 }
+
+/**
+ * Post-lock re-filter for proactive refs.
+ *
+ * Called INSIDE the reflect-distill.lock window with freshly-read timestamp
+ * maps so that any `reflect_invoked` events committed by a concurrent run
+ * while this run was waiting for the lock are visible. Refs that became
+ * non-due (staleDays ≤ dueDays) since planning time are dropped before
+ * execution, closing the SELECT-time cooldown race.
+ *
+ * The logic mirrors the DUE gate in `selectProactiveMaintenanceRefs` — an
+ * asset is due only when never touched OR last touched more than `dueDays`
+ * ago. The selector and this filter must always agree on the gate predicate.
+ */
+export function filterProactiveDue(
+  selected: ImproveEligibleRef[],
+  lastReflectTs: Map<string, string>,
+  lastDistillTs: Map<string, string>,
+  dueDays: number,
+  now: number,
+): ImproveEligibleRef[] {
+  return selected.filter((candidate) => {
+    const ref = candidate.ref;
+    const reflectIso = lastReflectTs.get(ref);
+    const distillIso = lastDistillTs.get(ref);
+    let lastTouchMs = 0;
+    if (reflectIso) lastTouchMs = Math.max(lastTouchMs, Date.parse(reflectIso) || 0);
+    if (distillIso) lastTouchMs = Math.max(lastTouchMs, Date.parse(distillIso) || 0);
+    const neverReflected = lastTouchMs === 0;
+    const staleDays = neverReflected ? Number.POSITIVE_INFINITY : (now - lastTouchMs) / DAY_MS;
+    return neverReflected || staleDays > dueDays;
+  });
+}

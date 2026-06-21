@@ -107,7 +107,12 @@ import {
   outcomeScoreToSalience,
   updateAssetOutcome,
 } from "./outcome-loop";
-import { DEFAULT_DUE_DAYS, DEFAULT_MAX_PER_RUN, selectProactiveMaintenanceRefs } from "./proactive-maintenance";
+import {
+  DEFAULT_DUE_DAYS,
+  DEFAULT_MAX_PER_RUN,
+  filterProactiveDue,
+  selectProactiveMaintenanceRefs,
+} from "./proactive-maintenance";
 import { akmProcedural } from "./procedural";
 import { akmRecombine } from "./recombine";
 import { type AkmReflectResult, akmReflect } from "./reflect";
@@ -1555,13 +1560,42 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           options.skipIfLocked,
           "reflect-distill",
         ) === "acquired";
+
+      // Post-lock cooldown re-filter for proactive refs (#SELECT-TIME-LEAK).
+      // Planning built `lastReflectProposalTs` BEFORE acquiring this lock, so a
+      // concurrent run's `reflect_invoked` writes are invisible to it. Now that
+      // we hold the lock, re-read fresh timestamp maps for the proactive subset
+      // and drop any ref whose cooldown has been consumed by the concurrent run.
+      const proactiveLoopRefs = preparation.loopRefs.filter((r) => r.eligibilitySource === "proactive");
+      let postLockLoopRefs = preparation.loopRefs;
+      if (proactiveLoopRefs.length > 0) {
+        const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
+        const freshReflectTs = buildLatestProposalTsMap(proactiveRefStrs, "reflect");
+        const freshDistillTs = buildLatestProposalTsMap(proactiveRefStrs, "distill");
+        const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
+        const stillDue = new Set(
+          filterProactiveDue(proactiveLoopRefs, freshReflectTs, freshDistillTs, pmDueDays, Date.now()).map(
+            (r) => r.ref,
+          ),
+        );
+        const dropped = proactiveLoopRefs.filter((r) => !stillDue.has(r.ref));
+        if (dropped.length > 0) {
+          info(
+            `[improve] post-lock cooldown re-filter: dropped ${dropped.length} proactive ref(s) claimed by concurrent run (${dropped.map((r) => r.ref).join(", ")})`,
+          );
+          postLockLoopRefs = preparation.loopRefs.filter(
+            (r) => r.eligibilitySource !== "proactive" || stillDue.has(r.ref),
+          );
+        }
+      }
+
       const loopResult = await runImproveLoopStageImpl({
         scope,
         options,
         primaryStashDir,
         reflectFn,
         distillFn,
-        loopRefs: preparation.loopRefs,
+        loopRefs: postLockLoopRefs,
         actions: preparation.actions,
         signalBearingSet: preparation.signalBearingSet,
         distillCooledRefs: preparation.distillCooledRefs,
