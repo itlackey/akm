@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.35] — 2026-06-21
+
+### Fixed
+
+- **Default extract discovery window is now "since the last run" (floored at 48h),
+  not a fixed 24h.** An intermittently-online host that was off for longer than
+  the old 24h window could permanently miss sessions that ended during the gap.
+  Discovery now looks back to the last recorded extract run for the harness, never
+  less than 48h. Widening is free of redundant LLM cost — the content-hash ledger
+  skips unchanged sessions with zero LLM calls. An explicit `--since`/`defaultSince`
+  still wins.
+- **Per-session lock prevents concurrent double-extraction.** A session-end hook
+  firing `extract --session-id` while the periodic `akm improve` extract pass runs
+  discovery could both LLM-process the SAME session (duplicate spend + near-dup
+  proposals). A per-(harness, session) advisory lock (co-located with state.db,
+  PID + age staleness recovery) now makes the second run skip without any LLM call.
+- **`minNewSessions` is read from the ACTIVE improve profile, not always `default`.**
+  A non-default profile (e.g. `frequent`) setting `minNewSessions` was silently
+  ignored because the gate (and its candidate-count discovery window) read
+  `profiles.improve.default`. They now read the resolved active profile, matching
+  how `extract.enabled` already resolves.
+
+### Docs
+
+- Documented that `processes.extract.indexSessions` (default on) makes a second
+  LLM call per processed session (the session summary); set it to `false` to halve
+  per-session extract cost. Unchanged/skipped sessions still cost zero.
+
 ## [0.9.0-beta.34] — 2026-06-21
 
 ### Fixed

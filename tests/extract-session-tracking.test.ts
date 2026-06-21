@@ -22,10 +22,12 @@ import path from "node:path";
 import * as extractModule from "../src/commands/improve/extract";
 import { akmExtract } from "../src/commands/improve/extract";
 import type { AkmConfig } from "../src/core/config/config";
+import { tryAcquireLockSync } from "../src/core/file-lock";
 import {
   type ExtractedSessionRow,
   getExtractedSession,
   getExtractedSessionsMap,
+  getLastExtractRunAt,
   openStateDatabase,
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
@@ -697,5 +699,161 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
     });
     expect(n).toBe(0);
     db.close();
+  });
+});
+
+// ── getLastExtractRunAt — discovery watermark source ────────────────────────
+
+describe("getLastExtractRunAt", () => {
+  test("returns null when the harness has never been extracted", () => {
+    const db = openStateDatabase(":memory:");
+    expect(getLastExtractRunAt(db, "claude-code")).toBeNull();
+    db.close();
+  });
+
+  test("returns the most recent processed_at (ms epoch) for the harness", () => {
+    const db = openStateDatabase(":memory:");
+    const older = "2026-06-01T00:00:00.000Z";
+    const newer = "2026-06-10T12:00:00.000Z";
+    for (const [sid, at] of [
+      ["ses_a", older],
+      ["ses_b", newer],
+    ] as const) {
+      upsertExtractedSession(db, {
+        harness: "claude-code",
+        sessionId: sid,
+        processedAt: at,
+        outcome: "no_candidates",
+        candidateCount: 0,
+        proposalCount: 0,
+        contentHash: "h",
+      });
+    }
+    // A different harness must not bleed into the watermark.
+    upsertExtractedSession(db, {
+      harness: "opencode",
+      sessionId: "ses_oc",
+      processedAt: "2030-01-01T00:00:00.000Z",
+      outcome: "no_candidates",
+      candidateCount: 0,
+      proposalCount: 0,
+      contentHash: "h",
+    });
+    expect(getLastExtractRunAt(db, "claude-code")).toBe(Date.parse(newer));
+    db.close();
+  });
+});
+
+// ── default discovery window — "since last run", floored at 48h ──────────────
+
+describe("akmExtract — default since (watermark)", () => {
+  test("floors at 48h when there is no prior run (older sessions excluded)", async () => {
+    const stash = makeStashDir();
+    const db = openStateDatabase(":memory:");
+    const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    const withinFloor = Date.now() - 1 * 60 * 60 * 1000;
+    const old = fakeSession("ses_3d", threeDaysAgo);
+    const recent = fakeSession("ses_1h", withinFloor);
+
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeHarness([old, recent])],
+      stateDb: db,
+      chat: async () => JSON.stringify({ candidates: [] }),
+    });
+
+    // 3-day-old session is outside the 48h floor; the 1h-old one is inside.
+    expect(result.sessions.map((s) => s.sessionId)).toEqual(["ses_1h"]);
+    db.close();
+  });
+
+  test("widens to the last run so an intermittent host doesn't lose sessions", async () => {
+    const stash = makeStashDir();
+    const db = openStateDatabase(":memory:");
+    // Establish a watermark: the last recorded run was 10 days ago.
+    const tenDaysAgo = Date.now() - 10 * 24 * 60 * 60 * 1000;
+    upsertExtractedSession(db, {
+      harness: "claude-code",
+      sessionId: "ses_prior_run",
+      processedAt: new Date(tenDaysAgo).toISOString(),
+      outcome: "no_candidates",
+      candidateCount: 0,
+      proposalCount: 0,
+      contentHash: "h",
+    });
+    // A session that ended 5 days ago: OUTSIDE the 48h floor, INSIDE the 10-day
+    // watermark — must be discovered (would be lost under a fixed 24h/48h window).
+    const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    const session = fakeSession("ses_5d", fiveDaysAgo);
+
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeHarness([session])],
+      stateDb: db,
+      chat: async () => JSON.stringify({ candidates: [] }),
+    });
+
+    expect(result.sessions.find((s) => s.sessionId === "ses_5d")).toBeDefined();
+    expect(result.sessionsProcessed).toBe(1);
+    db.close();
+  });
+});
+
+// ── Q5 per-session lock — concurrent-extract guard ──────────────────────────
+
+describe("akmExtract — per-session lock", () => {
+  test("skips a session whose lock is held by another live run (zero LLM calls)", async () => {
+    const stash = makeStashDir();
+    const stateDir = makeTempDir("akm-extract-lock-");
+    const stateDbPath = path.join(stateDir, "state.db");
+    const session = fakeSession("ses_locked", Date.now());
+
+    // Pre-create the lock held by THIS (live) process at the path akmExtract derives.
+    const lockPath = path.join(stateDir, "extract-locks", "extract-claude-code-ses_locked.lock");
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
+
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeHarness([session])],
+      // No stateDb handle → real cross-process path → lock engages; pinned to temp.
+      stateDbPath,
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+
+    expect(chatCalls).toBe(0);
+    expect(result.sessionsProcessed).toBe(0);
+    expect(result.sessions[0]?.skipReason).toBe("locked_concurrent");
+  });
+
+  test("processes normally when no lock is held, and releases the lock after", async () => {
+    const stash = makeStashDir();
+    const stateDir = makeTempDir("akm-extract-lock-free-");
+    const stateDbPath = path.join(stateDir, "state.db");
+    const session = fakeSession("ses_free", Date.now());
+
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeHarness([session])],
+      stateDbPath,
+      chat: async () => JSON.stringify({ candidates: [] }),
+    });
+
+    expect(result.sessionsProcessed).toBe(1);
+    // Lock released → a fresh acquire succeeds.
+    const lockPath = path.join(stateDir, "extract-locks", "extract-claude-code-ses_free.lock");
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
   });
 });

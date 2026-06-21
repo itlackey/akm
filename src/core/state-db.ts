@@ -1899,6 +1899,23 @@ export function getExtractedSessionsMap(
 }
 
 /**
+ * The most recent extract-run time for a harness — `MAX(processed_at)` across
+ * its ledger rows, as ms epoch — or `null` when the harness has never been
+ * extracted. Used to default the discovery window to "since the last run" so an
+ * intermittently-online host that was off for days still rediscovers sessions
+ * that ended during the gap (the content-hash ledger keeps the widened window
+ * free of redundant LLM cost).
+ */
+export function getLastExtractRunAt(db: Database, harness: string): number | null {
+  const row = db
+    .prepare("SELECT MAX(processed_at) AS last FROM extract_sessions_seen WHERE harness = ?")
+    .get(harness) as { last: string | null } | null;
+  if (!row?.last) return null;
+  const ms = Date.parse(row.last);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * Decide whether a session should be skipped because the extractor has already
  * processed BYTE-IDENTICAL content (#602). The skip authority is the content
  * hash, NOT `session_ended_at` — this is clock-independent, so it is immune to

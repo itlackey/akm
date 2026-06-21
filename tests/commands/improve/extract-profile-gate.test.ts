@@ -18,9 +18,9 @@
  * extract block (when `minNewSessions > 0` and a harness is available), so a
  * call counter on it deterministically proves whether the gate opened —
  * without configuring an LLM or touching the network. `minNewSessions` is set
- * on the DEFAULT profile because the count gate reads it from there; the
- * injected counter returns 0 so the extract pass never proceeds past the
- * count even when the gate is open.
+ * on the ACTIVE profile (the count gate reads minNewSessions from the resolved
+ * active profile, not always `default`); the injected counter returns 0 so the
+ * extract pass never proceeds past the count even when the gate is open.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -69,7 +69,11 @@ function makeConfig(args: { defaultExtractEnabled: boolean; profile?: { name: st
     },
   };
   if (args.profile) {
-    improve[args.profile.name] = { processes: { extract: { enabled: args.profile.extractEnabled } } };
+    // minNewSessions on the ACTIVE profile too, so the count gate's detection
+    // seam fires when this profile is active and its extract gate is open.
+    improve[args.profile.name] = {
+      processes: { extract: { enabled: args.profile.extractEnabled, minNewSessions: 1 } },
+    };
   }
   return { config: { semanticSearchMode: "off", profiles: { improve } } as unknown as AkmConfig };
 }

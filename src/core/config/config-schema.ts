@@ -227,6 +227,11 @@ export const ImproveProcessConfigSchema = z
     maxSessionsPerRun: z.number().int().min(0).optional(),
     // #561 — index agent sessions as a searchable `session` asset (extract
     // process). Absent = on-when-an-LLM-is-available (fail-open when offline).
+    // COST: when on, each processed session makes a SECOND LLM call (the session
+    // summary) on top of the extraction call — i.e. ~2 LLM calls/session. Set to
+    // false to halve per-session extract cost at the price of unsearchable
+    // sessions. (Unchanged/skip sessions still cost zero — the content-hash
+    // ledger gates both calls upstream.)
     indexSessions: z.boolean().optional(),
     // #561 — minimum session duration in minutes for session indexing. 0
     // disables the gate. Absent = default 5. Only meaningful on `extract`.

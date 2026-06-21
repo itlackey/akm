@@ -25,15 +25,20 @@
  *     consolidate-writer fix.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
 import {
   type ExtractedSessionRow,
   getExtractedSessionsMap,
+  getLastExtractRunAt,
+  getStateDbPath,
   openStateDatabase,
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
@@ -89,6 +94,90 @@ const DEFAULT_MIN_CONTENT_CHARS = 10;
  * processed by subsequent runs, so coverage is preserved — just spread out.
  */
 const DEFAULT_MAX_SESSIONS_PER_RUN = 25;
+
+/**
+ * Floor for the default discovery window (48h). When no explicit `--since` /
+ * `defaultSince` is configured, discovery looks back to the LAST recorded
+ * extract run for the harness (so an intermittently-online host that was off for
+ * days still rediscovers sessions that ended during the gap), but never LESS
+ * than this — looking back less than the prior window could drop a session that
+ * a previous run deferred via `maxSessionsPerRun`. Widening is free of redundant
+ * LLM cost: the content-hash ledger skips unchanged sessions with zero LLM calls.
+ */
+const DEFAULT_SINCE_FLOOR_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Staleness window for the per-session extract lock. A single session's
+ * processing is bounded by the per-session LLM timeout (default 60s) plus the
+ * session-summary call, so a lock older than this must belong to a crashed
+ * holder and is safe to reclaim.
+ */
+const EXTRACT_SESSION_LOCK_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Resolve the discovery `sinceMs` cutoff when no explicit `since`/`defaultSince`
+ * is set: the later of (last recorded extract run for this harness) and
+ * (now − 48h). See {@link DEFAULT_SINCE_FLOOR_MS}. Best-effort — any state.db
+ * error falls back to the 48h floor.
+ */
+function resolveDefaultSinceMs(
+  harnessName: string,
+  now: number,
+  opts: { stateDb?: Database; stateDbPath?: string; skipTracking?: boolean },
+): number {
+  const floor = now - DEFAULT_SINCE_FLOOR_MS;
+  if (opts.skipTracking) return floor;
+  let db: Database | undefined = opts.stateDb;
+  let opened = false;
+  try {
+    if (!db) {
+      db = openStateDatabase(opts.stateDbPath);
+      opened = true;
+    }
+    const lastRun = getLastExtractRunAt(db, harnessName);
+    return lastRun != null ? Math.min(lastRun, floor) : floor;
+  } catch {
+    return floor;
+  } finally {
+    if (opened && db) {
+      try {
+        db.close();
+      } catch {
+        // best-effort close
+      }
+    }
+  }
+}
+
+/** Filesystem-safe per-session lock path, co-located with the state.db. */
+function getExtractSessionLockPath(harness: string, sessionId: string, stateDbPath: string): string {
+  const safe = `${harness}-${sessionId}`.replace(/[^A-Za-z0-9._-]/g, "_");
+  return path.join(path.dirname(stateDbPath), "extract-locks", `extract-${safe}.lock`);
+}
+
+/**
+ * Try to claim the per-session extract lock so a concurrent extract (e.g. a
+ * session-end hook firing `--session-id` while the hourly improve pass runs
+ * discovery) cannot double-process the SAME session — duplicate LLM spend and
+ * near-duplicate proposals. Reclaims a stale lock (dead holder PID or age past
+ * {@link EXTRACT_SESSION_LOCK_STALE_MS}). Returns false when another LIVE run
+ * holds it — the caller then skips the session without any LLM call. Best-effort:
+ * any filesystem error resolves to `true` (proceed) so locking never blocks
+ * extraction outright.
+ */
+function acquireExtractSessionLock(lockPath: string): boolean {
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    if (tryAcquireLockSync(lockPath, String(process.pid))) return true;
+    const probe = probeLock(lockPath, { staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS });
+    if (probe.state === "held") return false;
+    // absent (released between attempt + probe) or stale → reclaim and retry once.
+    releaseLock(lockPath);
+    return tryAcquireLockSync(lockPath, String(process.pid));
+  } catch {
+    return true;
+  }
+}
 
 // ── Options + Result envelopes ──────────────────────────────────────────────
 
@@ -195,7 +284,14 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short" | "triaged_out";
+  skipReason?:
+    | "read_failed"
+    | "llm_unavailable"
+    | "exception"
+    | "already_extracted"
+    | "too_short"
+    | "triaged_out"
+    | "locked_concurrent";
   /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
   sessionAssetRef?: string;
   /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
@@ -877,7 +973,16 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     }
     candidates = [target];
   } else {
-    const sinceMs = parseSinceArg(effectiveSince);
+    // No explicit `--since`/`defaultSince` → default to "since the last run"
+    // (floored at 48h) so an intermittently-online host doesn't lose sessions
+    // that ended while it was off. See {@link resolveDefaultSinceMs}.
+    const sinceMs = effectiveSince
+      ? parseSinceArg(effectiveSince)
+      : resolveDefaultSinceMs(harness.name, startMs, {
+          ...(options.stateDb ? { stateDb: options.stateDb } : {}),
+          ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
+          ...(options.skipTracking ? { skipTracking: options.skipTracking } : {}),
+        });
     candidates = harness.listSessions({
       sinceMs,
       ...(options.location ? { location: options.location } : {}),
@@ -956,6 +1061,36 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         `Reached maxSessionsPerRun=${maxSessionsPerRun}; ${candidates.length - processedCount - skippedCount} session(s) deferred to a later run.`,
       );
       break;
+    }
+
+    // Q5 — per-session lock so two concurrent extracts (e.g. a session-end hook
+    // firing `--session-id` while the hourly improve discovery pass runs) can't
+    // both LLM-process the SAME session. The holder records the outcome; a
+    // second run skips without any LLM call. Engaged only for real cross-process
+    // runs (those that open their own state.db): dry-run is read-only, an
+    // injected `stateDb` handle is an in-process/test scenario with no cross-
+    // process race, and skip-tracking-off opts out entirely.
+    let sessionLockPath: string | undefined;
+    if (trackingEnabled && !dryRun && !options.stateDb) {
+      sessionLockPath = getExtractSessionLockPath(
+        harness.name,
+        summary.sessionId,
+        options.stateDbPath ?? getStateDbPath(),
+      );
+      if (!acquireExtractSessionLock(sessionLockPath)) {
+        sessions.push({
+          sessionId: summary.sessionId,
+          harness: harness.name,
+          candidateCount: 0,
+          proposalIds: [],
+          preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+          warnings: ["concurrent extract holds this session's lock — skipped (handled by the other run)"],
+          skipped: true,
+          skipReason: "locked_concurrent",
+        });
+        skippedCount += 1;
+        continue;
+      }
     }
 
     try {
@@ -1060,6 +1195,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         skipReason: "exception",
       });
       skippedCount += 1;
+    } finally {
+      if (sessionLockPath) releaseLock(sessionLockPath);
     }
   }
 
@@ -1142,7 +1279,10 @@ export interface CountNewExtractCandidatesOptions {
 export function countNewExtractCandidates(config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
   const extractProcess = config.profiles?.improve?.default?.processes?.extract;
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
-  const sinceMs = parseSinceArg(effectiveSince);
+  // Mirror akmExtract: when no explicit window is set, default per-harness to
+  // "since the last run" (floored at 48h) instead of a fixed 24h. Keeps this
+  // gate's discovery window identical to what akmExtract will actually scan.
+  const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
 
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
 
@@ -1151,6 +1291,12 @@ export function countNewExtractCandidates(config: AkmConfig, options: CountNewEx
   let total = 0;
   try {
     for (const harness of harnesses) {
+      const sinceMs =
+        explicitSinceMs ??
+        resolveDefaultSinceMs(harness.name, Date.now(), {
+          ...(options.stateDb ? { stateDb: options.stateDb } : {}),
+          ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
+        });
       const candidates = harness.listSessions({ sinceMs });
       if (candidates.length === 0) continue;
 

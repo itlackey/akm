@@ -2475,7 +2475,10 @@ async function runImprovePreparationStage(args: {
   // memory mtimes, so a skipped extract never flags work for the NEXT run's
   // consolidation mtime-gate (the downstream trigger #554 asks us to suppress).
   const EXTRACT_DEFAULT_MIN_NEW_SESSIONS = 0;
-  const configuredMinNewSessions = extractConfig.profiles?.improve?.default?.processes?.extract?.minNewSessions;
+  // Read from the ACTIVE resolved profile (not always `default`), matching how
+  // `extract.enabled` resolves — otherwise a non-default profile (e.g.
+  // `frequent`) setting `minNewSessions` was silently ignored.
+  const configuredMinNewSessions = improveProfile.processes?.extract?.minNewSessions;
   const minNewSessions =
     typeof configuredMinNewSessions === "number" ? configuredMinNewSessions : EXTRACT_DEFAULT_MIN_NEW_SESSIONS;
   // #593/#594: the ACTIVE resolved improve profile is the single source of
@@ -2493,6 +2496,11 @@ async function runImprovePreparationStage(args: {
       const countFn = options.extractCandidateCountFn ?? countNewExtractCandidates;
       const newCandidateCount = countFn(extractConfig, {
         ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+        // Use the ACTIVE profile's discovery window so the gate counts over the
+        // same window akmExtract will scan (not always `default`).
+        ...(improveProfile.processes?.extract?.defaultSince
+          ? { since: improveProfile.processes.extract.defaultSince }
+          : {}),
         // C2: pin the candidate-count state.db open to the boundary-resolved path.
         ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
       });

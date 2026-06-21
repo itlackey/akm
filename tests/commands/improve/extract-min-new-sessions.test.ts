@@ -165,6 +165,42 @@ describe("#554 extract minNewSessions gate", () => {
   );
 
   test(
+    "respects minNewSessions on the ACTIVE (non-default) profile, not just default",
+    async () => {
+      // The gate previously read profiles.improve.default only, so a non-default
+      // active profile's minNewSessions was silently ignored. Here only the
+      // ACTIVE profile ("racy") sets it; default does not. 1 new session < 3 must
+      // still skip — proving the gate reads the resolved active profile.
+      const config = {
+        semanticSearchMode: "off",
+        profiles: {
+          improve: {
+            default: { processes: { consolidate: { enabled: false }, extract: { enabled: true } } },
+            racy: { processes: { consolidate: { enabled: false }, extract: { enabled: true, minNewSessions: 3 } } },
+          },
+        },
+      } as unknown as AkmConfig;
+
+      await akmImprove({
+        scope: "memory",
+        config,
+        stashDir,
+        profile: "racy",
+        minRetrievalCount: 0,
+        ensureIndexFn: async () => false,
+        reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+        extractHarnesses: [fakeHarness(1)],
+        extractCandidateCountFn: () => 1,
+      });
+
+      const skips = belowMinNewSessionsEvents();
+      expect(skips.length).toBe(1);
+      expect(skips[0]?.metadata?.minNewSessions).toBe(3);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "health surfaces below_min_new_sessions in improve skip-reason aggregation",
     async () => {
       await runImprove(configWithMinNewSessions(3), 1);
