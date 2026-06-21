@@ -17,7 +17,6 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "012-improve-gate-thresholds",
     "013-extract-sessions-content-hash",
     "014-recombine-hypotheses",
-    "015-asset-accept-cooldown",
   ],
   "schema": [
     {
@@ -170,18 +169,6 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         ON task_history(task_id)"
 ,
       "type": "index",
-    },
-    {
-      "name": "asset_accept_cooldown",
-      "sql": 
-"CREATE TABLE asset_accept_cooldown (
-        stash_dir        TEXT    NOT NULL,
-        ref              TEXT    NOT NULL,
-        last_accepted_at INTEGER NOT NULL,
-        PRIMARY KEY (stash_dir, ref)
-      )"
-,
-      "type": "table",
     },
     {
       "name": "asset_outcome",

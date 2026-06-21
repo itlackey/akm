@@ -44,7 +44,6 @@ import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
-import { type Database, getLastAcceptedAt, openStateDatabase, recordLastAcceptedAt } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { type AgentRunResult, runAgent } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -82,47 +81,6 @@ export interface DrainPolicy {
 }
 
 export type DrainDeferReason = "mid-band" | "possible-dup";
-
-/**
- * Per-asset accept cooldown options (#638).
- *
- * When the cooldown is active (`proactiveCooldownMs > 0` or `userCooldownMs >
- * 0`), the drain engine defers (not drops) reflect/proactive-origin proposals
- * for refs that were accepted within the configured window.
- *
- * Two forms are accepted:
- *   - `CooldownOptions` (with a pre-opened `db` handle): used by
- *     `classifyProposal` callers that manage their own DB connection.
- *   - `DrainCooldownConfig` (with a `dbPath` string): used by `drainProposals`
- *     which opens the DB itself and closes it after the run.
- *
- * Escalation/contradiction/homeostatic origins (`eligibilitySource =
- * "signal-delta"`) BYPASS the cooldown regardless of the window.
- *
- * DEFAULT: 0 / disabled — opt-in by setting a positive window. Default runs
- * are byte-identical to pre-#638 behaviour.
- */
-export interface CooldownOptions {
-  stashDir: string;
-  db: Database;
-  /** Cooldown window in ms for proactive-origin proposals (longer). 0 = disabled. */
-  proactiveCooldownMs: number;
-  /** Cooldown window in ms for user-initiated-origin proposals (shorter). 0 = disabled. */
-  userCooldownMs: number;
-}
-
-/**
- * Cooldown config passed via `DrainOptions.cooldown`. Uses a file path instead
- * of a pre-opened DB handle; `drainProposals` opens/closes the DB itself.
- */
-export interface DrainCooldownConfig {
-  /** Absolute path to the state.db file to use for cooldown tracking. */
-  dbPath: string;
-  /** Cooldown window in ms for proactive-origin proposals (longer). 0 = disabled. */
-  proactiveCooldownMs: number;
-  /** Cooldown window in ms for user-initiated-origin proposals (shorter). 0 = disabled. */
-  userCooldownMs: number;
-}
 
 /**
  * Gate-decision context the engine stamps onto each proposal it adjudicates
@@ -166,15 +124,6 @@ export interface DrainOptions {
    */
   judgment?: RunnerSpec | null;
   eventsCtx?: EventsContext;
-  /**
-   * Optional per-asset accept cooldown configuration (#638). When set, the
-   * engine defers (not drops) reflect/proactive-origin proposals for refs that
-   * were accepted within the configured window. Escalation origins
-   * (`eligibilitySource = "signal-delta"`) bypass the cooldown.
-   *
-   * DEFAULT: absent / undefined → cooldown disabled (default-preserving).
-   */
-  cooldown?: DrainCooldownConfig;
 }
 
 export interface DrainResult {
@@ -249,19 +198,11 @@ export function isEmptyDiff(proposal: Proposal): boolean {
 /**
  * Decide a deterministic verdict for a single backlog proposal under `policy`.
  * Returns `null` when no rule applies (the proposal is left pending untouched).
- *
- * @param cooldown - Optional cooldown guard (#638). When provided and the ref
- *   was accepted within the configured window, returns `{ verdict: "defer",
- *   reason: "mid-band", gate: { reason: "cooldown-active" } }` BEFORE the
- *   normal accept path runs. Escalation/contradiction/homeostatic origins
- *   (`eligibilitySource = "signal-delta"`) BYPASS this check. Window = 0
- *   means disabled. Default (omitted): no cooldown check (default-preserving).
  */
 export function classifyProposal(
   proposal: Proposal,
   policy: DrainPolicy,
   maxDiffLines?: number,
-  cooldown?: CooldownOptions,
 ):
   | { verdict: "accept"; gate: DrainGateContext }
   | { verdict: "reject"; reason: string; gate: DrainGateContext }
@@ -272,29 +213,6 @@ export function classifyProposal(
   // Empty / near-empty diffs reject first (the reject-empty floor).
   if (policy.rejectEmpty && isEmptyDiff(proposal)) {
     return { verdict: "reject", reason: "empty diff", gate: { reason: "empty-diff" } };
-  }
-
-  // ── Cooldown guard (#638) ──────────────────────────────────────────────────
-  // Escalation/contradiction/homeostatic origin bypasses the cooldown entirely.
-  // "signal-delta" proposals carry urgency signals that override the throttle.
-  if (cooldown !== undefined && proposal.eligibilitySource !== "signal-delta") {
-    // User-initiated scope proposals use the shorter window; everything else
-    // (proactive, no eligibilitySource, other lanes) uses the longer window.
-    const windowMs = proposal.eligibilitySource === "scope" ? cooldown.userCooldownMs : cooldown.proactiveCooldownMs;
-
-    if (windowMs > 0) {
-      const lastAcceptedAt = getLastAcceptedAt(cooldown.db, cooldown.stashDir, proposal.ref);
-      if (lastAcceptedAt !== undefined && lastAcceptedAt !== null) {
-        const elapsed = Date.now() - lastAcceptedAt;
-        if (elapsed < windowMs) {
-          return {
-            verdict: "defer",
-            reason: "mid-band",
-            gate: { reason: "cooldown-active" },
-          };
-        }
-      }
-    }
   }
 
   const rule = policy.accept.find((r) => r.generator === proposal.source);
@@ -652,199 +570,153 @@ export async function drainProposals(
   const exclude = opts.excludeIds ?? new Set<string>();
   const pending = listProposals(opts.stashDir, { status: "pending" }).filter((p) => !exclude.has(p.id));
 
-  // ── Cooldown DB (#638) ──────────────────────────────────────────────────────
-  // Open the cooldown state.db only when a cooldown config is provided. The DB
-  // is opened once for the full drain run and closed in the finally block.
-  let cooldownDb: Database | undefined;
-  let cooldownOpts: CooldownOptions | undefined;
-  if (opts.cooldown !== undefined) {
-    const cfg = opts.cooldown;
-    if (cfg.proactiveCooldownMs > 0 || cfg.userCooldownMs > 0) {
-      cooldownDb = openStateDatabase(cfg.dbPath);
-      cooldownOpts = {
-        stashDir: opts.stashDir,
-        db: cooldownDb,
-        proactiveCooldownMs: cfg.proactiveCooldownMs,
-        userCooldownMs: cfg.userCooldownMs,
-      };
+  // First, classify every proposal deterministically.
+  const acceptIds: string[] = [];
+  const rejectTargets: Array<{ id: string; reason: string }> = [];
+  const gateLabel = `triage:${opts.policy.name}`;
+  // Items deferred purely because they need a judge (no threshold-based reason)
+  // — these are re-stamped `no-judge-configured` when no runner resolves them.
+  const needsJudge = new Set<string>();
+
+  for (const proposal of pending) {
+    const decision = classifyProposal(proposal, opts.policy, opts.maxDiffLines);
+    if (decision === null) continue;
+    // #577: stamp the gate's verdict onto the proposal so `akm proposal show`
+    // can explain WHY it landed here. A dry-run performs zero writes, so it
+    // records nothing.
+    const outcome =
+      decision.verdict === "accept" ? "auto-accepted" : decision.verdict === "reject" ? "auto-rejected" : "deferred";
+    stampGateDecision(opts, proposal.id, {
+      outcome,
+      reason: decision.gate.reason,
+      ...(decision.gate.measured !== undefined ? { measured: decision.gate.measured } : {}),
+      ...(decision.gate.thresholds ? { thresholds: decision.gate.thresholds } : {}),
+      gate: gateLabel,
+    });
+    // A defer with no threshold (mid-band / possible-dup from the defer list) is
+    // pending only because it needs adjudication — re-stampable to
+    // `no-judge-configured`. A band-based defer keeps its specific reason.
+    if (decision.verdict === "defer" && !decision.gate.thresholds) {
+      needsJudge.add(proposal.id);
+    }
+
+    if (decision.verdict === "accept") {
+      acceptIds.push(proposal.id);
+    } else if (decision.verdict === "reject") {
+      rejectTargets.push({ id: proposal.id, reason: decision.reason });
+    } else {
+      result.deferred.push({ id: proposal.id, reason: decision.reason });
     }
   }
 
-  try {
-    // First, classify every proposal deterministically.
-    const acceptIds: string[] = [];
-    const rejectTargets: Array<{ id: string; reason: string }> = [];
-    const gateLabel = `triage:${opts.policy.name}`;
-    // Items deferred purely because they need a judge (no threshold-based reason)
-    // — these are re-stamped `no-judge-configured` when no runner resolves them.
-    const needsJudge = new Set<string>();
-
-    // Map proposal id → ref so we can record cooldown accepts after the promote loop.
-    const proposalRefById = new Map<string, string>(pending.map((p) => [p.id, p.ref]));
-
-    for (const proposal of pending) {
-      const decision = classifyProposal(proposal, opts.policy, opts.maxDiffLines, cooldownOpts);
-      if (decision === null) continue;
-      // #577: stamp the gate's verdict onto the proposal so `akm proposal show`
-      // can explain WHY it landed here. A dry-run performs zero writes, so it
-      // records nothing.
-      const outcome =
-        decision.verdict === "accept" ? "auto-accepted" : decision.verdict === "reject" ? "auto-rejected" : "deferred";
-      stampGateDecision(opts, proposal.id, {
-        outcome,
-        reason: decision.gate.reason,
-        ...(decision.gate.measured !== undefined ? { measured: decision.gate.measured } : {}),
-        ...(decision.gate.thresholds ? { thresholds: decision.gate.thresholds } : {}),
-        gate: gateLabel,
-      });
-      // A defer with no threshold (mid-band / possible-dup from the defer list) is
-      // pending only because it needs adjudication — re-stampable to
-      // `no-judge-configured`. A band-based defer keeps its specific reason.
-      if (decision.verdict === "defer" && !decision.gate.thresholds) {
-        needsJudge.add(proposal.id);
-      }
-
-      if (decision.verdict === "accept") {
-        acceptIds.push(proposal.id);
-      } else if (decision.verdict === "reject") {
-        rejectTargets.push({ id: proposal.id, reason: decision.reason });
-      } else {
-        result.deferred.push({ id: proposal.id, reason: decision.reason });
-      }
+  // --- Reject empties (independent of the accept ceiling / applyMode) ---
+  for (const target of rejectTargets) {
+    if (opts.dryRun) {
+      result.rejected.push(target.id);
+      continue;
     }
+    try {
+      rejectFn({ stashDir: opts.stashDir, id: target.id, reason: target.reason });
+      result.rejected.push(target.id);
+    } catch (err) {
+      warn(`[triage] reject failed for ${target.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-    // --- Reject empties (independent of the accept ceiling / applyMode) ---
-    for (const target of rejectTargets) {
-      if (opts.dryRun) {
-        result.rejected.push(target.id);
-        continue;
-      }
+  // --- Accept ceiling: enforced BEFORE the promote loop ---
+  const withinCap = acceptIds.slice(0, Math.max(0, opts.maxAccepts));
+  result.skippedByCap = acceptIds.slice(Math.max(0, opts.maxAccepts));
+  if (result.skippedByCap.length > 0) {
+    info(
+      `[triage] accept ceiling reached: ${withinCap.length} promoted, ${result.skippedByCap.length} skipped by cap (maxAccepts=${opts.maxAccepts})`,
+    );
+  }
+
+  // --- Promotion gate: applyMode "queue" never promotes (stage only) ---
+  // Count deterministic promotions so the judgment tier shares the same accept
+  // budget (deterministic + judgment promotions ≤ maxAccepts).
+  let deterministicPromoted = 0;
+  if (opts.applyMode === "promote" && !opts.dryRun) {
+    info(`[triage] auto-promote active: ${withinCap.length} accepts allowed this run`);
+    for (const id of withinCap) {
       try {
-        rejectFn({ stashDir: opts.stashDir, id: target.id, reason: target.reason });
-        result.rejected.push(target.id);
+        await promoteFn({ stashDir: opts.stashDir, id });
+        result.promoted.push(id);
+        deterministicPromoted += 1;
       } catch (err) {
-        warn(`[triage] reject failed for ${target.id}: ${err instanceof Error ? err.message : String(err)}`);
+        warn(`[triage] promote failed for ${id}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  } else if (opts.applyMode === "promote" && opts.dryRun) {
+    // Dry-run promote: report (and count, for the shared budget) what would be
+    // promoted without writing.
+    result.promoted.push(...withinCap);
+    deterministicPromoted = withinCap.length;
+  }
+  // applyMode "queue": leave accept candidates pending (staged). No promotion.
 
-    // --- Accept ceiling: enforced BEFORE the promote loop ---
-    const withinCap = acceptIds.slice(0, Math.max(0, opts.maxAccepts));
-    result.skippedByCap = acceptIds.slice(Math.max(0, opts.maxAccepts));
-    if (result.skippedByCap.length > 0) {
+  // Remaining accept budget for the judgment tier: maxAccepts minus what was
+  // actually promoted deterministically. Bounds the TOTAL promotions, not just
+  // the deterministic path. Moot in queue mode (it promotes nothing).
+  const remainingAcceptBudget = Math.max(0, Math.max(0, opts.maxAccepts) - deterministicPromoted);
+
+  // --- Judgment tier (Phase 3): adjudicate the deferred items ---
+  // Only runs when a RunnerSpec is configured. The runner returns a verdict; the
+  // ENGINE performs the resulting accept (respecting applyMode) / reject write.
+  if (opts.judgment && result.deferred.length > 0) {
+    const tier = await runJudgmentTier({
+      stashDir: opts.stashDir,
+      applyMode: opts.applyMode,
+      dryRun: opts.dryRun,
+      runner: opts.judgment,
+      deferred: result.deferred,
+      pending,
+      promoteFn,
+      rejectFn,
+      seams: judgmentSeams,
+      remainingAcceptBudget,
+    });
+    result.promoted.push(...tier.promoted);
+    result.rejected.push(...tier.rejected);
+    result.staged.push(...tier.staged);
+    // Judgment-tier accepts dropped by the shared accept cap surface under
+    // skippedByCap, same as deterministic cap drops.
+    result.skippedByCap.push(...tier.skippedByCap);
+    if (tier.skippedByCap.length > 0) {
       info(
-        `[triage] accept ceiling reached: ${withinCap.length} promoted, ${result.skippedByCap.length} skipped by cap (maxAccepts=${opts.maxAccepts})`,
+        `[triage] accept ceiling reached in judgment tier: ${tier.skippedByCap.length} judged-accept items skipped by cap (maxAccepts=${opts.maxAccepts})`,
       );
     }
-
-    // --- Promotion gate: applyMode "queue" never promotes (stage only) ---
-    // Count deterministic promotions so the judgment tier shares the same accept
-    // budget (deterministic + judgment promotions ≤ maxAccepts).
-    let deterministicPromoted = 0;
-    if (opts.applyMode === "promote" && !opts.dryRun) {
-      info(`[triage] auto-promote active: ${withinCap.length} accepts allowed this run`);
-      for (const id of withinCap) {
-        try {
-          await promoteFn({ stashDir: opts.stashDir, id });
-          result.promoted.push(id);
-          deterministicPromoted += 1;
-          // Record the accept timestamp for cooldown tracking (#638). Best-effort:
-          // a failure here must not abort the promote or the drain run.
-          if (cooldownDb !== undefined) {
-            try {
-              const ref = proposalRefById.get(id);
-              if (ref !== undefined) {
-                recordLastAcceptedAt(cooldownDb, opts.stashDir, ref, Date.now());
-              }
-            } catch (cooldownErr) {
-              warn(
-                `[triage] cooldown record failed for ${id}: ${cooldownErr instanceof Error ? cooldownErr.message : String(cooldownErr)}`,
-              );
-            }
-          }
-        } catch (err) {
-          warn(`[triage] promote failed for ${id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    } else if (opts.applyMode === "promote" && opts.dryRun) {
-      // Dry-run promote: report (and count, for the shared budget) what would be
-      // promoted without writing.
-      result.promoted.push(...withinCap);
-      deterministicPromoted = withinCap.length;
+    // #577: re-stamp the gate decision for items the judgment tier resolved so
+    // `akm proposal show` reflects the judge's verdict, not the earlier
+    // deterministic defer.
+    for (const id of tier.promoted) {
+      stampGateDecision(opts, id, { outcome: "auto-accepted", reason: "judgment-accept", gate: gateLabel });
     }
-    // applyMode "queue": leave accept candidates pending (staged). No promotion.
-
-    // Remaining accept budget for the judgment tier: maxAccepts minus what was
-    // actually promoted deterministically. Bounds the TOTAL promotions, not just
-    // the deterministic path. Moot in queue mode (it promotes nothing).
-    const remainingAcceptBudget = Math.max(0, Math.max(0, opts.maxAccepts) - deterministicPromoted);
-
-    // --- Judgment tier (Phase 3): adjudicate the deferred items ---
-    // Only runs when a RunnerSpec is configured. The runner returns a verdict; the
-    // ENGINE performs the resulting accept (respecting applyMode) / reject write.
-    if (opts.judgment && result.deferred.length > 0) {
-      const tier = await runJudgmentTier({
-        stashDir: opts.stashDir,
-        applyMode: opts.applyMode,
-        dryRun: opts.dryRun,
-        runner: opts.judgment,
-        deferred: result.deferred,
-        pending,
-        promoteFn,
-        rejectFn,
-        seams: judgmentSeams,
-        remainingAcceptBudget,
-      });
-      result.promoted.push(...tier.promoted);
-      result.rejected.push(...tier.rejected);
-      result.staged.push(...tier.staged);
-      // Judgment-tier accepts dropped by the shared accept cap surface under
-      // skippedByCap, same as deterministic cap drops.
-      result.skippedByCap.push(...tier.skippedByCap);
-      if (tier.skippedByCap.length > 0) {
-        info(
-          `[triage] accept ceiling reached in judgment tier: ${tier.skippedByCap.length} judged-accept items skipped by cap (maxAccepts=${opts.maxAccepts})`,
-        );
-      }
-      // #577: re-stamp the gate decision for items the judgment tier resolved so
-      // `akm proposal show` reflects the judge's verdict, not the earlier
-      // deterministic defer.
-      for (const id of tier.promoted) {
-        stampGateDecision(opts, id, { outcome: "auto-accepted", reason: "judgment-accept", gate: gateLabel });
-      }
-      for (const id of tier.rejected) {
-        stampGateDecision(opts, id, { outcome: "auto-rejected", reason: "judgment-reject", gate: gateLabel });
-      }
-      // Replace the deferred list with only the items the judgment tier could NOT
-      // resolve (verdict "defer", parse failure, or runner error). Staged
-      // queue-mode accepts are RESOLVED and tracked in result.staged instead.
-      result.deferred = tier.stillDeferred;
-    } else if (result.deferred.length > 0) {
-      // #577: no judgment runner configured — items deferred *because they need a
-      // judge* (mid-band / possible-dup, no threshold reason) stay pending solely
-      // for lack of one. Re-stamp those as `no-judge-configured` so the operator
-      // sees a per-proposal reason instead of inferring it from the run-level
-      // triage_deferred aggregate. Band-deferred items keep their specific reason
-      // (e.g. `max-diff-lines`), which is more actionable than "no judge".
-      for (const item of result.deferred) {
-        if (needsJudge.has(item.id)) {
-          stampGateDecision(opts, item.id, { outcome: "deferred", reason: "no-judge-configured", gate: gateLabel });
-        }
-      }
+    for (const id of tier.rejected) {
+      stampGateDecision(opts, id, { outcome: "auto-rejected", reason: "judgment-reject", gate: gateLabel });
     }
-
-    emitDrainEvents(opts, result);
-
-    return result;
-  } finally {
-    // Close the cooldown DB if we opened it.
-    if (cooldownDb !== undefined) {
-      try {
-        cooldownDb.close();
-      } catch {
-        // Ignore close errors — the run is complete.
+    // Replace the deferred list with only the items the judgment tier could NOT
+    // resolve (verdict "defer", parse failure, or runner error). Staged
+    // queue-mode accepts are RESOLVED and tracked in result.staged instead.
+    result.deferred = tier.stillDeferred;
+  } else if (result.deferred.length > 0) {
+    // #577: no judgment runner configured — items deferred *because they need a
+    // judge* (mid-band / possible-dup, no threshold reason) stay pending solely
+    // for lack of one. Re-stamp those as `no-judge-configured` so the operator
+    // sees a per-proposal reason instead of inferring it from the run-level
+    // triage_deferred aggregate. Band-deferred items keep their specific reason
+    // (e.g. `max-diff-lines`), which is more actionable than "no judge".
+    for (const item of result.deferred) {
+      if (needsJudge.has(item.id)) {
+        stampGateDecision(opts, item.id, { outcome: "deferred", reason: "no-judge-configured", gate: gateLabel });
       }
     }
   }
+
+  emitDrainEvents(opts, result);
+
+  return result;
 }
 
 /**
