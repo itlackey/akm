@@ -51,6 +51,10 @@ export const PERSONAL_STASH: DrainPolicy = {
     { generator: "reflect", maxDiffLines: 80 },
     // Consolidate within the diff band; mid-band lands in `defer` below.
     { generator: "consolidate", maxDiffLines: 200 },
+    // Recombine: accept only confirmed type:lesson proposals (promoted by the
+    // recombine confidence gate) within the diff band. type:hypothesis proposals
+    // have no matching rule here and stay pending for manual review.
+    { generator: "recombine", requireType: "lesson", maxDiffLines: 200 },
   ],
   rejectEmpty: true,
   // Mid-band consolidate, distill duplicates, and contradiction escalations are
@@ -95,6 +99,7 @@ const DrainAcceptRuleSchema = z
     generator: GeneratorSchema,
     maxDiffLines: z.number().int().positive().optional(),
     minContentLines: z.number().int().nonnegative().optional(),
+    requireType: z.string().optional(),
   })
   .strict();
 

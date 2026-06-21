@@ -64,6 +64,11 @@ export interface DrainAcceptRule {
   maxDiffLines?: number;
   /** Accept only when the proposed content has >= this many body lines. */
   minContentLines?: number;
+  /**
+   * When set, the rule matches only if the proposal's frontmatter `type` field
+   * equals this value (e.g. "lesson"). Absent = match any type (backward-compat).
+   */
+  requireType?: string;
 }
 
 /** A deterministic triage policy: which generators auto-accept / defer. */
@@ -215,7 +220,14 @@ export function classifyProposal(
     return { verdict: "reject", reason: "empty diff", gate: { reason: "empty-diff" } };
   }
 
-  const rule = policy.accept.find((r) => r.generator === proposal.source);
+  const rule = policy.accept.find((r) => {
+    if (r.generator !== proposal.source) return false;
+    if (r.requireType !== undefined) {
+      const fm = parseFrontmatter(proposal.payload.content ?? "").data;
+      if (typeof fm.type !== "string" || fm.type !== r.requireType) return false;
+    }
+    return true;
+  });
   if (rule) {
     const lines = contentLineCount(content);
     const body = contentBodyLineCount(content);
