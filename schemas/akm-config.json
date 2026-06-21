@@ -429,6 +429,15 @@
                           "skip"
                         ]
                       },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -775,6 +784,15 @@
                           "shadow",
                           "skip"
                         ]
+                      },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
                       },
                       "applyMode": {
                         "type": "string",
@@ -1123,6 +1141,15 @@
                           "skip"
                         ]
                       },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -1469,6 +1496,15 @@
                           "shadow",
                           "skip"
                         ]
+                      },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
                       },
                       "applyMode": {
                         "type": "string",
@@ -1817,6 +1853,15 @@
                           "skip"
                         ]
                       },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -2163,6 +2208,15 @@
                           "shadow",
                           "skip"
                         ]
+                      },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
                       },
                       "applyMode": {
                         "type": "string",
@@ -2511,6 +2565,15 @@
                           "skip"
                         ]
                       },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -2857,6 +2920,15 @@
                           "shadow",
                           "skip"
                         ]
+                      },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
                       },
                       "applyMode": {
                         "type": "string",
@@ -3205,6 +3277,15 @@
                           "skip"
                         ]
                       },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -3551,6 +3632,15 @@
                           "shadow",
                           "skip"
                         ]
+                      },
+                      "lowValueFilter": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
                       },
                       "applyMode": {
                         "type": "string",
@@ -4598,6 +4688,15 @@
                               "skip"
                             ]
                           },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -4944,6 +5043,15 @@
                               "shadow",
                               "skip"
                             ]
+                          },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
                           },
                           "applyMode": {
                             "type": "string",
@@ -5292,6 +5400,15 @@
                               "skip"
                             ]
                           },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -5638,6 +5755,15 @@
                               "shadow",
                               "skip"
                             ]
+                          },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
                           },
                           "applyMode": {
                             "type": "string",
@@ -5986,6 +6112,15 @@
                               "skip"
                             ]
                           },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -6332,6 +6467,15 @@
                               "shadow",
                               "skip"
                             ]
+                          },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
                           },
                           "applyMode": {
                             "type": "string",
@@ -6680,6 +6824,15 @@
                               "skip"
                             ]
                           },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -7026,6 +7179,15 @@
                               "shadow",
                               "skip"
                             ]
+                          },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
                           },
                           "applyMode": {
                             "type": "string",
@@ -7374,6 +7536,15 @@
                               "skip"
                             ]
                           },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -7720,6 +7891,15 @@
                               "shadow",
                               "skip"
                             ]
+                          },
+                          "lowValueFilter": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
                           },
                           "applyMode": {
                             "type": "string",
@@ -8749,6 +8929,15 @@
             "skip"
           ]
         },
+        "lowValueFilter": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "applyMode": {
           "type": "string",
           "enum": [
@@ -9106,6 +9295,15 @@
                     "skip"
                   ]
                 },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -9452,6 +9650,15 @@
                     "shadow",
                     "skip"
                   ]
+                },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "applyMode": {
                   "type": "string",
@@ -9800,6 +10007,15 @@
                     "skip"
                   ]
                 },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -10146,6 +10362,15 @@
                     "shadow",
                     "skip"
                   ]
+                },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "applyMode": {
                   "type": "string",
@@ -10494,6 +10719,15 @@
                     "skip"
                   ]
                 },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -10840,6 +11074,15 @@
                     "shadow",
                     "skip"
                   ]
+                },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "applyMode": {
                   "type": "string",
@@ -11188,6 +11431,15 @@
                     "skip"
                   ]
                 },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -11534,6 +11786,15 @@
                     "shadow",
                     "skip"
                   ]
+                },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "applyMode": {
                   "type": "string",
@@ -11882,6 +12143,15 @@
                     "skip"
                   ]
                 },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -12228,6 +12498,15 @@
                     "shadow",
                     "skip"
                   ]
+                },
+                "lowValueFilter": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "applyMode": {
                   "type": "string",

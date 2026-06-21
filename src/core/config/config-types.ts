@@ -150,6 +150,14 @@ export interface ImproveProcessConfig {
    */
   contradictionDetection?: { enabled?: boolean };
   /**
+   * #639 — semantic value-floor filter for the `reflect` process. When
+   * enabled, reflect proposals classified as `"low-value"` by the
+   * deterministic noise gate are deferred (not accepted). DEFAULT OFF:
+   * absent or `{ enabled: false }` = byte-identical behaviour to pre-#639.
+   * Only meaningful on the `reflect` process.
+   */
+  lowValueFilter?: { enabled?: boolean };
+  /**
    * Default discovery window for the `extract` process when the caller does
    * not pass an explicit `--since`. Accepts ISO timestamps or duration
    * strings (`24h`, `7d`, `30m`). Only meaningful on the `extract` process.

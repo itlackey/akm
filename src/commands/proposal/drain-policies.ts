@@ -95,6 +95,8 @@ const DrainAcceptRuleSchema = z
     generator: GeneratorSchema,
     maxDiffLines: z.number().int().positive().optional(),
     minContentLines: z.number().int().nonnegative().optional(),
+    /** Optional confidence floor (#639). Absent → no gate (default-preserving). */
+    minConfidence: z.number().min(0).max(1).optional(),
   })
   .strict();
 

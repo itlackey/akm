@@ -353,6 +353,11 @@ export const ImproveProcessConfigSchema = z
     // behaviour change). "skip": skip the session entirely (no LLM call).
     // Absent = "shadow". Only meaningful on the `extract` process.
     skipSelfReview: z.enum(["shadow", "skip"]).optional(),
+    // #639 — semantic value-floor filter for the `reflect` process. When
+    // enabled, proposals classified as "low-value" by the deterministic noise
+    // gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
+    // byte-identical behaviour). Only meaningful on the `reflect` process.
+    lowValueFilter: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

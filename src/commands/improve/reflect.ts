@@ -1426,8 +1426,21 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // (new-asset proposals have nothing to diff against).
   if (assetContent !== undefined) {
     const changeKind = classifyReflectChange(assetContent, payload.content);
-    if (changeKind !== "substantive") {
-      const subreason = changeKind === "noop" ? "reflect_skipped_noop" : "reflect_skipped_cosmetic";
+    // 'low-value' is config-gated (#639): only defer when
+    // profiles.improve.default.processes.reflect.lowValueFilter.enabled is
+    // explicitly true. DEFAULT OFF — absent flag = byte-identical pre-#639
+    // behaviour (low-value treated the same as substantive).
+    const lowValueFilterEnabled =
+      runtimeConfig?.profiles?.improve?.default?.processes?.reflect?.lowValueFilter?.enabled === true;
+    const isDeferred =
+      changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);
+    if (isDeferred) {
+      const subreason =
+        changeKind === "noop"
+          ? "reflect_skipped_noop"
+          : changeKind === "low-value"
+            ? "reflect_skipped_low_value"
+            : "reflect_skipped_cosmetic";
       emitReflectFailed("no_change", subreason, options.ref, { changeKind });
       return {
         schemaVersion: 1,
@@ -1436,7 +1449,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         error:
           changeKind === "noop"
             ? `Reflect skipped: proposed content for ${payload.ref} is identical to the current asset (empty diff); no proposal created.`
-            : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
+            : changeKind === "low-value"
+              ? `Reflect skipped: proposed content for ${payload.ref} is a low-value prose micro-rewrite (few changed tokens, no structural changes); no proposal created.`
+              : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
         ...(options.ref ? { ref: options.ref } : {}),
         exitCode: result.exitCode,
       };
