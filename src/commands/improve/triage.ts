@@ -27,6 +27,21 @@ import type { SessionData } from "../../integrations/session-logs/types";
 export interface TriageConfig {
   enabled?: boolean;
   minScore?: number;
+  /**
+   * #641 — procedural-aware floor (opt-in, DEFAULT OFF).
+   *
+   * When `true`, a session PASSES only when:
+   *   score >= minScore AND (markers >= 1 OR editCommit >= 0.5)
+   *
+   * Sessions that clear the score gate via toolDensity + substantiveRatio alone
+   * (read-only Q&A with no narrative markers and no file edits) are rejected as
+   * low-signal. Sessions with real edit/commit signal or narrative markers always
+   * pass (protects #615 procedural compilation sessions).
+   *
+   * Recommended ON in production; left DEFAULT OFF to preserve byte-identical
+   * behaviour for existing users who have not opted in.
+   */
+  proceduralAwareFloor?: boolean;
 }
 
 /**
@@ -75,7 +90,20 @@ const SUBSTANTIVE_MIN_CHARS = 40;
  * The procedural sub-signals (toolDensity + editCommit) alone can clear
  * DEFAULT_TRIAGE_MIN_SCORE so high-action / no-narrative sessions are KEPT (#615).
  */
-export function scoreSessionTriage(data: SessionData, minScore: number): TriageScore {
+/**
+ * Optional config for {@link scoreSessionTriage}. All fields are opt-in and
+ * default-preserving: omitting this argument reproduces the pre-#641 behaviour.
+ */
+export interface ScoreSessionTriageOptions {
+  /** Enable the #641 procedural-aware floor. DEFAULT OFF. */
+  proceduralAwareFloor?: boolean;
+}
+
+export function scoreSessionTriage(
+  data: SessionData,
+  minScore: number,
+  options?: ScoreSessionTriageOptions,
+): TriageScore {
   const events = data.events;
   const total = events.length;
 
@@ -119,7 +147,21 @@ export function scoreSessionTriage(data: SessionData, minScore: number): TriageS
 
   const subscores = { markers, toolDensity, editCommit, substantiveRatio };
   const score = markers + toolDensity + editCommit + substantiveRatio;
-  const pass = score >= minScore;
+
+  // Base gate: score must clear the floor.
+  let pass = score >= minScore;
+
+  // #641 procedural-aware floor (opt-in, DEFAULT OFF).
+  // When enabled, a session that clears the score gate must ALSO have at least
+  // one narrative marker (markers >= 1) OR meaningful edit/commit signal
+  // (editCommit >= 0.5). Pure read-only Q&A sessions that pass only via
+  // toolDensity + substantiveRatio are rejected as low-signal.
+  if (pass && options?.proceduralAwareFloor === true) {
+    const hasProceduralSignal = markers >= 1 || editCommit >= 0.5;
+    if (!hasProceduralSignal) {
+      pass = false;
+    }
+  }
 
   return {
     pass,
@@ -136,9 +178,15 @@ export function scoreSessionTriage(data: SessionData, minScore: number): TriageS
  * Default-off: `enabled` is FALSE unless `triage.enabled === true`. `minScore`
  * defaults to {@link DEFAULT_TRIAGE_MIN_SCORE}.
  */
-export function resolveTriageConfig(extractProcess: unknown): { enabled: boolean; minScore: number } {
+export function resolveTriageConfig(extractProcess: unknown): {
+  enabled: boolean;
+  minScore: number;
+  proceduralAwareFloor: boolean;
+} {
   const triage = (extractProcess as { triage?: TriageConfig } | undefined)?.triage;
   const enabled = triage?.enabled === true;
   const minScore = typeof triage?.minScore === "number" ? triage.minScore : DEFAULT_TRIAGE_MIN_SCORE;
-  return { enabled, minScore };
+  // #641: default-off — only true when explicitly set to true.
+  const proceduralAwareFloor = triage?.proceduralAwareFloor === true;
+  return { enabled, minScore, proceduralAwareFloor };
 }

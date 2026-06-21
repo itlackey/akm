@@ -376,7 +376,8 @@ async function processSession(
   minContentChars: number,
   // #626 — pre-LLM heuristic triage gate. Default-off (enabled:false) takes the
   // exact pre-change path (no scorer call, no new skipReason).
-  triage: { enabled: boolean; minScore: number },
+  // #641 — proceduralAwareFloor is opt-in, DEFAULT OFF.
+  triage: { enabled: boolean; minScore: number; proceduralAwareFloor: boolean },
   sessionIndexing: {
     enabled: boolean;
     // #640: true only when both indexSessions AND indexSkippedSessions are on.
@@ -527,7 +528,9 @@ async function processSession(
   // the configured threshold we triage it out: no chat() call, no session asset,
   // no proposals. Pure-heuristic — zero added LLM cost. Default-off → skipped.
   if (triage.enabled) {
-    const t = scoreSessionTriage(data, triage.minScore);
+    const t = scoreSessionTriage(data, triage.minScore, {
+      proceduralAwareFloor: triage.proceduralAwareFloor,
+    });
     if (!t.pass) {
       // #640 — write deterministic session-index asset on triaged_out skips.
       // Same pattern as too_short: no LLM call, fail-open. DEFAULT OFF.

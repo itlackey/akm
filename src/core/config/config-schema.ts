@@ -363,6 +363,11 @@ export const ImproveProcessConfigSchema = z
     // gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
     // byte-identical behaviour). Only meaningful on the `reflect` process.
     lowValueFilter: z.object({ enabled: z.boolean().optional() }).strict().optional(),
+    // #641 — procedural-aware floor for the `extract` process triage gate.
+    // When true, a session must have markers>=1 OR editCommit>=0.5 to pass, even
+    // if score>=minScore. DEFAULT OFF (absent/false = pre-#641 byte-identical).
+    // Only meaningful on the `extract` process when triage is also enabled.
+    proceduralAwareFloor: z.boolean().optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),

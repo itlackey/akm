@@ -441,6 +441,9 @@
                         },
                         "additionalProperties": false
                       },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -799,6 +802,9 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -1159,6 +1165,9 @@
                         },
                         "additionalProperties": false
                       },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -1517,6 +1526,9 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -1877,6 +1889,9 @@
                         },
                         "additionalProperties": false
                       },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -2235,6 +2250,9 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -2595,6 +2613,9 @@
                         },
                         "additionalProperties": false
                       },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -2953,6 +2974,9 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -3313,6 +3337,9 @@
                         },
                         "additionalProperties": false
                       },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
+                      },
                       "applyMode": {
                         "type": "string",
                         "enum": [
@@ -3671,6 +3698,9 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      "proceduralAwareFloor": {
+                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -4730,6 +4760,9 @@
                             },
                             "additionalProperties": false
                           },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -5088,6 +5121,9 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -5448,6 +5484,9 @@
                             },
                             "additionalProperties": false
                           },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -5806,6 +5845,9 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -6166,6 +6208,9 @@
                             },
                             "additionalProperties": false
                           },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -6524,6 +6569,9 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -6884,6 +6932,9 @@
                             },
                             "additionalProperties": false
                           },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -7242,6 +7293,9 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -7602,6 +7656,9 @@
                             },
                             "additionalProperties": false
                           },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
+                          },
                           "applyMode": {
                             "type": "string",
                             "enum": [
@@ -7960,6 +8017,9 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "proceduralAwareFloor": {
+                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -9001,6 +9061,9 @@
           },
           "additionalProperties": false
         },
+        "proceduralAwareFloor": {
+          "type": "boolean"
+        },
         "applyMode": {
           "type": "string",
           "enum": [
@@ -9370,6 +9433,9 @@
                   },
                   "additionalProperties": false
                 },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -9728,6 +9794,9 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -10088,6 +10157,9 @@
                   },
                   "additionalProperties": false
                 },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -10446,6 +10518,9 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -10806,6 +10881,9 @@
                   },
                   "additionalProperties": false
                 },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -11164,6 +11242,9 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -11524,6 +11605,9 @@
                   },
                   "additionalProperties": false
                 },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -11882,6 +11966,9 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -12242,6 +12329,9 @@
                   },
                   "additionalProperties": false
                 },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
+                },
                 "applyMode": {
                   "type": "string",
                   "enum": [
@@ -12600,6 +12690,9 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "proceduralAwareFloor": {
+                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
