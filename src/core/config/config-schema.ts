@@ -228,6 +228,11 @@ export const ImproveProcessConfigSchema = z
     // #561 — index agent sessions as a searchable `session` asset (extract
     // process). Absent = on-when-an-LLM-is-available (fail-open when offline).
     indexSessions: z.boolean().optional(),
+    // #640 — write deterministic (no-LLM) session asset on too_short /
+    // triaged_out skips so #561 coverage is not thinned as gates tighten.
+    // Absent / false = DEFAULT OFF (byte-identical pre-#640 behaviour).
+    // Only meaningful on `extract` when indexSessions is enabled.
+    indexSkippedSessions: z.boolean().optional(),
     // #561 — minimum session duration in minutes for session indexing. 0
     // disables the gate. Absent = default 5. Only meaningful on `extract`.
     minSessionDuration: z.number().min(0).optional(),

@@ -279,6 +279,9 @@
                       "indexSessions": {
                         "type": "boolean"
                       },
+                      "indexSkippedSessions": {
+                        "type": "boolean"
+                      },
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
@@ -633,6 +636,9 @@
                         "minimum": 0
                       },
                       "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "indexSkippedSessions": {
                         "type": "boolean"
                       },
                       "minSessionDuration": {
@@ -991,6 +997,9 @@
                       "indexSessions": {
                         "type": "boolean"
                       },
+                      "indexSkippedSessions": {
+                        "type": "boolean"
+                      },
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
@@ -1345,6 +1354,9 @@
                         "minimum": 0
                       },
                       "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "indexSkippedSessions": {
                         "type": "boolean"
                       },
                       "minSessionDuration": {
@@ -1703,6 +1715,9 @@
                       "indexSessions": {
                         "type": "boolean"
                       },
+                      "indexSkippedSessions": {
+                        "type": "boolean"
+                      },
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
@@ -2057,6 +2072,9 @@
                         "minimum": 0
                       },
                       "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "indexSkippedSessions": {
                         "type": "boolean"
                       },
                       "minSessionDuration": {
@@ -2415,6 +2433,9 @@
                       "indexSessions": {
                         "type": "boolean"
                       },
+                      "indexSkippedSessions": {
+                        "type": "boolean"
+                      },
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
@@ -2769,6 +2790,9 @@
                         "minimum": 0
                       },
                       "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "indexSkippedSessions": {
                         "type": "boolean"
                       },
                       "minSessionDuration": {
@@ -3127,6 +3151,9 @@
                       "indexSessions": {
                         "type": "boolean"
                       },
+                      "indexSkippedSessions": {
+                        "type": "boolean"
+                      },
                       "minSessionDuration": {
                         "type": "number",
                         "minimum": 0
@@ -3481,6 +3508,9 @@
                         "minimum": 0
                       },
                       "indexSessions": {
+                        "type": "boolean"
+                      },
+                      "indexSkippedSessions": {
                         "type": "boolean"
                       },
                       "minSessionDuration": {
@@ -4538,6 +4568,9 @@
                           "indexSessions": {
                             "type": "boolean"
                           },
+                          "indexSkippedSessions": {
+                            "type": "boolean"
+                          },
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
@@ -4892,6 +4925,9 @@
                             "minimum": 0
                           },
                           "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "indexSkippedSessions": {
                             "type": "boolean"
                           },
                           "minSessionDuration": {
@@ -5250,6 +5286,9 @@
                           "indexSessions": {
                             "type": "boolean"
                           },
+                          "indexSkippedSessions": {
+                            "type": "boolean"
+                          },
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
@@ -5604,6 +5643,9 @@
                             "minimum": 0
                           },
                           "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "indexSkippedSessions": {
                             "type": "boolean"
                           },
                           "minSessionDuration": {
@@ -5962,6 +6004,9 @@
                           "indexSessions": {
                             "type": "boolean"
                           },
+                          "indexSkippedSessions": {
+                            "type": "boolean"
+                          },
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
@@ -6316,6 +6361,9 @@
                             "minimum": 0
                           },
                           "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "indexSkippedSessions": {
                             "type": "boolean"
                           },
                           "minSessionDuration": {
@@ -6674,6 +6722,9 @@
                           "indexSessions": {
                             "type": "boolean"
                           },
+                          "indexSkippedSessions": {
+                            "type": "boolean"
+                          },
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
@@ -7028,6 +7079,9 @@
                             "minimum": 0
                           },
                           "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "indexSkippedSessions": {
                             "type": "boolean"
                           },
                           "minSessionDuration": {
@@ -7386,6 +7440,9 @@
                           "indexSessions": {
                             "type": "boolean"
                           },
+                          "indexSkippedSessions": {
+                            "type": "boolean"
+                          },
                           "minSessionDuration": {
                             "type": "number",
                             "minimum": 0
@@ -7740,6 +7797,9 @@
                             "minimum": 0
                           },
                           "indexSessions": {
+                            "type": "boolean"
+                          },
+                          "indexSkippedSessions": {
                             "type": "boolean"
                           },
                           "minSessionDuration": {
@@ -8779,6 +8839,9 @@
         "indexSessions": {
           "type": "boolean"
         },
+        "indexSkippedSessions": {
+          "type": "boolean"
+        },
         "minSessionDuration": {
           "type": "number",
           "minimum": 0
@@ -9145,6 +9208,9 @@
                 "indexSessions": {
                   "type": "boolean"
                 },
+                "indexSkippedSessions": {
+                  "type": "boolean"
+                },
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
@@ -9499,6 +9565,9 @@
                   "minimum": 0
                 },
                 "indexSessions": {
+                  "type": "boolean"
+                },
+                "indexSkippedSessions": {
                   "type": "boolean"
                 },
                 "minSessionDuration": {
@@ -9857,6 +9926,9 @@
                 "indexSessions": {
                   "type": "boolean"
                 },
+                "indexSkippedSessions": {
+                  "type": "boolean"
+                },
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
@@ -10211,6 +10283,9 @@
                   "minimum": 0
                 },
                 "indexSessions": {
+                  "type": "boolean"
+                },
+                "indexSkippedSessions": {
                   "type": "boolean"
                 },
                 "minSessionDuration": {
@@ -10569,6 +10644,9 @@
                 "indexSessions": {
                   "type": "boolean"
                 },
+                "indexSkippedSessions": {
+                  "type": "boolean"
+                },
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
@@ -10923,6 +11001,9 @@
                   "minimum": 0
                 },
                 "indexSessions": {
+                  "type": "boolean"
+                },
+                "indexSkippedSessions": {
                   "type": "boolean"
                 },
                 "minSessionDuration": {
@@ -11281,6 +11362,9 @@
                 "indexSessions": {
                   "type": "boolean"
                 },
+                "indexSkippedSessions": {
+                  "type": "boolean"
+                },
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
@@ -11635,6 +11719,9 @@
                   "minimum": 0
                 },
                 "indexSessions": {
+                  "type": "boolean"
+                },
+                "indexSkippedSessions": {
                   "type": "boolean"
                 },
                 "minSessionDuration": {
@@ -11993,6 +12080,9 @@
                 "indexSessions": {
                   "type": "boolean"
                 },
+                "indexSkippedSessions": {
+                  "type": "boolean"
+                },
                 "minSessionDuration": {
                   "type": "number",
                   "minimum": 0
@@ -12347,6 +12437,9 @@
                   "minimum": 0
                 },
                 "indexSessions": {
+                  "type": "boolean"
+                },
+                "indexSkippedSessions": {
                   "type": "boolean"
                 },
                 "minSessionDuration": {

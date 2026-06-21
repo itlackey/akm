@@ -312,6 +312,15 @@ export interface ImproveProcessConfig {
    */
   indexSessions?: boolean;
   /**
+   * #640 — when `true`, write the DETERMINISTIC session-index asset (no LLM
+   * call) for sessions that are skipped via the `too_short` or `triaged_out`
+   * gates, so #561 coverage is not thinned as extraction gates tighten.
+   * Absent / `false` = DEFAULT: skip paths write NOTHING (byte-identical to
+   * pre-#640 behaviour). Set `true` to opt in. Ignored when
+   * `indexSessions: false`. Only meaningful on the `extract` process.
+   */
+  indexSkippedSessions?: boolean;
+  /**
    * #561 — minimum session duration (ended_at − started_at) in MINUTES for a
    * session to be indexed as a `session` asset. Trivially short sessions carry
    * little reusable signal and are not worth an LLM summary call. Absent =

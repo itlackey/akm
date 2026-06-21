@@ -65,6 +65,7 @@ import {
   SESSION_SUMMARY_JSON_SCHEMA,
   type SessionSummaryGenerator,
   sessionMeetsDurationGate,
+  writeDeterministicSessionAsset,
   writeSessionAsset,
 } from "./session-asset";
 import { resolveTriageConfig, scoreSessionTriage } from "./triage";
@@ -229,6 +230,17 @@ export interface AkmExtractResult {
   sessions: ExtractedSessionResult[];
   warnings: string[];
   durationMs: number;
+  /**
+   * #640 — number of session-index assets written via the SKIP path
+   * (too_short / triaged_out), i.e. deterministic writes without an LLM call.
+   * Present and 0 when no skipped sessions produced an asset.
+   */
+  skipPathIndexWrites: number;
+  /**
+   * #640 — number of session-index assets written via the normal EXTRACT path
+   * (LLM-generated summaries). Present and 0 when no sessions produced an asset.
+   */
+  extractPathIndexWrites: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -367,9 +379,13 @@ async function processSession(
   triage: { enabled: boolean; minScore: number },
   sessionIndexing: {
     enabled: boolean;
+    // #640: true only when both indexSessions AND indexSkippedSessions are on.
+    indexSkipped: boolean;
     minDurationMinutes: number;
     generate: SessionSummaryGenerator;
   },
+  // #640 — mutable counter object for skip-path vs extract-path index writes.
+  indexWriteCounter: { skipPath: number; extractPath: number },
   schemaSimilarityCtx: {
     config: SchemaSimilarityConfig;
     derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
@@ -470,6 +486,23 @@ async function processSession(
   // the config key's documented unit.
   const rawContentChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
   if (minContentChars > 0 && rawContentChars < minContentChars) {
+    // #640 — write deterministic session-index asset on too_short skips so
+    // coverage isn't thinned as gates tighten. NEVER calls generate/LLM.
+    // Fail-open: any write error is swallowed; skip result is unchanged.
+    // DEFAULT OFF: gated on the new opt-in indexSkippedSessions flag so that
+    // default runs remain byte-identical to pre-#640 behaviour.
+    let skipAssetRef: string | undefined;
+    if (sessionIndexing.indexSkipped && !dryRun) {
+      try {
+        const skipAsset = await writeDeterministicSessionAsset(data, stashDir);
+        if (skipAsset.written) {
+          skipAssetRef = skipAsset.ref;
+          indexWriteCounter.skipPath += 1;
+        }
+      } catch {
+        // fail-open: ignore write errors on the skip path
+      }
+    }
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
@@ -484,6 +517,7 @@ async function processSession(
       skipped: true,
       skipReason: "too_short",
       contentHash,
+      ...(skipAssetRef ? { sessionAssetRef: skipAssetRef } : {}),
     };
   }
 
@@ -495,6 +529,20 @@ async function processSession(
   if (triage.enabled) {
     const t = scoreSessionTriage(data, triage.minScore);
     if (!t.pass) {
+      // #640 — write deterministic session-index asset on triaged_out skips.
+      // Same pattern as too_short: no LLM call, fail-open. DEFAULT OFF.
+      let skipAssetRef: string | undefined;
+      if (sessionIndexing.indexSkipped && !dryRun) {
+        try {
+          const skipAsset = await writeDeterministicSessionAsset(data, stashDir);
+          if (skipAsset.written) {
+            skipAssetRef = skipAsset.ref;
+            indexWriteCounter.skipPath += 1;
+          }
+        } catch {
+          // fail-open: ignore write errors on the skip path
+        }
+      }
       return {
         sessionId: sessionRef.sessionId,
         harness: harness.name,
@@ -509,6 +557,7 @@ async function processSession(
         skipped: true,
         skipReason: "triaged_out",
         contentHash,
+        ...(skipAssetRef ? { sessionAssetRef: skipAssetRef } : {}),
       };
     }
   }
@@ -526,6 +575,8 @@ async function processSession(
     try {
       const result = await writeSessionAsset(data, stashDir, sessionIndexing.generate);
       if (result.written) {
+        // #640 — count extract-path index writes for observability.
+        indexWriteCounter.extractPath += 1;
         return {
           ...(result.ref ? { sessionAssetRef: result.ref } : {}),
           ...(result.logPath ? { sessionLogPath: result.logPath } : {}),
@@ -766,6 +817,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         "session_extraction feature disabled — set profiles.improve.default.processes.extract.enabled: true to use",
       ],
       durationMs: Date.now() - startMs,
+      skipPathIndexWrites: 0,
+      extractPathIndexWrites: 0,
     };
   }
 
@@ -853,8 +906,13 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     );
     return parseSessionSummary(raw);
   };
+  // #640 — opt-in flag: write deterministic asset on skip paths. DEFAULT OFF
+  // (absent = false) so no default-path side effect is added by #640.
+  const indexSkippedSessionsEnabled = extractProcess?.indexSkippedSessions === true;
   const sessionIndexing = {
     enabled: sessionIndexingEnabled,
+    // #640: true only when BOTH indexSessions and indexSkippedSessions are on.
+    indexSkipped: sessionIndexingEnabled && indexSkippedSessionsEnabled,
     minDurationMinutes: minSessionDuration,
     generate: options.generateSessionSummary ?? defaultSessionSummaryGenerator,
   };
@@ -874,6 +932,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       sessions: [],
       warnings: [`no available harness matches type "${options.type}" (check that the platform is installed)`],
       durationMs: Date.now() - startMs,
+      skipPathIndexWrites: 0,
+      extractPathIndexWrites: 0,
     };
   }
   if (!harness.isAvailable()) {
@@ -890,6 +950,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       sessions: [],
       warnings: [`harness ${options.type} is registered but reports not-available (no session data on this machine)`],
       durationMs: Date.now() - startMs,
+      skipPathIndexWrites: 0,
+      extractPathIndexWrites: 0,
     };
   }
 
@@ -914,6 +976,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         sessions: [],
         warnings: [`session ${options.sessionId} not found for harness ${options.type}`],
         durationMs: Date.now() - startMs,
+        skipPathIndexWrites: 0,
+        extractPathIndexWrites: 0,
       };
     }
     candidates = [target];
@@ -928,6 +992,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const sessions: ExtractedSessionResult[] = [];
   let processedCount = 0;
   let skippedCount = 0;
+  // #640 — mutable counters for skip-path vs extract-path session-index writes.
+  // Shared across all processSession calls via object reference so each call can
+  // increment without needing to return the delta through the existing result shape.
+  const indexWriteCounter = { skipPath: 0, extractPath: 0 };
   // #626 — per-run triage aggregation counters (counts-only telemetry, AC4).
   let triageEvaluated = 0;
   let triagePassed = 0;
@@ -1015,6 +1083,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         minContentChars,
         triage,
         sessionIndexing,
+        indexWriteCounter,
         schemaSimilarityCtx,
         prior,
         options.force === true,
@@ -1147,6 +1216,9 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     sessions,
     warnings: topLevelWarnings,
     durationMs: Date.now() - startMs,
+    // #640 — observability counters distinguishing skip-path vs extract-path writes.
+    skipPathIndexWrites: indexWriteCounter.skipPath,
+    extractPathIndexWrites: indexWriteCounter.extractPath,
   };
 }
 
