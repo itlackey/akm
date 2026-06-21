@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.32] — 2026-06-21
+
+### Added
+
+- **Recombine acceptance path — confirmed lessons now auto-accept.** Recombine
+  hypotheses that reach the confirmation threshold (promoted to `type: lesson`,
+  #625/#633) now flow to ACCEPTED by reusing the existing drain mechanism instead
+  of piling up pending forever: the `personal-stash` drain policy gains a
+  `{ generator: "recombine", requireType: "lesson", maxDiffLines: 200 }` rule, via
+  a new optional `requireType` frontmatter filter on `DrainAcceptRule`. Only
+  confirmed `type: lesson` proposals auto-accept; unconfirmed `type: hypothesis`
+  proposals stay pending; the existing proposal quality gate still applies.
+- **`processes.reflect.lowValueFilter` (opt-in, default OFF)** — deterministic
+  semantic value-floor that defers trivial reflect rewrites (#639A).
+- **`processes.extract.triage.proceduralAwareFloor` (opt-in, default OFF)** —
+  triage floor requiring markers/edits so real lessons always pass (#641).
+
+### Fixed
+
+- **Select-time proactive cooldown leak.** `selectProactiveMaintenanceRefs` plans
+  the due set BEFORE acquiring `reflect-distill.lock`, so overlapping/back-to-back
+  improve runs reused stale due-state and re-reflected the same asset repeatedly
+  (observed up to ~16× in a day). The orchestrator now re-applies the dueDays gate
+  with freshly-read timestamp maps INSIDE the lock (`filterProactiveDue`), dropping
+  refs a concurrent run already reflected.
+
 ## [0.9.0-beta.31] — 2026-06-20
 
 ### Changed
