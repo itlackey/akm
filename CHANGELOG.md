@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.34] — 2026-06-21
+
+### Fixed
+
+- **`akm extract --type opencode` reads opencode's SQLite session store.** opencode
+  migrated session storage from per-file JSON (`storage/session/<projectId>/<id>.json`
+  + `storage/message/<id>/*.json`) to a single Drizzle-managed database at
+  `<base>/opencode.db` (tables `session`/`message`/`part`; message text lives in
+  `part` rows with `data` JSON `type:"text"`). The legacy JSON layout went stale
+  ~2026-02, so extract discovered 0 sessions on current opencode and the
+  `session.idle` extract hook had nothing to read. `OpenCodeProvider` now prefers
+  `opencode.db` when present (read-only, via the cross-driver `openDatabase` seam)
+  and falls back to the JSON layout. Verified end-to-end through the plugin's
+  `session.idle` hook.
+
 ## [0.9.0-beta.33] — 2026-06-21
 
 ### Fixed
