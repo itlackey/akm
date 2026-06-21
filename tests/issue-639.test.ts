@@ -34,8 +34,6 @@ import { classifyReflectChange, type ReflectChangeKind } from "../src/commands/i
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repos.\n`;
-
 // A multi-line asset body where the candidate rewrites ~2 prose lines but
 // does NOT change any code fences, headings, or decision/outcome markers.
 const PROSE_REWRITE_SOURCE = `---
