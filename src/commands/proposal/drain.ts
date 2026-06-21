@@ -65,13 +65,6 @@ export interface DrainAcceptRule {
   maxDiffLines?: number;
   /** Accept only when the proposed content has >= this many body lines. */
   minContentLines?: number;
-  /**
-   * Optional confidence floor (#639). When set, proposals whose `confidence`
-   * field is present AND below this threshold are DEFERRED (not accepted).
-   * Absent confidence on the proposal → PASS (treated as meeting the threshold).
-   * DEFAULT: absent / undefined → no confidence gate (default-preserving).
-   */
-  minConfidence?: number;
 }
 
 /** A deterministic triage policy: which generators auto-accept / defer. */
@@ -326,20 +319,6 @@ export function classifyProposal(
         verdict: "defer",
         reason: "mid-band",
         gate: { reason: "min-content-lines", measured: body, thresholds: { minContentLines: rule.minContentLines } },
-      };
-    }
-    // minConfidence floor (#639): when the rule sets a confidence threshold AND
-    // the proposal carries a confidence value, defer if confidence < threshold.
-    // Absent confidence (undefined) → PASS (default-preserving).
-    if (
-      rule.minConfidence !== undefined &&
-      proposal.confidence !== undefined &&
-      proposal.confidence < rule.minConfidence
-    ) {
-      return {
-        verdict: "defer",
-        reason: "mid-band",
-        gate: { reason: "min-confidence" },
       };
     }
     return { verdict: "accept", gate: { reason: "policy-accept" } };

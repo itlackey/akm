@@ -312,15 +312,6 @@ export interface ImproveProcessConfig {
    */
   indexSessions?: boolean;
   /**
-   * #640 — when `true`, write the DETERMINISTIC session-index asset (no LLM
-   * call) for sessions that are skipped via the `too_short` or `triaged_out`
-   * gates, so #561 coverage is not thinned as extraction gates tighten.
-   * Absent / `false` = DEFAULT: skip paths write NOTHING (byte-identical to
-   * pre-#640 behaviour). Set `true` to opt in. Ignored when
-   * `indexSessions: false`. Only meaningful on the `extract` process.
-   */
-  indexSkippedSessions?: boolean;
-  /**
    * #561 — minimum session duration (ended_at − started_at) in MINUTES for a
    * session to be indexed as a `session` asset. Trivially short sessions carry
    * little reusable signal and are not worth an LLM summary call. Absent =
@@ -555,21 +546,6 @@ export interface ImproveProcessConfig {
    * deferred). Only meaningful on the `procedural` process.
    */
   emitAs?: "workflow" | "skill";
-  /**
-   * #637 — improve-review subagent session detection. When a session is
-   * identified as an improve-review subagent session (via AKM_ORIGIN marker
-   * or prose-fallback), controls the behaviour:
-   *
-   * - `"shadow"` (DEFAULT): detect and tag `skipReason='improve_review'` on the
-   *   session result for audit/observability, but STILL extract (zero behaviour
-   *   change, byte-identical token spend).
-   * - `"skip"`: actually skip the session (return `{skipped:true,
-   *   skipReason:'improve_review'}`), making ZERO LLM calls for it.
-   *
-   * Absent/unset = `"shadow"` (default-preserving). Only meaningful on the
-   * `extract` process.
-   */
-  skipSelfReview?: "shadow" | "skip";
 }
 
 export interface ImproveProfileConfig {

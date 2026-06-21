@@ -65,7 +65,6 @@ import {
   SESSION_SUMMARY_JSON_SCHEMA,
   type SessionSummaryGenerator,
   sessionMeetsDurationGate,
-  writeDeterministicSessionAsset,
   writeSessionAsset,
 } from "./session-asset";
 import { resolveTriageConfig, scoreSessionTriage } from "./triage";
@@ -196,14 +195,7 @@ export interface ExtractedSessionResult {
   preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
   warnings: string[];
   skipped?: boolean;
-  skipReason?:
-    | "read_failed"
-    | "llm_unavailable"
-    | "exception"
-    | "already_extracted"
-    | "too_short"
-    | "triaged_out"
-    | "improve_review";
+  skipReason?: "read_failed" | "llm_unavailable" | "exception" | "already_extracted" | "too_short" | "triaged_out";
   /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
   sessionAssetRef?: string;
   /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
@@ -230,17 +222,6 @@ export interface AkmExtractResult {
   sessions: ExtractedSessionResult[];
   warnings: string[];
   durationMs: number;
-  /**
-   * #640 — number of session-index assets written via the SKIP path
-   * (too_short / triaged_out), i.e. deterministic writes without an LLM call.
-   * Present and 0 when no skipped sessions produced an asset.
-   */
-  skipPathIndexWrites: number;
-  /**
-   * #640 — number of session-index assets written via the normal EXTRACT path
-   * (LLM-generated summaries). Present and 0 when no sessions produced an asset.
-   */
-  extractPathIndexWrites: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -380,13 +361,9 @@ async function processSession(
   triage: { enabled: boolean; minScore: number; proceduralAwareFloor: boolean },
   sessionIndexing: {
     enabled: boolean;
-    // #640: true only when both indexSessions AND indexSkippedSessions are on.
-    indexSkipped: boolean;
     minDurationMinutes: number;
     generate: SessionSummaryGenerator;
   },
-  // #640 — mutable counter object for skip-path vs extract-path index writes.
-  indexWriteCounter: { skipPath: number; extractPath: number },
   schemaSimilarityCtx: {
     config: SchemaSimilarityConfig;
     derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
@@ -401,9 +378,6 @@ async function processSession(
   prior: ExtractedSessionRow | undefined,
   force: boolean,
   singleSession: boolean,
-  // #637 — improve-review skip mode. "shadow" (default): tag skipReason but still
-  // extract. "skip": return skipped immediately. Absent/"shadow" = no behaviour change.
-  skipSelfReview: "shadow" | "skip" | undefined,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -421,37 +395,6 @@ async function processSession(
       skipReason: "read_failed",
     };
   }
-
-  // #637 — improve-review origin detection. Scan only the FIRST event's text for
-  // the AKM_ORIGIN marker (primary) or both prose-fallback markers (belt-and-suspenders
-  // for historical/un-upgraded sessions). Mid-conversation occurrences are ignored.
-  const firstEventText = data.events[0]?.text ?? "";
-  const hasOriginMarker = /^AKM_ORIGIN:\s*improve-review$/m.test(firstEventText);
-  const hasProseFallback = firstEventText.includes("Asset path:") && firstEventText.includes("Stash root:");
-  const isImproveReview = hasOriginMarker || hasProseFallback;
-  if (isImproveReview) {
-    // Set the origin field on the ref so callers / tests can observe detection.
-    data.ref.origin = "improve-review";
-    if (skipSelfReview === "skip") {
-      // Hard skip — zero LLM calls.
-      return {
-        sessionId: sessionRef.sessionId,
-        harness: harness.name,
-        candidateCount: 0,
-        proposalIds: [],
-        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
-        warnings: [],
-        skipped: true,
-        skipReason: "improve_review",
-      };
-    }
-    // Shadow mode (default when skipSelfReview is absent or 'shadow'): continue
-    // processing byte-identically but tag skipReason for audit. The tag is added
-    // to the final result at the bottom via the shadowSkipReason variable.
-  }
-  // Capture the shadow tag so we can attach it to the final result.
-  const shadowSkipReason: "improve_review" | undefined =
-    isImproveReview && (skipSelfReview === "shadow" || skipSelfReview === undefined) ? "improve_review" : undefined;
 
   // #602 — content-hash skip. Computed on the RAW event stream immediately after
   // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
@@ -487,23 +430,6 @@ async function processSession(
   // the config key's documented unit.
   const rawContentChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
   if (minContentChars > 0 && rawContentChars < minContentChars) {
-    // #640 — write deterministic session-index asset on too_short skips so
-    // coverage isn't thinned as gates tighten. NEVER calls generate/LLM.
-    // Fail-open: any write error is swallowed; skip result is unchanged.
-    // DEFAULT OFF: gated on the new opt-in indexSkippedSessions flag so that
-    // default runs remain byte-identical to pre-#640 behaviour.
-    let skipAssetRef: string | undefined;
-    if (sessionIndexing.indexSkipped && !dryRun) {
-      try {
-        const skipAsset = await writeDeterministicSessionAsset(data, stashDir);
-        if (skipAsset.written) {
-          skipAssetRef = skipAsset.ref;
-          indexWriteCounter.skipPath += 1;
-        }
-      } catch {
-        // fail-open: ignore write errors on the skip path
-      }
-    }
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
@@ -518,7 +444,6 @@ async function processSession(
       skipped: true,
       skipReason: "too_short",
       contentHash,
-      ...(skipAssetRef ? { sessionAssetRef: skipAssetRef } : {}),
     };
   }
 
@@ -532,20 +457,6 @@ async function processSession(
       proceduralAwareFloor: triage.proceduralAwareFloor,
     });
     if (!t.pass) {
-      // #640 — write deterministic session-index asset on triaged_out skips.
-      // Same pattern as too_short: no LLM call, fail-open. DEFAULT OFF.
-      let skipAssetRef: string | undefined;
-      if (sessionIndexing.indexSkipped && !dryRun) {
-        try {
-          const skipAsset = await writeDeterministicSessionAsset(data, stashDir);
-          if (skipAsset.written) {
-            skipAssetRef = skipAsset.ref;
-            indexWriteCounter.skipPath += 1;
-          }
-        } catch {
-          // fail-open: ignore write errors on the skip path
-        }
-      }
       return {
         sessionId: sessionRef.sessionId,
         harness: harness.name,
@@ -560,7 +471,6 @@ async function processSession(
         skipped: true,
         skipReason: "triaged_out",
         contentHash,
-        ...(skipAssetRef ? { sessionAssetRef: skipAssetRef } : {}),
       };
     }
   }
@@ -578,8 +488,6 @@ async function processSession(
     try {
       const result = await writeSessionAsset(data, stashDir, sessionIndexing.generate);
       if (result.written) {
-        // #640 — count extract-path index writes for observability.
-        indexWriteCounter.extractPath += 1;
         return {
           ...(result.ref ? { sessionAssetRef: result.ref } : {}),
           ...(result.logPath ? { sessionLogPath: result.logPath } : {}),
@@ -659,8 +567,6 @@ async function processSession(
       },
       warnings,
       contentHash,
-      // #637 shadow tag: observability only — session still extracted (no behaviour change)
-      ...(shadowSkipReason ? { skipReason: shadowSkipReason } : {}),
       ...sessionAsset,
     };
   }
@@ -768,8 +674,6 @@ async function processSession(
     },
     warnings,
     contentHash,
-    // #637 shadow tag: observability only — session still extracted (no behaviour change)
-    ...(shadowSkipReason ? { skipReason: shadowSkipReason } : {}),
     ...sessionAsset,
   };
 }
@@ -820,8 +724,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         "session_extraction feature disabled — set profiles.improve.default.processes.extract.enabled: true to use",
       ],
       durationMs: Date.now() - startMs,
-      skipPathIndexWrites: 0,
-      extractPathIndexWrites: 0,
     };
   }
 
@@ -874,10 +776,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // per-session path never calls the scorer and emits no telemetry.
   const triage = resolveTriageConfig(extractProcess);
 
-  // #637 — resolve improve-review skip mode. Default absent = "shadow" (no
-  // behaviour change — tag only). "skip" = hard skip improve-review sessions.
-  const skipSelfReview = extractProcess?.skipSelfReview;
-
   // #561 — resolve session-indexing config. Default ON: we only reach this code
   // when `session_extraction` is enabled AND an LLM is configured (both checked
   // above), so defaulting on costs nothing offline (the summary call fails open)
@@ -909,13 +807,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     );
     return parseSessionSummary(raw);
   };
-  // #640 — opt-in flag: write deterministic asset on skip paths. DEFAULT OFF
-  // (absent = false) so no default-path side effect is added by #640.
-  const indexSkippedSessionsEnabled = extractProcess?.indexSkippedSessions === true;
   const sessionIndexing = {
     enabled: sessionIndexingEnabled,
-    // #640: true only when BOTH indexSessions and indexSkippedSessions are on.
-    indexSkipped: sessionIndexingEnabled && indexSkippedSessionsEnabled,
     minDurationMinutes: minSessionDuration,
     generate: options.generateSessionSummary ?? defaultSessionSummaryGenerator,
   };
@@ -935,8 +828,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       sessions: [],
       warnings: [`no available harness matches type "${options.type}" (check that the platform is installed)`],
       durationMs: Date.now() - startMs,
-      skipPathIndexWrites: 0,
-      extractPathIndexWrites: 0,
     };
   }
   if (!harness.isAvailable()) {
@@ -953,8 +844,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       sessions: [],
       warnings: [`harness ${options.type} is registered but reports not-available (no session data on this machine)`],
       durationMs: Date.now() - startMs,
-      skipPathIndexWrites: 0,
-      extractPathIndexWrites: 0,
     };
   }
 
@@ -979,8 +868,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         sessions: [],
         warnings: [`session ${options.sessionId} not found for harness ${options.type}`],
         durationMs: Date.now() - startMs,
-        skipPathIndexWrites: 0,
-        extractPathIndexWrites: 0,
       };
     }
     candidates = [target];
@@ -995,10 +882,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const sessions: ExtractedSessionResult[] = [];
   let processedCount = 0;
   let skippedCount = 0;
-  // #640 — mutable counters for skip-path vs extract-path session-index writes.
-  // Shared across all processSession calls via object reference so each call can
-  // increment without needing to return the delta through the existing result shape.
-  const indexWriteCounter = { skipPath: 0, extractPath: 0 };
   // #626 — per-run triage aggregation counters (counts-only telemetry, AC4).
   let triageEvaluated = 0;
   let triagePassed = 0;
@@ -1086,12 +969,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         minContentChars,
         triage,
         sessionIndexing,
-        indexWriteCounter,
         schemaSimilarityCtx,
         prior,
         options.force === true,
         typeof options.sessionId === "string" && options.sessionId.length > 0,
-        skipSelfReview,
       );
       sessions.push(result);
       // #626 — triage aggregation. A session reached the triage gate only when it
@@ -1219,9 +1100,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     sessions,
     warnings: topLevelWarnings,
     durationMs: Date.now() - startMs,
-    // #640 — observability counters distinguishing skip-path vs extract-path writes.
-    skipPathIndexWrites: indexWriteCounter.skipPath,
-    extractPathIndexWrites: indexWriteCounter.extractPath,
   };
 }
 
