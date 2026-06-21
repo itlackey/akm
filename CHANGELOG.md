@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.33] — 2026-06-21
+
+### Fixed
+
+- **`akm extract` decoupled from the improve-stage toggle.** `processes.extract.enabled`
+  now gates extract only as a STAGE of `akm improve` (the active improve profile, per
+  #593/#594); an explicit `akm extract` command always runs. Previously dropping extract
+  from the daily improve profile silently disabled the standalone command (and its LLM
+  calls, via the shared `session_extraction` feature gate).
+- **`extract --session-id` now respects the content-hash ledger; `--force` overrides.**
+  Explicit single-session extraction previously bypassed the #602 already-extracted skip
+  unconditionally — re-paying the LLM on every call and risking double-extraction against
+  the cron. Now a targeted `extract --session-id <id>` is idempotent (skips an unchanged,
+  already-extracted session with zero LLM calls) and only `--force` re-extracts. This
+  makes a session-end hook firing `extract --session-id <id>` precise AND idempotent.
+
 ## [0.9.0-beta.32] — 2026-06-21
 
 ### Added
