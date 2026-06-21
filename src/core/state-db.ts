@@ -820,6 +820,38 @@ const MIGRATIONS: Migration[] = [
         ON recombine_hypotheses(last_seen_at);
     `,
   },
+
+  // ── Migration 015 — asset_accept_cooldown (#638) ────────────────────────────
+  //
+  // Per-ref accept timestamp for the drain-boundary cooldown gate. When
+  // `processes.reflect.proactiveCooldownMs` (or `userCooldownMs`) is non-zero
+  // and positive, `drainProposals` records the wall-clock time of every accepted
+  // reflect/proactive proposal here and defers (not drops) subsequent drain
+  // attempts for the same (stash_dir, ref) pair within the configured window.
+  //
+  // DEFAULT behaviour: cooldown = 0 / disabled. This table is never written to
+  // or read by default runs, so existing behaviour is byte-identical.
+  //
+  // Indexed (query) columns:
+  //   stash_dir    TEXT  — absolute stash root (multi-stash partitioning).
+  //   ref          TEXT  — asset ref (e.g. "lesson:alpha").
+  //
+  // Non-indexed columns:
+  //   last_accepted_at  INTEGER  — Unix milliseconds of the most recent accept.
+  //
+  // PK: (stash_dir, ref) — one row per (stash, ref) pair. Writes use
+  // INSERT OR REPLACE (upsert) so the table tracks only the latest accept.
+  {
+    id: "015-asset-accept-cooldown",
+    up: `
+      CREATE TABLE IF NOT EXISTS asset_accept_cooldown (
+        stash_dir        TEXT    NOT NULL,
+        ref              TEXT    NOT NULL,
+        last_accepted_at INTEGER NOT NULL,
+        PRIMARY KEY (stash_dir, ref)
+      );
+    `,
+  },
 ];
 
 /**
@@ -2304,3 +2336,38 @@ export const REGISTRY_INDEX_CACHE_DDL = `
   CREATE INDEX IF NOT EXISTS idx_registry_cache_fetched
     ON registry_index_cache(fetched_at);
 `;
+
+// ── asset_accept_cooldown helpers (#638) ────────────────────────────────────
+
+/**
+ * Record the wall-clock time (Unix ms) of the most recent accepted proposal for
+ * a given (stashDir, ref) pair. Uses INSERT OR REPLACE (upsert) so only the
+ * latest accept timestamp is stored; the table grows at most one row per
+ * (stash, ref) pair.
+ *
+ * Called by the drain engine immediately after a successful promote when a
+ * cooldown configuration is active. No-op if the table does not exist (the
+ * migration has not run yet — should not happen in practice since migrations run
+ * at openStateDatabase() time).
+ */
+export function recordLastAcceptedAt(db: Database, stashDir: string, ref: string, ts: number): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO asset_accept_cooldown (stash_dir, ref, last_accepted_at)
+     VALUES (?, ?, ?)`,
+  ).run(stashDir, ref, ts);
+}
+
+/**
+ * Return the Unix-ms timestamp of the last accepted proposal for (stashDir, ref),
+ * or `undefined` when no record exists (i.e. the ref has never been accepted while
+ * cooldown tracking was active).
+ *
+ * The return type is `number | undefined` — `null` is never returned; tests that
+ * call `result == null` catch both null and undefined so they remain correct.
+ */
+export function getLastAcceptedAt(db: Database, stashDir: string, ref: string): number | undefined {
+  const row = db
+    .prepare(`SELECT last_accepted_at FROM asset_accept_cooldown WHERE stash_dir = ? AND ref = ?`)
+    .get(stashDir, ref) as { last_accepted_at: number } | undefined;
+  return row?.last_accepted_at;
+}
