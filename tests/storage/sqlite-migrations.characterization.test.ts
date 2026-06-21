@@ -80,6 +80,7 @@ describe("SQLite migration runner characterization", () => {
         "012-improve-gate-thresholds",
         "013-extract-sessions-content-hash",
         "014-recombine-hypotheses",
+        "015-asset-accept-cooldown",
       ]);
 
       // The set of durable objects the migrations create.
@@ -91,6 +92,7 @@ describe("SQLite migration runner characterization", () => {
       expect(names).toContain("table:consolidation_judged");
       expect(names).toContain("table:body_embeddings");
       expect(names).toContain("table:recombine_hypotheses");
+      expect(names).toContain("table:asset_accept_cooldown");
 
       // Lock the exact DDL snapshot so any drift in the produced schema fails.
       expect(snap).toMatchSnapshot();

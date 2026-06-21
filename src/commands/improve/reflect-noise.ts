@@ -95,7 +95,7 @@ const LOW_VALUE_TOKEN_THRESHOLD = 4;
  * A line that introduces or removes one of these words carries enough semantic
  * weight to be treated as substantive.
  */
-const NEGATION_WORDS = new Set(["never", "not", "no", "don’t", "avoid", "cannot", "can’t"]);
+const NEGATION_WORDS = new Set(["never", "not", "no", "don't", "avoid", "cannot", "can't"]);
 
 /**
  * Pattern for lines that contain decision / outcome markers. Changed tokens on
@@ -249,11 +249,16 @@ function parseLowValueSections(text: string): {
 
 /** Split a prose line into lowercase word tokens, filtering punctuation. */
 function tokenize(line: string): string[] {
-  return line
-    .toLowerCase()
-    .replace(/[^a-z0-9'’-]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
+  return (
+    line
+      .toLowerCase()
+      // Normalize the curly apostrophe (U+2019) to a straight one so negation words
+      // like "don't"/"can't" match regardless of which glyph the content uses.
+      .replace(/’/g, "'")
+      .replace(/[^a-z0-9'-]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 0)
+  );
 }
 
 /**
