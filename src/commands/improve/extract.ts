@@ -47,7 +47,7 @@ import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { embed } from "../../llm/embedder";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import { tryLlmFeature } from "../../llm/feature-gate";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
@@ -703,9 +703,13 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const extractProcess = activeProfile
     ? activeProfile.processes?.extract
     : config.profiles?.improve?.default?.processes?.extract;
-  const extractEnabled = activeProfile
-    ? resolveProcessEnabled("extract", activeProfile)
-    : isLlmFeatureEnabled(config, "session_extraction");
+  // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
+  // (the activeProfile path) — consistent with #593/#594 where the active profile,
+  // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
+  // (no activeProfile) is a direct user/cron action and always runs; gating it on
+  // the default improve profile's stage toggle was a footgun — dropping extract
+  // from the daily improve profile would silently disable the standalone command.
+  const extractEnabled = activeProfile ? resolveProcessEnabled("extract", activeProfile) : true;
 
   // Feature-gate early so we get a clean "skipped because disabled" envelope.
   if (!extractEnabled) {

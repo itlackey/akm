@@ -71,10 +71,14 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
   // Legacy default: false
   memory_contradiction_detection: (cfg) =>
     cfg.profiles?.improve?.default?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
-  // Default: true. Session extraction replaces the akm-plugin checkpoint hook
-  // and is the primary path for capturing durable signal from real sessions.
-  // Opt out via `profiles.improve.default.processes.extract.enabled: false`.
-  session_extraction: (cfg) => cfg.profiles?.improve?.default?.processes?.extract?.enabled ?? true,
+  // Always on at the LLM-wrapper level. Enablement is decided ONCE at the
+  // extract entry point (`akmExtract`): the `extract.enabled` process toggle
+  // gates extract as a STAGE of `akm improve` (the active improve profile, per
+  // #593/#594), while an explicit `akm extract` command always runs. Gating the
+  // inner LLM calls on `default.processes.extract.enabled` here was a footgun —
+  // dropping extract from the daily improve profile silently disabled the
+  // standalone `akm extract` command. (cfg unused — kept for resolver signature.)
+  session_extraction: (_cfg) => true,
 };
 
 /**

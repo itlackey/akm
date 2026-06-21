@@ -170,19 +170,33 @@ describe("akmExtract — input validation", () => {
   });
 });
 
-describe("akmExtract — feature gate", () => {
-  test("returns empty envelope when session_extraction is disabled", async () => {
+describe("akmExtract — explicit command is not gated by the improve-stage toggle", () => {
+  // Bug fix: an explicit `akm extract` invocation (no `improveProfile` — the
+  // standalone command / cron) must RUN even when the default improve profile
+  // has `processes.extract.enabled: false`. The toggle gates extract as a STAGE
+  // of `akm improve` (the active-profile path), NOT the dedicated command —
+  // previously dropping extract from the daily improve profile silently disabled
+  // the standalone command (and its LLM calls via the shared feature gate).
+  test("standalone extract runs even when default.processes.extract.enabled is false", async () => {
     const stash = makeStashDir();
+    let chatCalls = 0;
     const result = await akmExtract({
       type: "claude-code",
       stashDir: stash,
-      config: configDisabled(stash),
+      config: configDisabled(stash), // default.extract.enabled === false
       harnesses: [makeFakeHarness([fakeSession("a", Date.now())])],
-      chat: async () => JSON.stringify({ candidates: [] }),
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
     });
     expect(result.ok).toBe(true);
-    expect(result.sessionsProcessed).toBe(0);
-    expect(result.warnings.join(" ")).toMatch(/disabled/);
+    // The session is actually processed (not short-circuited as "disabled")...
+    expect(result.sessionsProcessed).toBe(1);
+    // ...the extract LLM call fires (feature gate no longer blocks it)...
+    expect(chatCalls).toBeGreaterThan(0);
+    // ...and there is no "disabled" warning.
+    expect(result.warnings.join(" ")).not.toMatch(/disabled/);
   });
 });
 
