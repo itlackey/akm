@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-type SOFT authoring conventions are now user-editable stash facts.** A
+  third authoring-guidance layer joins the hard rules (#645) and general stash
+  standards (#642): a stash owner can author
+  `facts/conventions/assets/<type>.md` (e.g. `…/skill.md`, `…/command.md`) to
+  capture soft, type-specific guidance — voice, structure, length *preference*,
+  naming style. When an agent authors a `skill:x`, the body of
+  `fact:conventions/assets/skill` is injected (type-scoped — authoring
+  `command:y` pulls the `command` convention, never the `skill` one), labeled
+  as soft guidance and kept separate from the validator-enforced hard rules.
+  The basename must be a `getAssetTypes()`-validated asset type; facts are read
+  straight from disk (no index rebuild) and degrade to empty safely. When no
+  per-type fact exists, the built-in `TYPE_HINTS` fallback is unchanged (no
+  regression). These facts carry soft conventions only and can never weaken the
+  authoring contract the gate enforces (`authoringRulesForType` remains the sole
+  source of validator-rejecting rules). The general convention/meta resolver now
+  excludes `facts/conventions/assets/*` so per-type guidance never leaks
+  un-type-scoped into other authoring flows. (#646)
+
 ## [0.9.0-beta.36] — 2026-06-22
 
 ### Added

@@ -227,20 +227,31 @@ equivalent.
 
 ## 4. Standards & authoring-rules seam (HARD vs SOFT)
 
-Two layers, deliberately separate:
+**Three** layers now, deliberately separate (one HARD, two SOFT):
 
 - **HARD rules** (validator-rejecting, code-sourced): `src/core/authoring-rules.ts` →
   `authoringRulesForType()` injected verbatim into reflect/propose/distill/consolidate/
   recombine/procedural/extract/schema-repair prompts. Cannot drift from the gate (#645).
-- **SOFT conventions** (user-editable, advice-only): stash `fact` assets with
-  `category: convention|meta` → `resolveStashStandards(stashRoot)` (resolve-stash-
-  standards.ts:63). No enforcement — prose only.
+  Injected as its own block, AFTER `standardsContext`, in every prompt builder.
+- **SOFT general conventions** (user-editable, advice-only, cross-type): stash `fact`
+  assets with `category: convention|meta` → `resolveStashStandards(stashRoot)`
+  (resolve-stash-standards.ts:63). No enforcement — prose only. **Un-type-scoped.**
+- **SOFT per-type conventions** (user-editable, advice-only, type-scoped, #646):
+  `facts/conventions/assets/<type>.md` → `resolveTypeConventions(stashRoot, type)`
+  (resolve-type-conventions.ts). Basename MUST be a `getAssetTypes()`-validated type;
+  read straight from disk (no index rebuild); degrades to `""`. Augments the built-in
+  `TYPE_HINTS` fallback (`prompts.ts:54`, NOT removed) for that type. To prevent
+  cross-type leakage, `resolveStashStandards` now EXCLUDES `facts/conventions/assets/*`
+  so a `command` author never receives the `skill` convention.
 
-Dispatch: `resolveStandardsContext(ref, stashRoot)` (resolve-standards-context.ts:34) is
-**mutually exclusive**: genuine wiki page → `loadWikiSchema().body` (Feature A);
-non-wiki → `resolveStashStandards()` (Feature B); wiki `raw/`/infra files → `""`.
-Shipped #642 (beta.36). Per-type soft conventions (`facts/conventions/assets/<type>.md`)
-are the open follow-up **#646**.
+Dispatch: `resolveStandardsContext(ref, stashRoot)` (resolve-standards-context.ts) is
+**mutually exclusive at the A/B boundary**: genuine wiki page → `loadWikiSchema().body`
+(Feature A); non-wiki → `resolveStashStandards()` (general SOFT) **plus the type-scoped
+per-type SOFT section appended after it, clearly labeled "soft … guidance, not
+enforced"**; wiki `raw/`/infra files → `""`. The per-type layer never fires for wiki
+targets. Shipped #642 (beta.36); per-type conventions #646 (beta.38, fixed pending merge).
+The HARD/SOFT boundary is intact: per-type facts are advice only and CANNOT weaken the
+gate — `authoringRulesForType` remains the sole validator-enforced source.
 
 ---
 
@@ -345,7 +356,7 @@ rewrites.
 | issue | state | one-liner |
 |---|---|---|
 | **#644** | FIXED (pending merge) | high-salience gate selected on type-weight stub, not content score (F1). Fixed via `encoding_source` provenance (migration 015) + non-lowering `upsertAssetSalience` + loop read-back. |
-| **#646** | OPEN | per-type SOFT convention facts (`facts/conventions/assets/<type>.md`); keep TYPE_HINTS fallback; soft-only. |
+| **#646** | FIXED (pending merge) | per-type SOFT convention facts (`facts/conventions/assets/<type>.md`) via `resolveTypeConventions`, type-scoped, validated by `getAssetTypes()`; built-in TYPE_HINTS fallback kept; general resolver now excludes `conventions/assets/*` to stop cross-type leak; soft-only (HARD rules stay in #645). |
 | #642 | MERGED b36 | standards delivery (Feature A wiki schema + Feature B stash conventions). |
 | #645 | MERGED b36 | unify authoring rules into validator-sourced seam; fix stuck-proposal loop + drain masking. |
 | #643 | MERGED b36 | once-per-asset cooldown on high-salience gate (F2). |

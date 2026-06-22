@@ -27,6 +27,14 @@ const STANDARD_CATEGORIES = new Set(["convention", "meta"]);
 const FACTS_SUBDIR = "facts";
 
 /**
+ * Per-type SOFT convention facts (`facts/conventions/assets/<type>.md`, #646)
+ * are surfaced **type-scoped** through `resolveTypeConventions`, so they must
+ * NOT leak into this un-type-scoped general layer (authoring a `command` must
+ * not pull the `skill` convention). Excluded by relative path (POSIX form).
+ */
+const TYPE_CONVENTIONS_REL = "conventions/assets/";
+
+/**
  * Recursively collect `.md` files under `dir` in stable (sorted) enumeration
  * order. Returns absolute paths. Missing dir → `[]`.
  */
@@ -65,6 +73,11 @@ export function resolveStashStandards(stashRoot: string): string {
   const sections: string[] = [];
 
   for (const absPath of collectMarkdownFiles(factsRoot)) {
+    // Per-type SOFT conventions are delivered type-scoped (#646); skip them
+    // here so they never leak un-type-scoped into every authoring flow.
+    const relPosix = path.relative(factsRoot, absPath).split(path.sep).join("/");
+    if (relPosix.startsWith(TYPE_CONVENTIONS_REL)) continue;
+
     let raw: string;
     try {
       raw = fs.readFileSync(absPath, "utf8");
