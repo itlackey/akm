@@ -820,6 +820,31 @@ const MIGRATIONS: Migration[] = [
         ON recombine_hypotheses(last_seen_at);
     `,
   },
+  // ── Migration 015 — asset_salience: encoding_source provenance column (#644) ──
+  //
+  // Records HOW the stored `encoding_salience` was derived so an improve run's
+  // type-weight fallback can no longer clobber a real content-derived score:
+  //
+  //   "content"   — written by the distill path from `scoreEncodingSalience`
+  //                 (novelty·0.40 + magnitude·0.35 + predictionError·0.25).
+  //   "type-stub" — written by `computeSalience`'s `DEFAULT_TYPE_ENCODING_WEIGHTS`
+  //                 fallback (no content-based score available for this ref yet).
+  //   NULL        — legacy row written before this migration; provenance unknown.
+  //                 Treated as a stub by readers UNLESS its stored value differs
+  //                 from the pure type-weight (best-effort heuristic for old data).
+  //
+  // Why a column rather than inference: before #644, every improve run overwrote
+  // the distill-written content score with the type-weight stub, so the stored
+  // value alone cannot distinguish a real score from a stub. The provenance flag
+  // is the single source of truth going forward; `upsertAssetSalience` refuses to
+  // lower a "content" row to a "type-stub" so the high-salience gate (#608) keys
+  // on genuine novelty/magnitude/prediction-error, not the asset type.
+  {
+    id: "015-asset-salience-encoding-source",
+    up: `
+      ALTER TABLE asset_salience ADD COLUMN encoding_source TEXT DEFAULT NULL;
+    `,
+  },
 ];
 
 /**
