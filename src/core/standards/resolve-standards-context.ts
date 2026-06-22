@@ -19,9 +19,24 @@
 
 import { extractWikiNameFromRef, INDEX_MD, LOG_MD, loadWikiSchema, SCHEMA_MD } from "../../wiki/wiki";
 import { resolveStashStandards } from "./resolve-stash-standards";
+import { resolveTypeConventions, typeConventionRef } from "./resolve-type-conventions";
 
 /** Wiki infra files that are not authored pages (relative to the wiki root). */
 const WIKI_INFRA_BASENAMES: ReadonlySet<string> = new Set([SCHEMA_MD, INDEX_MD, LOG_MD]);
+
+/**
+ * Extract the asset type from a canonical ref (`[origin//]type:name`) without
+ * throwing. Returns `undefined` for refs that have no `type:` prefix. Kept local
+ * and lenient — the per-type resolver validates the result against
+ * `getAssetTypes()`, so a bogus prefix here simply yields no convention.
+ */
+function refType(ref: string | undefined): string | undefined {
+  if (!ref) return undefined;
+  const body = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
+  const colon = body.indexOf(":");
+  if (colon <= 0) return undefined;
+  return body.slice(0, colon).trim() || undefined;
+}
 
 /**
  * Resolve the standards context for a write target identified by its asset ref.
@@ -34,8 +49,25 @@ const WIKI_INFRA_BASENAMES: ReadonlySet<string> = new Set([SCHEMA_MD, INDEX_MD, 
 export function resolveStandardsContext(ref: string | undefined, stashRoot: string): string {
   const wikiName = ref ? extractWikiNameFromRef(ref) : undefined;
   if (!wikiName) {
-    // Non-wiki asset target → Feature B (stash authoring standards).
-    return resolveStashStandards(stashRoot);
+    // Non-wiki asset target → Feature B (general stash standards) plus the
+    // per-type SOFT conventions layer (#646), type-scoped to the write target.
+    const general = resolveStashStandards(stashRoot);
+
+    const type = refType(ref);
+    // A non-empty body here guarantees `type` is a `getAssetTypes()`-validated
+    // string (the resolver returns "" otherwise).
+    const typeConventions = type ? resolveTypeConventions(stashRoot, type) : "";
+    if (!typeConventions || !type) return general;
+
+    // Soft, type-scoped guidance — clearly labeled and kept separate from the
+    // HARD (validator-enforced) rules that `authoringRulesForType` injects
+    // downstream. These facts are advice only; they never weaken the gate.
+    const softSection = [
+      `# ${typeConventionRef(type)} (soft per-type conventions — guidance, not enforced)`,
+      typeConventions,
+    ].join("\n");
+
+    return general ? `${general}\n\n${softSection}` : softSection;
   }
 
   // Wiki target. Extract the page path after `wiki:<name>/`.
