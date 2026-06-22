@@ -9,26 +9,42 @@ import { getDirname } from "../../runtime";
 const SKELETON_DIR = path.join(getDirname(import.meta.url), "../../assets/stash-skeleton");
 
 /**
- * Copy the default stash skeleton into a newly created stash directory.
+ * Copy the default stash skeleton into a stash directory.
  *
- * Each file in src/assets/stash-skeleton/ is written to the stash root only
- * if the destination does not already exist — existing files are never
- * overwritten. Non-fatal: if the skeleton directory is missing or a copy
- * fails the caller continues normally.
+ * The skeleton tree under src/assets/stash-skeleton/ is mirrored **recursively**
+ * into the stash root, preserving relative subpaths (e.g.
+ * `facts/conventions/assets/skill.md` lands at the matching stash subpath).
+ * Each file is written only if the destination does not already exist — existing
+ * (possibly user-edited) files are never overwritten. Intermediate directories
+ * are created as needed.
+ *
+ * Idempotent and absent-only: running it again on an existing stash backfills
+ * any skeleton files that are missing without clobbering present ones. Non-fatal:
+ * if the skeleton directory is missing or a copy fails the caller continues.
  */
 export function copyStashSkeleton(stashDir: string): void {
-  let entries: string[];
+  copySkeletonDir(SKELETON_DIR, stashDir);
+}
+
+/** Recursively mirror `srcDir` into `destDir`, writing files only when absent. */
+function copySkeletonDir(srcDir: string, destDir: string): void {
+  let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(SKELETON_DIR);
+    entries = fs.readdirSync(srcDir, { withFileTypes: true });
   } catch {
     return;
   }
 
   for (const entry of entries) {
-    const src = path.join(SKELETON_DIR, entry);
-    const dest = path.join(stashDir, entry);
+    const src = path.join(srcDir, entry.name);
+    const dest = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copySkeletonDir(src, dest);
+      continue;
+    }
     if (fs.existsSync(dest)) continue;
     try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
     } catch {
       // Non-fatal — stash is usable without skeleton files

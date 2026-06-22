@@ -12,7 +12,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { akmInit } from "../src/commands/sources/init";
+import { resolveTypeConventions } from "../src/core/standards/resolve-type-conventions";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+
+/** Asset types that ship a default per-type SOFT convention template (#646). */
+const CONVENTION_TYPES = ["lesson", "skill", "command", "agent", "knowledge", "memory", "workflow", "script", "fact"];
+
+function conventionPath(stashDir: string, type: string): string {
+  return path.join(stashDir, "facts", "conventions", "assets", `${type}.md`);
+}
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -79,5 +87,83 @@ describe("akm init", () => {
     fs.writeFileSync(readmePath, "custom content", "utf8");
     await akmInit({ dir: stashDir });
     expect(fs.readFileSync(readmePath, "utf8")).toBe("custom content");
+  });
+
+  test("seeds default per-type SOFT convention templates (#646)", async () => {
+    const stashDir = makeTempDir("akm-init-conventions-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await akmInit({ dir: stashDir });
+
+    for (const type of CONVENTION_TYPES) {
+      expect(fs.existsSync(conventionPath(stashDir, type))).toBe(true);
+      // Resolves through the same disk reader the authoring seam uses, with a
+      // non-empty soft body (frontmatter stripped).
+      expect(resolveTypeConventions(stashDir, type).length).toBeGreaterThan(0);
+    }
+  });
+
+  test("convention templates carry category: convention and NO hard-rule phrasing (#645 boundary)", async () => {
+    const stashDir = makeTempDir("akm-init-conv-soft-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await akmInit({ dir: stashDir });
+
+    for (const type of CONVENTION_TYPES) {
+      const raw = fs.readFileSync(conventionPath(stashDir, type), "utf8");
+      expect(raw).toContain("category: convention");
+      // Must not restate the validator's HARD bounds — those live solely in
+      // src/core/authoring-rules.ts. A user editing these must not weaken the gate.
+      expect(raw).not.toContain("20–400");
+      expect(raw).not.toContain("20-400");
+      expect(raw).not.toContain("exactly two");
+      expect(raw).not.toMatch(/\b400\b/);
+    }
+  });
+
+  test("re-init backfills a deleted convention file but does not overwrite an edited one", async () => {
+    const stashDir = makeTempDir("akm-init-conv-backfill-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await akmInit({ dir: stashDir });
+
+    // Delete one convention file and edit another.
+    const skillPath = conventionPath(stashDir, "skill");
+    const factPath = conventionPath(stashDir, "fact");
+    fs.rmSync(skillPath, { force: true });
+    fs.writeFileSync(factPath, "user-edited convention", "utf8");
+    expect(fs.existsSync(skillPath)).toBe(false);
+
+    // Re-init on the EXISTING stash should backfill the missing file...
+    await akmInit({ dir: stashDir });
+    expect(fs.existsSync(skillPath)).toBe(true);
+    expect(resolveTypeConventions(stashDir, "skill").length).toBeGreaterThan(0);
+    // ...but never clobber the user-edited one.
+    expect(fs.readFileSync(factPath, "utf8")).toBe("user-edited convention");
+  });
+
+  test("recursive skeleton copy preserves nested subpaths under the stash root", async () => {
+    const stashDir = makeTempDir("akm-init-conv-subpath-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await akmInit({ dir: stashDir });
+    // The nested asset landed at its mirrored subpath, not flattened to root.
+    expect(fs.existsSync(conventionPath(stashDir, "skill"))).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "skill.md"))).toBe(false);
+  });
+
+  test("source convention templates ship under src/assets and are picked up by copy-assets", () => {
+    // Build sanity: the embedded source files exist (copy-assets mirrors
+    // src/assets/**/* into dist/assets/ verbatim, so shipping follows).
+    const repoRoot = path.resolve(import.meta.dir, "..");
+    for (const type of CONVENTION_TYPES) {
+      const srcPath = path.join(
+        repoRoot,
+        "src",
+        "assets",
+        "stash-skeleton",
+        "facts",
+        "conventions",
+        "assets",
+        `${type}.md`,
+      );
+      expect(fs.existsSync(srcPath)).toBe(true);
+    }
   });
 });
