@@ -3101,6 +3101,14 @@ async function runImprovePreparationStage(args: {
   // Cap: at most 10% of the effective run limit so the lane cannot crowd out
   // reactive feedback. Requires state.db to have an asset_salience row — refs
   // without a row (pre-#608 assets still on the type-weight stub) are skipped.
+  //
+  // Cooldown: a ref qualifies at most once — when no prior reflect proposal
+  // exists for it (`!lastReflectProposalTs.has`). Without this guard the lane
+  // re-selects the same high-salience refs on EVERY run (auto-accept emits a
+  // `promoted` event, not `feedback`, so the ref never leaves
+  // noFeedbackCandidates), burning LLM calls and churning the asset. This
+  // mirrors the P0-A high-retrieval gate's `!lastReflectProposalTs.has(r.ref)`
+  // guard above so all "rescue" lanes share the same once-per-asset semantics.
   const highSalienceRefs: ImproveEligibleRef[] = [];
   const salienceCfg = (options.config ?? loadConfig()).improve?.salience;
   const salienceThreshold = salienceCfg?.salienceThreshold ?? 0.75;
@@ -3115,7 +3123,7 @@ async function runImprovePreparationStage(args: {
       for (const r of candidates) {
         if (highSalienceRefs.length >= highSalienceCap) break;
         const row = getAssetSalience(dbForHighSalience, r.ref);
-        if (row && row.encoding_salience >= salienceThreshold) {
+        if (row && row.encoding_salience >= salienceThreshold && !lastReflectProposalTs.has(r.ref)) {
           highSalienceRefs.push(r);
         }
       }

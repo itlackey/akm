@@ -19,9 +19,11 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
+import { upsertAssetSalience } from "../../../src/commands/improve/salience";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
@@ -651,6 +653,72 @@ describe("P0-A high-retrieval fallback (zero-feedback assets)", () => {
     });
 
     expect(reflected).not.toContain("memory:already");
+  });
+});
+
+// ── Layer 3: high-salience admission gate (#608) ──────────────────────────────
+
+describe("high-salience admission gate (#608)", () => {
+  function seedSalience(ref: string, encoding: number): void {
+    const db = openStateDatabase();
+    try {
+      upsertAssetSalience(db, ref, { encoding, outcome: 0, retrieval: 0, rankScore: 0.2 });
+    } finally {
+      db.close();
+    }
+  }
+
+  test("zero-feedback ref with encoding_salience ≥ threshold and no prior reflect → reflected", async () => {
+    const stash = makeTempDir("akm-hs-rescue-");
+    writeMemory(stash, "salient", "Newly distilled, never surfaced to a user.");
+    await buildIndex(stash);
+    // High encoding_salience, no retrieval, no feedback — only the high-salience
+    // lane can rescue it (memory type-weight fallback is 0.5, below threshold).
+    seedSalience("memory:salient", 0.9);
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).toContain("memory:salient");
+  });
+
+  test("high-salience fires at most once per asset (prior reflect proposal blocks re-rescue)", async () => {
+    const stash = makeTempDir("akm-hs-once-");
+    writeMemory(stash, "salient", "High salience but already reflected once.");
+    await buildIndex(stash);
+    seedSalience("memory:salient", 0.9);
+    // A reflect proposal already exists for this ref. Without the cooldown guard
+    // the high-salience lane re-selected it every run (auto-accept emits a
+    // `promoted` event, not `feedback`, so it never leaves noFeedbackCandidates),
+    // burning LLM calls and churning the asset. The guard must block re-rescue.
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:salient" });
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).not.toContain("memory:salient");
   });
 });
 
