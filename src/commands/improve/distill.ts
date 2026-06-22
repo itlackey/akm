@@ -68,6 +68,7 @@ import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { getDbPath } from "../../core/paths";
+import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { openStateDatabase } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
 import { closeDatabase, getAllEntries, openDatabase } from "../../indexer/db/db";
@@ -514,6 +515,11 @@ interface BuildPromptInput {
    * proposals that have already been reviewed and refused.
    */
   rejectedProposals?: Array<{ reason: string; contentPreview?: string }>;
+  /**
+   * Stash authoring standards (convention/meta fact bodies) for non-wiki
+   * output. Empty/omitted when none exist; gated on non-empty before injection.
+   */
+  standardsContext?: string;
 }
 
 /**
@@ -529,6 +535,11 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   const lines: string[] = [];
   lines.push(`Asset ref: ${input.inputRef}`);
   lines.push("");
+  if (input.standardsContext?.trim()) {
+    lines.push("Standards to follow (the rulebook for this target):");
+    lines.push(input.standardsContext.trim());
+    lines.push("");
+  }
   lines.push("Asset content:");
   if (input.assetContent) {
     const body = input.assetContent.trim().slice(0, 3000);
@@ -1250,12 +1261,16 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     }
   }
 
+  // Distill output is a lesson/knowledge (non-wiki) → stash authoring
+  // standards. Resolved once for this single call.
+  const standardsContext = resolveStashStandards(stash);
   const baseUserPrompt = buildDistillPrompt({
     inputRef,
     assetContent,
     feedback,
     proposalKind: effectiveProposalKind,
     ...(rejectedForRef.length > 0 ? { rejectedProposals: rejectedForRef } : {}),
+    ...(standardsContext.trim() ? { standardsContext } : {}),
   });
   const userPrompt = clsContext ? `${baseUserPrompt}${clsContext}` : baseUserPrompt;
   const messages: ChatMessage[] = [

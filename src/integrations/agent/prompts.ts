@@ -165,6 +165,13 @@ export interface ReflectPromptInput {
   /** Optional operator task/focus hint. */
   task?: string;
   /**
+   * Standards "rulebook" for this write target — the wiki schema body (for a
+   * wiki-page target) or the concatenated convention/meta fact bodies (for a
+   * non-wiki asset target). Mutually exclusive by target; empty when neither
+   * fires. Injected verbatim as its own prompt section before the asset content.
+   */
+  standardsContext?: string;
+  /**
    * When provided, the agent is instructed to write the improved content
    * directly to this path using its file tools. No stdout JSON is expected.
    * When absent, the agent returns a JSON payload via stdout (legacy path).
@@ -250,6 +257,11 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     sections.push(
       "No usage feedback recorded. Limit your proposal to schema and structural improvements only: missing required frontmatter fields, unclear `when_to_use`, ambiguous description, or broken formatting. Do not speculate about runtime weaknesses you have not observed.",
     );
+  }
+
+  if (input.standardsContext?.trim()) {
+    sections.push("Standards to follow (the rulebook for this target):");
+    sections.push(input.standardsContext.trim());
   }
 
   if (input.assetContent?.trim()) {
@@ -401,6 +413,14 @@ export interface ProposePromptInput {
   /** Optional extra schema hints. */
   schemaHints?: string[];
   /**
+   * Standards "rulebook" for this write target — the wiki schema body (for a
+   * wiki-page target) or the concatenated convention/meta fact bodies (for a
+   * non-wiki asset target). Mutually exclusive by target; empty when neither
+   * fires. Injected verbatim as its own prompt section before the proposal
+   * contract.
+   */
+  standardsContext?: string;
+  /**
    * When provided, the agent is instructed to write the new asset content
    * directly to this path using its file tools. No stdout JSON is expected.
    * When absent, the agent returns a JSON payload via stdout (legacy path).
@@ -422,6 +442,10 @@ export function buildProposePrompt(input: ProposePromptInput): string {
     sections.push("Schema / lint hints:");
     for (const line of input.schemaHints) sections.push(`- ${line}`);
   }
+  if (input.standardsContext?.trim()) {
+    sections.push("Standards to follow (the rulebook for this target):");
+    sections.push(input.standardsContext.trim());
+  }
   sections.push("Produce a single proposal that, if accepted, would land as the asset described above.");
   sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
@@ -435,6 +459,12 @@ export interface SchemaRepairPromptInput {
   reason: string;
   /** Current verbatim file content of the failing asset. */
   assetContent: string;
+  /**
+   * Standards "rulebook" for this target — wiki schema (wiki page) or stash
+   * convention/meta facts (non-wiki asset). Empty/omitted when neither fires;
+   * gated on non-empty before injection.
+   */
+  standardsContext?: string;
   /**
    * When provided, the agent writes directly to this file path using its
    * file-editing tools. When absent, the agent returns a JSON payload via
@@ -457,6 +487,10 @@ export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string 
   );
   sections.push(`Target ref: ${input.ref}`);
   sections.push(`Schema requirements for ${input.type} assets: ${hintForType(input.type)}`);
+  if (input.standardsContext?.trim()) {
+    sections.push("Standards to follow (the rulebook for this target):");
+    sections.push(input.standardsContext.trim());
+  }
   const CONTENT_CAP = 3000;
   const body = input.assetContent.trimEnd();
   const truncated = body.length > CONTENT_CAP;

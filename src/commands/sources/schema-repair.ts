@@ -21,6 +21,7 @@ import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { appendEvent, readEvents } from "../../core/events";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { info, warn } from "../../core/warn";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
@@ -169,6 +170,13 @@ export async function runSchemaRepairPass(
       info(`[improve] schema-repair ${failure.ref} (${fieldList})`);
 
       const bodyPreview = (fm.content ?? raw).slice(0, 2000);
+      // Standards "rulebook" for this target — wiki schema (wiki page) or stash
+      // convention/meta facts (non-wiki asset); empty when neither fires or no
+      // stash dir is available. `resolveStandardsContext` dispatches on the ref.
+      const standardsContext = stashDir ? resolveStandardsContext(failure.ref, stashDir) : "";
+      const standardsSection = standardsContext.trim()
+        ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
+        : "";
       const llmResponse = await chatFn(llmConfig, [
         {
           role: "system",
@@ -176,7 +184,7 @@ export async function runSchemaRepairPass(
         },
         {
           role: "user",
-          content: `Generate the missing frontmatter fields (${fieldList}) for this ${parseAssetRef(failure.ref).type} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}\n\n${bodyPreview}`,
+          content: `Generate the missing frontmatter fields (${fieldList}) for this ${parseAssetRef(failure.ref).type} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}${standardsSection}\n\n${bodyPreview}`,
         },
       ]);
 

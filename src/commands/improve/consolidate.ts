@@ -17,6 +17,7 @@ import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 // Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import {
   hasHotCaptureMode,
@@ -761,6 +762,7 @@ export function buildChunkPrompt(
   totalChunks: number,
   bodyTruncation: number,
   pendingProposalBodyHashes: Set<string> = new Set(),
+  standardsContext = "",
 ): string {
   const start = memories[0] ? `memory:${memories[0].name}` : "";
   const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
@@ -799,6 +801,12 @@ export function buildChunkPrompt(
     `Chunk ${chunkIndex + 1} of ${totalChunks}, memories ${start}–${end}:`,
     "",
   ];
+
+  if (standardsContext.trim()) {
+    lines.push("Standards to follow (the rulebook for this target):");
+    lines.push(standardsContext.trim());
+    lines.push("");
+  }
 
   // Top-of-prompt protection block for hot refs. Neutral phrasing — avoid
   // op-words like "promote", "merge", "contradict" so the model doesn't
@@ -1763,6 +1771,11 @@ async function akmConsolidateInner(
       ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
   );
 
+  // Consolidate output merges memories (non-wiki) → stash authoring standards.
+  // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
+  // per chunk).
+  const standardsContext = resolveStashStandards(stashDir);
+
   const chunkOpsArrays: ConsolidateOperation[][] = [];
   // Structured skip-reason histogram (2026-05-26): every deterministic
   // post-LLM op rejection site below also calls `pushSkipReason` so the
@@ -1898,6 +1911,7 @@ async function akmConsolidateInner(
       chunks.length,
       bodyTruncation,
       pendingProposalBodyHashes,
+      standardsContext,
     );
 
     let raw = await tryLlmFeature(

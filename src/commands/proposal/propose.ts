@@ -20,6 +20,7 @@ import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { resolveStashDir } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import {
   type AgentConfig,
   type AgentFailureReason,
@@ -174,10 +175,15 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   );
   const resolvedDraftPath = await draftFilePath;
 
+  // Standards "rulebook" for this target — wiki schema (wiki page) or stash
+  // convention/meta facts (non-wiki asset); empty when neither fires.
+  const standardsContext = resolveStandardsContext(`${options.type}:${options.name}`, stash);
+
   const prompt = buildProposePrompt({
     type: options.type,
     name: options.name,
     task: options.task,
+    ...(standardsContext.trim() ? { standardsContext } : {}),
     draftFilePath: resolvedDraftPath,
   });
 

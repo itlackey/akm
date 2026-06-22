@@ -49,6 +49,7 @@ import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, RecombineResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import {
   decayUnseenRecombineHypotheses,
   findMatchingRecombineHypothesis,
@@ -320,12 +321,17 @@ function readBody(entry: DbIndexedEntry): string {
 }
 
 /** Assemble the per-cluster user prompt fed to the recombine LLM. */
-export function buildClusterPrompt(cluster: MemoryCluster): string {
+export function buildClusterPrompt(cluster: MemoryCluster, standardsContext = ""): string {
   const lines: string[] = [
     `Shared signal: ${cluster.signature}`,
     `Cluster of ${cluster.members.length} related memories:`,
     "",
   ];
+  if (standardsContext.trim()) {
+    lines.push("Standards to follow (the rulebook for this target):");
+    lines.push(standardsContext.trim());
+    lines.push("");
+  }
   for (const m of cluster.members) {
     lines.push(`[memory:${m.entry.name}]`);
     if (m.entry.description) lines.push(`Description: ${m.entry.description}`);
@@ -497,6 +503,10 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
   // run — everything else is decayed after the loop.
   const seenThisRun = new Set<string>();
 
+  // Recombine output is knowledge/lesson (non-wiki) → stash authoring
+  // standards. Resolved ONCE per run and passed to each cluster prompt.
+  const standardsContext = resolveStashStandards(stashDir);
+
   try {
     for (const cluster of clusters) {
       if (opts.signal?.aborted) {
@@ -505,7 +515,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
       }
       clustersFormed += 1;
 
-      const prompt = buildClusterPrompt(cluster);
+      const prompt = buildClusterPrompt(cluster, standardsContext);
       const raw = await llmFn(prompt);
       const generalization = parseGeneralization(raw);
 
