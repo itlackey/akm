@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0-beta.36] — 2026-06-22
+
+### Added
+
+- **Stash standards + wiki schemas are surfaced to authoring agents at write
+  time.** When an agent edits a page under `wikis/<name>/`, that wiki's
+  `schema.md` body is injected into the prompt; when it creates/edits a non-wiki
+  asset, the bodies of `category: convention`/`meta` `fact` assets are injected.
+  Two mutually-exclusive features selected by target type, sharing one
+  `standardsContext` prompt seam. Wired into reflect, propose, and every
+  improve authoring pass (distill, consolidate, recombine, procedural, extract,
+  schema-repair). (#642)
+- **Unified, validator-sourced authoring-rules seam.** A new
+  `authoringRulesForType(type)` injects the hard authoring rules (no
+  pseudo-frontmatter in body, exactly two `---` fences, description/`when_to_use`
+  length + shape) into every authoring prompt. The numeric bounds live in one
+  module that the validators import, so the prompt can no longer drift from what
+  the gate enforces. (#645)
+
+### Fixed
+
+- **High-salience reflect lane now reflects each asset at most once.** The
+  `#608` admission gate lacked the cooldown its sibling high-retrieval gate has,
+  so zero-feedback assets were re-selected on every run (auto-accept emits
+  `promoted`, not `feedback`), burning LLM calls and churning assets. (#643)
+- **Stuck validation-failing proposals no longer dead-end.** The triage drain no
+  longer overwrites an `auto-rejected` gate stamp with a misleading
+  `auto-accepted` (the failure stays truthful and visible). A bounded,
+  content-preserving auto-repair (strip pseudo-frontmatter / stray `---`, repair
+  truncated descriptions) runs at the promote boundary and re-validates — fixable
+  proposals promote; genuinely unrepairable ones stay `pending` for manual
+  review, with nothing fabricated and validation never bypassed. (#645)
+- Corrected a prompt/validator drift where the distill system prompt asked for an
+  80–200 char description while the gate enforced 20–400. (#645)
+
 ## [0.9.0-beta.35] — 2026-06-21
 
 ### Fixed
