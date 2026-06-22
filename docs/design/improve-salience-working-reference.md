@@ -243,6 +243,19 @@ equivalent.
   `TYPE_HINTS` fallback (`prompts.ts:54`, NOT removed) for that type. To prevent
   cross-type leakage, `resolveStashStandards` now EXCLUDES `facts/conventions/assets/*`
   so a `command` author never receives the `skill` convention.
+  - **Default templates seeded by `akm init`:** the stash skeleton now ships
+    starter `facts/conventions/assets/<type>.md` templates for the authored types
+    (`lesson, skill, command, agent, knowledge, memory, workflow, script, fact`;
+    `wiki`/`env`/`secret` excluded). They live under
+    `src/assets/stash-skeleton/facts/conventions/assets/` and are mirrored
+    recursively into the stash by `copyStashSkeleton`. `akm init` now seeds
+    UNCONDITIONALLY (not only on first create), so re-running it backfills any
+    missing skeleton/convention/meta files — absent-only, never clobbering a
+    user-edited template. Each template carries `category: convention`, expands
+    the matching `TYPE_HINTS` one-liner into soft starter guidance, and states
+    in-body that it is advice not enforced. The HARD boundary holds: templates
+    carry **no** validator-rejecting rules, so editing/deleting one cannot weaken
+    the gate (#645).
 
 Dispatch: `resolveStandardsContext(ref, stashRoot)` (resolve-standards-context.ts) is
 **mutually exclusive at the A/B boundary**: genuine wiki page → `loadWikiSchema().body`

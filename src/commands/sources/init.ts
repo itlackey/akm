@@ -96,10 +96,13 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
   // Ensure the default stash is a local git repo (no remote required)
   ensureGitRepo(stashDir);
 
-  if (created) {
-    copyStashSkeleton(stashDir);
-    scaffoldStashMeta(stashDir);
-  }
+  // Run seeding UNCONDITIONALLY (not just when the stash was newly created) so
+  // re-running `akm init` on an existing stash backfills any missing skeleton
+  // files — the README, the per-type SOFT convention templates under
+  // facts/conventions/assets/, and the `.meta/index.md` orientation doc. Both
+  // helpers are absent-only: they never overwrite a file a user has edited.
+  copyStashSkeleton(stashDir);
+  scaffoldStashMeta(stashDir);
 
   // Persist stashDir in config.json
   const configPath = getConfigPath();

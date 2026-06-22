@@ -25,6 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   source of validator-rejecting rules). The general convention/meta resolver now
   excludes `facts/conventions/assets/*` so per-type guidance never leaks
   un-type-scoped into other authoring flows. (#646)
+- **`akm init` now seeds default per-type SOFT convention templates.** Starter
+  `facts/conventions/assets/<type>.md` templates ship in the stash skeleton for
+  the authored types (`lesson, skill, command, agent, knowledge, memory,
+  workflow, script, fact`; `wiki`/`env`/`secret` excluded) so a stash owner has
+  an editable starting point. Each expands the matching built-in `TYPE_HINTS`
+  one-liner into soft starter guidance, carries `category: convention`
+  frontmatter, and states in-body that it is advice, not enforced — it carries
+  **no** validator-rejecting rules, so editing or deleting one cannot weaken the
+  gate (#645). The stash-skeleton copy is now recursive (preserving nested
+  subpaths), and `akm init` seeds **unconditionally** rather than only on first
+  create: re-running it on an existing stash backfills any missing skeleton,
+  convention, or `.meta/index.md` files. Seeding stays absent-only and never
+  overwrites a user-edited file. (#646)
 
 ## [0.9.0-beta.36] — 2026-06-22
 
