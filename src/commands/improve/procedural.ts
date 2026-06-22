@@ -31,6 +31,7 @@ import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, ProceduralCompilationResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
 import { closeDatabase, type DbIndexedEntry, getAllEntries, openExistingDatabase } from "../../indexer/db/db";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
@@ -204,12 +205,17 @@ export function deriveProceduralWorkflowRef(cluster: SequenceCluster): string {
 // ── Prompt + parse ──────────────────────────────────────────────────────────────
 
 /** Assemble the per-sequence user prompt fed to the procedural LLM. */
-export function buildProceduralPrompt(cluster: SequenceCluster): string {
+export function buildProceduralPrompt(cluster: SequenceCluster, standardsContext = ""): string {
   const lines: string[] = [
     `A recurring successful action sequence observed across ${cluster.members.length} sessions.`,
     "",
-    "Ordered actions (turn EACH into exactly one step, in this order):",
   ];
+  if (standardsContext.trim()) {
+    lines.push("Standards to follow (the rulebook for this target):");
+    lines.push(standardsContext.trim());
+    lines.push("");
+  }
+  lines.push("Ordered actions (turn EACH into exactly one step, in this order):");
   cluster.normalized.forEach((step, i) => {
     lines.push(`${i + 1}. ${step}`);
   });
@@ -378,6 +384,10 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
     return finish({ sequencesScanned, clustersFormed: 0 });
   }
 
+  // Procedural output is a workflow (non-wiki) → stash authoring standards.
+  // Resolved ONCE per run and passed to each sequence prompt.
+  const standardsContext = resolveStashStandards(stashDir);
+
   for (const cluster of clusters) {
     if (opts.signal?.aborted) {
       warnings.push("aborted-mid-run");
@@ -386,7 +396,7 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
     clustersFormed += 1;
     const workflowRef = deriveProceduralWorkflowRef(cluster);
 
-    const prompt = buildProceduralPrompt(cluster);
+    const prompt = buildProceduralPrompt(cluster, standardsContext);
     const raw = await llmFn(prompt);
     const doc = parseProceduralWorkflow(raw, cluster.normalized.length);
 

@@ -34,6 +34,7 @@ import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import {
   type ExtractedSessionRow,
   getExtractedSessionsMap,
@@ -473,6 +474,10 @@ async function processSession(
   // file read is incurred.
   prior: ExtractedSessionRow | undefined,
   force: boolean,
+  // Stash authoring standards (convention/meta fact bodies) for non-wiki
+  // output. Resolved ONCE per run by the caller and threaded in so facts are
+  // not re-read per session. Empty string when none exist.
+  standardsContext: string,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
   let data: ReturnType<SessionLogHarness["readSession"]>;
@@ -572,7 +577,12 @@ async function processSession(
     }
   }
 
-  const prompt = buildExtractPrompt({ data, events: filtered.events, inlineRefs: data.inlineRefs });
+  const prompt = buildExtractPrompt({
+    data,
+    events: filtered.events,
+    inlineRefs: data.inlineRefs,
+    ...(standardsContext.trim() ? { standardsContext } : {}),
+  });
 
   // #561 — ADDITIVE session indexing. Generate + write the session asset
   // (`sessions/<harness>/<id>.md`). FAIL-OPEN: any failure only records a
@@ -1046,6 +1056,11 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     };
   }
 
+  // Stash authoring standards (convention/meta fact bodies) for non-wiki
+  // extract output. Resolved ONCE per run and threaded into each session's
+  // prompt so facts are not re-read per session.
+  const extractStandardsContext = resolveStashStandards(stashDir);
+
   for (const summary of candidates) {
     // #602 — the already-extracted skip moved INTO processSession (the content
     // hash needs the session body, only available after readSession). The prior
@@ -1112,6 +1127,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         schemaSimilarityCtx,
         prior,
         options.force === true,
+        extractStandardsContext,
       );
       sessions.push(result);
       // #626 — triage aggregation. A session reached the triage gate only when it

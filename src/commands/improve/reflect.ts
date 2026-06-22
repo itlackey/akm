@@ -38,6 +38,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { lookup } from "../../indexer/indexer";
 import {
   type AgentConfig,
@@ -986,6 +987,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
   // reproducing proposals that have already been reviewed and refused.
   const rejectedProposals = readRejectedProposals(stash, options.ref);
+  // Standards "rulebook" for this target — wiki schema (wiki page) or stash
+  // convention/meta facts (non-wiki asset); empty when neither fires.
+  const standardsContext = resolveStandardsContext(options.ref, stash);
 
   // 5. Spawn the agent — with optional Self-Refine loop (R-1 / #372).
   //
@@ -1058,6 +1062,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         ...(schemaHints.length > 0 ? { schemaHints } : {}),
         ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
         ...(options.task ? { task: options.task } : {}),
+        ...(standardsContext.trim() ? { standardsContext } : {}),
         ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
         ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
         // R-1: inject prior draft as self-critique target on iterations > 0

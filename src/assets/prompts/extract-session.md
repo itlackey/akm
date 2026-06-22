@@ -28,7 +28,7 @@ Things NOT to extract:
 - Started: {{STARTED_AT}}
 - Ended: {{ENDED_AT}}
 - Project hint: {{PROJECT_HINT}}
-
+{{STANDARDS}}
 ## Filtered session transcript
 
 The transcript below has already had read-only `akm` meta-ops and platform boilerplate stripped. Only content that might carry signal remains.

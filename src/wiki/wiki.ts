@@ -295,6 +295,44 @@ function readSchemaDescription(wikiDir: string): string | undefined {
   }
 }
 
+/**
+ * Load a wiki's `schema.md` body and frontmatter.
+ *
+ * Unlike {@link readSchemaDescription} (which returns only the frontmatter
+ * `description` for `listWikis` summaries), this returns the markdown **body**
+ * — everything after the closing `---` of the frontmatter — which is where the
+ * page contract, operations, and hard rules live. The body is the rulebook
+ * injected into the write-time prompt for wiki-page edits.
+ *
+ * Swallow-and-degrade like the existing reader: a missing file, an unresolvable
+ * wiki dir, or malformed content yields `{ body: "", frontmatter: {} }`. Never
+ * throws.
+ */
+export function loadWikiSchema(
+  stashRoot: string,
+  name: string,
+): { body: string; frontmatter: Record<string, unknown> } {
+  const empty = { body: "", frontmatter: {} as Record<string, unknown> };
+  let wikiDir: string;
+  try {
+    wikiDir = resolveWikiDir(stashRoot, name);
+  } catch {
+    return empty;
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(wikiDir, SCHEMA_MD), "utf8");
+  } catch {
+    return empty;
+  }
+  try {
+    const parsed = parseFrontmatter(raw);
+    return { body: parsed.content, frontmatter: parsed.data };
+  } catch {
+    return empty;
+  }
+}
+
 function toIsoDate(ms: number): string {
   return new Date(ms).toISOString();
 }

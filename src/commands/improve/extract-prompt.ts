@@ -120,6 +120,12 @@ export interface ExtractPromptInput {
   events: SessionEvent[];
   /** Inline refs the agent already preserved during the session. */
   inlineRefs: InlineRefMention[];
+  /**
+   * Stash authoring standards (convention/meta fact bodies). Extract output is
+   * memories/lessons/knowledge (non-wiki). Empty/omitted when none exist;
+   * rendered to an empty string in the template when absent.
+   */
+  standardsContext?: string;
 }
 
 /**
@@ -166,6 +172,11 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
   const ref = input.data.ref;
   const startedAt = ref.startedAt ? new Date(ref.startedAt).toISOString() : "unknown";
   const endedAt = ref.endedAt ? new Date(ref.endedAt).toISOString() : "unknown";
+  // Optional standards block — rendered to the lead-in + body when present,
+  // or an empty string (no section) when absent. Gated on non-empty.
+  const standards = input.standardsContext?.trim()
+    ? `\n## Standards to follow (the rulebook for this target)\n\n${input.standardsContext.trim()}\n`
+    : "";
   return promptTemplate
     .replace("{{HARNESS}}", ref.harness)
     .replace("{{TITLE}}", ref.title ?? "(no title)")
@@ -173,6 +184,7 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
     .replace("{{ENDED_AT}}", endedAt)
     .replace("{{PROJECT_HINT}}", ref.projectHint ?? "(no project hint)")
     .replace("{{ALREADY_PRESERVED}}", formatAlreadyPreserved(input.inlineRefs))
+    .replace("{{STANDARDS}}", standards)
     .replace("{{TRANSCRIPT}}", formatTranscript(input.events));
 }
 
