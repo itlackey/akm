@@ -506,7 +506,7 @@ export function saveGitStash(
   name?: string,
   message?: string,
   writableOverride?: boolean,
-  options?: { push?: boolean; repoDir?: string },
+  options?: { push?: boolean; repoDir?: string; paths?: string[] },
 ): SaveGitStashResult {
   // `push: false` (from `akm sync --no-push`) commits but never pushes, even
   // when the stash is writable with a remote configured.
@@ -559,31 +559,34 @@ export function saveGitStash(
     return { committed: false, pushed: false, skipped: false, output: "nothing to commit, working tree clean" };
   }
 
-  // Safety check (#476): when the stash dir is shared with a non-akm project
-  // (stash root == project repo root), `git add -A` would stage every dirty
-  // file in the user's working tree and push their unrelated WIP to the
-  // stash's remote. Refuse if any dirty path is outside the known akm-
-  // managed subtrees (TYPE_DIRS + `.akm/` state).
-  const nonAkmDirty = collectNonAkmDirtyPaths(statusResult.stdout);
-  if (nonAkmDirty.length > 0) {
-    const sample = nonAkmDirty.slice(0, 10);
-    const more = nonAkmDirty.length > sample.length ? `\n  ...and ${nonAkmDirty.length - sample.length} more` : "";
-    throw new Error(
-      `refusing to push: stash repo at ${repoDir} has uncommitted non-akm changes:\n` +
-        sample.map((p) => `  ${p}`).join("\n") +
-        more +
-        `\nCommit or stash these manually before running an akm push. ` +
-        `Akm-managed paths are: ${Object.values(TYPE_DIRS).join(", ")}, .akm/`,
-    );
+  // Scoped staging (#476 + the auto-sync incident): NEVER refuse akm's commit
+  // because unrelated non-akm files exist in the working tree. When the stash
+  // dir is shared with a non-akm project (stash root == project repo root), a
+  // blunt `git add -A` would sweep the user's unrelated WIP into the stash's
+  // remote. We avoid that by SCOPING what we stage, not by refusing the commit.
+  //
+  // Precedence:
+  //   1. Explicit modified-file list (`options.paths`) — stage exactly those.
+  //   2. Managed pathspecs (TYPE_DIRS values + `.akm`) that exist on disk —
+  //      stages everything akm owns and, by construction, never stages non-akm
+  //      WIP. This preserves the #476 protection WITHOUT refusing.
+  //   3. Last-resort `git add -A` — ONLY when neither an explicit list nor any
+  //      managed pathspec can be resolved. This is the maintainer-approved
+  //      "or all files if we cannot determine the exact file list" fallback and
+  //      is the one (rare) path that could include unrelated non-akm files.
+  if (!stageScopedChanges(repoDir, options?.paths)) {
+    throw new Error(`git add failed while staging akm changes in ${repoDir}`);
   }
 
-  // Stage and commit — supply fallback identity so fresh environments without
-  // user.name/user.email configured can always commit to the default stash.
-  // `add -A` is safe here because nonAkmDirty was just verified empty.
-  const addResult = runGit(["-C", repoDir, "add", "-A"]);
-  if (addResult.status !== 0) {
-    throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
+  // Nothing actually staged → don't create an empty commit. This happens when
+  // only non-akm files were dirty (precedence 2 staged nothing).
+  const stagedResult = runGit(["-C", repoDir, "diff", "--cached", "--quiet"]);
+  if (stagedResult.status === 0) {
+    return { committed: false, pushed: false, skipped: false, output: "nothing to commit" };
   }
+
+  // Commit — supply fallback identity so fresh environments without
+  // user.name/user.email configured can always commit to the default stash.
   const commitResult = runGit([
     "-C",
     repoDir,
@@ -621,6 +624,54 @@ export function saveGitStash(
     skipped: false,
     output: (commitResult.stdout + pushResult.stdout).trim() || "changes committed and pushed",
   };
+}
+
+/**
+ * Stage akm's changes in `repoDir` using the scoped-staging precedence
+ * documented at the call site (#476). Returns `false` only when a `git add`
+ * subprocess fails; returns `true` otherwise (including when nothing matched —
+ * the caller then detects "nothing staged" via `git diff --cached --quiet`).
+ *
+ * @param paths Optional explicit repo-relative paths akm wrote this run. When
+ *   provided and non-empty, exactly those are staged (chunked to stay under
+ *   argv length limits). Otherwise we fall back to the managed pathspecs, and
+ *   finally to `git add -A` only if no managed pathspec exists on disk.
+ */
+function stageScopedChanges(repoDir: string, paths?: string[]): boolean {
+  // Precedence 1: explicit modified-file list.
+  const explicit = (paths ?? []).filter((p) => typeof p === "string" && p.length > 0);
+  if (explicit.length > 0) {
+    return addPathspecsChunked(repoDir, explicit);
+  }
+
+  // Precedence 2: managed pathspecs that exist on disk (TYPE_DIRS + `.akm`).
+  const managed = [...Object.values(TYPE_DIRS), ".akm"].filter((dir) => fs.existsSync(path.join(repoDir, dir)));
+  if (managed.length > 0) {
+    return addPathspecsChunked(repoDir, managed);
+  }
+
+  // Precedence 3 (last resort): nothing akm-managed resolved on disk. Stage
+  // everything. This is the ONLY branch that can include unrelated non-akm
+  // files — it is the explicit, maintainer-approved "or all files if we cannot
+  // determine the exact file list" fallback and should be rare/never in
+  // practice (a git-backed stash always has at least one managed subtree once
+  // akm has written to it).
+  const addAll = runGit(["-C", repoDir, "add", "-A"]);
+  return addAll.status === 0;
+}
+
+/**
+ * Run `git add -- <pathspec>...` in chunks so a very large path list never
+ * exceeds the OS argv-length limit. Each chunk must succeed.
+ */
+function addPathspecsChunked(repoDir: string, pathspecs: string[]): boolean {
+  const CHUNK = 500;
+  for (let i = 0; i < pathspecs.length; i += CHUNK) {
+    const chunk = pathspecs.slice(i, i + CHUNK);
+    const result = runGit(["-C", repoDir, "add", "--", ...chunk]);
+    if (result.status !== 0) return false;
+  }
+  return true;
 }
 
 function findGitStashByTarget(stashes: SourceConfigEntry[], target: string): SourceConfigEntry | undefined {
@@ -730,45 +781,7 @@ export function classifyCloneFailure(
   return `Failed to clone ${url}: ${detail}`;
 }
 
-// ── Stash-safety helpers (#476) ──────────────────────────────────────────────
-
-/**
- * Inspect `git status --porcelain` output and return every dirty path that is
- * NOT inside an akm-managed subtree. Used by `runUpstreamPush` to refuse
- * pushing unrelated WIP when a writable stash shares its root with a project
- * repo.
- *
- * Porcelain v1 format: `XY <path>` or `XY <orig> -> <new>` for renames. We
- * key off the post-rename path (or the only path) — that is the working-tree
- * file at risk of being staged by `git add -A`.
- */
-function collectNonAkmDirtyPaths(porcelainOutput: string): string[] {
-  const akmDirs = new Set<string>(Object.values(TYPE_DIRS));
-  const result: string[] = [];
-  for (const rawLine of porcelainOutput.split("\n")) {
-    const line = rawLine.replace(/\r$/, "");
-    if (line.length === 0) continue;
-    // Skip the 2-char status code + 1 space.
-    let p = line.length > 3 ? line.slice(3) : "";
-    // Renames / copies: `from -> to`. Stage decision applies to `to`.
-    const arrow = p.lastIndexOf(" -> ");
-    if (arrow !== -1) {
-      p = p.slice(arrow + 4);
-    }
-    // Strip surrounding quotes for paths with special chars.
-    if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
-      p = p.slice(1, -1);
-    }
-    if (!p) continue;
-    const segments = p.split("/");
-    const top = segments[0];
-    if (top === ".akm" || akmDirs.has(top)) continue;
-    result.push(p);
-  }
-  return result;
-}
-
 // ── Exports ─────────────────────────────────────────────────────────────────
 
-export { collectNonAkmDirtyPaths, ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };
+export { ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };
 // resolveWritableOverride is exported at its declaration above.
