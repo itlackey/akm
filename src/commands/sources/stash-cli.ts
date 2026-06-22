@@ -51,12 +51,21 @@ export const initCommand = defineJsonCommand({
   },
   args: {
     dir: { type: "string", description: "Custom stash directory path (default: ~/akm)" },
+    "set-default": {
+      type: "boolean",
+      description:
+        "Make --dir the default stash (write stashDir to config.json). Without this, `akm init --dir X` scaffolds X but leaves your existing default stash unchanged.",
+      default: false,
+    },
   },
   async run({ args }) {
     // Accept both historical spellings for backwards compatibility with
     // older docs/scripts that used `--stashDir`.
     const legacyDir = parseFlagValue(process.argv, "--stashDir") ?? parseFlagValue(process.argv, "--stash-dir");
-    const result = await akmInit({ dir: args.dir ?? legacyDir });
+    const result = await akmInit({
+      dir: args.dir ?? legacyDir,
+      setDefault: getHyphenatedBoolean(args, "set-default"),
+    });
     output("init", result);
   },
 });

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **BEHAVIOR CHANGE — `akm init --dir <path>` no longer silently repoints your
+  default stash.** Previously, `akm init --dir X` unconditionally wrote
+  `stashDir: X` to `config.json` whenever `X` differed from the configured
+  default — so initializing a throwaway or secondary stash (e.g.
+  `akm init --dir /tmp/scratch`) would hijack the user's real default stash
+  pointer (the footgun documented in `memory:akm-init-persists-stashdir-warning`).
+  Now `init` persists `stashDir` to config **only** when one of the following
+  holds: (a) **no `--dir`** was provided (the default `~/akm` setup flow —
+  unchanged), (b) `--dir` was provided and **no `stashDir` exists in config yet**
+  (first-time bootstrap), or (c) `--dir` was provided **with the new
+  `--set-default` flag** (explicit opt-in). Otherwise `init` still scaffolds and
+  backfills the target dir exactly as before, but **leaves your default stash
+  pointer untouched** and prints:
+  `Your default stash is unchanged (<existing>). Re-run with --set-default to make <dir> the default.`
+  The `InitResponse` JSON gains `defaultStashUpdated: boolean` and an optional
+  `previousStashDir`. To make a `--dir` target your default, pass
+  `akm init --dir <path> --set-default`. (`akm setup` is unaffected — it remains
+  the explicit configuration flow and always sets the default.)
+
 ### Added
 
 - **Per-type SOFT authoring conventions are now user-editable stash facts.** A

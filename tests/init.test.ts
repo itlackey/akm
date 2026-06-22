@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { akmInit } from "../src/commands/sources/init";
+import { loadUserConfig, saveConfig } from "../src/core/config/config";
 import { resolveTypeConventions } from "../src/core/standards/resolve-type-conventions";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
@@ -146,6 +147,67 @@ describe("akm init", () => {
     // The nested asset landed at its mirrored subpath, not flattened to root.
     expect(fs.existsSync(conventionPath(stashDir, "skill"))).toBe(true);
     expect(fs.existsSync(path.join(stashDir, "skill.md"))).toBe(false);
+  });
+
+  // ── Default-stash persist decision matrix (#footgun: --dir must not clobber) ──
+  describe("default stash persist decision matrix", () => {
+    test("no --dir, no existing stashDir → default-path init persists stashDir", async () => {
+      expect(loadUserConfig().stashDir).toBeUndefined();
+      const result = await akmInit();
+      expect(result.defaultStashUpdated).toBe(true);
+      expect(result.previousStashDir).toBeUndefined();
+      expect(loadUserConfig().stashDir).toBe(result.stashDir);
+    });
+
+    test("--dir X, NO existing stashDir → first-time bootstrap persists X", async () => {
+      const dirX = makeTempDir("akm-init-bootstrap-");
+      fs.rmSync(dirX, { recursive: true, force: true });
+      expect(loadUserConfig().stashDir).toBeUndefined();
+      const result = await akmInit({ dir: dirX });
+      expect(result.defaultStashUpdated).toBe(true);
+      expect(loadUserConfig().stashDir).toBe(dirX);
+    });
+
+    test("--dir X, existing stashDir=Y, NO --set-default → Y preserved, X scaffolded", async () => {
+      const dirY = makeTempDir("akm-init-existing-Y-");
+      saveConfig({ ...loadUserConfig(), stashDir: dirY });
+
+      const dirX = makeTempDir("akm-init-secondary-X-");
+      fs.rmSync(dirX, { recursive: true, force: true });
+      const result = await akmInit({ dir: dirX });
+
+      // Config still points at Y — default pointer left alone.
+      expect(loadUserConfig().stashDir).toBe(dirY);
+      expect(result.stashDir).toBe(dirX);
+      expect(result.defaultStashUpdated).toBe(false);
+      expect(result.previousStashDir).toBe(dirY);
+
+      // ...but X is still fully scaffolded (regression for the non-persist case).
+      expect(fs.existsSync(path.join(dirX, "lessons"))).toBe(true);
+      expect(fs.existsSync(path.join(dirX, "facts"))).toBe(true);
+      expect(fs.existsSync(conventionPath(dirX, "skill"))).toBe(true);
+    });
+
+    test("--dir X, existing stashDir=Y, WITH --set-default → config now points at X", async () => {
+      const dirY = makeTempDir("akm-init-setdefault-Y-");
+      saveConfig({ ...loadUserConfig(), stashDir: dirY });
+
+      const dirX = makeTempDir("akm-init-setdefault-X-");
+      fs.rmSync(dirX, { recursive: true, force: true });
+      const result = await akmInit({ dir: dirX, setDefault: true });
+
+      expect(loadUserConfig().stashDir).toBe(dirX);
+      expect(result.defaultStashUpdated).toBe(true);
+      expect(result.previousStashDir).toBeUndefined();
+    });
+
+    test("--dir X where X equals existing stashDir → no-op, no spurious rewrite", async () => {
+      const dirX = makeTempDir("akm-init-equal-");
+      saveConfig({ ...loadUserConfig(), stashDir: dirX });
+      const result = await akmInit({ dir: dirX });
+      expect(result.defaultStashUpdated).toBe(false);
+      expect(loadUserConfig().stashDir).toBe(dirX);
+    });
   });
 
   test("source convention templates ship under src/assets and are picked up by copy-assets", () => {
