@@ -25,6 +25,7 @@ import {
   DEFAULT_TYPE_ENCODING_WEIGHTS,
   getAssetSalience,
   getConsecutiveNoOps,
+  isContentEncodingRow,
   recordNoOp,
   resetConsecutiveNoOps,
   upsertAssetSalience,
@@ -464,6 +465,178 @@ describe("state.db persistence: upsertAssetSalience / getAssetSalience", () => {
       upsertAssetSalience(db, "lesson:beta", vector, NOW);
       const row = getAssetSalience(db, "lesson:beta");
       expect(row?.consecutive_no_ops).toBe(2);
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── #644 — encoding provenance: content scores survive the type-stub fallback ──
+
+describe("#644 encoding_salience provenance (content vs type-stub)", () => {
+  // A genuine content-derived score for an agent. The agent type stub is 0.9
+  // (DEFAULT_TYPE_ENCODING_WEIGHTS.agent); 0.65 mimics the issue's measured
+  // community-manager value (content formula ~0.65 < stub 0.9).
+  const CONTENT_SCORE = 0.65;
+
+  test("computeSalience tags encodingSource 'content' when encodingSalience is supplied", () => {
+    const v = computeSalience({ ref: "agent:x", type: "agent", retrievalFreq: 0, encodingSalience: CONTENT_SCORE });
+    expect(v.encoding).toBeCloseTo(CONTENT_SCORE, 6);
+    expect(v.encodingSource).toBe("content");
+  });
+
+  test("computeSalience tags encodingSource 'type-stub' when encodingSalience is absent", () => {
+    const v = computeSalience({ ref: "agent:x", type: "agent", retrievalFreq: 0 });
+    expect(v.encoding).toBeCloseTo(DEFAULT_TYPE_ENCODING_WEIGHTS.agent, 6);
+    expect(v.encodingSource).toBe("type-stub");
+  });
+
+  test("upsert persists encoding_source provenance", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      const content = computeSalience({
+        ref: "agent:c",
+        type: "agent",
+        retrievalFreq: 0,
+        encodingSalience: CONTENT_SCORE,
+      });
+      upsertAssetSalience(db, "agent:c", content, NOW);
+      expect(getAssetSalience(db, "agent:c")?.encoding_source).toBe("content");
+
+      const stub = computeSalience({ ref: "agent:s", type: "agent", retrievalFreq: 0 });
+      upsertAssetSalience(db, "agent:s", stub, NOW);
+      expect(getAssetSalience(db, "agent:s")?.encoding_source).toBe("type-stub");
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a later type-stub upsert does NOT clobber a stored content-derived score (THE #644 bug)", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      // 1. Distill writes a real content score (0.65, below the agent stub 0.9).
+      const distillVector = computeSalience({
+        ref: "agent:community-manager",
+        type: "agent",
+        retrievalFreq: 0,
+        encodingSalience: CONTENT_SCORE,
+      });
+      upsertAssetSalience(db, "agent:community-manager", distillVector, NOW - DAY_MS);
+      expect(getAssetSalience(db, "agent:community-manager")?.encoding_salience).toBeCloseTo(CONTENT_SCORE, 6);
+
+      // 2. A later improve run with NO encodingSalience would recompute the
+      //    type-weight stub (0.9). Pre-#644 this overwrote the real score.
+      const stubVector = computeSalience({ ref: "agent:community-manager", type: "agent", retrievalFreq: 0 });
+      expect(stubVector.encoding).toBeCloseTo(0.9, 6); // the stub
+      upsertAssetSalience(db, "agent:community-manager", stubVector, NOW);
+
+      // 3. The stored content score and provenance MUST survive.
+      const row = getAssetSalience(db, "agent:community-manager");
+      expect(row?.encoding_salience).toBeCloseTo(CONTENT_SCORE, 6);
+      expect(row?.encoding_source).toBe("content");
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a content upsert DOES overwrite a prior type-stub row (real score wins)", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      // 1. First seen as a stub (never content-scored).
+      upsertAssetSalience(
+        db,
+        "agent:a",
+        computeSalience({ ref: "agent:a", type: "agent", retrievalFreq: 0 }),
+        NOW - DAY_MS,
+      );
+      expect(getAssetSalience(db, "agent:a")?.encoding_salience).toBeCloseTo(0.9, 6);
+
+      // 2. Distill later computes a real score → it must replace the stub.
+      upsertAssetSalience(
+        db,
+        "agent:a",
+        computeSalience({ ref: "agent:a", type: "agent", retrievalFreq: 0, encodingSalience: CONTENT_SCORE }),
+        NOW,
+      );
+      const row = getAssetSalience(db, "agent:a");
+      expect(row?.encoding_salience).toBeCloseTo(CONTENT_SCORE, 6);
+      expect(row?.encoding_source).toBe("content");
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a content upsert is updated by a newer content upsert (content→content always wins)", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      upsertAssetSalience(
+        db,
+        "agent:a",
+        computeSalience({ ref: "agent:a", type: "agent", retrievalFreq: 0, encodingSalience: 0.65 }),
+        NOW - DAY_MS,
+      );
+      upsertAssetSalience(
+        db,
+        "agent:a",
+        computeSalience({ ref: "agent:a", type: "agent", retrievalFreq: 0, encodingSalience: 0.42 }),
+        NOW,
+      );
+      const row = getAssetSalience(db, "agent:a");
+      expect(row?.encoding_salience).toBeCloseTo(0.42, 6);
+      expect(row?.encoding_source).toBe("content");
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("isContentEncodingRow: 'content' true, 'type-stub' false", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      upsertAssetSalience(
+        db,
+        "agent:c",
+        computeSalience({ ref: "agent:c", type: "agent", retrievalFreq: 0, encodingSalience: CONTENT_SCORE }),
+        NOW,
+      );
+      upsertAssetSalience(db, "agent:s", computeSalience({ ref: "agent:s", type: "agent", retrievalFreq: 0 }), NOW);
+      const contentRow = getAssetSalience(db, "agent:c");
+      const stubRow = getAssetSalience(db, "agent:s");
+      expect(contentRow && isContentEncodingRow(contentRow, "agent")).toBe(true);
+      expect(stubRow && isContentEncodingRow(stubRow, "agent")).toBe(false);
+    } finally {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("isContentEncodingRow legacy NULL-provenance heuristic: differs-from-stub ⇒ content", () => {
+    const { db, tmpDir } = openTestStateDb();
+    try {
+      // Simulate a legacy row written before migration 015 (encoding_source NULL)
+      // whose stored value differs from the type stub — i.e. a real score that was
+      // never re-clobbered. The heuristic must treat it as content.
+      db.prepare(
+        `INSERT INTO asset_salience
+           (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+         VALUES (?, ?, 0, 0, 0, 0, ?, NULL)`,
+      ).run("memory:legacy-real", 0.83, NOW);
+      // And a legacy row sitting exactly on the type stub — treat as a stub.
+      db.prepare(
+        `INSERT INTO asset_salience
+           (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+         VALUES (?, ?, 0, 0, 0, 0, ?, NULL)`,
+      ).run("agent:legacy-stub", DEFAULT_TYPE_ENCODING_WEIGHTS.agent, NOW);
+
+      const realRow = getAssetSalience(db, "memory:legacy-real");
+      const stubRow = getAssetSalience(db, "agent:legacy-stub");
+      expect(realRow?.encoding_source).toBeNull();
+      expect(realRow && isContentEncodingRow(realRow, "memory")).toBe(true);
+      expect(stubRow && isContentEncodingRow(stubRow, "agent")).toBe(false);
     } finally {
       db.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });

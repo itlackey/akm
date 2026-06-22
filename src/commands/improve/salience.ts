@@ -217,7 +217,25 @@ export interface SalienceVector {
    * normalized to [0,1]. Used for ranking by every selector.
    */
   rankScore: number;
+  /**
+   * Provenance of the `encoding` sub-score (#644):
+   *   "content"   — `inputs.encodingSalience` was supplied (a real content-derived
+   *                 score from `scoreEncodingSalience`).
+   *   "type-stub" — fell back to `DEFAULT_TYPE_ENCODING_WEIGHTS` (no content score).
+   *
+   * `computeSalience` always sets this. Optional only so hand-built vectors (in
+   * tests and ad-hoc callers) need not specify it — `upsertAssetSalience` defaults
+   * an absent value to `"type-stub"`, which is the correct semantics for a vector
+   * built without a content-derived score.
+   *
+   * Persisted to `asset_salience.encoding_source` so a later improve run's
+   * type-stub fallback can no longer clobber a real content-derived score.
+   */
+  encodingSource?: EncodingSource;
 }
+
+/** Provenance tag for a stored `encoding_salience` value. */
+export type EncodingSource = "content" | "type-stub";
 
 // ── Core computation ─────────────────────────────────────────────────────────
 
@@ -236,6 +254,7 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   // Fall back to the type-importance stub only when the caller has not yet
   // computed a content-based score (e.g. on older assets before the first
   // staleness refresh runs).
+  const encodingSource: EncodingSource = inputs.encodingSalience !== undefined ? "content" : "type-stub";
   const encoding =
     inputs.encodingSalience !== undefined
       ? Math.min(1, Math.max(0, inputs.encodingSalience))
@@ -329,7 +348,7 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   const rawRankScore = (we * encoding + wo * outcome + wr * retrieval) * sizePenalty;
   const rankScore = Math.min(1, Math.max(0, rawRankScore));
 
-  return { encoding, outcome, retrieval, rankScore };
+  return { encoding, outcome, retrieval, rankScore, encodingSource };
 }
 
 // ── state.db persistence ─────────────────────────────────────────────────────
@@ -345,26 +364,89 @@ export interface AssetSalienceRow {
   rank_score: number;
   consecutive_no_ops: number;
   updated_at: number;
+  /**
+   * Provenance of `encoding_salience` (#644). `"content"` = real content-derived
+   * score; `"type-stub"` = type-weight fallback; `null` = legacy row (pre-#644
+   * migration 015) of unknown provenance. See {@link isContentEncodingRow}.
+   */
+  encoding_source: EncodingSource | null;
+}
+
+/**
+ * Does this row carry a genuine content-derived `encoding_salience` (#644)?
+ *
+ * Returns true when the provenance flag is `"content"`. For legacy rows
+ * (`encoding_source === null`, written before migration 015) we apply a
+ * conservative heuristic: treat the stored value as content-derived only when it
+ * does NOT equal the pure type-weight stub for the asset's type — because before
+ * the #644 fix every run overwrote real scores with the stub, a value that still
+ * differs from the stub must have been content-written and never re-clobbered.
+ * When the type cannot be determined (no `type` given) a null-provenance row is
+ * treated as a stub (the safe default).
+ */
+export function isContentEncodingRow(row: AssetSalienceRow, type?: string): boolean {
+  if (row.encoding_source === "content") return true;
+  if (row.encoding_source === "type-stub") return false;
+  // Legacy NULL provenance: differ-from-stub heuristic.
+  if (!type) return false;
+  const stub = DEFAULT_TYPE_ENCODING_WEIGHTS[type] ?? DEFAULT_ENCODING_SALIENCE;
+  return Math.abs(row.encoding_salience - stub) > 1e-9;
 }
 
 /**
  * Upsert salience scores for one asset into state.db.
  *
- * Idempotent: safe to call every run; updates all columns on conflict.
+ * Idempotent: safe to call every run; updates the outcome / retrieval / rank
+ * columns on conflict.
+ *
+ * #644 — encoding provenance guard: the `encoding_salience` + `encoding_source`
+ * columns are NOT lowered from a real content-derived score to a type-weight
+ * stub. When the stored row is `encoding_source = 'content'` and the incoming
+ * vector is a `type-stub` fallback, the stored encoding score and its provenance
+ * are preserved (only the other sub-scores and `rank_score` advance). A `content`
+ * write always wins; a `type-stub` write only seeds a row that has no content
+ * score yet. This stops the improve loop's type-weight fallback re-asserting the
+ * stub over a distill-written score on every run.
+ *
+ * NOTE: when the guard preserves the stored encoding score, the incoming
+ * `vector.rankScore` (computed from the stub encoding) is still written. Callers
+ * that want the rank_score to reflect the preserved content score should pass the
+ * stored content score back in as `inputs.encodingSalience` to `computeSalience`
+ * — which the improve loop does. The guard here is the defensive backstop.
  */
 export function upsertAssetSalience(db: Database, ref: string, vector: SalienceVector, now?: number): void {
   const ts = now ?? Date.now();
   db.prepare(
     `INSERT INTO asset_salience
-       (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at)
-     VALUES (?, ?, ?, ?, ?, 0, ?)
+       (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)
      ON CONFLICT(asset_ref) DO UPDATE SET
-       encoding_salience  = excluded.encoding_salience,
+       -- #644: never lower a real content-derived score to a type-weight stub.
+       -- Keep the stored encoding score + provenance when the stored row is
+       -- 'content' and the incoming write is a 'type-stub' fallback.
+       encoding_salience  = CASE
+         WHEN asset_salience.encoding_source = 'content' AND excluded.encoding_source = 'type-stub'
+           THEN asset_salience.encoding_salience
+           ELSE excluded.encoding_salience
+       END,
+       encoding_source    = CASE
+         WHEN asset_salience.encoding_source = 'content' AND excluded.encoding_source = 'type-stub'
+           THEN asset_salience.encoding_source
+           ELSE excluded.encoding_source
+       END,
        outcome_salience   = excluded.outcome_salience,
        retrieval_salience = excluded.retrieval_salience,
        rank_score         = excluded.rank_score,
        updated_at         = excluded.updated_at`,
-  ).run(ref, vector.encoding, vector.outcome, vector.retrieval, vector.rankScore, ts);
+  ).run(
+    ref,
+    vector.encoding,
+    vector.outcome,
+    vector.retrieval,
+    vector.rankScore,
+    ts,
+    vector.encodingSource ?? "type-stub",
+  );
 }
 
 /**
@@ -374,7 +456,7 @@ export function getAssetSalience(db: Database, ref: string): AssetSalienceRow | 
   const row = db
     .prepare(
       `SELECT asset_ref, encoding_salience, outcome_salience, retrieval_salience,
-              rank_score, consecutive_no_ops, updated_at
+              rank_score, consecutive_no_ops, updated_at, encoding_source
        FROM asset_salience WHERE asset_ref = ?`,
     )
     .get(ref);

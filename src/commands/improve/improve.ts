@@ -123,6 +123,7 @@ import {
   getAssetSalience,
   getConsecutiveNoOps,
   getLastUseMsByRef,
+  isContentEncodingRow,
   recordNoOp,
   resetConsecutiveNoOps,
   SALIENCE_NO_OP_DAMPEN_FACTOR,
@@ -3372,6 +3373,36 @@ async function runImprovePreparationStage(args: {
   const outcomeWeightEnabled = salienceConfig?.outcomeWeightEnabled === true;
   const salienceMap = new Map<string, ReturnType<typeof computeSalience>>();
   const nowForSalience = Date.now();
+
+  // #644 — preserve content-derived encoding scores across runs.
+  //
+  // Before computing the salience vector, load each ref's stored encoding score
+  // and its provenance. When the stored row carries a genuine content-derived
+  // score (written by the distill path via `scoreEncodingSalience`), pass that
+  // value back in as `inputs.encodingSalience` so `computeSalience` does NOT fall
+  // back to the type-weight stub — keeping both the persisted `encoding_salience`
+  // AND the derived `rank_score` keyed on real novelty/magnitude/prediction-error.
+  // Refs that have never been content-scored keep the type-weight stub fallback.
+  const storedEncodingByRef = new Map<string, number>();
+  {
+    let dbForStoredEncoding: import("../../storage/database").Database | undefined;
+    try {
+      dbForStoredEncoding = openStateDatabase(eventsCtx?.dbPath);
+      for (const r of mergedRefs) {
+        const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
+        const row = getAssetSalience(dbForStoredEncoding, r.ref);
+        if (row && isContentEncodingRow(row, type)) {
+          storedEncodingByRef.set(r.ref, row.encoding_salience);
+        }
+      }
+    } catch (err) {
+      rethrowIfTestIsolationError(err);
+      // best-effort: if DB unavailable, fall back to type-weight stub (prior behaviour)
+    } finally {
+      if (dbForStoredEncoding) dbForStoredEncoding.close();
+    }
+  }
+
   for (const r of mergedRefs) {
     const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
     const sizeBytes = (() => {
@@ -3383,9 +3414,13 @@ async function runImprovePreparationStage(args: {
         return undefined;
       }
     })();
+    const storedEncoding = storedEncodingByRef.get(r.ref);
     const vector = computeSalience({
       ref: r.ref,
       type,
+      // #644: pass the stored content-derived score (if any) so the type-weight
+      // stub is NOT re-asserted over a real distill-written encoding score.
+      ...(storedEncoding !== undefined ? { encodingSalience: storedEncoding } : {}),
       retrievalFreq: retrievalCounts.get(r.ref) ?? 0,
       lastUseMs: lastUseMsByRef.get(r.ref),
       utilityScore: utilityMap.get(r.ref),

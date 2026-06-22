@@ -80,6 +80,7 @@ describe("SQLite migration runner characterization", () => {
         "012-improve-gate-thresholds",
         "013-extract-sessions-content-hash",
         "014-recombine-hypotheses",
+        "015-asset-salience-encoding-source",
       ]);
 
       // The set of durable objects the migrations create.
