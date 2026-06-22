@@ -19,6 +19,7 @@ import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { authoringRulesForType } from "../../core/authoring-rules";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { appendEvent, readEvents } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
@@ -177,6 +178,9 @@ export async function runSchemaRepairPass(
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
+      const assetType = parseAssetRef(failure.ref).type;
+      const authoringRules = authoringRulesForType(assetType);
+      const authoringRulesSection = authoringRules ? `\n\n${authoringRules}` : "";
       const llmResponse = await chatFn(llmConfig, [
         {
           role: "system",
@@ -184,7 +188,7 @@ export async function runSchemaRepairPass(
         },
         {
           role: "user",
-          content: `Generate the missing frontmatter fields (${fieldList}) for this ${parseAssetRef(failure.ref).type} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}${standardsSection}\n\n${bodyPreview}`,
+          content: `Generate the missing frontmatter fields (${fieldList}) for this ${assetType} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}${standardsSection}${authoringRulesSection}\n\n${bodyPreview}`,
         },
       ]);
 

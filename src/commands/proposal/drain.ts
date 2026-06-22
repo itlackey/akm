@@ -591,6 +591,13 @@ export async function drainProposals(
   const needsJudge = new Set<string>();
 
   for (const proposal of pending) {
+    // Do NOT reclassify a proposal that was already conclusively stamped
+    // `auto-rejected` by a prior gate run (e.g. the improve confidence gate).
+    // Overwriting an authoritative rejection with `auto-accepted` would corrupt
+    // the audit trail and silently promote content the gate explicitly rejected.
+    // Such proposals remain pending for manual review (or TTL expiry).
+    if (proposal.gateDecision?.outcome === "auto-rejected") continue;
+
     const decision = classifyProposal(proposal, opts.policy, opts.maxDiffLines);
     if (decision === null) continue;
     // #577: stamp the gate's verdict onto the proposal so `akm proposal show`
