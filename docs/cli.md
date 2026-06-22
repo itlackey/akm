@@ -97,6 +97,21 @@ Creates one subdirectory per asset type under the stash path — currently
 `memories/`, `env/`, `secrets/`, `wikis/`, and `lessons/`. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
+```sh
+akm init                              # Initialize the default stash (~/akm) and set it as default
+akm init --dir ~/scratch-stash        # Scaffold a secondary stash WITHOUT changing your default
+akm init --dir ~/scratch-stash --set-default  # Scaffold AND make it the default stash
+```
+
+**`--dir <path>`** scaffolds (and backfills) the target directory. By design it
+does **not** change your configured default stash unless you ask: `init` writes
+`stashDir` to `config.json` only when (a) no `--dir` is given, (b) no default is
+configured yet (first-time bootstrap), or (c) you pass **`--set-default`**. When
+a `--dir` is given and a default already exists without `--set-default`, your
+default stash pointer is left untouched and `init` prints a note telling you so.
+This prevents `akm init --dir /tmp/throwaway` from silently hijacking your real
+default stash.
+
 ### setup
 
 Run the interactive first-run wizard.

@@ -1055,7 +1055,13 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
 
 export function formatInitPlain(r: Record<string, unknown>): string {
   let out = `Stash initialized at ${r.stashDir ?? "unknown"}`;
-  if (r.configPath) out += `\nConfig saved to ${r.configPath}`;
+  // When --dir scaffolded a secondary stash but the default was deliberately
+  // left untouched, tell the user instead of silently repointing their default.
+  if (r.defaultStashUpdated === false && typeof r.previousStashDir === "string" && r.previousStashDir) {
+    out += `\nYour default stash is unchanged (${r.previousStashDir}). Re-run with --set-default to make ${r.stashDir} the default.`;
+  } else if (r.configPath) {
+    out += `\nConfig saved to ${r.configPath}`;
+  }
   return out;
 }
 

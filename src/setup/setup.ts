@@ -2218,7 +2218,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   // Bootstrap directory structure before any prompts so the stash exists
   // even if the wizard is interrupted after this point.
   if (!opts?.noInit) {
-    await akmInit({ dir: resolvedStashDir });
+    await akmInit({ dir: resolvedStashDir, setDefault: true });
   }
 
   // Quick connectivity check — skip network-dependent steps when offline
@@ -2446,7 +2446,7 @@ export async function runSetupWithDefaults(opts: {
   // Bootstrap directory structure first
   let initResult: InitResponse | undefined;
   if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir });
+    initResult = await akmInit({ dir: stashDir, setDefault: true });
   }
 
   // Run steps in non-interactive mode (applies defaults, skips prompts)
@@ -2783,7 +2783,7 @@ export async function runSetupFromConfig(opts: {
   // Bootstrap directory structure
   let initResult: InitResponse | undefined;
   if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir });
+    initResult = await akmInit({ dir: stashDir, setDefault: true });
   }
 
   // Optional probe

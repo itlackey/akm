@@ -60,6 +60,19 @@ export interface InitResponse {
   stashDir: string;
   created: boolean;
   configPath: string;
+  /**
+   * Whether this init wrote `stashDir` to the user's config.json (i.e. changed
+   * the default stash pointer). False when `--dir` targeted a secondary stash
+   * and the existing default was deliberately left untouched.
+   */
+  defaultStashUpdated: boolean;
+  /**
+   * The `stashDir` that was configured BEFORE this init ran, when it differs
+   * from the dir we scaffolded and was left in place. Only set when a `--dir`
+   * was provided, an existing default already existed, and `--set-default` was
+   * NOT passed — so the CLI can tell the user their default is unchanged.
+   */
+  previousStashDir?: string;
   ripgrep?: {
     rgPath: string;
     installed: boolean;
@@ -67,7 +80,9 @@ export interface InitResponse {
   };
 }
 
-export async function akmInit(options?: { dir?: string }): Promise<InitResponse> {
+export async function akmInit(options?: { dir?: string; setDefault?: boolean }): Promise<InitResponse> {
+  const dirExplicitlyProvided = options?.dir != null;
+  const setDefault = options?.setDefault === true;
   const stashDir = options?.dir ? path.resolve(options.dir) : getDefaultStashDir();
 
   // Safety check (#473): refuse stashDir at /, $HOME, /etc, ~/.config, etc.
@@ -78,7 +93,7 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
 
   // Defense-in-depth: refuse to persist an explicit --dir /tmp/... stashDir
   // to config under a test runner. Default HOME-resolved paths are exempt.
-  assertInitSandbox(stashDir, options?.dir != null);
+  assertInitSandbox(stashDir, dirExplicitlyProvided);
 
   let created = false;
   if (!fs.existsSync(stashDir)) {
@@ -104,11 +119,33 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
   copyStashSkeleton(stashDir);
   scaffoldStashMeta(stashDir);
 
-  // Persist stashDir in config.json
+  // Persist stashDir in config.json — but ONLY when the user is actually
+  // setting up / opting into a default. A bare `akm init --dir <secondary>`
+  // must NOT silently repoint the user's real default stash (the footgun
+  // documented in memory:akm-init-persists-stashdir-warning).
+  //
+  // Decision matrix — persist when ANY of:
+  //   (a) no --dir provided           → default HOME-resolved setup flow
+  //   (b) --dir AND no existing stashDir in config → first-time bootstrap
+  //   (c) --dir AND --set-default      → explicit opt-in
+  // Otherwise (--dir + existing default + no --set-default) leave the default
+  // pointer alone; the target dir is still scaffolded above.
   const configPath = getConfigPath();
   const existing = loadUserConfig();
-  if (!existing.stashDir || existing.stashDir !== stashDir) {
-    saveConfig({ ...existing, stashDir });
+  const existingStashDir = existing.stashDir;
+  const shouldPersist = !dirExplicitlyProvided || !existingStashDir || setDefault;
+
+  let defaultStashUpdated = false;
+  let previousStashDir: string | undefined;
+  if (shouldPersist) {
+    if (!existingStashDir || existingStashDir !== stashDir) {
+      saveConfig({ ...existing, stashDir });
+      defaultStashUpdated = true;
+    }
+    // else: already pointed here — no-op, no spurious rewrite.
+  } else {
+    // Default left untouched; surface it so the CLI can inform the user.
+    previousStashDir = existingStashDir;
   }
 
   // Ensure ripgrep is available (install to cache/bin if needed)
@@ -121,7 +158,7 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
     // Non-fatal: ripgrep is optional, search works without it
   }
 
-  return { stashDir, created, configPath, ripgrep };
+  return { stashDir, created, configPath, defaultStashUpdated, previousStashDir, ripgrep };
 }
 
 /** Initialise `dir` as a git repository if it is not already one. */
