@@ -28,6 +28,7 @@
  */
 
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { authoringRulesForType } from "../../core/authoring-rules";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 
 /** Agent-returned proposal payload (after JSON parse). */
@@ -264,6 +265,14 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     sections.push(input.standardsContext.trim());
   }
 
+  {
+    const resolvedType = input.type ?? (input.ref?.includes(":") ? input.ref.split(":")[0] : "");
+    const authoringRules = resolvedType ? authoringRulesForType(resolvedType) : "";
+    if (authoringRules) {
+      sections.push(authoringRules);
+    }
+  }
+
   if (input.assetContent?.trim()) {
     // Cap at 12 000 chars to stay well under OS ARG_MAX when the prompt is
     // passed as a CLI argument to opencode/claude. Large assets (wiki snapshots,
@@ -446,6 +455,12 @@ export function buildProposePrompt(input: ProposePromptInput): string {
     sections.push("Standards to follow (the rulebook for this target):");
     sections.push(input.standardsContext.trim());
   }
+  {
+    const authoringRules = authoringRulesForType(input.type);
+    if (authoringRules) {
+      sections.push(authoringRules);
+    }
+  }
   sections.push("Produce a single proposal that, if accepted, would land as the asset described above.");
   sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
@@ -490,6 +505,12 @@ export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string 
   if (input.standardsContext?.trim()) {
     sections.push("Standards to follow (the rulebook for this target):");
     sections.push(input.standardsContext.trim());
+  }
+  {
+    const authoringRules = authoringRulesForType(input.type);
+    if (authoringRules) {
+      sections.push(authoringRules);
+    }
   }
   const CONTENT_CAP = 3000;
   const body = input.assetContent.trimEnd();

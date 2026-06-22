@@ -60,6 +60,7 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
+import { authoringRulesForType } from "../../core/authoring-rules";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
@@ -539,6 +540,13 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
     lines.push("Standards to follow (the rulebook for this target):");
     lines.push(input.standardsContext.trim());
     lines.push("");
+  }
+  {
+    const authoringRules = authoringRulesForType(input.proposalKind ?? "lesson");
+    if (authoringRules) {
+      lines.push(authoringRules);
+      lines.push("");
+    }
   }
   lines.push("Asset content:");
   if (input.assetContent) {

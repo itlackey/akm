@@ -15,7 +15,7 @@ when_to_use: <one complete sentence describing the concrete trigger condition>
 <lesson body — plain markdown, 1–3 short paragraphs of practical guidance>
 
 ## description field (MANDATORY)
-- A single complete sentence in present tense, 80-200 chars, NO markdown.
+- A single complete sentence in present tense, 20–400 chars, NO markdown.
 - Self-contained: a reviewer must understand the lesson from this field alone.
 - DO NOT start with "When ", "If ", or a connector word — that belongs in when_to_use.
 - DO NOT copy a section heading ("Key takeaways", "For example", "Key pitfalls").

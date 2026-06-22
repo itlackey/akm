@@ -62,6 +62,12 @@
 // ── Reflect-size guard ───────────────────────────────────────────────────────
 
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import {
+  DESCRIPTION_MAX_CHARS,
+  DESCRIPTION_MIN_CHARS,
+  WHEN_TO_USE_MAX_CHARS,
+  WHEN_TO_USE_MIN_CHARS,
+} from "../../../core/authoring-rules";
 import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
 import type { ProposalValidator } from "./proposal-validators";
 
@@ -100,8 +106,10 @@ export function isValidDescription(
   if (typeof value !== "string") return { ok: false, reason: "description is not a string" };
   const v = value.trim();
   if (!v) return { ok: false, reason: "description is empty" };
-  if (v.length < 20) return { ok: false, reason: `description is too short (${v.length} chars; need ≥20)` };
-  if (v.length > 400) return { ok: false, reason: `description is too long (${v.length} chars; max 400)` };
+  if (v.length < DESCRIPTION_MIN_CHARS)
+    return { ok: false, reason: `description is too short (${v.length} chars; need ≥${DESCRIPTION_MIN_CHARS})` };
+  if (v.length > DESCRIPTION_MAX_CHARS)
+    return { ok: false, reason: `description is too long (${v.length} chars; max ${DESCRIPTION_MAX_CHARS})` };
   if (/^\s*[\d#*\->`]/.test(v)) return { ok: false, reason: "description starts with a digit or markdown marker" };
   const last = v.slice(-1);
   if (last === ":" || last === ";" || last === ",")
@@ -152,8 +160,10 @@ export function isValidWhenToUse(value: unknown, inputRef: string): { ok: true }
   if (typeof value !== "string") return { ok: false, reason: "when_to_use is not a string" };
   const v = value.trim();
   if (!v) return { ok: false, reason: "when_to_use is empty" };
-  if (v.length < 15) return { ok: false, reason: `when_to_use is too short (${v.length} chars; need ≥15)` };
-  if (v.length > 400) return { ok: false, reason: `when_to_use is too long (${v.length} chars; max 400)` };
+  if (v.length < WHEN_TO_USE_MIN_CHARS)
+    return { ok: false, reason: `when_to_use is too short (${v.length} chars; need ≥${WHEN_TO_USE_MIN_CHARS})` };
+  if (v.length > WHEN_TO_USE_MAX_CHARS)
+    return { ok: false, reason: `when_to_use is too long (${v.length} chars; max ${WHEN_TO_USE_MAX_CHARS})` };
   if (/^when working with\b/i.test(v))
     return { ok: false, reason: "when_to_use is the circular 'When working with ...' fallback" };
   const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
