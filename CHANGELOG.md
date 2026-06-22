@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto-sync no longer refuses to commit akm's own changes when unrelated
+  non-akm files are present in the stash working tree.** When a stash root is
+  shared with a project repo, stray files written into the stash root (e.g. a
+  `tasks.bak-…` backup dir or report artifacts like `data.js`,
+  `akm-health-report.html`, `reports/`) previously tripped the #476 safety
+  guard, which threw `refusing to push: … has uncommitted non-akm changes` on
+  **every** `akm improve` end-of-run auto-sync, `akm sync`, and `akm push`. In
+  one production incident this silently blocked all commits for ~1.5 days while
+  akm kept accepting proposals it never persisted. `saveGitStash` now **scopes
+  what it stages** instead of refusing: (1) an explicit modified-file list when
+  the caller passes `opts.paths`, else (2) the akm-managed pathspecs
+  (`TYPE_DIRS` values + `.akm`) that exist on disk — which by construction never
+  stages non-akm WIP, preserving the #476 protection without an all-or-nothing
+  refusal — and only as a last resort (3) `git add -A` when no managed pathspec
+  can be resolved. If nothing akm-managed is staged the run returns
+  `nothing to commit` (no empty commit, no throw). Unrelated non-akm files are
+  left untouched and uncommitted.
+
 ### Changed
 
 - **BEHAVIOR CHANGE — `akm init --dir <path>` no longer silently repoints your

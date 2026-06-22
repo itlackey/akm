@@ -2,59 +2,208 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Regression suite for #476 — `akm save` git add -A clobbering WIP.
-// runUpstreamPush previously ran `git add -A` unconditionally, so any
-// dirty file in the working tree was staged and pushed. The fix refuses
-// the push when any dirty path is outside akm-managed subtrees (TYPE_DIRS
-// + `.akm/`). This file tests the path-classifier in isolation; the
-// integration path is exercised in git-provider tests.
+// Regression suite for the auto-sync staging behaviour (#476 + the auto-sync
+// incident where stray non-akm files in the stash root refused EVERY commit
+// for ~1.5 days). `saveGitStash` no longer refuses when unrelated non-akm
+// files are dirty; instead it SCOPES what it stages:
+//   1. explicit `options.paths` → exactly those
+//   2. fallback → akm-managed pathspecs (TYPE_DIRS + `.akm`) that exist
+//   3. last resort → `git add -A` (only when no managed pathspec exists)
+// The non-akm files must be left untouched/uncommitted.
 
-import { describe, expect, it } from "bun:test";
-import { collectNonAkmDirtyPaths } from "../src/sources/providers/git";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { saveGitStash } from "../src/sources/providers/git";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-describe("collectNonAkmDirtyPaths (#476)", () => {
-  it("returns empty when only akm-managed subtrees are dirty", () => {
-    const porcelain = [
-      " M skills/foo/skill.md",
-      "A  commands/bar.md",
-      "?? agents/new.md",
-      " M .akm/state/index.lock",
-    ].join("\n");
-    expect(collectNonAkmDirtyPaths(porcelain)).toEqual([]);
+function initRepo(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const args of [
+    ["init", "--initial-branch=main"],
+    ["config", "user.email", "test@akm.local"],
+    ["config", "user.name", "akm-test"],
+    ["config", "commit.gpgsign", "false"],
+  ] as string[][]) {
+    const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  }
+}
+
+function writeFile(filePath: string, content: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf8");
+}
+
+/** Files (relative paths) touched by the most recent commit on HEAD. */
+function committedFiles(repoDir: string): string[] {
+  const out = spawnSync("git", ["-C", repoDir, "show", "--name-only", "--format=", "HEAD"], { encoding: "utf8" });
+  return out.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/** Porcelain status lines (still-dirty working-tree paths). */
+function status(repoDir: string): string {
+  return spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" }).stdout;
+}
+
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  envCleanup = stashResult.cleanup;
+});
+
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
+});
+
+describe("saveGitStash — scoped staging (auto-sync incident regression)", () => {
+  test("commits akm-managed files and leaves unrelated non-akm files dirty/untouched", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+
+    // akm-managed dirty files.
+    writeFile(path.join(stashDir, "memories", "x.md"), "memory x\n");
+    writeFile(path.join(stashDir, "knowledge", "y.md"), "knowledge y\n");
+    // Unrelated non-akm files (the exact shapes that caused the incident).
+    writeFile(path.join(stashDir, "data.js"), "window.data = {};\n");
+    writeFile(path.join(stashDir, "akm-health-report.html"), "<html></html>\n");
+    writeFile(path.join(stashDir, "reports", "summary.txt"), "report\n");
+    writeFile(path.join(stashDir, "tasks.bak-123", "z"), "backup\n");
+
+    const result = saveGitStash(undefined, "scoped commit");
+    expect(result.committed).toBe(true);
+    expect(result.skipped).toBe(false);
+
+    // The commit contains ONLY managed paths.
+    const files = committedFiles(stashDir);
+    expect(files).toContain("memories/x.md");
+    expect(files).toContain("knowledge/y.md");
+    expect(files.some((f) => f.startsWith("data.js"))).toBe(false);
+    expect(files.some((f) => f.startsWith("akm-health-report.html"))).toBe(false);
+    expect(files.some((f) => f.startsWith("reports/"))).toBe(false);
+    expect(files.some((f) => f.startsWith("tasks.bak-123/"))).toBe(false);
+
+    // The non-akm files are STILL dirty afterward (untouched). Untracked
+    // directories are collapsed to "<dir>/" by git porcelain.
+    const after = status(stashDir);
+    expect(after).toContain("data.js");
+    expect(after).toContain("akm-health-report.html");
+    expect(after).toContain("reports/");
+    expect(after).toContain("tasks.bak-123/");
   });
 
-  it("flags top-level non-akm paths", () => {
-    const porcelain = [
-      " M skills/foo/skill.md", // akm — skip
-      " M package.json", // not akm
-      "?? README-DRAFT.md", // not akm
-    ].join("\n");
-    expect(collectNonAkmDirtyPaths(porcelain)).toEqual(["package.json", "README-DRAFT.md"]);
+  test("does NOT throw the old 'refusing to push' error when non-akm files are present", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    writeFile(path.join(stashDir, "facts", "a.md"), "fact a\n");
+    writeFile(path.join(stashDir, "scratch.tmp"), "stray\n");
+
+    let threw: unknown;
+    try {
+      saveGitStash(undefined, "no refuse");
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeUndefined();
   });
 
-  it("flags non-akm subtree paths", () => {
-    const porcelain = [" M src/index.ts", "?? docs/scratch.md", "A  vendor/lib.js"].join("\n");
-    expect(collectNonAkmDirtyPaths(porcelain)).toEqual(["src/index.ts", "docs/scratch.md", "vendor/lib.js"]);
+  test("explicit options.paths stages only the listed subset", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    writeFile(path.join(stashDir, "memories", "keep.md"), "keep\n");
+    writeFile(path.join(stashDir, "memories", "skip.md"), "skip\n");
+    writeFile(path.join(stashDir, "lessons", "also-skip.md"), "skip\n");
+
+    const result = saveGitStash(undefined, "subset", undefined, { paths: ["memories/keep.md"] });
+    expect(result.committed).toBe(true);
+
+    const files = committedFiles(stashDir);
+    expect(files).toEqual(["memories/keep.md"]);
+
+    const after = status(stashDir);
+    expect(after).toContain("memories/skip.md");
+    // lessons/ is entirely untracked → porcelain collapses it to "lessons/".
+    expect(after).toContain("lessons/");
   });
 
-  it("uses the post-rename path for renames", () => {
-    const porcelain = "R  src/old.ts -> src/new.ts";
-    // src/new.ts is non-akm → should be flagged.
-    expect(collectNonAkmDirtyPaths(porcelain)).toEqual(["src/new.ts"]);
+  test("only non-akm files dirty → nothing committed, no commit created, no throw", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    // Seed an initial commit so HEAD exists, then add only non-akm dirt.
+    writeFile(path.join(stashDir, "knowledge", "seed.md"), "seed\n");
+    saveGitStash(undefined, "seed");
+    const headBefore = spawnSync("git", ["-C", stashDir, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+
+    writeFile(path.join(stashDir, "data.js"), "only non-akm\n");
+    writeFile(path.join(stashDir, "tasks.bak-9", "z"), "backup\n");
+
+    const result = saveGitStash(undefined, "should not commit");
+    expect(result.committed).toBe(false);
+    expect(result.skipped).toBe(false);
+    expect(result.output).toBe("nothing to commit");
+
+    // No new commit was created.
+    const headAfter = spawnSync("git", ["-C", stashDir, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+    expect(headAfter).toBe(headBefore);
+
+    // Non-akm files still dirty.
+    const after = status(stashDir);
+    expect(after).toContain("data.js");
+    // tasks.bak-9/ is entirely untracked → porcelain collapses it.
+    expect(after).toContain("tasks.bak-9/");
   });
 
-  it("strips surrounding quotes for paths with special characters", () => {
-    const porcelain = ' M "skills/has space/file.md"\n M "external/with quote.txt"';
-    expect(collectNonAkmDirtyPaths(porcelain)).toEqual(["external/with quote.txt"]);
+  test("clean tree → nothing to commit, working tree clean", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    writeFile(path.join(stashDir, "facts", "seed.md"), "seed\n");
+    saveGitStash(undefined, "seed");
+
+    const result = saveGitStash(undefined, "nothing left");
+    expect(result.committed).toBe(false);
+    expect(result.output).toBe("nothing to commit, working tree clean");
   });
 
-  it("handles trailing carriage returns (git on Windows)", () => {
-    const porcelain = " M src/cli.ts\r\n M skills/ok.md\r";
-    expect(collectNonAkmDirtyPaths(porcelain)).toEqual(["src/cli.ts"]);
-  });
+  test("committed change pushes when a remote is configured and stash is writable", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    // Bare remote to push into.
+    const remoteDir = `${stashDir}-remote.git`;
+    spawnSync("git", ["init", "--bare", "--initial-branch=main", remoteDir], { encoding: "utf8" });
 
-  it("ignores empty lines", () => {
-    expect(collectNonAkmDirtyPaths("")).toEqual([]);
-    expect(collectNonAkmDirtyPaths("\n\n")).toEqual([]);
+    initRepo(stashDir);
+    spawnSync("git", ["-C", stashDir, "remote", "add", "origin", remoteDir], { encoding: "utf8" });
+    // Seed an initial commit and set the branch upstream so `git push` (no args)
+    // resolves a target — mirrors a cloned writable stash's tracking config.
+    writeFile(path.join(stashDir, "knowledge", "seed.md"), "seed\n");
+    spawnSync("git", ["-C", stashDir, "add", "-A"], { encoding: "utf8" });
+    spawnSync("git", ["-C", stashDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", "seed"], {
+      encoding: "utf8",
+    });
+    spawnSync("git", ["-C", stashDir, "push", "-u", "origin", "main"], { encoding: "utf8" });
+
+    writeFile(path.join(stashDir, "memories", "pushed.md"), "pushed\n");
+    // Stray non-akm file must NOT block the push.
+    writeFile(path.join(stashDir, "data.js"), "stray\n");
+
+    const result = saveGitStash(undefined, "push it", /* writableOverride */ true);
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+
+    // The remote received exactly the managed file.
+    const remoteFiles = spawnSync("git", ["-C", remoteDir, "show", "--name-only", "--format=", "HEAD"], {
+      encoding: "utf8",
+    }).stdout;
+    expect(remoteFiles).toContain("memories/pushed.md");
+    expect(remoteFiles).not.toContain("data.js");
+
+    fs.rmSync(remoteDir, { recursive: true, force: true });
   });
 });
