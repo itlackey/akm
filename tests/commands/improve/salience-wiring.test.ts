@@ -630,7 +630,11 @@ describe("#608 high-salience admission gate", () => {
     writeSkill(stash, "novel-skill", "A genuinely novel skill with critical error handling.");
     await buildIndex(stash);
 
-    // Pre-seed encoding_salience above the default threshold (0.75).
+    // Pre-seed a CONTENT-derived encoding_salience above the default threshold
+    // (0.75). #655: the high-salience lane requires content provenance — a
+    // type-stub row no longer qualifies (that was the lore-writer footgun) — and
+    // this case models a genuinely content-scored novel skill, the lane's real
+    // target.
     const dbSetup = openStateDatabase();
     try {
       upsertAssetSalience(dbSetup, "skill:novel-skill", {
@@ -638,6 +642,7 @@ describe("#608 high-salience admission gate", () => {
         outcome: 0,
         retrieval: 0,
         rankScore: 0.2,
+        encodingSource: "content",
       });
     } finally {
       dbSetup.close();
@@ -685,11 +690,15 @@ describe("#608 high-salience admission gate", () => {
 
     const dbSetup = openStateDatabase();
     try {
+      // Content-provenance so the ONLY thing keeping this ref out of the lane is
+      // the threshold (1.0 > 0.82), not the #655 content gate — this test pins
+      // the threshold knob specifically.
       upsertAssetSalience(dbSetup, "skill:gated-skill", {
         encoding: 0.82,
         outcome: 0,
         retrieval: 0,
         rankScore: 0.2,
+        encodingSource: "content",
       });
     } finally {
       dbSetup.close();

@@ -31,6 +31,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cf. #632/#633). No schema change. The cap now lives in a new `capClusters`
   helper split out of `buildRelatednessClusters` so the full ranked set stays
   available for the decay sweep.
+- **`improve` reflect no longer emits proposals doomed to fail the
+  `invalid-description` gate when the source asset has no frontmatter
+  `description` (#636).** Reflect echoed the source frontmatter, so for assets
+  that carry other keys but no `description` (notably scraped docs:
+  `source`/`title`/`scraped`) the proposal inherited the missing/empty
+  description and the promote-time validator (`isValidDescription`, 20–400
+  chars) rejected it — observed as ~14/16 rejects in one triage pass, blocking
+  the whole scraped-doc/knowledge cluster from reflect improvement. The fix is
+  **generation-time only**: (1) `buildReflectPrompt` now injects an explicit
+  "synthesize a `description`" instruction whenever the source lacks a non-empty
+  `description` and the asset type requires one (per `authoring-rules.ts`
+  `DESCRIPTION_TYPES`), telling the model it MUST author a valid 20–400-char
+  plain-prose description from the asset's `title:`/first `# Heading`/opening
+  body; and (2) a deterministic reflect-side belt-and-suspenders in
+  `sanitizeReflectPayload` — if a source that already had frontmatter still ends
+  up with a missing/empty description after generation, reflect derives one
+  deterministically from `title:`/first heading (validated against
+  `isValidDescription`, never free-form invention) **before** the proposal is
+  created. The validator, `authoring-rules.ts` bounds, `repairProposalContent`,
+  and the drain are unchanged — nothing in the validator/promote path fabricates
+  content to pass itself.
+- **The high-salience improve admission lane (#608) now requires a
+  content-derived encoding score, not the per-type weight stub (#655,
+  #608/#644 follow-up).** The lane previously admitted any zero-feedback ref
+  whose `asset_salience.encoding_salience >= salienceThreshold` (default 0.75).
+  But for assets distill has not content-scored, `encoding_salience` is just the
+  per-type WEIGHT STUB (skill/agent 0.9, command/workflow 0.8, lesson 0.75), so
+  "high-salience" degenerated into "is a skill/agent/command/lesson" — which
+  selected the type-stub `lore-writer` agent on every run (prod: 1 content-scored
+  / 37 type-stub / 1826 NULL-legacy rows). The gate now also requires
+  `isContentEncodingRow(row, parseAssetRef(ref).type)` (the #644 provenance
+  helper), so only genuinely content-scored assets qualify. This preserves
+  #608's intent — distilled assets, the lane's real targets, keep their real
+  content score and still qualify — while cutting the type-stub waste; type-stub
+  rows must earn retrieval/feedback signal via the other lanes. NULL-legacy rows
+  follow `isContentEncodingRow`'s differs-from-stub heuristic. An aggregated log
+  line now reports how many refs the lane admitted so lane composition is
+  observable. The threshold, type-weight table, 10% cap, and `isContentEncodingRow`
+  are unchanged.
 
 - **Auto-sync no longer refuses to commit akm's own changes when unrelated
   non-akm files are present in the stash working tree.** When a stash root is
