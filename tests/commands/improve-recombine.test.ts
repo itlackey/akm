@@ -40,7 +40,9 @@ import { listProposals } from "../../src/commands/proposal/validators/proposals"
 import type { AkmConfig } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
+import { closeDatabase, getAllEntries, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
+import { insertGraphEntities } from "../_helpers/graph-store";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -562,6 +564,96 @@ describe("recombine — budget/abort", () => {
       expect(res.schemaVersion).toBe(1);
       const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "recombine");
       expect(pending.length).toBe(0);
+    },
+    TIMEOUT_MS,
+  );
+});
+
+// ── #632 — graph-entity clustering end-to-end ─────────────────────────────────
+//
+// Proves the full `akmRecombine` path (real `getEntitiesByEntryIds` join →
+// `buildRelatednessClusters`) forms `entity:<norm>` clusters from a SHARED graph
+// entity, and that the new default (`relatednessSource` = "both") enables it
+// without an explicit source. Entities are injected post-index via the shared
+// `insertGraphEntities` seam (mirrors real `graph_file_entities` rows).
+
+describe("recombine #632 — entity clustering end-to-end", () => {
+  test(
+    "clusters memories sharing a graph entity (no shared tag) into an entity-derived lesson ref",
+    async () => {
+      const stash = isolatedStash();
+      // Three memories: NO shared tag, dissimilar bodies — related ONLY by a graph entity.
+      writeMemory(stash, "ent-a", [], "Refresh tokens rotate on each login event.");
+      writeMemory(stash, "ent-b", [], "A scheduled cron prunes orphaned database rows nightly.");
+      writeMemory(stash, "ent-c", [], "The marketing site uses a teal accent color in the footer.");
+      await buildIndex(stash);
+
+      // Attach a shared entity to all three indexed memories.
+      const db = openExistingDatabase();
+      try {
+        for (const m of getAllEntries(db, "memory")) {
+          insertGraphEntities(db, m.id, m.stashDir, m.filePath, ["OAuth"]);
+        }
+      } finally {
+        closeDatabase(db);
+      }
+
+      let seenSignal = "";
+      const res = await akmRecombine({
+        stashDir: stash,
+        config: recombineEnabledConfig(),
+        sourceRun: "run-entity",
+        relatednessSource: "graph",
+        minClusterSize: 3,
+        recombineLlmFn: async (prompt) => {
+          seenSignal = /Shared signal: (\S+)/.exec(prompt)?.[1] ?? "";
+          return generalization("OAuth artifacts are ephemeral.", "Generalization body.");
+        },
+      });
+
+      expect(res.clustersFormed).toBe(1);
+      expect(seenSignal).toBe("entity:oauth"); // entity_norm is lowercased
+      const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "recombine");
+      expect(pending.length).toBe(1);
+      expect(pending[0].ref.startsWith("lesson:recombined/oauth-")).toBe(true);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "the default relatednessSource ('both', #632) clusters by entity with NO explicit source",
+    async () => {
+      const stash = isolatedStash();
+      writeMemory(stash, "d-a", [], "Token refresh logic lives in the gateway.");
+      writeMemory(stash, "d-b", [], "Nightly jobs vacuum the analytics tables.");
+      writeMemory(stash, "d-c", [], "The footer link color is teal.");
+      await buildIndex(stash);
+
+      const db = openExistingDatabase();
+      try {
+        for (const m of getAllEntries(db, "memory")) {
+          insertGraphEntities(db, m.id, m.stashDir, m.filePath, ["PrintMd"]);
+        }
+      } finally {
+        closeDatabase(db);
+      }
+
+      let seenSignal = "";
+      const res = await akmRecombine({
+        stashDir: stash,
+        config: recombineEnabledConfig(),
+        sourceRun: "run-default",
+        // relatednessSource intentionally OMITTED → exercises DEFAULT_RELATEDNESS_SOURCE ("both").
+        // (akmRecombine reads opts.relatednessSource, not config, so the default applies.)
+        minClusterSize: 3,
+        recombineLlmFn: async (prompt) => {
+          seenSignal = /Shared signal: (\S+)/.exec(prompt)?.[1] ?? "";
+          return generalization("Print-md provider artifacts.", "Generalization body.");
+        },
+      });
+
+      expect(res.clustersFormed).toBe(1);
+      expect(seenSignal).toBe("entity:printmd");
     },
     TIMEOUT_MS,
   );

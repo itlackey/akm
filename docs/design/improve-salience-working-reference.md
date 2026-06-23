@@ -391,7 +391,7 @@ rewrites.
 | #645 | MERGED b36 | unify authoring rules into validator-sourced seam; fix stuck-proposal loop + drain masking. |
 | #643 | MERGED b36 | once-per-asset cooldown on high-salience gate (F2). |
 | #608 | CLOSED→0.10 | automatic encoding-time salience scoring (Gap 1 origin; only partially realized). |
-| #632 | OPEN | recombine clusters = whole-stash tag buckets → bland hypotheses (junk-tag filter shipped; graph-entity clustering pending). |
+| #632 | FIXED | recombine clusters = whole-stash tag buckets → bland hypotheses. Graph-entity clustering now the DEFAULT (`relatednessSource` "tags"→"both"); added `isJunkEntity` noise filter (drops `session_*`/`reason`/`harness`/raw paths) + `excludeEntities` knob, mirroring the tag path. Additive: tag streaks untouched (`entity:` namespace), tag fallback covers the ~52% of memories with no graph entity. |
 | #633 | OPEN (fix shipped b30) | recombine confirmation loop was structurally dead (member-set hash reset streak); Jaccard match fixed it — likely closeable. |
 | #634 | OPEN | procedural over-fits single-project sequences; default-OFF until cross-project gate + identifier-stripping land. |
 | #636 | OPEN | reflect emits proposals missing `description` for source docs lacking one (14/16 rejects in one pass). |

@@ -38,7 +38,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmRecombine, buildRelatednessClusters, capClusters, isJunkTag } from "../src/commands/improve/recombine";
+import {
+  akmRecombine,
+  buildRelatednessClusters,
+  capClusters,
+  isJunkEntity,
+  isJunkTag,
+} from "../src/commands/improve/recombine";
 import { listProposals } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
@@ -395,4 +401,127 @@ describe("#633 — drifting membership accumulates the confirmation streak", () 
     },
     TIMEOUT_MS,
   );
+});
+
+// ── #632 — graph-ENTITY clustering (RED) ───────────────────────────────────────
+//
+// The dormant entity path (`relatednessSource: "graph"|"both"`) clustered on
+// `graph_file_entities.entity_norm`, but (a) had no noise filter — generic
+// extraction artefacts (`session_checkpoint`, `session_id`, raw file paths)
+// formed the same bland mega-clusters #632 set out to kill, and (b) was never
+// the default. These tests assert: `isJunkEntity` drops the noise but keeps
+// coherent subsystem names; entity clustering forms `entity:<norm>` clusters
+// from a SHARED ENTITY (no shared tag); the `excludeEntities` knob suppresses a
+// named entity; and `"both"` unions tag + entity clusters. Tag clustering stays
+// byte-identical (additive).
+
+describe("recombine #632 — entity noise filter (isJunkEntity)", () => {
+  test("drops generic extraction-artefact entities", () => {
+    for (const junk of [
+      "session_checkpoint",
+      "session_id",
+      "session",
+      "reason",
+      "harness",
+      "structured event log",
+      "event",
+      "/home/founder3/.local/state/akm-opencode",
+      "C:\\Users\\x\\notes",
+      "2026",
+      "20260529",
+      "v1.2.3",
+      "a",
+    ]) {
+      expect(isJunkEntity(junk)).toBe(true);
+    }
+  });
+
+  test("keeps coherent subsystem / tool names", () => {
+    for (const good of ["opencode", "print-md", "akm_curate", "akm_show", "claude-code", "guardian"]) {
+      expect(isJunkEntity(good)).toBe(false);
+    }
+  });
+});
+
+describe("recombine #632 — entity-based clustering", () => {
+  test("forms an entity:<norm> cluster from a shared graph entity (no shared tag)", () => {
+    const entries = [memoryEntry(1, "a", []), memoryEntry(2, "b", []), memoryEntry(3, "c", [])];
+    const entityByEntryId = new Map<number, string[]>([
+      [1, ["opencode"]],
+      [2, ["opencode"]],
+      [3, ["opencode"]],
+    ]);
+    const clusters = buildRelatednessClusters(entries, {
+      minClusterSize: 3,
+      relatednessSource: "graph",
+      entityByEntryId,
+    });
+    expect(clusterShape(clusters)).toEqual([
+      { signature: "entity:opencode", members: ["memory:a", "memory:b", "memory:c"] },
+    ]);
+  });
+
+  test("a junk entity never forms a cluster", () => {
+    const entries = [memoryEntry(1, "a", []), memoryEntry(2, "b", []), memoryEntry(3, "c", [])];
+    const entityByEntryId = new Map<number, string[]>([
+      [1, ["session_checkpoint"]],
+      [2, ["session_checkpoint"]],
+      [3, ["session_checkpoint"]],
+    ]);
+    const clusters = buildRelatednessClusters(entries, {
+      minClusterSize: 3,
+      relatednessSource: "graph",
+      entityByEntryId,
+    });
+    expect(clusters).toEqual([]);
+  });
+
+  test("excludeEntities suppresses a named entity cluster", () => {
+    const entries = [memoryEntry(1, "a", []), memoryEntry(2, "b", []), memoryEntry(3, "c", [])];
+    const entityByEntryId = new Map<number, string[]>([
+      [1, ["opencode"]],
+      [2, ["opencode"]],
+      [3, ["opencode"]],
+    ]);
+    const clusters = buildRelatednessClusters(entries, {
+      minClusterSize: 3,
+      relatednessSource: "graph",
+      entityByEntryId,
+      excludeEntities: ["opencode"],
+    });
+    expect(clusters).toEqual([]);
+  });
+
+  test('"both" unions tag and entity clusters with distinct member sets', () => {
+    const entries = [
+      memoryEntry(1, "a", ["auth"]),
+      memoryEntry(2, "b", ["auth"]),
+      memoryEntry(3, "c", ["auth"]),
+      memoryEntry(4, "d", []),
+      memoryEntry(5, "e", []),
+    ];
+    const entityByEntryId = new Map<number, string[]>([
+      [3, ["opencode"]],
+      [4, ["opencode"]],
+      [5, ["opencode"]],
+    ]);
+    const clusters = buildRelatednessClusters(entries, {
+      minClusterSize: 3,
+      relatednessSource: "both",
+      entityByEntryId,
+    });
+    expect(clusterShape(clusters)).toEqual([
+      { signature: "entity:opencode", members: ["memory:c", "memory:d", "memory:e"] },
+      { signature: "tag:auth", members: ["memory:a", "memory:b", "memory:c"] },
+    ]);
+  });
+
+  test("tag clustering is unchanged when entities are absent (additive default)", () => {
+    const entries = [memoryEntry(1, "a", ["auth"]), memoryEntry(2, "b", ["auth"]), memoryEntry(3, "c", ["auth"])];
+    // No entityByEntryId → "both" falls through to tag-only, byte-identical to "tags".
+    const both = buildRelatednessClusters(entries, { minClusterSize: 3, relatednessSource: "both" });
+    const tags = buildRelatednessClusters(entries, { minClusterSize: 3, relatednessSource: "tags" });
+    expect(clusterShape(both)).toEqual(clusterShape(tags));
+    expect(clusterShape(both)).toEqual([{ signature: "tag:auth", members: ["memory:a", "memory:b", "memory:c"] }]);
+  });
 });

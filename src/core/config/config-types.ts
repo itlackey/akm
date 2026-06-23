@@ -509,13 +509,23 @@ export interface ImproveProcessConfig {
    */
   excludeTags?: string[];
   /**
+   * #632 — recombine pass: entity_norm values that must NEVER form an entity
+   * cluster (user-curated counterpart to the built-in generic-entity filter).
+   * Memories still cluster on their OTHER entities / tags. UNSET/[] = entity
+   * clustering governed by the built-in junk filter alone. Only meaningful on
+   * the `recombine` process.
+   */
+  excludeEntities?: string[];
+  /**
    * #609 — recombine pass: relatedness signal used to form clusters.
    *   - `"tags"`  — group memories by each shared frontmatter tag.
    *   - `"graph"` — group by shared graph entity (`graph_file_entities`);
    *                 falls back to tags when the graph table is empty.
    *   - `"both"`  — union of the two grouping keys.
-   * Clustering is by RELATEDNESS, never embedding similarity. Default `"tags"`.
-   * Only meaningful on the `recombine` process.
+   * Clustering is by RELATEDNESS, never embedding similarity. Default `"both"`
+   * (#632 — entity clustering surfaces coherent subject-scoped clusters tags
+   * miss; additive over tag clustering). Only meaningful on the `recombine`
+   * process.
    */
   relatednessSource?: "tags" | "graph" | "both";
   /**

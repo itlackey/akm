@@ -63,6 +63,36 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
   }
 }
 
+/**
+ * Insert raw `graph_files` + `graph_file_entities` rows linking an already-indexed
+ * asset (by its `file_path`) to a set of graph entities, so `getEntitiesByEntryIds`
+ * (entries ⋈ graph_files ⋈ graph_file_entities on stash_root/file_path/body_hash)
+ * returns them. `entity_norm` is lowercased to mirror real extraction
+ * (graph-dedup.ts). Used to drive entity-based recombine clustering and related
+ * graph lookups in tests without running real extraction.
+ */
+export function insertGraphEntities(
+  db: Database,
+  entryId: number,
+  stashRoot: string,
+  filePath: string,
+  entities: string[],
+  fileType: "memory" | "knowledge" | "session" = "memory",
+): void {
+  const bodyHash = `hash-${entryId}`;
+  db.prepare(
+    `INSERT OR REPLACE INTO graph_files (stash_root, file_path, file_order, file_type, body_hash, status)
+     VALUES (?, ?, ?, ?, ?, 'extracted')`,
+  ).run(stashRoot, filePath, entryId, fileType, bodyHash);
+  let order = 0;
+  for (const ent of entities) {
+    db.prepare(
+      `INSERT OR REPLACE INTO graph_file_entities (stash_root, file_path, body_hash, entity_order, entity_norm, entity)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(stashRoot, filePath, bodyHash, order++, ent.toLowerCase(), ent);
+  }
+}
+
 export function removeStoredGraph(dbPath: string, stashPath: string): void {
   const db = openDatabase(dbPath);
   try {

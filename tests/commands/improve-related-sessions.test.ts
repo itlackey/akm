@@ -36,7 +36,7 @@ import path from "node:path";
 import { getRelatedSessions } from "../../src/commands/improve/related-sessions";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { Database } from "../../src/storage/database";
+import { insertGraphEntities } from "../_helpers/graph-store";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -84,27 +84,6 @@ async function buildIndex(stashDir: string): Promise<void> {
  * match the indexed entries row's file_path. entryId is retained in the
  * signature (callers pass it) only to derive a stable file_order/body_hash.
  */
-function insertGraphEntities(
-  db: Database,
-  entryId: number,
-  stashRoot: string,
-  filePath: string,
-  entities: string[],
-): void {
-  const bodyHash = `hash-${entryId}`;
-  db.prepare(
-    `INSERT OR REPLACE INTO graph_files (stash_root, file_path, file_order, file_type, body_hash, status)
-     VALUES (?, ?, ?, 'session', ?, 'extracted')`,
-  ).run(stashRoot, filePath, entryId, bodyHash);
-  let order = 0;
-  for (const ent of entities) {
-    db.prepare(
-      `INSERT OR REPLACE INTO graph_file_entities (stash_root, file_path, body_hash, entity_order, entity_norm, entity)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(stashRoot, filePath, bodyHash, order++, ent.toLowerCase(), ent);
-  }
-}
-
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
@@ -226,9 +205,9 @@ describe("#627 getRelatedSessions — relatedness not similarity (AC5b)", () => 
         const seed = byName.get("claude/seed");
         const rel = byName.get("claude/rel");
         const other = byName.get("claude/other");
-        if (seed) insertGraphEntities(db, seed.id, stashRoot, seed.filePath, ["PaymentGateway"]);
-        if (rel) insertGraphEntities(db, rel.id, stashRoot, rel.filePath, ["PaymentGateway"]);
-        if (other) insertGraphEntities(db, other.id, stashRoot, other.filePath, ["Cache"]);
+        if (seed) insertGraphEntities(db, seed.id, stashRoot, seed.filePath, ["PaymentGateway"], "session");
+        if (rel) insertGraphEntities(db, rel.id, stashRoot, rel.filePath, ["PaymentGateway"], "session");
+        if (other) insertGraphEntities(db, other.id, stashRoot, other.filePath, ["Cache"], "session");
       } finally {
         closeDatabase(db);
       }

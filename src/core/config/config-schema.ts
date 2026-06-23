@@ -335,9 +335,13 @@ export const ImproveProcessConfigSchema = z
     // (generic project-wide tags). Default UNSET/[]. Only meaningful on
     // `recombine`.
     excludeTags: z.array(z.string().min(1)).optional(),
+    // #632 — recombine process: entity_norm values that must never form an
+    // entity cluster (user counterpart to the built-in generic-entity filter).
+    // Default UNSET/[]. Only meaningful on `recombine`.
+    excludeEntities: z.array(z.string().min(1)).optional(),
     // #609 — recombine process: relatedness signal used to form clusters
     // (tags | graph | both). Clustering is by relatedness, never embedding
-    // similarity. Default "tags". Only meaningful on `recombine`.
+    // similarity. Default "both" (#632). Only meaningful on `recombine`.
     relatednessSource: z.enum(["tags", "graph", "both"]).optional(),
     // #609 — recombine process: consecutive re-inductions required before a
     // hypothesis is promoted to a lesson. Default 2. Only meaningful on

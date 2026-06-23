@@ -395,6 +395,13 @@
                           "minLength": 1
                         }
                       },
+                      "excludeEntities": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -741,6 +748,13 @@
                         "exclusiveMinimum": 0
                       },
                       "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "excludeEntities": {
                         "type": "array",
                         "items": {
                           "type": "string",
@@ -1099,6 +1113,13 @@
                           "minLength": 1
                         }
                       },
+                      "excludeEntities": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -1445,6 +1466,13 @@
                         "exclusiveMinimum": 0
                       },
                       "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "excludeEntities": {
                         "type": "array",
                         "items": {
                           "type": "string",
@@ -1803,6 +1831,13 @@
                           "minLength": 1
                         }
                       },
+                      "excludeEntities": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -2149,6 +2184,13 @@
                         "exclusiveMinimum": 0
                       },
                       "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "excludeEntities": {
                         "type": "array",
                         "items": {
                           "type": "string",
@@ -2507,6 +2549,13 @@
                           "minLength": 1
                         }
                       },
+                      "excludeEntities": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -2853,6 +2902,13 @@
                         "exclusiveMinimum": 0
                       },
                       "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "excludeEntities": {
                         "type": "array",
                         "items": {
                           "type": "string",
@@ -3211,6 +3267,13 @@
                           "minLength": 1
                         }
                       },
+                      "excludeEntities": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
                       "relatednessSource": {
                         "type": "string",
                         "enum": [
@@ -3557,6 +3620,13 @@
                         "exclusiveMinimum": 0
                       },
                       "excludeTags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "excludeEntities": {
                         "type": "array",
                         "items": {
                           "type": "string",
@@ -4614,6 +4684,13 @@
                               "minLength": 1
                             }
                           },
+                          "excludeEntities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -4960,6 +5037,13 @@
                             "exclusiveMinimum": 0
                           },
                           "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "excludeEntities": {
                             "type": "array",
                             "items": {
                               "type": "string",
@@ -5318,6 +5402,13 @@
                               "minLength": 1
                             }
                           },
+                          "excludeEntities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -5664,6 +5755,13 @@
                             "exclusiveMinimum": 0
                           },
                           "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "excludeEntities": {
                             "type": "array",
                             "items": {
                               "type": "string",
@@ -6022,6 +6120,13 @@
                               "minLength": 1
                             }
                           },
+                          "excludeEntities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -6368,6 +6473,13 @@
                             "exclusiveMinimum": 0
                           },
                           "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "excludeEntities": {
                             "type": "array",
                             "items": {
                               "type": "string",
@@ -6726,6 +6838,13 @@
                               "minLength": 1
                             }
                           },
+                          "excludeEntities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -7072,6 +7191,13 @@
                             "exclusiveMinimum": 0
                           },
                           "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "excludeEntities": {
                             "type": "array",
                             "items": {
                               "type": "string",
@@ -7430,6 +7556,13 @@
                               "minLength": 1
                             }
                           },
+                          "excludeEntities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
                           "relatednessSource": {
                             "type": "string",
                             "enum": [
@@ -7776,6 +7909,13 @@
                             "exclusiveMinimum": 0
                           },
                           "excludeTags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "excludeEntities": {
                             "type": "array",
                             "items": {
                               "type": "string",
@@ -8815,6 +8955,13 @@
             "minLength": 1
           }
         },
+        "excludeEntities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "relatednessSource": {
           "type": "string",
           "enum": [
@@ -9177,6 +9324,13 @@
                     "minLength": 1
                   }
                 },
+                "excludeEntities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -9523,6 +9677,13 @@
                   "exclusiveMinimum": 0
                 },
                 "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "excludeEntities": {
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -9881,6 +10042,13 @@
                     "minLength": 1
                   }
                 },
+                "excludeEntities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -10227,6 +10395,13 @@
                   "exclusiveMinimum": 0
                 },
                 "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "excludeEntities": {
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -10585,6 +10760,13 @@
                     "minLength": 1
                   }
                 },
+                "excludeEntities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -10931,6 +11113,13 @@
                   "exclusiveMinimum": 0
                 },
                 "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "excludeEntities": {
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -11289,6 +11478,13 @@
                     "minLength": 1
                   }
                 },
+                "excludeEntities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -11635,6 +11831,13 @@
                   "exclusiveMinimum": 0
                 },
                 "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "excludeEntities": {
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -11993,6 +12196,13 @@
                     "minLength": 1
                   }
                 },
+                "excludeEntities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "relatednessSource": {
                   "type": "string",
                   "enum": [
@@ -12339,6 +12549,13 @@
                   "exclusiveMinimum": 0
                 },
                 "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "excludeEntities": {
                   "type": "array",
                   "items": {
                     "type": "string",

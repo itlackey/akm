@@ -79,7 +79,13 @@ const RECOMBINE_SYSTEM_PROMPT = recombineSystemPrompt;
 
 const DEFAULT_MIN_CLUSTER_SIZE = 3;
 const DEFAULT_MAX_CLUSTERS_PER_RUN = 5;
-const DEFAULT_RELATEDNESS_SOURCE: "tags" | "graph" | "both" = "tags";
+// #632 — default to the UNION of tag + graph-entity relatedness. Entity
+// clustering surfaces coherent, subject-scoped clusters (a tool/subsystem) that
+// the coarse stash-wide tag buckets miss, while tags still cover the ~half of
+// memories the graph has no entity for. Additive: existing `tag:` confirmation
+// streaks are untouched (entity uses a separate `entity:` signature namespace),
+// and a stash with no extracted graph entities falls through to tag-only.
+const DEFAULT_RELATEDNESS_SOURCE: "tags" | "graph" | "both" = "both";
 /** #625 — re-induction count required before a hypothesis promotes to a lesson. */
 const DEFAULT_CONFIRM_THRESHOLD = 2;
 /**
@@ -119,6 +125,8 @@ export interface AkmRecombineOptions {
   maxClusterSize?: number;
   /** #632 — tags excluded from tag clustering. Threaded from `processes.recombine.excludeTags`. UNSET/[] = none. */
   excludeTags?: string[];
+  /** #632 — entity_norms excluded from entity clustering. Threaded from `processes.recombine.excludeEntities`. UNSET/[] = none. */
+  excludeEntities?: string[];
   /**
    * #625 — re-induction count at which a hypothesis promotes to a `type: lesson`
    * proposal. Defaults to {@link DEFAULT_CONFIRM_THRESHOLD}. Threaded from
@@ -204,6 +212,52 @@ export function isJunkTag(tag: string): boolean {
 }
 
 /**
+ * #632 — generic extraction-artefact entities the graph routinely emits: session
+ * bookkeeping (`session_id`, `session_checkpoint`), structured-log field names
+ * (`reason`, `harness`, `structured event log`), and the like. They are
+ * stash-wide and carry no topical signal, so an `entity:<norm>` cluster keyed on
+ * one is exactly the bland mega-bucket #632 aims to remove. Lowercased; matched
+ * against the already-normalised `entity_norm`.
+ */
+const JUNK_ENTITY_NORMS = new Set([
+  "session",
+  "session_id",
+  "session_checkpoint",
+  "checkpoint",
+  "reason",
+  "harness",
+  "event",
+  "event log",
+  "structured event",
+  "structured event log",
+  "timestamp",
+  "metadata",
+  "status",
+]);
+
+/**
+ * #632 — an entity carries no clustering signal (and must be skipped) when it is
+ * a generic extraction artefact (session / structured-log bookkeeping), a raw
+ * filesystem path (absolute paths the extractor lifts verbatim), or the same
+ * number / date / hash / version / stopword junk `isJunkTag` rejects. Mirrors
+ * `isJunkTag` so the graph relatedness source does not reintroduce the very
+ * bland buckets entity clustering is meant to replace. Unlike `excludeEntities`
+ * (a fixed user list), this catches the OPEN-ENDED junk without config upkeep.
+ */
+export function isJunkEntity(entity: string): boolean {
+  const e = entity.trim().toLowerCase();
+  if (e.length <= 1) return true;
+  if (JUNK_ENTITY_NORMS.has(e)) return true;
+  if (JUNK_STOPWORD_TAGS.has(e)) return true;
+  if (e.includes("/") || e.includes("\\")) return true; // raw file paths
+  if (/^\d+$/.test(e)) return true; // pure numbers + dates
+  if (/^v?\d+(?:\.\d+)+$/.test(e)) return true; // versions
+  if (/^v\d+$/.test(e)) return true; // v0, v2
+  if (/^[0-9a-f]{4,}$/.test(e) && /\d/.test(e)) return true; // short hex hashes
+  return false;
+}
+
+/**
  * Build relatedness clusters from the memory pool. Clustering is driven purely
  * by shared tags / graph entities — it MUST NOT use embedding similarity, so
  * textually near-identical memories that share no relatedness signal never
@@ -240,6 +294,12 @@ export function buildRelatednessClusters(
      * byte-identical to the pre-#632 behaviour.
      */
     excludeTags?: string[];
+    /**
+     * #632 — entity_norm values that must never form an entity cluster (the
+     * user-curated counterpart to {@link isJunkEntity}'s open-ended filter).
+     * UNSET/[] = entity clustering governed by the junk filter alone.
+     */
+    excludeEntities?: string[];
   },
 ): MemoryCluster[] {
   // Only consolidation-eligible memories participate (exclude `.derived`).
@@ -264,9 +324,10 @@ export function buildRelatednessClusters(
   const useGraph = (opts.relatednessSource === "graph" || opts.relatednessSource === "both") && hasEntities;
   const tagsFallback = !useTags && opts.relatednessSource === "graph" && !hasEntities;
 
-  // #632 — tags excluded from tag-based clustering (applies regardless of
-  // source). UNSET/[] leaves clustering byte-identical to the pre-#632 path.
+  // #632 — tags/entities excluded from clustering (applies regardless of
+  // source). UNSET/[] leaves tag clustering byte-identical to the pre-#632 path.
   const excludeTags = new Set(opts.excludeTags ?? []);
+  const excludeEntities = new Set(opts.excludeEntities ?? []);
 
   for (const entry of memories) {
     if (useTags || tagsFallback) {
@@ -277,7 +338,11 @@ export function buildRelatednessClusters(
       }
     }
     if (useGraph && opts.entityByEntryId) {
-      for (const ent of opts.entityByEntryId.get(entry.id) ?? []) add(`entity:${ent}`, entry);
+      for (const ent of opts.entityByEntryId.get(entry.id) ?? []) {
+        if (excludeEntities.has(ent)) continue;
+        if (isJunkEntity(ent)) continue; // #632 — skip generic extraction-artefact / path entities
+        add(`entity:${ent}`, entry);
+      }
     }
   }
 
@@ -502,6 +567,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     ...(entityByEntryId ? { entityByEntryId } : {}),
     ...(opts.maxClusterSize != null ? { maxClusterSize: opts.maxClusterSize } : {}),
     ...(opts.excludeTags ? { excludeTags: opts.excludeTags } : {}),
+    ...(opts.excludeEntities ? { excludeEntities: opts.excludeEntities } : {}),
   });
   const clusters = capClusters(rankedClusters, maxClustersPerRun);
 

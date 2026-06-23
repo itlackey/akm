@@ -4815,6 +4815,7 @@ async function runImprovePostLoopStage(args: {
         // #632 — clustering-tuning knobs. UNSET = pre-#632 behaviour.
         maxClusterSize: improveProfile.processes?.recombine?.maxClusterSize,
         excludeTags: improveProfile.processes?.recombine?.excludeTags,
+        excludeEntities: improveProfile.processes?.recombine?.excludeEntities,
       });
     } catch (e) {
       allWarnings.push(`recombine: ${String(e)}`);
