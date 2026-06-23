@@ -81,6 +81,16 @@ const WHEN_TO_USE_TYPES = new Set(["lesson"]);
  * Inject this VERBATIM into every improve/authoring prompt that creates or edits
  * an asset of `type`, so the agent is told exactly what the gate will reject.
  */
+/**
+ * Whether an asset of `type` carries a `description` that the validator
+ * (`isValidDescription` / `validateProposalFrontmatter`) treats as required.
+ * Reflect uses this to decide when a description-synthesis instruction (and the
+ * deterministic reflect-side fallback) must fire for a description-less source.
+ */
+export function requiresDescription(type: string): boolean {
+  return DESCRIPTION_TYPES.has(type);
+}
+
 export function authoringRulesForType(type: string): string {
   const rules: string[] = [...FRONTMATTER_BODY_RULES];
   if (DESCRIPTION_TYPES.has(type)) rules.push(...DESCRIPTION_RULES);

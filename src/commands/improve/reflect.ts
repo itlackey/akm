@@ -31,6 +31,7 @@ import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
+import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -71,7 +72,7 @@ import {
   loadAgentConfigFromDisk,
   resolveAgentProfile,
 } from "../agent/agent-support";
-import { checkReflectSize } from "../proposal/validators/proposal-quality-validators";
+import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import {
   type CreateProposalInput,
   createProposal,
@@ -535,7 +536,7 @@ function looksLikeAssetContent(value: string, sdkMode = false, targetType?: stri
 }
 
 /** Outcome of {@link sanitizeReflectPayload}. */
-interface ReflectSanitizeResult {
+export interface ReflectSanitizeResult {
   /** Sanitized content (frontmatter preserved + identity fields restored). */
   content: string;
   /** Sanitized frontmatter object suitable for {@link CreateProposalInput.payload.frontmatter}. */
@@ -576,6 +577,79 @@ function stripAppendedFrontmatter(body: string): string {
 }
 
 /**
+ * #636 — deterministically derive a valid `description` from an asset's existing
+ * metadata when one is missing. Sources, in priority order: the `title:`
+ * frontmatter field, the first `# Heading` in the (proposed or source) body, and
+ * the first sentence of the opening body paragraph. The candidate is normalized
+ * (whitespace collapsed, trailing punctuation/markdown stripped, clamped to the
+ * description max) and only returned if it PASSES `isValidDescription` — so this
+ * never produces a heading-fragment, truncated, or otherwise gate-failing value.
+ * Returns `undefined` when nothing usable can be derived (caller leaves the
+ * proposal as-is rather than fabricating prose).
+ *
+ * This is intentionally deterministic and lives in the reflect proposal-build
+ * path — it does NOT touch the validators or the promote-time repair.
+ */
+function deriveDescriptionFromAsset(
+  title: unknown,
+  proposedBody: string,
+  sourceBody: string,
+  targetRef: string,
+): string | undefined {
+  const candidates: string[] = [];
+
+  // 1. title: frontmatter
+  if (typeof title === "string" && title.trim()) candidates.push(title.trim());
+
+  // 2. first `# Heading` (proposed body first, then source body)
+  for (const body of [proposedBody, sourceBody]) {
+    const headingMatch = body.match(/^#{1,6}\s+(.+?)\s*$/m);
+    if (headingMatch?.[1]) candidates.push(headingMatch[1].trim());
+  }
+
+  // 3. first sentence of the opening prose paragraph (skip headings, fences,
+  //    list markers, blockquotes — those are not prose).
+  for (const body of [proposedBody, sourceBody]) {
+    const firstSentence = firstProseSentence(body);
+    if (firstSentence) candidates.push(firstSentence);
+  }
+
+  for (const raw of candidates) {
+    const normalized = normalizeDescriptionCandidate(raw);
+    if (!normalized) continue;
+    // A bare title/heading often reads as a fragment; pad it into a sentence so
+    // it satisfies the prose/length rules without inventing new facts.
+    const variants = [normalized, `Reference notes on ${normalized}.`];
+    for (const v of variants) {
+      const clamped = v.length > DESCRIPTION_MAX_CHARS ? v.slice(0, DESCRIPTION_MAX_CHARS).trimEnd() : v;
+      if (isValidDescription(clamped, targetRef, { skipRefTailCheck: true }).ok) return clamped;
+    }
+  }
+  return undefined;
+}
+
+/** Extract the first prose sentence from a markdown body, or `""` if none. */
+function firstProseSentence(body: string): string {
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^(#{1,6}\s|```|~~~|[-*+]\s|\d+\.\s|>|\||<!--)/.test(line)) continue;
+    const sentenceMatch = line.match(/^(.+?[.!?])(\s|$)/);
+    return (sentenceMatch?.[1] ?? line).trim();
+  }
+  return "";
+}
+
+/** Normalize a description candidate: strip markdown markers, collapse space. */
+function normalizeDescriptionCandidate(raw: string): string {
+  return raw
+    .replace(/`/g, "")
+    .replace(/^[#>*\-\s]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Reflect post-processor — enforces the safety rails described at the top of
  * this file:
  *
@@ -600,7 +674,7 @@ function stripAppendedFrontmatter(body: string): string {
  * from `payload.frontmatter` so identity fields can be enforced. Size guard
  * is skipped because there is no source to compare against.
  */
-function sanitizeReflectPayload(
+export function sanitizeReflectPayload(
   payload: { content: string; frontmatter?: Record<string, unknown> },
   sourceContent: string | undefined,
   targetRef: string,
@@ -651,6 +725,37 @@ function sanitizeReflectPayload(
   }
 
   const cleanedBody = stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, ""));
+
+  // #636 — deterministic description fallback (reflect-side belt-and-suspenders).
+  // If the type requires a `description` and the merged frontmatter is still
+  // MISSING one (source had none AND the model didn't author one), derive a
+  // description DETERMINISTICALLY from the existing `title:` frontmatter or the
+  // first `# Heading` / opening body sentence — never free-form invention. This
+  // runs in the reflect proposal-build path, BEFORE the proposal is created, so
+  // the validator/promote path is left untouched (no gate fabricates content).
+  //
+  // Scope is the issue's target: a source asset that ALREADY carries frontmatter
+  // (e.g. scraped docs: `source`/`title`/`scraped`) but has a MISSING/empty
+  // `description`. We deliberately do NOT fire when:
+  //   - the source has no frontmatter block at all (injecting one would be a
+  //     structural change and would defeat the #580 no-op/cosmetic noise gate
+  //     for a pure body echo), or
+  //   - a present-but-otherwise-invalid description exists (too short, a heading
+  //     fragment) — overwriting authored content is out of scope; the prompt
+  //     instruction handles improving it instead.
+  const refType = targetRef.includes(":") ? (targetRef.split(":")[0] ?? "") : "";
+  const mergedDesc = mergedFm.description;
+  const descIsMissing = typeof mergedDesc !== "string" || mergedDesc.trim().length === 0;
+  const sourceHadFrontmatter = sourceFmText !== null && Object.keys(sourceFm).length > 0;
+  if (refType && requiresDescription(refType) && descIsMissing && sourceHadFrontmatter) {
+    const derived = deriveDescriptionFromAsset(mergedFm.title, cleanedBody, sourceBody, targetRef);
+    if (derived) {
+      mergedFm.description = derived;
+      warnings.push(
+        "Synthesized a deterministic `description` from title/heading (#636) — source and proposal lacked one.",
+      );
+    }
+  }
 
   // Size guard — only when source body is meaningfully large. The pure
   // predicate lives in `core/proposal-quality-validators` so the same check
