@@ -19,7 +19,13 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
-import { upsertAssetSalience } from "../../../src/commands/improve/salience";
+import type { AssetSalienceRow } from "../../../src/commands/improve/salience";
+import {
+  DEFAULT_ENCODING_SALIENCE,
+  DEFAULT_TYPE_ENCODING_WEIGHTS,
+  isContentEncodingRow,
+  upsertAssetSalience,
+} from "../../../src/commands/improve/salience";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
@@ -659,22 +665,52 @@ describe("P0-A high-retrieval fallback (zero-feedback assets)", () => {
 // ── Layer 3: high-salience admission gate (#608) ──────────────────────────────
 
 describe("high-salience admission gate (#608)", () => {
-  function seedSalience(ref: string, encoding: number): void {
+  // #644 follow-up: the high-salience lane requires a CONTENT-derived encoding
+  // score (`encoding_source = 'content'`), not the per-type weight stub. Default
+  // to "content" here so existing #608 cases model genuinely distilled assets
+  // (the lane's real targets); the type-stub exclusion is asserted separately.
+  function seedSalience(
+    ref: string,
+    encoding: number,
+    encodingSource: "content" | "type-stub" | null = "content",
+  ): void {
     const db = openStateDatabase();
     try {
-      upsertAssetSalience(db, ref, { encoding, outcome: 0, retrieval: 0, rankScore: 0.2 });
+      if (encodingSource === null) {
+        // Legacy NULL-provenance row (pre-#644 migration 015). Write the raw
+        // value with a NULL encoding_source so `isContentEncodingRow`'s
+        // differs-from-stub heuristic governs admission.
+        db.prepare(
+          `INSERT INTO asset_salience
+             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+           VALUES (?, ?, 0, 0, 0.2, 0, ?, NULL)
+           ON CONFLICT(asset_ref) DO UPDATE SET
+             encoding_salience = excluded.encoding_salience,
+             encoding_source = NULL,
+             updated_at = excluded.updated_at`,
+        ).run(ref, encoding, Date.now());
+      } else {
+        upsertAssetSalience(db, ref, {
+          encoding,
+          outcome: 0,
+          retrieval: 0,
+          rankScore: 0.2,
+          encodingSource,
+        });
+      }
     } finally {
       db.close();
     }
   }
 
-  test("zero-feedback ref with encoding_salience ≥ threshold and no prior reflect → reflected", async () => {
+  test("zero-feedback ref with content encoding_salience ≥ threshold and no prior reflect → reflected", async () => {
     const stash = makeTempDir("akm-hs-rescue-");
     writeMemory(stash, "salient", "Newly distilled, never surfaced to a user.");
     await buildIndex(stash);
-    // High encoding_salience, no retrieval, no feedback — only the high-salience
-    // lane can rescue it (memory type-weight fallback is 0.5, below threshold).
-    seedSalience("memory:salient", 0.9);
+    // High CONTENT-derived encoding_salience, no retrieval, no feedback — only the
+    // high-salience lane can rescue it (memory type-weight fallback is 0.5, below
+    // threshold). This is #608's real target: a distilled, content-scored asset.
+    seedSalience("memory:salient", 0.9, "content");
 
     const reflected: string[] = [];
     await akmImprove({
@@ -697,7 +733,7 @@ describe("high-salience admission gate (#608)", () => {
     const stash = makeTempDir("akm-hs-once-");
     writeMemory(stash, "salient", "High salience but already reflected once.");
     await buildIndex(stash);
-    seedSalience("memory:salient", 0.9);
+    seedSalience("memory:salient", 0.9, "content");
     // A reflect proposal already exists for this ref. Without the cooldown guard
     // the high-salience lane re-selected it every run (auto-accept emits a
     // `promoted` event, not `feedback`, so it never leaves noFeedbackCandidates),
@@ -719,6 +755,87 @@ describe("high-salience admission gate (#608)", () => {
     });
 
     expect(reflected).not.toContain("memory:salient");
+  });
+
+  // #644 follow-up — the lore-writer case. A type-stub row (encoding_salience set
+  // to the per-type WEIGHT STUB, e.g. agent 0.9) must NOT be admitted: before this
+  // fix "high-salience" degenerated into "is a skill/agent/command/lesson", and a
+  // type-stub agent (lore-writer) was selected by the lane on every run. The gate
+  // now requires content-derived provenance, so a `type-stub` row is excluded even
+  // though its `encoding_salience` (0.9) is well above the 0.75 threshold.
+  test("type-stub row (encoding_source='type-stub', 0.9) is NOT admitted — the lore-writer case", async () => {
+    const stash = makeTempDir("akm-hs-typestub-");
+    writeMemory(stash, "stub", "Type-stub asset; never content-scored.");
+    await buildIndex(stash);
+    // Explicit type-stub provenance: isContentEncodingRow returns false outright,
+    // regardless of the value differing from the (memory) stub.
+    seedSalience("memory:stub", 0.9, "type-stub");
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).not.toContain("memory:stub");
+  });
+
+  // Legacy NULL-provenance row (pre-#644 migration 015). isContentEncodingRow
+  // applies the differs-from-stub heuristic: a NULL row whose value still differs
+  // from the per-type stub must have been content-written and never re-clobbered,
+  // so it is treated as content and IS admitted. Memory stub is 0.5; 0.9 ≠ 0.5.
+  test("legacy NULL-provenance row that DIFFERS from the type stub IS admitted (differs-from-stub heuristic)", async () => {
+    const stash = makeTempDir("akm-hs-null-diff-");
+    writeMemory(stash, "legacy", "Legacy row, value differs from stub.");
+    await buildIndex(stash);
+    seedSalience("memory:legacy", 0.9, null);
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).toContain("memory:legacy");
+  });
+
+  // Legacy NULL-provenance row whose value EQUALS the per-type stub. The
+  // heuristic treats it as a stub (the safe default) → NOT admitted. Asserted at
+  // the helper level (a non-indexed lesson ref would never be a run candidate, so
+  // routing it through akmImprove would be vacuous): the gate calls
+  // `isContentEncodingRow(row, parseAssetRef(ref).type)` and admits only when it
+  // returns true. lesson stub = 0.75; a NULL row at exactly 0.75 returns false.
+  test("legacy NULL-provenance row that EQUALS the type stub is treated as a stub (isContentEncodingRow=false)", () => {
+    const equalsStub: AssetSalienceRow = {
+      asset_ref: "lesson:atstub",
+      encoding_salience: DEFAULT_TYPE_ENCODING_WEIGHTS.lesson ?? DEFAULT_ENCODING_SALIENCE,
+      outcome_salience: 0,
+      retrieval_salience: 0,
+      rank_score: 0.2,
+      consecutive_no_ops: 0,
+      updated_at: Date.now(),
+      encoding_source: null,
+    };
+    // EQUALS stub → not content → excluded from the lane.
+    expect(isContentEncodingRow(equalsStub, "lesson")).toBe(false);
+    // DIFFERS from stub → content (never re-clobbered) → admitted by the lane.
+    expect(isContentEncodingRow({ ...equalsStub, encoding_salience: 0.9 }, "lesson")).toBe(true);
   });
 });
 

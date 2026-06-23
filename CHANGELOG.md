@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The high-salience improve admission lane (#608) now requires a
+  content-derived encoding score, not the per-type weight stub (#655,
+  #608/#644 follow-up).** The lane previously admitted any zero-feedback ref
+  whose `asset_salience.encoding_salience >= salienceThreshold` (default 0.75).
+  But for assets distill has not content-scored, `encoding_salience` is just the
+  per-type WEIGHT STUB (skill/agent 0.9, command/workflow 0.8, lesson 0.75), so
+  "high-salience" degenerated into "is a skill/agent/command/lesson" — which
+  selected the type-stub `lore-writer` agent on every run (prod: 1 content-scored
+  / 37 type-stub / 1826 NULL-legacy rows). The gate now also requires
+  `isContentEncodingRow(row, parseAssetRef(ref).type)` (the #644 provenance
+  helper), so only genuinely content-scored assets qualify. This preserves
+  #608's intent — distilled assets, the lane's real targets, keep their real
+  content score and still qualify — while cutting the type-stub waste; type-stub
+  rows must earn retrieval/feedback signal via the other lanes. NULL-legacy rows
+  follow `isContentEncodingRow`'s differs-from-stub heuristic. An aggregated log
+  line now reports how many refs the lane admitted so lane composition is
+  observable. The threshold, type-weight table, 10% cap, and `isContentEncodingRow`
+  are unchanged.
+
 - **Auto-sync no longer refuses to commit akm's own changes when unrelated
   non-akm files are present in the stash working tree.** When a stash root is
   shared with a project repo, stray files written into the stash root (e.g. a

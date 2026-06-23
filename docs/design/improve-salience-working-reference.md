@@ -63,7 +63,7 @@ list the **footguns that have already bitten us** so we don't reintroduce them.
 | signal-delta partition | prep 2-3 | improve.ts:2762 | `eligibleRefs`, `distillOnlyRefs`, `noFeedbackPool` | 30-day window; `--scope` bypasses |
 | high-retrieval (P0-A) | prep 3 | improve.ts:3008 | `highRetrievalRefs` | `retrievalCount>=5`, no prior reflect proposal |
 | proactive maintenance | prep 3 | improve.ts:3035 | `proactiveRefs` | `proactiveMaintenance` enabled (**default OFF**) |
-| high-salience admission (#608) | prep 3 | improve.ts:3112 | `highSalienceRefs` (≤10% of limit) | `encoding_salience>=0.75`, no prior reflect proposal |
+| high-salience admission (#608) | prep 3 | improve.ts:3112 | `highSalienceRefs` (≤10% of limit) | `isContentEncodingRow` (content provenance, #655) AND `encoding_salience>=0.75`, no prior reflect proposal |
 | forgetting-safety | prep | improve.ts:3536 | force-add fallen refs | WS-1 rank-change report (scenario B) |
 | replay | prep | improve.ts:3650 | append refs after `--limit` | `replayBudget>0` (**default 0**) |
 | salience sort + no-op dampen | prep 4 | improve.ts:3782 | `loopRefs` priority order | always |
@@ -286,6 +286,23 @@ content-sourced, passes `encodingSalience` back in so the rank score is computed
 real content score too. The type-weight stub remains the genuine fallback for
 never-content-scored refs. (improve.ts ~3375; salience.ts `upsertAssetSalience` /
 `isContentEncodingRow`; distill.ts:973; state-db.ts migration 015)
+
+**F1-follow-up (#655) — the high-salience gate now REQUIRES content provenance.**
+Fixing the clobber (above) stopped the stub overwriting real scores, but the gate
+itself still admitted on `encoding_salience >= threshold` alone, so any unscored
+asset still qualified on its type-weight stub (skill/agent 0.9, command/workflow
+0.8, lesson 0.75) — "high-salience" = "is an agent/command/skill/lesson" — which
+selected the type-stub `lore-writer` agent every run (prod: 1 content / 37 stub /
+1826 NULL). The gate now ALSO requires
+`isContentEncodingRow(row, parseAssetRef(ref).type)` (improve.ts ~3127), so only
+genuinely content-scored rows (and NULL-legacy rows that differ from their type
+stub) are admitted; type-stub rows must earn signal via the other lanes. This
+preserves #608's intent — distilled assets keep their real content score and
+still qualify. Unchanged: threshold, type-weight table, 10% cap,
+`isContentEncodingRow`. An aggregated `[improve] high-salience lane admitted N
+content-scored ref(s)` log line makes lane composition observable; measure it
+after rollout (the skeptic's caveat — the lane shrinks, by design, until more
+assets carry content scores).
 
 **F2 — the high-salience gate fires exactly once, then never again.**
 `!lastReflectProposalTs.has(r.ref)` (improve.ts:3126, the #643 cooldown) permanently
