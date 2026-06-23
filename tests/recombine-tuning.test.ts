@@ -38,7 +38,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmRecombine, buildRelatednessClusters, isJunkTag } from "../src/commands/improve/recombine";
+import { akmRecombine, buildRelatednessClusters, capClusters, isJunkTag } from "../src/commands/improve/recombine";
 import { listProposals } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
@@ -107,9 +107,7 @@ describe("#632 — maxClusterSize cap", () => {
 
     const clusters = buildRelatednessClusters(entries, {
       minClusterSize: 3,
-      maxClustersPerRun: 5,
       relatednessSource: "tags",
-      // NEW knob — does not exist yet; intentional RED.
       maxClusterSize: 4,
     } as Parameters<typeof buildRelatednessClusters>[1]);
 
@@ -136,12 +134,14 @@ describe("#632 — maxClusterSize cap", () => {
       memoryEntry(8, "small-3", ["small"]),
     ];
 
-    const clusters = buildRelatednessClusters(entries, {
-      minClusterSize: 3,
-      maxClustersPerRun: 1,
-      relatednessSource: "tags",
-      maxClusterSize: 4,
-    } as Parameters<typeof buildRelatednessClusters>[1]);
+    const clusters = capClusters(
+      buildRelatednessClusters(entries, {
+        minClusterSize: 3,
+        relatednessSource: "tags",
+        maxClusterSize: 4,
+      } as Parameters<typeof buildRelatednessClusters>[1]),
+      1,
+    );
 
     expect(clusters.length).toBe(1);
     expect(clusters[0].signature).toBe("tag:small");
@@ -164,9 +164,7 @@ describe("#632 — excludeTags", () => {
 
     const clusters = buildRelatednessClusters(entries, {
       minClusterSize: 3,
-      maxClustersPerRun: 5,
       relatednessSource: "tags",
-      // NEW knob — does not exist yet; intentional RED.
       excludeTags: ["generic"],
     } as Parameters<typeof buildRelatednessClusters>[1]);
 
@@ -215,7 +213,6 @@ describe("#632 — junk tags (numeric/date/hash/version/stopword) never cluster"
     ];
     const clusters = buildRelatednessClusters(entries, {
       minClusterSize: 3,
-      maxClustersPerRun: 5,
       relatednessSource: "tags",
     });
     const signatures = clusters.map((c) => c.signature);
@@ -252,14 +249,13 @@ describe("#632 — default-preserving guard (both knobs UNSET)", () => {
 
     const opts = {
       minClusterSize: 3,
-      maxClustersPerRun: 2,
       relatednessSource: "tags" as const,
     };
 
-    // The pre-#632 behaviour: largest-first, then slice(0, maxClustersPerRun).
+    // The pre-#632 behaviour: largest-first, then capClusters(…, maxClustersPerRun).
     // alpha(4) wins; beta vs gamma tie at 3 → broken by signature ascending →
     // "tag:beta" before "tag:gamma". So the top-2 are alpha + beta.
-    const result = buildRelatednessClusters(entries, opts);
+    const result = capClusters(buildRelatednessClusters(entries, opts), 2);
     const shape = clusterShape(result);
 
     expect(result.length).toBe(2);

@@ -216,14 +216,16 @@ export function isJunkTag(tag: string): boolean {
  *   - `"both"`  — union of the tag and entity grouping keys.
  *
  * A cluster is a signal whose member set is >= `minClusterSize`. Overlapping
- * clusters are de-duplicated by member-set identity, and the result is capped
- * to `maxClustersPerRun` by member-count descending.
+ * clusters are de-duplicated by member-set identity, and the result is RANKED
+ * by member-count descending (deterministic alphabetical tiebreak). The
+ * `maxClustersPerRun` cap is NOT applied here — call {@link capClusters} on the
+ * result for the processed slice; the full ranked list is retained so the
+ * cap-aware decay sweep can tell cap-displacement from corpus absence (#658).
  */
 export function buildRelatednessClusters(
   entries: DbIndexedEntry[],
   opts: {
     minClusterSize: number;
-    maxClustersPerRun: number;
     relatednessSource: "tags" | "graph" | "both";
     entityByEntryId?: Map<number, string[]>;
     /**
@@ -303,9 +305,25 @@ export function buildRelatednessClusters(
     return true;
   });
 
-  // Cap to maxClustersPerRun, largest clusters first (deterministic tiebreak).
+  // Rank largest-first (deterministic alphabetical tiebreak). The cap is applied
+  // by the caller via {@link capClusters}, NOT here, so the FULL formed set
+  // (every cluster that genuinely re-forms this run) stays available for the
+  // cap-aware decay sweep — a cluster displaced by the cap must not be confused
+  // with a cluster that vanished from the corpus (#658).
   clusters.sort((a, b) => b.members.length - a.members.length || a.signature.localeCompare(b.signature));
-  return clusters.slice(0, Math.max(0, opts.maxClustersPerRun));
+  return clusters;
+}
+
+/**
+ * #658 — apply the `maxClustersPerRun` cap to a largest-first ranked cluster
+ * list. Split out from {@link buildRelatednessClusters} so callers retain the
+ * full pre-cap set: the clusters BELOW the cap still re-formed this run and must
+ * spare their hypotheses from decay (cap-displacement is a SCHEDULING miss, not
+ * a substance miss). Callers that only need the processed slice call this; the
+ * full ranked list feeds {@link decayUnseenRecombineHypotheses}.
+ */
+export function capClusters(ranked: MemoryCluster[], maxClustersPerRun: number): MemoryCluster[] {
+  return ranked.slice(0, Math.max(0, maxClustersPerRun));
 }
 
 // ── Prompt + ref derivation ───────────────────────────────────────────────────
@@ -474,14 +492,18 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     if (db) closeDatabase(db);
   }
 
-  const clusters = buildRelatednessClusters(entries, {
+  // #658 — `rankedClusters` is the FULL set that re-formed this run (ranked,
+  // pre-cap); `clusters` is the processed top-`maxClustersPerRun` slice. The
+  // decay sweep below uses the full set so a cap-displaced (but present)
+  // cluster spares its hypothesis from reset.
+  const rankedClusters = buildRelatednessClusters(entries, {
     minClusterSize,
-    maxClustersPerRun,
     relatednessSource,
     ...(entityByEntryId ? { entityByEntryId } : {}),
     ...(opts.maxClusterSize != null ? { maxClusterSize: opts.maxClusterSize } : {}),
     ...(opts.excludeTags ? { excludeTags: opts.excludeTags } : {}),
   });
+  const clusters = capClusters(rankedClusters, maxClustersPerRun);
 
   let clustersFormed = 0;
   let proposalsEmitted = 0;
@@ -700,8 +722,22 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
 
     // #625 — decay hypotheses NOT re-induced this run (reset their consecutive
     // streak) so confirmation is per-consecutive-run and conservative (AC4).
+    // #658 — but a hypothesis whose cluster genuinely re-formed this run and was
+    // merely cap-displaced (outside the top-`maxClustersPerRun` slice) must NOT
+    // be decayed — that is a scheduling miss, not a substance miss. We pass
+    // EVERY cluster that formed this run (the full pre-cap `rankedClusters`) as
+    // `presentClusters`; decay spares any row that Jaccard-matches a present
+    // cluster under the SAME overlap rule used for re-induction. Only rows with
+    // no matching current cluster (the corpus stopped supporting them) decay.
     if (stateDb) {
-      const decayedCount = decayUnseenRecombineHypotheses(stateDb, sourceRun, [...seenThisRun]);
+      const presentClusters = rankedClusters.map((c) => ({
+        signature: c.signature,
+        memberKey: recombineMemberKey(c),
+      }));
+      const decayedCount = decayUnseenRecombineHypotheses(stateDb, sourceRun, [...seenThisRun], {
+        presentClusters,
+        minOverlap: DEFAULT_RECOMBINE_OVERLAP,
+      });
       if (decayedCount > 0) {
         appendEvent(
           {
