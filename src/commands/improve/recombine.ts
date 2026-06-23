@@ -236,6 +236,25 @@ const JUNK_ENTITY_NORMS = new Set([
 ]);
 
 /**
+ * #632 — AKM session-capture telemetry memories: auto-generated session-end
+ * checkpoints named `<harness>-session-<YYYYMMDD>-<id>` or
+ * `<harness>-checkpoint-<YYYYMMDD…>-<id>`, carrying an embedded
+ * `akm_memory_kind: session_checkpoint` metadata block. Their bodies are
+ * pipeline bookkeeping, so the graph extracts their metadata FIELDS
+ * (`session_checkpoint`, `harness`, `buffered observations`, `tool_*_observed`,
+ * …) as ENTITIES — which then dominate entity clustering as bland, stash-wide
+ * mega-buckets (the #632 symptom, just under an `entity:` signature). They are
+ * session telemetry, not durable knowledge to generalize, so recombine excludes
+ * them from its pool. The `\d{8}` datestamp anchor is what distinguishes a
+ * capture name from a durable memory that merely MENTIONS session/checkpoint
+ * (e.g. `akm-plugins-session-end-extract-hook`, `session-checkpoint-lint-skips`),
+ * which stay in the pool.
+ */
+export function isSessionCaptureMemoryName(name: string): boolean {
+  return /-(session|checkpoint)-\d{8}/.test(name);
+}
+
+/**
  * #632 — an entity carries no clustering signal (and must be skipped) when it is
  * a generic extraction artefact (session / structured-log bookkeeping), a raw
  * filesystem path (absolute paths the extractor lifts verbatim), or the same
@@ -303,7 +322,15 @@ export function buildRelatednessClusters(
   },
 ): MemoryCluster[] {
   // Only consolidation-eligible memories participate (exclude `.derived`).
-  const memories = entries.filter((e) => e.entry.type === "memory" && isConsolidationEligibleMemoryName(e.entry.name));
+  // #632 — durable memories only: exclude `.derived` (via
+  // `isConsolidationEligibleMemoryName`) AND session-capture telemetry dumps
+  // whose embedded metadata pollutes both tag and entity clustering.
+  const memories = entries.filter(
+    (e) =>
+      e.entry.type === "memory" &&
+      isConsolidationEligibleMemoryName(e.entry.name) &&
+      !isSessionCaptureMemoryName(e.entry.name),
+  );
 
   // signal -> member entries
   const groups = new Map<string, DbIndexedEntry[]>();
@@ -327,7 +354,10 @@ export function buildRelatednessClusters(
   // #632 — tags/entities excluded from clustering (applies regardless of
   // source). UNSET/[] leaves tag clustering byte-identical to the pre-#632 path.
   const excludeTags = new Set(opts.excludeTags ?? []);
-  const excludeEntities = new Set(opts.excludeEntities ?? []);
+  // `entity_norm` is always lowercased (graph-dedup.ts), so normalise the
+  // user-supplied exclusion list to match — `excludeEntities: ["OpenCode"]`
+  // should suppress the stored `opencode` entity (Reviewer A, #632).
+  const excludeEntities = new Set((opts.excludeEntities ?? []).map((e) => e.toLowerCase()));
 
   for (const entry of memories) {
     if (useTags || tagsFallback) {
