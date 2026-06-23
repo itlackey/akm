@@ -1,22 +1,40 @@
 ---
 category: convention
-description: Starter SOFT authoring conventions for knowledge assets — edit to taste.
+description: Soft authoring conventions for knowledge assets as compiled, on-demand reference documents.
 when_to_use: Surfaced to authoring agents when they write or revise a knowledge asset.
 ---
 
 <!--
   SOFT guidance only — advice, not a contract. Nothing here is enforced by the
-  proposal gate; the validator-rejecting HARD rules live in
-  src/core/authoring-rules.ts (#645) and remain the sole enforced source. Editing
-  or deleting this file cannot weaken the gate.
+  proposal gate; validator-rejecting HARD rules live in src/core/authoring-rules.ts
+  and remain the sole enforced source. Editing or deleting this file cannot weaken
+  the gate. Tune the guidance below to match how your stash wants this asset type
+  maintained.
 -->
 
 # Knowledge authoring conventions
 
-A knowledge asset is a reference document meant to be read on demand.
+A knowledge asset is a compiled reference document meant to be read on demand. Treat it as the synthesized layer above raw material: not source files, not chat residue, but integrated, navigable understanding that saves future agents from rediscovering the same material.
 
-- Open with a top-level `# Title` that names the subject plainly.
-- Organise into concise, well-headed sections so a reader can jump to what they need.
-- Favour accuracy and clarity over completeness; link or cross-reference rather than
-  duplicating other assets.
-- Voice: explanatory and neutral, written to be re-read months later.
+## Purpose
+
+Use a knowledge asset for durable reference material, synthesized explanations, design notes, comparisons, and project context that is broader than a single memory but less procedural than a skill.
+
+## Authoring strategy
+
+- Open with a plain top-level title that names the subject.
+- Add a concise orientation paragraph: what this document covers and when it should be read.
+- For a long reference, add a table of contents near the top so the full scope is visible even on a partial read.
+- Organize by stable concepts, decisions, entities, or questions — roughly one page per concept.
+- Cross-reference related assets instead of duplicating them, so a navigable graph forms over time.
+- Preserve provenance where it matters: cite source files, raw notes, session logs, or issues by path/ref.
+- Call out contradictions, uncertainty, stale claims, and open questions explicitly.
+- Prefer accurate synthesis over exhaustive dumping. Raw material belongs elsewhere; this file is the compiled layer.
+- Use tables or checklists when they make retrieval and comparison easier.
+
+## Maintenance strategy
+
+- Update the existing page when new information changes the same topic; append a dated note rather than silently rewriting when provenance matters.
+- Create a new page when the concept deserves its own durable entry.
+- Add links both ways when a new relationship matters.
+- Periodically scan for orphaned, stale, or overlapping knowledge docs and consolidate them.
