@@ -1395,6 +1395,75 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // is installed inside the try; the `finally` always calls it.
   let disposeLlmUsageSink = (): void => {};
 
+  // ── Crash-safe / incremental stash sync (#662) ──────────────────────────────
+  // The primary stash writes as a filesystem source DURING the run
+  // (write-source.ts case-3); those writes become a git commit only when this
+  // closure runs. Historically the only call site was a single BATCH commit at
+  // the very end of the happy path, so a run interrupted AFTER writing but
+  // BEFORE finishing — a mid-cycle crash, a budget abort, or an external
+  // SIGTERM/`process.exit` — left every write uncommitted until some LATER run
+  // happened to finish cleanly and swept the whole backlog up. We now call this
+  // from THREE places: between cycles (bank each completed cycle), at end-of-run
+  // (the converged commit), and from the catch path (commit what was written
+  // before the crash). That shrinks the worst-case loss from "the entire run" to
+  // "the in-flight cycle".
+  //
+  // Declared in the OUTER scope (not inside the try) so the catch block can reach
+  // it. Idempotent + NON-FATAL: `saveGitStash` short-circuits a clean working
+  // tree ("nothing to commit") and a thrown sync error is swallowed here, so a
+  // repeat call after a no-op cycle is cheap and a failed push never fails the
+  // run. Gated identically to the original end-of-run block (git-backed primary
+  // stash, sync not disabled). `eventsCtx` is captured by reference, so calls
+  // after the db-backed context is installed inside the try use the live handle.
+  const effectiveSync = { ...improveProfile.sync, ...options.sync };
+  const commitStashBatch = (
+    messageContext: Parameters<typeof renderSyncCommitMessage>[1],
+  ): AkmImproveResult["sync"] | undefined => {
+    if (!primaryStashDir || effectiveSync.enabled === false || !isGitBackedStash(primaryStashDir)) {
+      return undefined;
+    }
+    const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
+    const writableOverride = resolveWritableOverride(_earlyConfig);
+    const push = effectiveSync.push !== false;
+    const message = renderSyncCommitMessage(
+      effectiveSync.message ?? "akm improve auto-sync",
+      messageContext,
+      Date.now(),
+    );
+    try {
+      const syncResult = saveGitStashFn(undefined, message, writableOverride, { push, repoDir: primaryStashDir });
+      appendEvent(
+        {
+          eventType: "stash_synced",
+          metadata: {
+            committed: syncResult.committed,
+            pushed: syncResult.pushed,
+            skipped: syncResult.skipped,
+            reason: syncResult.reason ?? null,
+          },
+        },
+        eventsCtx,
+      );
+      return {
+        committed: syncResult.committed,
+        pushed: syncResult.pushed,
+        skipped: syncResult.skipped,
+        ...(syncResult.reason !== undefined ? { reason: syncResult.reason } : {}),
+      };
+    } catch (syncErr) {
+      const reason = syncErr instanceof Error ? syncErr.message : String(syncErr);
+      warn(`improve: stash sync failed (non-fatal): ${reason}`);
+      appendEvent(
+        {
+          eventType: "stash_synced",
+          metadata: { committed: false, pushed: false, skipped: true, reason },
+        },
+        eventsCtx,
+      );
+      return { committed: false, pushed: false, skipped: true, reason };
+    }
+  };
+
   try {
     // H7 (#566): arm the budget watchdog. `armBudgetWatchdog` captures both the
     // budget timer and the hard-kill timer it schedules on exhaustion, returning
@@ -1490,6 +1559,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         if (budgetAbortController.signal.aborted || (remaining !== undefined && remaining <= 0)) {
           break;
         }
+      }
+
+      // #662 incremental sync: bank the PREVIOUS cycle's writes before starting a
+      // new one, so a crash/abort/timeout mid-run loses at most the in-flight
+      // cycle rather than the whole run. Guarded on `cycleIndex > 0`, so the
+      // common maxCycles:1 path never calls this — its single end-of-run commit
+      // below stays the only sync and the serialized envelope is byte-identical
+      // to pre-#662. `saveGitStash` no-ops a clean tree, so a cycle that wrote
+      // nothing costs only a `git status`.
+      if (cycleIndex > 0) {
+        commitStashBatch({ scope, plannedRefs, runId: options.runId });
       }
 
       // Re-run ensureIndex + collectEligibleRefs + memory-cleanup recompute for
@@ -1788,62 +1868,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         eventsCtx,
       );
 
-    // End-of-run BATCH auto-sync. Recognition is decoupled from the per-write
-    // path (see write-source.ts case-3): the primary stash writes as a
-    // filesystem source during the run, then is committed in one shot here via
-    // the same `saveGitStash` that `akm sync` calls. Gated on a non-dry-run, a
-    // git-backed primary stash (by `.git`, not by remote), and sync not
-    // disabled. A sync failure is NON-FATAL — it never fails a successful run
-    // (mirrors the contradiction-detection best-effort pattern).
-    const effectiveSync = { ...improveProfile.sync, ...options.sync };
-    if (!result.dryRun && primaryStashDir && effectiveSync.enabled !== false && isGitBackedStash(primaryStashDir)) {
-      const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
-      // Reuse the config resolved at the top of the run (`_earlyConfig`) instead
-      // of a second loadConfig(); the writable derivation is shared with
-      // `akm sync` via resolveWritableOverride().
-      const writableOverride = resolveWritableOverride(_earlyConfig);
-      const push = effectiveSync.push !== false;
-      // `sync.message` may contain `{token}` placeholders (timestamp/date/time/
-      // scope/refs/accepted) expanded against this run's results; the default
-      // template has no tokens so it renders verbatim.
-      const message = renderSyncCommitMessage(effectiveSync.message ?? "akm improve auto-sync", result, Date.now());
-      try {
-        // Pass primaryStashDir as the explicit commit target so the gate above
-        // (which validated primaryStashDir via isGitBackedStash) and the commit
-        // operate on the SAME directory — avoids divergence when a caller passes
-        // a non-default options.stashDir (FIX 9).
-        const syncResult = saveGitStashFn(undefined, message, writableOverride, { push, repoDir: primaryStashDir });
-        result.sync = {
-          committed: syncResult.committed,
-          pushed: syncResult.pushed,
-          skipped: syncResult.skipped,
-          ...(syncResult.reason !== undefined ? { reason: syncResult.reason } : {}),
-        };
-        appendEvent(
-          {
-            eventType: "stash_synced",
-            metadata: {
-              committed: syncResult.committed,
-              pushed: syncResult.pushed,
-              skipped: syncResult.skipped,
-              reason: syncResult.reason ?? null,
-            },
-          },
-          eventsCtx,
-        );
-      } catch (syncErr) {
-        const reason = syncErr instanceof Error ? syncErr.message : String(syncErr);
-        warn(`improve: end-of-run stash sync failed (non-fatal): ${reason}`);
-        result.sync = { committed: false, pushed: false, skipped: true, reason };
-        appendEvent(
-          {
-            eventType: "stash_synced",
-            metadata: { committed: false, pushed: false, skipped: true, reason },
-          },
-          eventsCtx,
-        );
-      }
-    }
+    // End-of-run BATCH auto-sync — the converged commit. Recognition is
+    // decoupled from the per-write path (see write-source.ts case-3): the primary
+    // stash writes as a filesystem source during the run, then is committed via
+    // the same `saveGitStash` that `akm sync` calls. The gating (git-backed
+    // primary stash, sync not disabled) and the NON-FATAL guarantee now live in
+    // `commitStashBatch` (#662); the inter-cycle and catch-path calls reuse it.
+    // dry-run already returned above, so this always runs on a completed live
+    // run. `result.sync` reflects this final commit (for a one-cycle run it is
+    // the only commit; for a multi-cycle run the earlier cycles were banked by
+    // the inter-cycle calls and this records the last batch). `result` carries
+    // the full `{accepted}`/`{refs}`/`{triage_*}` token data for the message.
+    result.sync = commitStashBatch(result);
 
     return result;
   } catch (err) {
@@ -1859,6 +1895,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       },
       eventsCtx,
     );
+    // #662 crash/abort safety net: commit whatever this run already wrote to the
+    // primary stash BEFORE rethrowing, so an interrupted run (mid-cycle crash or
+    // a cooperative budget abort that surfaces as a throw) does not leave its
+    // writes uncommitted until a later clean run sweeps them up. Best-effort —
+    // `commitStashBatch` swallows its own errors and no-ops a clean tree, so this
+    // never masks or supersedes the original failure being rethrown below.
+    commitStashBatch({ scope, plannedRefs, runId: options.runId });
     throw err;
   } finally {
     // #576: clear the per-run LLM usage sink BEFORE closing `eventsDb` below, so
