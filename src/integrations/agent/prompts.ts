@@ -28,7 +28,12 @@
  */
 
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
-import { authoringRulesForType } from "../../core/authoring-rules";
+import {
+  authoringRulesForType,
+  DESCRIPTION_MAX_CHARS,
+  DESCRIPTION_MIN_CHARS,
+  requiresDescription,
+} from "../../core/authoring-rules";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 
 /** Agent-returned proposal payload (after JSON parse). */
@@ -198,6 +203,28 @@ export interface ReflectPromptInput {
   priorDraft?: string;
 }
 
+/**
+ * Whether the source asset content has a non-empty `description:` key in its
+ * YAML frontmatter. Used by {@link buildReflectPrompt} (#636) to decide whether
+ * to inject the synthesize-a-description instruction. Uses an inline regex to
+ * avoid pulling the full YAML parser into the prompt module (mirrors the
+ * existing inline frontmatter handling here).
+ */
+function sourceHasNonEmptyDescription(assetContent: string | undefined): boolean {
+  if (!assetContent) return false;
+  const fmMatch = assetContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!fmMatch) return false;
+  const fmBlock = fmMatch[1] ?? "";
+  // Match a top-level `description:` line and capture its inline value.
+  const descMatch = fmBlock.match(/^description\s*:\s*(.*)$/m);
+  if (!descMatch) return false;
+  const value = (descMatch[1] ?? "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+  return value.length > 0;
+}
+
 /** Result of {@link buildReflectPrompt}. */
 export interface ReflectPromptResult {
   /** Full prompt string to forward to the agent/LLM. */
@@ -270,6 +297,26 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     const authoringRules = resolvedType ? authoringRulesForType(resolvedType) : "";
     if (authoringRules) {
       sections.push(authoringRules);
+    }
+
+    // #636 — synthesize-a-description instruction. Many source assets (notably
+    // scraped docs: `source`/`title`/`scraped`) carry frontmatter but NO
+    // `description`. Reflect echoes the source frontmatter, so the proposal
+    // inherits the missing description and the promote-time validator
+    // (isValidDescription, 20–400 chars) rejects it. The fix is at GENERATION
+    // time: when the source lacks a non-empty `description` and the type
+    // requires one, tell the model — unmissably — that it MUST author a valid
+    // `description`. (The validator/promote path is NOT changed: it must never
+    // fabricate content to pass itself.)
+    if (resolvedType && requiresDescription(resolvedType) && !sourceHasNonEmptyDescription(input.assetContent)) {
+      sections.push(
+        [
+          "REQUIRED — synthesize a `description` (the source asset has none):",
+          `- The source frontmatter does NOT include a non-empty \`description\`, but a ${resolvedType} asset REQUIRES one or the proposal will be rejected at promote time.`,
+          `- You MUST author a valid \`description\` in the proposal frontmatter: ${DESCRIPTION_MIN_CHARS}–${DESCRIPTION_MAX_CHARS} characters of plain-prose sentence summarizing what this asset is about.`,
+          '- Synthesize it from the asset\'s `title:` frontmatter, its first `# Heading`, or the opening body sentence. Do NOT copy a bare heading fragment (e.g. "Overview", "Named Page", "Key Insight") and do NOT emit a truncated phrase that ends on `:`/`;`/`,` or a hanging connector word.',
+        ].join("\n"),
+      );
     }
   }
 

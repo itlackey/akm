@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`improve` reflect no longer emits proposals doomed to fail the
+  `invalid-description` gate when the source asset has no frontmatter
+  `description` (#636).** Reflect echoed the source frontmatter, so for assets
+  that carry other keys but no `description` (notably scraped docs:
+  `source`/`title`/`scraped`) the proposal inherited the missing/empty
+  description and the promote-time validator (`isValidDescription`, 20–400
+  chars) rejected it — observed as ~14/16 rejects in one triage pass, blocking
+  the whole scraped-doc/knowledge cluster from reflect improvement. The fix is
+  **generation-time only**: (1) `buildReflectPrompt` now injects an explicit
+  "synthesize a `description`" instruction whenever the source lacks a non-empty
+  `description` and the asset type requires one (per `authoring-rules.ts`
+  `DESCRIPTION_TYPES`), telling the model it MUST author a valid 20–400-char
+  plain-prose description from the asset's `title:`/first `# Heading`/opening
+  body; and (2) a deterministic reflect-side belt-and-suspenders in
+  `sanitizeReflectPayload` — if a source that already had frontmatter still ends
+  up with a missing/empty description after generation, reflect derives one
+  deterministically from `title:`/first heading (validated against
+  `isValidDescription`, never free-form invention) **before** the proposal is
+  created. The validator, `authoring-rules.ts` bounds, `repairProposalContent`,
+  and the drain are unchanged — nothing in the validator/promote path fabricates
+  content to pass itself.
 - **The high-salience improve admission lane (#608) now requires a
   content-derived encoding score, not the per-type weight stub (#655,
   #608/#644 follow-up).** The lane previously admitted any zero-feedback ref
