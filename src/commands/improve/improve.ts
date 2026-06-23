@@ -3110,6 +3110,18 @@ async function runImprovePreparationStage(args: {
   // noFeedbackCandidates), burning LLM calls and churning the asset. This
   // mirrors the P0-A high-retrieval gate's `!lastReflectProposalTs.has(r.ref)`
   // guard above so all "rescue" lanes share the same once-per-asset semantics.
+  //
+  // Content-provenance gate (#644 follow-up): the row must ALSO carry a genuine
+  // content-derived encoding score (`isContentEncodingRow`). Otherwise the lane
+  // admits the per-type WEIGHT STUB (skill/agent 0.9, command/workflow 0.8,
+  // lesson 0.75 from DEFAULT_TYPE_ENCODING_WEIGHTS) for every distill-unscored
+  // asset — i.e. "high-salience" degenerates into "is a skill/agent/command/
+  // lesson", which selected the lore-writer type-stub agent on every run. Only
+  // content-scored assets earn the high-salience rescue; type-stub rows must
+  // earn retrieval/feedback signal via the other lanes. This PRESERVES #608's
+  // intent — distilled assets (the lane's real targets) keep their real content
+  // score and still qualify — while cutting the type-stub waste. See §5 F1 of
+  // docs/design/improve-salience-working-reference.md and #608/#644.
   const highSalienceRefs: ImproveEligibleRef[] = [];
   const salienceCfg = (options.config ?? loadConfig()).improve?.salience;
   const salienceThreshold = salienceCfg?.salienceThreshold ?? 0.75;
@@ -3124,7 +3136,12 @@ async function runImprovePreparationStage(args: {
       for (const r of candidates) {
         if (highSalienceRefs.length >= highSalienceCap) break;
         const row = getAssetSalience(dbForHighSalience, r.ref);
-        if (row && row.encoding_salience >= salienceThreshold && !lastReflectProposalTs.has(r.ref)) {
+        if (
+          row &&
+          isContentEncodingRow(row, parseAssetRef(r.ref).type) &&
+          row.encoding_salience >= salienceThreshold &&
+          !lastReflectProposalTs.has(r.ref)
+        ) {
           highSalienceRefs.push(r);
         }
       }
@@ -3133,6 +3150,12 @@ async function runImprovePreparationStage(args: {
       // best-effort: if DB unavailable, highSalienceRefs stays empty
     } finally {
       if (dbForHighSalience) dbForHighSalience.close();
+    }
+    if (highSalienceRefs.length > 0) {
+      info(
+        `[improve] high-salience lane admitted ${highSalienceRefs.length} content-scored ref(s) ` +
+          `(threshold=${salienceThreshold}, requires content-derived encoding_source)`,
+      );
     }
   }
 
