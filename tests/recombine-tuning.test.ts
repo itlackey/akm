@@ -432,6 +432,8 @@ describe("recombine #632 — entity noise filter (isJunkEntity)", () => {
       "2026",
       "20260529",
       "v1.2.3",
+      "a1b2", // short hex hash (has a digit)
+      "002c624c",
       "a",
     ]) {
       expect(isJunkEntity(junk)).toBe(true);
@@ -628,6 +630,26 @@ describe("recombine #632 — selectClustersForRun (entity/tag blend)", () => {
     const ranked = [cl("entity:x", 4), cl("tag:a", 4)];
     expect(selectClustersForRun(ranked, 0)).toEqual([]);
     expect(selectClustersForRun(ranked, 5).map((c) => c.signature)).toEqual(["entity:x", "tag:a"]);
+  });
+
+  test("reserved tag slots prefer TIGHTER tags over broad mega-buckets (#632)", () => {
+    // tag:broad is the largest (50 > soft cap 20) but the LEAST coherent; the
+    // reserve must prefer the tighter tag:tight (12) instead.
+    const ranked = [
+      cl("entity:x", 8),
+      cl("tag:broad", 50), // over the soft cap — demoted in the reserve
+      cl("tag:tight", 12), // tight, mid-band — preferred for the reserve
+    ];
+    // cap 2: 1 entity (never starved) + 1 reserved tag → the tight one, not broad.
+    expect(selectClustersForRun(ranked, 2).map((c) => c.signature)).toEqual(["entity:x", "tag:tight"]);
+  });
+
+  test("entities are never starved when maxClustersPerRun < RESERVED_TAG_SLOTS", () => {
+    const ranked = [cl("entity:x", 9), cl("tag:a", 8), cl("tag:b", 7), cl("tag:c", 6)];
+    // cap 1 → the single slot goes to the leading entity.
+    expect(selectClustersForRun(ranked, 1).map((c) => c.signature)).toEqual(["entity:x"]);
+    // cap 2 → 1 entity + 1 tag (entity not crowded out by the 3-slot reserve).
+    expect(selectClustersForRun(ranked, 2).map((c) => c.signature)).toEqual(["entity:x", "tag:a"]);
   });
 });
 

@@ -621,6 +621,59 @@ describe("recombine #632 — entity clustering end-to-end", () => {
   );
 
   test(
+    "the 'both' blend processes an entity-led mix through akmRecombine (entities lead, 1 tag reserved)",
+    async () => {
+      const stash = isolatedStash();
+      // THREE entity clusters (members share an entity, no shared tag) + ONE tag
+      // cluster. With cap 3 and pure entity-preference all 3 slots would be
+      // entities, starving the tag; the reserve must hand one slot to tag:topic.
+      for (const p of ["x", "y", "z"]) {
+        writeMemory(stash, `${p}-1`, [], `${p} alpha detail.`);
+        writeMemory(stash, `${p}-2`, [], `${p} beta detail.`);
+        writeMemory(stash, `${p}-3`, [], `${p} gamma detail.`);
+      }
+      writeMemory(stash, "t-1", ["topic"], "Topic one.");
+      writeMemory(stash, "t-2", ["topic"], "Topic two.");
+      writeMemory(stash, "t-3", ["topic"], "Topic three.");
+      await buildIndex(stash);
+
+      const db = openExistingDatabase();
+      try {
+        for (const m of getAllEntries(db, "memory")) {
+          const name = (m.entry as { name: string }).name;
+          if (name.startsWith("x-")) insertGraphEntities(db, m.id, m.stashDir, m.filePath, ["Toolx"]);
+          else if (name.startsWith("y-")) insertGraphEntities(db, m.id, m.stashDir, m.filePath, ["Tooly"]);
+          else if (name.startsWith("z-")) insertGraphEntities(db, m.id, m.stashDir, m.filePath, ["Toolz"]);
+        }
+      } finally {
+        closeDatabase(db);
+      }
+
+      const seenSignals: string[] = [];
+      const res = await akmRecombine({
+        stashDir: stash,
+        config: recombineEnabledConfig(),
+        sourceRun: "run-blend",
+        relatednessSource: "both",
+        minClusterSize: 3,
+        maxClustersPerRun: 3,
+        recombineLlmFn: async (prompt) => {
+          seenSignals.push(/Shared signal: (\S+)/.exec(prompt)?.[1] ?? "");
+          return generalization("Blended generalization.", "Generalization body.");
+        },
+      });
+
+      expect(res.clustersFormed).toBe(3);
+      // Two entity clusters lead (alphabetical tiebreak: toolx, tooly), and one
+      // slot is RESERVED for the tag — the third entity (toolz) is left out.
+      expect(seenSignals.filter((s) => s.startsWith("entity:")).sort()).toEqual(["entity:toolx", "entity:tooly"]);
+      expect(seenSignals).toContain("tag:topic");
+      expect(seenSignals).not.toContain("entity:toolz");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "session-capture telemetry memories are excluded from the real akmRecombine pool",
     async () => {
       const stash = isolatedStash();

@@ -85,6 +85,10 @@ const DEFAULT_MAX_CLUSTERS_PER_RUN = 5;
 // Entities still take the rest of the budget; whichever kind is short, the other
 // backfills. UNSET of entities (tags-only stash) ignores this and takes top-N tags.
 const RESERVED_TAG_SLOTS = 3;
+// #632 — a tag cluster larger than this is treated as an over-broad project
+// mega-bucket (low-coherence, the bland signal #632 de-emphasizes), so the
+// reserved tag slots prefer TIGHTER clusters at or below this size first.
+const TAG_RESERVE_SOFT_CAP = 20;
 // #632 — default to the UNION of tag + graph-entity relatedness, with entity
 // clusters PREFERRED at selection time (see the rank in buildRelatednessClusters).
 // Entity clustering surfaces coherent, subject-scoped clusters (a tool/subsystem)
@@ -301,9 +305,10 @@ export function isJunkEntity(entity: string): boolean {
  * A cluster is a signal whose member set is >= `minClusterSize`. Overlapping
  * clusters are de-duplicated by member-set identity, and the result is RANKED
  * by member-count descending (deterministic alphabetical tiebreak). The
- * `maxClustersPerRun` cap is NOT applied here — call {@link capClusters} on the
- * result for the processed slice; the full ranked list is retained so the
- * cap-aware decay sweep can tell cap-displacement from corpus absence (#658).
+ * `maxClustersPerRun` cap is NOT applied here — call {@link selectClustersForRun}
+ * (entity-aware blend) or {@link capClusters} (tags-only) on the result for the
+ * processed slice; the full ranked list is retained so the cap-aware decay sweep
+ * can tell cap-displacement from corpus absence (#658).
  */
 export function buildRelatednessClusters(
   entries: DbIndexedEntry[],
@@ -420,8 +425,9 @@ export function buildRelatednessClusters(
   // coherent entity clusters this pass produces. Preferring entities keeps tag
   // clustering as the fallback (a stash with no graph entities, or a topic with a
   // tag but no extracted entity, still clusters) while ensuring the better signal
-  // wins the cap. The cap is applied by the caller via {@link capClusters}, NOT
-  // here, so the FULL formed set stays available for the cap-aware decay sweep —
+  // wins the cap. The processed slice is chosen by the caller via
+  // {@link selectClustersForRun} (NOT here), so the FULL formed set stays
+  // available for the cap-aware decay sweep —
   // a cluster displaced by the cap must not be confused with a cluster that
   // vanished from the corpus (#658).
   const entityRank = (sig: string): number => (sig.startsWith("entity:") ? 0 : 1);
@@ -452,12 +458,19 @@ export function capClusters(ranked: MemoryCluster[], maxClustersPerRun: number):
  *
  *   - No entity clusters → top `maxClustersPerRun` TAG clusters (a tags-only
  *     stash is byte-identical to {@link capClusters}).
- *   - Entity clusters present → fill the budget with the top ENTITY clusters
- *     (the higher-signal key — an extracted subject vs an auto-tokenized filename
- *     tag), but RESERVE up to `RESERVED_TAG_SLOTS` of the budget for the top tag
- *     clusters so tag-only topics still surface every run. Whichever kind is
- *     short, the other backfills the leftover slots, so the full budget is always
- *     used when enough clusters exist.
+ *   - Entity clusters present → ENTITIES LEAD the budget (the higher-signal key —
+ *     an extracted subject vs an auto-tokenized filename tag), but RESERVE up to
+ *     `RESERVED_TAG_SLOTS` for tag clusters so tag-only topics still surface every
+ *     run. Entities are never starved below one slot when present and the budget
+ *     allows. Whichever kind is short, the other backfills, so the full budget is
+ *     always used when enough clusters exist.
+ *
+ * The reserved tag slots prefer TIGHTER tag clusters (size <= `TAG_RESERVE_SOFT_CAP`,
+ * largest-first within that band, then the over-cap buckets): a broad
+ * auto-tokenized `tag:<project>` mega-bucket is exactly the bland, low-coherence
+ * signal #632 de-emphasizes, so the reserve should not spend its protected slots
+ * on the largest tags. Entities themselves stay largest-first — an entity is a
+ * coherent subject at any size.
  *
  * Entities lead the returned order. The FULL pre-cap `ranked` list (not this
  * slice) still feeds the cap-aware decay sweep (#658), so a cluster left out of
@@ -469,10 +482,21 @@ export function selectClustersForRun(ranked: MemoryCluster[], maxClustersPerRun:
   const entities = ranked.filter((c) => c.signature.startsWith("entity:"));
   if (entities.length === 0) return ranked.slice(0, max); // tags-only → top-N (capClusters parity)
   const tags = ranked.filter((c) => !c.signature.startsWith("entity:"));
-  const reservedForTags = Math.min(tags.length, RESERVED_TAG_SLOTS, max);
+  // Reserve up to RESERVED_TAG_SLOTS for tags, but never below one slot for the
+  // leading entities when the budget allows (so a small `maxClustersPerRun` does
+  // not silently invert the entity preference).
+  const reservedForTags = Math.min(tags.length, RESERVED_TAG_SLOTS, Math.max(0, max - 1));
   const entityTake = Math.min(entities.length, max - reservedForTags);
   const tagTake = Math.min(tags.length, max - entityTake); // tags take their reserve + any slot entities left
-  return [...entities.slice(0, entityTake), ...tags.slice(0, tagTake)];
+  // Prefer tight tags (<= soft cap) over broad mega-buckets for the reserve.
+  const reserveTags = [...tags]
+    .sort((a, b) => {
+      const aOver = a.members.length > TAG_RESERVE_SOFT_CAP ? 1 : 0;
+      const bOver = b.members.length > TAG_RESERVE_SOFT_CAP ? 1 : 0;
+      return aOver - bOver || b.members.length - a.members.length || a.signature.localeCompare(b.signature);
+    })
+    .slice(0, tagTake);
+  return [...entities.slice(0, entityTake), ...reserveTags];
 }
 
 // ── Prompt + ref derivation ───────────────────────────────────────────────────
