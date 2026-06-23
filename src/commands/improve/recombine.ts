@@ -79,6 +79,12 @@ const RECOMBINE_SYSTEM_PROMPT = recombineSystemPrompt;
 
 const DEFAULT_MIN_CLUSTER_SIZE = 3;
 const DEFAULT_MAX_CLUSTERS_PER_RUN = 5;
+// #632 — slots in each run's processed budget reserved for the top TAG clusters
+// when entity clusters are present, so tag-only topics (a topic with a good tag
+// but no extracted graph entity) are never fully starved by entity preference.
+// Entities still take the rest of the budget; whichever kind is short, the other
+// backfills. UNSET of entities (tags-only stash) ignores this and takes top-N tags.
+const RESERVED_TAG_SLOTS = 3;
 // #632 — default to the UNION of tag + graph-entity relatedness, with entity
 // clusters PREFERRED at selection time (see the rank in buildRelatednessClusters).
 // Entity clustering surfaces coherent, subject-scoped clusters (a tool/subsystem)
@@ -440,6 +446,35 @@ export function capClusters(ranked: MemoryCluster[], maxClustersPerRun: number):
   return ranked.slice(0, Math.max(0, maxClustersPerRun));
 }
 
+/**
+ * #632 — pick the per-run PROCESSED slice from the full ranked list, BLENDING
+ * entity and tag clusters so neither starves the other:
+ *
+ *   - No entity clusters → top `maxClustersPerRun` TAG clusters (a tags-only
+ *     stash is byte-identical to {@link capClusters}).
+ *   - Entity clusters present → fill the budget with the top ENTITY clusters
+ *     (the higher-signal key — an extracted subject vs an auto-tokenized filename
+ *     tag), but RESERVE up to `RESERVED_TAG_SLOTS` of the budget for the top tag
+ *     clusters so tag-only topics still surface every run. Whichever kind is
+ *     short, the other backfills the leftover slots, so the full budget is always
+ *     used when enough clusters exist.
+ *
+ * Entities lead the returned order. The FULL pre-cap `ranked` list (not this
+ * slice) still feeds the cap-aware decay sweep (#658), so a cluster left out of
+ * the processed slice this run is NOT decayed as if it vanished.
+ */
+export function selectClustersForRun(ranked: MemoryCluster[], maxClustersPerRun: number): MemoryCluster[] {
+  const max = Math.max(0, maxClustersPerRun);
+  if (max === 0) return [];
+  const entities = ranked.filter((c) => c.signature.startsWith("entity:"));
+  if (entities.length === 0) return ranked.slice(0, max); // tags-only → top-N (capClusters parity)
+  const tags = ranked.filter((c) => !c.signature.startsWith("entity:"));
+  const reservedForTags = Math.min(tags.length, RESERVED_TAG_SLOTS, max);
+  const entityTake = Math.min(entities.length, max - reservedForTags);
+  const tagTake = Math.min(tags.length, max - entityTake); // tags take their reserve + any slot entities left
+  return [...entities.slice(0, entityTake), ...tags.slice(0, tagTake)];
+}
+
 // ── Prompt + ref derivation ───────────────────────────────────────────────────
 
 /** Read a memory body (frontmatter stripped) for the cluster prompt. */
@@ -618,7 +653,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     ...(opts.excludeTags ? { excludeTags: opts.excludeTags } : {}),
     ...(opts.excludeEntities ? { excludeEntities: opts.excludeEntities } : {}),
   });
-  const clusters = capClusters(rankedClusters, maxClustersPerRun);
+  const clusters = selectClustersForRun(rankedClusters, maxClustersPerRun);
 
   let clustersFormed = 0;
   let proposalsEmitted = 0;

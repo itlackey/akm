@@ -45,6 +45,7 @@ import {
   isJunkEntity,
   isJunkTag,
   isSessionCaptureMemoryName,
+  selectClustersForRun,
 } from "../src/commands/improve/recombine";
 import { listProposals } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
@@ -566,6 +567,69 @@ describe("recombine #632 — entity-based clustering", () => {
 // and dominate the largest-first selection — reproducing #632 under entity
 // signatures. They are telemetry, not durable knowledge, so they are excluded
 // from the recombine pool.
+
+describe("recombine #632 — selectClustersForRun (entity/tag blend)", () => {
+  // Build a cluster of `size` members with the given signature.
+  const cl = (signature: string, size: number) => ({
+    signature,
+    members: Array.from({ length: size }, (_, i) => memoryEntry(i + 1, `${signature.replace(/\W/g, "-")}-${i}`, [])),
+  });
+
+  test("tags-only (no entity clusters) → top-N tags, identical to capClusters", () => {
+    const ranked = [cl("tag:a", 5), cl("tag:b", 4), cl("tag:c", 3), cl("tag:d", 3)];
+    expect(selectClustersForRun(ranked, 3).map((c) => c.signature)).toEqual(["tag:a", "tag:b", "tag:c"]);
+    expect(selectClustersForRun(ranked, 3).map((c) => c.signature)).toEqual(
+      capClusters(ranked, 3).map((c) => c.signature),
+    );
+  });
+
+  test("entities + plenty of tags → entities lead, top-3 tags reserved (2 entity + 3 tag at cap 5)", () => {
+    // ranked is entity-first (the buildRelatednessClusters sort), largest-first within kind.
+    const ranked = [
+      cl("entity:x", 10),
+      cl("entity:y", 9),
+      cl("entity:z", 8),
+      cl("tag:a", 7),
+      cl("tag:b", 6),
+      cl("tag:c", 5),
+    ];
+    expect(selectClustersForRun(ranked, 5).map((c) => c.signature)).toEqual([
+      "entity:x",
+      "entity:y",
+      "tag:a",
+      "tag:b",
+      "tag:c",
+    ]);
+  });
+
+  test("few tags → entities backfill the unused tag reserve", () => {
+    const ranked = [cl("entity:x", 10), cl("entity:y", 9), cl("entity:z", 8), cl("entity:w", 7), cl("tag:a", 6)];
+    expect(selectClustersForRun(ranked, 5).map((c) => c.signature)).toEqual([
+      "entity:x",
+      "entity:y",
+      "entity:z",
+      "entity:w",
+      "tag:a",
+    ]);
+  });
+
+  test("few entities → tags backfill the rest", () => {
+    const ranked = [cl("entity:x", 10), cl("tag:a", 9), cl("tag:b", 8), cl("tag:c", 7), cl("tag:d", 6)];
+    expect(selectClustersForRun(ranked, 5).map((c) => c.signature)).toEqual([
+      "entity:x",
+      "tag:a",
+      "tag:b",
+      "tag:c",
+      "tag:d",
+    ]);
+  });
+
+  test("cap 0 → empty; tiny pools never exceed the budget", () => {
+    const ranked = [cl("entity:x", 4), cl("tag:a", 4)];
+    expect(selectClustersForRun(ranked, 0)).toEqual([]);
+    expect(selectClustersForRun(ranked, 5).map((c) => c.signature)).toEqual(["entity:x", "tag:a"]);
+  });
+});
 
 describe("recombine #632 — session-capture telemetry detection", () => {
   test("recognises AKM session/checkpoint capture names (datestamped)", () => {
