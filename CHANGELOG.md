@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`improve` reflect cooldown guard now covers the no-feedback rescue lanes
+  (#653).** The once-per-asset reflect cooldown (`!lastReflectProposalTs.has(ref)`,
+  #643) was built only over `candidateRefs`, while the high-salience, proactive,
+  and high-retrieval (P0-A) lanes select from a broader pool. A gated ref absent
+  from the candidateRefs-scoped map made `!has(ref)` vacuously true, so the guard
+  silently never fired for those lanes — the lore-writer case re-selected the same
+  high-salience asset 57× in one day (52 wasted on the downstream reflect
+  cooldown). The reflect/distill cooldown maps are now rebuilt over the **union**
+  of every lane's candidate refs (`candidateRefs ∪ noFeedbackCandidates`) before
+  any gate consumes them, so the P0-A, proactive, and high-salience gates all
+  share a map whose `!has(ref)` lookup is meaningful. The signal-delta lane is
+  unchanged (its refs are a subset of the union; the map is a per-ref max over all
+  `*_invoked` events, so existing keys keep identical values).
+
 - **Auto-sync no longer refuses to commit akm's own changes when unrelated
   non-akm files are present in the stash working tree.** When a stash root is
   shared with a project repo, stray files written into the stash root (e.g. a

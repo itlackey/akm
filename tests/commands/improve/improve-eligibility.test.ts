@@ -720,6 +720,61 @@ describe("high-salience admission gate (#608)", () => {
 
     expect(reflected).not.toContain("memory:salient");
   });
+
+  // #653: regression for the candidateRefs-scope gap. The reflect cooldown map
+  // (`lastReflectProposalTs`) used to be built ONLY over `candidateRefs`, while
+  // the high-salience lane iterates the broader no-feedback pool. For a rescue-
+  // lane ref absent from that map, `!has(ref)` was vacuously true and the
+  // once-per-asset guard never fired — the production lore-writer case
+  // (57 reflect_invoked events in one day, still re-selected 57×). The fix
+  // rebuilds the cooldown maps over the UNION of every lane's candidate refs, so
+  // the guard now blocks a recently-reflected high-salience ref even when it is
+  // outside candidateRefs. This test runs a mixed population: a feedback-bearing
+  // ref (signal-delta lane = candidateRefs) plus two high-salience refs — one
+  // with a prior reflect (must be blocked) and one without (must still fire).
+  test("#653: high-salience ref with recent reflect is blocked even alongside other lanes; sibling without reflect still fires", async () => {
+    const stash = makeTempDir("akm-hs-union-");
+    // Signal-delta (candidateRefs) population.
+    writeMemory(stash, "rated", "Has fresh feedback — signal-delta lane.");
+    // High-salience population (no feedback, no retrieval).
+    writeMemory(stash, "salient-cooled", "High salience, already reflected.");
+    writeMemory(stash, "salient-fresh", "High salience, never reflected.");
+    await buildIndex(stash);
+
+    // Feedback ref: feedback newer than its last reflect → signal-delta eligible.
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:rated" }, { now: () => OLDER_MS });
+    appendEvent(
+      { eventType: "feedback", ref: "memory:rated", metadata: { signal: "negative" } },
+      { now: () => NEWER_MS },
+    );
+
+    seedSalience("memory:salient-cooled", 0.9);
+    seedSalience("memory:salient-fresh", 0.9);
+    // Only salient-cooled has a recent reflect proposal → union-scoped guard
+    // must exclude it; salient-fresh has none → must be admitted.
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:salient-cooled" });
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      minRetrievalCount: 5,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    // Cooled high-salience ref is blocked by the union-scoped guard…
+    expect(reflected).not.toContain("memory:salient-cooled");
+    // …while the never-reflected high-salience sibling is still admitted (guard
+    // does not over-block), and the signal-delta ref is unchanged.
+    expect(reflected).toContain("memory:salient-fresh");
+    expect(reflected).toContain("memory:rated");
+  });
 });
 
 // ── Aggregated no_new_signal skip event ──────────────────────────────────────

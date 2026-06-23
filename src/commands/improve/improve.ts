@@ -1570,6 +1570,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       const proactiveLoopRefs = preparation.loopRefs.filter((r) => r.eligibilitySource === "proactive");
       let postLockLoopRefs = preparation.loopRefs;
       if (proactiveLoopRefs.length > 0) {
+        // #653: this re-filter builds a fresh map scoped to exactly the refs it
+        // filters (`proactiveRefStrs`). Unlike the planning-time gates, that is
+        // sufficient here: every ref under test IS in the lookup set, so
+        // `!has(ref)` is never vacuously true. The scope-gap that affected the
+        // planning gates does not apply to a map whose key set equals its
+        // filter set.
         const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
         const freshReflectTs = buildLatestProposalTsMap(proactiveRefStrs, "reflect");
         const freshDistillTs = buildLatestProposalTsMap(proactiveRefStrs, "distill");
@@ -2768,8 +2774,23 @@ async function runImprovePreparationStage(args: {
   // in `akm improve`.
   const candidateRefs = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref)).map((r) => r.ref);
   const latestFeedbackTs = buildLatestFeedbackTsMap(candidateRefs, feedbackSinceCutoff);
-  const lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect");
-  const lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill");
+  // #653: these proposal-ts maps gate every lane — not just the signal-delta
+  // lane whose refs are exactly `candidateRefs`. The no-feedback rescue lanes
+  // (P0-A high-retrieval, proactive maintenance, high-salience admission) iterate
+  // `noFeedbackCandidates`, a set that is NOT guaranteed to be a subset of
+  // `candidateRefs`. For a gated ref missing from the map, `!has(ref)` is
+  // vacuously true and the once-per-asset reflect cooldown guard (#643) never
+  // fires — letting a recently-reflected high-salience asset be re-selected every
+  // run (the lore-writer incident: 57 reflect_invoked events in one day, still
+  // re-selected 57×). We therefore REBUILD these two maps over the union of
+  // every lane's candidate refs once `noFeedbackCandidates` is known (below),
+  // before any gate consumes them. The signal-delta partition loop runs first
+  // with the candidateRefs-scoped maps; because `buildLatestProposalTsMap` is a
+  // per-ref max over all `*_invoked` events, the union-scoped map yields
+  // identical values for every candidateRefs entry, so the signal-delta lane's
+  // behavior is unchanged — the union only ADDS keys for the rescue-lane refs.
+  let lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect");
+  let lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill");
 
   // Refs the distill signal-delta gate rejected at planning time. The main
   // loop reads this to skip distill for these refs without re-checking
@@ -2966,6 +2987,23 @@ async function runImprovePreparationStage(args: {
     if (noFeedbackSeen.has(r.ref)) continue;
     noFeedbackSeen.add(r.ref);
     noFeedbackCandidates.push(r);
+  }
+
+  // #653: now that the rescue-lane candidate set (`noFeedbackCandidates`) is
+  // known, rebuild the reflect/distill cooldown maps over the UNION of every
+  // lane the planner may select — candidateRefs PLUS the no-feedback rescue
+  // pool. This closes the candidateRefs-scope gap: the P0-A high-retrieval
+  // (`!lastReflectProposalTs.has`), proactive-maintenance, and high-salience
+  // admission gates below all consume these maps, and previously a rescue-lane
+  // ref absent from the candidateRefs-scoped map slipped past the once-per-asset
+  // reflect guard. The union is a superset of candidateRefs, and the maps are a
+  // per-ref max over all `*_invoked` events, so existing candidateRefs entries
+  // are unchanged — only new keys for rescue-lane refs are added. (No-op when
+  // every rescue ref is already in candidateRefs.)
+  const cooldownUnionRefs = [...new Set([...candidateRefs, ...noFeedbackCandidates.map((r) => r.ref)])];
+  if (cooldownUnionRefs.length > candidateRefs.length) {
+    lastReflectProposalTs = buildLatestProposalTsMap(cooldownUnionRefs, "reflect");
+    lastDistillProposalTs = buildLatestProposalTsMap(cooldownUnionRefs, "distill");
   }
 
   let highRetrievalRefs: ImproveEligibleRef[] = [];

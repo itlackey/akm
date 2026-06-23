@@ -288,11 +288,24 @@ never-content-scored refs. (improve.ts ~3375; salience.ts `upsertAssetSalience` 
 `isContentEncodingRow`; distill.ts:973; state-db.ts migration 015)
 
 **F2 — the high-salience gate fires exactly once, then never again.**
-`!lastReflectProposalTs.has(r.ref)` (improve.ts:3126, the #643 cooldown) permanently
+`!lastReflectProposalTs.has(r.ref)` (improve.ts, the #643 cooldown) permanently
 excludes a ref after its first reflect proposal. Auto-accept emits `promoted`, not
 `feedback`, so the ref never re-enters via signal-delta. It must accumulate
 `retrievalCount>=5` to return via high-retrieval. Newly-distilled high-salience assets
 get one pass, then freeze out.
+
+> **#653 (FIXED):** the #643 cooldown map was scoped only to `candidateRefs`, but
+> the high-salience / proactive / P0-A lanes iterate the broader
+> `noFeedbackCandidates` pool. For a gated ref outside `candidateRefs` the map had
+> no key, so `!has(ref)` was vacuously true and the F2 guard never fired for those
+> lanes (lore-writer re-selected 57× in one day). `lastReflectProposalTs` /
+> `lastDistillProposalTs` are now rebuilt over the **union** of every lane's
+> candidate refs (`candidateRefs ∪ noFeedbackCandidates`) right after that pool is
+> known, before the P0-A / proactive / high-salience gates consume them. The map is
+> a per-ref max over all `*_invoked` events, so the signal-delta lane (whose refs
+> are a subset) is byte-identical; the union only ADDS keys for the rescue-lane
+> refs. The post-lock proactive re-filter (improve.ts:1574) already builds its map
+> over exactly the refs it filters, so it had no gap and was left as-is.
 
 **F3 — the no-op dampener can't fire on a churning ref.**
 `resetConsecutiveNoOps` is called on `reflectResult.ok` (improve.ts:4335) = "a proposal
@@ -373,6 +386,7 @@ rewrites.
 | #642 | MERGED b36 | standards delivery (Feature A wiki schema + Feature B stash conventions). |
 | #645 | MERGED b36 | unify authoring rules into validator-sourced seam; fix stuck-proposal loop + drain masking. |
 | #643 | MERGED b36 | once-per-asset cooldown on high-salience gate (F2). |
+| #653 | FIXED (pending merge) | #643 cooldown map was scoped to `candidateRefs`, ineffective for the no-feedback rescue lanes (high-salience/proactive/P0-A); maps now rebuilt over the union of all lanes' candidate refs (F2). |
 | #608 | CLOSED→0.10 | automatic encoding-time salience scoring (Gap 1 origin; only partially realized). |
 | #632 | OPEN | recombine clusters = whole-stash tag buckets → bland hypotheses (junk-tag filter shipped; graph-entity clustering pending). |
 | #633 | OPEN (fix shipped b30) | recombine confirmation loop was structurally dead (member-set hash reset streak); Jaccard match fixed it — likely closeable. |
