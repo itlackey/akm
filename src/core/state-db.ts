@@ -2273,9 +2273,16 @@ function decayUnseenRecombineHypothesesInner(db: Database, currentRun: string, s
   }
   // A single NOT IN keeps the exclusion atomic (a chunked NOT IN would let a ref
   // excluded by one chunk still be reset by another chunk's statement). The
-  // recombine pass caps re-induced clusters at `maxClustersPerRun` (a handful),
-  // so `seenRefs` is far under SQLite's ~999 param ceiling in practice; we cap
-  // defensively and fall back to resetting all when somehow exceeded.
+  // recombine pass caps RE-INDUCED clusters at `maxClustersPerRun` (a handful) —
+  // but with #658 cap-aware sparing the caller folds every cap-displaced
+  // (present-but-unprocessed) hypothesis into `effectiveSeen` too, so on a large
+  // stash `seenRefs` here can carry MANY spared refs, not just the handful that
+  // were processed. We cap defensively at ~900 (under SQLite's ~999 param
+  // ceiling): if `effectiveSeen` somehow exceeds it we fall back to resetting all
+  // eligible rows — which re-introduces the cap-displacement trap for THAT run
+  // (spared rows get decayed because the NOT IN protection is dropped). That is a
+  // rare, bounded degradation; a stash with >900 simultaneously-spared
+  // hypotheses is far beyond current scale.
   if (seenRefs.length > 900) {
     const res = db
       .prepare(
