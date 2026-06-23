@@ -139,6 +139,30 @@ describe("#636 sanitizeReflectPayload — deterministic description fallback", (
     expect(check.ok).toBe(true);
   });
 
+  test("short title yields the SENTENCE form, not the bare title fragment", () => {
+    // The source title "Paged.js — Named Page" is 21 chars — long enough to pass
+    // the 20-char floor on its own, so the OLD ordering returned it verbatim as a
+    // bare fragment. The fix prefers the padded sentence form for title/heading
+    // candidates, reserving the bare form for prose sentences.
+    const result = sanitizeReflectPayload(
+      // Body has NO usable heading/prose sentence that would win over the title,
+      // so the derivation must come from the `title:` frontmatter.
+      { content: "- a bullet item\n- another bullet item\n- a third bullet item for body size" },
+      SCRAPED_SOURCE,
+      "knowledge:pagedjs_named_page",
+    );
+    expect(result.reject).toBeUndefined();
+    const fm = parseFrontmatter(result.content).data;
+    const desc = fm.description as string;
+    // It must NOT be the bare title fragment...
+    expect(desc).not.toBe("Paged.js — Named Page");
+    // ...it must read as a sentence (the padded form) and still name the topic.
+    expect(desc).toBe("Reference notes on Paged.js — Named Page.");
+    expect(desc.endsWith(".")).toBe(true);
+    // And it must still pass the promote-time gate.
+    expect(isValidDescription(desc, "knowledge:pagedjs_named_page", { skipRefTailCheck: true }).ok).toBe(true);
+  });
+
   test("proposal that ALREADY has a valid description is NOT overridden", () => {
     const existing = "A precise, human-authored description of the named-page feature in Paged.js print layouts.";
     const result = sanitizeReflectPayload(

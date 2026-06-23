@@ -596,30 +596,38 @@ function deriveDescriptionFromAsset(
   sourceBody: string,
   targetRef: string,
 ): string | undefined {
-  const candidates: string[] = [];
+  // Each candidate is tagged with its kind. A title or `# Heading` is a bare
+  // fragment ("Paged.js — Named Page") that reads poorly as a description even
+  // when it is long enough to pass the length gate, so for those we prefer the
+  // padded sentence form. A prose sentence is already a sentence, so it is used
+  // as-is (padding it would double-wrap an already-complete sentence).
+  const candidates: Array<{ text: string; kind: "fragment" | "prose" }> = [];
 
   // 1. title: frontmatter
-  if (typeof title === "string" && title.trim()) candidates.push(title.trim());
+  if (typeof title === "string" && title.trim()) candidates.push({ text: title.trim(), kind: "fragment" });
 
   // 2. first `# Heading` (proposed body first, then source body)
   for (const body of [proposedBody, sourceBody]) {
     const headingMatch = body.match(/^#{1,6}\s+(.+?)\s*$/m);
-    if (headingMatch?.[1]) candidates.push(headingMatch[1].trim());
+    if (headingMatch?.[1]) candidates.push({ text: headingMatch[1].trim(), kind: "fragment" });
   }
 
   // 3. first sentence of the opening prose paragraph (skip headings, fences,
   //    list markers, blockquotes — those are not prose).
   for (const body of [proposedBody, sourceBody]) {
     const firstSentence = firstProseSentence(body);
-    if (firstSentence) candidates.push(firstSentence);
+    if (firstSentence) candidates.push({ text: firstSentence, kind: "prose" });
   }
 
-  for (const raw of candidates) {
-    const normalized = normalizeDescriptionCandidate(raw);
+  for (const { text, kind } of candidates) {
+    const normalized = normalizeDescriptionCandidate(text);
     if (!normalized) continue;
-    // A bare title/heading often reads as a fragment; pad it into a sentence so
-    // it satisfies the prose/length rules without inventing new facts.
-    const variants = [normalized, `Reference notes on ${normalized}.`];
+    // For a title/heading fragment, try the padded sentence form FIRST so the
+    // result reads as a sentence rather than a bare fragment — a short but valid
+    // title like "Paged.js — Named Page" (21 chars) would otherwise be returned
+    // verbatim. Fall back to the bare form only if the padded form fails the
+    // gate. A prose candidate is already a sentence, so it is used as-is.
+    const variants = kind === "fragment" ? [`Reference notes on ${normalized}.`, normalized] : [normalized];
     for (const v of variants) {
       const clamped = v.length > DESCRIPTION_MAX_CHARS ? v.slice(0, DESCRIPTION_MAX_CHARS).trimEnd() : v;
       if (isValidDescription(clamped, targetRef, { skipRefTailCheck: true }).ok) return clamped;
