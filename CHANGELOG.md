@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **improve/recombine: cap-aware decay — the `maxClustersPerRun` cap no longer
+  traps recurring hypotheses below `confirmThreshold` (#658).** Recombine is a
+  two-pass design: a cluster must be re-induced on `confirmThreshold` (=2) runs
+  before its `type:hypothesis` proposal promotes to an auto-accepted
+  `type:lesson`. But only the top-`maxClustersPerRun` (=5) clusters are
+  processed per run, and `decayUnseenRecombineHypotheses` hard-reset the
+  confirmation streak of every hypothesis not processed that run. A cluster that
+  genuinely re-forms every run but is displaced out of the top-5 (slots are tied
+  on member-count and broken by an arbitrary alphabetical tiebreak) had its
+  streak zeroed — it could never win two consecutive slots, so its proposal sat
+  pending forever (6 such proposals were stuck in one production stash).
+  `decayUnseenRecombineHypotheses` is now **cap-aware**: `recombine.ts` passes
+  the FULL pre-cap cluster set, and a hypothesis is spared from reset when its
+  cluster still Jaccard-matches a present cluster (same signature, overlap ≥ 0.7
+  — the same rule used for re-induction). Only hypotheses with no matching
+  current cluster (the corpus stopped supporting them) decay. This does **not**
+  lower the recurrence bar: the confirmation count is still advanced only by
+  genuine re-induction in the processed slice (`recordRecombineInduction`);
+  sparing merely avoids an artificial reset, so a genuinely non-recurring
+  hypothesis still decays to 0 and never confirms (no new bland-hypothesis churn,
+  cf. #632/#633). No schema change. The cap now lives in a new `capClusters`
+  helper split out of `buildRelatednessClusters` so the full ranked set stays
+  available for the decay sweep.
+
 - **Auto-sync no longer refuses to commit akm's own changes when unrelated
   non-akm files are present in the stash working tree.** When a stash root is
   shared with a project repo, stray files written into the stash root (e.g. a

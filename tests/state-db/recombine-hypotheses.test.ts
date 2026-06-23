@@ -146,3 +146,109 @@ describe("decayUnseenRecombineHypotheses", () => {
     expect(row?.promoted_at).toBe("2026-06-18T01:00:00.000Z");
   });
 });
+
+// ── #658 — cap-aware decay ──────────────────────────────────────────────────────
+//
+// A hypothesis whose cluster genuinely re-formed this run but was displaced out
+// of the processed top-`maxClustersPerRun` slice (so its ref is NOT in seenRefs)
+// must NOT have its streak reset — that is a scheduling miss, not a substance
+// miss. The recombine pass passes EVERY cluster that formed this run (the full
+// pre-cap set) as `presentClusters`; decay spares any non-promoted row that
+// Jaccard-matches a present cluster under the same overlap rule.
+describe("decayUnseenRecombineHypotheses — #658 cap-aware sparing", () => {
+  // The member_key that `induct()` writes for every row.
+  const MEMBERS = "memory:auth-a|memory:auth-b|memory:auth-c";
+
+  test("a cap-displaced row (cluster present this run, not in seenRefs) is SPARED", () => {
+    // The row accumulated to count=1 in run-1 and was NOT processed in run-2
+    // (outside the top-N cap), so it is absent from seenRefs. Its cluster still
+    // formed this run → it is in presentClusters → must NOT decay.
+    induct("lesson:recombined/displaced", "run-1");
+    const before = getRecombineHypothesis(db, "lesson:recombined/displaced")?.consecutive_count;
+    expect(before).toBe(1);
+
+    const affected = decayUnseenRecombineHypotheses(db, "run-2", [], {
+      presentClusters: [{ signature: "tag:auth", memberKey: MEMBERS }],
+      minOverlap: 0.7,
+    });
+
+    expect(affected).toBe(0);
+    // Streak preserved (NOT advanced — sparing only avoids reset).
+    expect(getRecombineHypothesis(db, "lesson:recombined/displaced")?.consecutive_count).toBe(1);
+  });
+
+  test("a row whose cluster genuinely has NO matching present cluster DOES decay", () => {
+    induct("lesson:recombined/gone", "run-1");
+    expect(getRecombineHypothesis(db, "lesson:recombined/gone")?.consecutive_count).toBe(1);
+
+    // presentClusters contains an unrelated signature → no match → decays.
+    const affected = decayUnseenRecombineHypotheses(db, "run-2", [], {
+      presentClusters: [{ signature: "tag:unrelated", memberKey: "memory:x|memory:y|memory:z" }],
+      minOverlap: 0.7,
+    });
+
+    expect(affected).toBe(1);
+    expect(getRecombineHypothesis(db, "lesson:recombined/gone")?.consecutive_count).toBe(0);
+  });
+
+  test("a present cluster below the overlap floor does NOT spare the row (it decays)", () => {
+    induct("lesson:recombined/drifted", "run-1");
+    // Same signature but membership has fully drifted (0 overlap) → below the
+    // 0.7 floor → treated as a different cluster → row decays.
+    const affected = decayUnseenRecombineHypotheses(db, "run-2", [], {
+      presentClusters: [{ signature: "tag:auth", memberKey: "memory:auth-x|memory:auth-y|memory:auth-z" }],
+      minOverlap: 0.7,
+    });
+
+    expect(affected).toBe(1);
+    expect(getRecombineHypothesis(db, "lesson:recombined/drifted")?.consecutive_count).toBe(0);
+  });
+
+  test("confirmation still requires reaching the threshold via genuine re-induction (sparing never advances the streak)", () => {
+    const CONFIRM_THRESHOLD = 2;
+    // run-1: first induction → count 1.
+    expect(induct("lesson:recombined/streak", "run-1")).toBe(1);
+    // run-2: the cluster is present but cap-displaced (spared, NOT re-inducted).
+    decayUnseenRecombineHypotheses(db, "run-2", [], {
+      presentClusters: [{ signature: "tag:auth", memberKey: MEMBERS }],
+      minOverlap: 0.7,
+    });
+    // Still count 1 — sparing alone never reaches the threshold.
+    expect(getRecombineHypothesis(db, "lesson:recombined/streak")?.consecutive_count).toBe(1);
+    expect(getRecombineHypothesis(db, "lesson:recombined/streak")?.consecutive_count).toBeLessThan(CONFIRM_THRESHOLD);
+    // run-3: the cluster finally wins a processed slot → genuine re-induction →
+    // count reaches the threshold (this is what authorizes promotion).
+    expect(induct("lesson:recombined/streak", "run-3")).toBe(CONFIRM_THRESHOLD);
+  });
+
+  test("a genuinely non-recurring hypothesis never confirms (decays every run it is absent)", () => {
+    expect(induct("lesson:recombined/oneoff", "run-1")).toBe(1);
+    // It never re-forms: every subsequent run has no matching present cluster.
+    for (const run of ["run-2", "run-3", "run-4"]) {
+      decayUnseenRecombineHypotheses(db, run, [], {
+        presentClusters: [{ signature: "tag:other", memberKey: "memory:p|memory:q|memory:r" }],
+        minOverlap: 0.7,
+      });
+      expect(getRecombineHypothesis(db, "lesson:recombined/oneoff")?.consecutive_count).toBe(0);
+    }
+  });
+
+  test("omitting presentClusters preserves the pre-#658 hard-reset behaviour", () => {
+    induct("lesson:recombined/legacy", "run-1");
+    // No opts → unconditional reset of every unseen prior-run row.
+    const affected = decayUnseenRecombineHypotheses(db, "run-2", []);
+    expect(affected).toBe(1);
+    expect(getRecombineHypothesis(db, "lesson:recombined/legacy")?.consecutive_count).toBe(0);
+  });
+
+  test("a re-inducted row is untouched even when also present (seenRefs wins)", () => {
+    induct("lesson:recombined/seen2", "run-1");
+    induct("lesson:recombined/seen2", "run-2");
+    const affected = decayUnseenRecombineHypotheses(db, "run-2", ["lesson:recombined/seen2"], {
+      presentClusters: [{ signature: "tag:auth", memberKey: MEMBERS }],
+      minOverlap: 0.7,
+    });
+    expect(affected).toBe(0);
+    expect(getRecombineHypothesis(db, "lesson:recombined/seen2")?.consecutive_count).toBe(2);
+  });
+});

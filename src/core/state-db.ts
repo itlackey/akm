@@ -2160,6 +2160,46 @@ export function markRecombineHypothesisPromoted(db: Database, hypothesisRef: str
 }
 
 /**
+ * A cluster that formed in the current run, identified the same way a hypothesis
+ * row is: by its relatedness `signature` plus its membership fingerprint
+ * (`memberKey` — sorted member entryKeys joined by `|`). Used by
+ * {@link decayUnseenRecombineHypotheses} to spare cap-displaced hypotheses.
+ */
+export interface PresentCluster {
+  signature: string;
+  memberKey: string;
+}
+
+/**
+ * #658 — does any current-run cluster match this hypothesis row under the SAME
+ * signature + Jaccard-overlap rule used for re-induction? A match means the
+ * cluster genuinely re-formed this run (it was merely cap-displaced out of the
+ * processed top-`maxClustersPerRun` slice), so its streak must NOT be reset.
+ */
+function hypothesisMatchesAnyPresentCluster(
+  row: { signature: string; member_key: string },
+  presentClusters: readonly PresentCluster[],
+  minOverlap: number,
+): boolean {
+  const rowMembers = row.member_key.split("|").filter((m) => m.length > 0);
+  if (rowMembers.length === 0) return false;
+  const rowSet = new Set(rowMembers);
+  for (const cluster of presentClusters) {
+    if (cluster.signature !== row.signature) continue;
+    const clusterMembers = cluster.memberKey.split("|").filter((m) => m.length > 0);
+    if (clusterMembers.length === 0) continue;
+    let intersection = 0;
+    for (const m of clusterMembers) {
+      if (rowSet.has(m)) intersection += 1;
+    }
+    const union = rowSet.size + clusterMembers.length - intersection;
+    const overlap = union === 0 ? 0 : intersection / union;
+    if (overlap >= minOverlap) return true;
+  }
+  return false;
+}
+
+/**
  * Decay-to-zero every NON-promoted hypothesis NOT re-induced in the current run.
  *
  * A generalization that stops being supported by the corpus has lost its
@@ -2169,9 +2209,57 @@ export function markRecombineHypothesisPromoted(db: Database, hypothesisRef: str
  *
  * Only rows whose `hypothesis_ref` is NOT in `seenRefs` AND whose `last_run` is
  * NOT the current run are decayed. Already-promoted rows are left alone.
+ *
+ * #658 — CAP-AWARE decay. The recombine pass only re-inducts (and thus marks
+ * `seen`) the top-`maxClustersPerRun` clusters, but a cluster genuinely
+ * re-forms every run even when it is displaced below that cap. Resetting such a
+ * row treats a SCHEDULING miss as a SUBSTANCE miss and traps the hypothesis
+ * below `confirmThreshold` forever. When `opts.presentClusters` is supplied, a
+ * row is SPARED from decay if it Jaccard-matches any present cluster (same
+ * signature, overlap >= `opts.minOverlap`) — i.e. its cluster re-formed this run
+ * but was cap-displaced. This does NOT advance the streak (only re-induction in
+ * the processed slice does that, via {@link recordRecombineInduction}), so the
+ * recurrence bar for promotion is unchanged; it only stops the cap from
+ * manufacturing artificial misses. Omitting `presentClusters` preserves the
+ * pre-#658 hard-reset-after-one-miss behaviour exactly.
+ *
  * Returns the number of rows reset.
  */
-export function decayUnseenRecombineHypotheses(db: Database, currentRun: string, seenRefs: readonly string[]): number {
+export function decayUnseenRecombineHypotheses(
+  db: Database,
+  currentRun: string,
+  seenRefs: readonly string[],
+  opts?: { presentClusters: readonly PresentCluster[]; minOverlap: number },
+): number {
+  // #658 — when cap-aware sparing is requested, fold the cap-displaced rows into
+  // the "seen" exclusion set: the underlying reset SQL already protects every
+  // ref it is given, so sparing == treating a spared row exactly like a seen
+  // row for this sweep (its count is left untouched, never advanced).
+  let effectiveSeen: readonly string[] = seenRefs;
+  if (opts && opts.presentClusters.length > 0) {
+    const candidates = db
+      .prepare(
+        "SELECT hypothesis_ref, signature, member_key FROM recombine_hypotheses WHERE promoted_at IS NULL AND (last_run IS NULL OR last_run != ?) AND consecutive_count != 0",
+      )
+      .all(currentRun) as Array<{ hypothesis_ref: string; signature: string; member_key: string }>;
+    const seenSet = new Set(seenRefs);
+    for (const row of candidates) {
+      if (seenSet.has(row.hypothesis_ref)) continue;
+      if (hypothesisMatchesAnyPresentCluster(row, opts.presentClusters, opts.minOverlap)) {
+        seenSet.add(row.hypothesis_ref);
+      }
+    }
+    effectiveSeen = [...seenSet];
+  }
+  return decayUnseenRecombineHypothesesInner(db, currentRun, effectiveSeen);
+}
+
+/**
+ * The raw reset sweep shared by the cap-aware wrapper above. Resets every
+ * non-promoted row from a prior run whose ref is NOT in `seenRefs`. Kept private
+ * so the param-ceiling chunking logic lives in one place.
+ */
+function decayUnseenRecombineHypothesesInner(db: Database, currentRun: string, seenRefs: readonly string[]): number {
   // Reset every eligible row, then exclude the seen refs in chunks to respect
   // the ~999 SQLite param ceiling. With no seen refs we reset all non-promoted
   // rows from prior runs in a single statement.
