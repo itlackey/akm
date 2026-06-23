@@ -621,6 +621,43 @@ describe("recombine #632 — entity clustering end-to-end", () => {
   );
 
   test(
+    "session-capture telemetry memories are excluded from the real akmRecombine pool",
+    async () => {
+      const stash = isolatedStash();
+      // A durable trio sharing tag:print — must cluster.
+      writeMemory(stash, "print-a", ["print"], "The print provider resolves per repo.");
+      writeMemory(stash, "print-b", ["print"], "Pagination is handled by paged.js.");
+      writeMemory(stash, "print-c", ["print"], "Chromium renders the final PDF.");
+      // A session-capture telemetry dump sharing the SAME tag — must be EXCLUDED
+      // from the pool (datestamped capture name), so the cluster stays at 3.
+      writeMemory(stash, "claude-session-20260601-aaaabbbb", ["print"], "Session checkpoint bookkeeping.");
+      await buildIndex(stash);
+
+      const seenMembers: string[][] = [];
+      const res = await akmRecombine({
+        stashDir: stash,
+        config: recombineEnabledConfig(),
+        sourceRun: "run-session-exclude",
+        relatednessSource: "tags",
+        minClusterSize: 3,
+        recombineLlmFn: async (prompt) => {
+          seenMembers.push(
+            ["print-a", "print-b", "print-c", "claude-session-20260601-aaaabbbb"].filter((n) => prompt.includes(n)),
+          );
+          return generalization("Print artifacts are repo-scoped.", "Generalization body.");
+        },
+      });
+
+      expect(res.clustersFormed).toBe(1);
+      // Exactly the durable trio; the session-capture memory is filtered out of
+      // the pool even though it carries the same tag.
+      expect(seenMembers[0]?.sort()).toEqual(["print-a", "print-b", "print-c"]);
+      expect(seenMembers[0]).not.toContain("claude-session-20260601-aaaabbbb");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "the default relatednessSource ('both', #632) clusters by entity with NO explicit source",
     async () => {
       const stash = isolatedStash();

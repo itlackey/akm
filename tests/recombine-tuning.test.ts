@@ -518,6 +518,33 @@ describe("recombine #632 — entity-based clustering", () => {
     ]);
   });
 
+  test("entity clusters rank AHEAD of larger tag clusters for selection (#632)", () => {
+    const entries = [
+      // tag:big has 4 members — LARGER than the entity cluster.
+      memoryEntry(1, "a", ["big"]),
+      memoryEntry(2, "b", ["big"]),
+      memoryEntry(3, "c", ["big"]),
+      memoryEntry(4, "d", ["big"]),
+      // entity:printmd has 3 members — smaller, but must rank FIRST (higher-signal).
+      memoryEntry(5, "e", []),
+      memoryEntry(6, "f", []),
+      memoryEntry(7, "g", []),
+    ];
+    const entityByEntryId = new Map<number, string[]>([
+      [5, ["printmd"]],
+      [6, ["printmd"]],
+      [7, ["printmd"]],
+    ]);
+    const clusters = buildRelatednessClusters(entries, {
+      minClusterSize: 3,
+      relatednessSource: "both",
+      entityByEntryId,
+    });
+    // Result order is the SELECTION order (capClusters slices the head). The
+    // smaller entity cluster must come before the larger tag cluster.
+    expect(clusters.map((c) => c.signature)).toEqual(["entity:printmd", "tag:big"]);
+  });
+
   test("tag clustering is unchanged when entities are absent (additive default)", () => {
     const entries = [memoryEntry(1, "a", ["auth"]), memoryEntry(2, "b", ["auth"]), memoryEntry(3, "c", ["auth"])];
     // No entityByEntryId → "both" falls through to tag-only, byte-identical to "tags".

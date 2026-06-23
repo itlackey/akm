@@ -79,12 +79,16 @@ const RECOMBINE_SYSTEM_PROMPT = recombineSystemPrompt;
 
 const DEFAULT_MIN_CLUSTER_SIZE = 3;
 const DEFAULT_MAX_CLUSTERS_PER_RUN = 5;
-// #632 — default to the UNION of tag + graph-entity relatedness. Entity
-// clustering surfaces coherent, subject-scoped clusters (a tool/subsystem) that
-// the coarse stash-wide tag buckets miss, while tags still cover the ~half of
-// memories the graph has no entity for. Additive: existing `tag:` confirmation
-// streaks are untouched (entity uses a separate `entity:` signature namespace),
-// and a stash with no extracted graph entities falls through to tag-only.
+// #632 — default to the UNION of tag + graph-entity relatedness, with entity
+// clusters PREFERRED at selection time (see the rank in buildRelatednessClusters).
+// Entity clustering surfaces coherent, subject-scoped clusters (a tool/subsystem)
+// that the coarse stash-wide tag buckets miss, while tags still cover memories the
+// graph has no entity for. The `entity:` vs `tag:` signature namespaces are
+// independent, so a pure tag cluster's confirmation streak is only re-baselined
+// when its OWN membership changes — which is exactly what the session-capture pool
+// exclusion intends for the telemetry-polluted buckets (re-baselining a noisy
+// cluster's streak is correct, not a regression). A stash with no extracted graph
+// entities falls through to tag-only.
 const DEFAULT_RELATEDNESS_SOURCE: "tags" | "graph" | "both" = "both";
 /** #625 — re-induction count required before a hypothesis promotes to a lesson. */
 const DEFAULT_CONFIRM_THRESHOLD = 2;
@@ -400,12 +404,27 @@ export function buildRelatednessClusters(
     return true;
   });
 
-  // Rank largest-first (deterministic alphabetical tiebreak). The cap is applied
-  // by the caller via {@link capClusters}, NOT here, so the FULL formed set
-  // (every cluster that genuinely re-forms this run) stays available for the
-  // cap-aware decay sweep — a cluster displaced by the cap must not be confused
-  // with a cluster that vanished from the corpus (#658).
-  clusters.sort((a, b) => b.members.length - a.members.length || a.signature.localeCompare(b.signature));
+  // #632 — rank ENTITY clusters ahead of tag clusters, then largest-first within
+  // each kind (deterministic alphabetical tiebreak). A graph entity is an
+  // EXTRACTED SUBJECT (a tool / subsystem / component), so it is a far
+  // higher-signal cluster key than an auto-tokenized frontmatter tag, whose
+  // broadest buckets (`tag:<project>` — e.g. every memory tagged `akm`) are the
+  // coarse, bland clusters #632 set out to kill. Largest-first ALONE let those
+  // tag mega-buckets fill the `maxClustersPerRun` slice every run and starve the
+  // coherent entity clusters this pass produces. Preferring entities keeps tag
+  // clustering as the fallback (a stash with no graph entities, or a topic with a
+  // tag but no extracted entity, still clusters) while ensuring the better signal
+  // wins the cap. The cap is applied by the caller via {@link capClusters}, NOT
+  // here, so the FULL formed set stays available for the cap-aware decay sweep —
+  // a cluster displaced by the cap must not be confused with a cluster that
+  // vanished from the corpus (#658).
+  const entityRank = (sig: string): number => (sig.startsWith("entity:") ? 0 : 1);
+  clusters.sort(
+    (a, b) =>
+      entityRank(a.signature) - entityRank(b.signature) ||
+      b.members.length - a.members.length ||
+      a.signature.localeCompare(b.signature),
+  );
   return clusters;
 }
 
