@@ -44,6 +44,7 @@ import {
   openDatabase,
   openExistingDatabase,
 } from "../../indexer/db/db";
+import { type GetAllEntries, sqliteGetAllEntries } from "../../indexer/db/entry-reader";
 import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { withIndexWriterLease } from "../../indexer/index-writer-lock";
@@ -296,6 +297,13 @@ export interface AkmImproveOptions {
   maxCycles?: number;
   /** #616 test seam: override collectEligibleRefs (re-run each cycle). */
   collectEligibleRefsFn?: typeof collectEligibleRefs;
+  /**
+   * #664 Seam 2 inner seam: override how the planner reads the `entries` table.
+   * Defaults to opening the real index DB. Inject an in-memory adapter
+   * (`seedEntries(...).getAllEntries`) so a planner test needs no on-disk
+   * akmIndex({full:true}).
+   */
+  getAllEntries?: GetAllEntries;
   /** #616 test seam: override runImprovePreparationStage (re-run each cycle). */
   runImprovePreparationStageFn?: typeof runImprovePreparationStage;
   /** #616 test seam: override runImproveLoopStage (re-run each cycle). */
@@ -595,6 +603,10 @@ async function collectEligibleRefs(
   scope: { mode: "all" | "type" | "ref"; value?: string },
   stashDir?: string,
   improveProfile?: ImproveProfileConfig,
+  // #664 Seam 2: the planner reads only the `entries` table. Default opens the
+  // real index DB exactly as before; tests inject an in-memory adapter so they
+  // need no on-disk akmIndex({full:true}).
+  getAllEntriesFn: GetAllEntries = sqliteGetAllEntries(),
 ): Promise<{
   plannedRefs: ImproveEligibleRef[];
   memorySummary: { eligible: number; derived: number };
@@ -659,10 +671,8 @@ async function collectEligibleRefs(
   }
   const writableDirSet = new Set(writableDirs.map((d) => path.resolve(d)));
 
-  let db: Database | undefined;
   try {
-    db = openExistingDatabase();
-    const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) => {
+    const entries = getAllEntriesFn(scope.mode === "type" ? scope.value : undefined).filter((indexed) => {
       // First apply the existing stashDir-scope filter (no-op when stashDir is unset).
       if (!isEntryInScope(indexed.stashDir, indexed.filePath, stashDir)) return false;
       // Then restrict to writable sources only.
@@ -722,8 +732,6 @@ async function collectEligibleRefs(
       return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
     }
     throw error;
-  } finally {
-    if (db) closeDatabase(db);
   }
 }
 
@@ -1245,6 +1253,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       scope,
       options.stashDir,
       improveProfile,
+      options.getAllEntries,
     ));
     const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
 
