@@ -342,35 +342,10 @@ describe("issue #12: updatable field absent from SourceEntry", () => {
 // ── Issue #19: akm update syncs website sources ───────────────────────────
 
 describe("issue #19: akm update website sources", () => {
-  test("website source update does not throw TARGET_NOT_UPDATABLE", async () => {
-    // Use a local HTTP server to serve minimal HTML for the crawl
-    const server = Bun.serve({
-      port: 0,
-      fetch(_req: Request) {
-        return new Response(
-          "<html><head><title>Test</title></head><body><h1>Test</h1><p>hello world</p></body></html>",
-          { headers: { "Content-Type": "text/html; charset=utf-8" } },
-        );
-      },
-    });
-    const siteUrl = `http://127.0.0.1:${server.port}`;
-
-    try {
-      saveConfig({
-        semanticSearchMode: "off",
-        sources: [{ type: "website", url: siteUrl, name: "test-site" }],
-      });
-
-      // Should not throw TARGET_NOT_UPDATABLE
-      const result = await akmUpdate({ target: "test-site", stashDir });
-      // Returns an UpdateResponse with processed[] (empty for website sources)
-      expect(result).toBeDefined();
-      expect(result.schemaVersion).toBe(1);
-      expect(result.processed).toEqual([]);
-    } finally {
-      server.stop(true);
-    }
-  });
+  // The website crawl case (Bun.serve + real fetch via the source-provider
+  // sync() boundary) is a genuinely transport-shaped test and lives in
+  // tests/integration/website-source-update.test.ts (#664). The git case below
+  // stays here: it stubs the provider via spyOn and does no real I/O.
 
   test("git source update refreshes configured git mirrors instead of treating them as local paths", async () => {
     const syncSpy = spyOn(gitProvider, "syncMirroredRepo").mockResolvedValue({
