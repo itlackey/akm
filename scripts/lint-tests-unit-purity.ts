@@ -52,10 +52,19 @@ const repoRoot = path.resolve(import.meta.dir, "..");
  */
 const ALLOWED_SERVE = new Set<string>([]);
 
-/** Unit-tier files that currently spawn a real subprocess. Shrink-only. */
-const ALLOWED_SPAWN = new Set<string>([
-  "tests/completions.test.ts",
-]);
+/**
+ * Unit-tier files that currently spawn a real subprocess. Shrink-only.
+ *
+ * EMPTY — every unit-tier real subprocess spawn has been relocated to
+ * `tests/integration/` (genuine process boundaries: real git/tar/bash, the
+ * file/index-writer locks, the events cross-process cursor, the schema-drift
+ * script, the uncontended-DB improve CLIs, the distill removed-verb CLI) or
+ * extracted (the `completions --install` warn()→stderr subprocess lives in
+ * `tests/integration/completions-install.test.ts`; the rest of `completions`
+ * runs in-process via `runCliCapture`). A NEW spawn in a unit file now fails the
+ * lint with no grandfather escape.
+ */
+const ALLOWED_SPAWN = new Set<string>([]);
 
 /**
  * Unit-tier files that currently call `akmIndex({ full: true })` directly inside
@@ -88,7 +97,7 @@ const ALLOWED_FULL_INDEX = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 14;
+export const UNIT_PURITY_BASELINE = 13;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size + ALLOWED_FULL_INDEX.size;
