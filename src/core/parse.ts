@@ -98,22 +98,47 @@ export function parseJsonResponse<T = unknown>(raw: string): T | undefined {
   }
 }
 
+/** Options for {@link parseEmbeddedJsonResponse}. */
+export interface ParseEmbeddedJsonOptions {
+  /**
+   * Which top-level shape the caller expects.
+   *
+   * - `"any"` (default): object-preferring. A `{…}` object found first is
+   *   returned immediately; arrays are only a fallback. Preserves the
+   *   historical behaviour for the many object-expecting callers.
+   * - `"array"`: array-preferring. Only top-level `[…]` arrays are returned;
+   *   leading/example `{…}` objects are ignored. Use this for callers that
+   *   expect a JSON array (e.g. batched graph extraction, #635) so a stray
+   *   object before the array no longer masks a valid array as "non-array".
+   */
+  expect?: "any" | "array";
+}
+
 /**
  * Attempts `parseJsonResponse` first. On failure, scans for the first
  * balanced `{ }` or `[ ]` structure in the text and attempts to parse that
  * substring. Returns `undefined` if no valid JSON structure is found.
  *
- * Non-array results are preferred: if a `{…}` object is found first, it is
- * returned immediately. Arrays (`[…]`) are captured as a fallback and
- * returned only when no object was found.
+ * Shape preference is controlled by {@link ParseEmbeddedJsonOptions.expect}:
+ * - `"any"` (default): non-array results are preferred — a `{…}` object found
+ *   first is returned immediately; arrays (`[…]`) are a fallback.
+ * - `"array"`: only top-level arrays are returned. The direct parse is
+ *   accepted only if it is an array, and the scanner returns the first
+ *   balanced `[…]` while skipping `{…}` openers entirely.
  */
-export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefined {
+export function parseEmbeddedJsonResponse<T = unknown>(raw: string, options?: ParseEmbeddedJsonOptions): T | undefined {
+  const expectArray = options?.expect === "array";
+
   const direct = parseJsonResponse<T>(raw);
-  if (direct !== undefined) return direct;
+  if (direct !== undefined && (!expectArray || Array.isArray(direct))) return direct;
 
   const text = escapeJsonStringControls(stripCodeFences(stripThinkBlocks(raw)));
   let arrayFallback: T | undefined;
 
+  // Scan only *top-level* balanced structures: once a `{…}`/`[…]` is matched we
+  // jump `start` past its closing bracket rather than re-scanning its interior.
+  // This keeps array mode from salvaging an array *nested inside* a leading
+  // object (e.g. the `entities` array of a bare `{entities,relations}` object).
   for (let start = 0; start < text.length; start++) {
     const opener = text[start];
     if (opener !== "{" && opener !== "[") continue;
@@ -122,6 +147,7 @@ export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefin
     let depth = 0;
     let inString = false;
     let escaped = false;
+    let end = -1;
 
     for (let i = start; i < text.length; i++) {
       const ch = text[i];
@@ -143,18 +169,28 @@ export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefin
       if (ch === closer) {
         depth -= 1;
         if (depth === 0) {
-          try {
-            const parsed = JSON.parse(text.slice(start, i + 1)) as T;
-            if (!Array.isArray(parsed)) {
-              return parsed;
-            }
-            arrayFallback ??= parsed;
-            break;
-          } catch {
-            break;
-          }
+          end = i;
+          break;
         }
       }
+    }
+
+    if (end === -1) continue; // never balanced — let the next opener try
+
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1)) as T;
+      if (Array.isArray(parsed)) {
+        // First valid array wins in array mode; in "any" mode it is the
+        // fallback returned only if no object is found.
+        if (expectArray) return parsed;
+        arrayFallback ??= parsed;
+      } else if (!expectArray) {
+        return parsed;
+      }
+      // Skip past this balanced structure so we don't descend into it.
+      start = end;
+    } catch {
+      // Malformed candidate — advance one char and try the next opener.
     }
   }
 

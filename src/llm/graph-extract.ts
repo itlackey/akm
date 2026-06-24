@@ -517,6 +517,21 @@ function buildBatchSystemPrompt(): string {
   );
 }
 
+/**
+ * Hardened system prompt for the single batch retry (#635). Used only after a
+ * first response failed array salvage — leans harder on "raw array only" so a
+ * model that wrapped the array in prose/fences corrects itself before we pay
+ * the per-asset fallback.
+ */
+function buildBatchRetrySystemPrompt(): string {
+  return (
+    `${buildBatchSystemPrompt()} ` +
+    "Your previous response could NOT be parsed as a JSON array. " +
+    "Respond with ONLY the raw JSON array — start with '[' and end with ']'. " +
+    "No prose, no explanation, no markdown code fences, no preamble."
+  );
+}
+
 function buildBatchUserPrompt(bodies: string[]): string {
   const count = bodies.length;
   const assetBlocks = bodies.map((body, i) => `${BATCH_ASSET_SEPARATOR} ${i + 1} ===\n${body.trim()}`).join("\n\n");
@@ -663,7 +678,25 @@ export async function extractGraphFromBodies(
           },
         );
         if (!raw) return null;
-        const parsed = parseEmbeddedJsonResponse<unknown[]>(raw);
+        // Array-preferring salvage (#635): the batch contract is a top-level
+        // JSON array. A leading/example `{…}` object in the response must not
+        // mask a valid `[…]` array as a false "non-array" failure.
+        let parsed = parseEmbeddedJsonResponse<unknown[]>(raw, { expect: "array" });
+        if (!Array.isArray(parsed)) {
+          // One stricter-reprompt retry before paying the per-asset fallback
+          // (#635). Many genuine non-array responses recover when the model is
+          // told explicitly to emit only the raw array.
+          bumpTelemetry(options.telemetry, "retryAttempts");
+          const retryRaw = await chatCompletion(
+            llmConfig,
+            [
+              { role: "system", content: buildBatchRetrySystemPrompt() },
+              { role: "user", content: userPrompt },
+            ],
+            { temperature: 0, timeoutMs: llmConfig.timeoutMs, signal },
+          );
+          parsed = retryRaw ? parseEmbeddedJsonResponse<unknown[]>(retryRaw, { expect: "array" }) : undefined;
+        }
         if (!Array.isArray(parsed)) {
           nonArrayResponse = true;
           bumpTelemetry(options.telemetry, "nonArrayBatchFailures");
@@ -674,8 +707,9 @@ export async function extractGraphFromBodies(
             }
           }
           warn(
-            `graph extraction (batch): LLM response was not a JSON array for ${nonEmptyBodies.length} asset(s); ` +
-              `will fall back per-asset. promptChars=${userPrompt.length}${formatContextHint(llmConfig)}`,
+            `graph extraction (batch): LLM response was not a JSON array for ${nonEmptyBodies.length} asset(s) ` +
+              `even after a stricter retry; will fall back per-asset. ` +
+              `promptChars=${userPrompt.length}${formatContextHint(llmConfig)}`,
           );
           return null;
         }

@@ -370,8 +370,13 @@ describe("runGraphExtractionPass — batch path", () => {
 
       expect(result.considered).toBe(6);
       expect(result.extracted).toBe(6);
-      expect(batchCallCount).toBe(2);
+      // Two batches each fail after one stricter retry (#635): batch + retry =
+      // 2 calls per failing batch, ×2 batches = 4. The 2nd failure trips the
+      // disable threshold so m5/m6 go straight to per-asset (no 3rd batch).
+      expect(batchCallCount).toBe(4);
       expect(singleCallCount).toBe(6);
+      // The two batch→per-asset fallbacks are now observable (#635 item 3).
+      expect(result.telemetry?.nonArrayBatchFailures).toBe(2);
     } finally {
       closeDatabase(db);
     }

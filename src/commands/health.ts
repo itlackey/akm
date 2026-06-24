@@ -393,6 +393,13 @@ export interface ImproveHealthMetrics {
     htmlErrors: number;
     /** Single bounded retries triggered for transient LLM failures during extraction. */
     retryAttempts: number;
+    /**
+     * Batch extraction calls that stayed non-array even after the stricter
+     * retry, each forcing a per-asset fallback. A rising count signals the
+     * batch→per-asset cost cliff (#635). Sourced from the graph-extraction
+     * telemetry's `nonArrayBatchFailures`.
+     */
+    nonArrayBatchFailures: number;
     durationMs: number;
   };
   /**
@@ -778,6 +785,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       failures: 0,
       htmlErrors: 0,
       retryAttempts: 0,
+      nonArrayBatchFailures: 0,
       durationMs: 0,
     },
     sessionExtraction: {
@@ -1077,6 +1085,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
       metrics.graphExtraction.failures += toFiniteNumber(telemetry.failureCount);
       metrics.graphExtraction.htmlErrors += toFiniteNumber(telemetry.htmlErrorCount);
       metrics.graphExtraction.retryAttempts += toFiniteNumber(telemetry.retryAttempts);
+      metrics.graphExtraction.nonArrayBatchFailures += toFiniteNumber(telemetry.nonArrayBatchFailures);
     }
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
@@ -1233,6 +1242,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.graphExtraction.truncations += src.graphExtraction.truncations;
   dst.graphExtraction.failures += src.graphExtraction.failures;
   dst.graphExtraction.htmlErrors += src.graphExtraction.htmlErrors;
+  dst.graphExtraction.nonArrayBatchFailures += src.graphExtraction.nonArrayBatchFailures;
   dst.graphExtraction.durationMs += src.graphExtraction.durationMs;
   dst.sessionExtraction.sessionsScanned += src.sessionExtraction.sessionsScanned;
   dst.sessionExtraction.sessionsExtracted += src.sessionExtraction.sessionsExtracted;
@@ -1686,6 +1696,7 @@ const INTERESTING_DELTA_PATHS = [
   "improve.graphExtraction.cacheHitRate",
   "improve.graphExtraction.failures",
   "improve.graphExtraction.htmlErrors",
+  "improve.graphExtraction.nonArrayBatchFailures",
   "improve.sessionExtraction.sessionsScanned",
   "improve.sessionExtraction.proposalsCreated",
   "improve.autoAccept.promoted",
@@ -2445,6 +2456,7 @@ export function renderWindowCompareMd(windows: WindowResult[], deltas: Record<st
     "improve.actions.reflect.failed",
     "improve.actions.distill.llmFailed",
     "improve.graphExtraction.failures",
+    "improve.graphExtraction.nonArrayBatchFailures",
     "improve.wallTime.medianMs",
     "improve.wallTime.p95Ms",
     "improve.memoryInference.skippedNoFacts",
