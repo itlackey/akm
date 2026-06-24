@@ -39,10 +39,7 @@ const repoRoot = path.resolve(import.meta.dir, "..");
 // ── Grandfather allowlists (shrink-only) ─────────────────────────────────────
 
 /** Unit-tier files that currently stand up `Bun.serve`. Shrink-only. */
-const ALLOWED_SERVE = new Set<string>([
-  "tests/registry-build-index.test.ts",
-  "tests/source-qa-fixes.test.ts",
-]);
+const ALLOWED_SERVE = new Set<string>(["tests/source-qa-fixes.test.ts"]);
 
 /** Unit-tier files that currently spawn a real subprocess. Shrink-only. */
 const ALLOWED_SPAWN = new Set<string>([
@@ -70,7 +67,7 @@ const ALLOWED_SPAWN = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 19;
+export const UNIT_PURITY_BASELINE = 18;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size;

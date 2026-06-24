@@ -14,7 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, jsonWithByteCap } from "../core/common";
+import { fetchWithRetry, type HttpClient, jsonWithByteCap } from "../core/common";
 import { getCacheDir } from "../core/paths";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "../indexer/passes/metadata";
 import { walkStashFlat } from "../indexer/walk/walker";
@@ -35,6 +35,13 @@ export interface BuildRegistryIndexOptions {
   manualEntriesPath?: string;
   npmRegistryBase?: string;
   githubApiBase?: string;
+  /**
+   * Injectable HTTP client (#664 Seam 1; defaults to `globalThis.fetch` via
+   * `fetchWithRetry`) used for every npm/GitHub search + archive download. Unit
+   * tests inject a fake so the real discovery/inspection pipeline runs with no
+   * socket; production never sets it.
+   */
+  fetchImpl?: HttpClient;
 }
 
 export interface BuildRegistryIndexResult {
@@ -103,8 +110,8 @@ export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): P
 
   const [manualKits, npmKits, githubKits] = await Promise.all([
     loadManualEntries(manualEntriesPath),
-    scanNpm(npmRegistryBase),
-    scanGithub(githubApiBase),
+    scanNpm(npmRegistryBase, options?.fetchImpl),
+    scanGithub(githubApiBase, options?.fetchImpl),
   ]);
 
   const stashes = deduplicateStashes([...manualKits, ...npmKits, ...githubKits]).sort((a, b) =>
@@ -137,7 +144,7 @@ export function writeRegistryIndex(index: RegistryIndex, outPath?: string): stri
   return resolved;
 }
 
-async function scanNpm(npmRegistryBase: string): Promise<RegistryStashEntry[]> {
+async function scanNpm(npmRegistryBase: string, fetchImpl?: HttpClient): Promise<RegistryStashEntry[]> {
   const stashes: RegistryStashEntry[] = [];
   const seen = new Set<string>();
 
@@ -147,7 +154,7 @@ async function scanNpm(npmRegistryBase: string): Promise<RegistryStashEntry[]> {
 
     while (true) {
       const url = `${npmRegistryBase}/-/v1/search?text=keywords:${encodeURIComponent(keyword)}&size=${size}&from=${offset}`;
-      const data = await fetchJson<NpmSearchResult>(url);
+      const data = await fetchJson<NpmSearchResult>(url, undefined, fetchImpl);
 
       for (const obj of data.objects) {
         const pkg = obj.package;
@@ -168,12 +175,16 @@ async function scanNpm(npmRegistryBase: string): Promise<RegistryStashEntry[]> {
         try {
           latestMetadata = await fetchJson<Record<string, unknown>>(
             `${npmRegistryBase}/${encodeURIComponent(pkg.name)}/latest`,
+            undefined,
+            fetchImpl,
           );
         } catch {
           latestMetadata = {};
         }
 
-        const inspection = await inspectNpmPackage(npmRegistryBase, latestMetadata).catch(() => EMPTY_INSPECTION);
+        const inspection = await inspectNpmPackage(npmRegistryBase, latestMetadata, fetchImpl).catch(
+          () => EMPTY_INSPECTION,
+        );
         const tags = mergeStrings(
           (pkg.keywords ?? []).filter((value) => !REQUIRED_KEYWORDS.includes(value.toLowerCase())),
           inspection.tags,
@@ -208,12 +219,13 @@ async function scanNpm(npmRegistryBase: string): Promise<RegistryStashEntry[]> {
 async function inspectNpmPackage(
   _npmRegistryBase: string,
   latestMetadata: Record<string, unknown>,
+  fetchImpl?: HttpClient,
 ): Promise<PackageInspection> {
   const dist = asRecord(latestMetadata.dist);
   const tarballUrl = asString(dist.tarball);
   if (!tarballUrl) return {};
 
-  const inspection = await inspectArchive(tarballUrl);
+  const inspection = await inspectArchive(tarballUrl, undefined, fetchImpl);
   return {
     description: asString(latestMetadata.description) ?? inspection.description,
     latestVersion: asString(latestMetadata.version) ?? inspection.latestVersion,
@@ -224,7 +236,7 @@ async function inspectNpmPackage(
   };
 }
 
-async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> {
+async function scanGithub(githubApiBase: string, fetchImpl?: HttpClient): Promise<RegistryStashEntry[]> {
   const stashes: RegistryStashEntry[] = [];
   const seen = new Set<string>();
   const headers = githubHeaders();
@@ -236,7 +248,7 @@ async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> 
     while (true) {
       const q = encodeURIComponent(`topic:${topic}`);
       const url = `${githubApiBase}/search/repositories?q=${q}&sort=updated&order=desc&per_page=${perPage}&page=${page}`;
-      const data = await fetchJson<GithubSearchResponse>(url, headers);
+      const data = await fetchJson<GithubSearchResponse>(url, headers, fetchImpl);
 
       for (const repo of data.items) {
         if (EXCLUDED_REPOS.has(repo.full_name)) continue;
@@ -247,6 +259,7 @@ async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> 
         const inspection = await inspectArchive(
           `${githubApiBase}/repos/${repo.full_name}/tarball/${encodeURIComponent(repo.default_branch)}`,
           headers,
+          fetchImpl,
         ).catch(() => EMPTY_INSPECTION);
         const topics = repo.topics.filter((value) => !GITHUB_TOPICS.includes(value));
 
@@ -276,7 +289,7 @@ async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> 
   return stashes;
 }
 
-async function inspectArchive(url: string, headers?: HeadersInit): Promise<PackageInspection> {
+async function inspectArchive(url: string, headers?: HeadersInit, fetchImpl?: HttpClient): Promise<PackageInspection> {
   // Route registry-build scratch space under the akm cache dir instead of
   // the system temp directory. Long-running registry builds that crash
   // mid-flight previously left orphan dirs under `/tmp`, which can fill
@@ -291,7 +304,7 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
   const extractDir = path.join(tempDir, "extract");
 
   try {
-    const response = await fetchWithRetry(url, headers ? { headers } : undefined, { timeout: 120_000 });
+    const response = await fetchWithRetry(url, headers ? { headers } : undefined, { timeout: 120_000, fetchImpl });
     if (!response.ok) {
       throw new Error(`Failed to fetch archive (${response.status}) from ${url}`);
     }
@@ -412,8 +425,8 @@ async function loadManualEntries(manualEntriesPath: string): Promise<RegistrySta
 // misconfigured upstream that streams unbounded JSON.
 const BUILD_INDEX_JSON_BYTE_CAP = 25 * 1024 * 1024;
 
-async function fetchJson<T>(url: string, headers?: HeadersInit): Promise<T> {
-  const response = await fetchWithRetry(url, headers ? { headers } : undefined, { timeout: 30_000 });
+async function fetchJson<T>(url: string, headers?: HeadersInit, fetchImpl?: HttpClient): Promise<T> {
+  const response = await fetchWithRetry(url, headers ? { headers } : undefined, { timeout: 30_000, fetchImpl });
   if (!response.ok) {
     // Error-body sampling is intentionally small; 4 KB is plenty to
     // include upstream hints in the thrown error.

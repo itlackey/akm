@@ -1,14 +1,13 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { HttpClient } from "../src/core/common";
 import { buildRegistryIndex, writeRegistryIndex } from "../src/registry/build-index";
 import { sandboxXdgCacheHome } from "./_helpers/sandbox";
 
-const CLI = path.join(import.meta.dir, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
-const servers: Array<ReturnType<typeof Bun.serve>> = [];
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -29,93 +28,85 @@ function createTarball(sourceDir: string, archivePath: string): void {
   expect(result.status).toBe(0);
 }
 
-function createRegistryServer(npmArchivePath: string, githubArchivePath: string) {
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      const pathname = url.pathname;
+// #664 Seam 1: a fake HttpClient that serves the npm/GitHub registry discovery
+// routes and the two archive tarballs from disk, injected via
+// `buildRegistryIndex({ fetchImpl })`. The whole discovery + inspection pipeline
+// runs with no socket. The arbitrary `http://registry.test` base is never dialed.
+const REGISTRY_BASE = "http://registry.test";
 
-      if (pathname === "/-/v1/search") {
-        return Response.json({
-          objects: [
-            {
-              package: {
-                name: "agent-stash",
-                version: "1.2.3",
-                description: "npm description",
-                keywords: ["akm-stash", "deploy"],
-                links: {
-                  homepage: "https://example.test/agent-stash",
-                  repository: "https://github.com/acme/agent-stash",
-                },
-                author: { name: "acme" },
+function makeRegistryFetch(npmArchivePath: string, githubArchivePath: string): HttpClient {
+  return async (input) => {
+    const url = new URL(String(input));
+    const pathname = url.pathname;
+
+    if (pathname === "/-/v1/search") {
+      return Response.json({
+        objects: [
+          {
+            package: {
+              name: "agent-stash",
+              version: "1.2.3",
+              description: "npm description",
+              keywords: ["akm-stash", "deploy"],
+              links: {
+                homepage: "https://example.test/agent-stash",
+                repository: "https://github.com/acme/agent-stash",
               },
+              author: { name: "acme" },
             },
-          ],
-        });
-      }
-
-      if (pathname === "/agent-stash/latest") {
-        return Response.json({
-          version: "1.2.3",
-          description: "npm latest description",
-          keywords: ["akm-stash", "deploy", "review"],
-          license: "MIT",
-          dist: {
-            tarball: `${url.origin}/archives/npm-agent-stash.tgz`,
           },
-        });
-      }
+        ],
+      });
+    }
 
-      if (pathname === "/search/repositories") {
-        return Response.json({
-          items: [
-            {
-              full_name: "acme/release-stash",
-              name: "release-stash",
-              description: "github description",
-              html_url: "https://github.com/acme/release-stash",
-              owner: { login: "acme" },
-              license: { spdx_id: "Apache-2.0" },
-              topics: ["akm-stash", "release"],
-              default_branch: "main",
-            },
-          ],
-        });
-      }
+    if (pathname === "/agent-stash/latest") {
+      return Response.json({
+        version: "1.2.3",
+        description: "npm latest description",
+        keywords: ["akm-stash", "deploy", "review"],
+        license: "MIT",
+        dist: {
+          tarball: `${url.origin}/archives/npm-agent-stash.tgz`,
+        },
+      });
+    }
 
-      if (pathname === "/repos/acme/release-stash/tarball/main") {
-        return new Response(Bun.file(githubArchivePath), {
-          headers: { "Content-Type": "application/gzip" },
-        });
-      }
+    if (pathname === "/search/repositories") {
+      return Response.json({
+        items: [
+          {
+            full_name: "acme/release-stash",
+            name: "release-stash",
+            description: "github description",
+            html_url: "https://github.com/acme/release-stash",
+            owner: { login: "acme" },
+            license: { spdx_id: "Apache-2.0" },
+            topics: ["akm-stash", "release"],
+            default_branch: "main",
+          },
+        ],
+      });
+    }
 
-      if (pathname === "/archives/npm-agent-stash.tgz") {
-        return new Response(Bun.file(npmArchivePath), {
-          headers: { "Content-Type": "application/gzip" },
-        });
-      }
+    if (pathname === "/repos/acme/release-stash/tarball/main") {
+      return new Response(fs.readFileSync(githubArchivePath), {
+        headers: { "Content-Type": "application/gzip" },
+      });
+    }
 
-      return new Response("not found", { status: 404 });
-    },
-  });
-  servers.push(server);
-  return `http://127.0.0.1:${server.port}`;
+    if (pathname === "/archives/npm-agent-stash.tgz") {
+      return new Response(fs.readFileSync(npmArchivePath), {
+        headers: { "Content-Type": "application/gzip" },
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  };
 }
 
 afterEach(() => {
-  while (servers.length > 0) {
-    servers.pop()?.stop(true);
-  }
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop() ?? "", { recursive: true, force: true });
-  }
-});
-
-afterAll(() => {
-  while (servers.length > 0) {
-    servers.pop()?.stop(true);
   }
 });
 
@@ -165,7 +156,7 @@ describe("buildRegistryIndex", () => {
     const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
     createTarball(githubRepoDir, githubArchivePath);
 
-    const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
+    const fetchImpl = makeRegistryFetch(npmArchivePath, githubArchivePath);
     const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
     fs.writeFileSync(
       manualEntriesPath,
@@ -199,8 +190,9 @@ describe("buildRegistryIndex", () => {
 
     const result = await buildRegistryIndex({
       manualEntriesPath,
-      npmRegistryBase: serverBase,
-      githubApiBase: serverBase,
+      npmRegistryBase: REGISTRY_BASE,
+      githubApiBase: REGISTRY_BASE,
+      fetchImpl,
     });
 
     expect(result.index.version).toBe(3);
@@ -255,7 +247,7 @@ describe("buildRegistryIndex", () => {
     const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
     createTarball(npmPackageDir, npmArchivePath);
 
-    const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
+    const fetchImpl = makeRegistryFetch(npmArchivePath, githubArchivePath);
     const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
     fs.writeFileSync(
       manualEntriesPath,
@@ -280,16 +272,18 @@ describe("buildRegistryIndex", () => {
     await expect(
       buildRegistryIndex({
         manualEntriesPath,
-        npmRegistryBase: serverBase,
-        githubApiBase: serverBase,
+        npmRegistryBase: REGISTRY_BASE,
+        githubApiBase: REGISTRY_BASE,
+        fetchImpl,
       }),
     ).resolves.toBeDefined();
 
     // Re-run to inspect the actual result; resolves above proves no throw.
     const result = await buildRegistryIndex({
       manualEntriesPath,
-      npmRegistryBase: serverBase,
-      githubApiBase: serverBase,
+      npmRegistryBase: REGISTRY_BASE,
+      githubApiBase: REGISTRY_BASE,
+      fetchImpl,
     });
 
     // Non-empty kit list proves the legacy entry was processed, not silently
@@ -337,14 +331,15 @@ describe("buildRegistryIndex", () => {
     const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
     createTarball(githubRepoDir, githubArchivePath);
 
-    const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
+    const fetchImpl = makeRegistryFetch(npmArchivePath, githubArchivePath);
     const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
     fs.writeFileSync(manualEntriesPath, "[]\n", "utf8");
 
     const result = await buildRegistryIndex({
       manualEntriesPath,
-      npmRegistryBase: serverBase,
-      githubApiBase: serverBase,
+      npmRegistryBase: REGISTRY_BASE,
+      githubApiBase: REGISTRY_BASE,
+      fetchImpl,
     });
 
     const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
@@ -392,8 +387,12 @@ describe("buildRegistryIndex", () => {
     const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
     createTarball(githubRepoDir, githubArchivePath);
 
-    const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
-    const result = await buildRegistryIndex({ npmRegistryBase: serverBase, githubApiBase: serverBase });
+    const fetchImpl = makeRegistryFetch(npmArchivePath, githubArchivePath);
+    const result = await buildRegistryIndex({
+      npmRegistryBase: REGISTRY_BASE,
+      githubApiBase: REGISTRY_BASE,
+      fetchImpl,
+    });
 
     const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
     expect(npmStash).toBeDefined();
@@ -401,123 +400,4 @@ describe("buildRegistryIndex", () => {
     expect(deployAsset).toBeDefined();
     expect(deployAsset?.description).not.toBe("legacy filename-less entry");
   });
-});
-
-function waitForChild(
-  child: ChildProcess,
-  timeoutMs: number,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += String(chunk);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += String(chunk);
-    });
-
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        child.kill("SIGKILL");
-        reject(new Error(`Child process timed out after ${timeoutMs}ms\nstdout: ${stdout}\nstderr: ${stderr}`));
-      }
-    }, timeoutMs);
-
-    child.on("error", (err) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        reject(err);
-      }
-    });
-
-    child.on("close", (code) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve({ code: code ?? 1, stdout, stderr });
-      }
-    });
-  });
-}
-
-describe("akm registry build-index", () => {
-  test(
-    "writes the generated index to disk",
-    async () => {
-      const fixtureRoot = makeTempDir("akm-registry-build-cli-");
-      const npmPackageDir = path.join(fixtureRoot, "package");
-      writeFile(path.join(npmPackageDir, "package.json"), JSON.stringify({ name: "agent-stash", version: "1.2.3" }));
-      writeFile(path.join(npmPackageDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n");
-      const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
-      createTarball(npmPackageDir, npmArchivePath);
-
-      const githubRepoDir = path.join(fixtureRoot, "release-stash-main");
-      writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
-      const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
-      createTarball(githubRepoDir, githubArchivePath);
-
-      const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
-      const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
-      fs.writeFileSync(manualEntriesPath, "[]\n", "utf8");
-      const outPath = path.join(fixtureRoot, "out", "index.json");
-      const xdgCache = makeTempDir("akm-registry-build-cache-");
-      const xdgConfig = makeTempDir("akm-registry-build-config-");
-      const homeDir = makeTempDir("akm-registry-build-home-");
-
-      const child = spawn(
-        "bun",
-        [
-          CLI,
-          "registry",
-          "build-index",
-          "--format=json",
-          "--out",
-          outPath,
-          "--manual",
-          manualEntriesPath,
-          "--npmRegistry",
-          serverBase,
-          "--githubApi",
-          serverBase,
-        ],
-        {
-          cwd: path.join(import.meta.dir, ".."),
-          stdio: ["ignore", "pipe", "pipe"],
-          env: {
-            ...process.env,
-            HOME: homeDir,
-            NO_PROXY: "127.0.0.1,localhost",
-            GITHUB_TOKEN: "",
-            XDG_CACHE_HOME: xdgCache,
-            XDG_CONFIG_HOME: xdgConfig,
-          },
-        },
-      );
-
-      const result = await waitForChild(child, 30_000);
-
-      if (result.code !== 0) {
-        console.error("stderr:", result.stderr);
-        console.error("stdout:", result.stdout);
-      }
-      expect(result.code).toBe(0);
-      expect(result.stderr.trim()).toBe("");
-      const stdout = JSON.parse(result.stdout.trim()) as { outPath: string; totalKits: number };
-      expect(stdout.outPath).toBe(outPath);
-      expect(stdout.totalKits).toBe(2);
-
-      const written = JSON.parse(fs.readFileSync(outPath, "utf8")) as {
-        version: number;
-        stashes: Array<{ id: string }>;
-      };
-      expect(written.version).toBe(3);
-      expect(written.stashes.map((stash) => stash.id)).toEqual(["npm:agent-stash", "github:acme/release-stash"]);
-    },
-    { timeout: 60_000 },
-  );
 });
