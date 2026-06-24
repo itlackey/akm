@@ -6,10 +6,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../src/core/file-lock";
-import { type Cleanup, sandboxXdgDataHome } from "./_helpers/sandbox";
+import { releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../src/core/file-lock";
+import { type Cleanup, sandboxXdgDataHome } from "../_helpers/sandbox";
 
-const FILE_LOCK_MODULE = path.resolve(import.meta.dir, "../src/core/file-lock.ts");
+const FILE_LOCK_MODULE = path.resolve(import.meta.dir, "../../src/core/file-lock.ts");
 
 describe("releaseLockIfOwned", () => {
   let dir: string;

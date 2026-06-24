@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { getIndexWriterLockPath } from "../src/core/paths";
-import { acquireIndexWriterLease, probeIndexWriterLease, withIndexWriterLease } from "../src/indexer/index-writer-lock";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { getIndexWriterLockPath } from "../../src/core/paths";
+import {
+  acquireIndexWriterLease,
+  probeIndexWriterLease,
+  withIndexWriterLease,
+} from "../../src/indexer/index-writer-lock";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 

@@ -3,9 +3,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HttpClient } from "../src/core/common";
-import { buildRegistryIndex, writeRegistryIndex } from "../src/registry/build-index";
-import { sandboxXdgCacheHome } from "./_helpers/sandbox";
+import type { HttpClient } from "../../src/core/common";
+import { buildRegistryIndex, writeRegistryIndex } from "../../src/registry/build-index";
+import { sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
