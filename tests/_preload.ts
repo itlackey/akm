@@ -49,6 +49,7 @@ import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
+import { setInMemoryDbRedirect } from "../src/storage/database";
 
 /**
  * Env vars the harness owns. Anything in this list is restored from the
@@ -101,6 +102,10 @@ function installSuiteWideSandbox(): void {
   // Set before the baseline snapshot below so the tripwire treats it as a
   // pre-existing key, not a mid-test leak.
   process.env.AKM_TEST_HARNESS = "1";
+  // #664: unit tier (test:unit sets AKM_TEST_DB_INMEMORY=1) redirects every
+  // real-file DB open to a pooled :memory: DB — one structural change that makes
+  // the whole unit tier fd-pure and parallel-safe. Integration leaves it off.
+  if (process.env.AKM_TEST_DB_INMEMORY === "1") setInMemoryDbRedirect(true);
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
   const home = path.join(suiteSandboxRoot, "home");
   fs.mkdirSync(home, { recursive: true });

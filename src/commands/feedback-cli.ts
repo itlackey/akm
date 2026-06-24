@@ -17,6 +17,7 @@ import { warn } from "../core/warn";
 import {
   applyFeedbackToUtilityScore,
   closeDatabase,
+  databaseExists,
   findEntryIdByRef,
   getEntryFilePathById,
   openExistingDatabase,
@@ -250,7 +251,7 @@ export const feedbackCommand = defineCommand({
       // background process that holds the writer lock, causing the feedback write
       // to spin-wait for the full reindex duration. If the DB is absent we give a
       // clear error below rather than silently triggering a rebuild.
-      if (!fs.existsSync(getDbPath())) {
+      if (!databaseExists(getDbPath())) {
         throw new UsageError(
           "Index not found. Run 'akm index' first to build the index before recording feedback.",
           "MISSING_REQUIRED_ARGUMENT",

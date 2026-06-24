@@ -19,7 +19,14 @@ import path from "node:path";
 import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
 import { getDataDir, getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistingDatabase } from "./db/db";
+import {
+  closeDatabase,
+  databaseExists,
+  getEntryCount,
+  getIndexedFilePaths,
+  getMeta,
+  openExistingDatabase,
+} from "./db/db";
 import { acquireIndexWriterLease, handoffIndexWriterLeaseToPid } from "./index-writer-lock";
 
 export interface EnsureIndexOptions {
@@ -103,7 +110,7 @@ function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined, i
  */
 export function isIndexStale(stashDir: string): boolean {
   const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) return true;
+  if (!databaseExists(dbPath)) return true;
 
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {
@@ -146,7 +153,7 @@ export function isIndexStale(stashDir: string): boolean {
  */
 function indexCanServeStash(stashDir: string): boolean {
   const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) return false;
+  if (!databaseExists(dbPath)) return false;
 
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {

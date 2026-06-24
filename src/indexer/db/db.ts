@@ -12,7 +12,12 @@ import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
-import { type Database, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
+import { type Database, databaseExists, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
+
+// Re-export so DB-existence guards can use the pool-aware check (#664) without
+// each call site reaching into the storage boundary directly.
+export { databaseExists };
+
 import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";

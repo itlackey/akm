@@ -36,6 +36,7 @@ import {
 import { info, warn } from "../../core/warn";
 import {
   closeDatabase,
+  databaseExists,
   getAllEntries,
   getEntryCount,
   getRetrievalCounts,
@@ -1216,7 +1217,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       let preEnsureEntryCount: number | undefined;
       try {
         const dbPath = getDbPath();
-        if (fs.existsSync(dbPath)) {
+        if (databaseExists(dbPath)) {
           const probeDb = openExistingDatabase();
           try {
             preEnsureEntryCount = getEntryCount(probeDb);

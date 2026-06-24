@@ -15,7 +15,6 @@
  * implementation, not a "local vs. remote" distinction.
  */
 
-import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
@@ -28,6 +27,7 @@ import type { Database } from "../../storage/database";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import {
   closeDatabase,
+  databaseExists,
   getAllEntries,
   getEntryById,
   getEntryCount,
@@ -190,7 +190,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<SearchLocalR
   await ensureIndex(stashDir);
 
   const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) {
+  if (!databaseExists(dbPath)) {
     return {
       hits: [],
       tip: "No search index available. Run 'akm index' to build one.",

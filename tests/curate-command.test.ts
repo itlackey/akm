@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
+import { databaseExists, openDatabase } from "../src/storage/database";
 import { runCliCapture } from "./_helpers/cli";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
 
@@ -157,12 +158,15 @@ describe("curate command", () => {
     const stashDir = makeStash();
     const { dataDir } = await runCliWithDataDir(stashDir, ["curate", "release", "--format=json"]);
 
-    // Check the database for the curate event
+    // Check the database for the curate event. Read through AKM's own opener
+    // (not a raw bun:sqlite handle) so this resolves the same DB the CLI wrote:
+    // under the unit tier's in-memory redirect a built DB lives in the process
+    // pool keyed by path, never on disk — `databaseExists` + `openDatabase`
+    // see it there, while integration/production see the real file.
     const dbPath = path.join(dataDir, "akm", "index.db");
-    expect(fs.existsSync(dbPath)).toBe(true);
+    expect(databaseExists(dbPath)).toBe(true);
 
-    const { Database } = require("bun:sqlite");
-    const db = new Database(dbPath);
+    const db = openDatabase(dbPath);
     try {
       const rows = db
         .prepare("SELECT event_type, query, metadata FROM usage_events WHERE event_type = 'curate'")

@@ -9,7 +9,7 @@ import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { getDbPath } from "../../core/paths";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
+import { closeDatabase, databaseExists, openExistingDatabase } from "../../indexer/db/db";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -483,7 +483,7 @@ function loadWorkflowDocumentFromDisk(assetPath: string): WorkflowDocument {
 
 function readWorkflowDocumentFromIndex(sourcePath: string, ref: string): WorkflowDocument | null {
   const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) return null;
+  if (!databaseExists(dbPath)) return null;
 
   const db = openExistingDatabase(dbPath);
   try {
@@ -535,7 +535,7 @@ function projectAsset(doc: WorkflowDocument, ref: string, assetPath: string, sou
 
 function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null {
   const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) return null;
+  if (!databaseExists(dbPath)) return null;
 
   const db = openExistingDatabase(dbPath);
   try {

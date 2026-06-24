@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import type { GraphRelation } from "../../llm/graph-extract";
@@ -13,7 +12,7 @@ import type {
   GraphFileNode,
   GraphQualityTelemetry,
 } from "../graph/graph-extraction";
-import { closeDatabase, openExistingDatabase } from "./db";
+import { closeDatabase, databaseExists, openExistingDatabase } from "./db";
 
 export interface StoredGraphSnapshot {
   stashPath: string;
@@ -39,7 +38,7 @@ export interface StoredGraphMeta {
 function withReadableGraphDb<T>(db: Database | undefined, fn: (db: Database) => T): T {
   if (db) return fn(db);
   const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) throw new Error("GRAPH_DB_MISSING");
+  if (!databaseExists(dbPath)) throw new Error("GRAPH_DB_MISSING");
   const opened = openExistingDatabase(dbPath);
   try {
     return fn(opened);
