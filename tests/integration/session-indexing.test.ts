@@ -21,24 +21,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmExtract } from "../src/commands/improve/extract";
-import type { SessionSummaryGenerator } from "../src/commands/improve/session-asset";
-import { akmSearch } from "../src/commands/read/search";
-import { parseFrontmatter } from "../src/core/asset/frontmatter";
-import type { AkmConfig } from "../src/core/config/config";
-import { resetConfigCache, saveConfig } from "../src/core/config/config";
-import { getDbPath } from "../src/core/paths";
-import { getAllEntries, openDatabase } from "../src/indexer/db/db";
-import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
-import { akmIndex } from "../src/indexer/indexer";
+import { akmExtract } from "../../src/commands/improve/extract";
+import type { SessionSummaryGenerator } from "../../src/commands/improve/session-asset";
+import { akmSearch } from "../../src/commands/read/search";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import type { AkmConfig } from "../../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { getDbPath } from "../../src/core/paths";
+import { getAllEntries, openDatabase } from "../../src/indexer/db/db";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { akmIndex } from "../../src/indexer/indexer";
 import type {
   SessionData,
   SessionLogHarness,
   SessionRef,
   SessionSummary,
-} from "../src/integrations/session-logs/types";
-import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+} from "../../src/integrations/session-logs/types";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 let stashDir = "";
 let envCleanup: Cleanup = () => {};

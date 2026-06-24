@@ -2,11 +2,11 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getDbPath } from "../../src/core/paths";
-import { resetQuiet, resetVerbose, setVerbose } from "../../src/core/warn";
-import { closeDatabase, openDatabase } from "../../src/indexer/db/db";
-import { akmIndex } from "../../src/indexer/indexer";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import { getDbPath } from "../../../src/core/paths";
+import { resetQuiet, resetVerbose, setVerbose } from "../../../src/core/warn";
+import { closeDatabase, openDatabase } from "../../../src/indexer/db/db";
+import { akmIndex } from "../../../src/indexer/indexer";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
 let envCleanup: Cleanup = () => {};
 

@@ -110,13 +110,13 @@ const ALLOWED_FILES = new Set<string>([
   // issue-36-repro.test.ts: three tests set AKM_STASH_DIR in test bodies for
   // cross-source and incremental-index tests. These are deliberate per-test
   // overrides; beforeEach/afterEach use the sandbox helper for outer isolation.
-  "tests/issue-36-repro.test.ts",
+  "tests/integration/issue-36-repro.test.ts",
 
   // source.test.ts: ~50 tests each create a dedicated stash with specific file
   // content and set AKM_STASH_DIR so akmSearch/akmIndex/akmShow read that stash.
   // These are per-test content fixtures, not isolation boilerplate; XDG vars are
   // now properly sandboxed via beforeEach/afterEach.
-  "tests/source.test.ts",
+  "tests/integration/source.test.ts",
 
   // search-include-proposed-cli.test.ts: one test creates a custom stash with
   // specific quality-marked skills and sets AKM_STASH_DIR to that stash so the
@@ -142,7 +142,7 @@ const ALLOWED_FILES = new Set<string>([
   // sets env vars manually in its own beforeAll/beforeEach because it needs a
   // different stash from the gated block. Full migration would require deep
   // refactoring of the cross-describe env sharing pattern.
-  "tests/semantic-search-e2e.test.ts",
+  "tests/integration/semantic-search-e2e.test.ts",
 
   // wiki.test.ts: a few tests set XDG_CONFIG_HOME or AKM_STASH_DIR in their bodies
   // to configure wiki registration (external sources / config-based detection) or
@@ -180,10 +180,10 @@ const ALLOWED_FILES = new Set<string>([
   "tests/commands/graph-cli-negative.test.ts",
   "tests/commands/graph.test.ts",
   "tests/commands/graph-update.test.ts",
-  "tests/commands/history.test.ts",
+  "tests/integration/commands/history.test.ts",
   "tests/commands/improve-distill-planner-skip-lessons.test.ts",
-  "tests/commands/improve-ensure-index-first.test.ts",
-  "tests/commands/improve-memory.test.ts",
+  "tests/integration/commands/improve-ensure-index-first.test.ts",
+  "tests/integration/commands/improve-memory.test.ts",
   "tests/commands/improve-path-exists-guard.test.ts",
   "tests/commands/improve-reflect-unsupported-type-skip.test.ts",
   "tests/integration/commands/improve-result-to-file.test.ts",
@@ -200,9 +200,9 @@ const ALLOWED_FILES = new Set<string>([
   "tests/graph-extraction-batch.test.ts",
   "tests/graph-extraction.test.ts",
   // tests/health-command.test.ts — migrated to withIsolatedAkmStorage (C2/#499).
-  "tests/commands/improve/improve-dry-run-side-effects.test.ts",
+  "tests/integration/commands/improve/improve-dry-run-side-effects.test.ts",
   "tests/commands/improve/improve-no-hang.test.ts",
-  "tests/index-clean.test.ts",
+  "tests/integration/index-clean.test.ts",
   "tests/lessons-coverage.test.ts",
   "tests/llm-enrichment-cache.test.ts",
   "tests/commands/reflect/reflect-completed-on-failure.test.ts",

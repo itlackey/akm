@@ -70,34 +70,24 @@ const ALLOWED_SPAWN = new Set<string>([]);
  * Unit-tier files that currently call `akmIndex({ full: true })` directly inside
  * a `test()` / `it()` body (an on-disk FTS/vector rebuild per test). Shrink-only.
  *
- * Each is migrated by replacing the per-test rebuild with Seam 2's
- * `seedEntries(...)` (`:memory:` `entries`) or Seam 3's `searchLocal({ db })` /
- * `searchOnDb` (`:memory:` FTS5+vec), or by hoisting the build into a `beforeAll`
- * fixture, or — when the index build IS the subject (`ensureIndex` staleness, the
- * DB file lock, the indexer/e2e cluster) — relocated to `tests/integration/`.
+ * EMPTY — every former offender exercised the indexer/FTS end-to-end (the on-disk
+ * rebuild IS the subject: `ensureIndex` staleness, `--clean`, indexer rejection,
+ * the semantic-search/secret/session indexing e2e, source-scoping, improve over a
+ * real indexed stash) and was relocated to `tests/integration/` (out of unit
+ * scope, where it runs under the `--parallel=1` + retry wrapper). A NEW per-test
+ * `akmIndex({ full: true })` in a unit file now fails the lint with no
+ * grandfather escape; replace it with Seam 2's `seedEntries(...)` (`:memory:`
+ * `entries`) or Seam 3's `searchLocal({ db })` / `searchOnDb` (`:memory:`
+ * FTS5+vec), hoist the build into a `beforeAll` fixture, or relocate the file.
  */
-const ALLOWED_FULL_INDEX = new Set<string>([
-  "tests/commands/history.test.ts",
-  "tests/commands/improve-ensure-index-first.test.ts",
-  "tests/commands/improve-memory.test.ts",
-  "tests/commands/improve/improve-dry-run-side-effects.test.ts",
-  "tests/commands/improve/improve-sync.test.ts",
-  "tests/commands/scope-flags.test.ts",
-  "tests/index-clean.test.ts",
-  "tests/issue-36-repro.test.ts",
-  "tests/secret-indexing.test.ts",
-  "tests/semantic-search-e2e.test.ts",
-  "tests/session-indexing.test.ts",
-  "tests/source.test.ts",
-  "tests/workflows/indexer-rejection.test.ts",
-]);
+const ALLOWED_FULL_INDEX = new Set<string>([]);
 
 /**
  * Shrink-only ratchet baseline = combined allowlist size. LOWER this in the same
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 13;
+export const UNIT_PURITY_BASELINE = 0;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size + ALLOWED_FULL_INDEX.size;

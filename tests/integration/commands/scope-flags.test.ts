@@ -13,16 +13,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/read/search";
-import { akmShowUnified } from "../../src/commands/read/show";
-import { buildMemoryFrontmatter } from "../../src/commands/remember";
-import { parseFrontmatter } from "../../src/core/asset/frontmatter";
-import { saveConfig } from "../../src/core/config/config";
-import { NotFoundError, UsageError } from "../../src/core/errors";
-import { akmIndex } from "../../src/indexer/indexer";
-import type { SourceSearchHit } from "../../src/sources/types";
-import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../../src/commands/read/search";
+import { akmShowUnified } from "../../../src/commands/read/show";
+import { buildMemoryFrontmatter } from "../../../src/commands/remember";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { saveConfig } from "../../../src/core/config/config";
+import { NotFoundError, UsageError } from "../../../src/core/errors";
+import { akmIndex } from "../../../src/indexer/indexer";
+import type { SourceSearchHit } from "../../../src/sources/types";
+import { runCliCapture } from "../../_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
 // (tests/_helpers/cli.ts). The preload (tests/_preload.ts) sandboxes HOME / XDG

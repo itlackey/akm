@@ -12,9 +12,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmConfig } from "../src/core/config/config";
-import { resetConfigCache, saveConfig } from "../src/core/config/config";
-import { getDbPath } from "../src/core/paths";
+import type { AkmConfig } from "../../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { getDbPath } from "../../src/core/paths";
 import {
   closeDatabase,
   EMBEDDING_DIM,
@@ -23,11 +23,11 @@ import {
   getEntryCount,
   getMeta,
   openDatabase,
-} from "../src/indexer/db/db";
-import { akmIndex } from "../src/indexer/indexer";
-import { searchLocal } from "../src/indexer/search/db-search";
-import { clearEmbeddingCache } from "../src/llm/embedder";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+} from "../../src/indexer/db/db";
+import { akmIndex } from "../../src/indexer/indexer";
+import { searchLocal } from "../../src/indexer/search/db-search";
+import { clearEmbeddingCache } from "../../src/llm/embedder";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Gate ───────────────────────────────────────────────────────────────────
 

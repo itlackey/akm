@@ -16,11 +16,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmImprove } from "../../src/commands/improve/improve";
-import { saveConfig } from "../../src/core/config/config";
-import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, getEntryCount, openExistingDatabase } from "../../src/indexer/db/db";
-import { akmIndex } from "../../src/indexer/indexer";
+import { akmImprove } from "../../../src/commands/improve/improve";
+import { saveConfig } from "../../../src/core/config/config";
+import { getDbPath } from "../../../src/core/paths";
+import { closeDatabase, getEntryCount, openExistingDatabase } from "../../../src/indexer/db/db";
+import { akmIndex } from "../../../src/indexer/indexer";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -144,7 +144,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       ensureIndexFn: async (dir: string, options) => {
         ensureCalls += 1;
         ensureMode = options?.mode;
-        const { ensureIndex } = await import("../../src/indexer/ensure-index");
+        const { ensureIndex } = await import("../../../src/indexer/ensure-index");
         return ensureIndex(dir, options);
       },
     });

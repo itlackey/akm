@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmHistory } from "../../src/commands/sources/history";
-import { saveConfig } from "../../src/core/config/config";
-import { appendEvent } from "../../src/core/events";
-import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase } from "../../src/indexer/db/db";
-import { akmIndex } from "../../src/indexer/indexer";
-import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage/usage-events";
-import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
+import { akmHistory } from "../../../src/commands/sources/history";
+import { saveConfig } from "../../../src/core/config/config";
+import { appendEvent } from "../../../src/core/events";
+import { getDbPath } from "../../../src/core/paths";
+import { closeDatabase, openDatabase } from "../../../src/indexer/db/db";
+import { akmIndex } from "../../../src/indexer/indexer";
+import { ensureUsageEventsSchema, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import { runCliCapture } from "../../_helpers/cli";
+import { type Cleanup, makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
 // (tests/_helpers/cli.ts). The pure akmHistory tests use openDatabase(":memory:")

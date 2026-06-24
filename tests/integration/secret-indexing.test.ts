@@ -13,14 +13,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../src/commands/env/secret";
-import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
-import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
-import { akmIndex } from "../src/indexer/indexer";
-import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
-import { runCliCapture } from "./_helpers/cli";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
+import { setSecret } from "../../src/commands/env/secret";
+import { getDbPath } from "../../src/core/paths";
+import { closeDatabase, getAllEntries, openDatabase } from "../../src/indexer/db/db";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { akmIndex } from "../../src/indexer/indexer";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
+import { runCliCapture } from "../_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "../_helpers/sandbox";
 
 const SECRET_VALUE = "correct-horse-battery-staple-secret-do-not-leak";
 
