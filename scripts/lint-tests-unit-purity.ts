@@ -62,10 +62,7 @@ const ALLOWED_SPAWN = new Set<string>([
   "tests/github.test.ts",
   "tests/index-writer-lock.test.ts",
   "tests/registry-build-index.test.ts",
-  "tests/remember-frontmatter.test.ts",
   "tests/save-command.test.ts",
-  "tests/secret-path-run.test.ts",
-  "tests/secret.test.ts",
   "tests/source-providers/git.test.ts",
   "tests/tar-utils-scan.test.ts",
   "tests/walker.test.ts",
@@ -77,7 +74,7 @@ const ALLOWED_SPAWN = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 26;
+export const UNIT_PURITY_BASELINE = 23;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size;

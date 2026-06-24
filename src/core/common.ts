@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getAssetTypes, TYPE_DIRS } from "./asset/asset-spec";
 import { ConfigError } from "./errors";
+import { getStdinPort } from "./io-port";
 import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -379,8 +380,10 @@ function shouldRetry(status: number): boolean {
  * when stdin is a TTY (no pipe) or when the piped content is empty.
  */
 export function tryReadStdinText(): string | undefined {
-  if (process.stdin.isTTY) return undefined;
-  const input = fs.readFileSync(0, "utf8");
+  // #664 Seam 4: delegate to the ambient StdinPort (default = real impl).
+  const port = getStdinPort();
+  if (port.isTty()) return undefined;
+  const input = port.readText();
   return input.length > 0 ? input : undefined;
 }
 

@@ -64,6 +64,7 @@ import { emitJsonError } from "../../src/cli/shared";
 import { normalizeShowArgv } from "../../src/commands/read/show";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
+import { resetStdinPort, setStdinPort } from "../../src/core/io-port";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
@@ -93,6 +94,8 @@ export function resetAllProcessState(): void {
   resetQuiet();
   resetVerbose();
   clearLogFile();
+  // #664 Seam 4: clear any stdin port a prior run installed.
+  resetStdinPort();
 }
 
 export interface CliResult {
@@ -134,11 +137,32 @@ const joinParts = (parts: unknown[]): string => parts.map((p) => (typeof p === "
  *
  * @param args CLI argument vector WITHOUT the leading `["bun", "cli.ts"]`
  *   (e.g. `["search", "test", "--source", "invalid"]`).
+ * @param opts.stdin When provided, the CLI reads this string as piped stdin
+ *   (in-process via the #664 Seam 4 `StdinPort`), so commands like `secret set`,
+ *   `env create --from-stdin`, `remember`, and `import -` no longer need a real
+ *   subprocess to feed stdin. `isTty()` reports false (piped), matching a pipe.
  */
-export async function runCliCapture(args: string[]): Promise<CliResult> {
+export async function runCliCapture(args: string[], opts?: { stdin?: string }): Promise<CliResult> {
   // Reset module-level singletons so this run re-reads the (sandboxed) env,
   // matching fresh-subprocess semantics even for back-to-back calls in one test.
   resetAllProcessState();
+
+  // #664 Seam 4: install a piped stdin port when the caller supplies input.
+  // Reset (not just restore) afterward — `resetAllProcessState` already calls
+  // `resetStdinPort`, but the explicit reset in `finally` guarantees the slot
+  // never leaks past this run even if the body throws before that next reset.
+  if (opts?.stdin !== undefined) {
+    const text = opts.stdin;
+    const bytes = Buffer.from(text, "utf8");
+    setStdinPort({
+      isTty: () => false,
+      readText: () => text,
+      readBytes: async (limit, onLimitExceeded) => {
+        if (bytes.byteLength > limit) throw onLimitExceeded();
+        return bytes;
+      },
+    });
+  }
 
   // Resolve everything that requires an `await` BEFORE patching the output
   // sinks, so the patched console.log isn't relied on across an await boundary
@@ -280,6 +304,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
     console.debug = realDebug;
     (process as unknown as { exit: typeof realExit }).exit = realExit;
     process.argv = realArgv;
+    // #664 Seam 4: never let an injected stdin port leak past this run.
+    resetStdinPort();
   }
 
   return { code, stdout, stderr };

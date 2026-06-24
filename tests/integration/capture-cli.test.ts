@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +6,6 @@ import { runCliCapture } from "../_helpers/cli";
 import { seedStoredGraph } from "../_helpers/graph-store";
 import { withEnv } from "../_helpers/sandbox";
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -31,7 +29,7 @@ interface CliRunResult {
 // assertions are byte-identical.
 async function runCli(
   args: string[],
-  options?: { stashDir?: string; env?: NodeJS.ProcessEnv },
+  options?: { stashDir?: string; input?: string; env?: NodeJS.ProcessEnv },
 ): Promise<{ stashDir: string; result: CliRunResult }> {
   const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
   const xdgCache = makeTempDir("akm-capture-cache-");
@@ -50,41 +48,16 @@ async function runCli(
       ...(options?.env as Record<string, string | undefined> | undefined),
     },
     async (): Promise<CliRunResult> => {
-      const { code, stdout, stderr } = await runCliCapture(args);
+      // #664 Seam 4: `import -` reads piped content via the StdinPort; supply it
+      // in-process via runCliCapture({ stdin }) rather than a real subprocess.
+      const { code, stdout, stderr } = await runCliCapture(
+        args,
+        options?.input !== undefined ? { stdin: options.input } : undefined,
+      );
       return { status: code, stdout, stderr };
     },
   );
   return { stashDir, result };
-}
-
-// KEPT AS A SUBPROCESS: the in-process harness has no stdin support, and `import
-// -` reads piped content via fs.readFileSync(0) (real fd 0). Spawning a real
-// subprocess is the faithful way to feed stdin, so the one `import -` test
-// continues to shell out through this helper.
-function spawnCli(
-  args: string[],
-  options?: { stashDir?: string; input?: string; env?: NodeJS.ProcessEnv },
-): { stashDir: string; result: { status: number | null; stdout: string; stderr: string } } {
-  const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
-  const xdgCache = makeTempDir("akm-capture-cache-");
-  const xdgConfig = makeTempDir("akm-capture-config-");
-  const xdgData = makeTempDir("akm-capture-data-");
-  const xdgState = makeTempDir("akm-capture-state-");
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    input: options?.input,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-      ...options?.env,
-    },
-  });
-  return { stashDir, result: { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" } };
 }
 
 afterEach(() => {
@@ -180,10 +153,10 @@ describe("capture commands", () => {
     expect(show.stdout).toContain("# Release Notes");
   });
 
-  test("import accepts stdin when source is '-'", () => {
-    // KEPT AS A SUBPROCESS: `import -` reads stdin via fs.readFileSync(0); the
-    // in-process harness has no stdin shim. spawnCli feeds the piped input.
-    const { stashDir, result } = spawnCli(["import", "-", "--name", "scratch-notes"], {
+  test("import accepts stdin when source is '-'", async () => {
+    // #664 Seam 4: `import -` reads stdin via the StdinPort; runCliCapture({ stdin })
+    // feeds the piped input in-process.
+    const { stashDir, result } = await runCli(["import", "-", "--name", "scratch-notes"], {
       input: "# Scratch Notes\n\nRemember the rollout freeze.\n",
     });
     expect(result.status).toBe(0);

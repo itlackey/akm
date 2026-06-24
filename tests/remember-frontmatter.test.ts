@@ -12,7 +12,6 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,20 +24,16 @@ import { withEnv } from "./_helpers/sandbox";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
 //
-// Migrated the non-stdin `akm remember` invocations from spawnSync to the shared
-// in-process harness (tests/_helpers/cli.ts). `remember` resolves its target
-// from AKM_STASH_DIR (XDG), not process.cwd(), so it runs faithfully in-process.
-//
-// KEPT SPAWNING (harness gap): the two tests that pipe a body via stdin
-// (`spawnRunCli({ input })`). runCliCapture has no stdin support — the CLI's
-// `remember` reads process.stdin when no body arg is given (and when --format
-// json is present), which the in-process harness cannot supply. Those two tests
-// stay as real subprocesses so the stdin read path is exercised faithfully.
+// Every `akm remember` invocation — including the stdin-driven ones — runs via
+// the shared in-process harness (tests/_helpers/cli.ts). `remember` resolves its
+// target from AKM_STASH_DIR (XDG), not process.cwd(), so it runs faithfully
+// in-process. #664 Seam 4: the tests that pipe a body via stdin supply it with
+// `runCliCapture({ stdin })` (the CLI reads process.stdin when no body arg is
+// given, and when --format json is present), so no subprocess is needed.
 //
 // Env mutation goes through the allowlisted withEnv wrapper; temp dirs are
 // created via makeTempDir (kept local) and tracked in tempDirs for cleanup.
 
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -61,26 +56,17 @@ function freshDirs(options?: { stashDir?: string }) {
   };
 }
 
-/** In-process runner for the non-stdin `remember` paths. */
-async function runCli(args: string[], options?: { stashDir?: string }) {
-  const { stashDir, env } = freshDirs(options);
-  const { stdout, stderr, code } = await withEnv(env, () => runCliCapture(args));
-  return { stashDir, result: { status: code, stdout, stderr } };
-}
-
 /**
- * Subprocess runner, retained ONLY for the stdin-driven tests. runCliCapture has
- * no stdin support, so the CLI's stdin read path is exercised via a real process.
+ * In-process runner for all `remember` paths, including stdin-driven ones.
+ * #664 Seam 4: piped stdin is supplied via `runCliCapture({ stdin })`, so the
+ * CLI's `tryReadStdinText` read path is exercised in-process — no subprocess.
  */
-function spawnRunCli(args: string[], options?: { stashDir?: string; input?: string }) {
+async function runCli(args: string[], options?: { stashDir?: string; input?: string }) {
   const { stashDir, env } = freshDirs(options);
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    input: options?.input,
-    env: { ...process.env, ...env },
-  });
-  return { stashDir, result };
+  const { stdout, stderr, code } = await withEnv(env, () =>
+    runCliCapture(args, options?.input !== undefined ? { stdin: options.input } : undefined),
+  );
+  return { stashDir, result: { status: code, stdout, stderr } };
 }
 
 afterEach(() => {
@@ -110,8 +96,8 @@ describe("zero-flag remember", () => {
     expect(stashDir).toBeTruthy();
   });
 
-  test("stdin zero-flag path also writes captureMode: hot + beliefState: asserted", () => {
-    const { result } = spawnRunCli(["remember"], { input: "VPN needed for staging deploys" });
+  test("stdin zero-flag path also writes captureMode: hot + beliefState: asserted", async () => {
+    const { result } = await runCli(["remember"], { input: "VPN needed for staging deploys" });
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
@@ -122,8 +108,8 @@ describe("zero-flag remember", () => {
     expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode"]);
   });
 
-  test("reads stdin when --format json is present", () => {
-    const { result } = spawnRunCli(["remember", "--name", "from-stdin", "--format", "json"], { input: "stdin body" });
+  test("reads stdin when --format json is present", async () => {
+    const { result } = await runCli(["remember", "--name", "from-stdin", "--format", "json"], { input: "stdin body" });
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { path: string };
     expect(fs.readFileSync(json.path, "utf8")).toContain("stdin body");

@@ -43,12 +43,16 @@ const xdgConfig = cliXdgConfig;
 async function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
+  stdinInput?: string,
 ): Promise<{ stdout: string; stderr: string; status: number }> {
   return withEnv({ AKM_STASH_DIR: undefined, AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
     resetGraphBoostCache();
-    const { stdout, stderr, code } = await runCliCapture(args);
+    const { stdout, stderr, code } = await runCliCapture(
+      args,
+      stdinInput !== undefined ? { stdin: stdinInput } : undefined,
+    );
     return { stdout, stderr, status: code };
   });
 }
@@ -512,6 +516,37 @@ describe("env create --from-file / --from-stdin", () => {
     if (process.platform !== "win32") {
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
     }
+  });
+
+  // #664 Seam 4: `env create --from-stdin` reads piped content via the
+  // StdinPort; runCliCapture({ stdin }) feeds it in-process (no subprocess).
+  test("--from-stdin ingests piped .env content at mode 0600", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    const result = await runCli(
+      ["env", "create", "prod", "--from-stdin"],
+      { AKM_STASH_DIR: stashDir },
+      "# piped\nDB_URL=postgres://y\nTOKEN=z\n",
+    );
+
+    expect(result.status).toBe(0);
+    const dest = path.join(stashDir, "env", "prod.env");
+    expect(fs.readFileSync(dest, "utf8")).toContain("DB_URL=postgres://y");
+    if (process.platform !== "win32") {
+      expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  test("--from-stdin and --from-file together is a usage error", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    const srcFile = path.join(stashDir, "source.env");
+    fs.writeFileSync(srcFile, "A=b\n", "utf8");
+    const result = await runCli(
+      ["env", "create", "prod", "--from-file", srcFile, "--from-stdin"],
+      { AKM_STASH_DIR: stashDir },
+      "C=d\n",
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("only one of --from-file or --from-stdin");
   });
 
   test("--from-file refuses to clobber an existing env", async () => {

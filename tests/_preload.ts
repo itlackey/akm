@@ -91,6 +91,11 @@ const HARNESSED: readonly string[] = [
 let suiteSandboxRoot: string | undefined;
 
 function installSuiteWideSandbox(): void {
+  // #664 Seam 4: mark the process as the test harness so the code-guarded
+  // `setStdinPort` (src/core/io-port.ts) is permitted ONLY under the suite.
+  // Set before the baseline snapshot below so the tripwire treats it as a
+  // pre-existing key, not a mid-test leak.
+  process.env.AKM_TEST_HARNESS = "1";
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
   const home = path.join(suiteSandboxRoot, "home");
   fs.mkdirSync(home, { recursive: true });

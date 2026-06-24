@@ -30,6 +30,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { getStdinPort } from "./core/io-port";
 
 /** True when running under the Bun runtime. Computed once at module load. */
 const isBun = !!process.versions?.bun;
@@ -171,19 +172,19 @@ function stdioFor(mode: "inherit" | "pipe" | "ignore" | undefined): "inherit" | 
  * Error) is thrown — callers supply their own message so behaviour is exact.
  */
 export async function readStdin(limitBytes: number, onLimitExceeded: () => Error): Promise<Buffer> {
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for await (const chunk of stdinIterator()) {
-    total += chunk.byteLength;
-    if (total > limitBytes) throw onLimitExceeded();
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+  // #664 Seam 4: delegate to the ambient StdinPort (default = real impl) so a
+  // test can supply piped bytes in-process via runCliCapture({ stdin }).
+  return getStdinPort().readBytes(limitBytes, onLimitExceeded);
 }
 
-function stdinIterator(): AsyncIterable<Uint8Array> {
+/**
+ * The runtime's stdin byte stream as an async iterable. Lives here because it is
+ * the `Bun.*` boundary; the default {@link StdinPort} (src/core/io-port.ts) reads
+ * through this so io-port never touches `Bun.*` directly (runtime-boundary lint).
+ */
+export function stdinByteStream(): AsyncIterable<Uint8Array> {
   if (isBun) {
-    return bunGlobal().stdin.stream() as AsyncIterable<Uint8Array>;
+    return bunGlobal().stdin.stream();
   }
   // process.stdin is an async iterable of Buffer on Node.
   return process.stdin as AsyncIterable<Uint8Array>;
