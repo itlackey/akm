@@ -47,7 +47,6 @@ const ALLOWED_SERVE = new Set<string>([
   "tests/graph-extraction-batch.test.ts",
   "tests/graph-extraction.test.ts",
   "tests/graph-lazy-show-curate.test.ts",
-  "tests/llm-client.test.ts",
   "tests/llm-enrichment-cache.test.ts",
   "tests/registry-build-index.test.ts",
   "tests/registry-cli.test.ts",
@@ -88,7 +87,7 @@ const ALLOWED_SPAWN = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 37;
+export const UNIT_PURITY_BASELINE = 36;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size;
