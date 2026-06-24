@@ -27,11 +27,29 @@
 #   - The shared fixture loader (tests/fixtures/stashes/load.ts) now indexes
 #     in-process instead of spawning `bun run … index`.
 #   - registry-search.test.ts shares ONE Bun.serve instead of ~40.
-# This retry wrapper stays as DEFENCE-IN-DEPTH: ~45 unit files still spawn, so
-# the race can still surface. Re-evaluating `--parallel>1` (TEST_PARALLEL) and/or
-# a Bun upgrade is gated on draining the remaining churners; do NOT flip
-# parallelism back on until the unit tree is spawn-light and a Bun build without
-# the epoll collision is confirmed. See the `akm-bun-parallel-test-hang` memory.
+#   - Bun.serve is FULLY drained from the unit tier (ALLOWED_SERVE is empty in
+#     scripts/lint-tests-unit-purity.ts).
+# This retry wrapper stays as DEFENCE-IN-DEPTH: the unit tier still has real fd
+# churn — UNIT_PURITY_BASELINE is 39 (17 real-`spawn` files + 22
+# `akmIndex({full:true})` on-disk FTS/vector rebuilds; 0 Bun.serve) — so the race
+# can still surface. Re-evaluating `--parallel>1` (SHARD_PARALLEL, below) is
+# gated on draining the remaining churners; do NOT flip parallelism back on until
+# the unit tree is spawn-light and a Bun build without the epoll collision is
+# confirmed. See the `akm-bun-parallel-test-hang` memory.
+#
+# #664 PARALLEL-READINESS SNAPSHOT (2026-06-24, local, NOT a CI gate result):
+#   - Gate preconditions E (search no longer mutates
+#     process.env.AKM_DISABLE_PROJECT_CONTEXT; resolved at the CLI edge) and
+#     F-min (getDbPath/getCacheDir/getDefaultStashDir take an injectable
+#     `env = process.env`) are BOTH already landed.
+#   - A local `SHARD=1/1 SHARD_PARALLEL=2` unit trial ran CLEAN 3×
+#     (5204 pass / 0 fail, 0 RACE_SIGNATURE, ~58-62s each) — a promising but
+#     NOT-sufficient signal.
+#   - The flip stays GATED and the default below stays 1, because the gate is
+#     NOT met: UNIT_PURITY_BASELINE must be 0 (it is 39), and the proof run is
+#     20 runs at SHARD_PARALLEL=4 with 0 RACE_SIGNATURE (only 3 runs at
+#     SHARD_PARALLEL=2 have been done locally). Until BOTH hold, leave the
+#     default at 1 and keep this retry wrapper. Do NOT flip on the 3-run/=2 trial.
 #
 # Usage:  SHARD=k/N scripts/run-test-shard.sh <unit|integration>
 #
@@ -67,6 +85,13 @@ MAX_ATTEMPTS="${SHARD_MAX_ATTEMPTS:-3}"
 # reaches CI because CI invokes this script directly. DO NOT raise the default
 # until the gate is met: UNIT_PURITY_BASELINE === 0, issues E + F-min landed,
 # and an opt-in SHARD_PARALLEL=4 job shows 0 RACE_SIGNATURE retries over 20 runs.
+#
+# READINESS (2026-06-24): E + F-min are DONE. The SOLE remaining blocker is
+# UNIT_PURITY_BASELINE === 0 — it is currently 39 (17 real-spawn + 22 full-index
+# files in scripts/lint-tests-unit-purity.ts). A SHARD_PARALLEL=2 trial is clean
+# locally (3 runs), but the proof run (20× at SHARD_PARALLEL=4, 0 RACE_SIGNATURE)
+# is NOT done. So the default stays 1. To trial parallelism by hand without
+# flipping the default, run e.g. `SHARD=1/1 SHARD_PARALLEL=2 scripts/run-test-shard.sh unit`.
 SHARD_PARALLEL="${SHARD_PARALLEL:-1}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true

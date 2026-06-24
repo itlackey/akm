@@ -52,6 +52,18 @@ Legend: `[x]` done · `[ ]` pending · each line ≈ one commit (some batch 2-3)
 - [ ] **C6.3** The gate: opt-in CI job `SHARD_PARALLEL=4` × 20 runs, 0 `RACE_SIGNATURE` retries, with E + F-min landed. If green, flip the `run-test-shard.sh` default.
 - [ ] **C6.4** No-debt cleanup once the flip is proven: **DELETE the epoll retry wrapper from the UNIT shard path** (the unit tier is pure → the race cannot fire → the wrapper is dead code, not "defence in depth forever"). The wrapper survives only on the integration shard path until that tier is purified (Phase 7). Remove the `akmIndex({full:true})`-in-test-body and any now-dead `withRegistryCacheDb`/legacy seam left unused after Seam 1b lands.
 
+### Parallel-readiness snapshot (2026-06-24 — gate NOT yet met, default stays 1)
+Recorded by the parallel-readiness stage; this is the live state of the C6.3 gate:
+
+| Gate precondition (§8.5 Step 0) | State |
+|---|---|
+| **E** — search no longer mutates `process.env.AKM_DISABLE_PROJECT_CONTEXT`; resolved once at the CLI edge and threaded via the options bag (`search-cli.ts:99-105`, `db-search.ts:175`) | **DONE** — no env write remains; only `===` reads, defaulted from the injected `input.disableProjectContext`. |
+| **F-min** — `getDbPath`/`getCacheDir`/`getDefaultStashDir` take an injectable `env: NodeJS.ProcessEnv = process.env` (`paths.ts:139,248,308`) | **DONE.** |
+| **`UNIT_PURITY_BASELINE === 0`** | **NOT MET — baseline is 39** (0 `Bun.serve`, 17 `real-spawn`, 22 `full-index` in `lint-tests-unit-purity.ts`). This is the sole remaining hard blocker. |
+| **20× `SHARD_PARALLEL=4`, 0 `RACE_SIGNATURE`** | **NOT DONE** — only a local 3× `SHARD_PARALLEL=2` trial was run (all clean: 5204 pass / 0 fail / 0 `RACE_SIGNATURE`, ~58-62s). Promising but neither the run count nor the parallelism level the gate requires. |
+
+**Decision:** the `run-test-shard.sh` `SHARD_PARALLEL` default **stays 1** and the epoll retry wrapper is **kept**. Per C6.4 / no-debt, the wrapper is deleted from the unit path **only after** the flip is proven (baseline 0 + the 20×/=4 run). The unit tier still has 39 real-fd-churn files, so the race surface is non-empty and the wrapper is still load-bearing, not dead code. **Do not flip on the 3-run/parallel=2 trial.** Remaining work before the flip: C6.1 (drain baseline 39 → 0), C6.2 (guard + lint rules), then C6.3 (the 20×/=4 proof run).
+
 ## Phase 7 — DEFERRED, owner-gated (separate proposal, off critical path)
 God-function / reader decomposition — **requires explicit owner go-ahead per PR**, touches cron-critical files (`improve.ts`, `consolidate.ts`), zero bearing on the flip: D (`runImprovePreparationStage`), D2 (`indexEntries`), J (`akmConsolidateInner`/`akmReflect`/`akmDistill`), K (openDatabase CQS), M (session readers), N (selection-window clock), L (if not done in C3.3), O (leaf default-to-pure fixes).
 
