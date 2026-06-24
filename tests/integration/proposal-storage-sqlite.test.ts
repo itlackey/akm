@@ -22,7 +22,7 @@ import {
   akmProposalDiff,
   akmProposalRevert,
   akmProposalShow,
-} from "../src/commands/proposal/proposal";
+} from "../../src/commands/proposal/proposal";
 import {
   createProposal,
   getProposal,
@@ -30,10 +30,10 @@ import {
   listProposals,
   type Proposal,
   resolveProposalId,
-} from "../src/commands/proposal/validators/proposals";
-import type { AkmConfig } from "../src/core/config/config";
-import { getStateDbPath, openStateDatabase } from "../src/core/state-db";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+} from "../../src/commands/proposal/validators/proposals";
+import type { AkmConfig } from "../../src/core/config/config";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const tempDirs: string[] = [];
 let storage: IsolatedAkmStorage;
@@ -187,7 +187,7 @@ function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<
 }
 
 function proposalsModuleHref(): string {
-  return pathToFileURL(path.join(import.meta.dir, "../src/commands/proposal/validators/proposals.ts")).href;
+  return pathToFileURL(path.join(import.meta.dir, "../../src/commands/proposal/validators/proposals.ts")).href;
 }
 
 // ── canonical store ──────────────────────────────────────────────────────────

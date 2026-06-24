@@ -8,7 +8,12 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { computeFixtureContentHash, fixtureContentHash, listFixtures, loadFixtureStash } from "./load";
+import {
+  computeFixtureContentHash,
+  fixtureContentHash,
+  listFixtures,
+  loadFixtureStash,
+} from "../fixtures/stashes/load";
 
 describe("loadFixtureStash", () => {
   test("materialises the minimal fixture and cleanup removes it", async () => {

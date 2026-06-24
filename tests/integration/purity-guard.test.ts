@@ -11,9 +11,9 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { openDatabase as openIndexDatabase } from "../src/indexer/db/db";
-import { openDatabase as openStorageDatabase, setOpenDatabaseGuard } from "../src/storage/database";
-import { installPurityGuard, isInMemorySqlitePath, UnitImpureError } from "./_helpers/purity-guard";
+import { openDatabase as openIndexDatabase } from "../../src/indexer/db/db";
+import { openDatabase as openStorageDatabase, setOpenDatabaseGuard } from "../../src/storage/database";
+import { installPurityGuard, isInMemorySqlitePath, UnitImpureError } from "../_helpers/purity-guard";
 
 describe("isInMemorySqlitePath — §8.3 correction 1", () => {
   test("honors EXACTLY the bare :memory: token", () => {

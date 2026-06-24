@@ -28,9 +28,9 @@ import {
   purgeOldTaskLogs,
   queryFailedRunLogLines,
   queryTaskLogs,
-} from "../src/core/logs-db";
-import { openStateDatabase, upsertTaskHistory } from "../src/core/state-db";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+} from "../../src/core/logs-db";
+import { openStateDatabase, upsertTaskHistory } from "../../src/core/state-db";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 

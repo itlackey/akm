@@ -70,10 +70,12 @@ const ENV_ASSIGN_ALLOWED = new Set<string>([
   // restores the captured original. Synchronous, no real I/O.
   "tests/registry-resolve.test.ts",
 
-  // fixtures/stashes/load.test.ts: sets AKM_STASH_DIR to a sentinel string to
-  // verify the fixture loader's env handling; captures and restores the prior
-  // value in afterEach (both branches). No temp dir, no leak.
-  "tests/fixtures/stashes/load.test.ts",
+  // integration/fixtures-stash-load.test.ts: sets AKM_STASH_DIR to a sentinel
+  // string to verify the fixture loader's env handling; captures and restores
+  // the prior value in afterEach (both branches). No temp dir, no leak.
+  // (#664: relocated to the integration tier — it asserts the index.db lands on
+  // disk, which is real-file behavior the unit-tier in-memory redirect erases.)
+  "tests/integration/fixtures-stash-load.test.ts",
 ]);
 
 /**

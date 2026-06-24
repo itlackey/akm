@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Database as AkmDatabase } from "../../src/storage/database";
-import { closeWorkflowDatabase, openWorkflowDatabase, runMigrations } from "../../src/workflows/db";
+import type { Database as AkmDatabase } from "../../../src/storage/database";
+import { closeWorkflowDatabase, openWorkflowDatabase, runMigrations } from "../../../src/workflows/db";
 
 /**
  * Tests for the workflow.db migration framework.

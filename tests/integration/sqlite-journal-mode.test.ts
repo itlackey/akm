@@ -30,19 +30,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { openLogsDatabase } from "../src/core/logs-db";
-import { openStateDatabase } from "../src/core/state-db";
-import { closeDatabase, openDatabase, openExistingDatabase } from "../src/indexer/db/db";
-import type { Database } from "../src/storage/database";
-import { openDatabase as openRawDatabase } from "../src/storage/database";
+import { openLogsDatabase } from "../../src/core/logs-db";
+import { openStateDatabase } from "../../src/core/state-db";
+import { closeDatabase, openDatabase, openExistingDatabase } from "../../src/indexer/db/db";
+import type { Database } from "../../src/storage/database";
+import { openDatabase as openRawDatabase } from "../../src/storage/database";
 import {
   applyStandardPragmas,
   isNetworkFilesystem,
   type JournalMode,
   resolveJournalMode,
-} from "../src/storage/sqlite-pragmas";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../src/workflows/db";
-import { withEnv } from "./_helpers/sandbox";
+} from "../../src/storage/sqlite-pragmas";
+import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
+import { withEnv } from "../_helpers/sandbox";
 
 const EXPECTED_BUSY_TIMEOUT_MS = 30_000;
 
@@ -307,8 +307,8 @@ describe("#628 AC-e: applyStandardPragmas() network-FS fallback wiring", () => {
 // ── AC-f: docs carry the env-var row (assert on disk content) ────────────────
 describe("#628 AC-f: docs document AKM_SQLITE_JOURNAL_MODE", () => {
   test("data-and-telemetry.md and configuration.md mention the env var", () => {
-    const telemetry = fs.readFileSync(path.join(import.meta.dir, "..", "docs", "data-and-telemetry.md"), "utf8");
-    const config = fs.readFileSync(path.join(import.meta.dir, "..", "docs", "configuration.md"), "utf8");
+    const telemetry = fs.readFileSync(path.join(import.meta.dir, "..", "..", "docs", "data-and-telemetry.md"), "utf8");
+    const config = fs.readFileSync(path.join(import.meta.dir, "..", "..", "docs", "configuration.md"), "utf8");
     expect(telemetry).toContain("AKM_SQLITE_JOURNAL_MODE");
     expect(config).toContain("AKM_SQLITE_JOURNAL_MODE");
   });
