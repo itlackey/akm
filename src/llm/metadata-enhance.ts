@@ -11,6 +11,7 @@
  */
 
 import metadataEnhanceSystemPrompt from "../assets/prompts/metadata-enhance-system.md" with { type: "text" };
+import type { HttpClient } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import type { StashEntry } from "../indexer/passes/metadata";
 import { chatCompletion, parseJsonResponse } from "./client";
@@ -36,6 +37,7 @@ export async function enhanceMetadata(
   fileContent?: string,
   signal?: AbortSignal,
   akmConfig?: AkmConfig,
+  deps?: { fetch?: HttpClient },
 ): Promise<EnhancedMetadata> {
   const contextParts = [`Name: ${entry.name}`, `Type: ${entry.type}`];
   if (entry.description) contextParts.push(`Current description: ${entry.description}`);
@@ -62,7 +64,7 @@ Return ONLY the JSON object, no explanation.`;
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
       ],
-      { signal },
+      { signal, fetch: deps?.fetch },
     );
 
     const parsed = parseJsonResponse<Record<string, unknown>>(raw);
