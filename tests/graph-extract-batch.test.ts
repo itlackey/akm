@@ -30,8 +30,8 @@ import type { LlmConnectionConfig } from "../src/core/config/config";
  * individual (single-asset) fallback calls and route to separate queues.
  */
 let chatCallCount = 0;
-/** First batch response to return. Consumed once. */
-let batchRawOnce: string | null = null;
+/** Queue of raw strings for batch calls (the user prompt contains "N="). */
+const batchRawQueue: string[] = [];
 /** Queue of raw strings for individual (single-asset fallback) calls. */
 const singleRawQueue: string[] = [];
 
@@ -44,9 +44,8 @@ const llmServer = Bun.serve({
     };
     const userContent = body.messages?.find((m) => m.role === "user")?.content ?? "";
     let content = "";
-    if (userContent.includes("N=") && batchRawOnce !== null) {
-      content = batchRawOnce;
-      batchRawOnce = null;
+    if (userContent.includes("N=")) {
+      content = batchRawQueue.shift() ?? "";
     } else {
       content = singleRawQueue.shift() ?? "";
     }
@@ -79,7 +78,7 @@ const AKM_CFG_WITH_GATE = {
 
 beforeEach(() => {
   chatCallCount = 0;
-  batchRawOnce = null;
+  batchRawQueue.length = 0;
   singleRawQueue.length = 0;
 });
 
@@ -134,17 +133,19 @@ describe("extractGraphFromBodies — unit", () => {
       "No graph content here.",
     ];
 
-    batchRawOnce = JSON.stringify([
-      {
-        entities: ["ServiceA", "ServiceB"],
-        relations: [{ from: "ServiceA", to: "ServiceB", type: "integrates with" }],
-      },
-      {
-        entities: ["Terraform", "ProdCluster"],
-        relations: [{ from: "Terraform", to: "ProdCluster", type: "provisions" }],
-      },
-      { entities: [], relations: [] },
-    ]);
+    batchRawQueue.push(
+      JSON.stringify([
+        {
+          entities: ["ServiceA", "ServiceB"],
+          relations: [{ from: "ServiceA", to: "ServiceB", type: "integrates with" }],
+        },
+        {
+          entities: ["Terraform", "ProdCluster"],
+          relations: [{ from: "Terraform", to: "ProdCluster", type: "provisions" }],
+        },
+        { entities: [], relations: [] },
+      ]),
+    );
 
     const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE);
 
@@ -163,11 +164,13 @@ describe("extractGraphFromBodies — unit", () => {
     const bodies = ["Body A mentioning Alpha.", "Body B mentioning Beta.", "Body C mentioning Gamma."];
 
     // Batch returns only 2 items (missing index 2).
-    batchRawOnce = JSON.stringify([
-      { entities: ["Alpha"], relations: [] },
-      { entities: ["Beta"], relations: [] },
-      // index 2 is intentionally omitted — partial failure
-    ]);
+    batchRawQueue.push(
+      JSON.stringify([
+        { entities: ["Alpha"], relations: [] },
+        { entities: ["Beta"], relations: [] },
+        // index 2 is intentionally omitted — partial failure
+      ]),
+    );
 
     // Individual fallback for index 2 (the single-asset prompt does NOT contain "N=").
     singleRawQueue.push(JSON.stringify({ entities: ["Gamma"], relations: [] }));
@@ -238,21 +241,76 @@ describe("extractGraphFromBodies — unit", () => {
     expect(chatCallCount).toBe(0);
   });
 
-  test("(f) LLM returns non-array JSON falls back to individual calls for all assets", async () => {
+  test("(f) genuinely non-array batch retries once, then falls back + surfaces the metric", async () => {
     const bodies = ["Alpha body.", "Beta body."];
-    // Batch call returns an object (not an array) — parse succeeds but not an array.
-    batchRawOnce = JSON.stringify({ oops: true });
+    const telemetry: Record<string, number> = {};
+    // First batch call AND the stricter retry both return a non-array object.
+    batchRawQueue.push(JSON.stringify({ oops: true }));
+    batchRawQueue.push(JSON.stringify({ still: "broken" }));
     // Individual fallback calls for both assets.
     singleRawQueue.push(JSON.stringify({ entities: ["Alpha"], relations: [] }));
     singleRawQueue.push(JSON.stringify({ entities: ["Beta"], relations: [] }));
 
-    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE);
+    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE, undefined, {
+      telemetry,
+    });
 
     expect(results).toHaveLength(2);
     expect(results[0]?.entities).toEqual(["Alpha"]);
     expect(results[1]?.entities).toEqual(["Beta"]);
-    // 1 batch call + 2 fallback individual calls = 3 total.
-    expect(chatCallCount).toBe(3);
+    // 1 batch call + 1 stricter retry + 2 fallback individual calls = 4 total.
+    expect(chatCallCount).toBe(4);
+    // The failure (after the retry) is counted and observable (#635 item 3).
+    expect(telemetry.nonArrayBatchFailures).toBe(1);
+    expect(telemetry.retryAttempts).toBe(1);
+  });
+
+  test("(g) batch response wrapped in prose with a leading object is salvaged (#635) — no fallback", async () => {
+    const bodies = ["Alpha references Beta.", "Gamma uses Delta."];
+    // Model wraps the valid array in prose AND emits a stray example object
+    // first. Array-preferring salvage must recover the array — no per-asset
+    // fallback, no retry.
+    const validArray = JSON.stringify([
+      { entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta" }] },
+      { entities: ["Gamma", "Delta"], relations: [{ from: "Gamma", to: "Delta" }] },
+    ]);
+    batchRawQueue.push(
+      `Sure! For example {"from":"X","to":"Y"}.\nHere is the result:\n${validArray}\nHope that helps.`,
+    );
+
+    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.entities).toEqual(["Alpha", "Beta"]);
+    expect(results[1]?.entities).toEqual(["Gamma", "Delta"]);
+    // Only the single batch call — salvage avoided both the retry and fallback.
+    expect(chatCallCount).toBe(1);
+  });
+
+  test("(h) non-array batch recovered by the stricter retry — no per-asset fallback", async () => {
+    const bodies = ["Alpha body.", "Beta body."];
+    const telemetry: Record<string, number> = {};
+    // First batch is non-array prose; the stricter retry returns a clean array.
+    batchRawQueue.push("I cannot produce JSON, sorry.");
+    batchRawQueue.push(
+      JSON.stringify([
+        { entities: ["Alpha"], relations: [] },
+        { entities: ["Beta"], relations: [] },
+      ]),
+    );
+
+    const results = await extractGraphFromBodies(SAMPLE_LLM, bodies, undefined, AKM_CFG_WITH_GATE, undefined, {
+      telemetry,
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.entities).toEqual(["Alpha"]);
+    expect(results[1]?.entities).toEqual(["Beta"]);
+    // 1 batch + 1 stricter retry, no per-asset fallback.
+    expect(chatCallCount).toBe(2);
+    expect(telemetry.retryAttempts).toBe(1);
+    // The retry recovered the batch → no surfaced non-array failure.
+    expect(telemetry.nonArrayBatchFailures ?? 0).toBe(0);
   });
 
   test("normalizes entities/relation types and keeps confidence when provided", async () => {

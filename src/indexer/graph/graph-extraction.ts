@@ -107,6 +107,13 @@ export interface GraphExtractionTelemetry {
   htmlErrorCount?: number;
   /** Count of single bounded retries triggered for transient LLM failures. */
   retryAttempts: number;
+  /**
+   * Batch graph-extraction calls whose response was not a JSON array even
+   * after the one stricter-reprompt retry — each one cost a wasted batch call
+   * plus a per-asset fallback. Surfaced so a rising batch-fallback rate is
+   * observable instead of silent (#635).
+   */
+  nonArrayBatchFailures?: number;
 }
 
 /** Persisted graph shape loaded from SQLite. */
@@ -562,6 +569,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     failureCount: 0,
     htmlErrorCount: 0,
     retryAttempts: 0,
+    nonArrayBatchFailures: 0,
   };
   const canReusePreviousGraph = previousGraph.telemetry?.extractorId === extractorId;
   const runtimeTelemetry: graphExtract.GraphRuntimeTelemetry = {
@@ -857,6 +865,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   telemetry.failureCount = runtimeTelemetry.failureCount ?? 0;
   telemetry.htmlErrorCount = runtimeTelemetry.htmlErrorCount ?? 0;
   telemetry.retryAttempts = runtimeTelemetry.retryAttempts ?? 0;
+  telemetry.nonArrayBatchFailures = runtimeTelemetry.nonArrayBatchFailures ?? 0;
 
   const qualityConsidered = mergedNodes.length;
   const qualityExtracted = mergedNodes.filter((node) => node.status === "extracted" && node.entities.length > 0).length;
