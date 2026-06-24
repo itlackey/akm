@@ -1,9 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { RegistryIndex } from "../src/commands/read/registry-search";
 import { searchRegistry } from "../src/commands/read/registry-search";
+import type { HttpClient } from "../src/core/common";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
@@ -65,76 +63,50 @@ const FIXTURE_INDEX: RegistryIndex = {
   ],
 };
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Injected fetch (#664 Seam 1) ──────────────────────────────────────────────
+//
+// Non-routable endpoints — the injected fetch never opens a socket, so these
+// URLs serve only to key the route table. `searchRegistry({ fetch })` threads
+// the fake into every provider, replacing the per-test Bun.serve instances.
 
-const createdTmpDirs: string[] = [];
+const FIXTURE_URL = "http://test.local/index.json";
 
-function _createTmpDir(prefix = "akm-search-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
+/** A skills.sh API response body (matches the shape the old server returned). */
+function skillsBody(skills: Array<{ id: string; name: string; installs: number; source: string }>): string {
+  return JSON.stringify({ skills });
 }
-
-/** Start a minimal HTTP server that serves the fixture index. */
-function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
-  const body = JSON.stringify(index);
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(body, {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  return {
-    url: `http://localhost:${server.port}/index.json`,
-    close: () => server.stop(true),
-  };
-}
-
-// One shared server for the constant FIXTURE_INDEX. The vast majority of tests
-// only need a stable endpoint serving the same immutable fixture — standing up
-// (and tearing down) a fresh Bun.serve per test was ~40 socket lifecycles of
-// pure fd churn, a top driver of both the unit-suite runtime (#664 §2) and the
-// Bun --isolate epoll fd race (#664 §1). Per-test XDG isolation still happens in
-// beforeEach, so the registry cache never leaks across tests; the server itself
-// is immutable so sharing it is safe. Tests that must KILL the server mid-test
-// (the cache test) or serve a custom/erroring index still mint their own.
-let sharedFixtureServer: { url: string; close: () => void };
-
-beforeAll(() => {
-  sharedFixtureServer = serveIndex(FIXTURE_INDEX);
-});
 
 /**
- * Return the shared FIXTURE_INDEX endpoint. `close()` is a deliberate no-op —
- * the single underlying server is reaped once in afterAll — so existing
- * `try { … } finally { srv.close() }` blocks keep working unchanged.
+ * Build an `HttpClient` that routes by request URL to a registered body.
+ *
+ * - A `string` route returns `200` with that JSON body.
+ * - A `{ status, body }` route returns the given status (for error paths).
+ * - skills.sh providers append `/api/search?…` to their base URL, so routes
+ *   match by URL prefix.
+ * - Unmatched URLs reject (mimics an unreachable host) so error-path tests work.
  */
-function serveFixtureIndex(): { url: string; close: () => void } {
-  return { url: sharedFixtureServer.url, close: () => {} };
-}
-
-/** Start a server that always returns an error. */
-function serveError(status: number): { url: string; close: () => void } {
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response("error", { status });
-    },
-  });
-  return {
-    url: `http://localhost:${server.port}/index.json`,
-    close: () => server.stop(true),
+function fakeFetch(routes: Record<string, string | { status: number; body?: string }>): HttpClient {
+  return async (input) => {
+    const url = String(input);
+    for (const [base, route] of Object.entries(routes)) {
+      if (url === base || url.startsWith(base)) {
+        if (typeof route === "string") {
+          return new Response(route, { headers: { "Content-Type": "application/json" } });
+        }
+        return new Response(route.body ?? "error", {
+          status: route.status,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+    throw new Error(`fakeFetch: no route for ${url}`);
   };
 }
 
-afterAll(() => {
-  sharedFixtureServer?.close();
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+/** The common case: one static-index endpoint serving the constant fixture. */
+const fetchFixture: HttpClient = fakeFetch({ [FIXTURE_URL]: JSON.stringify(FIXTURE_INDEX) });
+
+// ── Per-test XDG sandbox ──────────────────────────────────────────────────────
 
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
@@ -145,11 +117,8 @@ beforeEach(() => {
   const cacheResult = sandboxXdgCacheHome();
   // Also isolate the data dir per test. The registry-index cache lives in
   // index.db under getDataDir() (XDG_DATA_HOME/HOME), NOT XDG_CACHE_HOME. That
-  // cache is keyed solely on the registry URL with a 1-hour TTL. Test servers
-  // bind random ports that the OS reuses across tests, so without a fresh data
-  // dir a later test whose serveIndex() lands on a previously-used port reads a
-  // stale, unrelated index out of the shared real ~/.local/share/akm/index.db —
-  // making queries like "openkit" return zero hits and flaking hits[0] reads.
+  // cache is keyed solely on the registry URL with a 1-hour TTL, so a fresh data
+  // dir per test keeps a cached index from one test out of the next.
   const dataResult = sandboxXdgDataHome(cacheResult.cleanup);
   envCleanup = dataResult.cleanup;
   delete process.env.AKM_REGISTRY_URL;
@@ -183,81 +152,57 @@ describe("searchRegistry", () => {
 
 describe("scoring", () => {
   test("exact name match ranks highest", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("Azure Ops Stash", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:someone/azure-ops-stash");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("Azure Ops Stash", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].id).toBe("github:someone/azure-ops-stash");
   });
 
   test("tag match surfaces relevant stashes", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("creaturepunk", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:itlackey/dimm-city-stash");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("creaturepunk", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].id).toBe("github:itlackey/dimm-city-stash");
   });
 
   test("description substring matches", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("Container Apps", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.some((h) => h.id === "github:someone/azure-ops-stash")).toBe(true);
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("Container Apps", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.some((h) => h.id === "github:someone/azure-ops-stash")).toBe(true);
   });
 
   test("no match returns empty hits without error", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("zzz-nonexistent-xxy", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits).toEqual([]);
-      expect(result.warnings).toEqual([]);
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("zzz-nonexistent-xxy", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 
   test("multi-token query scores across fields", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("bun typescript starter", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      // openkit has all three in its tags
-      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("bun typescript starter", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    // openkit has all three in its tags
+    expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
   });
 
   test("author match works", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("devperson", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:generic-agent-utils");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("devperson", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBe(1);
+    expect(result.hits[0].id).toBe("npm:generic-agent-utils");
   });
 });
 
@@ -265,43 +210,31 @@ describe("scoring", () => {
 
 describe("limit enforcement", () => {
   test("limit: 1 returns at most 1 hit", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("stash", {
-        registries: [{ url: srv.url }],
-        limit: 1,
-      });
-      expect(result.hits.length).toBeLessThanOrEqual(1);
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("stash", {
+      registries: [{ url: FIXTURE_URL }],
+      limit: 1,
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeLessThanOrEqual(1);
   });
 
   test("limit: 0 falls back to default", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("stash", {
-        registries: [{ url: srv.url }],
-        limit: 0,
-      });
-      // Should not crash, uses default of 20
-      expect(result.hits.length).toBeLessThanOrEqual(20);
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("stash", {
+      registries: [{ url: FIXTURE_URL }],
+      limit: 0,
+      fetch: fetchFixture,
+    });
+    // Should not crash, uses default of 20
+    expect(result.hits.length).toBeLessThanOrEqual(20);
   });
 
   test("limit: NaN falls back to default", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("stash", {
-        registries: [{ url: srv.url }],
-        limit: NaN,
-      });
-      expect(result.hits.length).toBeLessThanOrEqual(20);
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("stash", {
+      registries: [{ url: FIXTURE_URL }],
+      limit: NaN,
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeLessThanOrEqual(20);
   });
 });
 
@@ -309,20 +242,24 @@ describe("limit enforcement", () => {
 
 describe("caching", () => {
   test("second call uses cached index (no network needed)", async () => {
-    // Dedicated server: this test proves the cache path by KILLING the server
-    // between calls, so it cannot share the always-on fixture server.
-    const srv = serveIndex(FIXTURE_INDEX);
-    const url = srv.url;
+    // Prove the cache path: the first call populates the index cache, then the
+    // injected fetch is swapped for one that always throws. A second call that
+    // still returns hits can only have read from cache.
+    const url = FIXTURE_URL;
 
-    // First call — fetches from server
-    const result1 = await searchRegistry("openkit", { registries: [{ url }] });
+    const result1 = await searchRegistry("openkit", {
+      registries: [{ url }],
+      fetch: fetchFixture,
+    });
     expect(result1.hits.length).toBeGreaterThan(0);
 
-    // Kill the server
-    srv.close();
-
-    // Second call — should use cache
-    const result2 = await searchRegistry("openkit", { registries: [{ url }] });
+    const exploding: HttpClient = async () => {
+      throw new Error("network is down");
+    };
+    const result2 = await searchRegistry("openkit", {
+      registries: [{ url }],
+      fetch: exploding,
+    });
     expect(result2.hits.length).toBeGreaterThan(0);
     expect(result2.hits[0].id).toBe(result1.hits[0].id);
   });
@@ -332,43 +269,34 @@ describe("caching", () => {
 
 describe("error handling", () => {
   test("server error produces warning, not exception", async () => {
-    const srv = serveError(500);
-    try {
-      const result = await searchRegistry("test", { registries: [{ url: srv.url }] });
-      expect(result.hits).toEqual([]);
-      expect(result.warnings.length).toBe(1);
-      expect(result.warnings[0]).toContain("HTTP 500");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("test", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fakeFetch({ [FIXTURE_URL]: { status: 500 } }),
+    });
+    expect(result.hits).toEqual([]);
+    expect(result.warnings.length).toBe(1);
+    expect(result.warnings[0]).toContain("HTTP 500");
   });
 
   test("unreachable server produces warning", async () => {
+    const unreachable: HttpClient = async () => {
+      throw new Error("connection refused");
+    };
     const result = await searchRegistry("test", {
-      registries: [{ url: "http://127.0.0.1:1/nonexistent" }],
+      registries: [{ url: "http://test.local/nonexistent" }],
+      fetch: unreachable,
     });
     expect(result.hits).toEqual([]);
     expect(result.warnings.length).toBe(1);
   });
 
   test("invalid JSON produces warning", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response("not json", {
-          headers: { "Content-Type": "application/json" },
-        });
-      },
+    const result = await searchRegistry("test", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fakeFetch({ [FIXTURE_URL]: "not json" }),
     });
-    try {
-      const result = await searchRegistry("test", {
-        registries: [{ url: `http://localhost:${server.port}/index.json` }],
-      });
-      expect(result.hits).toEqual([]);
-      expect(result.warnings.length).toBe(1);
-    } finally {
-      server.stop(true);
-    }
+    expect(result.hits).toEqual([]);
+    expect(result.warnings.length).toBe(1);
   });
 });
 
@@ -376,6 +304,8 @@ describe("error handling", () => {
 
 describe("multiple registries", () => {
   test("merges stashes from multiple registry URLs", async () => {
+    const url1 = "http://test.local/index-1.json";
+    const url2 = "http://test.local/index-2.json";
     const index1: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
@@ -405,23 +335,19 @@ describe("multiple registries", () => {
       ],
     };
 
-    const srv1 = serveIndex(index1);
-    const srv2 = serveIndex(index2);
-    try {
-      const result = await searchRegistry("deploy", {
-        registries: [{ url: srv1.url }, { url: srv2.url }],
-      });
-      expect(result.hits.length).toBe(2);
-      const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:stash-a");
-      expect(ids).toContain("github:org/stash-b");
-    } finally {
-      srv1.close();
-      srv2.close();
-    }
+    const result = await searchRegistry("deploy", {
+      registries: [{ url: url1 }, { url: url2 }],
+      fetch: fakeFetch({ [url1]: JSON.stringify(index1), [url2]: JSON.stringify(index2) }),
+    });
+    expect(result.hits.length).toBe(2);
+    const ids = result.hits.map((h) => h.id);
+    expect(ids).toContain("npm:stash-a");
+    expect(ids).toContain("github:org/stash-b");
   });
 
   test("one failing registry does not block others", async () => {
+    const goodUrl = "http://test.local/good.json";
+    const badUrl = "http://test.local/bad.json";
     const goodIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
@@ -436,19 +362,13 @@ describe("multiple registries", () => {
       ],
     };
 
-    const good = serveIndex(goodIndex);
-    const bad = serveError(500);
-    try {
-      const result = await searchRegistry("works", {
-        registries: [{ url: good.url }, { url: bad.url }],
-      });
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:good-stash");
-      expect(result.warnings.length).toBe(1);
-    } finally {
-      good.close();
-      bad.close();
-    }
+    const result = await searchRegistry("works", {
+      registries: [{ url: goodUrl }, { url: badUrl }],
+      fetch: fakeFetch({ [goodUrl]: JSON.stringify(goodIndex), [badUrl]: { status: 500 } }),
+    });
+    expect(result.hits.length).toBe(1);
+    expect(result.hits[0].id).toBe("npm:good-stash");
+    expect(result.warnings.length).toBe(1);
   });
 });
 
@@ -456,54 +376,48 @@ describe("multiple registries", () => {
 
 describe("hit shape", () => {
   test("includes metadata fields from index", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("openkit", { registries: [{ url: srv.url }] });
-      const hit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
-      expect(hit).toBeDefined();
-      expect(hit?.source).toBe("npm");
-      expect(hit?.title).toBe("@itlackey/openkit");
-      expect(hit?.ref).toBe("@itlackey/openkit");
-      expect(hit?.installRef).toBe("npm:@itlackey/openkit");
-      expect(hit?.metadata?.version).toBe("1.2.0");
-      expect(hit?.metadata?.author).toBe("itlackey");
-      expect(hit?.metadata?.license).toBe("MIT");
-      expect(hit?.metadata?.assetTypes).toBe("skill, script, command");
-      expect(typeof hit?.score).toBe("number");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("openkit", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    const hit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
+    expect(hit).toBeDefined();
+    expect(hit?.source).toBe("npm");
+    expect(hit?.title).toBe("@itlackey/openkit");
+    expect(hit?.ref).toBe("@itlackey/openkit");
+    expect(hit?.installRef).toBe("npm:@itlackey/openkit");
+    expect(hit?.metadata?.version).toBe("1.2.0");
+    expect(hit?.metadata?.author).toBe("itlackey");
+    expect(hit?.metadata?.license).toBe("MIT");
+    expect(hit?.metadata?.assetTypes).toBe("skill, script, command");
+    expect(typeof hit?.score).toBe("number");
   });
 
   test("installRef is prefixed with source type for github stashes", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("azure", { registries: [{ url: srv.url }] });
-      const hit = result.hits.find((h) => h.id === "github:someone/azure-ops-stash");
-      expect(hit).toBeDefined();
-      expect(hit?.installRef).toBe("github:someone/azure-ops-stash");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("azure", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    const hit = result.hits.find((h) => h.id === "github:someone/azure-ops-stash");
+    expect(hit).toBeDefined();
+    expect(hit?.installRef).toBe("github:someone/azure-ops-stash");
   });
 
   test("legacy `curated` key in registry JSON parses and is silently ignored", async () => {
     // Spec §4.2: the legacy registry boolean `curated` is removed in v1.
     // Legacy index JSON containing it MUST parse without error and the key
     // MUST NOT appear on emitted hits.
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("itlackey", { registries: [{ url: srv.url }] });
-      const legacyCuratedHit = result.hits.find((h) => h.id === "github:itlackey/dimm-city-stash");
-      expect(legacyCuratedHit).toBeDefined();
-      expect(legacyCuratedHit as unknown as Record<string, unknown>).not.toHaveProperty("curated");
+    const result = await searchRegistry("itlackey", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    const legacyCuratedHit = result.hits.find((h) => h.id === "github:itlackey/dimm-city-stash");
+    expect(legacyCuratedHit).toBeDefined();
+    expect(legacyCuratedHit as unknown as Record<string, unknown>).not.toHaveProperty("curated");
 
-      const autoHit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
-      expect(autoHit).toBeDefined();
-      expect(autoHit as unknown as Record<string, unknown>).not.toHaveProperty("curated");
-    } finally {
-      srv.close();
-    }
+    const autoHit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
+    expect(autoHit).toBeDefined();
+    expect(autoHit as unknown as Record<string, unknown>).not.toHaveProperty("curated");
   });
 });
 
@@ -511,19 +425,14 @@ describe("hit shape", () => {
 
 describe("AKM_REGISTRY_URL env var", () => {
   test("uses env var when no explicit URLs provided", async () => {
-    const srv = serveFixtureIndex();
-    process.env.AKM_REGISTRY_URL = srv.url;
-    try {
-      const result = await searchRegistry("azure");
-      expect(result.hits.length).toBeGreaterThan(0);
-    } finally {
-      srv.close();
-    }
+    process.env.AKM_REGISTRY_URL = FIXTURE_URL;
+    const result = await searchRegistry("azure", { fetch: fetchFixture });
+    expect(result.hits.length).toBeGreaterThan(0);
   });
 
   test("supports comma-separated URLs in env var", async () => {
-    const srv1 = serveIndex(FIXTURE_INDEX);
-    const srv2 = serveIndex({
+    const extraUrl = "http://test.local/extra.json";
+    const extraIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
@@ -535,61 +444,42 @@ describe("AKM_REGISTRY_URL env var", () => {
           tags: ["azure"],
         },
       ],
+    };
+    process.env.AKM_REGISTRY_URL = `${FIXTURE_URL},${extraUrl}`;
+    const result = await searchRegistry("azure", {
+      fetch: fakeFetch({ [FIXTURE_URL]: JSON.stringify(FIXTURE_INDEX), [extraUrl]: JSON.stringify(extraIndex) }),
     });
-    process.env.AKM_REGISTRY_URL = `${srv1.url},${srv2.url}`;
-    try {
-      const result = await searchRegistry("azure");
-      const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("github:someone/azure-ops-stash");
-      expect(ids).toContain("npm:extra-stash");
-    } finally {
-      srv1.close();
-      srv2.close();
-    }
+    const ids = result.hits.map((h) => h.id);
+    expect(ids).toContain("github:someone/azure-ops-stash");
+    expect(ids).toContain("npm:extra-stash");
   });
 
   // Problem A: env-based override must preserve provider type
   test("provider::url syntax routes to the declared provider type", async () => {
-    // Stand up a skills-sh-shaped endpoint
-    const skillsSrv = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response(
-          JSON.stringify({
-            skills: [{ id: "org/tools/my-skill", name: "my-skill", installs: 200, source: "org/tools" }],
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      },
+    const skillsUrl = "http://test.local/skills";
+    process.env.AKM_REGISTRY_URL = `skills-sh::${skillsUrl}`;
+    const result = await searchRegistry("my-skill", {
+      fetch: fakeFetch({
+        [skillsUrl]: skillsBody([{ id: "org/tools/my-skill", name: "my-skill", installs: 200, source: "org/tools" }]),
+      }),
     });
-    process.env.AKM_REGISTRY_URL = `skills-sh::http://localhost:${skillsSrv.port}`;
-    try {
-      const result = await searchRegistry("my-skill");
-      // skills-sh provider should have handled this — hits use skills-sh id format
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("skills-sh:org/tools/my-skill");
-      expect(result.hits[0].installRef).toBe("github:org/tools");
-      expect(result.warnings).toEqual([]);
-    } finally {
-      skillsSrv.stop(true);
-    }
+    // skills-sh provider should have handled this — hits use skills-sh id format
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].id).toBe("skills-sh:org/tools/my-skill");
+    expect(result.hits[0].installRef).toBe("github:org/tools");
+    expect(result.warnings).toEqual([]);
   });
 
   test("bare URL in env var defaults to static-index provider", async () => {
-    const srv = serveFixtureIndex();
-    process.env.AKM_REGISTRY_URL = srv.url;
-    try {
-      const result = await searchRegistry("openkit");
-      expect(result.hits.length).toBeGreaterThan(0);
-      // static-index uses the stash id directly
-      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
-    } finally {
-      srv.close();
-    }
+    process.env.AKM_REGISTRY_URL = FIXTURE_URL;
+    const result = await searchRegistry("openkit", { fetch: fetchFixture });
+    expect(result.hits.length).toBeGreaterThan(0);
+    // static-index uses the stash id directly
+    expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
   });
 
   test("unknown provider type in env var produces warning, not crash", async () => {
-    process.env.AKM_REGISTRY_URL = `no-such-provider::http://127.0.0.1:1/index.json`;
+    process.env.AKM_REGISTRY_URL = `no-such-provider::http://test.local/index.json`;
     const result = await searchRegistry("anything");
     expect(result.hits).toEqual([]);
     expect(result.warnings.length).toBe(1);
@@ -597,7 +487,9 @@ describe("AKM_REGISTRY_URL env var", () => {
   });
 
   test("mixed provider types in comma-separated env var", async () => {
-    const staticSrv = serveIndex({
+    const staticUrl = "http://test.local/static.json";
+    const skillsUrl = "http://test.local/skills";
+    const staticIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
@@ -609,29 +501,20 @@ describe("AKM_REGISTRY_URL env var", () => {
           tags: ["deploy"],
         },
       ],
+    };
+    process.env.AKM_REGISTRY_URL = `${staticUrl},skills-sh::${skillsUrl}`;
+    const result = await searchRegistry("env", {
+      fetch: fakeFetch({
+        [staticUrl]: JSON.stringify(staticIndex),
+        [skillsUrl]: skillsBody([
+          { id: "user/tools/env-skill", name: "env-skill", installs: 100, source: "user/tools" },
+        ]),
+      }),
     });
-    const skillsSrv = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response(
-          JSON.stringify({
-            skills: [{ id: "user/tools/env-skill", name: "env-skill", installs: 100, source: "user/tools" }],
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      },
-    });
-    process.env.AKM_REGISTRY_URL = `${staticSrv.url},skills-sh::http://localhost:${skillsSrv.port}`;
-    try {
-      const result = await searchRegistry("env");
-      const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:env-static-stash");
-      expect(ids).toContain("skills-sh:user/tools/env-skill");
-      expect(result.warnings).toEqual([]);
-    } finally {
-      staticSrv.close();
-      skillsSrv.stop(true);
-    }
+    const ids = result.hits.map((h) => h.id);
+    expect(ids).toContain("npm:env-static-stash");
+    expect(ids).toContain("skills-sh:user/tools/env-skill");
+    expect(result.warnings).toEqual([]);
   });
 });
 
@@ -641,42 +524,36 @@ describe("cross-provider score normalization", () => {
   test("scores from all providers are in [0, 1] after normalization", async () => {
     // static-index raw scores can exceed 1 (e.g. exact name + tag + description).
     // After normalization, all scores in the merged response must be <= 1.
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("openkit bun typescript starter", {
-        registries: [{ url: srv.url }],
-      });
-      for (const hit of result.hits) {
-        if (hit.score !== undefined) {
-          expect(hit.score).toBeGreaterThanOrEqual(0);
-          expect(hit.score).toBeLessThanOrEqual(1);
-        }
+    const result = await searchRegistry("openkit bun typescript starter", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    for (const hit of result.hits) {
+      if (hit.score !== undefined) {
+        expect(hit.score).toBeGreaterThanOrEqual(0);
+        expect(hit.score).toBeLessThanOrEqual(1);
       }
-    } finally {
-      srv.close();
     }
   });
 
   test("top hit within a provider batch retains score = 1 after normalization", async () => {
     // The highest-scored hit in each provider batch should map to exactly 1.0.
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("openkit", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      const topScore = result.hits[0].score;
-      expect(topScore).toBe(1);
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("openkit", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    const topScore = result.hits[0].score;
+    expect(topScore).toBe(1);
   });
 
   test("merged multi-provider results are ordered by normalized score", async () => {
     // Provider A: static-index with a moderate-relevance match.
     // Provider B: skills-sh with a high-installs match.
     // After normalization each batch has max=1; the better-matched kit wins.
-    const staticSrv = serveIndex({
+    const staticUrl = "http://test.local/static.json";
+    const skillsUrl = "http://test.local/skills";
+    const staticIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
@@ -697,44 +574,33 @@ describe("cross-provider score normalization", () => {
           tags: [],
         },
       ],
+    };
+    const result = await searchRegistry("deploy", {
+      registries: [{ url: staticUrl }, { url: skillsUrl, provider: "skills-sh" }],
+      fetch: fakeFetch({
+        [staticUrl]: JSON.stringify(staticIndex),
+        [skillsUrl]: skillsBody([
+          { id: "org/deploy-skill", name: "deploy-skill", installs: 1000, source: "org/deploy-skill" },
+          { id: "org/other-skill", name: "other-skill", installs: 100, source: "org/other" },
+        ]),
+      }),
     });
-    const skillsSrv = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response(
-          JSON.stringify({
-            skills: [
-              { id: "org/deploy-skill", name: "deploy-skill", installs: 1000, source: "org/deploy-skill" },
-              { id: "org/other-skill", name: "other-skill", installs: 100, source: "org/other" },
-            ],
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      },
-    });
-    try {
-      const result = await searchRegistry("deploy", {
-        registries: [{ url: staticSrv.url }, { url: `http://localhost:${skillsSrv.port}`, provider: "skills-sh" }],
-      });
-      // All scores in [0, 1]
-      for (const hit of result.hits) {
-        if (hit.score !== undefined) {
-          expect(hit.score).toBeGreaterThanOrEqual(0);
-          expect(hit.score).toBeLessThanOrEqual(1);
-        }
+    // All scores in [0, 1]
+    for (const hit of result.hits) {
+      if (hit.score !== undefined) {
+        expect(hit.score).toBeGreaterThanOrEqual(0);
+        expect(hit.score).toBeLessThanOrEqual(1);
       }
-      // Results should be sorted descending
-      for (let i = 1; i < result.hits.length; i++) {
-        expect((result.hits[i - 1].score ?? 0) >= (result.hits[i].score ?? 0)).toBe(true);
-      }
-    } finally {
-      staticSrv.close();
-      skillsSrv.stop(true);
+    }
+    // Results should be sorted descending
+    for (let i = 1; i < result.hits.length; i++) {
+      expect((result.hits[i - 1].score ?? 0) >= (result.hits[i].score ?? 0)).toBe(true);
     }
   });
 
   test("single-hit provider batch normalizes to score 1", async () => {
-    const srv = serveIndex({
+    const url = "http://test.local/only.json";
+    const onlyIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
@@ -747,16 +613,13 @@ describe("cross-provider score normalization", () => {
           tags: ["unique"],
         },
       ],
+    };
+    const result = await searchRegistry("unique", {
+      registries: [{ url }],
+      fetch: fakeFetch({ [url]: JSON.stringify(onlyIndex) }),
     });
-    try {
-      const result = await searchRegistry("unique", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0].score).toBe(1);
-    } finally {
-      srv.close();
-    }
+    expect(result.hits.length).toBe(1);
+    expect(result.hits[0].score).toBe(1);
   });
 });
 
@@ -764,29 +627,21 @@ describe("cross-provider score normalization", () => {
 
 describe("provenance tagging", () => {
   test("hits include registryName from entry config", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("openkit", {
-        registries: [{ url: srv.url, name: "test-registry" }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].registryName).toBe("test-registry");
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("openkit", {
+      registries: [{ url: FIXTURE_URL, name: "test-registry" }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].registryName).toBe("test-registry");
   });
 
   test("registryName is undefined when entry has no name", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      const result = await searchRegistry("openkit", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].registryName).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const result = await searchRegistry("openkit", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].registryName).toBeUndefined();
   });
 });
 
@@ -795,7 +650,7 @@ describe("provenance tagging", () => {
 describe("provider routing", () => {
   test("unknown provider type produces warning, not crash", async () => {
     const result = await searchRegistry("test", {
-      registries: [{ url: "http://example.com", provider: "nonexistent-type" }],
+      registries: [{ url: "http://test.local", provider: "nonexistent-type" }],
     });
     expect(result.hits).toEqual([]);
     expect(result.warnings.length).toBe(1);
@@ -803,7 +658,9 @@ describe("provider routing", () => {
   });
 
   test("mixed static-index and skills-sh registries return merged results", async () => {
-    const staticSrv = serveIndex({
+    const staticUrl = "http://test.local/static.json";
+    const skillsUrl = "http://test.local/skills";
+    const staticIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
@@ -816,47 +673,38 @@ describe("provider routing", () => {
           tags: ["deploy"],
         },
       ],
+    };
+
+    const result = await searchRegistry("deploy", {
+      registries: [
+        { url: staticUrl, name: "static" },
+        { url: skillsUrl, name: "skills.sh", provider: "skills-sh" },
+      ],
+      fetch: fakeFetch({
+        [staticUrl]: JSON.stringify(staticIndex),
+        [skillsUrl]: skillsBody([
+          { id: "org/skills/deploy-vercel", name: "deploy-vercel", installs: 500, source: "org/skills" },
+        ]),
+      }),
     });
 
-    const skillsSrv = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response(
-          JSON.stringify({
-            skills: [{ id: "org/skills/deploy-vercel", name: "deploy-vercel", installs: 500, source: "org/skills" }],
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      },
-    });
+    const ids = result.hits.map((h) => h.id);
+    expect(ids).toContain("npm:deploy-stash");
+    expect(ids).toContain("skills-sh:org/skills/deploy-vercel");
 
-    try {
-      const result = await searchRegistry("deploy", {
-        registries: [
-          { url: staticSrv.url, name: "static" },
-          { url: `http://localhost:${skillsSrv.port}`, name: "skills.sh", provider: "skills-sh" },
-        ],
-      });
+    // installRef should be directly usable with `akm add`
+    const npmHit = result.hits.find((h) => h.id === "npm:deploy-stash");
+    expect(npmHit?.installRef).toBe("npm:deploy-stash");
+    const skillsHit = result.hits.find((h) => h.id === "skills-sh:org/skills/deploy-vercel");
+    expect(skillsHit?.installRef).toBe("github:org/skills");
 
-      const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:deploy-stash");
-      expect(ids).toContain("skills-sh:org/skills/deploy-vercel");
-
-      // installRef should be directly usable with `akm add`
-      const npmHit = result.hits.find((h) => h.id === "npm:deploy-stash");
-      expect(npmHit?.installRef).toBe("npm:deploy-stash");
-      const skillsHit = result.hits.find((h) => h.id === "skills-sh:org/skills/deploy-vercel");
-      expect(skillsHit?.installRef).toBe("github:org/skills");
-
-      expect(result.warnings).toEqual([]);
-    } finally {
-      staticSrv.close();
-      skillsSrv.stop(true);
-    }
+    expect(result.warnings).toEqual([]);
   });
 
   test("one provider fails, other succeeds — partial results + warning", async () => {
-    const goodSrv = serveIndex({
+    const goodUrl = "http://test.local/good.json";
+    const badUrl = "http://test.local/bad";
+    const goodIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
@@ -868,36 +716,37 @@ describe("provider routing", () => {
           tags: ["test"],
         },
       ],
+    };
+
+    const failing: HttpClient = async (input) => {
+      const url = String(input);
+      if (url.startsWith(goodUrl)) {
+        return new Response(JSON.stringify(goodIndex), { headers: { "Content-Type": "application/json" } });
+      }
+      throw new Error("connection refused");
+    };
+
+    const result = await searchRegistry("test", {
+      registries: [
+        { url: goodUrl, name: "good" },
+        { url: badUrl, name: "bad", provider: "skills-sh" },
+      ],
+      fetch: failing,
     });
 
-    try {
-      const result = await searchRegistry("test", {
-        registries: [
-          { url: goodSrv.url, name: "good" },
-          { url: "http://127.0.0.1:1", name: "bad", provider: "skills-sh" },
-        ],
-      });
-
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:good-stash");
-      expect(result.warnings.length).toBe(1);
-    } finally {
-      goodSrv.close();
-    }
+    expect(result.hits.length).toBe(1);
+    expect(result.hits[0].id).toBe("npm:good-stash");
+    expect(result.warnings.length).toBe(1);
   });
 
   test("default provider is static-index when omitted", async () => {
-    const srv = serveFixtureIndex();
-    try {
-      // No provider field — should use static-index
-      const result = await searchRegistry("openkit", {
-        registries: [{ url: srv.url }],
-      });
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
-    } finally {
-      srv.close();
-    }
+    // No provider field — should use static-index
+    const result = await searchRegistry("openkit", {
+      registries: [{ url: FIXTURE_URL }],
+      fetch: fetchFixture,
+    });
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
   });
 });
 
@@ -924,7 +773,7 @@ describe("incomplete hits filter (#159)", () => {
     })) as unknown as Parameters<typeof registerProvider>[1]);
 
     const result = await searchRegistry("anything", {
-      registries: [{ url: "http://unused", provider: "incomplete-hits-test" }],
+      registries: [{ url: "http://test.local/unused", provider: "incomplete-hits-test" }],
     });
 
     expect(result.hits).toEqual([goodHit]);
@@ -955,7 +804,7 @@ describe("incomplete hits filter (#159)", () => {
     })) as unknown as Parameters<typeof registerProvider>[1]);
 
     const result = await searchRegistry("anything", {
-      registries: [{ url: "http://unused", provider: "incomplete-assets-test" }],
+      registries: [{ url: "http://test.local/unused", provider: "incomplete-assets-test" }],
     });
 
     expect(result.assetHits).toBeDefined();
@@ -1010,7 +859,7 @@ describe("incomplete hits filter (#159)", () => {
     })) as unknown as Parameters<typeof registerProvider>[1]);
 
     const result = await searchRegistry("anything", {
-      registries: [{ url: "http://unused", provider: "incomplete-stash-test" }],
+      registries: [{ url: "http://test.local/unused", provider: "incomplete-stash-test" }],
     });
 
     expect(result.assetHits?.length).toBe(1);

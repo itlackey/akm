@@ -9,10 +9,8 @@
  * If you add a third built-in registry provider, register it here.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { HttpClient } from "../../src/core/common";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import type { ParsedGithubRef } from "../../src/registry/types";
@@ -20,6 +18,9 @@ import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration of every built-in provider
 import "../../src/registry/providers/index";
+
+// Non-routable endpoint — the injected fetch never connects.
+const TEST_URL = "http://test.local";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -53,29 +54,12 @@ const SKILLS_SH_FIXTURE = {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const createdTmpDirs: string[] = [];
-const servers: Array<{ stop: (force: boolean) => void }> = [];
-
-function _createTmpDir(prefix = "akm-parity-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
-}
-
-function serveJson(body: unknown): { url: string; close: () => void } {
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(JSON.stringify(body), {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  servers.push(server);
-  return {
-    url: `http://localhost:${server.port}`,
-    close: () => server.stop(true),
-  };
+/** A fake HttpClient that returns the given JSON body for any request. */
+function fakeJsonFetch(body: unknown): HttpClient {
+  return async () =>
+    new Response(JSON.stringify(body), {
+      headers: { "Content-Type": "application/json" },
+    });
 }
 
 let envCleanup: Cleanup = () => {};
@@ -86,22 +70,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const s of servers) {
-    try {
-      s.stop(true);
-    } catch {
-      /* already stopped */
-    }
-  }
-  servers.length = 0;
   envCleanup();
   envCleanup = () => {};
-});
-
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ── Provider factory ────────────────────────────────────────────────────────
@@ -116,19 +86,20 @@ function buildHarnesses(): ProviderHarness[] {
     {
       type: "static-index",
       build: () => {
-        const srv = serveJson(STATIC_INDEX_FIXTURE);
         const factory = resolveProviderFactory("static-index");
         if (!factory) throw new Error("static-index not registered");
-        return factory({ url: `${srv.url}/index.json`, name: "official" });
+        return factory(
+          { url: `${TEST_URL}/index.json`, name: "official" },
+          { fetch: fakeJsonFetch(STATIC_INDEX_FIXTURE) },
+        );
       },
     },
     {
       type: "skills-sh",
       build: () => {
-        const srv = serveJson(SKILLS_SH_FIXTURE);
         const factory = resolveProviderFactory("skills-sh");
         if (!factory) throw new Error("skills-sh not registered");
-        return factory({ url: srv.url, name: "skills.sh" });
+        return factory({ url: TEST_URL, name: "skills.sh" }, { fetch: fakeJsonFetch(SKILLS_SH_FIXTURE) });
       },
     },
   ];
@@ -202,8 +173,8 @@ describe("RegistryProvider parity (built-in providers)", () => {
     for (const type of types) {
       const factory = resolveProviderFactory(type);
       expect(factory).not.toBeNull();
-      // Use a dummy URL — canHandle is pure dispatch on ref shape, not network.
-      const provider = factory?.({ url: "http://localhost:0/none", name: type });
+      // Use a non-routable URL — canHandle is pure dispatch on ref shape, not network.
+      const provider = factory?.({ url: `${TEST_URL}/none`, name: type });
       if (provider?.canHandle(ref)) {
         owner = provider.type;
         break;

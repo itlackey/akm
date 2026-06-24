@@ -6,12 +6,14 @@
  * These tests are intentionally siloed from the orchestrator-level tests in
  * `tests/registry-search.test.ts`: they hit the provider directly to make sure
  * the v1-spec §3.1 surface contracts hold for the default provider.
+ *
+ * #664 Seam 1: providers receive an injected `fetch` (RegistryProviderDeps), so
+ * these tests stand up no `Bun.serve` — the fake fetch returns the index JSON
+ * directly and the non-routable endpoint is never contacted.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { HttpClient } from "../../src/core/common";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import type { ParsedGithubRef, ParsedNpmRef } from "../../src/registry/types";
@@ -55,35 +57,25 @@ const FIXTURE_INDEX = {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const createdTmpDirs: string[] = [];
-const servers: Array<{ stop: (force: boolean) => void }> = [];
-
-function _createTmpDir(prefix = "akm-static-index-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
+/** A fake HttpClient that serves `body` as JSON for any request. */
+function fakeFetch(body: unknown): HttpClient {
+  return async () =>
+    new Response(JSON.stringify(body), {
+      headers: { "Content-Type": "application/json" },
+    });
 }
 
-function serveJson(body: unknown): { url: string; close: () => void } {
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(JSON.stringify(body), {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  servers.push(server);
-  return {
-    url: `http://localhost:${server.port}/index.json`,
-    close: () => server.stop(true),
-  };
-}
+// The registry index is cached by URL in index.db, so each provider gets a
+// unique (non-routable) endpoint to keep per-test indexes from colliding in the
+// cache. The injected fetch never connects, so the host need not resolve.
+let urlSeq = 0;
 
-function makeProvider(url: string, name = "official"): RegistryProvider {
+/** Build a static-index provider whose injected fetch returns `index`. */
+function makeProvider(index: unknown, name = "official"): RegistryProvider {
   const factory = resolveProviderFactory("static-index");
   if (!factory) throw new Error("static-index provider not registered");
-  return factory({ url, name });
+  const url = `http://test.local/index-${urlSeq++}.json`;
+  return factory({ url, name }, { fetch: fakeFetch(index) });
 }
 
 let envCleanup: Cleanup = () => {};
@@ -94,22 +86,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const s of servers) {
-    try {
-      s.stop(true);
-    } catch {
-      /* already stopped */
-    }
-  }
-  servers.length = 0;
   envCleanup();
   envCleanup = () => {};
-});
-
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -121,8 +99,7 @@ describe("StaticIndexProvider", () => {
 
   describe("searchKits (v1-spec §3.1)", () => {
     test("returns KitResult entries with installRef", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const kits = await provider.searchKits({ text: "skills", limit: 10 });
       expect(kits.length).toBeGreaterThan(0);
       for (const kit of kits) {
@@ -133,16 +110,14 @@ describe("StaticIndexProvider", () => {
     });
 
     test("kit installRef is a valid akm add target", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const kits = await provider.searchKits({ text: "agent", limit: 10 });
       const githubKit = kits.find((k) => k.id.startsWith("github:"));
       expect(githubKit?.installRef).toBe("github:vercel-labs/agent-skills");
     });
 
     test("respects limit", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const kits = await provider.searchKits({ text: "agent skills opencode", limit: 1 });
       expect(kits.length).toBeLessThanOrEqual(1);
     });
@@ -150,8 +125,7 @@ describe("StaticIndexProvider", () => {
 
   describe("searchAssets (v1-spec §3.1)", () => {
     test("returns AssetPreview entries scoped to kits", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const assets = await provider.searchAssets?.({ text: "deploy", limit: 10 });
       expect(assets).toBeDefined();
       const deploy = assets?.find((a) => a.name === "deploy");
@@ -163,8 +137,7 @@ describe("StaticIndexProvider", () => {
 
   describe("getKit (v1-spec §3.1)", () => {
     test("returns a KitManifest for a known id", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const manifest = await provider.getKit("github:vercel-labs/agent-skills");
       expect(manifest).not.toBeNull();
       expect(manifest?.id).toBe("github:vercel-labs/agent-skills");
@@ -173,15 +146,13 @@ describe("StaticIndexProvider", () => {
     });
 
     test("returns null for an unknown id", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const manifest = await provider.getKit("github:does-not-exist/anywhere");
       expect(manifest).toBeNull();
     });
 
     test("preserves npm install refs", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const manifest = await provider.getKit("npm:@itlackey/openkit");
       expect(manifest?.installRef).toBe("npm:@itlackey/openkit");
     });
@@ -189,8 +160,7 @@ describe("StaticIndexProvider", () => {
 
   describe("canHandle (plan §9 item 2)", () => {
     test("claims github refs", () => {
-      const srv = serveJson({ stashes: [] });
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider({ stashes: [] });
       const ref: ParsedGithubRef = {
         source: "github",
         ref: "owner/repo",
@@ -202,8 +172,7 @@ describe("StaticIndexProvider", () => {
     });
 
     test("claims npm refs (default catch-all)", () => {
-      const srv = serveJson({ stashes: [] });
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider({ stashes: [] });
       const ref: ParsedNpmRef = {
         source: "npm",
         ref: "npm:foo",
@@ -216,8 +185,7 @@ describe("StaticIndexProvider", () => {
 
   describe("backwards-compat search", () => {
     test("legacy search() still returns RegistrySearchHit shape", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX);
       const result = await provider.search({ query: "agent", limit: 10 });
       expect(Array.isArray(result.hits)).toBe(true);
       const hit = result.hits.find((h) => h.id === "github:vercel-labs/agent-skills");
@@ -227,26 +195,21 @@ describe("StaticIndexProvider", () => {
 
   describe("registry version contract", () => {
     test("version 3 index parses without warnings (canonical format)", async () => {
-      const srv = serveJson(FIXTURE_INDEX); // FIXTURE_INDEX has version: 3
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(FIXTURE_INDEX); // FIXTURE_INDEX has version: 3
       const result = await provider.search({ query: "agent", limit: 10 });
       expect(result.warnings ?? []).toHaveLength(0);
       expect(result.hits.length).toBeGreaterThan(0);
     });
 
     test("version 2 index parses without warnings (live official registry format)", async () => {
-      const v2Index = { ...FIXTURE_INDEX, version: 2 };
-      const srv = serveJson(v2Index);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider({ ...FIXTURE_INDEX, version: 2 });
       const result = await provider.search({ query: "agent", limit: 10 });
       expect(result.warnings ?? []).toHaveLength(0);
       expect(result.hits.length).toBeGreaterThan(0);
     });
 
     test("version 2 index returns correct kit hits", async () => {
-      const v2Index = { ...FIXTURE_INDEX, version: 2 };
-      const srv = serveJson(v2Index);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider({ ...FIXTURE_INDEX, version: 2 });
       const kits = await provider.searchKits({ text: "agent", limit: 10 });
       expect(kits.length).toBeGreaterThan(0);
       expect(kits.some((k) => k.id === "github:vercel-labs/agent-skills")).toBe(true);
@@ -254,9 +217,7 @@ describe("StaticIndexProvider", () => {
 
     test("version 1 index returns null (unsupported)", async () => {
       // version 1 is explicitly unsupported per schema comment
-      const v1Index = { ...FIXTURE_INDEX, version: 1 };
-      const srv = serveJson(v1Index);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider({ ...FIXTURE_INDEX, version: 1 });
       const result = await provider.search({ query: "agent", limit: 10 });
       // No hits because the parser returns null for unsupported versions
       expect(result.hits).toHaveLength(0);

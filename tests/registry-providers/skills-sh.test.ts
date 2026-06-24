@@ -1,7 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { HttpClient } from "../../src/core/common";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
 import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
@@ -24,67 +22,43 @@ const FIXTURE_RESPONSE = {
   ],
 };
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-const createdTmpDirs: string[] = [];
-const servers: Array<{ stop: (force: boolean) => void }> = [];
-
-function _createTmpDir(prefix = "akm-skills-sh-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
+// Non-routable endpoint — the injected fetch never connects. Each provider gets
+// a unique host so the registry index cache (keyed by config URL) never collides
+// between tests that share a query string.
+let endpointSeq = 0;
+function nextEndpoint(): string {
+  endpointSeq += 1;
+  return `http://test.local/r${endpointSeq}`;
 }
 
-function serveJson(body: unknown): { url: string; close: () => void } {
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(JSON.stringify(body), {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  servers.push(server);
-  return {
-    url: `http://localhost:${server.port}`,
-    close: () => server.stop(true),
+// ── Fake fetch helpers ────────────────────────────────────────────────────────
+
+/** Fake HttpClient that returns `body` as a JSON response (status 200). */
+function fetchJson(body: unknown): HttpClient {
+  return async () => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+}
+
+/** Fake HttpClient that returns an error status. */
+function fetchStatus(status: number): HttpClient {
+  return async () => new Response("error", { status });
+}
+
+/** Fake HttpClient that returns raw (non-JSON) text with a JSON content-type. */
+function fetchText(text: string): HttpClient {
+  return async () => new Response(text, { headers: { "Content-Type": "application/json" } });
+}
+
+/** Fake HttpClient that simulates an unreachable server (network error). */
+function fetchUnreachable(): HttpClient {
+  return async () => {
+    throw new Error("connect ECONNREFUSED");
   };
 }
 
-function serveError(status: number): { url: string; close: () => void } {
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response("error", { status });
-    },
-  });
-  servers.push(server);
-  return {
-    url: `http://localhost:${server.port}`,
-    close: () => server.stop(true),
-  };
-}
-
-function serveText(text: string): { url: string; close: () => void } {
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(text, {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  servers.push(server);
-  return {
-    url: `http://localhost:${server.port}`,
-    close: () => server.stop(true),
-  };
-}
-
-function makeProvider(url: string, name = "skills.sh"): RegistryProvider {
+function makeProvider(fetch: HttpClient, name = "skills.sh", url = nextEndpoint()): RegistryProvider {
   const factory = resolveProviderFactory("skills-sh");
   if (!factory) throw new Error("skills-sh provider not registered");
-  return factory({ url, name });
+  return factory({ url, name }, { fetch });
 }
 
 let envCleanup: Cleanup = () => {};
@@ -95,22 +69,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const s of servers) {
-    try {
-      s.stop(true);
-    } catch {
-      /* already stopped */
-    }
-  }
-  servers.length = 0;
   envCleanup();
   envCleanup = () => {};
-});
-
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -123,15 +83,13 @@ describe("SkillsShProvider", () => {
 
   describe("happy path", () => {
     test("returns correct number of hits", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       expect(result.hits).toHaveLength(3);
     });
 
     test("hit IDs are prefixed with skills-sh:", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       for (const hit of result.hits) {
         expect(hit.id).toStartWith("skills-sh:");
@@ -139,8 +97,7 @@ describe("SkillsShProvider", () => {
     });
 
     test("hit source is github", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       for (const hit of result.hits) {
         expect(hit.source).toBe("github");
@@ -148,8 +105,7 @@ describe("SkillsShProvider", () => {
     });
 
     test("hit ref matches entry source", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       expect(result.hits[0].ref).toBe("vercel-labs/agent-skills");
       expect(result.hits[1].ref).toBe("some-org/web-skills");
@@ -157,15 +113,14 @@ describe("SkillsShProvider", () => {
     });
 
     test("hit homepage derives from config URL", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const url = nextEndpoint();
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE), "skills.sh", url);
       const result = await provider.search({ query: "react", limit: 10 });
-      expect(result.hits[0].homepage).toBe(`${srv.url}/vercel-labs/agent-skills/react-best-practices`);
+      expect(result.hits[0].homepage).toBe(`${url}/vercel-labs/agent-skills/react-best-practices`);
     });
 
     test("registryName is set from config", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url, "my-skills-registry");
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE), "my-skills-registry");
       const result = await provider.search({ query: "react", limit: 10 });
       for (const hit of result.hits) {
         expect(hit.registryName).toBe("my-skills-registry");
@@ -173,18 +128,16 @@ describe("SkillsShProvider", () => {
     });
 
     test("metadata includes installs and author", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       expect(result.hits[0].metadata?.installs).toBe("22475");
       expect(result.hits[0].metadata?.author).toBe("vercel-labs");
     });
 
     test("registryName defaults to skills.sh when config has no name", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
       const factory = resolveProviderFactory("skills-sh");
       expect(factory).not.toBeNull();
-      const provider = factory?.({ url: srv.url });
+      const provider = factory?.({ url: nextEndpoint() }, { fetch: fetchJson(FIXTURE_RESPONSE) });
       const result = await provider?.search({ query: "react", limit: 10 });
       for (const hit of result?.hits ?? []) {
         expect(hit.registryName).toBe("skills.sh");
@@ -192,15 +145,13 @@ describe("SkillsShProvider", () => {
     });
 
     test("limit is enforced client-side", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 1 });
       expect(result.hits).toHaveLength(1);
     });
 
     test("no warnings on success", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       expect(result.warnings).toBeUndefined();
     });
@@ -208,8 +159,7 @@ describe("SkillsShProvider", () => {
 
   describe("empty results", () => {
     test("empty skills array returns empty hits and no warnings", async () => {
-      const srv = serveJson({ skills: [] });
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson({ skills: [] }));
       const result = await provider.search({ query: "nonexistent", limit: 10 });
       expect(result.hits).toEqual([]);
       expect(result.warnings).toBeUndefined();
@@ -218,8 +168,7 @@ describe("SkillsShProvider", () => {
 
   describe("error handling", () => {
     test("404 returns empty hits with warning", async () => {
-      const srv = serveError(404);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchStatus(404));
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
       expect(result.warnings).toHaveLength(1);
@@ -227,15 +176,14 @@ describe("SkillsShProvider", () => {
     });
 
     test("500 returns empty hits with warning", async () => {
-      const srv = serveError(500);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchStatus(500));
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
       expect(result.warnings?.[0]).toContain("HTTP 500");
     });
 
     test("unreachable server returns warning", async () => {
-      const provider = makeProvider("http://127.0.0.1:1");
+      const provider = makeProvider(fetchUnreachable());
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
       expect(result.warnings).toHaveLength(1);
@@ -244,16 +192,14 @@ describe("SkillsShProvider", () => {
 
   describe("malformed responses", () => {
     test("non-JSON returns empty hits with warning", async () => {
-      const srv = serveText("not json at all");
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchText("not json at all"));
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
       expect(result.warnings).toBeDefined();
     });
 
     test("missing skills array returns empty hits without warning", async () => {
-      const srv = serveJson({ unexpected: true });
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson({ unexpected: true }));
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
       // No warning because the response was valid JSON, just empty results
@@ -261,15 +207,16 @@ describe("SkillsShProvider", () => {
     });
 
     test("skills with invalid entries filters them out", async () => {
-      const srv = serveJson({
-        skills: [
-          { id: "valid/skill", name: "valid", installs: 100, source: "valid/repo" },
-          { id: "missing-fields" }, // invalid
-          "not-an-object", // invalid
-          null, // invalid
-        ],
-      });
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(
+        fetchJson({
+          skills: [
+            { id: "valid/skill", name: "valid", installs: 100, source: "valid/repo" },
+            { id: "missing-fields" }, // invalid
+            "not-an-object", // invalid
+            null, // invalid
+          ],
+        }),
+      );
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toHaveLength(1);
       expect(result.hits[0].title).toBe("valid");
@@ -278,8 +225,7 @@ describe("SkillsShProvider", () => {
 
   describe("score normalization", () => {
     test("scores are in 0-1 range", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       for (const hit of result.hits) {
         expect(hit.score).toBeGreaterThanOrEqual(0);
@@ -288,8 +234,7 @@ describe("SkillsShProvider", () => {
     });
 
     test("highest-installs entry gets score 1.0", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10 });
       // vercel-labs has 22475 installs (highest)
       expect(result.hits[0].score).toBe(1);
@@ -298,15 +243,13 @@ describe("SkillsShProvider", () => {
 
   describe("asset hits", () => {
     test("includeAssets returns RegistryAssetSearchHit entries", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
       expect(result.assetHits).toHaveLength(3);
     });
 
     test("asset hits have assetType skill", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
       for (const hit of result.assetHits ?? []) {
         expect(hit.assetType).toBe("skill");
@@ -314,31 +257,34 @@ describe("SkillsShProvider", () => {
     });
 
     test("asset hits have correct action", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
       expect(result.assetHits?.[0].action).toBe("akm add github:vercel-labs/agent-skills");
     });
 
     test("no asset hits when includeAssets is false", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+      const provider = makeProvider(fetchJson(FIXTURE_RESPONSE));
       const result = await provider.search({ query: "react", limit: 10, includeAssets: false });
       expect(result.assetHits).toBeUndefined();
     });
   });
 
   describe("caching", () => {
-    test("second call uses cache after server is killed", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
+    test("second call uses cache after fetch stops responding", async () => {
+      // First call fetches from the API; the second call must be served from the
+      // cache, so the fake fetch is swapped to one that fails on any later call.
+      let live = true;
+      const provider = makeProvider(async () => {
+        if (!live) throw new Error("connect ECONNREFUSED");
+        return new Response(JSON.stringify(FIXTURE_RESPONSE), { headers: { "Content-Type": "application/json" } });
+      });
 
-      // First call — fetches from server
+      // First call — fetches from the (live) API
       const result1 = await provider.search({ query: "react", limit: 10 });
       expect(result1.hits).toHaveLength(3);
 
-      // Kill the server
-      srv.close();
+      // Take the server offline
+      live = false;
 
       // Second call — should use cache
       const result2 = await provider.search({ query: "react", limit: 10 });

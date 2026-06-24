@@ -1,9 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { RegistryIndex } from "../src/commands/read/registry-search";
 import { searchRegistry } from "../src/commands/read/registry-search";
+import type { HttpClient } from "../src/core/common";
 import { type Cleanup, sandboxXdgCacheHome } from "./_helpers/sandbox";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -73,35 +71,42 @@ const V2_INDEX: RegistryIndex = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const createdTmpDirs: string[] = [];
-
-function _createTmpDir(prefix = "akm-v2-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdTmpDirs.push(dir);
-  return dir;
+// Non-routable endpoints — the injected fetch never connects (#664 Seam 1).
+// The static-index provider caches the parsed index in index.db keyed by URL,
+// and that DB is not XDG-cache sandboxed, so each distinct index body needs a
+// unique URL to avoid cache collisions (the old Bun.serve servers got this for
+// free via unique ports). `uniqueUrl()` mints one per registry under test.
+let urlCounter = 0;
+function uniqueUrl(): string {
+  return `http://test.local/reg-${urlCounter++}/index.json`;
 }
 
-function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
-  const body = JSON.stringify(index);
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(body, {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
+/**
+ * Build a registry under test: a unique non-routable URL plus a fake
+ * HttpClient that serves the given index as JSON (mirroring the body the old
+ * `Bun.serve` handler returned).
+ */
+function fakeRegistry(index: RegistryIndex): { url: string; fetch: HttpClient } {
+  const url = uniqueUrl();
   return {
-    url: `http://localhost:${server.port}/index.json`,
-    close: () => server.stop(true),
+    url,
+    fetch: async () =>
+      new Response(JSON.stringify(index), {
+        headers: { "Content-Type": "application/json" },
+      }),
   };
 }
 
-afterAll(() => {
-  for (const dir of createdTmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+/**
+ * Build a fake HttpClient that routes by URL to one of several indexes — used
+ * for the multi-registry merge test where each URL must return its own body.
+ */
+function routedFetch(routes: Record<string, RegistryIndex>): HttpClient {
+  return async (input) =>
+    new Response(JSON.stringify(routes[String(input)]), {
+      headers: { "Content-Type": "application/json" },
+    });
+}
 
 const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
 
@@ -127,27 +132,26 @@ afterEach(() => {
 
 describe("parser: v1 index compatibility", () => {
   test("v1 index without assets parses and searches correctly", async () => {
-    const srv = serveIndex(V1_INDEX);
-    try {
-      const result = await searchRegistry("legacy", { registries: [{ url: srv.url }] });
-      expect(result.warnings).toEqual([]);
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:legacy-stash");
-      expect(result.hits[0].title).toBe("Legacy Stash");
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V1_INDEX);
+    const result = await searchRegistry("legacy", {
+      registries: [{ url: reg.url }],
+      fetch: reg.fetch,
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.hits.length).toBe(1);
+    expect(result.hits[0].id).toBe("npm:legacy-stash");
+    expect(result.hits[0].title).toBe("Legacy Stash");
   });
 
   test("v1 index returns no assetHits even when includeAssets is true", async () => {
-    const srv = serveIndex(V1_INDEX);
-    try {
-      const result = await searchRegistry("legacy", { registries: [{ url: srv.url }], includeAssets: true });
-      expect(result.hits.length).toBe(1);
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V1_INDEX);
+    const result = await searchRegistry("legacy", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.hits.length).toBe(1);
+    expect(result.assetHits).toBeUndefined();
   });
 });
 
@@ -155,37 +159,36 @@ describe("parser: v1 index compatibility", () => {
 
 describe("parser: v2 index with assets", () => {
   test("v2 index parses stashes with assets", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("automation", { registries: [{ url: srv.url }] });
-      expect(result.warnings).toEqual([]);
-      expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:owner/my-stash");
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("automation", {
+      registries: [{ url: reg.url }],
+      fetch: reg.fetch,
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].id).toBe("github:owner/my-stash");
   });
 
   test("v2 index returns assetHits when includeAssets is true", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy", { registries: [{ url: srv.url }], includeAssets: true });
-      expect(result.warnings).toEqual([]);
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBeGreaterThan(0);
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("deploy", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.assetHits).toBeDefined();
+    expect(result.assetHits?.length).toBeGreaterThan(0);
 
-      const deployHit = result.assetHits?.find((h) => h.assetName === "deploy.sh");
-      expect(deployHit).toBeDefined();
-      expect(deployHit?.type).toBe("registry-asset");
-      expect(deployHit?.assetType).toBe("script");
-      expect(deployHit?.description).toBe("Deploy the application");
-      expect(deployHit?.estimatedTokens).toBe(64);
-      expect(deployHit?.stash.id).toBe("github:owner/my-stash");
-      expect(deployHit?.stash.name).toBe("My Stash");
-      expect(deployHit?.action).toBe("akm add github:owner/my-stash");
-    } finally {
-      srv.close();
-    }
+    const deployHit = result.assetHits?.find((h) => h.assetName === "deploy.sh");
+    expect(deployHit).toBeDefined();
+    expect(deployHit?.type).toBe("registry-asset");
+    expect(deployHit?.assetType).toBe("script");
+    expect(deployHit?.description).toBe("Deploy the application");
+    expect(deployHit?.estimatedTokens).toBe(64);
+    expect(deployHit?.stash.id).toBe("github:owner/my-stash");
+    expect(deployHit?.stash.name).toBe("My Stash");
+    expect(deployHit?.action).toBe("akm add github:owner/my-stash");
   });
 });
 
@@ -193,76 +196,63 @@ describe("parser: v2 index with assets", () => {
 
 describe("asset-level search", () => {
   test("asset search returns hits with stash provenance", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("code-review", {
-        registries: [{ url: srv.url, name: "test-reg" }],
-        includeAssets: true,
-      });
-      expect(result.warnings).toEqual([]);
-      expect(result.assetHits).toBeDefined();
-      const reviewHit = result.assetHits?.find((h) => h.assetName === "code-review");
-      expect(reviewHit).toBeDefined();
-      expect(reviewHit?.stash.id).toBe("github:owner/my-stash");
-      expect(reviewHit?.registryName).toBe("test-reg");
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("code-review", {
+      registries: [{ url: reg.url, name: "test-reg" }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.assetHits).toBeDefined();
+    const reviewHit = result.assetHits?.find((h) => h.assetName === "code-review");
+    expect(reviewHit).toBeDefined();
+    expect(reviewHit?.stash.id).toBe("github:owner/my-stash");
+    expect(reviewHit?.registryName).toBe("test-reg");
   });
 
   test("stashes without assets are silently skipped in asset search", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("utility", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      // "utility" matches the no-assets-stash but not any asset
-      // Asset hits should not include anything from stashes without assets
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("utility", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    // "utility" matches the no-assets-stash but not any asset
+    // Asset hits should not include anything from stashes without assets
+    expect(result.assetHits).toBeUndefined();
   });
 
   test("stashes with empty assets array are silently skipped in asset search", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("test", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      // "test" only matches the empty-assets-stash tag, which has no assets
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("test", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    // "test" only matches the empty-assets-stash tag, which has no assets
+    expect(result.assetHits).toBeUndefined();
   });
 
   test("no asset hits when includeAssets is false (default)", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy", { registries: [{ url: srv.url }] });
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("deploy", {
+      registries: [{ url: reg.url }],
+      fetch: reg.fetch,
+    });
+    expect(result.assetHits).toBeUndefined();
   });
 
   test("asset search scores by name match", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy.sh", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBeGreaterThan(0);
-      // The deploy.sh asset should score higher than code-review for this query
-      expect(result.assetHits?.[0].assetName).toBe("deploy.sh");
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("deploy.sh", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.assetHits).toBeDefined();
+    expect(result.assetHits?.length).toBeGreaterThan(0);
+    // The deploy.sh asset should score higher than code-review for this query
+    expect(result.assetHits?.[0].assetName).toBe("deploy.sh");
   });
 
   test("local source stash uses file: prefix in action string", async () => {
@@ -288,40 +278,34 @@ describe("asset-level search", () => {
         },
       ],
     };
-    const srv = serveIndex(localIndex);
-    try {
-      const result = await searchRegistry("setup", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.warnings).toEqual([]);
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBe(1);
-      const hit = result.assetHits?.[0];
-      expect(hit).toBeDefined();
-      expect(hit?.assetName).toBe("setup.sh");
-      expect(hit?.stash.id).toBe("local:my-local-stash");
-      // Local source should use file: prefix, not "github:"
-      expect(hit?.action).toBe("akm add file:/home/user/stashes/my-local-stash");
-      expect(hit?.action).not.toContain("github:");
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(localIndex);
+    const result = await searchRegistry("setup", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.assetHits).toBeDefined();
+    expect(result.assetHits?.length).toBe(1);
+    const hit = result.assetHits?.[0];
+    expect(hit).toBeDefined();
+    expect(hit?.assetName).toBe("setup.sh");
+    expect(hit?.stash.id).toBe("local:my-local-stash");
+    // Local source should use file: prefix, not "github:"
+    expect(hit?.action).toBe("akm add file:/home/user/stashes/my-local-stash");
+    expect(hit?.action).not.toContain("github:");
   });
 
   test("asset search scores by tag match", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("quality", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.assetHits).toBeDefined();
-      const qualityHit = result.assetHits?.find((h) => h.assetName === "code-review");
-      expect(qualityHit).toBeDefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(V2_INDEX);
+    const result = await searchRegistry("quality", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.assetHits).toBeDefined();
+    const qualityHit = result.assetHits?.find((h) => h.assetName === "code-review");
+    expect(qualityHit).toBeDefined();
   });
 });
 
@@ -341,18 +325,15 @@ describe("edge cases", () => {
         },
       ],
     };
-    const srv = serveIndex(index);
-    try {
-      const result = await searchRegistry("plain", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.hits.length).toBe(1);
-      // No asset hits because the stash has no assets
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(index);
+    const result = await searchRegistry("plain", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.hits.length).toBe(1);
+    // No asset hits because the stash has no assets
+    expect(result.assetHits).toBeUndefined();
   });
 
   test("empty assets array parsed correctly", async () => {
@@ -369,17 +350,14 @@ describe("edge cases", () => {
         },
       ],
     };
-    const srv = serveIndex(index);
-    try {
-      const result = await searchRegistry("empty", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.hits.length).toBe(1);
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(index);
+    const result = await searchRegistry("empty", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.hits.length).toBe(1);
+    expect(result.assetHits).toBeUndefined();
   });
 
   test("asset with invalid structure is skipped", async () => {
@@ -403,44 +381,37 @@ describe("edge cases", () => {
         },
       ],
     };
-    const srv = serveIndex(index);
-    try {
-      const result = await searchRegistry("good", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBe(1);
-      expect(result.assetHits?.[0].assetName).toBe("good.sh");
-    } finally {
-      srv.close();
-    }
+    const reg = fakeRegistry(index as RegistryIndex);
+    const result = await searchRegistry("good", {
+      registries: [{ url: reg.url }],
+      includeAssets: true,
+      fetch: reg.fetch,
+    });
+    expect(result.assetHits).toBeDefined();
+    expect(result.assetHits?.length).toBe(1);
+    expect(result.assetHits?.[0].assetName).toBe("good.sh");
   });
 
   test("v1 and v2 indexes from different registries merge correctly", async () => {
-    const srv1 = serveIndex(V1_INDEX);
-    const srv2 = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy", {
-        registries: [
-          { url: srv1.url, name: "v1-reg" },
-          { url: srv2.url, name: "v2-reg" },
-        ],
-        includeAssets: true,
-      });
-      // Both v1 stash hits and v2 stash hits should be present
-      const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:legacy-stash");
-      expect(ids).toContain("github:owner/my-stash");
+    const v1Url = uniqueUrl();
+    const v2Url = uniqueUrl();
+    const result = await searchRegistry("deploy", {
+      registries: [
+        { url: v1Url, name: "v1-reg" },
+        { url: v2Url, name: "v2-reg" },
+      ],
+      includeAssets: true,
+      fetch: routedFetch({ [v1Url]: V1_INDEX, [v2Url]: V2_INDEX }),
+    });
+    // Both v1 stash hits and v2 stash hits should be present
+    const ids = result.hits.map((h) => h.id);
+    expect(ids).toContain("npm:legacy-stash");
+    expect(ids).toContain("github:owner/my-stash");
 
-      // Asset hits should come only from v2
-      expect(result.assetHits).toBeDefined();
-      const assetKitIds = result.assetHits?.map((h) => h.stash.id);
-      expect(assetKitIds).toContain("github:owner/my-stash");
-      expect(assetKitIds).not.toContain("npm:legacy-stash");
-    } finally {
-      srv1.close();
-      srv2.close();
-    }
+    // Asset hits should come only from v2
+    expect(result.assetHits).toBeDefined();
+    const assetKitIds = result.assetHits?.map((h) => h.stash.id);
+    expect(assetKitIds).toContain("github:owner/my-stash");
+    expect(assetKitIds).not.toContain("npm:legacy-stash");
   });
 });

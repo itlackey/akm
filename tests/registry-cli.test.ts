@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../src/commands/read/registry-search";
 import { resolveRegistries, searchRegistry } from "../src/commands/read/registry-search";
+import type { HttpClient } from "../src/core/common";
 import type { RegistryConfigEntry } from "../src/core/config/config";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
@@ -24,20 +25,19 @@ function writeConfig(configPath: string, config: Record<string, unknown>): void 
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
-  const body = JSON.stringify(index);
-  const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(body, {
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  return {
-    url: `http://localhost:${server.port}/index.json?test=${token}`,
-    close: () => server.stop(true),
+/**
+ * Build an injected HttpClient (#664 Seam 1) that serves a static registry
+ * index per URL — replacing the old Bun.serve loopback servers. The fake never
+ * connects; it routes by `String(input)` and returns the matching index JSON
+ * (404 for unknown URLs, mirroring a missing registry).
+ */
+function fakeRegistryFetch(byUrl: Record<string, RegistryIndex>): HttpClient {
+  return async (input) => {
+    const index = byUrl[String(input)];
+    if (!index) return new Response("not found", { status: 404 });
+    return new Response(JSON.stringify(index), {
+      headers: { "Content-Type": "application/json" },
+    });
   };
 }
 
@@ -283,17 +283,14 @@ describe("registry search with config entries", () => {
       ],
     };
 
-    const srv = serveIndex(index);
-    try {
-      const result = await searchRegistry("deploy", {
-        registries: [{ url: srv.url, name: "test-reg" }],
-      });
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:test-stash");
-      expect(result.hits[0].registryName).toBe("test-reg");
-    } finally {
-      srv.close();
-    }
+    const url = "http://test.local/index.json";
+    const result = await searchRegistry("deploy", {
+      registries: [{ url, name: "test-reg" }],
+      fetch: fakeRegistryFetch({ [url]: index }),
+    });
+    expect(result.hits.length).toBe(1);
+    expect(result.hits[0].id).toBe("npm:test-stash");
+    expect(result.hits[0].registryName).toBe("test-reg");
   });
 
   test("multi-registry search merges results from multiple URLs", async () => {
@@ -326,29 +323,25 @@ describe("registry search with config entries", () => {
       ],
     };
 
-    const srv1 = serveIndex(index1);
-    const srv2 = serveIndex(index2);
-    try {
-      const result = await searchRegistry("build", {
-        registries: [
-          { url: srv1.url, name: "primary" },
-          { url: srv2.url, name: "secondary" },
-        ],
-      });
-      expect(result.hits.length).toBe(2);
-      const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:stash-one");
-      expect(ids).toContain("github:org/stash-two");
+    const url1 = "http://test.local/primary.json";
+    const url2 = "http://test.local/secondary.json";
+    const result = await searchRegistry("build", {
+      registries: [
+        { url: url1, name: "primary" },
+        { url: url2, name: "secondary" },
+      ],
+      fetch: fakeRegistryFetch({ [url1]: index1, [url2]: index2 }),
+    });
+    expect(result.hits.length).toBe(2);
+    const ids = result.hits.map((h) => h.id);
+    expect(ids).toContain("npm:stash-one");
+    expect(ids).toContain("github:org/stash-two");
 
-      // Verify provenance
-      const stash1Hit = result.hits.find((h) => h.id === "npm:stash-one");
-      const stash2Hit = result.hits.find((h) => h.id === "github:org/stash-two");
-      expect(stash1Hit?.registryName).toBe("primary");
-      expect(stash2Hit?.registryName).toBe("secondary");
-    } finally {
-      srv1.close();
-      srv2.close();
-    }
+    // Verify provenance
+    const stash1Hit = result.hits.find((h) => h.id === "npm:stash-one");
+    const stash2Hit = result.hits.find((h) => h.id === "github:org/stash-two");
+    expect(stash1Hit?.registryName).toBe("primary");
+    expect(stash2Hit?.registryName).toBe("secondary");
   });
 
   test("disabled registries are skipped via resolveRegistries before search", () => {
