@@ -41,6 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import type { HttpClient } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import { type AkmConfig, getIndexPassConfig, loadConfig, resolveBatchSize } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
@@ -178,6 +179,12 @@ export interface GraphExtractionPassOptions {
    * high-signal-first sweep). Unset = process all eligible (current behavior).
    */
   topN?: number;
+  /**
+   * Injectable HTTP client (#664 Seam 1; defaults to `globalThis.fetch`) forwarded
+   * to the leaf graph-extract calls. Unit tests inject a fake so the whole pass —
+   * routing, batching, snapshot — runs with no socket.
+   */
+  fetch?: HttpClient;
 }
 
 /** Progress event emitted by {@link runGraphExtractionPass}. */
@@ -494,7 +501,11 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     const drained = drainExtractionQueue(db, primary.path, GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT);
     for (const queued of drained) {
       if (signal?.aborted) break;
-      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, { config, signal });
+      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, {
+        config,
+        signal,
+        fetch: options.fetch,
+      });
     }
   }
 
@@ -647,7 +658,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
             signal,
             config,
             onFallback,
-            { batchState, telemetry: runtimeTelemetry },
+            { batchState, telemetry: runtimeTelemetry, fetch: options.fetch },
           );
           cached = {
             entities: extraction.entities,
@@ -784,7 +795,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
           signal,
           config,
           onFallback,
-          { batchState, telemetry: runtimeTelemetry },
+          { batchState, telemetry: runtimeTelemetry, fetch: options.fetch },
         );
 
         // Map LLM results back to original positions and write cache entries.
@@ -954,7 +965,7 @@ export async function extractGraphForSingleFile(
   stashRoot: string,
   filePath: string,
   bodyHash?: string,
-  opts?: { llmOverride?: SingleFileLlmOverride; signal?: AbortSignal; config?: AkmConfig },
+  opts?: { llmOverride?: SingleFileLlmOverride; signal?: AbortSignal; config?: AkmConfig; fetch?: HttpClient },
 ): Promise<boolean> {
   try {
     // Re-read from disk — never trust a stale queued body.
@@ -985,7 +996,9 @@ export async function extractGraphForSingleFile(
       if (!isProcessEnabled("index", "graph_extraction", config)) return false;
       const llmConfig = resolveIndexPassLLM("graph", config);
       if (!llmConfig) return false; // model-available guard
-      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, config);
+      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, config, undefined, {
+        fetch: opts?.fetch,
+      });
       extraction = {
         entities: result.entities,
         relations: result.relations,
