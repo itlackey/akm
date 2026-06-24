@@ -54,12 +54,7 @@ const ALLOWED_SERVE = new Set<string>([]);
 
 /** Unit-tier files that currently spawn a real subprocess. Shrink-only. */
 const ALLOWED_SPAWN = new Set<string>([
-  "tests/commands/distill/distill-cli-flag.test.ts",
-  "tests/commands/events.test.ts",
-  "tests/commands/improve-cli-flags.test.ts",
-  "tests/commands/improve-result-to-file.test.ts",
   "tests/completions.test.ts",
-  "tests/contracts/config-schema-drift.test.ts",
 ]);
 
 /**
@@ -93,7 +88,7 @@ const ALLOWED_FULL_INDEX = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 19;
+export const UNIT_PURITY_BASELINE = 14;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size + ALLOWED_FULL_INDEX.size;

@@ -17,8 +17,8 @@ import path from "node:path";
 // mutating process.env, so it does not affect the in-process tests.
 //
 // (The runCli import for the in-process tests stays inline below.)
-import { runCliCapture } from "../_helpers/cli";
-import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../_helpers/sandbox";
+import { runCliCapture } from "../../_helpers/cli";
+import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -33,7 +33,7 @@ async function runCli(args: string[]): Promise<{ status: number; stdout: string;
   return { status: code, stdout, stderr };
 }
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 /** Subprocess runner for the improve-executing test (see HARNESS GAP above). */

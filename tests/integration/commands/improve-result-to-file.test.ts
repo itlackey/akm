@@ -18,13 +18,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmImproveResult } from "../../src/commands/improve/improve";
+import type { AkmImproveResult } from "../../../src/commands/improve/improve";
 import {
   buildImproveRunId,
   relativeImproveResultPath,
   writeImproveResultFile,
-} from "../../src/commands/improve/improve-result-file";
-import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataHome } from "../_helpers/sandbox";
+} from "../../../src/commands/improve/improve-result-file";
+import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // The pure-function tests (buildImproveRunId, relativeImproveResultPath,
 // writeImproveResultFile) run in-process — writeImproveResultFile isolates
@@ -46,7 +46,7 @@ import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataH
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 function makeStashDir(): string {

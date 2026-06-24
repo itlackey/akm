@@ -176,7 +176,7 @@ const ALLOWED_FILES = new Set<string>([
   // here; the list is allowed to shrink as follow-up migrations land.
   // tests/agent/agent-config-loader.test.ts — migrated to withIsolatedAkmStorage (#664 C2.x).
   "tests/belief-state-phase1a.test.ts",
-  "tests/commands/events.test.ts",
+  "tests/integration/commands/events.test.ts",
   "tests/commands/graph-cli-negative.test.ts",
   "tests/commands/graph.test.ts",
   "tests/commands/graph-update.test.ts",
@@ -186,7 +186,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/commands/improve-memory.test.ts",
   "tests/commands/improve-path-exists-guard.test.ts",
   "tests/commands/improve-reflect-unsupported-type-skip.test.ts",
-  "tests/commands/improve-result-to-file.test.ts",
+  "tests/integration/commands/improve-result-to-file.test.ts",
   "tests/commands/reflect-response-schema.test.ts",
   "tests/config-auto-migrate.test.ts",
   // tests/config-sanitize-secrets.test.ts — migrated to withIsolatedAkmStorage (#664 C2.x).
@@ -194,7 +194,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/commands/consolidate/consolidate-promote-dedup.test.ts",
   "tests/contracts/v1-spec-section-11-proposal-queue.test.ts",
   "tests/integration/core/write-source.test.ts",
-  "tests/commands/distill/distill-cli-flag.test.ts",
+  "tests/integration/commands/distill/distill-cli-flag.test.ts",
   "tests/commands/distill/distill-response-schema.test.ts",
   "tests/distill.test.ts",
   "tests/graph-extraction-batch.test.ts",

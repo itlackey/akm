@@ -3,14 +3,14 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmEventsList, akmEventsTail } from "../../src/commands/events";
-import { saveConfig } from "../../src/core/config/config";
-import { appendEvent, type EventsContext, readEvents, tailEvents } from "../../src/core/events";
-import { getDbPath } from "../../src/core/paths";
-import { openStateDatabase } from "../../src/core/state-db";
-import type { Database } from "../../src/storage/database";
-import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
+import { akmEventsList, akmEventsTail } from "../../../src/commands/events";
+import { saveConfig } from "../../../src/core/config/config";
+import { appendEvent, type EventsContext, readEvents, tailEvents } from "../../../src/core/events";
+import { getDbPath } from "../../../src/core/paths";
+import { openStateDatabase } from "../../../src/core/state-db";
+import type { Database } from "../../../src/storage/database";
+import { runCliCapture } from "../../_helpers/cli";
+import { type Cleanup, sandboxStashDir } from "../../_helpers/sandbox";
 
 /**
  * #664 Seam 5: a controllable interval timer so the tailEvents polling loop can
@@ -59,7 +59,7 @@ class FakeIntervals {
 // local spawnCli helper (which passes env to spawnSync rather than mutating
 // process.env, so it does not affect the in-process tests).
 
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
+const CLI = path.join(__dirname, "..", "..", "..", "src", "cli.ts");
 
 const tempDirs: string[] = [];
 let stashCleanup: Cleanup = () => {};
