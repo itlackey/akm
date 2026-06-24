@@ -68,6 +68,7 @@ import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
+import { clearLlmUsageSink } from "../../src/llm/usage-telemetry";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
 
 /**
@@ -75,10 +76,10 @@ import { initOutputMode, resetOutputMode } from "../../src/output/context";
  * run re-reads its state from the (sandboxed) environment — matching
  * fresh-subprocess semantics. This is a SUPERSET of the historical
  * config+output-mode reset: it additionally clears the graph-boost cache, the
- * local embedder, the embedding cache, and the warn-module quiet/verbose/log-file
- * state. Every call is to a verified-exported, no-argument, idempotent reset, so
- * invoking them here (and possibly again in `tests/_preload.ts`) is safe and makes
- * isolation order-independent.
+ * local embedder, the embedding cache, the LLM-usage sink, and the warn-module
+ * quiet/verbose/log-file state. Every call is to a verified-exported,
+ * no-argument, idempotent reset, so invoking them here (and possibly again in
+ * `tests/_preload.ts`) is safe and makes isolation order-independent.
  */
 export function resetAllProcessState(): void {
   resetConfigCache();
@@ -86,6 +87,9 @@ export function resetAllProcessState(): void {
   resetGraphBoostCache();
   resetLocalEmbedder();
   clearEmbeddingCache();
+  // #664 issue A: a leaked usage sink from one in-process run would otherwise
+  // capture (or suppress) the next run's telemetry.
+  clearLlmUsageSink();
   resetQuiet();
   resetVerbose();
   clearLogFile();
