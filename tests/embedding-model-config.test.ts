@@ -1,9 +1,31 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import type { HttpClient } from "../src/core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../src/core/config/config";
 import { setQuiet } from "../src/core/warn";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
+
+// #664 Seam 1: inject a fake HttpClient instead of standing up Bun.serve. The
+// fake runs the real RemoteEmbedder request/parse/L2-normalize path with no
+// socket. `capture` records the parsed request body for assertions.
+function makeEmbedFetch(opts: { embedding: number[]; capture?: (body: Record<string, unknown>) => void }): HttpClient {
+  return async (_input, init) => {
+    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    opts.capture?.(body);
+    return new Response(
+      JSON.stringify({
+        data: [{ embedding: opts.embedding }],
+        model: body.model,
+        usage: { prompt_tokens: 5, total_tokens: 5 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  };
+}
+
+// A non-routable endpoint string; the injected fetch never connects to it.
+const TEST_ENDPOINT = "http://embed.test";
 
 mock.module("@huggingface/transformers", () => ({
   pipeline: async () => {
@@ -119,75 +141,45 @@ describe("EmbeddingConnectionConfig type accepts localModel field", () => {
 
 describe("remote endpoint independence", () => {
   test("setting localModel does not affect remote endpoint behavior", async () => {
-    // Create a mock embedding server
-    const server = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        const body = (await request.json()) as Record<string, unknown>;
-        return new Response(
-          JSON.stringify({
-            data: [{ embedding: [0.5, 0.6, 0.7] }],
-            model: body.model,
-            usage: { prompt_tokens: 5, total_tokens: 5 },
-          }),
-          { headers: { "Content-Type": "application/json", Connection: "close" } },
-        );
-      },
+    const { embed } = await import("../src/llm/embedder");
+    const config: EmbeddingConnectionConfig = {
+      endpoint: TEST_ENDPOINT,
+      model: "remote-model",
+      localModel: "Xenova/bge-small-en-v1.5",
+    };
+
+    // Remote embedding should still work — localModel should not interfere
+    const result = await embed("hello world", config, undefined, {
+      fetch: makeEmbedFetch({ embedding: [0.5, 0.6, 0.7] }),
     });
-
-    try {
-      const { embed } = await import("../src/llm/embedder");
-      const config: EmbeddingConnectionConfig = {
-        endpoint: `http://localhost:${server.port}`,
-        model: "remote-model",
-        localModel: "Xenova/bge-small-en-v1.5",
-      };
-
-      // Remote embedding should still work — localModel should not interfere
-      const result = await embed("hello world", config);
-      expect(result.length).toBe(3);
-      // Result should be L2-normalized
-      const norm = Math.sqrt(result.reduce((sum, v) => sum + v * v, 0));
-      expect(norm).toBeCloseTo(1.0, 5);
-    } finally {
-      server.stop(true);
-    }
+    expect(result.length).toBe(3);
+    // Result should be L2-normalized
+    const norm = Math.sqrt(result.reduce((sum, v) => sum + v * v, 0));
+    expect(norm).toBeCloseTo(1.0, 5);
   });
 
   test("remote embed does not send localModel to the API", async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    const server = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        capturedBody = (await request.json()) as Record<string, unknown>;
-        return new Response(
-          JSON.stringify({
-            data: [{ embedding: [0.1, 0.2] }],
-            model: "test",
-            usage: { prompt_tokens: 5, total_tokens: 5 },
-          }),
-          { headers: { "Content-Type": "application/json", Connection: "close" } },
-        );
-      },
+    const { embed } = await import("../src/llm/embedder");
+    const config: EmbeddingConnectionConfig = {
+      endpoint: TEST_ENDPOINT,
+      model: "remote-model",
+      localModel: "Xenova/bge-small-en-v1.5",
+    };
+    await embed("test", config, undefined, {
+      fetch: makeEmbedFetch({
+        embedding: [0.1, 0.2],
+        capture: (body) => {
+          capturedBody = body;
+        },
+      }),
     });
 
-    try {
-      const { embed } = await import("../src/llm/embedder");
-      const config: EmbeddingConnectionConfig = {
-        endpoint: `http://localhost:${server.port}`,
-        model: "remote-model",
-        localModel: "Xenova/bge-small-en-v1.5",
-      };
-      await embed("test", config);
-
-      // The request body should use `model` (not localModel) and should
-      // not include localModel as a field
-      expect(capturedBody).toBeDefined();
-      expect(capturedBody?.model).toBe("remote-model");
-      expect(capturedBody).not.toHaveProperty("localModel");
-    } finally {
-      server.stop(true);
-    }
+    // The request body should use `model` (not localModel) and should
+    // not include localModel as a field
+    expect(capturedBody).toBeDefined();
+    expect(capturedBody?.model).toBe("remote-model");
+    expect(capturedBody).not.toHaveProperty("localModel");
   });
 });
 
