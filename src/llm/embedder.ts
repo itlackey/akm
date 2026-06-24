@@ -192,7 +192,10 @@ export async function checkEmbeddingAvailability(
   }
 }
 
-export async function isEmbeddingAvailable(embeddingConfig?: EmbeddingConnectionConfig): Promise<boolean> {
-  const result = await checkEmbeddingAvailability(embeddingConfig);
+export async function isEmbeddingAvailable(
+  embeddingConfig?: EmbeddingConnectionConfig,
+  deps?: RemoteEmbedderDeps,
+): Promise<boolean> {
+  const result = await checkEmbeddingAvailability(embeddingConfig, deps);
   return result.available;
 }
