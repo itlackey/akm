@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
+import type { HttpClient } from "../../src/core/common";
 import { saveConfig } from "../../src/core/config/config";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -47,20 +48,22 @@ function writeFile(filePath: string, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
-  url: string;
-  server: ReturnType<typeof Bun.serve>;
-} {
-  const server = Bun.serve({
-    port: 0,
-    async fetch() {
-      return new Response(JSON.stringify({ data: [{ embedding }] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json", Connection: "close" },
-      });
-    },
-  });
-  return { url: `http://localhost:${server.port}/v1/embeddings`, server };
+// #664 Seam 1: a fake HttpClient that returns a fixed embedding for each input,
+// injected into akmIndex via `embedFetch` so the real remote-embed request/
+// parse/L2-normalize path runs with no socket. Production sends `input` as an
+// array (embedBatch) and expects one `{ embedding, index }` per input.
+const TEST_EMBEDDING_ENDPOINT = "http://embed.test/v1/embeddings";
+
+function makeEmbeddingFetch(embedding: number[] = [1, 0, 0, 0]): HttpClient {
+  return async (_input, init) => {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { input?: unknown }) : {};
+    const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    const data = inputs.map((_value, index) => ({ embedding, index }));
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
 }
 
 /**
@@ -192,49 +195,44 @@ describe("Database search path (FTS scoring)", () => {
 
   test("search telemetry does not downgrade embedding dimension metadata", async () => {
     const stashDir = tmpStash();
-    const { url, server } = createMockEmbeddingServer();
 
+    writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(
+      path.join(stashDir, "scripts", "deploy", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "deploy",
+            type: "script",
+            description: "Deploy application to production servers",
+            filename: "deploy.sh",
+          },
+        ],
+      }),
+    );
+
+    saveConfig({
+      semanticSearchMode: "auto",
+      embedding: {
+        provider: "openai-compatible",
+        endpoint: TEST_EMBEDDING_ENDPOINT,
+        model: "test-embed",
+        dimension: 4,
+      },
+    });
+    await akmIndex({ stashDir, full: true, embedFetch: makeEmbeddingFetch() });
+
+    const result = await akmSearch({ query: "deploy", source: "local" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    expect(localHits.length).toBeGreaterThanOrEqual(1);
+
+    const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
     try {
-      writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
-      writeFile(
-        path.join(stashDir, "scripts", "deploy", ".stash.json"),
-        JSON.stringify({
-          entries: [
-            {
-              name: "deploy",
-              type: "script",
-              description: "Deploy application to production servers",
-              filename: "deploy.sh",
-            },
-          ],
-        }),
-      );
-
-      saveConfig({
-        semanticSearchMode: "auto",
-        embedding: {
-          provider: "openai-compatible",
-          endpoint: url,
-          model: "test-embed",
-          dimension: 4,
-        },
-      });
-      await akmIndex({ stashDir, full: true });
-
-      const result = await akmSearch({ query: "deploy", source: "local" });
-      const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-      expect(localHits.length).toBeGreaterThanOrEqual(1);
-
-      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
-      try {
-        expect(getMeta(db, "embeddingDim")).toBe("4");
-        expect(getMeta(db, "hasEmbeddings")).toBe("1");
-        expect(searchVec(db, [1, 0, 0, 0], 10).length).toBeGreaterThanOrEqual(1);
-      } finally {
-        closeDatabase(db);
-      }
+      expect(getMeta(db, "embeddingDim")).toBe("4");
+      expect(getMeta(db, "hasEmbeddings")).toBe("1");
+      expect(searchVec(db, [1, 0, 0, 0], 10).length).toBeGreaterThanOrEqual(1);
     } finally {
-      server.stop(true);
+      closeDatabase(db);
     }
   });
 

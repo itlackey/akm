@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
-import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
+import { type HttpClient, isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
@@ -173,6 +173,13 @@ interface IndexOptions {
   dryRun?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
+  /**
+   * Injectable HTTP client (#664 Seam 1; defaults to `globalThis.fetch`)
+   * forwarded to the embedding-phase `embedBatch` call. Unit tests inject a
+   * fake so the real remote-embed request/parse/L2-normalize path runs with no
+   * socket; production never sets it.
+   */
+  embedFetch?: HttpClient;
 }
 
 interface IndexedDirCandidate {
@@ -313,11 +320,11 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
  * entries. Writes `ctx.embeddingResult` for the finalize phase.
  */
 async function runEmbeddingPhase(ctx: IndexRunContext): Promise<void> {
-  const { db, config, signal, onProgress } = ctx;
+  const { db, config, signal, onProgress, embedFetch } = ctx;
 
   throwIfAborted(signal);
 
-  ctx.embeddingResult = await generateEmbeddingsForDb(db, config, onProgress);
+  ctx.embeddingResult = await generateEmbeddingsForDb(db, config, onProgress, signal, embedFetch);
   ctx.timing.tEmbedEnd = Date.now();
 }
 
@@ -486,6 +493,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         stashDir,
         onProgress,
         signal,
+        embedFetch: options?.embedFetch,
         timing: {
           t0,
           tWalkStart: t0,
@@ -1301,6 +1309,7 @@ async function generateEmbeddingsForDb(
   config: AkmConfig,
   onProgress: (event: IndexProgressEvent) => void,
   signal?: AbortSignal,
+  embedFetch?: HttpClient,
 ): Promise<EmbeddingGenerationResult> {
   throwIfAborted(signal);
 
@@ -1359,7 +1368,12 @@ async function generateEmbeddingsForDb(
       }
     }
 
-    const embeddings = await embedBatch(texts, config.embedding, signal);
+    const embeddings = await embedBatch(
+      texts,
+      config.embedding,
+      signal,
+      embedFetch ? { fetch: embedFetch } : undefined,
+    );
     throwIfAborted(signal);
     // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.

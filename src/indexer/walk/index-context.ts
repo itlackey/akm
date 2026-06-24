@@ -12,6 +12,7 @@
  * sequence.
  */
 
+import type { HttpClient } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import type { Database } from "../../storage/database";
 import type { GraphExtractionResult } from "../graph/graph-extraction";
@@ -56,6 +57,11 @@ export interface IndexRunContext {
   onProgress: (event: IndexPhaseEvent) => void;
   /** Abort signal (may be undefined when no cancellation is needed). */
   signal: AbortSignal | undefined;
+  /**
+   * Injectable HTTP client forwarded to the embedding phase's `embedBatch`
+   * call (#664 Seam 1; defaults to `globalThis.fetch` when undefined).
+   */
+  embedFetch?: HttpClient;
   /** Timing accumulator — phases fill this in as they complete. */
   timing: IndexTiming;
   /** Whether this run is incremental (false = full rebuild). */

@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { parseAssetRef } from "../../src/core/asset/asset-ref";
+import type { HttpClient } from "../../src/core/common";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
@@ -43,20 +44,22 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
-  url: string;
-  server: ReturnType<typeof Bun.serve>;
-} {
-  const server = Bun.serve({
-    port: 0,
-    async fetch() {
-      return new Response(JSON.stringify({ data: [{ embedding }] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json", Connection: "close" },
-      });
-    },
-  });
-  return { url: `http://localhost:${server.port}/v1/embeddings`, server };
+// #664 Seam 1: a fake HttpClient that returns a fixed embedding for each input,
+// injected into akmIndex via `embedFetch` so the real remote-embed request/
+// parse/L2-normalize path runs with no socket. Production sends `input` as an
+// array (embedBatch) and expects one `{ embedding, index }` per input.
+const TEST_EMBEDDING_ENDPOINT = "http://embed.test/v1/embeddings";
+
+function makeEmbeddingFetch(embedding: number[] = [1, 0, 0, 0]): HttpClient {
+  return async (_input, init) => {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { input?: unknown }) : {};
+    const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    const data = inputs.map((_value, index) => ({ embedding, index }));
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
 }
 
 let stashDir = "";
@@ -140,7 +143,6 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
   });
 
   test("lookup and show do not downgrade embedding dimension metadata", async () => {
-    const { url, server } = createMockEmbeddingServer();
     const body = ["---", "name: embed-skill", "description: Test", "---", "# embed"].join("\n");
     writeFile(path.join(stashDir, "skills", "embed-skill", "SKILL.md"), body);
 
@@ -148,28 +150,24 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
       semanticSearchMode: "auto",
       embedding: {
         provider: "openai-compatible",
-        endpoint: url,
+        endpoint: TEST_EMBEDDING_ENDPOINT,
         model: "test-embed",
         dimension: 4,
       },
     });
     resetConfigCache();
 
-    try {
-      await akmIndex({ stashDir, full: true });
-      await lookup(parseAssetRef("skill:embed-skill"));
-      await akmShowUnified({ ref: "skill:embed-skill" });
+    await akmIndex({ stashDir, full: true, embedFetch: makeEmbeddingFetch() });
+    await lookup(parseAssetRef("skill:embed-skill"));
+    await akmShowUnified({ ref: "skill:embed-skill" });
 
-      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
-      try {
-        expect(getMeta(db, "embeddingDim")).toBe("4");
-        expect(getMeta(db, "hasEmbeddings")).toBe("1");
-        expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
-      } finally {
-        closeDatabase(db);
-      }
+    const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+    try {
+      expect(getMeta(db, "embeddingDim")).toBe("4");
+      expect(getMeta(db, "hasEmbeddings")).toBe("1");
+      expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
     } finally {
-      server.stop(true);
+      closeDatabase(db);
     }
   });
 

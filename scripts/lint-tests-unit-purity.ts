@@ -40,8 +40,6 @@ const repoRoot = path.resolve(import.meta.dir, "..");
 
 /** Unit-tier files that currently stand up `Bun.serve`. Shrink-only. */
 const ALLOWED_SERVE = new Set<string>([
-  "tests/commands/search.test.ts",
-  "tests/commands/show-indexer-parity.test.ts",
   "tests/registry-build-index.test.ts",
   "tests/source-qa-fixes.test.ts",
 ]);
@@ -72,7 +70,7 @@ const ALLOWED_SPAWN = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 21;
+export const UNIT_PURITY_BASELINE = 19;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size;
