@@ -148,7 +148,7 @@ const ALLOWED_FILES = new Set<string>([
   // to configure wiki registration (external sources / config-based detection) or
   // to point searchInWiki at a specific stash. These are deliberate fixture setups;
   // the module-level beforeEach/afterEach now use the sandbox for outer isolation.
-  "tests/wiki.test.ts",
+  "tests/integration/wiki.test.ts",
 
   // scoring-pipeline.test.ts: buildTestIndex sets AKM_STASH_DIR to the per-test
   // tmpStash() dir so akmIndex and akmSearch read the right fixture stash. Each

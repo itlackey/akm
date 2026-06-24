@@ -60,8 +60,6 @@ const ALLOWED_SPAWN = new Set<string>([
   "tests/commands/improve-result-to-file.test.ts",
   "tests/completions.test.ts",
   "tests/contracts/config-schema-drift.test.ts",
-  "tests/env.test.ts",
-  "tests/wiki.test.ts",
 ]);
 
 /**
@@ -81,14 +79,12 @@ const ALLOWED_FULL_INDEX = new Set<string>([
   "tests/commands/improve/improve-dry-run-side-effects.test.ts",
   "tests/commands/improve/improve-sync.test.ts",
   "tests/commands/scope-flags.test.ts",
-  "tests/env.test.ts",
   "tests/index-clean.test.ts",
   "tests/issue-36-repro.test.ts",
   "tests/secret-indexing.test.ts",
   "tests/semantic-search-e2e.test.ts",
   "tests/session-indexing.test.ts",
   "tests/source.test.ts",
-  "tests/wiki.test.ts",
   "tests/workflows/indexer-rejection.test.ts",
 ]);
 
@@ -97,7 +93,7 @@ const ALLOWED_FULL_INDEX = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 23;
+export const UNIT_PURITY_BASELINE = 19;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size + ALLOWED_FULL_INDEX.size;
