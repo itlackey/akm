@@ -11,12 +11,12 @@ import path from "node:path";
 import { computeFixtureContentHash, fixtureContentHash, listFixtures, loadFixtureStash } from "./load";
 
 describe("loadFixtureStash", () => {
-  test("materialises the minimal fixture and cleanup removes it", () => {
+  test("materialises the minimal fixture and cleanup removes it", async () => {
     const priorAkmStashDir = process.env.AKM_STASH_DIR;
     const sentinel = "/tmp/some-prior-value";
     process.env.AKM_STASH_DIR = sentinel;
 
-    const { stashDir, cleanup, contentHash } = loadFixtureStash("minimal");
+    const { stashDir, cleanup, contentHash } = await loadFixtureStash("minimal");
 
     try {
       expect(fs.existsSync(stashDir)).toBe(true);
@@ -51,10 +51,10 @@ describe("loadFixtureStash", () => {
     else process.env.AKM_STASH_DIR = priorAkmStashDir;
   });
 
-  test("with { skipIndex: true } does not invoke akm index", () => {
+  test("with { skipIndex: true } does not invoke akm index", async () => {
     const priorAkmStashDir = process.env.AKM_STASH_DIR;
 
-    const { stashDir, cleanup } = loadFixtureStash("minimal", { skipIndex: true });
+    const { stashDir, cleanup } = await loadFixtureStash("minimal", { skipIndex: true });
 
     try {
       // The fixture is still materialised and AKM_STASH_DIR is still set.

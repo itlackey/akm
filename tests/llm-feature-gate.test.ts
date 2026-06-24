@@ -169,7 +169,7 @@ describe("tryLlmFeature", () => {
     const result = await tryLlmFeature(
       "memory_inference",
       configWith({ memory_inference: true }),
-      () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)),
+      () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 50)),
       "fallback",
       { timeoutMs: 25, onFallback: (e) => events.push({ reason: e.reason, error: e.error }) },
     );
@@ -196,7 +196,7 @@ test("timeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200 ms fn)", a
   const result = await tryLlmFeature(
     "memory_inference",
     configWith({ memory_inference: true }),
-    () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)),
+    () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 50)),
     "fallback-from-gate-timeout",
     {
       timeoutMs: 25,

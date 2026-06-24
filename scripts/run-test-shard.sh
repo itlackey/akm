@@ -18,6 +18,21 @@
 # expect(), so retrying on them cannot mask a genuine red test. A real
 # assertion failure (no signature, non-timeout exit) fails fast immediately.
 #
+# #664 DECISION (root-cause work, not just self-heal): the race trigger is
+# real-`spawnSync`/`Bun.serve` fd churn. We are draining that churn out of the
+# UNIT tree so the race surface shrinks shard by shard:
+#   - The heaviest churners were relocated into tests/integration/ (out of the
+#     `test:unit` shards): the git-`spawnSync` `write-source.test.ts` (the
+#     deterministic shard-5 crasher) and the real-`bun`-spawn `env-path-run.test.ts`.
+#   - The shared fixture loader (tests/fixtures/stashes/load.ts) now indexes
+#     in-process instead of spawning `bun run … index`.
+#   - registry-search.test.ts shares ONE Bun.serve instead of ~40.
+# This retry wrapper stays as DEFENCE-IN-DEPTH: ~45 unit files still spawn, so
+# the race can still surface. Re-evaluating `--parallel>1` (TEST_PARALLEL) and/or
+# a Bun upgrade is gated on draining the remaining churners; do NOT flip
+# parallelism back on until the unit tree is spawn-light and a Bun build without
+# the epoll collision is confirmed. See the `akm-bun-parallel-test-hang` memory.
+#
 # Usage:  SHARD=k/N scripts/run-test-shard.sh <unit|integration>
 #
 # Mirrors the `test:unit:shard` / `test:integration:shard` package.json scripts

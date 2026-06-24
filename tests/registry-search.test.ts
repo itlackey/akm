@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -92,6 +92,29 @@ function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
   };
 }
 
+// One shared server for the constant FIXTURE_INDEX. The vast majority of tests
+// only need a stable endpoint serving the same immutable fixture — standing up
+// (and tearing down) a fresh Bun.serve per test was ~40 socket lifecycles of
+// pure fd churn, a top driver of both the unit-suite runtime (#664 §2) and the
+// Bun --isolate epoll fd race (#664 §1). Per-test XDG isolation still happens in
+// beforeEach, so the registry cache never leaks across tests; the server itself
+// is immutable so sharing it is safe. Tests that must KILL the server mid-test
+// (the cache test) or serve a custom/erroring index still mint their own.
+let sharedFixtureServer: { url: string; close: () => void };
+
+beforeAll(() => {
+  sharedFixtureServer = serveIndex(FIXTURE_INDEX);
+});
+
+/**
+ * Return the shared FIXTURE_INDEX endpoint. `close()` is a deliberate no-op —
+ * the single underlying server is reaped once in afterAll — so existing
+ * `try { … } finally { srv.close() }` blocks keep working unchanged.
+ */
+function serveFixtureIndex(): { url: string; close: () => void } {
+  return { url: sharedFixtureServer.url, close: () => {} };
+}
+
 /** Start a server that always returns an error. */
 function serveError(status: number): { url: string; close: () => void } {
   const server = Bun.serve({
@@ -107,6 +130,7 @@ function serveError(status: number): { url: string; close: () => void } {
 }
 
 afterAll(() => {
+  sharedFixtureServer?.close();
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -159,7 +183,7 @@ describe("searchRegistry", () => {
 
 describe("scoring", () => {
   test("exact name match ranks highest", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("Azure Ops Stash", {
         registries: [{ url: srv.url }],
@@ -172,7 +196,7 @@ describe("scoring", () => {
   });
 
   test("tag match surfaces relevant stashes", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("creaturepunk", {
         registries: [{ url: srv.url }],
@@ -185,7 +209,7 @@ describe("scoring", () => {
   });
 
   test("description substring matches", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("Container Apps", {
         registries: [{ url: srv.url }],
@@ -197,7 +221,7 @@ describe("scoring", () => {
   });
 
   test("no match returns empty hits without error", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("zzz-nonexistent-xxy", {
         registries: [{ url: srv.url }],
@@ -210,7 +234,7 @@ describe("scoring", () => {
   });
 
   test("multi-token query scores across fields", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("bun typescript starter", {
         registries: [{ url: srv.url }],
@@ -224,7 +248,7 @@ describe("scoring", () => {
   });
 
   test("author match works", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("devperson", {
         registries: [{ url: srv.url }],
@@ -241,7 +265,7 @@ describe("scoring", () => {
 
 describe("limit enforcement", () => {
   test("limit: 1 returns at most 1 hit", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("stash", {
         registries: [{ url: srv.url }],
@@ -254,7 +278,7 @@ describe("limit enforcement", () => {
   });
 
   test("limit: 0 falls back to default", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("stash", {
         registries: [{ url: srv.url }],
@@ -268,7 +292,7 @@ describe("limit enforcement", () => {
   });
 
   test("limit: NaN falls back to default", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("stash", {
         registries: [{ url: srv.url }],
@@ -285,6 +309,8 @@ describe("limit enforcement", () => {
 
 describe("caching", () => {
   test("second call uses cached index (no network needed)", async () => {
+    // Dedicated server: this test proves the cache path by KILLING the server
+    // between calls, so it cannot share the always-on fixture server.
     const srv = serveIndex(FIXTURE_INDEX);
     const url = srv.url;
 
@@ -430,7 +456,7 @@ describe("multiple registries", () => {
 
 describe("hit shape", () => {
   test("includes metadata fields from index", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("openkit", { registries: [{ url: srv.url }] });
       const hit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
@@ -450,7 +476,7 @@ describe("hit shape", () => {
   });
 
   test("installRef is prefixed with source type for github stashes", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("azure", { registries: [{ url: srv.url }] });
       const hit = result.hits.find((h) => h.id === "github:someone/azure-ops-stash");
@@ -465,7 +491,7 @@ describe("hit shape", () => {
     // Spec §4.2: the legacy registry boolean `curated` is removed in v1.
     // Legacy index JSON containing it MUST parse without error and the key
     // MUST NOT appear on emitted hits.
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("itlackey", { registries: [{ url: srv.url }] });
       const legacyCuratedHit = result.hits.find((h) => h.id === "github:itlackey/dimm-city-stash");
@@ -485,7 +511,7 @@ describe("hit shape", () => {
 
 describe("AKM_REGISTRY_URL env var", () => {
   test("uses env var when no explicit URLs provided", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     process.env.AKM_REGISTRY_URL = srv.url;
     try {
       const result = await searchRegistry("azure");
@@ -550,7 +576,7 @@ describe("AKM_REGISTRY_URL env var", () => {
   });
 
   test("bare URL in env var defaults to static-index provider", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     process.env.AKM_REGISTRY_URL = srv.url;
     try {
       const result = await searchRegistry("openkit");
@@ -615,7 +641,7 @@ describe("cross-provider score normalization", () => {
   test("scores from all providers are in [0, 1] after normalization", async () => {
     // static-index raw scores can exceed 1 (e.g. exact name + tag + description).
     // After normalization, all scores in the merged response must be <= 1.
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("openkit bun typescript starter", {
         registries: [{ url: srv.url }],
@@ -633,7 +659,7 @@ describe("cross-provider score normalization", () => {
 
   test("top hit within a provider batch retains score = 1 after normalization", async () => {
     // The highest-scored hit in each provider batch should map to exactly 1.0.
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("openkit", {
         registries: [{ url: srv.url }],
@@ -738,7 +764,7 @@ describe("cross-provider score normalization", () => {
 
 describe("provenance tagging", () => {
   test("hits include registryName from entry config", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("openkit", {
         registries: [{ url: srv.url, name: "test-registry" }],
@@ -751,7 +777,7 @@ describe("provenance tagging", () => {
   });
 
   test("registryName is undefined when entry has no name", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       const result = await searchRegistry("openkit", {
         registries: [{ url: srv.url }],
@@ -861,7 +887,7 @@ describe("provider routing", () => {
   });
 
   test("default provider is static-index when omitted", async () => {
-    const srv = serveIndex(FIXTURE_INDEX);
+    const srv = serveFixtureIndex();
     try {
       // No provider field — should use static-index
       const result = await searchRegistry("openkit", {

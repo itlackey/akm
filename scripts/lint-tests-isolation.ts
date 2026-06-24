@@ -193,7 +193,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/config.test.ts",
   "tests/commands/consolidate/consolidate-promote-dedup.test.ts",
   "tests/contracts/v1-spec-section-11-proposal-queue.test.ts",
-  "tests/core/write-source.test.ts",
+  "tests/integration/core/write-source.test.ts",
   "tests/commands/distill/distill-cli-flag.test.ts",
   "tests/commands/distill/distill-response-schema.test.ts",
   "tests/distill.test.ts",

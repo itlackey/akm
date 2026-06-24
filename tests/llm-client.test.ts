@@ -551,18 +551,23 @@ describe("chatCompletion single bounded retry", () => {
   test("retry is skipped when the first attempt consumes >= 90% of timeoutMs", async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
-    // First attempt fails with a retryable 500 but only after burning ~95% of
-    // the budget, so the budget guard must suppress the retry.
+    // First attempt fails with a retryable 500. Rather than burn ~460ms of real
+    // wall time, we inject a fake clock that reports the budget as ~95% spent by
+    // the time the guard checks it — exercising the same suppression path with
+    // zero sleep.
     globalThis.fetch = (async () => {
       calls += 1;
-      await new Promise((r) => setTimeout(r, 460));
       return new Response("boom", { status: 500 });
     }) as unknown as typeof fetch;
+    // started=0, elapsed-check=475 → 475 >= 0.9*500=450 → retry suppressed.
+    const clockTicks = [0, 475];
+    const now = () => clockTicks.shift() ?? 475;
     let retries = 0;
     let caught: LlmCallError | undefined;
     try {
       await chatCompletion({ ...baseConfig, timeoutMs: 500 }, [{ role: "user", content: "hi" }], {
         sleep: fastSleep,
+        now,
         onRetryAttempt: () => {
           retries += 1;
         },

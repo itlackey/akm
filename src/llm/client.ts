@@ -248,6 +248,12 @@ function isRetryable(err: LlmCallError): boolean {
 interface ChatCompletionInternalOptions extends ChatCompletionOptions {
   /** Override the backoff sleep (defaults to the real {@link sleep}). */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Override the wall clock used for the retry-budget guard (defaults to
+   * `Date.now`). Tests inject a fake clock so the budget-exhaustion path can be
+   * exercised without burning real wall time — no `setTimeout(…, 460)` sleep.
+   */
+  now?: (() => number) | undefined;
 }
 
 export async function chatCompletion(
@@ -256,8 +262,9 @@ export async function chatCompletion(
   options?: ChatCompletionInternalOptions,
 ): Promise<string> {
   const effectiveTimeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+  const now = options?.now ?? Date.now;
 
-  const started = Date.now();
+  const started = now();
   try {
     return await chatCompletionAttempt(config, messages, options, effectiveTimeoutMs);
   } catch (err) {
@@ -265,7 +272,7 @@ export async function chatCompletion(
 
     // Timeout-budget guard: if the first attempt already burned most of the
     // budget, a second attempt cannot complete — skip the retry.
-    const elapsed = Date.now() - started;
+    const elapsed = now() - started;
     const remaining = effectiveTimeoutMs - elapsed;
     if (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || remaining <= 0) {
       throw err;

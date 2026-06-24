@@ -31,14 +31,23 @@ const targets = args.filter((a) => !a.startsWith("--"));
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 
+// The default `bun run test:unit` scope is `./tests
+// --path-ignore-patterns=tests/integration`, so the bare report (no path args)
+// must mirror that and skip `tests/integration/` — otherwise ~111s of files
+// that never run in test:unit pollute the totals and the per-file ranking (the
+// #664 measurement caveat). Passing an explicit path still times whatever the
+// caller names, integration included.
+const UNIT_IGNORE_DIR = path.join(repoRoot, "tests", "integration");
+
 /** Recursively collect *.test.ts files under a directory. */
-function collectTests(dir: string): string[] {
+function collectTests(dir: string, options: { excludeIntegration?: boolean } = {}): string[] {
   const results: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === "dist") continue;
-      results.push(...collectTests(full));
+      if (options.excludeIntegration && path.resolve(full) === UNIT_IGNORE_DIR) continue;
+      results.push(...collectTests(full, options));
     } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
       results.push(full);
     }
@@ -49,7 +58,8 @@ function collectTests(dir: string): string[] {
 /** Resolve CLI targets (files or dirs) to a flat list of test files. */
 function resolveTargets(rawTargets: string[]): string[] {
   if (rawTargets.length === 0) {
-    return collectTests(path.join(repoRoot, "tests"));
+    // Mirror test:unit: every *.test.ts under ./tests EXCEPT tests/integration.
+    return collectTests(path.join(repoRoot, "tests"), { excludeIntegration: true });
   }
   const files: string[] = [];
   for (const t of rawTargets) {

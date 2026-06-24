@@ -22,8 +22,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { SourceConfigEntry } from "../../src/core/config/config";
-import { ConfigError, UsageError } from "../../src/core/errors";
+import type { SourceConfigEntry } from "../../../src/core/config/config";
+import { ConfigError, UsageError } from "../../../src/core/errors";
 import {
   assertWritableAllowedForKind,
   commitWriteTargetBoundary,
@@ -35,7 +35,7 @@ import {
   sanitizeCommitMessage,
   type WriteTargetSource,
   writeAssetToSource,
-} from "../../src/core/write-source";
+} from "../../../src/core/write-source";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

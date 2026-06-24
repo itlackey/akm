@@ -13,10 +13,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { saveConfig } from "../../../src/core/config/config";
+import { akmIndex } from "../../../src/indexer/indexer";
 
 const FIXTURES_ROOT = __dirname;
-const REPO_ROOT = path.resolve(FIXTURES_ROOT, "..", "..", "..");
-const CLI_ENTRY = path.join(REPO_ROOT, "src", "cli.ts");
 
 export interface LoadedFixtureStash {
   /** Absolute path to the materialised stash directory. */
@@ -99,14 +99,24 @@ export interface LoadFixtureStashOptions {
 }
 
 /**
- * Copy the named fixture into a fresh tmp dir, set `AKM_STASH_DIR`, and run
- * `akm index` against it. Returns the tmp path plus a cleanup function that
- * restores the prior env value and recursively removes the tmp dir.
+ * Copy the named fixture into a fresh tmp dir, set `AKM_STASH_DIR`, and build
+ * its FTS index **in-process** via the production {@link akmIndex} indexer.
+ * Returns the tmp path plus a cleanup function that restores the prior env
+ * value and recursively removes the tmp dir.
+ *
+ * In-process (not a `bun run … index` subprocess) is deliberate: the spawn was
+ * pure fd churn — one of the `spawnSync`/`Bun.serve` lifecycles that drive both
+ * the unit-suite runtime and the Bun `--isolate` epoll fd race (#664). Building
+ * the index directly is faster (no Bun cold-start) and keeps no extra fds open.
  *
  * Pass `{ skipIndex: true }` if the caller will build its own index and the
- * helper's `akm index` spawn would be wasted work.
+ * helper's index build would be wasted work. Returns a Promise because the
+ * indexer is async.
  */
-export function loadFixtureStash(name: string, options: LoadFixtureStashOptions = {}): LoadedFixtureStash {
+export async function loadFixtureStash(
+  name: string,
+  options: LoadFixtureStashOptions = {},
+): Promise<LoadedFixtureStash> {
   const sourceDir = fixtureSourceDir(name);
   const contentHash = fixtureContentHash(name);
 
@@ -122,33 +132,47 @@ export function loadFixtureStash(name: string, options: LoadFixtureStashOptions 
   process.env.AKM_STASH_DIR = stashDir;
 
   if (!options.skipIndex) {
-    // Use isolated XDG dirs for the index invocation so the helper never
-    // touches the operator's real ~/.cache/akm or pulls in their configured
-    // registries / sources. The shipped fixture is the only thing indexed.
-    const result = Bun.spawnSync({
-      cmd: ["bun", "run", CLI_ENTRY, "index"],
-      cwd: stashDir,
-      env: {
-        ...process.env,
-        AKM_STASH_DIR: stashDir,
-        XDG_CACHE_HOME: cacheHome,
-        XDG_CONFIG_HOME: configHome,
-        XDG_DATA_HOME: path.join(tmpRoot, "data"),
-        XDG_STATE_HOME: path.join(tmpRoot, "state"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    // Isolate the XDG dirs for the in-process index so the helper never touches
+    // the operator's real ~/.cache|~/.local/share/akm or pulls in their
+    // configured registries / sources — the shipped fixture is the only thing
+    // indexed. AKM_STASH_DIR must be paired with XDG_DATA_HOME + XDG_STATE_HOME
+    // so the test-isolation guard in src/core/paths.ts stays inert. We snapshot
+    // and restore these four vars around the build; AKM_STASH_DIR is left set
+    // (cleanup() restores it) to preserve the helper's documented contract.
+    const dataHome = path.join(tmpRoot, "data");
+    const stateHome = path.join(tmpRoot, "state");
+    const xdgSnapshot = {
+      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+      XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+    };
+    const restoreXdg = (): void => {
+      for (const [key, value] of Object.entries(xdgSnapshot)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    };
+    process.env.XDG_CACHE_HOME = cacheHome;
+    process.env.XDG_CONFIG_HOME = configHome;
+    process.env.XDG_DATA_HOME = dataHome;
+    process.env.XDG_STATE_HOME = stateHome;
 
-    if (result.exitCode !== 0) {
-      // Restore env and clean up before throwing so the caller is not left
+    try {
+      // Pin semantic search off so the build is deterministic and never reaches
+      // for a local embedder — the FTS index is all fixtures need.
+      saveConfig({ semanticSearchMode: "off" });
+      await akmIndex({ stashDir, full: true });
+    } catch (err) {
+      // Restore env and clean up before rethrowing so the caller is not left
       // with a leaked tmp dir or mutated process state.
+      restoreXdg();
       if (priorAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
       else process.env.AKM_STASH_DIR = priorAkmStashDir;
       fs.rmSync(tmpRoot, { recursive: true, force: true });
-      const stderr = result.stderr ? new TextDecoder().decode(result.stderr) : "";
-      throw new Error(`akm index failed for fixture "${name}" (exit ${result.exitCode}): ${stderr}`);
+      throw new Error(`akm index failed for fixture "${name}": ${(err as Error).message}`);
     }
+    restoreXdg();
   }
 
   const cleanup = (): void => {

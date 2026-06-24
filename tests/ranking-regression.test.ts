@@ -65,7 +65,7 @@ beforeAll(async () => {
   // The suite indexes it in-process against isolated XDG dirs so the
   // fixture exercises the same generated-metadata + legacy-override path
   // as production indexing.
-  const loaded = loadFixtureStash("ranking-baseline", { skipIndex: true });
+  const loaded = await loadFixtureStash("ranking-baseline", { skipIndex: true });
   FIXTURE_STASH = loaded.stashDir;
   fixtureCleanup = loaded.cleanup;
 

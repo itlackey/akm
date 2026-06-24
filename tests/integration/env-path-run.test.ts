@@ -12,10 +12,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
-import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
-import { runCliCapture } from "./_helpers/cli";
-import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
+import { runCliCapture } from "../_helpers/cli";
+import { makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -24,7 +24,7 @@ afterAll(() => {
   disposers.length = 0;
 });
 
-const repoRoot = path.resolve(import.meta.dir, "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 function makeStash(): string {
