@@ -95,7 +95,7 @@ export function shouldQueryPositiveFeedbackCounts(utilityDecayRaw: ImproveConfig
 
 // ── Main search entrypoint ───────────────────────────────────────────────────
 
-export async function searchLocal(input: {
+export interface SearchLocalInput {
   query: string;
   searchType: AkmSearchType;
   limit: number;
@@ -152,7 +152,19 @@ export async function searchLocal(input: {
   disableScopedUtility?: boolean;
   cwd?: string;
   scopeKey?: string;
-}): Promise<{
+  /**
+   * #664 Seam 3 — when supplied, this already-open index DB handle is used
+   * directly and the `ensureIndex(stashDir)` + `openExistingDatabase(getDbPath())`
+   * acquisition preamble is SKIPPED. The handle is caller-owned: `searchLocal`
+   * does NOT close it (the `finally` close is gated on "we opened it"). This is
+   * the unit-test seam — point it at an `openDatabase(":memory:")` handle seeded
+   * by `seedEntries(...)` and the real FTS5+vector pipeline runs with zero
+   * disk/socket fd. When absent, behavior is byte-identical to before.
+   */
+  db?: Database;
+}
+
+export interface SearchLocalResult {
   hits: SourceSearchHit[];
   tip?: string;
   warnings?: string[];
@@ -160,7 +172,54 @@ export async function searchLocal(input: {
   rankMs?: number;
   /** Whether embedding-based ranking was used (`'semantic'`) or keyword-only (`'keyword'`). */
   mode: "semantic" | "keyword";
-}> {
+}
+
+export async function searchLocal(input: SearchLocalInput): Promise<SearchLocalResult> {
+  const { stashDir } = input;
+
+  // #664 Seam 3 — caller-supplied handle: skip the `ensureIndex` +
+  // `openExistingDatabase(getDbPath())` acquisition preamble entirely and run
+  // the post-open core directly against the injected DB. The handle is
+  // caller-owned, so the `finally` close below is gated on "we opened it" and
+  // an injected handle is NEVER closed here.
+  if (input.db) {
+    return searchOnDb(input.db, input);
+  }
+
+  // Auto-index when stale so the DB is always current before querying.
+  await ensureIndex(stashDir);
+
+  const dbPath = getDbPath();
+  if (!fs.existsSync(dbPath)) {
+    return {
+      hits: [],
+      tip: "No search index available. Run 'akm index' to build one.",
+      warnings: computeSemanticWarnings(input),
+      mode: "keyword",
+    };
+  }
+
+  const db = openExistingDatabase(dbPath);
+  try {
+    return await searchOnDb(db, input);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+/**
+ * #664 Seam 3 — post-open search core. Runs the FULL `searchLocal` pipeline
+ * (semantic-status warnings, ambient-input resolution, entry-count gating, the
+ * single FTS5+vector+boosts scoring pass) against an ALREADY-OPEN index DB
+ * handle. It performs NO acquisition (`ensureIndex`/`getDbPath`/open) and NEVER
+ * closes `db` — the caller owns the handle's lifetime.
+ *
+ * `searchLocal` delegates to this after opening the on-disk DB; unit tests call
+ * it directly against an `openDatabase(":memory:")` handle seeded by
+ * `seedEntries(...)` / `rebuildFts(...)`, exercising the real `searchFts` /
+ * `searchVec` / ranking code with zero disk/socket fd.
+ */
+export async function searchOnDb(db: Database, input: SearchLocalInput): Promise<SearchLocalResult> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const filters = input.filters;
   const includeProposed = input.includeProposed === true;
@@ -187,6 +246,59 @@ export async function searchLocal(input: {
     }
   }
   const allSourceDirs = sources.map((s) => s.path);
+  const warnings = computeSemanticWarnings(input);
+
+  const entryCount = getEntryCount(db);
+  if (entryCount === 0) {
+    return {
+      hits: [],
+      tip: "Index is empty. Run 'akm index' to populate it.",
+      warnings,
+      mode: "keyword",
+    };
+  }
+
+  const { hits, embedMs, rankMs } = await searchDatabase(
+    db,
+    query,
+    searchType,
+    limit,
+    stashDir,
+    allSourceDirs,
+    config,
+    sources,
+    rendererRegistry,
+    filters,
+    includeProposed,
+    beliefFilter,
+    restrictToSources,
+    includeExcludedTypes,
+    disableProjectContext,
+    cwd,
+    scopeKey,
+  );
+  return {
+    hits,
+    tip:
+      hits.length === 0
+        ? "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
+        : undefined,
+    warnings,
+    embedMs,
+    rankMs,
+    mode: embedMs !== undefined && embedMs > 0 ? "semantic" : "keyword",
+  };
+}
+
+/**
+ * Resolve the semantic-search-mode advisory warnings shown alongside results.
+ * Reads only `config` + the on-disk semantic-status file (no DB handle), so it
+ * is shared by both the acquisition path (`searchLocal`) and the post-open core
+ * (`searchOnDb`). Returns `undefined` when there are no warnings so the result
+ * payload stays compact.
+ */
+function computeSemanticWarnings(input: SearchLocalInput): string[] | undefined {
+  const { config } = input;
   const rawStatus = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, rawStatus);
   const warnings: string[] = [];
@@ -218,65 +330,7 @@ export async function searchLocal(input: {
       "Semantic search is currently blocked. Using keyword search until the semantic backend is healthy again.",
     );
   }
-
-  // Auto-index when stale so the DB is always current before querying.
-  await ensureIndex(stashDir);
-
-  const dbPath = getDbPath();
-  if (!fs.existsSync(dbPath)) {
-    return {
-      hits: [],
-      tip: "No search index available. Run 'akm index' to build one.",
-      warnings: warnings.length > 0 ? warnings : undefined,
-      mode: "keyword",
-    };
-  }
-
-  const db = openExistingDatabase(dbPath);
-  try {
-    const entryCount = getEntryCount(db);
-    if (entryCount === 0) {
-      return {
-        hits: [],
-        tip: "Index is empty. Run 'akm index' to populate it.",
-        warnings: warnings.length > 0 ? warnings : undefined,
-        mode: "keyword",
-      };
-    }
-
-    const { hits, embedMs, rankMs } = await searchDatabase(
-      db,
-      query,
-      searchType,
-      limit,
-      stashDir,
-      allSourceDirs,
-      config,
-      sources,
-      rendererRegistry,
-      filters,
-      includeProposed,
-      beliefFilter,
-      restrictToSources,
-      includeExcludedTypes,
-      disableProjectContext,
-      cwd,
-      scopeKey,
-    );
-    return {
-      hits,
-      tip:
-        hits.length === 0
-          ? "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
-          : undefined,
-      warnings: warnings.length > 0 ? warnings : undefined,
-      embedMs,
-      rankMs,
-      mode: embedMs !== undefined && embedMs > 0 ? "semantic" : "keyword",
-    };
-  } finally {
-    closeDatabase(db);
-  }
+  return warnings.length > 0 ? warnings : undefined;
 }
 
 // ── Database search ─────────────────────────────────────────────────────────
