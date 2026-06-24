@@ -6,11 +6,12 @@ import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
 import type { Proposal } from "../../src/commands/proposal/validators/proposals";
-import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
-import { akmIndex } from "../../src/indexer/indexer";
+import type { GetAllEntries } from "../../src/indexer/db/entry-reader";
+import { type SeededEntries, seedEntries } from "../_helpers/seed-entries";
 
 const tempDirs: string[] = [];
+const seededDbs: SeededEntries[] = [];
 const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   AKM_DATA_DIR: process.env.AKM_DATA_DIR,
@@ -63,10 +64,25 @@ function makeProposal(ref: string): Proposal {
   };
 }
 
-async function buildIndex(stashDir: string): Promise<void> {
+// #664 Seam 2: the planner reads only the `entries` table, so seed `memory` rows
+// into an in-memory index DB instead of running a full on-disk FTS rebuild
+// (`akmIndex({full:true})`). The backing files are still written by writeMemory
+// (the planner's existsSync guard + reflect/distill dispatch read them);
+// `filePath` defaults to the same `<stash>/memories/<name>.md` path writeMemory
+// uses. Returns the injectable `getAllEntries` reader.
+function seedMemories(stashDir: string, names: string[]): GetAllEntries {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
-  await akmIndex({ stashDir, full: true });
+  const s = seedEntries(
+    names.map((name) => ({
+      name,
+      type: "memory",
+      description: name,
+      stashDir,
+      filePath: path.join(stashDir, "memories", `${name}.md`),
+    })),
+  );
+  seededDbs.push(s);
+  return s.getAllEntries;
 }
 
 beforeEach(() => {
@@ -77,6 +93,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const s of seededDbs.splice(0)) s.close();
   if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
   if (savedEnv.AKM_DATA_DIR === undefined) delete process.env.AKM_DATA_DIR;
@@ -102,7 +119,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
   test("explicit --scope <ref> reflects even when ref is on reflect cooldown", async () => {
     const stashDir = makeTempDir("akm-o2-reflect-bypass-");
     writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["auth-tips"]);
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
@@ -111,6 +128,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     await akmImprove({
       scope: "memory:auth-tips",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -140,7 +158,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
   test("non-ref scope (scope: 'memory') still respects reflect cooldown", async () => {
     const stashDir = makeTempDir("akm-o2-no-bypass-");
     writeMemory(stashDir, "auth-tips-2", { description: "auth memory 2" }, "Auth tips 2.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["auth-tips-2"]);
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
@@ -149,6 +167,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -182,13 +201,14 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
   test("reflectFn receives a timeoutMs derived from the remaining budget", async () => {
     const stashDir = makeTempDir("akm-o1-timeout-propagation-");
     writeMemory(stashDir, "budget-test", { description: "budget memory" }, "Budget test content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["budget-test"]);
 
     const capturedTimeouts: Array<number | undefined> = [];
 
     await akmImprove({
       scope: "memory:budget-test",
       stashDir,
+      getAllEntries,
       timeoutMs: 60_000,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -223,11 +243,12 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
   test("budget AbortController is cleared after run completes (no timer leak)", async () => {
     const stashDir = makeTempDir("akm-o1-timer-clear-");
     writeMemory(stashDir, "timer-test", { description: "timer memory" }, "Timer test content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["timer-test"]);
 
     const result = await akmImprove({
       scope: "memory:timer-test",
       stashDir,
+      getAllEntries,
       timeoutMs: 5_000,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -258,7 +279,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
   test("distill is skipped when the lesson for an asset was recently rejected", async () => {
     const stashDir = makeTempDir("akm-d2-reject-cooldown-");
     writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["auth-tips"]);
 
     const distilledRefs: string[] = [];
     const now = Date.now();
@@ -270,6 +291,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -302,7 +324,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
   test("D-2: --scope <ref> bypasses distill reject cooldown (O-2 interaction)", async () => {
     const stashDir = makeTempDir("akm-d2-scope-bypass-");
     writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["auth-tips"]);
 
     const distilledRefs: string[] = [];
     const now = Date.now();
@@ -314,6 +336,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     await akmImprove({
       scope: "memory:auth-tips",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
@@ -512,7 +535,7 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
   test("reindexFn is called after consolidation ran and before graph extraction", async () => {
     const stashDir = makeTempDir("akm-o3-reindex-");
     writeMemory(stashDir, "auth-guide", { description: "Auth guide" }, "Auth guide content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["auth-guide"]);
 
     const reindexCallOrder: string[] = [];
 
@@ -565,6 +588,7 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
         },
         defaults: { llm: "default" },
       },
+      getAllEntries,
       ensureIndexFn: async () => false,
       reindexFn,
       graphExtractionFn,
@@ -602,15 +626,17 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
 describe("zero-signal stash: 0 eligible refs when stash has no feedback or retrievals", () => {
   test("nothing is reflected when stash has no feedback and no retrievals", async () => {
     const stashDir = makeTempDir("akm-zero-signal-");
-    for (let i = 1; i <= 5; i++) {
-      writeMemory(stashDir, `mem-${i}`, { description: `Memory ${i}` }, `Memory ${i} content.`);
+    const memNames = Array.from({ length: 5 }, (_, i) => `mem-${i + 1}`);
+    for (const name of memNames) {
+      writeMemory(stashDir, name, { description: name }, `${name} content.`);
     }
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, memNames);
 
     const reflected: string[] = [];
     await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       config: {
         semanticSearchMode: "off",
         profiles: {
@@ -653,11 +679,12 @@ describe("new 0.8.0 improve metrics", () => {
   test("result shape includes orphansPurged and reflectCooldownActions fields", async () => {
     const stashDir = makeTempDir("akm-m8-shape-");
     writeMemory(stashDir, "alpha", { description: "Alpha memory" }, "Alpha content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["alpha"]);
 
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
         schemaVersion: 1,
@@ -687,7 +714,7 @@ describe("new 0.8.0 improve metrics", () => {
     const stashDir = makeTempDir("akm-m8-cooldown-");
     writeMemory(stashDir, "beta", { description: "Beta memory" }, "Beta content.");
     writeMemory(stashDir, "gamma", { description: "Gamma memory" }, "Gamma content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["beta", "gamma"]);
 
     // 0.8.0 signal-delta gate requires recent feedback to make a ref eligible
     // for reflect. Add a feedback event for each ref so the planner queues
@@ -699,6 +726,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
@@ -727,7 +755,7 @@ describe("new 0.8.0 improve metrics", () => {
     const stashDir = makeTempDir("akm-m8-orphan-");
     // Write one real memory so improve has something to process.
     writeMemory(stashDir, "real-asset", { description: "Real memory" }, "Real content.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["real-asset"]);
 
     // Seed a pending reflect proposal for a ref that does NOT exist on disk.
     createProposal(stashDir, {
@@ -740,6 +768,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
         schemaVersion: 1,
@@ -770,7 +799,7 @@ describe("new 0.8.0 improve metrics", () => {
     );
     const stashDir = makeTempDir("akm-6a-auto-accept-");
     writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["target-asset"]);
 
     // The mock reflectFn must persist a real proposal on disk so that
     // promoteProposal() can find it. We persist with confidence 0.95 — well
@@ -779,6 +808,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory:target-asset",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       autoAccept: 90, // explicit threshold (default is now OFF / undefined); conversion = 0.9
       minRetrievalCount: 0,
@@ -844,11 +874,12 @@ describe("new 0.8.0 improve metrics", () => {
     );
     const stashDir = makeTempDir("akm-6a-below-threshold-");
     writeMemory(stashDir, "target-low", { description: "Existing memory" }, "Existing body.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["target-low"]);
 
     await akmImprove({
       scope: "memory:target-low",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       autoAccept: 90,
       minRetrievalCount: 0,
@@ -911,7 +942,7 @@ describe("new 0.8.0 improve metrics", () => {
     const { createProposal, isProposalSkipped } = await import("../../src/commands/proposal/validators/proposals");
     const stashDir = makeTempDir("akm-6b-expired-");
     writeMemory(stashDir, "live-asset", { description: "Live memory" }, "Live body.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["live-asset"]);
 
     // Seed a stale proposal that should be expired. We seed it on a ref that
     // exists on disk so the orphan-purge pass does not race the expiration
@@ -933,6 +964,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory:live-asset",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       minRetrievalCount: 0,
       // Disable auto-accept so the seed proposal doesn't get auto-promoted by
@@ -968,13 +1000,14 @@ describe("Phase 4A: staleness-detection pass appears in maintenance result when 
   test("akmImprove surfaces stalenessDetection telemetry from the injected pass", async () => {
     const stashDir = makeTempDir("akm-improve-staleness-");
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
-    await buildIndex(stashDir);
+    const getAllEntries = seedMemories(stashDir, ["vpn"]);
 
     appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
 
     const result = await akmImprove({
       scope: "memory",
       stashDir,
+      getAllEntries,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
