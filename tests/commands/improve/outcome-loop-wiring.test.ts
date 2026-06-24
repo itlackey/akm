@@ -28,15 +28,16 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import { getAssetOutcome } from "../../../src/commands/improve/outcome-loop";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { getAssetSalience } from "../../../src/commands/improve/salience";
-import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { akmIndex } from "../../../src/indexer/indexer";
+import type { GetAllEntries } from "../../../src/indexer/db/entry-reader";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type SeededEntries, seedEntries } from "../../_helpers/seed-entries";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const cleanups: Array<() => void> = [];
+const seededDbs: SeededEntries[] = [];
 
 function isolatedStash(): string {
   const iso = withIsolatedAkmStorage();
@@ -45,6 +46,7 @@ function isolatedStash(): string {
 }
 
 afterEach(() => {
+  for (const s of seededDbs.splice(0)) s.close();
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
@@ -54,9 +56,16 @@ function writeSkill(stashDir: string, name: string, body: string): void {
   fs.writeFileSync(filePath, `---\nname: ${name}\ndescription: ${name}\n---\n\n${body}\n`, "utf8");
 }
 
-async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
-  await akmIndex({ stashDir, full: true });
+// #664 Seam 2: the planner reads only the `entries` table, so seed `skill` rows
+// into an in-memory index DB instead of running a full on-disk FTS rebuild
+// (`akmIndex({full:true})`). The backing files are written by writeSkill (the
+// planner's existsSync guard reads them); `filePath` defaults to the same
+// `<stash>/skills/<name>.md` path. Returns the injectable `getAllEntries`.
+function seedSkills(stashDir: string, names: string[]): GetAllEntries {
+  for (const name of names) writeSkill(stashDir, name, `${name} content.`);
+  const s = seedEntries(names.map((name) => ({ name, type: "skill", description: name, stashDir })));
+  seededDbs.push(s);
+  return s.getAllEntries;
 }
 
 const noopIndexFns = {
@@ -114,13 +123,12 @@ const minimalConfig = (): import("../../../src/core/config/config").AkmConfig =>
 describe("WS-2 wiring — asset_outcome rows written during improve preparation", () => {
   test("asset_outcome row is created for each processed ref after akmImprove", async () => {
     const stash = isolatedStash();
-    writeSkill(stash, "ws2-alpha", "WS-2 alpha content.");
-    writeSkill(stash, "ws2-beta", "WS-2 beta content.");
-    await buildIndex(stash);
+    const getAllEntries = seedSkills(stash, ["ws2-alpha", "ws2-beta"]);
 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
+      getAllEntries,
       config: minimalConfig(),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -152,12 +160,12 @@ describe("WS-2 wiring — asset_outcome rows written during improve preparation"
 describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", () => {
   test("asset_salience.outcome_salience is non-zero after outcome_score is written", async () => {
     const stash = isolatedStash();
-    writeSkill(stash, "ws2-gamma", "WS-2 gamma content.");
-    await buildIndex(stash);
+    const getAllEntries = seedSkills(stash, ["ws2-gamma"]);
 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
+      getAllEntries,
       config: minimalConfig(),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -187,12 +195,12 @@ describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", 
 
   test("second improve run updates outcome_salience in asset_salience (not stuck at seed)", async () => {
     const stash = isolatedStash();
-    writeSkill(stash, "ws2-delta", "WS-2 delta content.");
-    await buildIndex(stash);
+    const getAllEntries = seedSkills(stash, ["ws2-delta"]);
 
     const runOpts = {
       scope: "skill" as const,
       stashDir: stash,
+      getAllEntries,
       config: minimalConfig(),
       ...noopIndexFns,
       reflectFn: async ({ ref }: { ref?: string }) => okReflect(ref ?? ""),
@@ -238,12 +246,12 @@ describe("WS-2 wiring — proxy-adequacy tripwire event", () => {
     // A single-asset stash produces only one asset_outcome row — below the 3-row
     // minimum for the correlation. The tripwire should not fire.
     const stash = isolatedStash();
-    writeSkill(stash, "ws2-lone", "Lone asset for tripwire test.");
-    await buildIndex(stash);
+    const getAllEntries = seedSkills(stash, ["ws2-lone"]);
 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
+      getAllEntries,
       config: minimalConfig(),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
