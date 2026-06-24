@@ -501,7 +501,12 @@ export function loadStoredGraphMeta(stashPath: string, db?: Database): StoredGra
             retryAttempts: 0,
           },
         };
-      } catch {
+      } catch (err) {
+        // Guard integrity (#664 issue C): the bun-test isolation guard can fire
+        // inside this block (e.g. getDbPath() during row mapping), and MUST
+        // propagate to the outer rethrow / runtime purity guard — never be
+        // swallowed as "absent / corrupt".
+        rethrowIfTestIsolationError(err);
         return null;
       }
     });
@@ -613,7 +618,12 @@ export function loadStoredGraphSnapshot(stashPath: string, db?: Database): Store
           entities: uniqueSorted(files.flatMap((file) => file.entities)),
           relations: files.flatMap((file) => file.relations),
         };
-      } catch {
+      } catch (err) {
+        // Guard integrity (#664 issue C): the bun-test isolation guard can fire
+        // inside this block (e.g. getDbPath() during row mapping), and MUST
+        // propagate to the outer rethrow / runtime purity guard — never be
+        // swallowed as "absent / corrupt".
+        rethrowIfTestIsolationError(err);
         return null;
       }
     });
