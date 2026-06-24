@@ -4,9 +4,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseGitRepoUrl } from "../src/sources/providers/git";
-import { type CliResult, runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { parseGitRepoUrl } from "../../src/sources/providers/git";
+import { type CliResult, runCliCapture } from "../_helpers/cli";
+import { withEnv } from "../_helpers/sandbox";
 
 // Migrated the `akm save` invocations from spawnSync("bun", [CLI, …]) to the
 // shared in-process harness (tests/_helpers/cli.ts). `akm save` resolves its

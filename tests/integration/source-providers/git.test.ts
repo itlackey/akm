@@ -3,13 +3,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl, saveGitStash } from "../../src/sources/providers/git";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
+import { resolveSourceProviderFactory } from "../../../src/sources/provider-factory";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl, saveGitStash } from "../../../src/sources/providers/git";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
 // Trigger self-registration
-import "../../src/sources/providers/git";
+import "../../../src/sources/providers/git";
 
 const createdTmpDirs: string[] = [];
 
@@ -261,13 +261,13 @@ describe("GitSourceProvider", () => {
     });
     resetConfigCache();
 
-    const { ensureSourceCaches } = await import("../../src/indexer/search/search-source");
-    const { loadConfig } = await import("../../src/core/config/config");
+    const { ensureSourceCaches } = await import("../../../src/indexer/search/search-source");
+    const { loadConfig } = await import("../../../src/core/config/config");
     const config = loadConfig();
     await ensureSourceCaches(config);
 
     // Verify git stash content dir appears in stash sources.
-    const { resolveSourceEntries } = await import("../../src/indexer/search/search-source");
+    const { resolveSourceEntries } = await import("../../../src/indexer/search/search-source");
     const sources = resolveSourceEntries(undefined, config);
     const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
     expect(gitSource).toBeDefined();

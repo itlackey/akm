@@ -62,14 +62,10 @@ const ALLOWED_SPAWN = new Set<string>([
   "tests/contracts/config-schema-drift.test.ts",
   "tests/env.test.ts",
   "tests/file-lock.test.ts",
-  "tests/git-source-safety.test.ts",
   "tests/github.test.ts",
   "tests/index-writer-lock.test.ts",
   "tests/registry-build-index.test.ts",
-  "tests/save-command.test.ts",
-  "tests/source-providers/git.test.ts",
   "tests/tar-utils-scan.test.ts",
-  "tests/walker.test.ts",
   "tests/wiki.test.ts",
 ]);
 
@@ -106,7 +102,7 @@ const ALLOWED_FULL_INDEX = new Set<string>([
  * change whenever you remove an entry; never raise it. Meta-test:
  * `tests/lint-unit-purity-ratchet.test.ts`.
  */
-export const UNIT_PURITY_BASELINE = 32;
+export const UNIT_PURITY_BASELINE = 28;
 
 export function combinedAllowlistSize(): number {
   return ALLOWED_SERVE.size + ALLOWED_SPAWN.size + ALLOWED_FULL_INDEX.size;
