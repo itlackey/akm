@@ -61,6 +61,14 @@ esac
 PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-300s}"
 MAX_ATTEMPTS="${SHARD_MAX_ATTEMPTS:-3}"
 
+# In-process parallelism per shard. Pinned to 1 today because the Bun --isolate
+# epoll fd race (see header) makes >1 unsafe. This is the REAL knob the #664
+# `--parallel>1` gate flips — the package.json `TEST_PARALLEL` default never
+# reaches CI because CI invokes this script directly. DO NOT raise the default
+# until the gate is met: UNIT_PURITY_BASELINE === 0, issues E + F-min landed,
+# and an opt-in SHARD_PARALLEL=4 job shows 0 RACE_SIGNATURE retries over 20 runs.
+SHARD_PARALLEL="${SHARD_PARALLEL:-1}"
+
 bun run sweep:tmp >/dev/null 2>&1 || true
 
 # Signature of the Bun --isolate fd/epoll race in captured output. Emitted by
@@ -76,7 +84,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   # Tee so we can inspect the output for the race signature while still
   # streaming it to the CI log live. PIPESTATUS[0] is bun's real exit code.
   timeout --kill-after=15s "$PER_ATTEMPT_TIMEOUT" \
-    bun test --parallel=1 --timeout=30000 "${paths[@]}" --shard="$SHARD" 2>&1 | tee "$out_file"
+    bun test --parallel="$SHARD_PARALLEL" --timeout=30000 "${paths[@]}" --shard="$SHARD" 2>&1 | tee "$out_file"
   ec="${PIPESTATUS[0]}"
   echo "::endgroup::"
 
