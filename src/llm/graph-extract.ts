@@ -24,7 +24,7 @@
 
 import systemPromptTemplate from "../assets/prompts/graph-extract-system.md" with { type: "text" };
 import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" with { type: "text" };
-import { toErrorMessage } from "../core/common";
+import { type HttpClient, toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { warn, warnVerbose } from "../core/warn";
 import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
@@ -135,6 +135,12 @@ export interface GraphRuntimeTelemetry {
 export interface GraphExtractionRuntimeOptions {
   batchState?: GraphBatchState;
   telemetry?: GraphRuntimeTelemetry;
+  /**
+   * Injectable HTTP client (#664 Seam 1; defaults to `globalThis.fetch`) passed
+   * through to {@link chatCompletion}. Unit tests inject a fake so extraction
+   * runs its real prompt/parse/salvage path with no socket.
+   */
+  fetch?: HttpClient;
 }
 
 const GENERIC_ENTITIES = new Set([
@@ -674,6 +680,7 @@ export async function extractGraphFromBodies(
             temperature: 0.1,
             timeoutMs: llmConfig.timeoutMs,
             signal,
+            fetch: options.fetch,
             onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
           },
         );
@@ -693,7 +700,7 @@ export async function extractGraphFromBodies(
               { role: "system", content: buildBatchRetrySystemPrompt() },
               { role: "user", content: userPrompt },
             ],
-            { temperature: 0, timeoutMs: llmConfig.timeoutMs, signal },
+            { temperature: 0, timeoutMs: llmConfig.timeoutMs, signal, fetch: options.fetch },
           );
           parsed = retryRaw ? parseEmbeddedJsonResponse<unknown[]>(retryRaw, { expect: "array" }) : undefined;
         }
@@ -885,6 +892,7 @@ export async function extractGraphFromBody(
             temperature: 0.1,
             timeoutMs: llmConfig.timeoutMs,
             signal,
+            fetch: options.fetch,
             onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
           },
         );
