@@ -110,7 +110,11 @@ function buildContradictionJudgePrompt(a: DerivedMemoryEntry, b: DerivedMemoryEn
 
 function* walkMarkdownFilesLocal(root: string): Generator<string> {
   if (!fs.existsSync(root)) return;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+  // Sort: the walk order feeds the (MAX_FAMILY_SIZE / MAX_PAIRS_PER_RUN) capped
+  // pair selection, so OS readdir order must not decide which pairs are checked
+  // (#664 issue G — deterministic, reproducible contradiction detection).
+  const entries = fs.readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
     const full = path.join(root, entry.name);
     if (entry.isDirectory()) yield* walkMarkdownFilesLocal(full);
     else if (entry.isFile() && entry.name.endsWith(".md")) yield full;

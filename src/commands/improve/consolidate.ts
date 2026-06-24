@@ -3256,7 +3256,9 @@ function loadMemoriesForSource(source: string | undefined, stashDir: string, war
     const memoriesDir = path.join(source ?? stashDir, "memories");
     const fsStashDir = source ?? stashDir;
     if (fs.existsSync(memoriesDir)) {
-      for (const fname of fs.readdirSync(memoriesDir)) {
+      // Sort: this list feeds the (capped) consolidation pool, so OS readdir
+      // order must not decide which memories are selected (#664 issue G).
+      for (const fname of fs.readdirSync(memoriesDir).sort()) {
         if (!fname.endsWith(".md")) continue;
         const filePath = path.join(memoriesDir, fname);
         const name = fname.replace(/\.md$/, "");
