@@ -282,6 +282,15 @@ function normalizeFsPathForComparison(value: string): string {
 }
 
 /**
+ * Injectable HTTP client (#664 Seam 1). Production defaults to `globalThis.fetch`;
+ * unit tests pass a fake so the code under test runs its real branch with no
+ * socket — the seam that lets registry/LLM/embedder tests drop `Bun.serve`. The
+ * default is read per-call (not captured at module load) so the live global is
+ * always used unless a caller injects.
+ */
+export type HttpClient = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+/**
  * Fetch with an AbortController timeout.
  * Defaults to 30 seconds if no timeout is specified.
  */
@@ -290,6 +299,7 @@ export async function fetchWithTimeout(
   opts?: RequestInit,
   timeoutMs = 30_000,
   signal?: AbortSignal,
+  fetchImpl: HttpClient = globalThis.fetch,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -303,7 +313,7 @@ export async function fetchWithTimeout(
     }
   }
   try {
-    return await fetch(url, { ...opts, signal: controller.signal });
+    return await fetchImpl(url, { ...opts, signal: controller.signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       if (signal?.aborted) {
@@ -326,26 +336,35 @@ export async function fetchWithTimeout(
 export async function fetchWithRetry(
   url: string,
   init?: RequestInit,
-  options?: { timeout?: number; retries?: number; baseDelay?: number },
+  options?: {
+    timeout?: number;
+    retries?: number;
+    baseDelay?: number;
+    /** Injectable HTTP client (#664 Seam 1); defaults to `globalThis.fetch`. */
+    fetchImpl?: HttpClient;
+    /** Injectable backoff sleep (#664 Seam 5); defaults to real `setTimeout`. */
+    sleep?: (ms: number) => Promise<void>;
+  },
 ): Promise<Response> {
   const maxRetries = options?.retries ?? 3;
   const baseDelay = options?.baseDelay ?? 500;
   const timeout = options?.timeout ?? 30_000;
+  const sleep = options?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const response = await fetchWithTimeout(url, init, timeout);
+      const response = await fetchWithTimeout(url, init, timeout, undefined, options?.fetchImpl ?? globalThis.fetch);
       if (attempt < maxRetries && shouldRetry(response.status)) {
         const retryAfter = parseRetryAfter(response);
         const delay = retryAfter ?? baseDelay * 2 ** attempt * (0.5 + Math.random() * 0.5);
-        await new Promise((r) => setTimeout(r, delay));
+        await sleep(delay);
         continue;
       }
       return response;
     } catch (err) {
       if (attempt >= maxRetries) throw err;
       const delay = baseDelay * 2 ** attempt * (0.5 + Math.random() * 0.5);
-      await new Promise((r) => setTimeout(r, delay));
+      await sleep(delay);
     }
   }
   throw new Error("fetchWithRetry: unreachable");

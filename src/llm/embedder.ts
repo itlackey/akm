@@ -25,7 +25,7 @@
 import type { EmbeddingConnectionConfig } from "../core/config/config";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "./embedders/cache";
 import { DEFAULT_LOCAL_MODEL, isTransformersAvailable, LocalEmbedder } from "./embedders/local";
-import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
+import { hasRemoteEndpoint, RemoteEmbedder, type RemoteEmbedderDeps } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 // ── Re-exports (public API) ─────────────────────────────────────────────────
@@ -74,6 +74,7 @@ export async function embed(
   text: string,
   embeddingConfig?: EmbeddingConnectionConfig,
   signal?: AbortSignal,
+  deps?: RemoteEmbedderDeps,
 ): Promise<EmbeddingVector> {
   const key = embedCacheKey(text, embeddingConfig);
 
@@ -82,7 +83,7 @@ export async function embed(
 
   const result =
     embeddingConfig && hasRemoteEndpoint(embeddingConfig)
-      ? await new RemoteEmbedder(embeddingConfig).embed(text, signal)
+      ? await new RemoteEmbedder(embeddingConfig, deps).embed(text, signal)
       : await getLocalEmbedder().embed(text, signal);
 
   setCachedEmbedding(key, result);
@@ -99,11 +100,12 @@ export async function embedBatch(
   texts: string[],
   embeddingConfig?: EmbeddingConnectionConfig,
   signal?: AbortSignal,
+  deps?: RemoteEmbedderDeps,
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return [];
 
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
-    return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal);
+    return new RemoteEmbedder(embeddingConfig, deps).embedBatch(texts, signal);
   }
 
   // Local transformer: use the batched path (chunks of 32 via LocalEmbedder).
@@ -156,10 +158,11 @@ export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionCon
  */
 export async function checkEmbeddingAvailability(
   embeddingConfig?: EmbeddingConnectionConfig,
+  deps?: RemoteEmbedderDeps,
 ): Promise<EmbeddingCheckResult> {
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
     try {
-      await new RemoteEmbedder(embeddingConfig).embed("test");
+      await new RemoteEmbedder(embeddingConfig, deps).embed("test");
       return { available: true };
     } catch (err) {
       return {

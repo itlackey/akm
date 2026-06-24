@@ -12,7 +12,7 @@
  * `llm.ts` re-exports everything from this module for backward compatibility.
  */
 
-import { fetchWithTimeout } from "../core/common";
+import { fetchWithTimeout, type HttpClient } from "../core/common";
 import { type LlmConnectionConfig, resolveSecret } from "../core/config/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import { warnVerbose } from "../core/warn";
@@ -254,6 +254,12 @@ interface ChatCompletionInternalOptions extends ChatCompletionOptions {
    * exercised without burning real wall time — no `setTimeout(…, 460)` sleep.
    */
   now?: (() => number) | undefined;
+  /**
+   * Injectable HTTP client (#664 Seam 1; defaults to `globalThis.fetch`). Tests
+   * pass a fake so the request/response/parse path runs with no socket — the
+   * seam that lets the LLM-client and graph-extract suites drop `Bun.serve`.
+   */
+  fetch?: HttpClient;
 }
 
 export async function chatCompletion(
@@ -300,7 +306,9 @@ export async function chatCompletion(
 async function chatCompletionAttempt(
   config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
   messages: ChatMessage[],
-  options: ChatCompletionOptions | undefined,
+  // Internal type (not public ChatCompletionOptions) so the injected `fetch`
+  // seam is visible here — chatCompletion always passes the internal object.
+  options: ChatCompletionInternalOptions | undefined,
   timeoutMs: number,
 ): Promise<string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -346,6 +354,7 @@ async function chatCompletionAttempt(
       },
       timeoutMs,
       options?.signal,
+      options?.fetch ?? globalThis.fetch,
     );
   } catch (err) {
     // fetchWithTimeout throws a plain Error with a message containing

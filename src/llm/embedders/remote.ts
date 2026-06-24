@@ -9,9 +9,18 @@
  * vectors so the scoring pipeline's L2-to-cosine conversion is correct.
  */
 
-import { fetchWithTimeout, isHttpUrl } from "../../core/common";
+import { fetchWithTimeout, type HttpClient, isHttpUrl } from "../../core/common";
 import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config/config";
 import type { Embedder, EmbeddingVector } from "./types";
+
+/**
+ * Injectable dependencies for {@link RemoteEmbedder} (#664 Seam 1). `fetch`
+ * defaults to `globalThis.fetch`; unit tests pass a fake so embed/embedBatch
+ * run their real request/parse/L2-normalize path with no socket.
+ */
+export interface RemoteEmbedderDeps {
+  fetch?: HttpClient;
+}
 
 const DEFAULT_REMOTE_BATCH_SIZE = 100;
 
@@ -24,7 +33,10 @@ export class RemoteEmbedder implements Embedder {
   private readonly endpoint: string;
   private readonly model: string;
 
-  constructor(private readonly config: EmbeddingConnectionConfig) {
+  constructor(
+    private readonly config: EmbeddingConnectionConfig,
+    private readonly deps: RemoteEmbedderDeps = {},
+  ) {
     if (!config.endpoint || !config.model) {
       throw new Error("RemoteEmbedder requires both endpoint and model on the embedding config.");
     }
@@ -46,12 +58,13 @@ export class RemoteEmbedder implements Embedder {
       body.options = ollamaOpts;
     }
 
-    const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.endpoint), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    });
+    const response = await fetchWithTimeout(
+      normalizeEmbeddingEndpoint(this.endpoint),
+      { method: "POST", headers, body: JSON.stringify(body), signal },
+      30_000,
+      undefined,
+      this.deps.fetch ?? globalThis.fetch,
+    );
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => "");
@@ -89,12 +102,13 @@ export class RemoteEmbedder implements Embedder {
         body.options = ollamaOpts;
       }
 
-      const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.endpoint), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
+      const response = await fetchWithTimeout(
+        normalizeEmbeddingEndpoint(this.endpoint),
+        { method: "POST", headers, body: JSON.stringify(body), signal },
+        30_000,
+        undefined,
+        this.deps.fetch ?? globalThis.fetch,
+      );
 
       if (!response.ok) {
         const respBody = await response.text().catch(() => "");
@@ -141,7 +155,7 @@ export class RemoteEmbedder implements Embedder {
  * conversion formula (1 - distance^2/2) is only correct for unit vectors.
  * The local embedder already normalizes via `normalize: true`.
  */
-function l2Normalize(vec: number[]): number[] {
+export function l2Normalize(vec: number[]): number[] {
   const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
   if (norm === 0) return vec;
   return vec.map((v) => v / norm);
