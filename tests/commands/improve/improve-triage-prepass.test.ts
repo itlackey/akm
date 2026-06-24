@@ -23,18 +23,39 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { DrainResult } from "../../../src/commands/proposal/drain";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
-import { akmIndex } from "../../../src/indexer/indexer";
+import type { GetAllEntries } from "../../../src/indexer/db/entry-reader";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type SeededEntries, seedEntries } from "../../_helpers/seed-entries";
 
 const TIMEOUT_MS = 20_000;
 
 let cleanup: Cleanup = () => {};
 let stashDir = "";
+const seededDbs: SeededEntries[] = [];
 
 function writeMemory(name: string, body: string): void {
   const filePath = path.join(stashDir, "memories", `${name}.md`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `---\ndescription: ${name} memory\n---\n\n${body}\n`, "utf8");
+}
+
+// #664 Seam 2: these tests drive the triage pre-pass; the planner only needs the
+// `entries` table, so seed `alpha` into an in-memory index DB and write its
+// backing file instead of running a full on-disk FTS rebuild
+// (`akmIndex({full:true})`). Returns the injectable `getAllEntries` reader.
+function seedAlpha(): GetAllEntries {
+  writeMemory("alpha", "Remember alpha details.");
+  const s = seedEntries([
+    {
+      name: "alpha",
+      type: "memory",
+      description: "alpha memory",
+      stashDir,
+      filePath: path.join(stashDir, "memories", "alpha.md"),
+    },
+  ]);
+  seededDbs.push(s);
+  return s.getAllEntries;
 }
 
 /**
@@ -74,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const s of seededDbs.splice(0)) s.close();
   cleanup();
   cleanup = () => {};
   stashDir = "";
@@ -83,8 +105,7 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "fires on a whole-stash run when triage is enabled",
     async () => {
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const captured: Array<import("../../../src/commands/proposal/drain").DrainOptions> = [];
       const drainProposalsFn = mock(async (opts: import("../../../src/commands/proposal/drain").DrainOptions) => {
@@ -95,6 +116,8 @@ describe("akm improve — triage pre-pass", () => {
       const result = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: drainProposalsFn as never,
       });
@@ -113,14 +136,15 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "does NOT fire when triage is disabled",
     async () => {
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const drainProposalsFn = mock(async () => emptyDrainResult());
 
       const result = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(false),
         drainProposalsFn: drainProposalsFn as never,
       });
@@ -134,14 +158,15 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "is skipped when scope.mode === 'ref'",
     async () => {
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const drainProposalsFn = mock(async () => emptyDrainResult());
 
       const result = await akmImprove({
         scope: "memory:alpha",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: drainProposalsFn as never,
       });
@@ -156,14 +181,15 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "is skipped on dry-run (no lock, no triage)",
     async () => {
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const drainProposalsFn = mock(async () => emptyDrainResult());
 
       const result = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         dryRun: true,
         config: triageEnabledConfig(true),
         drainProposalsFn: drainProposalsFn as never,
@@ -179,8 +205,7 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "a thrown drain error is non-fatal — improve still completes",
     async () => {
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const drainProposalsFn = mock(async () => {
         throw new Error("simulated triage failure");
@@ -189,6 +214,8 @@ describe("akm improve — triage pre-pass", () => {
       const result = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: drainProposalsFn as never,
       });
@@ -211,14 +238,15 @@ describe("akm improve — triage pre-pass", () => {
       // user-visible post-condition: after a real (non-dry-run) triage-enabled
       // run the lock file is gone, and a back-to-back second run is NOT rejected
       // by a stale/leaked lock.
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const lockPath = path.join(stashDir, ".akm", "improve.lock");
 
       const result1 = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: (async () => emptyDrainResult()) as never,
       });
@@ -228,6 +256,8 @@ describe("akm improve — triage pre-pass", () => {
       const result2 = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: (async () => emptyDrainResult()) as never,
       });
@@ -248,8 +278,7 @@ describe("akm improve — triage pre-pass", () => {
       // assertion is that the lock file is gone afterward and a back-to-back run
       // is not blocked. (Pre-fix, a throw in the post-acquire/pre-mainTry gap
       // leaked the lock; this asserts the unified finally always releases it.)
-      writeMemory("alpha", "Remember alpha details.");
-      await akmIndex({ stashDir, full: true });
+      const getAllEntries = seedAlpha();
 
       const lockPath = path.join(stashDir, ".akm", "improve.lock");
 
@@ -261,6 +290,8 @@ describe("akm improve — triage pre-pass", () => {
       const result1 = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: (async () => emptyDrainResult()) as never,
         saveGitStashFn: (() => {
@@ -274,6 +305,8 @@ describe("akm improve — triage pre-pass", () => {
       const result2 = await akmImprove({
         scope: "memory",
         stashDir,
+        getAllEntries,
+        ensureIndexFn: async () => false,
         config: triageEnabledConfig(true),
         drainProposalsFn: (async () => emptyDrainResult()) as never,
       });
