@@ -13,17 +13,18 @@
 // whole file on a missing NAMED import); each test then fails individually on
 // the absent feature.
 //
-// runGraphExtractionPass is exercised against a local Bun HTTP server (the same
-// harness the existing graph-extraction tests use) — it is the real transport,
-// not a process-global module mock — but every test completes in well under a
-// second with no real network, so this remains a unit-scope file under tests/.
+// runGraphExtractionPass is exercised through an injected fake `HttpClient`
+// (#664 Seam 1) passed via `ctx.options.fetch` — the real pass (routing,
+// batching, snapshot) runs with no socket. There is no server and no module
+// mock; the fake is the transport. Every test completes in well under a second.
 // Uses sandbox env redirection; never touches host state. Run individually
 // before any full-suite gate.
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { HttpClient } from "../src/core/common";
 import type { AkmConfig } from "../src/core/config/config";
 import { closeDatabase, computeBodyHash, openDatabase, upsertEntry } from "../src/indexer/db/db";
 import * as graphDb from "../src/indexer/db/graph-db";
@@ -59,7 +60,7 @@ const drainExtractionQueue = (
   }
 ).drainExtractionQueue;
 
-// ── Local LLM server (mirrors tests/graph-extraction.test.ts) ────────────────
+// ── Injected fake LLM transport (replaces the local Bun HTTP server) ──────────
 
 let extractor: (body: string) => {
   entities: string[];
@@ -77,26 +78,29 @@ function parseBatchBodies(userContent: string): string[] {
     .filter(Boolean);
 }
 
-const llmServer = Bun.serve({
-  port: 0,
-  async fetch(request) {
-    const payload = (await request.json()) as { messages?: Array<{ role?: string; content?: string }> };
-    const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
-    const batchBodies = parseBatchBodies(userContent);
-    if (batchBodies.length > 0) {
-      for (const b of batchBodies) extractedBodies.push(b);
-      const arr = batchBodies.map((body) => extractor(body));
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(arr) } }] }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    extractedBodies.push(userContent);
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: JSON.stringify(extractor(userContent)) } }] }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  },
-});
+// Fake `HttpClient` that replicates the former Bun.serve handler's logic: it
+// reads the chat-completion request, replays the user content through the
+// `extractor` fixture, records every observed body in `extractedBodies`, and
+// returns a chat-completion-shaped Response — a JSON ARRAY string for batch
+// prompts (the `=== ASSET N ===` / `N=` marker), a JSON OBJECT string for single.
+const fakeFetch: HttpClient = async (_input, init) => {
+  const payload = JSON.parse(String(init?.body ?? "{}")) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
+  const batchBodies = parseBatchBodies(userContent);
+  if (batchBodies.length > 0) {
+    for (const b of batchBodies) extractedBodies.push(b);
+    const arr = batchBodies.map((body) => extractor(body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(arr) } }] }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  extractedBodies.push(userContent);
+  return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(extractor(userContent)) } }] }), {
+    headers: { "Content-Type": "application/json" },
+  });
+};
 
 const { runGraphExtractionPass } = await import("../src/indexer/graph/graph-extraction");
 
@@ -131,12 +135,9 @@ afterEach(() => {
   tmpStash = "";
 });
 
-afterAll(() => {
-  llmServer.stop(true);
-});
-
+// Non-routable endpoint — all transport is the injected `fakeFetch`, never a socket.
 const SAMPLE_LLM = {
-  endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+  endpoint: "http://test.local/v1/chat/completions",
   model: "llama3.2",
 };
 
@@ -232,8 +233,8 @@ describe("#624 P3 runGraphExtractionPass drains the queue first (AC5)", () => {
         sources: sources(),
         db,
         // Scope the normal sweep to ONLY `swept`. Without the queue-drain,
-        // `queued` would never be extracted.
-        options: { candidatePaths: new Set([swept]) },
+        // `queued` would never be extracted. Inject the fake transport.
+        options: { candidatePaths: new Set([swept]), fetch: fakeFetch },
       });
 
       // Both got graph data: `swept` from the normal sweep, `queued` from the drain.
@@ -262,7 +263,12 @@ describe("#624 P3 default byte-identical (AC6)", () => {
 
     await withDb(async (db) => {
       // No enqueue, no lazyGraphExtraction flag → behaves exactly like today.
-      await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db });
+      await runGraphExtractionPass({
+        config: configWithLlm(),
+        sources: sources(),
+        db,
+        options: { fetch: fakeFetch },
+      });
 
       // Both normal-eligible files extracted; no queue table interaction needed.
       expect(graphFileRowExists(db, tmpStash, a)).toBe(true);

@@ -1,9 +1,11 @@
 /**
  * Integration tests for `runGraphExtractionPass` with `graphExtractionBatchSize`.
  *
- * The graph extraction pass runs against a local Bun HTTP server so the real
- * `../src/llm/graph-extract` and client transport path are exercised without
- * process-global module mocks. These tests verify that:
+ * The graph extraction pass runs against an injected fake `HttpClient` (#664
+ * Seam 1) so the real `../src/llm/graph-extract` and client transport path are
+ * exercised without a socket or process-global module mocks. The fake fetch is
+ * threaded into the leaf extract calls via `ctx.options.fetch`. These tests
+ * verify that:
  *
  *   (g) `graphExtractionBatchSize > 1` routes through `extractGraphFromBodies`
  *       (batch path), writing a correct SQLite-backed graph snapshot for a 3-file stash.
@@ -11,19 +13,26 @@
  *       — behaviour is identical to the original implementation.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { HttpClient } from "../src/core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../src/core/config/config";
 import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
 import { loadStoredGraphSnapshot } from "../src/indexer/db/graph-db";
-import type { GraphExtractionResult } from "../src/indexer/graph/graph-extraction";
+import {
+  GRAPH_FILE_SCHEMA_VERSION,
+  type GraphExtractionResult,
+  runGraphExtractionPass,
+} from "../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../src/indexer/search/search-fields";
 import type { GraphExtraction } from "../src/llm/graph-extract";
 
-// ── Local LLM server ─────────────────────────────────────────────────────────
+// ── Injected fake LLM transport ───────────────────────────────────────────────
+
+const TEST_ENDPOINT = "http://test.local/v1/chat/completions";
 
 let batchExtractorStub: ((bodies: string[]) => Promise<GraphExtraction[]>) | null = null;
 let singleExtractorStub: ((body: string) => Promise<GraphExtraction>) | null = null;
@@ -40,49 +49,51 @@ function parseBatchBodies(userContent: string): string[] {
     .filter(Boolean);
 }
 
-const llmServer = Bun.serve({
-  port: 0,
-  async fetch(request) {
-    const payload = (await request.json()) as {
-      messages?: Array<{ role?: string; content?: string }>;
-    };
-    const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
+/**
+ * Fake chat-completion transport that mirrors the leaf graph-extract request
+ * shape. Batch prompts (carrying the `N=` marker / `=== ASSET` separators)
+ * resolve to a JSON ARRAY string; single prompts resolve to a JSON OBJECT
+ * string. Stub failures surface as a non-OK Response, exactly like a 500 from a
+ * real endpoint.
+ */
+const fakeFetch: HttpClient = async (_input, init) => {
+  const payload = JSON.parse(String(init?.body ?? "{}")) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
 
-    if (userContent.includes("N=")) {
-      batchCallCount++;
-      const bodies = parseBatchBodies(userContent);
-      let result: GraphExtraction[];
-      try {
-        result = batchExtractorStub
-          ? await batchExtractorStub(bodies)
-          : bodies.map(() => ({ entities: [], relations: [] }));
-      } catch (err) {
-        return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
-      }
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    singleCallCount++;
-    let result: GraphExtraction;
+  if (userContent.includes("N=")) {
+    batchCallCount++;
+    const bodies = parseBatchBodies(userContent);
+    let result: GraphExtraction[];
     try {
-      result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+      result = batchExtractorStub
+        ? await batchExtractorStub(bodies)
+        : bodies.map(() => ({ entities: [], relations: [] }));
     } catch (err) {
       return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
     }
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
       headers: { "Content-Type": "application/json" },
     });
-  },
-});
+  }
 
-const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph/graph-extraction");
+  singleCallCount++;
+  let result: GraphExtraction;
+  try {
+    result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+  } catch (err) {
+    return new Response(String(err instanceof Error ? err.message : err), { status: 500 });
+  }
+  return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+    headers: { "Content-Type": "application/json" },
+  });
+};
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
 const SAMPLE_LLM: LlmConnectionConfig = {
-  endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+  endpoint: TEST_ENDPOINT,
   model: "llama3.2",
 };
 
@@ -96,6 +107,16 @@ function makeConfig(overrides?: Partial<AkmConfig>): AkmConfig {
     defaults: { llm: "default" },
     ...overrides,
   };
+}
+
+/** Drives the pass with the fake transport injected through `ctx.options.fetch`. */
+function runPass(config: AkmConfig, db: ReturnType<typeof openDatabase>): Promise<GraphExtractionResult> {
+  return runGraphExtractionPass({
+    config,
+    sources: sources(),
+    db,
+    options: { fetch: fakeFetch },
+  });
 }
 
 let tmpStash = "";
@@ -142,10 +163,6 @@ afterEach(() => {
   else process.env.XDG_STATE_HOME = savedXdgStateHome;
   if (savedAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = savedAkmStashDir;
-});
-
-afterAll(() => {
-  llmServer.stop(true);
 });
 
 function writeMemory(name: string, body: string): void {
@@ -213,11 +230,7 @@ describe("runGraphExtractionPass — batch path", () => {
         }
       | undefined;
     try {
-      const result = await runGraphExtractionPass({
-        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
-        sources: sources(),
-        db,
-      });
+      const result = await runPass(makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }), db);
 
       // extractGraphFromBodies was called exactly once with all 3 bodies.
       expect(batchCallCount).toBe(1);
@@ -268,11 +281,7 @@ describe("runGraphExtractionPass — batch path", () => {
     const db = openDatabase(path.join(tmpStash, "graph-default.db"));
     let result: GraphExtractionResult;
     try {
-      result = await runGraphExtractionPass({
-        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
-        sources: sources(),
-        db,
-      });
+      result = await runPass(makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }), db);
     } finally {
       closeDatabase(db);
     }
@@ -303,11 +312,7 @@ describe("runGraphExtractionPass — batch path", () => {
     const db = openDatabase(path.join(tmpStash, "graph-chunked.db"));
     let result: GraphExtractionResult;
     try {
-      result = await runGraphExtractionPass({
-        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
-        sources: sources(),
-        db,
-      });
+      result = await runPass(makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }), db);
     } finally {
       closeDatabase(db);
     }
@@ -338,11 +343,7 @@ describe("runGraphExtractionPass — batch path", () => {
 
     const db = openDatabase(path.join(tmpStash, "graph-adaptive.db"));
     try {
-      const result = await runGraphExtractionPass({
-        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
-        sources: sources(),
-        db,
-      });
+      const result = await runPass(makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }), db);
 
       expect(result.considered).toBe(3);
       expect(result.extracted).toBe(3);
@@ -362,11 +363,7 @@ describe("runGraphExtractionPass — batch path", () => {
 
     const db = openDatabase(path.join(tmpStash, "graph-disable-batching.db"));
     try {
-      const result = await runGraphExtractionPass({
-        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
-        sources: sources(),
-        db,
-      });
+      const result = await runPass(makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }), db);
 
       expect(result.considered).toBe(6);
       expect(result.extracted).toBe(6);
@@ -412,11 +409,7 @@ describe("runGraphExtractionPass — batch path", () => {
 
     const db = openDatabase(path.join(tmpStash, "graph-consistency.db"));
     try {
-      const result = await runGraphExtractionPass({
-        config: makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),
-        sources: sources(),
-        db,
-      });
+      const result = await runPass(makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }), db);
 
       expect(result.considered).toBe(1);
       expect(result.extracted).toBe(1);
