@@ -136,8 +136,8 @@ export function getConfigPath(): string {
 
 // ── Cache directory ──────────────────────────────────────────────────────────
 
-export function getCacheDir(): string {
-  const override = process.env.AKM_CACHE_DIR?.trim();
+export function getCacheDir(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.AKM_CACHE_DIR?.trim();
   if (override) return override;
 
   // Explicit XDG/platform overrides win before the transient-stash isolation
@@ -146,13 +146,13 @@ export function getCacheDir(): string {
   // as set, so the AKM_STASH_DIR transient rule does not silently move cache
   // writes away from where they pointed them.
   if (IS_WINDOWS) {
-    const localAppData = process.env.LOCALAPPDATA?.trim();
+    const localAppData = env.LOCALAPPDATA?.trim();
     if (localAppData) return path.join(localAppData, "akm");
 
-    const userProfile = process.env.USERPROFILE?.trim();
+    const userProfile = env.USERPROFILE?.trim();
     if (userProfile) return path.join(userProfile, "AppData", "Local", "akm");
 
-    const appData = process.env.APPDATA?.trim();
+    const appData = env.APPDATA?.trim();
     if (appData) {
       // Heuristic fallback: APPDATA points to %APPDATA% (Roaming), so
       // navigate to the sibling "Local" directory. This is typically
@@ -161,7 +161,7 @@ export function getCacheDir(): string {
       return path.join(appData, "..", "Local", "akm");
     }
   } else {
-    const xdgCacheHome = process.env.XDG_CACHE_HOME?.trim();
+    const xdgCacheHome = env.XDG_CACHE_HOME?.trim();
     if (xdgCacheHome) return path.join(xdgCacheHome, "akm");
   }
 
@@ -170,7 +170,7 @@ export function getCacheDir(): string {
   // into `${AKM_STASH_DIR}/.akm/cache` so that config backups, registry-index
   // cache, and other regenerable artifacts do not pollute the user's host
   // ~/.cache/akm directory.
-  const stashOverride = process.env.AKM_STASH_DIR?.trim();
+  const stashOverride = env.AKM_STASH_DIR?.trim();
   if (stashOverride && isTransientStashPath(stashOverride)) {
     return path.join(stashOverride, ".akm", "cache");
   }
@@ -183,7 +183,7 @@ export function getCacheDir(): string {
     );
   }
 
-  const home = process.env.HOME?.trim();
+  const home = env.HOME?.trim();
   if (!home) return path.join("/tmp", "akm-cache");
 
   return path.join(home, ".cache", "akm");
@@ -245,77 +245,77 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = proc
   return path.join(home, ".local", "share", "akm");
 }
 
-export function getDbPath(): string {
-  return path.join(getDataDir(), "index.db");
+export function getDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "index.db");
 }
 
-export function getIndexWriterLockPath(): string {
-  return path.join(getDataDir(), "index.db.write.lock");
+export function getIndexWriterLockPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "index.db.write.lock");
 }
 
-export function getWorkflowDbPath(): string {
-  return path.join(getDataDir(), "workflow.db");
+export function getWorkflowDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "workflow.db");
 }
 
 /** Path to the state.db file in $DATA. */
-export function getStateDbPathInDataDir(): string {
-  return path.join(getDataDir(), "state.db");
+export function getStateDbPathInDataDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "state.db");
 }
 
 /** Path for the task history directory in $DATA. */
-export function getTaskHistoryStateDir(): string {
-  return path.join(getDataDir(), "tasks", "history");
+export function getTaskHistoryStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "tasks", "history");
 }
 
 /** Path to the akm.lock file in $DATA. */
-export function getLockfilePath(): string {
-  return path.join(getDataDir(), "akm.lock");
+export function getLockfilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "akm.lock");
 }
 
 /** Path to the akm.lock.lck write-sentinel in $DATA. */
-export function getLockfileLockPath(): string {
-  return path.join(getDataDir(), "akm.lock.lck");
+export function getLockfileLockPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "akm.lock.lck");
 }
 
-export function getSemanticStatusPath(): string {
-  return path.join(getCacheDir(), "semantic-status.json");
+export function getSemanticStatusPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getCacheDir(env), "semantic-status.json");
 }
 
-export function getRegistryCacheDir(): string {
-  return path.join(getCacheDir(), "registry");
+export function getRegistryCacheDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getCacheDir(env), "registry");
 }
 
-export function getRegistryIndexCacheDir(): string {
-  return path.join(getCacheDir(), "registry-index");
+export function getRegistryIndexCacheDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getCacheDir(env), "registry-index");
 }
 
-export function getBinDir(): string {
-  return path.join(getCacheDir(), "bin");
+export function getBinDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getCacheDir(env), "bin");
 }
 
 // ── Scheduled-task runtime directories (logs + history) ──────────────────────
 
-export function getTaskLogDir(): string {
-  return path.join(getCacheDir(), "tasks", "logs");
+export function getTaskLogDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getCacheDir(env), "tasks", "logs");
 }
 
-export function getTaskHistoryDir(): string {
-  return path.join(getCacheDir(), "tasks", "history");
+export function getTaskHistoryDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getCacheDir(env), "tasks", "history");
 }
 
 // ── Default stash directory ──────────────────────────────────────────────────
 
-export function getDefaultStashDir(): string {
-  const override = process.env.AKM_STASH_DIR?.trim();
+export function getDefaultStashDir(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.AKM_STASH_DIR?.trim();
   if (override) return override;
 
   if (IS_WINDOWS) {
-    const userProfile = process.env.USERPROFILE?.trim();
+    const userProfile = env.USERPROFILE?.trim();
     if (userProfile) return path.join(userProfile, "Documents", "akm");
     return path.join("C:\\", "akm");
   }
 
-  const home = process.env.HOME?.trim();
+  const home = env.HOME?.trim();
   if (!home) {
     throw new ConfigError("Unable to determine default stash directory. Set HOME.", "STASH_DIR_NOT_FOUND");
   }
