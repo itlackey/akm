@@ -49,7 +49,8 @@ Legend: `[x]` done · `[ ]` pending · each line ≈ one commit (some batch 2-3)
 ## Phase 6 — close out + the `--parallel>1` flip
 - [ ] **C6.1** Drive `UNIT_PURITY_BASELINE` → 0 (final stragglers) + drive `lint-tests-isolation` ratchet 64 → ~5 (`withIsolatedAkmStorage`/`makeStashDir`). Batch.
 - [ ] **C6.2** Install the runtime purity guard globally in the unit tier; add lint rules (no `fs.readFileSync(0)`/`process.stdin` outside `io-port`/`runtime`/`common`; no real-sleep in unit tier).
-- [ ] **C6.3** The gate: opt-in CI job `SHARD_PARALLEL=4` × 20 runs, 0 `RACE_SIGNATURE` retries, with E + F-min landed. If green, flip the `run-test-shard.sh` default; keep the epoll retry wrapper as defence-in-depth.
+- [ ] **C6.3** The gate: opt-in CI job `SHARD_PARALLEL=4` × 20 runs, 0 `RACE_SIGNATURE` retries, with E + F-min landed. If green, flip the `run-test-shard.sh` default.
+- [ ] **C6.4** No-debt cleanup once the flip is proven: **DELETE the epoll retry wrapper from the UNIT shard path** (the unit tier is pure → the race cannot fire → the wrapper is dead code, not "defence in depth forever"). The wrapper survives only on the integration shard path until that tier is purified (Phase 7). Remove the `akmIndex({full:true})`-in-test-body and any now-dead `withRegistryCacheDb`/legacy seam left unused after Seam 1b lands.
 
 ## Phase 7 — DEFERRED, owner-gated (separate proposal, off critical path)
 God-function / reader decomposition — **requires explicit owner go-ahead per PR**, touches cron-critical files (`improve.ts`, `consolidate.ts`), zero bearing on the flip: D (`runImprovePreparationStage`), D2 (`indexEntries`), J (`akmConsolidateInner`/`akmReflect`/`akmDistill`), K (openDatabase CQS), M (session readers), N (selection-window clock), L (if not done in C3.3), O (leaf default-to-pure fixes).
@@ -58,5 +59,20 @@ God-function / reader decomposition — **requires explicit owner go-ahead per P
 
 ### Commit cadence
 - One item = one commit unless noted; `bun run check` green before each.
-- Production-seam commits land first within a phase (backward compatible), then the test migrations that consume them (which also lower the ratchet).
+- Production-seam commits land first within a phase, then the test migrations that consume them (which also lower the ratchet).
 - Gate preconditions **E** (C3.1) and **F-min** (C5.1) MUST be merged before C6.3.
+
+### No-debt rule (standing)
+Migrate-and-DELETE — never leave a dual path or dead compat shim behind:
+- A test migration MUST delete the old `Bun.serve` / `globalThis.fetch=` /
+  server-helper scaffolding it replaces — not leave it unused. (The unit-purity
+  lint catches residual `Bun.serve`; also grep the file for orphaned helpers.)
+- When a new seam supersedes an old one, REMOVE the old one (e.g. collapse
+  `collectEligibleRefsFn` into `getAllEntries` if `improve-multi-cycle` can use
+  rows; drop the duplicated `withRegistryCacheDb` once the `RegistryCache` port
+  lands; delete the epoll retry wrapper from the unit path post-flip — C6.4).
+- An injected dep that DEFAULTS to the real impl is the production path, not a
+  shim; that is not debt and stays. Debt = a *second, now-unreachable* path kept
+  "for compatibility."
+- Each phase ends with a grep for newly-dead code (unused helpers/exports/
+  options introduced or orphaned by that phase) and removes it in the same PR.
