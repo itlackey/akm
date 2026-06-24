@@ -13,6 +13,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  ALLOWED_FULL_INDEX,
   ALLOWED_SERVE,
   ALLOWED_SPAWN,
   combinedAllowlistSize,
@@ -32,7 +33,8 @@ describe("unit-tier purity ratchet", () => {
 
   test("baseline only ever shrinks", () => {
     // If this fails because the number went DOWN, lower UNIT_PURITY_BASELINE to
-    // match (a file was migrated — good). It must NEVER be raised.
+    // match (a file was migrated — good). It must NEVER be raised. The ceiling
+    // is the high-water mark recorded when the full-index rule was seeded.
     expect(combinedAllowlistSize()).toBeLessThanOrEqual(39);
   });
 
@@ -41,7 +43,7 @@ describe("unit-tier purity ratchet", () => {
     const path = require("node:path") as typeof import("node:path");
     const root = path.resolve(import.meta.dir, "..");
     const missing: string[] = [];
-    for (const rel of [...ALLOWED_SERVE, ...ALLOWED_SPAWN]) {
+    for (const rel of [...ALLOWED_SERVE, ...ALLOWED_SPAWN, ...ALLOWED_FULL_INDEX]) {
       if (!fs.existsSync(path.join(root, rel))) missing.push(rel);
     }
     expect(missing).toEqual([]);
