@@ -29,9 +29,8 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/improve/reflect";
-import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
-import { akmIndex } from "../../src/indexer/indexer";
+import { type SeedEntrySpec, type SeededEntries, seedEntries } from "../_helpers/seed-entries";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -50,10 +49,18 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-async function indexStash(stashDir: string): Promise<void> {
+const seededDbs: SeededEntries[] = [];
+
+// #664 Seam 2: the planner pre-filter reads only the `entries` table, so seed
+// those rows into an in-memory index DB instead of building a full on-disk FTS
+// index (`akmIndex({full:true})`). The backing files are still written by each
+// test so the planner's existsSync guard keeps the dispatched refs; `filePath`
+// must match the written path. Returns the injectable `getAllEntries` reader.
+function seedStash(stashDir: string, specs: SeedEntrySpec[]): SeededEntries["getAllEntries"] {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
-  await akmIndex({ stashDir, full: true });
+  const s = seedEntries(specs.map((spec) => ({ ...spec, stashDir })));
+  seededDbs.push(s);
+  return s.getAllEntries;
 }
 
 function makeStubReflectResult(ref: string): AkmReflectResult {
@@ -93,6 +100,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const s of seededDbs.splice(0)) s.close();
   if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
   if (savedEnv.AKM_DATA_DIR === undefined) delete process.env.AKM_DATA_DIR;
@@ -116,22 +124,26 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
   test("script:* refs are dropped at planner time (reflect AND distill both refuse them on default profile)", async () => {
     const stash = makeTempDir("akm-planner-prefilter-script-stash-");
     fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(stash, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho 'deploy'\n", "utf8");
-    fs.writeFileSync(path.join(stash, "scripts", "build.sh"), "#!/usr/bin/env bash\necho 'build'\n", "utf8");
+    const deploySh = path.join(stash, "scripts", "deploy.sh");
+    const buildSh = path.join(stash, "scripts", "build.sh");
+    fs.writeFileSync(deploySh, "#!/usr/bin/env bash\necho 'deploy'\n", "utf8");
+    fs.writeFileSync(buildSh, "#!/usr/bin/env bash\necho 'build'\n", "utf8");
     // Co-located memory so the run has at least one real planned ref.
     fs.mkdirSync(path.join(stash, "memory"), { recursive: true });
-    fs.writeFileSync(
-      path.join(stash, "memory", "fixture.md"),
-      "---\ntitle: Fixture memory\n---\n\nFixture body.\n",
-      "utf8",
-    );
-    await indexStash(stash);
+    const fixtureMd = path.join(stash, "memory", "fixture.md");
+    fs.writeFileSync(fixtureMd, "---\ntitle: Fixture memory\n---\n\nFixture body.\n", "utf8");
+    const getAllEntries = seedStash(stash, [
+      { name: "deploy.sh", type: "script", filePath: deploySh },
+      { name: "build.sh", type: "script", filePath: buildSh },
+      { name: "fixture", type: "memory", filePath: fixtureMd },
+    ]);
 
     const reflectCalls: AkmReflectOptions[] = [];
     const distillCalls: string[] = [];
 
     const result = await akmImprove({
       stashDir: stash,
+      getAllEntries,
       ensureIndexFn: async () => undefined,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (options): Promise<AkmReflectResult> => {
@@ -169,11 +181,15 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     fs.mkdirSync(path.join(wikiDir, "raw"), { recursive: true });
     // Minimal wiki scaffolding so the indexer recognises it as a wiki source.
     fs.writeFileSync(path.join(wikiDir, "INDEX.md"), "---\ndescription: Research wiki\n---\n# Research Wiki\n", "utf8");
-    fs.writeFileSync(path.join(wikiDir, "raw", "draft.md"), "---\ndescription: raw paper\n---\n# raw paper\n", "utf8");
-    await indexStash(stash);
+    const rawDraft = path.join(wikiDir, "raw", "draft.md");
+    fs.writeFileSync(rawDraft, "---\ndescription: raw paper\n---\n# raw paper\n", "utf8");
+    const getAllEntries = seedStash(stash, [
+      { name: "research/raw/draft", type: "wiki", wikiRole: "raw", filePath: rawDraft },
+    ]);
 
     const result = await akmImprove({
       stashDir: stash,
+      getAllEntries,
       ensureIndexFn: async () => undefined,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (options): Promise<AkmReflectResult> => makeStubReflectResult(options.ref ?? "unknown"),
@@ -194,11 +210,13 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
   test("memory:* refs are NOT pre-filtered (both reflect and distill accept memory)", async () => {
     const stash = makeTempDir("akm-planner-prefilter-memory-stash-");
     fs.mkdirSync(path.join(stash, "memory"), { recursive: true });
-    fs.writeFileSync(path.join(stash, "memory", "alpha.md"), "---\ntitle: Alpha memory\n---\n\nAlpha body.\n", "utf8");
-    await indexStash(stash);
+    const alphaMd = path.join(stash, "memory", "alpha.md");
+    fs.writeFileSync(alphaMd, "---\ntitle: Alpha memory\n---\n\nAlpha body.\n", "utf8");
+    const getAllEntries = seedStash(stash, [{ name: "alpha", type: "memory", filePath: alphaMd }]);
 
     const result = await akmImprove({
       stashDir: stash,
+      getAllEntries,
       ensureIndexFn: async () => undefined,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (options): Promise<AkmReflectResult> => makeStubReflectResult(options.ref ?? "unknown"),
@@ -219,12 +237,9 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     // delta / preparation-stage filtering is orthogonal to this layer.
     const stash = makeTempDir("akm-planner-prefilter-skill-stash-");
     fs.mkdirSync(path.join(stash, "skills", "alpha"), { recursive: true });
-    fs.writeFileSync(
-      path.join(stash, "skills", "alpha", "SKILL.md"),
-      "---\ndescription: Alpha skill\nwhen_to_use: Always\n---\n\nAlpha body.\n",
-      "utf8",
-    );
-    await indexStash(stash);
+    const skillMd = path.join(stash, "skills", "alpha", "SKILL.md");
+    fs.writeFileSync(skillMd, "---\ndescription: Alpha skill\nwhen_to_use: Always\n---\n\nAlpha body.\n", "utf8");
+    const getAllEntries = seedStash(stash, [{ name: "alpha", type: "skill", filePath: skillMd }]);
     // Feedback signal so the preparation stage keeps the ref alive — otherwise
     // the skill ref is filtered out for "no signal", which would falsely look
     // like the planner pre-filter dropped it.
@@ -236,6 +251,7 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
 
     const result = await akmImprove({
       stashDir: stash,
+      getAllEntries,
       ensureIndexFn: async () => undefined,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (options): Promise<AkmReflectResult> => makeStubReflectResult(options.ref ?? "unknown"),
@@ -251,13 +267,17 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
   test("emits a single summary improve_skipped event for all pre-filtered refs with reason profile_filtered_all_passes", async () => {
     const stash = makeTempDir("akm-planner-prefilter-event-stash-");
     fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(stash, "scripts", "a.sh"), "#!/bin/sh\n", "utf8");
-    fs.writeFileSync(path.join(stash, "scripts", "b.sh"), "#!/bin/sh\n", "utf8");
-    fs.writeFileSync(path.join(stash, "scripts", "c.sh"), "#!/bin/sh\n", "utf8");
-    await indexStash(stash);
+    const scriptSpecs: SeedEntrySpec[] = [];
+    for (const n of ["a.sh", "b.sh", "c.sh"]) {
+      const fp = path.join(stash, "scripts", n);
+      fs.writeFileSync(fp, "#!/bin/sh\n", "utf8");
+      scriptSpecs.push({ name: n, type: "script", filePath: fp });
+    }
+    const getAllEntries = seedStash(stash, scriptSpecs);
 
     await akmImprove({
       stashDir: stash,
+      getAllEntries,
       ensureIndexFn: async () => undefined,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (options): Promise<AkmReflectResult> => makeStubReflectResult(options.ref ?? "unknown"),

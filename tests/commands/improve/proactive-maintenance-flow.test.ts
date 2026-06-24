@@ -18,12 +18,12 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
-import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
-import { akmIndex } from "../../../src/indexer/indexer";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type SeededEntries, seedEntries } from "../../_helpers/seed-entries";
 
 const cleanups: Array<() => void> = [];
+const seededDbs: SeededEntries[] = [];
 
 // Sanctioned isolation: sets AKM_STASH_DIR + all XDG_* to sandboxed temp dirs
 // and returns a restoring cleanup (see tests/_helpers/sandbox.ts). Each call
@@ -40,9 +40,16 @@ function writeSkill(stashDir: string, name: string, body: string): void {
   fs.writeFileSync(filePath, `---\nname: ${name}\ndescription: ${name}\n---\n\n${body}\n`, "utf8");
 }
 
-async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
-  await akmIndex({ stashDir, full: true });
+// #664 Seam 2: the planner reads only the `entries` table, so seed those rows
+// into an in-memory index DB instead of running a full on-disk FTS rebuild
+// (`akmIndex({full:true})`). The backing `.md` files are still written via
+// writeSkill so the planner's final existsSync guard keeps the refs. Returns
+// the injectable `getAllEntries` reader; `filePath` defaults to the same
+// `<stash>/skills/<name>.md` path writeSkill uses.
+function seedSkills(stashDir: string, names: string[]): SeededEntries["getAllEntries"] {
+  const s = seedEntries(names.map((name) => ({ name, type: "skill", description: name, stashDir })));
+  seededDbs.push(s);
+  return s.getAllEntries;
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
@@ -96,6 +103,7 @@ function enabledConfig(overrides?: Record<string, unknown>): import("../../../sr
 }
 
 afterEach(() => {
+  for (const s of seededDbs.splice(0)) s.close();
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
@@ -103,12 +111,13 @@ describe("proactive maintenance — disabled by default", () => {
   test("a never-reflected, no-signal asset is NOT selected when the process is off", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "deploy", "Deploy steps.");
-    await buildIndex(stash);
+    const getAllEntries = seedSkills(stash, ["deploy"]);
 
     const reflected: string[] = [];
     const res = await akmImprove({
       scope: "skill",
       stashDir: stash,
+      getAllEntries,
       minRetrievalCount: 5, // P0-A would also not pick (no retrievals)
       ...noopIndexFns,
       reflectFn: async ({ ref }) => {
@@ -129,12 +138,13 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
   test("never-reflected, no-feedback, no-retrieval asset flows into reflect via the selector", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "deploy", "Deploy steps.");
-    await buildIndex(stash);
+    const getAllEntries = seedSkills(stash, ["deploy"]);
 
     const reflected: string[] = [];
     const res = await akmImprove({
       scope: "skill",
       stashDir: stash,
+      getAllEntries,
       config: enabledConfig(),
       minRetrievalCount: 5, // ensure P0-A is NOT the path (no retrievals at all)
       ...noopIndexFns,
@@ -160,13 +170,15 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
 
   test("maxPerRun bounds how many due assets are folded in", async () => {
     const stash = isolatedStash();
-    for (let i = 0; i < 5; i++) writeSkill(stash, `s${i}`, `Body ${i}.`);
-    await buildIndex(stash);
+    const names = Array.from({ length: 5 }, (_, i) => `s${i}`);
+    for (const name of names) writeSkill(stash, name, `Body ${name}.`);
+    const getAllEntries = seedSkills(stash, names);
 
     const reflected: string[] = [];
     const res = await akmImprove({
       scope: "skill",
       stashDir: stash,
+      getAllEntries,
       config: enabledConfig({ maxPerRun: 2 }),
       minRetrievalCount: 5,
       ...noopIndexFns,
