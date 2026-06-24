@@ -21,9 +21,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { resetConfigCache, saveConfig } from "../src/core/config/config";
-import { akmIndex } from "../src/indexer/indexer";
-import { runCliCapture } from "./_helpers/cli";
+import { resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { akmIndex } from "../../src/indexer/indexer";
+import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
   makeSandboxDir,
@@ -34,7 +34,7 @@ import {
   sandboxXdgDataHome,
   sandboxXdgStateHome,
   withEnv,
-} from "./_helpers/sandbox";
+} from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 

@@ -122,7 +122,7 @@ const ALLOWED_FILES = new Set<string>([
   // specific quality-marked skills and sets AKM_STASH_DIR to that stash so the
   // spawned CLI subprocess reads it. Deliberate fixture setup; XDG vars are
   // sandboxed via beforeEach/afterEach.
-  "tests/search-include-proposed-cli.test.ts",
+  "tests/integration/search-include-proposed-cli.test.ts",
 
   // ripgrep.test.ts: one integration test creates a stash with specific script
   // content and sets AKM_STASH_DIR to that stash for the index+search pipeline.
@@ -154,12 +154,12 @@ const ALLOWED_FILES = new Set<string>([
   // tmpStash() dir so akmIndex and akmSearch read the right fixture stash. Each
   // test creates its own isolated stash with specific content; XDG vars are
   // sandboxed via beforeEach/afterEach.
-  "tests/scoring-pipeline.test.ts",
+  "tests/integration/scoring-pipeline.test.ts",
 
   // commands/search.test.ts: buildTestIndex and several tests set AKM_STASH_DIR
   // to per-test fixture stash dirs so akmIndex and akmSearch read the right content.
   // XDG vars are sandboxed via beforeEach/afterEach.
-  "tests/commands/search.test.ts",
+  "tests/integration/search.test.ts",
 
   // parallel-search.test.ts: buildTestIndex sets AKM_STASH_DIR to the per-test
   // tmpStash() so akmIndex and akmSearch read the right fixture stash.
@@ -209,7 +209,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/commands/reflect/reflect-pipeline-fixes.test.ts",
   "tests/registry-cli.test.ts",
   "tests/integration/registry-install.test.ts",
-  "tests/search-source-filter.test.ts",
+  "tests/integration/search-source-filter.test.ts",
   "tests/setup-tmp-stash-guard.test.ts",
   "tests/source-qa-fixes.test.ts",
   "tests/source-source.test.ts",

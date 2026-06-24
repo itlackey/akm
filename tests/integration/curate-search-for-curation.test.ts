@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { searchForCuration } from "../src/commands/read/curate";
-import { saveConfig } from "../src/core/config/config";
-import { akmIndex } from "../src/indexer/indexer";
-import { withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { searchForCuration } from "../../src/commands/read/curate";
+import { saveConfig } from "../../src/core/config/config";
+import { akmIndex } from "../../src/indexer/indexer";
+import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

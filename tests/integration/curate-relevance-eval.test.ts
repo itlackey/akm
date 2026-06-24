@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmCurate } from "../src/commands/read/curate";
-import { saveConfig } from "../src/core/config/config";
-import { akmIndex } from "../src/indexer/indexer";
-import { withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { akmCurate } from "../../src/commands/read/curate";
+import { saveConfig } from "../../src/core/config/config";
+import { akmIndex } from "../../src/indexer/indexer";
+import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const BASELINE = {
   dockerHomelab: ["knowledge:skills/docker-homelab/references/compose", "skill:docker-homelab"],
@@ -18,7 +18,7 @@ const BASELINE = {
   howDocker: [] as string[],
 } as const;
 
-const RANKING_BASELINE_FIXTURE = path.join(__dirname, "fixtures", "stashes", "ranking-baseline");
+const RANKING_BASELINE_FIXTURE = path.join(__dirname, "..", "fixtures", "stashes", "ranking-baseline");
 
 async function curateRefs(query: string): Promise<string[]> {
   const result = await akmCurate({ query, limit: 4 });
