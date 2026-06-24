@@ -10,13 +10,14 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
 import { loadConfig, saveConfig } from "../src/core/config/config";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
-const tempDirs: string[] = [];
+let storage: IsolatedAkmStorage;
 let stashDir = "";
+/** The akm/ subdir of the isolated XDG config home, where config.json persists. */
 let configDir = "";
 
 function makeConfig(partial: Partial<AkmConfig>): AkmConfig {
@@ -28,34 +29,13 @@ function makeConfig(partial: Partial<AkmConfig>): AkmConfig {
 }
 
 beforeEach(() => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sanitize-"));
-  tempDirs.push(tmp);
-  configDir = path.join(tmp, "config");
-  stashDir = path.join(tmp, "stash");
-  process.env.AKM_CONFIG_DIR = configDir;
-  process.env.AKM_CACHE_DIR = path.join(tmp, "cache");
-  process.env.AKM_DATA_DIR = path.join(tmp, "data");
-  process.env.AKM_STATE_DIR = path.join(tmp, "state");
-  process.env.AKM_STASH_DIR = stashDir;
-  for (const d of [
-    configDir,
-    process.env.AKM_CACHE_DIR,
-    process.env.AKM_DATA_DIR,
-    process.env.AKM_STATE_DIR,
-    stashDir,
-  ]) {
-    fs.mkdirSync(d, { recursive: true });
-  }
+  storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
+  configDir = path.join(storage.configDir, "akm");
 });
 
 afterEach(() => {
-  for (const k of ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR", "AKM_STASH_DIR"]) {
-    delete process.env[k];
-  }
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) fs.rmSync(dir, { recursive: true, force: true });
-  }
+  storage.cleanup();
 });
 
 describe("sanitizeConfigForWrite — secret handling (#474)", () => {

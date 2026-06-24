@@ -10,7 +10,6 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import {
@@ -24,39 +23,22 @@ import {
   akmTasksShow,
 } from "../src/commands/tasks/tasks";
 import { runCliCapture } from "./_helpers/cli";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
+let storage: IsolatedAkmStorage;
 let stashDir: string;
-let xdgConfig: string;
-let xdgData: string;
-let xdgState: string;
-const origEnv = {
-  AKM_STASH_DIR: process.env.AKM_STASH_DIR,
-  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-};
 
 beforeEach(() => {
-  stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-md-warn-"));
-  xdgConfig = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-md-warn-cfg-"));
-  xdgData = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-md-warn-data-"));
-  xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-md-warn-state-"));
-  process.env.AKM_STASH_DIR = stashDir;
-  process.env.XDG_CONFIG_HOME = xdgConfig;
-  process.env.XDG_DATA_HOME = xdgData;
-  process.env.XDG_STATE_HOME = xdgState;
+  // One isolated temp root for AKM_STASH_DIR + every XDG dir, with cleanup that
+  // restores all overridden env vars (the _preload tripwire enforces it).
+  storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
   fs.mkdirSync(path.join(stashDir, "tasks"), { recursive: true });
   _resetLegacyMdTaskWarningStateForTests();
 });
 
 afterEach(() => {
-  for (const dir of [stashDir, xdgConfig, xdgData, xdgState]) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-  for (const [k, v] of Object.entries(origEnv)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
+  storage.cleanup();
 });
 
 function captureStderr(fn: () => Promise<void> | void): Promise<string> {

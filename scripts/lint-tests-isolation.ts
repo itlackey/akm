@@ -174,7 +174,7 @@ const ALLOWED_FILES = new Set<string>([
   // The following files were not migrated by QW3 (#493) due to API drift
   // between the migration base commit and release/0.8.0. They are grandfathered
   // here; the list is allowed to shrink as follow-up migrations land.
-  "tests/agent/agent-config-loader.test.ts",
+  // tests/agent/agent-config-loader.test.ts — migrated to withIsolatedAkmStorage (#664 C2.x).
   "tests/belief-state-phase1a.test.ts",
   "tests/commands/events.test.ts",
   "tests/commands/graph-cli-negative.test.ts",
@@ -189,7 +189,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/commands/improve-result-to-file.test.ts",
   "tests/commands/reflect-response-schema.test.ts",
   "tests/config-auto-migrate.test.ts",
-  "tests/config-sanitize-secrets.test.ts",
+  // tests/config-sanitize-secrets.test.ts — migrated to withIsolatedAkmStorage (#664 C2.x).
   "tests/config.test.ts",
   "tests/commands/consolidate/consolidate-promote-dedup.test.ts",
   "tests/contracts/v1-spec-section-11-proposal-queue.test.ts",
@@ -213,7 +213,7 @@ const ALLOWED_FILES = new Set<string>([
   "tests/setup-tmp-stash-guard.test.ts",
   "tests/source-qa-fixes.test.ts",
   "tests/source-source.test.ts",
-  "tests/tasks-legacy-md-warning.test.ts",
+  // tests/tasks-legacy-md-warning.test.ts — migrated to withIsolatedAkmStorage (#664 C2.x).
   "tests/test-isolation-no-swallow.test.ts",
 
   // The following files were not yet migrated (grandfathered alongside the
@@ -238,7 +238,7 @@ const ALLOWED_FILES = new Set<string>([
  *
  * KPI (WS4): drive this from ~73 toward ~5.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 64;
+export const ALLOWLIST_RATCHET_BASELINE = 61;
 
 /** Live size of the combined grandfather allowlist (both rule sets). */
 export function combinedAllowlistSize(): number {

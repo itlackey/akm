@@ -5,21 +5,20 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
-// HOME / XDG_CONFIG_HOME are snapshotted and restored by tests/_preload.ts.
-// This file only owns the per-test tmp dir lifecycle.
-let tmpHome: string;
+// All AKM storage paths (HOME/XDG/stash) are isolated under one temp root and
+// every env override is restored by the helper's cleanup. The config path the
+// loader resolves (getConfigPath()) lands under the isolated XDG_CONFIG_HOME.
+let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-agent-cfg-"));
-  process.env.HOME = tmpHome;
-  process.env.XDG_CONFIG_HOME = path.join(tmpHome, ".config");
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
-  fs.rmSync(tmpHome, { recursive: true, force: true });
+  storage.cleanup();
 });
 
 describe("AkmConfig loader — agent block migration", () => {
