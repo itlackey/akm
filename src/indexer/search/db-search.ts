@@ -133,6 +133,25 @@ export async function searchLocal(input: {
    * `session`). No effect when an explicit `--type` is supplied.
    */
   includeExcludedTypes?: boolean;
+  /**
+   * Issue E (#664) — ambient ranking inputs threaded explicitly so the scoring
+   * core never reads `process.env`/`process.cwd()` mid-flight (which is unsafe
+   * under parallel and leaks across in-process searches). When a field is
+   * omitted it falls back to the real env/cwd read ONCE here at the search
+   * edge, preserving prior default behaviour for every caller.
+   *
+   * - `disableProjectContext`: skip the project-context ranking boost
+   *   (CLI `--no-project-context`, env `AKM_DISABLE_PROJECT_CONTEXT=1`).
+   * - `disableScopedUtility`: skip scoped-utility scoring
+   *   (env `AKM_DISABLE_SCOPED_UTILITY=1`).
+   * - `cwd`: working directory used to resolve project-context tokens.
+   * - `scopeKey`: per-project scope key for scoped utility; resolving it
+   *   reads `process.cwd()`, so callers can pre-resolve it at their edge.
+   */
+  disableProjectContext?: boolean;
+  disableScopedUtility?: boolean;
+  cwd?: string;
+  scopeKey?: string;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -149,6 +168,24 @@ export async function searchLocal(input: {
   const restrictToSources = input.restrictToSources === true;
   const includeExcludedTypes = input.includeExcludedTypes === true;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
+  // Issue E (#664): resolve the ambient ranking inputs ONCE here at the search
+  // edge. Injected values win; absent ones fall back to the real env/cwd so
+  // default behaviour is unchanged. The scoring core (`searchDatabase`) is then
+  // pure-of-inputs — it never reads `process.env`/`process.cwd()` itself.
+  const disableProjectContext = input.disableProjectContext ?? process.env.AKM_DISABLE_PROJECT_CONTEXT === "1";
+  const disableScopedUtility = input.disableScopedUtility ?? process.env.AKM_DISABLE_SCOPED_UTILITY === "1";
+  const cwd = input.cwd ?? process.cwd();
+  let scopeKey: string | undefined;
+  if (input.scopeKey !== undefined) {
+    scopeKey = input.scopeKey;
+  } else if (!disableScopedUtility) {
+    try {
+      scopeKey = getCurrentWorkflowScopeKey();
+    } catch {
+      // Non-fatal — ranking proceeds without scoped utility on any error.
+      scopeKey = undefined;
+    }
+  }
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, rawStatus);
@@ -222,6 +259,9 @@ export async function searchLocal(input: {
       beliefFilter,
       restrictToSources,
       includeExcludedTypes,
+      disableProjectContext,
+      cwd,
+      scopeKey,
     );
     return {
       hits,
@@ -256,6 +296,12 @@ async function searchDatabase(
   beliefFilter: BeliefFilterMode = "all",
   restrictToSources = false,
   includeExcludedTypes = false,
+  // Issue E (#664): ambient ranking inputs are resolved at the `searchLocal`
+  // edge and passed in explicitly — this function reads neither `process.env`
+  // nor `process.cwd()`, so two searches in one process never race the env.
+  disableProjectContext = false,
+  cwd: string = process.cwd(),
+  scopeKey?: string,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -386,10 +432,11 @@ async function searchDatabase(
     return loadGraphBoostContext(allSourceDirs, query, config, db);
   })();
 
-  // Resolve project-context tokens from the current working directory once
+  // Resolve project-context tokens from the supplied working directory once
   // per search invocation. Returns null when running from home dir / /tmp,
-  // or when the caller has set AKM_DISABLE_PROJECT_CONTEXT=1.
-  const projectContext = process.env.AKM_DISABLE_PROJECT_CONTEXT === "1" ? null : resolveProjectContext(process.cwd());
+  // or when the caller disabled project context (Issue E: resolved at the
+  // search edge, not read from `process.env` here).
+  const projectContext = disableProjectContext ? null : resolveProjectContext(cwd);
 
   // Phase 2A / Rec 5: resolve forgetting-curve config and skip the feedback
   // count query when the boost cannot make a difference (default ≤ 1.0 means
@@ -409,15 +456,6 @@ async function searchDatabase(
         scored.map((item) => item.id),
       )
     : undefined;
-
-  // Resolve per-project scope key for scoped utility scoring.
-  // AKM_DISABLE_SCOPED_UTILITY=1 opts out (e.g. for registry searches or tests).
-  let scopeKey: string | undefined;
-  try {
-    scopeKey = process.env.AKM_DISABLE_SCOPED_UTILITY === "1" ? undefined : getCurrentWorkflowScopeKey();
-  } catch {
-    // Non-fatal — ranking proceeds without scoped utility on any error.
-  }
 
   applyRankingRules({
     db,

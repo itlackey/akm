@@ -86,6 +86,16 @@ export async function akmSearch(input: {
    * so events can be filtered out of user-facing history.
    */
   eventSource?: "user" | "improve";
+  /**
+   * Issue E (#664) — ambient ranking inputs resolved at the CLI edge and
+   * forwarded to `searchLocal` so the scoring core never reads
+   * `process.env`/`process.cwd()` mid-flight. Omitted fields fall back to the
+   * real env/cwd inside `searchLocal`, preserving prior default behaviour.
+   */
+  disableProjectContext?: boolean;
+  disableScopedUtility?: boolean;
+  cwd?: string;
+  scopeKey?: string;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -175,6 +185,10 @@ export async function akmSearch(input: {
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
           includeExcludedTypes: input.includeSessions === true,
+          disableProjectContext: input.disableProjectContext,
+          disableScopedUtility: input.disableScopedUtility,
+          cwd: input.cwd,
+          scopeKey: input.scopeKey,
         });
 
   const registryResult =

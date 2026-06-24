@@ -95,11 +95,14 @@ export const searchCommand = defineJsonCommand({
     const filters = parseScopeFilterFlags(filterTokens, "--filter");
     const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
-    const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
     const includeSessions = getHyphenatedBoolean(args, "include-sessions");
-    // --no-project-context sets env so searchDatabase picks it up without
-    // threading the flag through the entire call stack.
-    if (noProjectContext) process.env.AKM_DISABLE_PROJECT_CONTEXT = "1";
+    // Issue E (#664): resolve the project-context ranking switch ONCE here at
+    // the CLI edge — the `--no-project-context` flag OR the env opt-out — and
+    // thread it into the search options bag instead of mutating
+    // `process.env.AKM_DISABLE_PROJECT_CONTEXT` mid-flight. The mutation was
+    // set-once-never-reset and leaked into every later in-process search.
+    const disableProjectContext =
+      getHyphenatedBoolean(args, "no-project-context") || process.env.AKM_DISABLE_PROJECT_CONTEXT === "1";
     const result = await akmSearch({
       query,
       type,
@@ -110,6 +113,7 @@ export const searchCommand = defineJsonCommand({
       belief,
       includeSessions,
       eventSource: resolveEventSource(),
+      disableProjectContext,
     });
     output("search", result);
   },
