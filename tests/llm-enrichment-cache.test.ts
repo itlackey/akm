@@ -8,40 +8,48 @@
  *   (c) --re-enrich bypasses the cache even when the body is unchanged.
  *   (d) clearStaleCacheEntries removes entries for assets no longer in the index.
  *
- * Graph extraction is controlled via a local Bun HTTP server — no module mocking,
- * no global state pollution between test files.
+ * Graph extraction is controlled via an injected fake `HttpClient` (#664 Seam 1)
+ * threaded through `runGraphExtractionPass({ options: { fetch } })` — no real
+ * socket, no module mocking of the llm client (which would leak into other test
+ * files, e.g. tests/llm.test.ts, when Bun shares workers across files).
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { HttpClient } from "../src/core/common";
 import type { AkmConfig } from "../src/core/config/config";
 import type { SearchSource } from "../src/indexer/search/search-source";
 import type { Database } from "../src/storage/database";
 
-// ── Local LLM server (graph extraction) ──────────────────────────────────────
-// A real HTTP server on a random port stands in for the LLM endpoint.
-// This avoids mock.module("../src/llm/client") which leaks into other test
-// files (e.g. tests/llm.test.ts) when Bun shares workers across files.
+// ── Fake LLM client (graph extraction) ───────────────────────────────────────
+// A fake `HttpClient` stands in for the chat-completion socket: it counts calls,
+// drives the test's `graphExtractor`, and returns an OpenAI-shaped response. The
+// pass runs its real routing/cache/snapshot path with no I/O. The cache tests
+// write one asset at a time, so graph extraction runs one call per asset (the
+// default batchSize=1) and a single result object is the right response.
 
 let graphExtractCallCount = 0;
 let graphExtractor: (body: string) => { entities: string[]; relations: { from: string; to: string; type?: string }[] } =
   () => ({ entities: [], relations: [] });
 
-const llmServer = Bun.serve({
-  port: 0, // OS picks an available port
-  fetch(_req) {
-    graphExtractCallCount++;
-    const result = graphExtractor("");
-    return new Response(
-      JSON.stringify({
-        choices: [{ message: { content: JSON.stringify(result) } }],
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  },
-});
+// A non-routable endpoint string; the injected fetch never connects to it.
+const TEST_LLM_ENDPOINT = "http://llm.test/v1/chat/completions";
+
+const llmFetch: HttpClient = (_input, init) => {
+  graphExtractCallCount++;
+  const payload = JSON.parse(String(init?.body ?? "{}")) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
+  const content = JSON.stringify(graphExtractor(userContent));
+  return Promise.resolve(
+    new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+};
 
 // ── Memory inference stub ─────────────────────────────────────────────────────
 // memory-infer is not tested by any other file in the suite, so mock.module
@@ -99,7 +107,7 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
     profiles: {
       llm: {
         default: {
-          endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+          endpoint: TEST_LLM_ENDPOINT,
           model: "test-model",
         },
       },
@@ -191,7 +199,6 @@ afterEach(() => {
 
 afterAll(() => {
   mock.restore();
-  llmServer.stop(true);
 });
 
 // ── computeBodyHash ───────────────────────────────────────────────────────────
@@ -287,14 +294,26 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceA", "ServiceB"], relations: [] });
 
     // First run: LLM is called and result is cached.
-    const first = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
+    const first = await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: false,
+      options: { fetch: llmFetch },
+    });
     expect(first.written).toBe(true);
     expect(graphExtractCallCount).toBe(1);
 
     const callsAfterFirst = graphExtractCallCount;
 
     // Second run with same db and same file body: should be a cache hit.
-    const second = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
+    const second = await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: false,
+      options: { fetch: llmFetch },
+    });
     expect(second.written).toBe(true);
     // LLM must NOT have been called again — it should serve from cache.
     expect(graphExtractCallCount).toBe(callsAfterFirst);
@@ -309,7 +328,13 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
 
     // First run.
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
+    await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: false,
+      options: { fetch: llmFetch },
+    });
     expect(graphExtractCallCount).toBe(1);
 
     // Mutate the file body.
@@ -317,7 +342,13 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceB"], relations: [] });
 
     // Second run: body changed → cache miss → new LLM call.
-    const second = await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
+    const second = await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: false,
+      options: { fetch: llmFetch },
+    });
     expect(graphExtractCallCount).toBe(2);
     expect(second.written).toBe(true);
     // The graph should now contain the new entity.
@@ -330,11 +361,23 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
 
     // First run fills the cache.
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
+    await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: false,
+      options: { fetch: llmFetch },
+    });
     expect(graphExtractCallCount).toBe(1);
 
     // Second run with reEnrich=true must call LLM again.
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: true });
+    await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: true,
+      options: { fetch: llmFetch },
+    });
     expect(graphExtractCallCount).toBe(2);
   });
 
@@ -342,7 +385,13 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     writeFile("memories/m1.md", {}, "Body about ServiceA.");
     graphExtractor = () => ({ entities: ["ServiceA"], relations: [] });
 
-    await runGraphExtractionPass({ config: configWithLlm(), sources: sources(), db, reEnrich: false });
+    await runGraphExtractionPass({
+      config: configWithLlm(),
+      sources: sources(),
+      db,
+      reEnrich: false,
+      options: { fetch: llmFetch },
+    });
     expect(graphExtractCallCount).toBe(1);
 
     await runGraphExtractionPass({
@@ -350,7 +399,7 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
         profiles: {
           llm: {
             default: {
-              endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+              endpoint: TEST_LLM_ENDPOINT,
               model: "different-model",
             },
           },
@@ -361,6 +410,7 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
       sources: sources(),
       db,
       reEnrich: false,
+      options: { fetch: llmFetch },
     });
     expect(graphExtractCallCount).toBe(2);
   });
