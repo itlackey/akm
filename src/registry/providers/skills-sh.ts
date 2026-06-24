@@ -15,6 +15,7 @@ import type {
   KitManifest,
   KitResult,
   RegistryProvider,
+  RegistryProviderDeps,
   RegistryProviderResult,
   RegistryProviderSearchOptions,
   RegistryQuery,
@@ -71,9 +72,11 @@ async function withRegistryCacheDb<T>(fn: (db: ReturnType<typeof openDatabase> |
 class SkillsShProvider implements RegistryProvider {
   readonly type = "skills-sh";
   private readonly config: RegistryConfigEntry;
+  private readonly deps: RegistryProviderDeps;
 
-  constructor(config: RegistryConfigEntry) {
+  constructor(config: RegistryConfigEntry, deps: RegistryProviderDeps = {}) {
     this.config = config;
+    this.deps = deps;
   }
 
   async search(options: RegistryProviderSearchOptions): Promise<RegistryProviderResult> {
@@ -189,7 +192,11 @@ class SkillsShProvider implements RegistryProvider {
       const url = `${baseUrl}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`;
 
       try {
-        const response = await fetchWithRetry(url, undefined, { timeout: 10_000, retries: 1 });
+        const response = await fetchWithRetry(url, undefined, {
+          timeout: 10_000,
+          retries: 1,
+          fetchImpl: this.deps.fetch,
+        });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -291,7 +298,7 @@ class SkillsShProvider implements RegistryProvider {
 
 // ── Self-register ───────────────────────────────────────────────────────────
 
-registerProvider("skills-sh", (config) => new SkillsShProvider(config));
+registerProvider("skills-sh", (config, deps) => new SkillsShProvider(config, deps));
 
 // ── Response parsing ────────────────────────────────────────────────────────
 

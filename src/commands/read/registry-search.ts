@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { toErrorMessage } from "../../core/common";
+import { type HttpClient, toErrorMessage } from "../../core/common";
 import { DEFAULT_CONFIG, type RegistryConfigEntry } from "../../core/config/config";
 import { warn } from "../../core/warn";
 import { resolveProviderFactory } from "../../registry/factory";
@@ -25,6 +25,12 @@ export interface RegistrySearchOptions {
   registries?: RegistryConfigEntry[];
   /** When true, also search asset-level metadata within stashes. */
   includeAssets?: boolean;
+  /**
+   * Injectable HTTP client (#664 Seam 1; defaults to `globalThis.fetch`).
+   * Threaded into every provider so unit tests run the real search/parse path
+   * with no socket — the seam that lets registry tests drop `Bun.serve`.
+   */
+  fetch?: HttpClient;
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -44,7 +50,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   // Resolve and search all providers concurrently
   const results = await Promise.allSettled(
     entries.map((entry) => {
-      const provider = createProvider(entry, warnings);
+      const provider = createProvider(entry, warnings, options?.fetch);
       if (!provider) return Promise.resolve(null);
       return provider.search({ query: trimmed, limit, includeAssets: options?.includeAssets });
     }),
@@ -174,7 +180,7 @@ export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): Reg
 
 // ── Provider resolution ─────────────────────────────────────────────────────
 
-function createProvider(entry: RegistryConfigEntry, warnings: string[]) {
+function createProvider(entry: RegistryConfigEntry, warnings: string[], fetchImpl?: HttpClient) {
   const providerType = entry.provider ?? "static-index";
   const factory = resolveProviderFactory(providerType);
   if (!factory) {
@@ -182,7 +188,7 @@ function createProvider(entry: RegistryConfigEntry, warnings: string[]) {
     warnings.push(`Registry ${label}: unknown provider type "${providerType}"`);
     return null;
   }
-  return factory(entry);
+  return factory(entry, fetchImpl ? { fetch: fetchImpl } : undefined);
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/common";
+import { fetchWithRetry, type HttpClient, jsonWithByteCap, toErrorMessage } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
@@ -15,6 +15,7 @@ import type {
   KitManifest,
   KitResult,
   RegistryProvider,
+  RegistryProviderDeps,
   RegistryProviderResult,
   RegistryProviderSearchOptions,
   RegistryQuery,
@@ -56,9 +57,11 @@ export interface RegistryStashEntry {
 class StaticIndexProvider implements RegistryProvider {
   readonly type = "static-index";
   private readonly config: RegistryConfigEntry;
+  private readonly deps: RegistryProviderDeps;
 
-  constructor(config: RegistryConfigEntry) {
+  constructor(config: RegistryConfigEntry, deps: RegistryProviderDeps = {}) {
     this.config = config;
+    this.deps = deps;
   }
 
   async search(options: RegistryProviderSearchOptions): Promise<RegistryProviderResult> {
@@ -130,7 +133,7 @@ class StaticIndexProvider implements RegistryProvider {
   private async loadAllKits(warnings: string[]): Promise<Array<{ stash: RegistryStashEntry; registryName?: string }>> {
     const allKits: Array<{ stash: RegistryStashEntry; registryName?: string }> = [];
     try {
-      const index = await loadIndex(this.config);
+      const index = await loadIndex(this.config, this.deps.fetch);
       if (index) {
         const regName = this.config.name;
         for (const stash of index.stashes) {
@@ -167,7 +170,7 @@ function assetHitToPreview(hit: RegistryAssetSearchHit): AssetPreview {
 
 // ── Self-register ───────────────────────────────────────────────────────────
 
-registerProvider("static-index", (config) => new StaticIndexProvider(config));
+registerProvider("static-index", (config, deps) => new StaticIndexProvider(config, deps));
 
 // ── Index loading with cache ────────────────────────────────────────────────
 
@@ -201,7 +204,7 @@ async function withRegistryCacheDb<T>(fn: (db: ReturnType<typeof openDatabase> |
   }
 }
 
-async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | null> {
+async function loadIndex(entry: RegistryConfigEntry, fetchImpl?: HttpClient): Promise<RegistryIndex | null> {
   return withRegistryCacheDb(async (db) => {
     // ── Step 1: Try DB cache (index.db) ─────────────────────────────────────
     let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
@@ -227,7 +230,7 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
 
     // ── Step 2: Fetch fresh index from remote ────────────────────────────────
     try {
-      const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000 });
+      const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000, fetchImpl });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

@@ -27,6 +27,7 @@
  * iterated cleanly post-Phase 6 without reaching into provider-specific shapes.
  */
 
+import type { HttpClient } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config/config";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 
@@ -115,4 +116,14 @@ export interface RegistryProvider {
   canHandle(ref: ParsedRegistryRef): boolean;
 }
 
-export type RegistryProviderFactory = (config: RegistryConfigEntry) => RegistryProvider;
+/**
+ * Injectable dependencies for registry providers (#664 Seam 1). `fetch` defaults
+ * to `globalThis.fetch`; unit tests pass a fake so provider search/parse runs
+ * with no socket. The in-memory cache port (#1b) is added in Phase 2 alongside
+ * the `:memory:` runtime guard.
+ */
+export interface RegistryProviderDeps {
+  fetch?: HttpClient;
+}
+
+export type RegistryProviderFactory = (config: RegistryConfigEntry, deps?: RegistryProviderDeps) => RegistryProvider;
