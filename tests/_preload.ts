@@ -80,6 +80,11 @@ const HARNESSED: readonly string[] = [
   // Registry overrides used by registry-providers tests.
   "AKM_REGISTRY_URL",
   "AKM_NPM_REGISTRY",
+  // #664 Step 2: the opt-in runtime purity guard (tests/_helpers/purity-guard.ts)
+  // sets these in its `beforeAll` for the duration of a guarded describe. They are
+  // harness-owned (snapshotted/restored per-test), not a mid-test leak.
+  "AKM_NO_AUTO_MIGRATE",
+  "AKM_TEST_TEMP_STORE_MEMORY",
 ];
 
 /**

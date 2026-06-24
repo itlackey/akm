@@ -110,6 +110,38 @@ export interface OpenDatabaseOptions {
 }
 
 /**
+ * A guard consulted on every {@link openDatabase} call before the driver opens
+ * the handle. It receives the FINAL path string handed to the driver (already
+ * resolved past any `?? getDbPath()` default at the higher-level openers), so it
+ * sees `:memory:` verbatim and sees a no-arg default-to-real open as the real
+ * file path. Throwing from it aborts the open. Used by the unit-tier purity
+ * guard (`tests/_helpers/purity-guard.ts`) to fail any real on-disk SQLite open.
+ */
+export type OpenDatabaseGuard = (path: string) => void;
+
+let activeOpenGuard: OpenDatabaseGuard | undefined;
+
+/**
+ * Install a {@link OpenDatabaseGuard}. TEST-ONLY: throws unless
+ * `AKM_TEST_HARNESS === "1"`, so production code can never install one — the
+ * default (no guard) is the production path. Returns the previously-installed
+ * guard so a caller can restore it (`afterAll`).
+ */
+export function setOpenDatabaseGuard(guard: OpenDatabaseGuard | null): OpenDatabaseGuard | undefined {
+  if (process.env.AKM_TEST_HARNESS !== "1") {
+    throw new Error("setOpenDatabaseGuard is test-only (requires AKM_TEST_HARNESS=1)");
+  }
+  const prev = activeOpenGuard;
+  activeOpenGuard = guard ?? undefined;
+  return prev;
+}
+
+/** Remove any installed open-database guard (restore the production no-guard path). */
+export function resetOpenDatabaseGuard(): void {
+  activeOpenGuard = undefined;
+}
+
+/**
  * Open a SQLite database handle at `path`, selecting the driver for the current
  * runtime. Returns a handle conforming to the structural {@link Database} type.
  *
@@ -117,6 +149,11 @@ export interface OpenDatabaseOptions {
  * Bun, so importing this module under Bun never touches `better-sqlite3`.
  */
 export function openDatabase(path: string, opts?: OpenDatabaseOptions): Database {
+  // The guard slot is undefined in production (zero overhead beyond this load);
+  // only the unit-tier purity harness installs one. It sees the final driver
+  // path, so the §8.3 `p === ":memory:"` discrimination runs on exactly what the
+  // driver receives.
+  activeOpenGuard?.(path);
   if (isBun) {
     return openBunDatabase(path, opts);
   }

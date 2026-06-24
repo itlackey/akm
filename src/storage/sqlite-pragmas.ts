@@ -172,6 +172,16 @@ export function applyStandardPragmas(db: Database, opts: StandardPragmaOptions =
     db.exec("PRAGMA synchronous = FULL");
   }
 
+  // #664 §8.5: under the unit-tier purity harness, force temp btrees in-memory
+  // so large FTS5/vec sorts on a seeded `:memory:` corpus never spill to a
+  // file-backed temp the path-level open guard cannot see. Harness-only flag
+  // (`tests/_helpers/purity-guard.ts`); never set in production, so this is a
+  // no-op there. `MEMORY` only forbids file-backing — SQLite already defaults
+  // temp btrees, so behaviour is otherwise unchanged.
+  if (process.env.AKM_TEST_TEMP_STORE_MEMORY === "1") {
+    db.exec("PRAGMA temp_store = MEMORY");
+  }
+
   return mode;
 }
 
