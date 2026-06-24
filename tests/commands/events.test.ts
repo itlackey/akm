@@ -5,10 +5,44 @@ import os from "node:os";
 import path from "node:path";
 import { akmEventsList, akmEventsTail } from "../../src/commands/events";
 import { saveConfig } from "../../src/core/config/config";
-import { appendEvent, readEvents, tailEvents } from "../../src/core/events";
+import { appendEvent, type EventsContext, readEvents, tailEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
+import { openStateDatabase } from "../../src/core/state-db";
+import type { Database } from "../../src/storage/database";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
+
+/**
+ * #664 Seam 5: a controllable interval timer so the tailEvents polling loop can
+ * be driven deterministically with zero real wall-clock waits. `setIntervalFn`
+ * records the tick callback; the test fires it via {@link tick}. Paired with a
+ * manually-advanced `now()` clock and an in-memory state.db handle (`ctx.db`),
+ * this makes the tail tests fully pure (no real timer, no real state.db file).
+ */
+class FakeIntervals {
+  private callback: (() => void) | undefined;
+  private nextId = 1;
+  private clearedId: number | undefined;
+
+  readonly setInterval = ((fn: () => void): ReturnType<typeof setInterval> => {
+    this.callback = fn;
+    return this.nextId++ as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof setInterval;
+
+  readonly clearInterval = ((handle: unknown): void => {
+    this.clearedId = handle as number;
+    this.callback = undefined;
+  }) as unknown as typeof clearInterval;
+
+  /** Fire one poll tick (no-op once the loop has cleared its interval). */
+  tick(): void {
+    this.callback?.();
+  }
+
+  get cleared(): boolean {
+    return this.clearedId !== undefined;
+  }
+}
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
 // (tests/_helpers/cli.ts) where faithful. The pure appendEvent/readEvents/
@@ -238,42 +272,71 @@ describe("appendEvent / readEvents", () => {
 });
 
 describe("tailEvents", () => {
+  // #664 Seam 5: these tests drive the poll loop with an injected fake interval
+  // timer + a manually-advanced clock + an in-memory state.db (ctx.db), so they
+  // do ZERO real I/O — no real timer, no real state.db file.
+  let db: Database;
+  afterEach(() => {
+    db?.close();
+    db = undefined as unknown as Database;
+  });
+
   test("emits historical events, then follows new appends until maxEvents", async () => {
-    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
-    const ctx = { dbPath };
+    db = openStateDatabase(":memory:");
+    const ctx: EventsContext = { db };
     appendEvent({ eventType: "remember", ref: "memory:1" }, ctx);
 
-    const tailPromise = tailEvents({ intervalMs: 25, maxEvents: 3, maxDurationMs: 2_000 }, ctx);
-    // Give the tail loop a chance to start polling
-    await new Promise((r) => setTimeout(r, 50));
+    const timers = new FakeIntervals();
+    const tailPromise = tailEvents(
+      {
+        intervalMs: 25,
+        maxEvents: 3,
+        maxDurationMs: 2_000,
+        setIntervalFn: timers.setInterval,
+        clearIntervalFn: timers.clearInterval,
+      },
+      ctx,
+    );
+    // The immediate first tick (run synchronously inside tailEvents) already
+    // picked up memory:1. Append the rest and fire one tick per write.
     appendEvent({ eventType: "remember", ref: "memory:2" }, ctx);
-    await new Promise((r) => setTimeout(r, 50));
+    timers.tick();
     appendEvent({ eventType: "remember", ref: "memory:3" }, ctx);
+    timers.tick();
 
     const result = await tailPromise;
     expect(result.events.map((e) => e.ref)).toEqual(["memory:1", "memory:2", "memory:3"]);
     expect(result.reason).toBe("maxEvents");
+    expect(timers.cleared).toBe(true);
   });
 
   test("tail keeps up with a concurrent writer without losing events", async () => {
-    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
-    const ctx = { dbPath };
+    db = openStateDatabase(":memory:");
+    const ctx: EventsContext = { db };
     const TOTAL = 50;
 
-    // Writer: append TOTAL events with small jitter so the tail polling
-    // intervals span multiple writes. Run concurrently with the tail.
-    const writerPromise = (async () => {
-      for (let i = 0; i < TOTAL; i += 1) {
-        appendEvent({ eventType: "remember", ref: `memory:${i}`, metadata: { i } }, ctx);
-        if (i % 5 === 0) await new Promise((r) => setTimeout(r, 5));
-      }
-    })();
+    const timers = new FakeIntervals();
+    // Tail with maxEvents = TOTAL so it resolves once it has seen every event.
+    const tailPromise = tailEvents(
+      {
+        intervalMs: 20,
+        maxEvents: TOTAL,
+        maxDurationMs: 5_000,
+        setIntervalFn: timers.setInterval,
+        clearIntervalFn: timers.clearInterval,
+      },
+      ctx,
+    );
 
-    // Tail with maxEvents = TOTAL so we resolve as soon as we've seen
-    // every event the writer produced.
-    const tailPromise = tailEvents({ intervalMs: 20, maxEvents: TOTAL, maxDurationMs: 5_000 }, ctx);
+    // Interleave writes and polls: append in batches and fire a tick after each
+    // batch, so a single tick must drain multiple events written since the last
+    // poll (this is the rowid-cursor "no skips" contract under test).
+    for (let i = 0; i < TOTAL; i += 1) {
+      appendEvent({ eventType: "remember", ref: `memory:${i}`, metadata: { i } }, ctx);
+      if (i % 5 === 0) timers.tick();
+    }
+    timers.tick();
 
-    await writerPromise;
     const result = await tailPromise;
 
     expect(result.events).toHaveLength(TOTAL);
@@ -284,12 +347,48 @@ describe("tailEvents", () => {
   });
 
   test("tail terminates on AbortSignal", async () => {
-    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
-    const ctx = { dbPath };
+    db = openStateDatabase(":memory:");
+    const ctx: EventsContext = { db };
     const ac = new AbortController();
-    setTimeout(() => ac.abort(), 80);
-    const result = await tailEvents({ intervalMs: 20, signal: ac.signal, maxDurationMs: 1_000 }, ctx);
+    const timers = new FakeIntervals();
+    const tailPromise = tailEvents(
+      {
+        intervalMs: 20,
+        signal: ac.signal,
+        maxDurationMs: 1_000,
+        setIntervalFn: timers.setInterval,
+        clearIntervalFn: timers.clearInterval,
+      },
+      ctx,
+    );
+    // Abort while the loop is polling — it must resolve with reason "signal".
+    ac.abort();
+    const result = await tailPromise;
     expect(result.reason).toBe("signal");
+    expect(timers.cleared).toBe(true);
+  });
+
+  test("maxDuration fires via the injected clock without real time passing", async () => {
+    db = openStateDatabase(":memory:");
+    let virtualNow = 1_000;
+    const ctx: EventsContext = { db, now: () => virtualNow };
+    const timers = new FakeIntervals();
+    const tailPromise = tailEvents(
+      {
+        intervalMs: 20,
+        maxDurationMs: 500,
+        setIntervalFn: timers.setInterval,
+        clearIntervalFn: timers.clearInterval,
+      },
+      ctx,
+    );
+    // Advance virtual time past the cutoff, then poll — the cutoff is evaluated
+    // against ctx.now, so no real wall-clock wait is needed.
+    virtualNow += 600;
+    timers.tick();
+    const result = await tailPromise;
+    expect(result.reason).toBe("maxDuration");
+    expect(timers.cleared).toBe(true);
   });
 });
 

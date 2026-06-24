@@ -295,6 +295,16 @@ export interface AkmImproveOptions {
    * when remainingBudgetMs is exhausted.
    */
   maxCycles?: number;
+  /**
+   * #664 Seam 5: clock for the duration-telemetry bookends ONLY. Defaults to
+   * `Date.now`. This feeds the wall-clock-delta telemetry pairs (total run
+   * duration on the `improve_completed`/`improve_failed` events; the
+   * memory-inference and graph-extraction per-phase durations). It does NOT
+   * feed budget/window math — `startMs`, `remainingBudgetMs`, the budget-exhaust
+   * checks, and every selection-window cutoff stay on real wall-clock. A
+   * FakeClock test injecting `now` MUST NOT assert on budget math (§8 caveat).
+   */
+  now?: () => number;
   /** #616 test seam: override collectEligibleRefs (re-run each cycle). */
   collectEligibleRefsFn?: typeof collectEligibleRefs;
   /**
@@ -1373,6 +1383,14 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Each stage acquires its lock just before starting and releases in finally.
   // best-effort `unlinkSync` is a no-op when no lock file exists.
   const startMs = Date.now();
+  // #664 Seam 5: separate clock for duration-telemetry bookends ONLY. `startMs`
+  // above stays on real wall-clock because it anchors budget/window math
+  // (remainingBudgetMs, the budget-exhaust checks); `telemetryNow`/`telemetryStartMs`
+  // feed only the wall-clock-delta telemetry on the improve_completed/_failed
+  // events, so a FakeClock test can assert a non-zero virtual duration without
+  // touching budget behaviour.
+  const telemetryNow = options.now ?? Date.now;
+  const telemetryStartMs = telemetryNow();
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   // O-1 (#364): Create a shared AbortController derived from startMs + budgetMs.
   // Every async seam receives this signal so a hung sub-call cannot extend the
@@ -1870,7 +1888,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         {
           memoryInferenceDurationMs,
           graphExtractionDurationMs,
-          totalDurationMs: Date.now() - startMs,
+          totalDurationMs: telemetryNow() - telemetryStartMs,
           warningCount: allWarnings.length,
           orphansPurged: orphansPurged ?? 0,
         },
@@ -1899,7 +1917,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
         metadata: {
           error: err instanceof Error ? err.message : String(err),
-          durationMs: Date.now() - startMs,
+          durationMs: telemetryNow() - telemetryStartMs,
         },
       },
       eventsCtx,
@@ -4916,6 +4934,10 @@ export async function runImproveMaintenancePasses(args: {
 
   const config = options.config ?? loadConfig();
   const sources = resolveSourceEntries(options.stashDir, config);
+  // #664 Seam 5: clock for the per-phase duration-telemetry bookends ONLY
+  // (memory-inference / graph-extraction). Defaults to `Date.now`; never gates
+  // any decision — pure wall-clock-delta telemetry.
+  const telemetryNow = options.now ?? Date.now;
   const memoryInferenceFn = options.memoryInferenceFn ?? runMemoryInferencePass;
   const graphExtractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
   const stalenessDetectionFn = options.stalenessDetectionFn ?? runStalenessDetectionPass;
@@ -4991,7 +5013,7 @@ export async function runImproveMaintenancePasses(args: {
             ? `[improve] memory inference starting (${hintRefs} hint refs touched this run; pass discovers all pending)`
             : "[improve] memory inference starting (discovering pending parents)",
         );
-        const inferenceStart = Date.now();
+        const inferenceStart = telemetryNow();
         try {
           // O-1 (#364): pass budget signal so a hung inference call is cancelled.
           memoryInference = await withLlmStage("memory-inference", () =>
@@ -5009,13 +5031,13 @@ export async function runImproveMaintenancePasses(args: {
               },
             }),
           );
-          memoryInferenceDurationMs = Date.now() - inferenceStart;
+          memoryInferenceDurationMs = telemetryNow() - inferenceStart;
           actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
           info(
             `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
           );
         } catch (err) {
-          memoryInferenceDurationMs = Date.now() - inferenceStart;
+          memoryInferenceDurationMs = telemetryNow() - inferenceStart;
           allWarnings.push(`memory inference failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
@@ -5055,7 +5077,7 @@ export async function runImproveMaintenancePasses(args: {
         info("[improve] graph extraction skipped (disabled by improve profile)");
       } else if (sources.length > 0 && graphEnabled) {
         info(`[improve] graph extraction starting${graphExtractionFullScan ? " (full-corpus scan)" : ""}`);
-        const extractionStart = Date.now();
+        const extractionStart = telemetryNow();
         try {
           // D9: if consolidation ran but memory inference did not reindex, force a reindex
           // so graph extraction sees current DB state after consolidation writes.
@@ -5115,13 +5137,13 @@ export async function runImproveMaintenancePasses(args: {
               options: { candidatePaths, ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}) },
             }),
           );
-          graphExtractionDurationMs = Date.now() - extractionStart;
+          graphExtractionDurationMs = telemetryNow() - extractionStart;
           actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
           info(
             `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
           );
         } catch (err) {
-          graphExtractionDurationMs = Date.now() - extractionStart;
+          graphExtractionDurationMs = telemetryNow() - extractionStart;
           allWarnings.push(`graph extraction failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       } else if (sources.length > 0 && !graphEnabled) {

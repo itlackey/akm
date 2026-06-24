@@ -293,8 +293,17 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
       metadata: { signal: "positive", note: "fixture" },
     });
 
+    // #664 Seam 5: inject a monotonic virtual clock for the duration-telemetry
+    // bookends. Each call advances by a fixed step, so the per-phase
+    // `telemetryNow()` bookend pairs produce a strictly-positive delta WITHOUT
+    // any real wall-clock wait — the injected passes return instantly.
+    let virtualNow = 1_000;
     const result = await akmImprove({
       stashDir: stash,
+      now: () => {
+        virtualNow += 5;
+        return virtualNow;
+      },
       ensureIndexFn: async () => undefined,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -321,13 +330,12 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
         },
       }),
       distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
-      // Inject memory inference + graph extraction passes that simulate
-      // taking measurable wall-clock time. The improve loop wraps these
-      // calls with Date.now() bookends, so the envelope MUST end up with
-      // a non-zero `memoryInferenceDurationMs` / `graphExtractionDurationMs`
-      // at the top level.
+      // Inject memory inference + graph extraction passes. The improve loop
+      // wraps these calls with `telemetryNow()` bookends; with the injected
+      // monotonic clock the envelope MUST end up with a non-zero
+      // `memoryInferenceDurationMs` / `graphExtractionDurationMs` at the top
+      // level — no real sleep required.
       memoryInferenceFn: async () => {
-        await new Promise((r) => setTimeout(r, 5));
         return {
           schemaVersion: 1 as const,
           considered: 0,
@@ -348,7 +356,6 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
         };
       },
       graphExtractionFn: async () => {
-        await new Promise((r) => setTimeout(r, 5));
         return {
           schemaVersion: 1 as const,
           considered: 0,

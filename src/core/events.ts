@@ -290,8 +290,21 @@ export interface ReadEventsResult {
 /**
  * Read all events matching the filter. Returns a `nextOffset` that callers
  * can persist between processes for monotonic resumption.
+ *
+ * I1: when `ctx.db` is provided (a pre-opened long-lived connection), the
+ * function reads directly from that handle without opening or closing the DB —
+ * exactly mirroring how {@link appendEvent} already honors `ctx.db`. This is the
+ * seam a pure events unit test uses: it injects `ctx.db = openStateDatabase(":memory:")`
+ * so no real `state.db` file is opened. The caller owns the handle's lifetime;
+ * `readEvents` never closes a caller-provided connection.
  */
 export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext): ReadEventsResult {
+  // Fast path: caller provided a long-lived connection — read from it directly
+  // and never close it (the caller owns its lifetime).
+  if (ctx?.db) {
+    return readEventsFromDb(ctx.db, options);
+  }
+
   const dbPath = resolveDbPath(ctx);
 
   let db: import("../storage/database").Database | undefined;
@@ -305,25 +318,30 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
   }
 
   try {
-    const { events: rawEvents, nextId } = readStateEvents(db, {
-      sinceId: options.sinceOffset,
-      since: options.since,
-      type: options.type,
-      ref: options.ref,
-    });
-
-    // Apply tag filters in application code (same as the old JSONL implementation).
-    const events = rawEvents.filter((envelope) => {
-      const tags = (envelope.metadata?.tags as string[] | undefined) ?? [];
-      if (options.excludeTags?.some((t) => tags.includes(t))) return false;
-      if (options.includeTags && !options.includeTags.every((t) => tags.includes(t))) return false;
-      return true;
-    });
-
-    return { events, nextOffset: nextId };
+    return readEventsFromDb(db, options);
   } finally {
     db.close();
   }
+}
+
+/** Run the filtered read against an already-open state.db handle. */
+function readEventsFromDb(db: Database, options: ReadEventsOptions): ReadEventsResult {
+  const { events: rawEvents, nextId } = readStateEvents(db, {
+    sinceId: options.sinceOffset,
+    since: options.since,
+    type: options.type,
+    ref: options.ref,
+  });
+
+  // Apply tag filters in application code (same as the old JSONL implementation).
+  const events = rawEvents.filter((envelope) => {
+    const tags = (envelope.metadata?.tags as string[] | undefined) ?? [];
+    if (options.excludeTags?.some((t) => tags.includes(t))) return false;
+    if (options.includeTags && !options.includeTags.every((t) => tags.includes(t))) return false;
+    return true;
+  });
+
+  return { events, nextOffset: nextId };
 }
 
 // ─── Tailing ─────────────────────────────────────────────────────────────────
@@ -342,6 +360,15 @@ export interface TailOptions extends ReadEventsOptions {
   signal?: AbortSignal;
   /** Called once per emitted event. */
   onEvent?: (event: EventEnvelope) => void;
+  /**
+   * #664 Seam 5: injectable poll-timer pair (default: the globals). A pure
+   * events test injects a fake `setInterval`/`clearInterval` so it can drive the
+   * polling cadence deterministically without any real wall-clock wait. The
+   * polling model is unchanged — `setInterval` is kept (no self-rescheduling
+   * rewrite); only the timer source is parameterized.
+   */
+  setIntervalFn?: typeof setInterval;
+  clearIntervalFn?: typeof clearInterval;
 }
 
 export interface TailResult {
@@ -361,6 +388,9 @@ export interface TailResult {
  */
 export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext): Promise<TailResult> {
   const intervalMs = options.intervalMs ?? 75;
+  const now = resolveNow(ctx);
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
   const collected: EventEnvelope[] = [];
   let cursor = options.sinceOffset ?? 0;
 
@@ -389,7 +419,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
     cursor = initial.nextOffset;
   }
 
-  const startedAt = Date.now();
+  const startedAt = now();
   return new Promise<TailResult>((resolve) => {
     let resolved = false;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -397,7 +427,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
     function finish(reason: TailResult["reason"]): void {
       if (resolved) return;
       resolved = true;
-      if (timer) clearInterval(timer);
+      if (timer) clearIntervalFn(timer);
       resolve({ events: collected, nextOffset: cursor, reason });
     }
 
@@ -428,7 +458,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
       } catch {
         // Non-fatal: stay in the loop.
       }
-      if (options.maxDurationMs !== undefined && Date.now() - startedAt >= options.maxDurationMs) {
+      if (options.maxDurationMs !== undefined && now() - startedAt >= options.maxDurationMs) {
         finish("maxDuration");
       }
     }
@@ -441,7 +471,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
       options.signal.addEventListener("abort", () => finish("signal"), { once: true });
     }
 
-    timer = setInterval(tick, intervalMs);
+    timer = setIntervalFn(tick, intervalMs);
     // Run one tick immediately so callers don't have to wait an interval
     // for events written in the same tick as the tail starts.
     tick();
