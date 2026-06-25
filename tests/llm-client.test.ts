@@ -525,7 +525,12 @@ describe("chatCompletion single bounded retry", () => {
   test("context-overflow-classified 5xx is not retried", async () => {
     const originalFetch = globalThis.fetch;
     const { fetch: stub, calls } = queuedFetch([
-      new Response("the prompt exceeds the model context length", { status: 500 }),
+      // Strict classifier: a context keyword PLUS token-count evidence. Bare
+      // prose like "exceeds the context length" (no token count / "exceeded")
+      // is intentionally NOT classified as overflow and IS retried (#496).
+      new Response("This model's maximum context length is 8192 tokens, however you requested 9000 tokens", {
+        status: 500,
+      }),
       jsonOk("unreached"),
     ]);
     globalThis.fetch = stub;

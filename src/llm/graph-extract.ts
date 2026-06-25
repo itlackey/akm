@@ -27,7 +27,7 @@ import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" 
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { warn, warnVerbose } from "../core/warn";
-import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
+import { chatCompletion, isContextSizeError, LlmCallError, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 
 /**
@@ -59,27 +59,11 @@ const USER_PROMPT_PREFIX = userPromptTemplate
   .replace("{{MAX_ENTITIES}}", String(MAX_ENTITIES_PER_ASSET))
   .replace("{{MAX_RELATIONS}}", String(MAX_RELATIONS_PER_ASSET));
 
-/**
- * Detect whether an error message indicates a context size exceeded condition.
- * Covers common patterns from OpenAI-compatible APIs (LM Studio, Ollama, etc).
- *
- * Requires BOTH a context keyword AND token-count/overflow evidence so that
- * model prose merely mentioning "context size" / "context length" (e.g. gemma
- * narrating about a document) does not get misclassified as a provider
- * context-limit error (#496).
- */
-export function isContextSizeError(message: string): boolean {
-  const lower = message.toLowerCase();
-  const contextKw = /context (size|length|window)|prompt too long|exceeds.*context/.test(lower);
-  if (!contextKw) {
-    return false;
-  }
-  const evidence =
-    /\b\d+\s*(token|tokens|tk)\b/.test(lower) ||
-    /max(imum)?\s+(context|token|input)/.test(lower) ||
-    /exceeded|over.*limit|too.*long/.test(lower);
-  return evidence;
-}
+// `isContextSizeError` is defined in `./client` and re-exported here so the
+// graph extractor and the retry classifier (`isRetryable`) share one
+// definition (#496). Re-exported (not just imported) to preserve existing
+// importers of this module — including its unit test.
+export { isContextSizeError } from "./client";
 
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
 export interface GraphRelation {

@@ -33,7 +33,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { LlmConnectionConfig } from "../../core/config/config";
+import type { LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
@@ -847,7 +847,7 @@ export interface RunReflectViaLlmOptions {
   /** Reflect prompt text (built by {@link buildReflectPrompt}). */
   prompt: string | undefined;
   /** LLM connection config. `supportsJsonSchema` controls structured-output mode. */
-  connection: LlmConnectionConfig & { supportsJsonSchema?: boolean };
+  connection: LlmProfileConfig;
   /** Hard timeout for the LLM request in ms. */
   timeoutMs?: number;
   /** Prior draft for Self-Refine critique (injected on iterations > 0). */
