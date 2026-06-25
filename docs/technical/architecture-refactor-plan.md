@@ -2,7 +2,7 @@
 
 ## Execution status (last updated 2026-06-25)
 
-All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: unit **5,211 / 0**, integration **1,578 / 0 fail**.
+All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: lint **0 warnings**, tsc **0 errors**, unit **5,218 / 0**, integration **1,545 / 0 fail**.
 
 | Task | Status | Notes |
 |---|---|---|
@@ -17,9 +17,9 @@ All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each �
 | **R9** dir-staleness pass extraction | ✅ DONE `05d4b1fa` | |
 | **R5** source-kind descriptor table | ⏭️ SKIPPED | Couldn't reach a clean behavior-preserving gate; the 4 switches weren't cleanly unifiable as scoped. Re-attempt with a different shape. |
 | **R6** collapse output/text+shapes wrappers | ⏭️ NOT VALID | Premise was wrong — those modules are registration entries delegating to output-layer helpers, **not** command-wrappers. Nothing to inline. Removed from scope. |
-| **R2** route `ensureSourceCaches` through `sync()` | ⏸️ NOT STARTED | |
-| **R8** `runImproveSession` lifecycle lift | ⏸️ NOT STARTED | |
-| **X3** `executeRunner()` kind-switch | ⏸️ NOT STARTED | |
+| **X3** `executeRunner()` kind-switch | ✅ DONE `bf84d441` | TDD; one dispatch in `integrations/agent/runner-dispatch.ts` + `RunnerSeams`; deleted both copied switches (reflect+drain) + `runProfileJudgment`. net −43 |
+| **R2** route `ensureSourceCaches` through `sync()` | ✅ DONE `eaef79a4` | TDD; **fixed the verified npm-never-refreshed bug** — two hardcoded loops → one `provider.sync({force})` loop. net −10 prod |
+| **R8** `runImproveSession` lifecycle lift | ✅ DONE `5e16311e` | TDD; SIGNAL_TABLE + handlers + persist-before-exit lifted to testable `improve/improve-session.ts` (fake-SIGTERM unit test, no child process). net −20 CLI |
 | **D1** decompose `improve.ts` (5,406 LOC) + **D1b** `withProcessLock` | ⏸️ DEFERRED | XL / high-risk / never-big-bang — needs human-supervised incremental work, NOT a one-shot agent |
 | **D2** `state-db` per-domain repositories | ⏸️ DEFERRED | XL; builds on the X1 seam |
 | **D3** decompose `consolidate.ts` (3,447 LOC) | ⏸️ DEFERRED | XL |
