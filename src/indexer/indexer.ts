@@ -60,6 +60,7 @@ import {
   isVecAvailable,
   openDatabase,
   openExistingDatabase,
+  purgeEmbeddings,
   rebuildFts,
   relinkUsageEvents,
   setMeta,
@@ -1314,19 +1315,9 @@ async function generateEmbeddingsForDb(
   const currentFingerprint = deriveSemanticProviderFingerprint(config.embedding);
   const storedFingerprint = getMeta(db, "embeddingFingerprint");
   if (storedFingerprint && storedFingerprint !== currentFingerprint) {
-    try {
-      db.exec("DELETE FROM embeddings");
-    } catch {
-      /* ignore */
-    }
-    if (isVecAvailable(db)) {
-      try {
-        db.exec("DELETE FROM entries_vec");
-      } catch {
-        /* ignore */
-      }
-    }
-    setMeta(db, "hasEmbeddings", "0");
+    // Model/provider changed → stored vectors are incompatible. Clear them
+    // (same dimension, so keep the vec table); re-embedded by this index run.
+    purgeEmbeddings(db);
   }
 
   try {

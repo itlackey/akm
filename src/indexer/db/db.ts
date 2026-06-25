@@ -17,7 +17,7 @@ import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
 import { ensureUsageEventsSchema } from "../usage/usage-events";
-import { backupDataDir, EMBEDDING_DIM_CHANGE_REASON } from "./db-backup";
+import { backupDataDir } from "./db-backup";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -534,17 +534,10 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     if (dimExplicit) {
       const storedDim = getMeta(db, "embeddingDim");
       if (storedDim && storedDim !== String(embeddingDim)) {
-        // Re-embedding the whole stash is expensive (LLM API calls + cache
-        // misses), so snapshot the data dir before we drop the vec table and
-        // wipe `embeddings`. This is the SAME hook the version-upgrade path
-        // uses earlier in this function, just gated on embedding-dim mismatch
-        // and tagged so operators can tell the two backup kinds apart.
-        backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-        bestEffort(() => db.exec("DROP TABLE IF EXISTS entries_vec"), "drop entries_vec on dim change");
-        // Delete stale BLOB embeddings so they don't produce silently wrong
-        // similarity scores against the new-dimension vec table.
-        bestEffort(() => db.exec("DELETE FROM embeddings"), "delete stale embeddings on dim change");
-        setMeta(db, "hasEmbeddings", "0");
+        // Stored vectors are incompatible with the new dimension. Drop the vec
+        // table so the block below recreates it at the new width; the BLOB rows
+        // go too. Regenerable from markdown — re-embedded by the next index.
+        purgeEmbeddings(db, { dropVecTable: true });
       }
     }
 
@@ -571,9 +564,8 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     if (dimExplicit) {
       const storedDim = getMeta(db, "embeddingDim");
       if (storedDim && storedDim !== String(embeddingDim)) {
-        backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-        bestEffort(() => db.exec("DELETE FROM embeddings"), "delete embeddings on explicit dim change");
-        setMeta(db, "hasEmbeddings", "0");
+        // JS-fallback path: no vec table, just clear the stale BLOB vectors.
+        purgeEmbeddings(db);
       }
       setMeta(db, "embeddingDim", String(embeddingDim));
     }
@@ -644,52 +636,27 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
 }
 
 /**
- * Snapshot the data directory before the embedding-dimension drop path wipes
- * `embeddings` and recreates `entries_vec`. Re-embedding a real-world stash
- * is expensive (LLM calls + cache misses), so we capture the pre-drop state
- * here using the same MVP backup helper the version-upgrade hook uses
- * earlier in {@link ensureSchema}.
+ * Purge stored embeddings (BLOB rows in `embeddings`, plus the `entries_vec`
+ * virtual table) and mark the index as embedding-free. The single place that
+ * invalidates embeddings — used on a dimension change, a model/provider change,
+ * and a full rebuild.
  *
- * The backup is tagged with the `embedding-dim-change` reason so it lands in
- * `<dataDir>/backups/<timestamp>-embedding-dim-change/` instead of the
- * version-upgrade-flavored `<timestamp>-pre-v<N>/` directory. Restoration
- * works identically via `scripts/migrations/restore-data-dir.sh`.
+ * No backup: embeddings are a derived cache, fully regenerable from the markdown
+ * by the next `akm index`. (Recovery model decided 2026-06-25.)
  *
- * Failures are non-fatal — they downgrade to a warning and the destructive
- * ops run anyway, matching the version-upgrade hook's behavior so a broken
- * backup cannot brick a binary that bumped the configured dim. Likewise,
- * `AKM_DB_BACKUP=0` opts out via the same path.
+ * `dropVecTable: true` DROPs `entries_vec` — used on a DIMENSION change, where
+ * the vec0 table must be recreated at the new width by the caller. The default
+ * clears its rows in place (same dimension, stale vectors).
  */
-function backupBeforeEmbeddingDimChange(dataDir: string | undefined, fromDim: string, toDim: string): void {
-  if (!dataDir) return;
-  try {
-    const result = backupDataDir({
-      dataDir,
-      // The DB version isn't changing here — pass the current DB_VERSION for
-      // both source and target so the metadata sidecar still records the
-      // running binary's version for forensic context.
-      sourceVersion: DB_VERSION,
-      targetVersion: DB_VERSION,
-      reason: EMBEDDING_DIM_CHANGE_REASON,
-      env: process.env,
-    });
-    if (result) {
-      warn(
-        "[akm] embedding dimension changed %s→%s; data directory backed up to %s; embeddings will be regenerated",
-        fromDim,
-        toDim,
-        result.path,
-      );
-    }
-  } catch (err) {
-    // Defensive — backupDataDir already swallows most errors, but if it
-    // throws for an unexpected reason we must still proceed with the drop
-    // so the user isn't locked out of their binary on a changed dim.
-    warn(
-      "[akm] pre-embedding-dim-change data dir backup raised an unexpected error — %s; embeddings will be regenerated without a snapshot",
-      err instanceof Error ? err.message : String(err),
+export function purgeEmbeddings(db: Database, opts?: { dropVecTable?: boolean }): void {
+  bestEffort(() => db.exec("DELETE FROM embeddings"), "purge embeddings");
+  if (isVecAvailable(db)) {
+    bestEffort(
+      () => db.exec(opts?.dropVecTable ? "DROP TABLE IF EXISTS entries_vec" : "DELETE FROM entries_vec"),
+      "purge entries_vec",
     );
   }
+  setMeta(db, "hasEmbeddings", "0");
 }
 
 /**
