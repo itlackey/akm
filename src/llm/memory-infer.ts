@@ -23,10 +23,11 @@
 import memoryInferSystemPrompt from "../assets/prompts/memory-infer-system.md" with { type: "text" };
 import memoryInferUserPrompt from "../assets/prompts/memory-infer-user.md" with { type: "text" };
 import { toErrorMessage } from "../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
+import type { AkmConfig, LlmConnectionConfig, LlmProfileConfig } from "../core/config/config";
 import { warn } from "../core/warn";
-import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse } from "./client";
-import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
+import { parseEmbeddedJsonResponse } from "./client";
+import type { TryLlmFeatureFallbackEvent } from "./feature-gate";
+import { callStructured } from "./structured-call";
 
 /** Hard cap on body chars sent to the model — pragmatic and matches `runLlmEnrich`. */
 const MAX_BODY_CHARS = 4000;
@@ -86,8 +87,9 @@ const DERIVED_MEMORY_JSON_SCHEMA = {
  * Errors are logged via `warn()` but never thrown — a failed split for one memory
  * must not abort the rest of the index pass.
  *
- * Routes through `tryLlmFeature("memory_inference", ...)` so the feature gate
- * and onFallback hook are honoured uniformly (Fix C5).
+ * Routes through `callStructured({ feature: "memory_inference", ... })` so the
+ * feature gate, error classification, and onFallback hook are honoured uniformly
+ * (Fix C5).
  */
 export async function compressMemoryToDerivedMemory(
   llmConfig: LlmConnectionConfig,
@@ -103,67 +105,70 @@ export async function compressMemoryToDerivedMemory(
 
   const userPrompt = `${USER_PROMPT_PREFIX}${trimmedBody.slice(0, MAX_BODY_CHARS)}`;
 
-  return tryLlmFeature(
-    "memory_inference",
+  // Memory-inference is ALWAYS gated: no `akmConfig` ⇒ gate closed (no chat,
+  // `disabled` fallback), never the seam's ungated/propagate path (which is for
+  // direct callers like `enhanceMetadata`). This is the gate-closed branch
+  // `tryLlmFeature(_, undefined, _)` took before the migration.
+  if (!akmConfig) {
+    onFallback?.({ feature: "memory_inference", reason: "disabled" });
+    return undefined;
+  }
+
+  return callStructured<DerivedMemoryDraft | undefined>({
+    feature: "memory_inference",
     akmConfig,
-    async () => {
-      try {
-        const raw = await chatCompletion(
-          llmConfig,
-          [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPrompt },
-          ],
-          {
-            temperature: 0.1,
-            timeoutMs: llmConfig.timeoutMs,
-            signal,
-            responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
-            onRetryAttempt,
-          },
-        );
-        if (!raw) return undefined;
-        const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
-        if (!parsed) {
-          warn("memory inference: invalid JSON response from LLM; skipping memory.");
-          return undefined;
-        }
-        const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
-        const description = typeof parsed.description === "string" ? parsed.description.trim() : "";
-        const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
-        const tags = Array.isArray(parsed.tags)
-          ? parsed.tags
-              .filter((t): t is string => typeof t === "string")
-              .map((t) => t.trim())
-              .filter(Boolean)
-              .slice(0, 8)
-          : [];
-        const searchHints = Array.isArray(parsed.searchHints)
-          ? parsed.searchHints
-              .filter((h): h is string => typeof h === "string")
-              .map((h) => h.trim())
-              .filter(Boolean)
-              .slice(0, 6)
-          : [];
-        if (!title || !description || !content || tags.length === 0 || searchHints.length === 0) {
-          warn("memory inference: incomplete derived memory payload from LLM; skipping memory.");
-          return undefined;
-        }
-        return { title, description, tags, searchHints, content };
-      } catch (err) {
-        if (err instanceof LlmCallError && err.code === "provider_html_error") {
-          if (telemetry) telemetry.htmlErrorCount = (telemetry.htmlErrorCount ?? 0) + 1;
-          warn(`memory inference: provider returned HTML instead of JSON; skipping memory: ${toErrorMessage(err)}`);
-          return undefined;
-        }
-        warn(`memory inference failed: ${toErrorMessage(err)}`);
+    config: llmConfig as unknown as LlmProfileConfig,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    request: {
+      temperature: 0.1,
+      timeoutMs: llmConfig.timeoutMs,
+      signal,
+      responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
+      onRetryAttempt,
+    },
+    parse: (raw) => {
+      if (!raw) return undefined;
+      const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
+      if (!parsed) {
+        warn("memory inference: invalid JSON response from LLM; skipping memory.");
         return undefined;
       }
+      const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+      const description = typeof parsed.description === "string" ? parsed.description.trim() : "";
+      const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
+      const tags = Array.isArray(parsed.tags)
+        ? parsed.tags
+            .filter((t): t is string => typeof t === "string")
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
+      const searchHints = Array.isArray(parsed.searchHints)
+        ? parsed.searchHints
+            .filter((h): h is string => typeof h === "string")
+            .map((h) => h.trim())
+            .filter(Boolean)
+            .slice(0, 6)
+        : [];
+      if (!title || !description || !content || tags.length === 0 || searchHints.length === 0) {
+        warn("memory inference: incomplete derived memory payload from LLM; skipping memory.");
+        return undefined;
+      }
+      return { title, description, tags, searchHints, content };
     },
-    undefined,
-    {
-      timeoutMs: llmConfig.timeoutMs,
-      onFallback,
+    onError: (cls, err) => {
+      if (cls === "html") {
+        if (telemetry) telemetry.htmlErrorCount = (telemetry.htmlErrorCount ?? 0) + 1;
+        warn(`memory inference: provider returned HTML instead of JSON; skipping memory: ${toErrorMessage(err)}`);
+        return undefined;
+      }
+      warn(`memory inference failed: ${toErrorMessage(err)}`);
+      return undefined;
     },
-  );
+    fallback: undefined,
+    onFallback,
+  });
 }
