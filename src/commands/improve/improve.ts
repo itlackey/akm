@@ -1272,6 +1272,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         : undefined;
   };
 
+  // Holds our own process.on("exit") backstop so the finally can remove EXACTLY
+  // that handler (not every exit listener in the process). Declared in the scope
+  // shared by the try and its finally; assigned when the backstop is registered.
+  let exitBackstop: (() => void) | undefined;
+
   try {
     // #607: Per-process lock acquisition. Each process acquires only the lock(s)
     // it needs. The dry-run branch produces plannedRefs/memorySummary WITHOUT any
@@ -1284,6 +1289,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           releaseLockIfOwned(p, process.pid);
         }
       };
+      exitBackstop = releaseAllOnExit;
       process.on("exit", releaseAllOnExit);
 
       // #607 triage pre-pass: acquire triage.lock, drain the standing pending
@@ -1913,9 +1919,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // #607: release any per-process locks still held (backstop for error paths;
     // the normal path already released each lock after its stage completed).
     releaseAllProcessLocks();
-    // Drop the process.exit backstop so it does not fire later (or accumulate
-    // across repeated in-process calls).
-    process.removeAllListeners("exit");
+    // Drop ONLY our own process.exit backstop so it does not fire later (or
+    // accumulate across repeated in-process calls). Must NOT use
+    // removeAllListeners("exit") here: in the in-process model (tests and
+    // programmatic callers import cli.ts) that would silently destroy exit
+    // handlers owned by the host or other commands.
+    if (exitBackstop) {
+      process.removeListener("exit", exitBackstop);
+      exitBackstop = undefined;
+    }
     // I1: close the long-lived state.db connection opened at the top of the run.
     try {
       eventsDb?.close();

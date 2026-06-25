@@ -19,7 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { output, runWithJsonErrors } from "../../cli/shared";
+import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import { getAvailableHarnesses, getWatchTargets } from "../../integrations/session-logs";
 import { type AkmExtractResult, akmExtract } from "./extract";
@@ -163,11 +163,17 @@ export const extractCommand = defineCommand({
           totalProposals,
           results,
         });
+        // Signal failure to callers/cron when every harness failed. output()
+        // only renders; without this the */30 cron exits 0 on a total failure
+        // and the breakage is invisible to exit-code monitoring. process.exitCode
+        // (not process.exit) lets stdout flush and the watcher/timers settle.
+        if (!ok) process.exitCode = EXIT_CODES.GENERAL;
         return;
       }
 
       const result = await akmExtract({ type, ...commonOptions });
       output("extract", result);
+      if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
     });
   },
 });

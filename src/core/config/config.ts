@@ -289,7 +289,18 @@ function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
   } catch {
     return text; // Malformed JSON — let parseAndValidate surface the error.
   }
-  if (compareConfigVersion(obj.configVersion as string | number | undefined, CURRENT_CONFIG_VERSION) === 1) {
+  // Downgrade protection. Skip migration when the on-disk config is NEWER than
+  // this binary (=== 1), OR when it carries a configVersion we cannot order
+  // against ours (compareConfigVersion returns undefined for an unparseable
+  // value — e.g. one written by a newer/foreign akm). Migrating such a config
+  // could strip fields a newer binary added, a cross-version data-loss path.
+  //
+  // A MISSING configVersion (absent → undefined) is a legacy pre-versioning
+  // config that MUST still migrate, so the unparseable-skip is gated on the
+  // field being PRESENT (`onDiskVersion !== undefined`).
+  const onDiskVersion = obj.configVersion as string | number | undefined;
+  const versionOrder = compareConfigVersion(onDiskVersion, CURRENT_CONFIG_VERSION);
+  if (versionOrder === 1 || (onDiskVersion !== undefined && versionOrder === undefined)) {
     return text;
   }
 
@@ -538,7 +549,12 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
 
   // LLM profile keys: AKM_LLM_API_KEY for the default profile, then
   // AKM_PROFILE_<UPPER>_API_KEY for any profile (per-profile wins).
-  const defaultProfile = next.defaults?.llm;
+  // Resolve the default profile the SAME way the rest of the config layer does
+  // (resolveDefaultLlmProfileName), so the implicit `profiles.llm.default`
+  // fallback is honored. Keying off the raw `defaults.llm` field alone silently
+  // dropped AKM_LLM_API_KEY for configs that rely on the implicit default —
+  // the same no-op-run class as the 2026-05-23 incident.
+  const defaultProfile = resolveDefaultLlmProfileName(next);
   if (next.profiles?.llm) {
     const updated = { ...next.profiles.llm };
     let changed = false;
