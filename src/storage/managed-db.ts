@@ -73,3 +73,26 @@ export function withManagedDb<T>(open: () => Database, fn: (db: Database) => T, 
     db.close();
   }
 }
+
+/**
+ * Async sibling of {@link withManagedDb}. Use this — NOT `withManagedDb` — when
+ * `fn` holds the handle across an `await`: the sync version closes in its
+ * `finally` before the awaited work resolves (use-after-close). Here the handle
+ * is closed only after `fn`'s promise settles. Borrowed handles pass straight
+ * through and are not closed, as in the sync version.
+ */
+export async function withManagedDbAsync<T>(
+  open: () => Database,
+  fn: (db: Database) => Promise<T>,
+  opts?: { borrowed?: Database },
+): Promise<T> {
+  if (opts?.borrowed) {
+    return fn(opts.borrowed);
+  }
+  const db = open();
+  try {
+    return await fn(db);
+  } finally {
+    db.close();
+  }
+}

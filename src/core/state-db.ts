@@ -55,7 +55,7 @@ import path from "node:path";
 import type { Proposal } from "../commands/proposal/validators/proposals";
 import type { Database, SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
-import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
+import { openManagedDatabase, withManagedDb, withManagedDbAsync } from "../storage/managed-db";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
 import { classifyImproveAction } from "./improve-types";
@@ -118,8 +118,20 @@ export function openStateDatabase(dbPath?: string): Database {
  * opening + closing a fresh one — this replaces the hand-rolled
  * `ctx?.db ?? open()` + `ownsDb` flag + `finally`/close idiom at call sites.
  */
-export function withStateDb<T>(fn: (db: Database) => T, opts?: { borrowed?: Database }): T {
-  return withManagedDb(() => openStateDatabase(), fn, opts);
+export function withStateDb<T>(fn: (db: Database) => T, opts?: { path?: string; borrowed?: Database }): T {
+  return withManagedDb(() => openStateDatabase(opts?.path), fn, opts);
+}
+
+/**
+ * Async sibling of {@link withStateDb} — for `fn`s that hold the handle across
+ * an `await` (the sync version would close it too early). Same borrow/own +
+ * optional `path` override semantics.
+ */
+export function withStateDbAsync<T>(
+  fn: (db: Database) => Promise<T>,
+  opts?: { path?: string; borrowed?: Database },
+): Promise<T> {
+  return withManagedDbAsync(() => openStateDatabase(opts?.path), fn, opts);
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────
