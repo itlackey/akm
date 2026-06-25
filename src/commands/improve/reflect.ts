@@ -26,7 +26,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertNever } from "../../core/assert";
 import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -62,6 +61,7 @@ import {
   runnerIsLlm,
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
+import { executeRunner } from "../../integrations/agent/runner-dispatch";
 import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isLlmFeatureEnabled } from "../../llm/feature-gate";
@@ -1207,45 +1207,40 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         };
         iterResult = await runAgent(resolvedProfile, prompt, runOptions);
       } else if (runnerSpec) {
-        // v2: dispatch through unified RunnerSpec
+        // v2: dispatch through the unified RunnerSpec seam (X3). The `agent` /
+        // `sdk` arms route to the default profile runners; the `llm` arm is
+        // reflect-specific (wraps `runReflectViaLlm` — its bespoke iteration
+        // shape) so it is supplied as the `llm` handler.
         const runOptions: RunAgentOptions = {
           stdio: "captured",
           parseOutput: "text",
           ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
         };
-        switch (runnerSpec.kind) {
-          case "llm":
+        iterResult = await executeRunner(runnerSpec, prompt ?? "", runOptions, {
+          llm: async (spec) =>
             // LLM HTTP path — `draftFilePath` is accepted for type symmetry
             // (see `RunReflectViaLlmOptions.draftFilePath` docstring) but is
             // intentionally a no-op. The prompt builder above also did not
             // include the file-write contract for this kind, so the LLM is
             // still asked for JSON via stdout.
-            iterResult = await runReflectViaLlm({
+            runReflectViaLlm({
               prompt,
-              connection: runnerSpec.connection,
-              timeoutMs:
-                runnerSpec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
+              connection: spec.connection,
+              timeoutMs: spec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
               priorDraft,
               iteration: iter,
               responseSchema: REFLECT_JSON_SCHEMA,
               chat: options.chat,
               ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
-            });
-            break;
-          case "sdk":
-            iterResult = await runOpencodeSdk(runnerSpec.profile, prompt ?? "", runOptions);
-            break;
-          case "agent":
-            iterResult = await runAgent(runnerSpec.profile, prompt, {
-              ...runOptions,
+            }),
+          // The `agent` arm (and only the agent arm — preserving prior behavior)
+          // overlays `spec.timeoutMs` onto the base run options.
+          runAgent: (profile, p, opts) =>
+            runAgent(profile, p, {
+              ...opts,
               ...(runnerSpec.timeoutMs !== undefined ? { timeoutMs: runnerSpec.timeoutMs } : {}),
-            });
-            break;
-          default:
-            // Exhaustiveness arm (H1): a 4th RunnerSpec kind becomes a compile
-            // error here instead of leaving `iterResult` unassigned at runtime.
-            assertNever(runnerSpec);
-        }
+            }),
+        });
       } else {
         // Production path (v1): dispatch directly to the appropriate runner.
         // The fallback at the end of step 3 guarantees `profile` is set whenever

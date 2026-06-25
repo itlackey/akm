@@ -38,16 +38,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assertNever } from "../../core/assert";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
 import { info, warn } from "../../core/warn";
-import { type AgentRunResult, runAgent } from "../../integrations/agent";
+import type { RunAgentOptions, runAgent } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
+import { executeRunner } from "../../integrations/agent/runner-dispatch";
+import type { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject } from "./proposal";
 import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./validators/proposals";
@@ -370,80 +370,42 @@ export function parseJudgmentVerdict(raw: string): JudgmentVerdict | null {
 }
 
 /**
- * Dispatch a single judgment prompt to the resolved runner. The switch mirrors
- * the canonical consumer at `reflect.ts:1060-1090`: llm → `chatCompletion`
- * (no filesystem), agent → `runAgent`, sdk → `runOpencodeSdk`.
+ * Dispatch a single judgment prompt to the resolved runner via the unified
+ * {@link executeRunner} seam (X3). The `llm` arm is drain-specific (wraps
+ * `chatCompletion` — no filesystem) so it is supplied as the `llm` handler; the
+ * byte-identical `agent` / `sdk` arms route to the default profile runners (or
+ * the injected {@link JudgmentSeams} test fakes). A failed spawn warns and
+ * yields `null`, matching the prior per-arm behavior.
  */
 async function dispatchJudgment(
   runner: RunnerSpec,
   prompt: string,
   seams: JudgmentSeams,
 ): Promise<JudgmentVerdict | null> {
-  let raw: string;
-  switch (runner.kind) {
-    case "llm": {
-      const messages: ChatMessage[] = [{ role: "user", content: prompt }];
-      raw = seams.chat
-        ? await seams.chat(runner, messages)
-        : await chatCompletion(runner.connection, messages, {
-            ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
-          });
-      break;
-    }
-    case "agent": {
-      const stdout = await runProfileJudgment(
-        seams.runAgentFn ?? runAgent,
-        runner.profile,
-        prompt,
-        "agent",
-        runner.timeoutMs,
-      );
-      if (stdout === null) return null;
-      raw = stdout;
-      break;
-    }
-    case "sdk": {
-      const stdout = await runProfileJudgment(
-        seams.runSdkFn ?? runOpencodeSdk,
-        runner.profile,
-        prompt,
-        "sdk",
-        runner.timeoutMs,
-      );
-      if (stdout === null) return null;
-      raw = stdout;
-      break;
-    }
-    default:
-      // Exhaustiveness arm (H1): a 4th RunnerSpec kind becomes a compile error
-      // here instead of leaving `raw` undefined at runtime.
-      return assertNever(runner);
-  }
-  return parseJudgmentVerdict(raw);
-}
-
-/**
- * Shared spawn-runner dispatch for the byte-identical `agent` / `sdk` arms: run
- * the profile-based runner, log a labelled warning on failure, and return the
- * captured stdout (or `null` on failure). `label` only changes the warn prefix.
- */
-async function runProfileJudgment(
-  run: typeof runAgent | typeof runOpencodeSdk,
-  profile: Parameters<typeof runAgent>[0],
-  prompt: string,
-  label: string,
-  timeoutMs: number | undefined,
-): Promise<string | null> {
-  const result: AgentRunResult = await run(profile, prompt, {
+  const runOptions: RunAgentOptions = {
     stdio: "captured",
     parseOutput: "text",
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(runner.timeoutMs !== undefined ? { timeoutMs: runner.timeoutMs } : {}),
+  };
+  const result = await executeRunner(runner, prompt, runOptions, {
+    llm: async (spec, p) => {
+      const messages: ChatMessage[] = [{ role: "user", content: p }];
+      const raw = seams.chat
+        ? await seams.chat(spec, messages)
+        : await chatCompletion(spec.connection, messages, {
+            ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
+          });
+      // chatCompletion has no failure envelope — a returned string is success.
+      return { ok: true, exitCode: 0, stdout: raw, stderr: "", durationMs: 0 };
+    },
+    ...(seams.runAgentFn ? { runAgent: seams.runAgentFn } : {}),
+    ...(seams.runSdkFn ? { runSdk: seams.runSdkFn } : {}),
   });
   if (!result.ok) {
-    warn(`[triage] judgment ${label} failed: ${result.error ?? result.reason ?? "unknown error"}`);
+    warn(`[triage] judgment ${runner.kind} failed: ${result.error ?? result.reason ?? "unknown error"}`);
     return null;
   }
-  return result.stdout;
+  return parseJudgmentVerdict(result.stdout);
 }
 
 interface JudgmentTierInput {
