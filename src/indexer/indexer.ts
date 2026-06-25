@@ -90,11 +90,10 @@ import {
   classifySemanticFailure,
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
-  type SemanticSearchRuntimeStatus,
   writeSemanticStatus,
 } from "./search/semantic-status";
 import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage/usage-events";
-import type { IndexRunContext } from "./walk/index-context";
+import type { IndexRunContext, IndexVerification } from "./walk/index-context";
 import { walkStashFlat } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -132,19 +131,6 @@ export interface IndexResponse {
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
   /** Present when --clean was passed: stale-entry purge results. */
   clean?: IndexCleanResult;
-}
-
-export interface IndexVerification {
-  ok: boolean;
-  message: string;
-  guidance?: string;
-  semanticSearchEnabled: boolean;
-  semanticSearchMode: "off" | "auto";
-  semanticStatus: "disabled" | SemanticSearchRuntimeStatus;
-  embeddingProvider: "local" | "remote";
-  entryCount: number;
-  embeddingCount: number;
-  vecAvailable: boolean;
 }
 
 export interface IndexProgressEvent {
@@ -389,8 +375,8 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   onProgress({ phase: "verify", message: verification.message });
 
   // Store verification result and totalEntries on ctx for the caller to use
-  (ctx as IndexRunContext & { _verification: IndexVerification; _totalEntries: number })._verification = verification;
-  (ctx as IndexRunContext & { _verification: IndexVerification; _totalEntries: number })._totalEntries = totalEntries;
+  ctx.verification = verification;
+  ctx.totalEntries = totalEntries;
 
   // suppress unused warning — sources was previously used inline
   void sources;
@@ -526,10 +512,9 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       await runFinalizePhase(ctx);
       // ────────────────────────────────────────────────────────────────────────
 
-      const { _verification: verification, _totalEntries: totalEntries } = ctx as IndexRunContext & {
-        _verification: IndexVerification;
-        _totalEntries: number;
-      };
+      // runFinalizePhase always populates these before returning.
+      const verification = ctx.verification as IndexVerification;
+      const totalEntries = ctx.totalEntries as number;
       const { timing } = ctx;
 
       // ── Clean pass ───────────────────────────────────────────────────────────

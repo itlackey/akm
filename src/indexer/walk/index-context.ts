@@ -16,7 +16,7 @@ import type { AkmConfig } from "../../core/config/config";
 import type { Database } from "../../storage/database";
 import type { GraphExtractionResult } from "../graph/graph-extraction";
 import type { SearchSource } from "../search/search-source";
-import type { SemanticSearchReason } from "../search/semantic-status";
+import type { SemanticSearchReason, SemanticSearchRuntimeStatus } from "../search/semantic-status";
 
 /** Timing accumulator written by each phase. All values are in milliseconds. */
 export interface IndexTiming {
@@ -26,6 +26,23 @@ export interface IndexTiming {
   tLlmEnd: number;
   tFtsEnd: number;
   tEmbedEnd: number;
+}
+
+/**
+ * Verification of the post-index semantic-search state. Produced by the
+ * finalize phase and surfaced to the `akmIndex()` caller via the run context.
+ */
+export interface IndexVerification {
+  ok: boolean;
+  message: string;
+  guidance?: string;
+  semanticSearchEnabled: boolean;
+  semanticSearchMode: "off" | "auto";
+  semanticStatus: "disabled" | SemanticSearchRuntimeStatus;
+  embeddingProvider: "local" | "remote";
+  entryCount: number;
+  embeddingCount: number;
+  vecAvailable: boolean;
 }
 
 /** Progress event emitted during indexing. Mirrors IndexProgressEvent in indexer.ts. */
@@ -93,4 +110,13 @@ export interface IndexRunContext {
   } | null;
   /** Result from the graph extraction phase. */
   graphExtractionResult: GraphExtractionResult | null;
+
+  // ── Finalize-phase results ───────────────────────────────────────────────────
+  // Written by `runFinalizePhase` and read back by `akmIndex()` to assemble the
+  // response. Undefined until the finalize phase has run.
+
+  /** Semantic-search verification result computed during finalize. */
+  verification?: IndexVerification;
+  /** Total entry count in the index after finalize. */
+  totalEntries?: number;
 }
