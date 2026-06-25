@@ -2,13 +2,15 @@
 
 ## Execution status (last updated 2026-06-25)
 
-All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: lint **0 warnings**, tsc **0 errors**, unit **5,218 / 0**, integration **1,545 / 0 fail**.
+All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: lint **0 warnings**, tsc **0 errors**, unit **5,256 / 0**, integration **1,545 / 0 fail**.
+
+> **Test-host note:** the integration suite (`bun run test:integration`, single-process `--parallel=1`) finishes in **~2 min** on an idle host but APPEARS to hang for 100+ min under CPU contention (concurrent workflow subagents, or a runaway `bun test` from a prior session pinning a core). It is NOT a code hang — kill stray `bun test` procs (`ps … | grep 'bun test'`) and re-run on idle cores to verify green. Bun buffers all test output until completion, so a contended run shows an empty log, not partial progress.
 
 | Task | Status | Notes |
 |---|---|---|
 | **R4** delete dead provider interface | ✅ DONE `65f2006b` | −574 LOC; zero-call-site v1 surface removed |
 | **X1** `withManagedDb`/`withStateDb` seam | ✅ DONE `f511e10c` `c3ec1aad` `1484b180` | Seam + async/path variants; **22 sites converted, 8 deliberately left** (long-lived run handles, guarded conditional opens, open-only try/catch — the seam can't express "soft-fail to undefined" or "catch open but not body") |
-| **X2** `callStructured()` template | ⚠️ PARTIAL `86797077` | Type-half done (LlmProfileConfig unification + context-overflow classifier merge). The full template across the ~20 `chatCompletion` callers is **not** done. |
+| **X2** `callStructured()` template | ⚠️ PARTIAL `86797077` `b55b51e5` +3 | Type-half done (`86797077`). Seam built + first 3 callers migrated via TDD (`b55b51e5` callStructured; `1b3ab4d2` memory-infer; `714703bd` metadata-enhance; `15f39a01` graph-extract leaf) — behavior-preserving, characterization-tested. **~16 `chatCompletion` callers remain** (incl. consolidate's leaf, deferred with D3). Follow-up increments. |
 | **R3** registry cache-fetch Template + layering fix | ✅ DONE `7d9cb8a3` | |
 | **R1** typed PhaseResult (kill cast-injection) | ✅ DONE `cd9af204` | |
 | **D4** split `git.ts` | ✅ DONE `a4a37c28` | → git-provider / git-install / git-stash |
