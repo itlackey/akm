@@ -57,16 +57,15 @@ import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import {
   type Database,
-  getStateDbPath,
   getStateProposal,
   hasImportedFsProposals,
   insertProposalIfAbsent,
   listStateProposalIdsByPrefix,
   listStateProposals,
-  openStateDatabase,
   recordFsProposalsImport,
   upsertProposal,
   withImmediateTransaction,
+  withStateDb,
 } from "../../../core/state-db";
 import { repairTruncatedDescription } from "../../../core/text-truncation";
 import { warn } from "../../../core/warn";
@@ -492,13 +491,13 @@ function newId(ctx?: ProposalsContext): string {
  * guaranteed to have run before any read or write.
  */
 function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined, fn: (db: Database) => T): T {
-  const db = openStateDatabase(ctx?.dbPath ?? getStateDbPath());
-  try {
-    importLegacyProposalFiles(db, stashDir);
-    return fn(db);
-  } finally {
-    db.close();
-  }
+  return withStateDb(
+    (db) => {
+      importLegacyProposalFiles(db, stashDir);
+      return fn(db);
+    },
+    { path: ctx?.dbPath },
+  );
 }
 
 // ── Legacy filesystem import (#578) ─────────────────────────────────────────

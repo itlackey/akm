@@ -29,7 +29,7 @@
 
 import crypto from "node:crypto";
 import path from "node:path";
-import { openStateDatabase, recordImproveRun } from "../../core/state-db";
+import { recordImproveRun, withStateDb } from "../../core/state-db";
 import type { AkmImproveResult } from "./improve";
 
 /**
@@ -85,8 +85,7 @@ export function writeImproveResultFile(
   result: AkmImproveResult,
   startedAt?: string,
 ): string {
-  const db = openStateDatabase();
-  try {
+  withStateDb((db) => {
     const completedAt = new Date().toISOString();
     // startedAt is the ISO timestamp captured at process launch (passed from the
     // CLI entry point). If omitted, fall back to the run-id's embedded timestamp
@@ -107,13 +106,7 @@ export function writeImproveResultFile(
       ok: Boolean(result.ok),
       result,
     });
-  } finally {
-    try {
-      db.close();
-    } catch {
-      // best-effort
-    }
-  }
+  });
   return relativeImproveResultPath(runId);
 }
 
@@ -170,8 +163,7 @@ export function recordTerminatedImproveRun(
     },
   } as unknown as AkmImproveResult;
 
-  const db = openStateDatabase();
-  try {
+  withStateDb((db) => {
     recordImproveRun(db, {
       id: runId,
       startedAt,
@@ -192,11 +184,5 @@ export function recordTerminatedImproveRun(
         },
       },
     });
-  } finally {
-    try {
-      db.close();
-    } catch {
-      // best-effort
-    }
-  }
+  });
 }

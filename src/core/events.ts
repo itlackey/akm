@@ -30,7 +30,7 @@ import path from "node:path";
 import type { Database } from "../storage/database";
 import { rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
-import { insertEvent, openStateDatabase, readStateEvents } from "./state-db";
+import { insertEvent, openStateDatabase, readStateEvents, withStateDb } from "./state-db";
 import { error } from "./warn";
 
 /**
@@ -233,17 +233,17 @@ export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void 
   // Default path: open, insert, close.
   const dbPath = resolveDbPath(ctx);
   try {
-    const db = openStateDatabase(dbPath);
-    try {
-      insertEvent(db, {
-        eventType: input.eventType,
-        ts,
-        ref: input.ref,
-        metadata: input.metadata,
-      });
-    } finally {
-      db.close();
-    }
+    withStateDb(
+      (db) => {
+        insertEvent(db, {
+          eventType: input.eventType,
+          ts,
+          ref: input.ref,
+          metadata: input.metadata,
+        });
+      },
+      { path: dbPath },
+    );
   } catch (err) {
     // Never mask the bun-test isolation guard as a silent "events failed".
     rethrowIfTestIsolationError(err);

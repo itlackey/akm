@@ -43,6 +43,7 @@ import {
   openStateDatabase,
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
+  withStateDb,
 } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
@@ -128,25 +129,16 @@ function resolveDefaultSinceMs(
 ): number {
   const floor = now - DEFAULT_SINCE_FLOOR_MS;
   if (opts.skipTracking) return floor;
-  let db: Database | undefined = opts.stateDb;
-  let opened = false;
   try {
-    if (!db) {
-      db = openStateDatabase(opts.stateDbPath);
-      opened = true;
-    }
-    const lastRun = getLastExtractRunAt(db, harnessName);
-    return lastRun != null ? Math.min(lastRun, floor) : floor;
+    return withStateDb(
+      (db) => {
+        const lastRun = getLastExtractRunAt(db, harnessName);
+        return lastRun != null ? Math.min(lastRun, floor) : floor;
+      },
+      { path: opts.stateDbPath, borrowed: opts.stateDb },
+    );
   } catch {
     return floor;
-  } finally {
-    if (opened && db) {
-      try {
-        db.close();
-      } catch {
-        // best-effort close
-      }
-    }
   }
 }
 

@@ -51,6 +51,7 @@ import {
   openStateDatabase,
   upsertBodyEmbeddings,
   upsertConsolidationJudged,
+  withStateDb,
 } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
@@ -1550,18 +1551,16 @@ async function akmConsolidateInner(
           cachedMap = new Map();
         }
       } else {
-        let localDb: ReturnType<typeof openStateDatabase> | undefined;
         try {
-          localDb = openStateDatabase();
-          cachedMap = getConsolidationJudgedMap(
-            localDb,
-            memories.map((m) => `memory:${m.name}`),
+          cachedMap = withStateDb((localDb) =>
+            getConsolidationJudgedMap(
+              localDb,
+              memories.map((m) => `memory:${m.name}`),
+            ),
           );
         } catch {
           // State DB unavailable → fail open: judge the full pool this run.
           cachedMap = new Map();
-        } finally {
-          localDb?.close();
         }
       }
     }
@@ -2079,14 +2078,10 @@ async function akmConsolidateInner(
         warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
       }
     } else {
-      let localDb: ReturnType<typeof openStateDatabase> | undefined;
       try {
-        localDb = openStateDatabase();
-        doRecord(localDb);
+        withStateDb((localDb) => doRecord(localDb));
       } catch (e) {
         warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-      } finally {
-        localDb?.close();
       }
     }
   }
