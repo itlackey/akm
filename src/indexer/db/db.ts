@@ -12,7 +12,7 @@ import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
-import { type Database, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
+import { type Database, openDatabase, type SqlValue } from "../../storage/database";
 import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
@@ -67,14 +67,14 @@ export const GRAPH_SCHEMA_VERSION = 4;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
-export function openDatabase(dbPath?: string, options?: { embeddingDim?: number }): Database {
+export function openIndexDatabase(dbPath?: string, options?: { embeddingDim?: number }): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const dir = path.dirname(resolvedPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = openSqlite(resolvedPath);
+  const db = openDatabase(resolvedPath);
   applyStandardPragmas(db, { dataDir: dir });
 
   // Try to load sqlite-vec extension
@@ -119,7 +119,7 @@ function resolveConfiguredEmbeddingDim(): number | undefined {
 export function openExistingDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const dir = path.dirname(resolvedPath);
-  const db = openSqlite(resolvedPath);
+  const db = openDatabase(resolvedPath);
   applyStandardPragmas(db, { dataDir: dir });
 
   // Existing-DB callers must not mutate schema or embedding metadata on open,

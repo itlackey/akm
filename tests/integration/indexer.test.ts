@@ -13,7 +13,7 @@ import {
   getEmbeddingCount,
   getIndexDirState,
   getMeta,
-  openDatabase,
+  openIndexDatabase,
 } from "../../src/indexer/db/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
@@ -157,7 +157,7 @@ test("akmIndex scans directories and builds index", async () => {
   const deployStash = path.join(stashDir, "scripts", "deploy", ".stash.json");
   expect(fs.existsSync(deployStash)).toBe(false);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const entries = getAllEntries(db);
   expect(entries.length).toBe(2);
   const deployEntry = entries.find((e) => e.entry.name.includes("deploy"));
@@ -246,7 +246,7 @@ test("akmIndex does not treat .stash.json changes as incremental stale signals",
   expect(third.directoriesScanned).toBe(0);
   expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const entries = getAllEntries(db, "script");
     expect(entries).toHaveLength(1);
@@ -266,7 +266,7 @@ test("akmIndex writes index to SQLite database", async () => {
   expect(fs.existsSync(result.indexPath)).toBe(true);
   expect(result.indexPath).toEndWith(".db");
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const version = getMeta(db, "version");
   expect(version).toBe(String(DB_VERSION));
   const entries = getAllEntries(db);
@@ -305,7 +305,7 @@ test("akmIndex classifies flat markdown files under skills/ as skill assets", as
 
   await akmIndex({ stashDir, full: true });
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const skillEntry = getAllEntries(db).find((row) => row.entry.type === "skill" && row.entry.name === "deploy");
   expect(skillEntry).toBeDefined();
   closeDatabase(db);
@@ -324,7 +324,7 @@ test("akmIndex includes wiki raw files but excludes infrastructure files from th
 
   await akmIndex({ stashDir, full: true });
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const wikiEntries = getAllEntries(db, "wiki")
     .map((row) => row.entry.name)
     .sort();
@@ -353,7 +353,7 @@ test("akmIndex includes wiki raw files but excludes infrastructure files for wik
 
     await akmIndex({ stashDir: primaryStash, full: true });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const wikiEntries = getAllEntries(db, "wiki")
       .map((row) => row.entry.name)
       .sort();
@@ -404,7 +404,7 @@ test("akmIndex applies curated frontmatter metadata for wiki-root stash sources"
 
     await akmIndex({ stashDir: primaryStash, full: true });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const wikiEntry = getAllEntries(db, "wiki").find((row) => row.entry.name === "research/page")?.entry;
     expect(wikiEntry).toBeDefined();
     expect(wikiEntry).toMatchObject({
@@ -455,7 +455,7 @@ test("akmIndex populates derived_from column for derived memories (Phase 5A)", a
   saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     // 1. The entry JSON for the derived child carries `derivedFrom`.
     const memoryEntries = getAllEntries(db, "memory");
@@ -523,7 +523,7 @@ test("akmIndex skips malformed workflow assets and reports warnings", async () =
   expect(result.warnings).toBeDefined();
   expect(result.warnings?.some((warning) => warning.includes(path.join(stashDir, "workflows", "bad.md")))).toBe(true);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const workflowEntries = getAllEntries(db, "workflow")
     .map((row) => row.entry.name)
     .sort();
@@ -560,7 +560,7 @@ test("akmIndex keeps knowledge docs with fenced workflow examples out of workflo
   expect(result.totalEntries).toBe(1);
   expect((result.warnings ?? []).some((warning) => warning.startsWith("Skipped workflow "))).toBe(false);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const knowledgeEntries = getAllEntries(db, "knowledge")
     .map((row) => row.entry.name)
     .sort();
@@ -581,7 +581,7 @@ test("akmIndex generates TOC in database for knowledge entries", async () => {
 
   // TOC is stored in the database, not in .stash.json
   expect(fs.existsSync(path.join(stashDir, "knowledge", ".stash.json"))).toBe(false);
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const entries = getAllEntries(db, "knowledge");
   expect(entries.length).toBe(1);
   expect(entries[0].entry.toc).toBeDefined();
@@ -893,7 +893,7 @@ test("akmIndex ignores filename-less .stash.json entries and stabilizes incremen
   expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
   expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const entries = getAllEntries(db, "script");
     expect(entries).toHaveLength(1);
@@ -984,7 +984,7 @@ test("akmIndex does not re-embed unchanged wiki-root source entries across conse
     expect(callsAfterSecond).toBe(callsAfterFirst);
     expect(embedCalls.length).toBe(callsAfterFirst);
 
-    const db = openDatabase(getDbPath(), { embeddingDim: 4 });
+    const db = openIndexDatabase(getDbPath(), { embeddingDim: 4 });
     try {
       expect(getEmbeddingCount(db)).toBe(first.totalEntries);
     } finally {
@@ -1047,7 +1047,7 @@ test("akmIndex does not re-embed generated entries when filename-less .stash.jso
   expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
   expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
 
-  const db = openDatabase(getDbPath(), { embeddingDim: 4 });
+  const db = openIndexDatabase(getDbPath(), { embeddingDim: 4 });
   try {
     expect(getEmbeddingCount(db)).toBe(first.totalEntries);
   } finally {
@@ -1095,7 +1095,7 @@ test("akmIndex caches zero-row directory state so incremental reruns can skip it
   await akmIndex({ stashDir: primaryStash, full: true });
 
   const zeroRowDir = path.join(secondStash, "scripts", "shared");
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const state = getIndexDirState(db, zeroRowDir);
     expect(state).toBeDefined();
@@ -1141,7 +1141,7 @@ test("akmIndex incrementally skips unchanged zero-row workflow directories", asy
   saveConfig({ semanticSearchMode: "off" });
 
   const first = await akmIndex({ stashDir, full: true });
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const state = getIndexDirState(db, path.join(stashDir, "workflows"));
     expect(state).toBeDefined();
@@ -1187,7 +1187,7 @@ test("akmIndex rescans deduped zero-row directories when an earlier winning sour
   expect(result.directoriesScanned).toBeGreaterThanOrEqual(2);
   expect(result.directoriesSkipped).toBe(0);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const zeroRowState = getIndexDirState(db, path.join(secondStash, "scripts", "shared"));
     expect(zeroRowState?.reason).toBe("deduped-zero-row");
@@ -1305,7 +1305,7 @@ test("akmIndex does not generate heuristic searchHints (LLM-only)", async () => 
   await akmIndex({ stashDir });
 
   // Search hints are only generated when LLM is configured
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const entries = getAllEntries(db, "script");
   expect(entries.length).toBe(1);
   expect(entries[0].entry.searchHints).toBeUndefined();
@@ -1336,7 +1336,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   const result = await akmIndex({ stashDir: primaryStash });
 
   // The shared script should appear exactly once, not duplicated
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const entries = getAllEntries(db, "script");
   const sharedEntries = entries.filter((e) => e.entry.name.includes("shared"));
   expect(sharedEntries).toHaveLength(1);
@@ -1363,7 +1363,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
 
   await akmIndex({ stashDir: stash1, full: true });
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   const entries = getAllEntries(db);
   // Count entries with the utility name — should be exactly 1
   const utilEntries = entries.filter((e) => e.entry.name.includes("util"));
@@ -1393,7 +1393,7 @@ test("akmIndex does not collapse unrelated same-basename assets across sources",
 
     await akmIndex({ stashDir: primaryStash, full: true });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db, "knowledge");
       const names = entries.map((entry) => entry.entry.name);
@@ -1452,7 +1452,7 @@ test("usage_events are re-linked after full reindex", async () => {
 
   // Insert a usage event referencing an entry
   const dbPath = getDbPath();
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   const entry = db.prepare("SELECT id, entry_key FROM entries LIMIT 1").get() as { id: number; entry_key: string };
   expect(entry).toBeTruthy();
 
@@ -1476,7 +1476,7 @@ test("usage_events are re-linked after full reindex", async () => {
   await akmIndex({ stashDir, full: true });
 
   // Verify event was re-linked to the new entry_id
-  const db2 = openDatabase(dbPath);
+  const db2 = openIndexDatabase(dbPath);
   const after = db2.prepare("SELECT entry_id, entry_ref FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
     entry_id: number | null;
     entry_ref: string;
@@ -1507,7 +1507,7 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   await akmIndex({ stashDir, full: true });
 
   const dbPath = getDbPath();
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   const fp1 = getMeta(db, "embeddingFingerprint");
   expect(fp1).toContain("local:");
 
@@ -1523,7 +1523,7 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   // Re-index with a different embedding fingerprint by passing a config override
   // Since we can't easily change the config mid-test, verify the meta key exists
   // and that a fingerprint change would trigger a purge by checking the code path.
-  const db2 = openDatabase(dbPath);
+  const db2 = openIndexDatabase(dbPath);
   // Manually set a different fingerprint to simulate a provider change
   db2
     .prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)")
@@ -1533,7 +1533,7 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   // Run incremental index — should detect fingerprint mismatch and purge old embeddings
   await akmIndex({ stashDir });
 
-  const db3 = openDatabase(dbPath);
+  const db3 = openIndexDatabase(dbPath);
   const fp2 = getMeta(db3, "embeddingFingerprint");
   // Fingerprint should be back to local (since we used default config)
   expect(fp2).toContain("local:");
@@ -1635,7 +1635,7 @@ test("akmIndex removes graph rows when a stash source is no longer configured", 
   // Seed graph rows for the secondary stash directly into the database.
   const { replaceStoredGraph, loadStoredGraphMeta } = await import("../../src/indexer/db/graph-db");
   const { GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph/graph-extraction");
-  const seedDb = openDatabase();
+  const seedDb = openIndexDatabase();
   try {
     replaceStoredGraph(seedDb, {
       schemaVersion: GRAPH_FILE_SCHEMA_VERSION,

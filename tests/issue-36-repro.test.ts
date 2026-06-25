@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
-import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/indexer/db/db";
+import { closeDatabase, getAllEntries, openIndexDatabase, searchFts } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
@@ -79,7 +79,7 @@ describe("Issue #36: Script search and index", () => {
     expect(result.totalEntries).toBeGreaterThanOrEqual(1);
 
     // Verify the script entry was created in the index
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db);
       const scriptEntries = entries.filter((e) => e.entry.type === "script");
@@ -167,7 +167,7 @@ describe("Issue #36: Script search and index", () => {
     // All 5 scripts should be indexed
     expect(result.totalEntries).toBeGreaterThanOrEqual(5);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db);
       const scriptEntries = entries.filter((e) => e.entry.type === "script");
@@ -206,7 +206,7 @@ describe("Issue #36: buildSearchText includes script content from comments", () 
 
     await buildTestIndex(stashDir);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db);
       const scriptEntry = entries.find((e) => e.entry.name.includes("provision"));
@@ -232,7 +232,7 @@ describe("Issue #36: FTS5 query sanitization", () => {
     await buildTestIndex(stashDir);
 
     // Directly test FTS with "ai" query
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const results = searchFts(db, "ai", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
@@ -250,7 +250,7 @@ describe("Issue #36: FTS5 query sanitization", () => {
 
     // Single-char tokens are now passed through to FTS5 so that searches
     // for short identifiers (e.g., "R", "C", "x") can return results.
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const results = searchFts(db, "x", 10);
       // "x" appears in the indexed search text, so FTS should find it

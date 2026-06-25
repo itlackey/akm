@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, getEntryCount, openDatabase, setMeta } from "../../src/indexer/db/db";
+import { closeDatabase, getEntryCount, openIndexDatabase, setMeta } from "../../src/indexer/db/db";
 import { countUsageEventsByType, insertUsageEvent } from "../../src/indexer/usage/usage-events";
 
 describe("#664 Step A — index.db preserves data across a stale version marker (no nuclear drop)", () => {
@@ -25,7 +25,7 @@ describe("#664 Step A — index.db preserves data across a stale version marker 
     try {
       // Build a DB and seed an entry + a usage event (the latter is the only
       // non-regenerable data the old backup/restore dance existed to protect).
-      let db = openDatabase(dbPath, { embeddingDim: 384 });
+      let db = openIndexDatabase(dbPath, { embeddingDim: 384 });
       db.exec(
         `INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type)
          VALUES ('k:memory:a', '/s/memories', '/s/memories/a.md', '/s', '{"name":"a","type":"memory"}', 'a', 'memory')`,
@@ -39,7 +39,7 @@ describe("#664 Step A — index.db preserves data across a stale version marker 
       closeDatabase(db);
 
       // Reopen: the stale marker must NOT trigger a wipe.
-      db = openDatabase(dbPath, { embeddingDim: 384 });
+      db = openIndexDatabase(dbPath, { embeddingDim: 384 });
       expect(getEntryCount(db)).toBe(1); // entry preserved (not nuclear-dropped)
       expect(countUsageEventsByType(db, "search")).toBe(1); // usage_events preserved
       closeDatabase(db);

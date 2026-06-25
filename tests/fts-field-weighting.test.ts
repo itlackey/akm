@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, DB_VERSION, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, DB_VERSION, openIndexDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { buildSearchFields } from "../src/indexer/search/search-fields";
 import type { Database } from "../src/storage/database";
@@ -61,7 +61,7 @@ function insertEntry(db: Database, key: string, entry: StashEntry, searchText: s
 
 describe("FTS5 field weighting", () => {
   test("name match ranks higher than description-only match", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // Entry with "deploy" in the name
       const nameEntry = makeEntry({
@@ -93,7 +93,7 @@ describe("FTS5 field weighting", () => {
   // ── Test 2: Name match ranks higher than tag-only match ─────────────────
 
   test("name match ranks higher than tag-only match", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // Entry with "kubernetes" in the name
       const nameEntry = makeEntry({
@@ -125,7 +125,7 @@ describe("FTS5 field weighting", () => {
   // ── Test 3: Description match ranks higher than content-only (TOC) match ──
 
   test("description match ranks higher than content-only match", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // Entry with "terraform" in description
       const descEntry = makeEntry({
@@ -157,7 +157,7 @@ describe("FTS5 field weighting", () => {
   // ── Test 4: Multi-field matches rank highest ──────────────────────────────
 
   test("multi-field matches rank highest", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // Entry with "deploy" in BOTH name and description
       const multiEntry = makeEntry({
@@ -190,7 +190,7 @@ describe("FTS5 field weighting", () => {
   // ── Test 5: FTS5 table has separate columns ───────────────────────────────
 
   test("FTS5 table has separate columns", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // Query the FTS5 table config to verify it has the expected columns
       // FTS5 tables expose column info via sqlite_master
@@ -221,7 +221,7 @@ describe("FTS5 field weighting", () => {
   // ── Test 7: Existing search queries still return results ──────────────────
 
   test("existing search queries still return results (no regression)", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const entry = makeEntry({
         name: "deploy-tool",

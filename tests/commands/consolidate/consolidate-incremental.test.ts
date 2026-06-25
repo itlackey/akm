@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { narrowToIncrementalCandidates } from "../../../src/commands/improve/consolidate";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, openDatabase, upsertEmbedding, upsertEntry } from "../../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, upsertEmbedding, upsertEntry } from "../../../src/indexer/db/db";
 import type { StashEntry } from "../../../src/indexer/passes/metadata";
 import { type Cleanup, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
@@ -133,7 +133,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
   // findEntryIdByRef("memory:NAME") and getNeighborsByEntryId() resolve it.
   // The dim-4 unit vectors are crafted so cosine similarity (the JS fallback in
   // searchBlobVec, and sqlite-vec when present) ranks neighbours deterministically.
-  function indexMemory(db: ReturnType<typeof openDatabase>, name: string, embedding: number[]): number {
+  function indexMemory(db: ReturnType<typeof openIndexDatabase>, name: string, embedding: number[]): number {
     const entry: StashEntry = { type: "memory", name, description: `desc for ${name}` };
     const id = upsertEntry(
       db,
@@ -177,7 +177,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     // entries at 1°..4.5° are even closer, filling 5 of the 6 top-k slots
     // alongside A itself — so C lands at rank 6 (kept), while B (90°) and
     // D (180°) are ranks 7+ and excluded.
-    const db = openDatabase(getDbPath(), { embeddingDim: DIM });
+    const db = openIndexDatabase(getDbPath(), { embeddingDim: DIM });
     try {
       indexMemory(db, "alpha", vecAtAngle(0));
       indexMemory(db, "gamma", vecAtAngle(5)); // C — in pool, kept neighbour
@@ -217,7 +217,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
     // padding — all closer to A than beta. ghost and padding are never passed
     // in `memories`, so the byName.has() guard drops them. beta (90°) is far
     // enough that it lands past rank 6 → excluded too. Net: only alpha kept.
-    const db = openDatabase(getDbPath(), { embeddingDim: DIM });
+    const db = openIndexDatabase(getDbPath(), { embeddingDim: DIM });
     try {
       indexMemory(db, "alpha", vecAtAngle(0));
       indexMemory(db, "ghost", vecAtAngle(5)); // nearest to alpha, not in pool

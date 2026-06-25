@@ -17,7 +17,7 @@
  * re-keyed getEntitiesByEntryIds, survival on reindex) is not implemented yet.
  *
  * Isolation: no host state. A temp .db file per test; XDG sandboxed so any
- * config read inside openDatabase cannot touch the developer's real config.
+ * config read inside openIndexDatabase cannot touch the developer's real config.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -31,7 +31,7 @@ import {
   getEntitiesByEntryIds,
   getEntryIdByFilePath,
   getMeta,
-  openDatabase,
+  openIndexDatabase,
   upsertEntry,
 } from "../src/indexer/db/db";
 import * as graphDb from "../src/indexer/db/graph-db";
@@ -54,7 +54,7 @@ import { makeSandboxDir, withIsolatedAkmStorage } from "./_helpers/sandbox";
 // ── Temp / env management ───────────────────────────────────────────────────
 //
 // All host state is sandboxed: withIsolatedAkmStorage() redirects every AKM/XDG
-// env var at a per-test temp root (so openDatabase's config read can never touch
+// env var at a per-test temp root (so openIndexDatabase's config read can never touch
 // real user data), and makeSandboxDir() mints disposable dirs for the .db files.
 // Both register their cleanups, drained in afterEach.
 
@@ -126,7 +126,7 @@ function tableInfoColumns(db: Database, table: string): string[] {
 describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   // AC#1 — schema shape ------------------------------------------------------
   test("AC#1: graph tables drop entry_id and adopt the composite key", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // entry_id must be ABSENT from all three graph tables.
       expect(tableInfoColumns(db, "graph_files")).not.toContain("entry_id");
@@ -179,7 +179,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
 
   // AC#1 — one row per path --------------------------------------------------
   test("AC#1: two body_hashes for one path collide on the unique path index", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const file = path.join(STASH, "a.md");
       seedEntry(db, file, "a");
@@ -203,7 +203,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
 
   // AC#2 — THE CORE P1 WIN ---------------------------------------------------
   test("AC#2: graph data survives an entries delete + reinsert (reindex)", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const file = path.join(STASH, "survivor.md");
       seedEntry(db, file, "survivor");
@@ -247,7 +247,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
 
   // AC#3 — unchanged hash reused, changed hash re-extracts -------------------
   test("AC#3: same body_hash reuses the row; a new body_hash replaces children", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const file = path.join(STASH, "churn.md");
       seedEntry(db, file, "churn");
@@ -290,7 +290,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
 
   // AC#4 — graph_meta counts stay consistent after an entries delete ---------
   test("AC#4: deleting entries preserves graph rows and keeps graph_meta counts live", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const file = path.join(STASH, "meta.md");
       seedEntry(db, file, "meta");
@@ -340,7 +340,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
     expect(DB_VERSION).toBe(17);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
 
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       expect(getMeta(db, "version")).toBe(String(17));
 
@@ -373,7 +373,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   // preserving graph-only migration.
   test("AC#6: legacy entry_id graph schema migrates data + preserves entries/embeddings", () => {
     const dbPath = tmpDbPath();
-    let db = openDatabase(dbPath);
+    let db = openIndexDatabase(dbPath);
     try {
       // Seed real index content that must survive: an entry + its embedding.
       const file = path.join(STASH, "keepme.md");
@@ -445,7 +445,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
       closeDatabase(db);
 
       // Reopen → ensureSchema → migrateGraphFilesSchema + migrateGraphDataFromLegacy.
-      db = openDatabase(dbPath);
+      db = openIndexDatabase(dbPath);
 
       // The graph table is now the NEW shape; legacy tables are gone.
       expect(tableInfoColumns(db, "graph_files")).not.toContain("entry_id");
@@ -478,7 +478,7 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
 
   // Regression — getEntitiesByEntryIds keeps the entry_id -> entities contract.
   test("regression: getEntitiesByEntryIds returns entry_id->entities after re-key", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const fileA = path.join(STASH, "ra.md");
       const fileB = path.join(STASH, "rb.md");

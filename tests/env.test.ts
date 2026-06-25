@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildShellExportScript, createEnv, injectIntoEnv, listKeys, loadEnv } from "../src/commands/env/env";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, getAllEntries, openIndexDatabase } from "../src/indexer/db/db";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
@@ -295,7 +295,7 @@ describe("env indexer safety", () => {
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBe(1);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db);
       expect(entries.length).toBe(1);
@@ -342,7 +342,7 @@ describe("env indexer safety", () => {
 
     await akmIndex({ stashDir, full: true });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       type FtsRow = { c: number };
       const hit = db
@@ -365,7 +365,7 @@ describe("env indexer safety", () => {
     // Only the env/ copy is indexed; the frozen vaults/ copy is skipped.
     expect(result.totalEntries).toBe(1);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db);
       expect(entries.length).toBe(1);

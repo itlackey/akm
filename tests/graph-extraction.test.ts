@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config/config";
-import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, upsertEntry } from "../src/indexer/db/db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/db/graph-db";
 import { buildSearchText } from "../src/indexer/search/search-fields";
 import type { SearchSource } from "../src/indexer/search/search-source";
@@ -177,7 +177,7 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
     filename: path.basename(rel),
     ...(typeof frontmatter.description === "string" ? { description: frontmatter.description } : {}),
   };
-  const db = openDatabase(path.join(tmpStash, "graph-test.db"));
+  const db = openIndexDatabase(path.join(tmpStash, "graph-test.db"));
   try {
     upsertEntry(
       db,
@@ -204,7 +204,7 @@ function withGraphDb<T>(
   fn: (db: import("../src/storage/database").Database) => Promise<T> | T,
 ): Promise<T> | T {
   void name;
-  const db = openDatabase(path.join(tmpStash, "graph-test.db"));
+  const db = openIndexDatabase(path.join(tmpStash, "graph-test.db"));
   const result = fn(db);
   if (result instanceof Promise) {
     return result.finally(() => {

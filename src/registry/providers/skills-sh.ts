@@ -5,7 +5,7 @@
 import { fetchWithRetry } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
-import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
+import { closeDatabase, getRegistryIndexCache, openIndexDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
 import { md5Hex } from "../../runtime";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
@@ -44,10 +44,12 @@ interface SkillsShEntry {
  * (the await is required: the callbacks are async, and closing before they
  * settle would tear the DB down mid-write).
  */
-async function withRegistryCacheDb<T>(fn: (db: ReturnType<typeof openDatabase> | undefined) => Promise<T>): Promise<T> {
-  let db: ReturnType<typeof openDatabase> | undefined;
+async function withRegistryCacheDb<T>(
+  fn: (db: ReturnType<typeof openIndexDatabase> | undefined) => Promise<T>,
+): Promise<T> {
+  let db: ReturnType<typeof openIndexDatabase> | undefined;
   try {
-    db = openDatabase();
+    db = openIndexDatabase();
   } catch (err) {
     // Never mask the bun-test isolation guard as "DB unavailable".
     rethrowIfTestIsolationError(err);

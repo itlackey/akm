@@ -58,8 +58,8 @@ import {
   getIndexDirState,
   getMeta,
   isVecAvailable,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
   purgeEmbeddings,
   rebuildFts,
   relinkUsageEvents,
@@ -467,7 +467,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // Open database — pass embedding dimension from config if available
     const dbPath = getDbPath();
     const embeddingDim = config.embedding?.dimension;
-    const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
+    const db = openIndexDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
 
     try {
       // Determine incremental vs full mode

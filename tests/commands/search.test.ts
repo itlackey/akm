@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
-import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db/db";
+import { closeDatabase, getMeta, openIndexDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
@@ -225,7 +225,9 @@ describe("Database search path (FTS scoring)", () => {
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       expect(localHits.length).toBeGreaterThanOrEqual(1);
 
-      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openIndexDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), {
+        embeddingDim: 4,
+      });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");

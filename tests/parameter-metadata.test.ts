@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, getAllEntries, openIndexDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { extractCommandParameters, generateMetadataFlat } from "../src/indexer/passes/metadata";
@@ -364,7 +364,7 @@ describe("indexing pipeline with parameters", () => {
     process.env.AKM_STASH_DIR = stashDir;
     await akmIndex({ stashDir });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const entries = getAllEntries(db, "command");
     expect(entries.length).toBe(1);
 

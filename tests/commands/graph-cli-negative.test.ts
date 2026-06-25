@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 
@@ -32,7 +32,7 @@ async function runCli(args: string[], _stashDir: string): Promise<{ status: numb
 
 /** Initialize an empty index DB at the sandboxed `getDbPath()` location. */
 function seedEmptyIndexDb(): void {
-  const db = openDatabase(getDbPath());
+  const db = openIndexDatabase(getDbPath());
   closeDatabase(db);
 }
 

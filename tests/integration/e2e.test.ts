@@ -22,7 +22,7 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../../src/indexer/db/db";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openIndexDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { loadStashFile } from "../../src/indexer/passes/metadata";
 import type { SearchHit, SourceSearchHit } from "../../src/sources/types";
@@ -256,7 +256,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     // git/ directory had no .stash.json — metadata generated in DB only
     expect(fs.existsSync(path.join(stashDir, "scripts", "git", ".stash.json"))).toBe(false);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const entries = getAllEntries(db, "script");
     const gitEntries = entries.filter((e) => e.dirPath.includes(path.join("scripts", "git")));
     expect(gitEntries.length).toBeGreaterThanOrEqual(2);
@@ -282,7 +282,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("index extracts description from code comments", async () => {
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const entries = getAllEntries(db, "script");
     const diffEntry = entries.find((e) => e.entry.name.includes("summarize-diff"));
     expect(diffEntry).toBeDefined();
@@ -293,7 +293,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("index extracts metadata from package.json", async () => {
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const entries = getAllEntries(db, "script");
     const lintEntry = entries.find((e) => e.entry.name.includes("eslint-check"));
     expect(lintEntry).toBeDefined();
@@ -1507,7 +1507,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     // No .stash.json should be auto-generated
     expect(fs.existsSync(path.join(stashDir, "scripts", "format", ".stash.json"))).toBe(false);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const entries = getAllEntries(db, "script");
     const formatEntry = entries.find((e) => e.entry.name.includes("prettier"));
     expect(formatEntry).toBeDefined();
@@ -1526,7 +1526,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     const result = await akmIndex({ stashDir });
     expect(result.totalEntries).toBeGreaterThanOrEqual(2);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const entries = getAllEntries(db, "script");
     const migrateEntry = entries.find((e) => e.entry.name.includes("migrate"));
     expect(migrateEntry).toBeDefined();
@@ -1672,7 +1672,7 @@ describe("Scenario: Index persistence across sessions", () => {
   test("index is persisted and loadable", async () => {
     await akmIndex({ stashDir });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     const version = getMeta(db, "version");
     expect(version).toBe(String(DB_VERSION));
     const storedStashDir = getMeta(db, "stashDir");
@@ -1697,7 +1697,7 @@ describe("Scenario: Index persistence across sessions", () => {
 
   test("re-index updates the persisted index", async () => {
     await akmIndex({ stashDir });
-    const db1 = openDatabase();
+    const db1 = openIndexDatabase();
     const entries1 = getAllEntries(db1);
     const builtAt1 = expectDefined(getMeta(db1, "builtAt"));
     closeDatabase(db1);
@@ -1707,7 +1707,7 @@ describe("Scenario: Index persistence across sessions", () => {
     fs.writeFileSync(path.join(stashDir, "scripts", "new-script", "hello.sh"), "#!/bin/bash\necho hello\n");
 
     await akmIndex({ stashDir });
-    const db2 = openDatabase();
+    const db2 = openIndexDatabase();
     const entries2 = getAllEntries(db2);
     const builtAt2 = expectDefined(getMeta(db2, "builtAt"));
     closeDatabase(db2);

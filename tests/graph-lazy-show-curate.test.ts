@@ -25,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config/config";
-import { closeDatabase, computeBodyHash, openDatabase, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, computeBodyHash, openIndexDatabase, upsertEntry } from "../src/indexer/db/db";
 import * as graphDb from "../src/indexer/db/graph-db";
 import { buildSearchText } from "../src/indexer/search/search-fields";
 import type { SearchSource } from "../src/indexer/search/search-source";
@@ -157,7 +157,7 @@ function dbPath(): string {
 }
 
 async function withDb<T>(fn: (db: Database) => T | Promise<T>): Promise<T> {
-  const db = openDatabase(dbPath());
+  const db = openIndexDatabase(dbPath());
   try {
     return await fn(db);
   } finally {
@@ -183,7 +183,7 @@ function graphFileRowExists(db: Database, stashRoot: string, filePath: string): 
 function writeMemory(slug: string, body: string): string {
   const filePath = path.join(tmpStash, "memories", `${slug}.md`);
   fs.writeFileSync(filePath, `---\ntype: memory\n---\n\n${body}\n`, "utf8");
-  const db = openDatabase(dbPath());
+  const db = openIndexDatabase(dbPath());
   try {
     const entry = { name: slug, type: "memory", filename: `${slug}.md` } as Parameters<typeof upsertEntry>[5];
     upsertEntry(

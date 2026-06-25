@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setSecret } from "../src/commands/env/secret";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, getAllEntries, openIndexDatabase } from "../src/indexer/db/db";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
@@ -65,7 +65,7 @@ describe("secret indexer safety", () => {
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBe(1);
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db);
       expect(entries.length).toBe(1);
@@ -104,7 +104,7 @@ describe("secret indexer safety", () => {
     setSecret(path.join(stashDir, "secrets", "stripe-api-key"), Buffer.from("sk_live_should_not_be_indexed"));
     await akmIndex({ stashDir, full: true });
 
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       type FtsRow = { c: number };
       const byName = db

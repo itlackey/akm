@@ -30,8 +30,8 @@ import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
 import {
   closeDatabase,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
   rebuildFts,
   setMeta,
   upsertEntry,
@@ -181,7 +181,7 @@ function buildFixture(): void {
   const dbPath = getDbPath();
   // Make sure the cache dir exists (akm-graph-rank-cache-* is fresh).
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     const entries: Array<{ entry: StashEntry; filePath: string; dirPath: string }> = [
       {

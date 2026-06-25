@@ -14,8 +14,8 @@ import {
   findEntryIdByRef,
   getEntryById,
   getEntryRefRowsForStashRoot,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
 } from "../../indexer/db/db";
 import { loadStoredGraphSnapshot } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
@@ -554,7 +554,7 @@ export async function akmGraphUpdate(options: {
       let db: import("../../storage/database").Database | undefined;
       const resolvedPaths = new Set<string>();
       try {
-        db = openDatabase(dbPath);
+        db = openIndexDatabase(dbPath);
         for (const ref of options.refs) {
           const trimmed = ref.trim();
           if (!trimmed) continue;
@@ -595,7 +595,7 @@ export async function akmGraphUpdate(options: {
     let db: import("../../storage/database").Database | undefined;
     const startMs = Date.now();
     try {
-      db = openDatabase(getDbPath());
+      db = openIndexDatabase(getDbPath());
 
       const onProgress = (event: {
         processed: number;

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, rebuildFts, searchFts, upsertEntry } from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import type { Database } from "../src/storage/database";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
@@ -81,7 +81,7 @@ function insertTestEntry(
 
 describe("Fuzzy prefix fallback in searchFts", () => {
   test("exact match still works normally", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration platform",
@@ -97,7 +97,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("truncated prefix — 'kubernet' matches 'kubernetes' via prefix expansion", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration platform",
@@ -114,7 +114,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("partial prefix match — 'kube' finds 'kubernetes' assets", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration",
@@ -137,7 +137,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("multiple token query with prefix fallback", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-kubernetes", {
         searchText: "deploy kubernetes production cluster",
@@ -161,7 +161,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("non-matching query returns empty even with prefix fallback", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration",
@@ -177,7 +177,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("short tokens (1-2 chars) should NOT get prefix expansion", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
         searchText: "kubernetes container orchestration",
@@ -202,7 +202,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("all short tokens produce no prefix fallback and return empty", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "golang-setup", {
         searchText: "go golang setup configuration",
@@ -220,7 +220,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("prefix fallback only triggers when exact match returns zero results", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy", {
         searchText: "deploy application production",
@@ -244,7 +244,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
   });
 
   test("prefix fallback with entryType filter", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes-skill", {
         type: "skill",

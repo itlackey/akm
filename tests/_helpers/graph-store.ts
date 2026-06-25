@@ -1,5 +1,5 @@
 import path from "node:path";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { deleteStoredGraph, loadStoredGraphSnapshot, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import type { GraphFile } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
@@ -13,7 +13,7 @@ import type { Database } from "../../src/storage/database";
  * still upsert their own; this helper is idempotent.
  */
 export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     for (const file of graph.files) {
       const name = path.basename(file.path, path.extname(file.path));
@@ -94,7 +94,7 @@ export function insertGraphEntities(
 }
 
 export function removeStoredGraph(dbPath: string, stashPath: string): void {
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     deleteStoredGraph(db, stashPath);
   } finally {

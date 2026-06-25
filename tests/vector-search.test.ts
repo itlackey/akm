@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   closeDatabase,
-  openDatabase,
+  openIndexDatabase,
   rebuildFts,
   searchFts,
   searchVec,
@@ -128,7 +128,7 @@ describe("tryVecScores activation", () => {
     // BLOB table. This is the data path that tryVecScores consumes.
     const dbPath = tmpDbPath("vec-activation");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       const id = insertTestEntry(db, "vec-ready-tool", {
         description: "A tool with embeddings ready for vector search",
@@ -155,7 +155,7 @@ describe("tryVecScores activation", () => {
   test("searchVec returns results sorted by similarity (closest first)", () => {
     const dbPath = tmpDbPath("vec-sorted");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       // Insert two entries with different embeddings
       const id1 = insertTestEntry(db, "close-match", {
@@ -261,7 +261,7 @@ describe("FTS-only entries survive in hybrid mode", () => {
   test("entry matching FTS but with no embedding appears in results", () => {
     const dbPath = tmpDbPath("fts-only-hybrid");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       // Insert two entries: one with embedding, one without
       const idWithEmb = insertTestEntry(db, "with-embedding", {
@@ -481,7 +481,7 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
   test("searchVec with BLOB embeddings returns correct similarity ranking", () => {
     const dbPath = tmpDbPath("blob-fallback");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       // Insert three entries with different embeddings
       const id1 = insertTestEntry(db, "exact-match", {
@@ -540,7 +540,7 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
   test("searchVec returns empty array when no embeddings exist", () => {
     const dbPath = tmpDbPath("blob-empty");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       insertTestEntry(db, "no-embed-entry", {
         description: "Entry without embedding",
@@ -558,7 +558,7 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
   test("searchVec with k smaller than total results returns top-k", () => {
     const dbPath = tmpDbPath("blob-topk");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       // Insert 5 entries with embeddings
       const ids: number[] = [];
@@ -636,7 +636,7 @@ describe("Dimension mismatch produces zero similarity", () => {
     // Verify this end-to-end via searchVec.
     const dbPath = tmpDbPath("dim-mismatch");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       const id = insertTestEntry(db, "small-emb", {
         description: "Entry with small embedding",
@@ -677,7 +677,7 @@ describe("L2-to-cosine conversion round-trip", () => {
     // These should be inverse operations for normalized vectors.
     const dbPath = tmpDbPath("roundtrip");
     const dim = 4;
-    const db = openDatabase(dbPath, { embeddingDim: dim });
+    const db = openIndexDatabase(dbPath, { embeddingDim: dim });
     try {
       const id = insertTestEntry(db, "roundtrip-entry", {
         description: "Round-trip test entry",

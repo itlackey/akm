@@ -38,7 +38,7 @@ import { backupExistingConfig } from "../core/config/config-io";
 import { ConfigError, UsageError } from "../core/errors";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db/db";
+import { closeDatabase, isVecAvailable, openIndexDatabase } from "../indexer/db/db";
 import { akmIndex } from "../indexer/indexer";
 import {
   clearSemanticStatus,
@@ -578,11 +578,11 @@ async function prepareSemanticSearchAssets(
 
   spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
 
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openIndexDatabase> | undefined;
   let probeDir: string | undefined;
   try {
     probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-vec-probe-"));
-    db = openDatabase(
+    db = openIndexDatabase(
       path.join(probeDir, "probe.db"),
       config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
     );

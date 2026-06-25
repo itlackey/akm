@@ -72,7 +72,7 @@ import { getDbPath } from "../../core/paths";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { openStateDatabase } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
-import { closeDatabase, getAllEntries, openDatabase } from "../../indexer/db/db";
+import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/db/db";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
@@ -937,7 +937,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       let existingRefVocabulary = new Set<string>();
       try {
         const embCfg = config?.embedding;
-        const indexDb = openDatabase(getDbPath(), embCfg?.dimension ? { embeddingDim: embCfg.dimension } : undefined);
+        const indexDb = openIndexDatabase(
+          getDbPath(),
+          embCfg?.dimension ? { embeddingDim: embCfg.dimension } : undefined,
+        );
         try {
           const allRefs = getAllEntries(indexDb).map((e) => e.entryKey);
           existingRefVocabulary = buildRefVocabulary(allRefs);

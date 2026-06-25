@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase } from "../src/indexer/db/db";
 import { getUsageEvents, insertUsageEvent } from "../src/indexer/usage/usage-events";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
@@ -47,7 +47,7 @@ afterEach(() => {
 describe("Usage Telemetry", () => {
   test("usage_events table is created by ensureSchema", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='usage_events'").get() as
         | { name: string }
@@ -63,7 +63,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a search event", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "search",
@@ -84,7 +84,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a show event", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "show",
@@ -104,7 +104,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a feedback event with positive signal", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "feedback",
@@ -125,7 +125,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a feedback event with negative signal", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "feedback",
@@ -145,7 +145,7 @@ describe("Usage Telemetry", () => {
 
   test("getUsageEvents filters by event_type", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "search", query: "test query" });
       insertUsageEvent(db, { event_type: "show", entry_ref: "skill:a" });
@@ -174,7 +174,7 @@ describe("Usage Telemetry", () => {
 
   test("getUsageEvents filters by entry_ref", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "show", entry_ref: "skill:deploy" });
       insertUsageEvent(db, { event_type: "show", entry_ref: "skill:test" });
@@ -197,7 +197,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent does not throw on DB errors (fire-and-forget)", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       // Drop the usage_events table to force an error
       db.exec("DROP TABLE IF EXISTS usage_events");
@@ -215,7 +215,7 @@ describe("Usage Telemetry", () => {
 
   test("created_at is auto-populated", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "search", query: "auto timestamp" });
 
@@ -234,7 +234,7 @@ describe("Usage Telemetry", () => {
 
   test("metadata field stores JSON and is retrievable and parseable", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const meta = { entry_refs: ["skill:deploy", "command:rollback"], resultCount: 5 };
       insertUsageEvent(db, {
@@ -258,7 +258,7 @@ describe("Usage Telemetry", () => {
 
   test("getUsageEvents supports combined event_type and entry_ref filters", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "show", entry_ref: "skill:deploy" });
       insertUsageEvent(db, { event_type: "feedback", entry_ref: "skill:deploy", signal: "positive" });
@@ -277,7 +277,7 @@ describe("Usage Telemetry", () => {
 
   test("entry_id field is stored correctly", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "show",

@@ -41,8 +41,8 @@ import {
   getRetrievalCounts,
   getUtilityScoresByIds,
   getZeroResultSearches,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
 } from "../../indexer/db/db";
 import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
@@ -4935,7 +4935,10 @@ export async function runImproveMaintenancePasses(args: {
   let proposalsExpired = 0;
 
   const openIndexDb = () =>
-    openDatabase(getDbPath(), config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined);
+    openIndexDatabase(
+      getDbPath(),
+      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
+    );
 
   // #584: reindexFn opens its own write handle on the same index.db WAL file.
   // Holding our handle across that call produced SQLITE_BUSY / "database is
