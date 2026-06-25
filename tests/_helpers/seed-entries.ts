@@ -18,6 +18,7 @@
  */
 
 import path from "node:path";
+import { TYPE_DIRS } from "../../src/core/asset/asset-spec";
 import { EMBEDDING_DIM, openDatabase, upsertEntry } from "../../src/indexer/db/db";
 import { type GetAllEntries, inMemoryGetAllEntries } from "../../src/indexer/db/entry-reader";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
@@ -55,7 +56,12 @@ export function seedEntries(specs: SeedEntrySpec[]): SeededEntries {
     const { stashDir: specStash, filePath: specFile, ...rest } = spec;
     const stashDir = specStash ?? DEFAULT_STASH;
     const entry = rest as StashEntry;
-    const filePath = specFile ?? path.join(stashDir, `${entry.type}s`, `${entry.name}.md`);
+    // Use the canonical type→dir map (memory→memories, etc.) so the seeded
+    // filePath matches AKM's real on-disk layout and the planner's path/existence
+    // guards behave as they would against a real stash. Falls back to naive
+    // pluralization only for an unregistered/unknown type.
+    const typeDir = TYPE_DIRS[entry.type] ?? `${entry.type}s`;
+    const filePath = specFile ?? path.join(stashDir, typeDir, `${entry.name}.md`);
     const dirPath = path.dirname(filePath);
     const entryKey = `${stashDir}:${entry.type}:${entry.name}`;
     upsertEntry(db, entryKey, dirPath, filePath, stashDir, entry, buildSearchText(entry));

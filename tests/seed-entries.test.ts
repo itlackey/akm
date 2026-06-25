@@ -28,7 +28,8 @@ describe("seedEntries (#664 Seam 2)", () => {
       expect(mem?.entry.description).toBe("auth memory");
       expect(mem?.entry.tags).toEqual(["auth", "vpn"]);
       expect(mem?.stashDir).toBe("/seed/stash");
-      expect(mem?.filePath).toBe("/seed/stash/memorys/auth-tips.md");
+      // Canonical AKM layout: memory entries live under memories/ (not "memorys").
+      expect(mem?.filePath).toBe("/seed/stash/memories/auth-tips.md");
     } finally {
       seeded.close();
     }

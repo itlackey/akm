@@ -58,11 +58,14 @@ export class RemoteEmbedder implements Embedder {
       body.options = ollamaOpts;
     }
 
+    // `signal` is the 4th positional arg (NOT RequestInit.signal): fetchWithTimeout
+    // owns the AbortController and overwrites opts.signal with its own; the 4th
+    // param is what links the caller's signal so the request is actually cancellable.
     const response = await fetchWithTimeout(
       normalizeEmbeddingEndpoint(this.endpoint),
-      { method: "POST", headers, body: JSON.stringify(body), signal },
+      { method: "POST", headers, body: JSON.stringify(body) },
       30_000,
-      undefined,
+      signal,
       this.deps.fetch ?? globalThis.fetch,
     );
 
@@ -102,11 +105,12 @@ export class RemoteEmbedder implements Embedder {
         body.options = ollamaOpts;
       }
 
+      // `signal` is the 4th positional arg, not RequestInit.signal — see embed().
       const response = await fetchWithTimeout(
         normalizeEmbeddingEndpoint(this.endpoint),
-        { method: "POST", headers, body: JSON.stringify(body), signal },
+        { method: "POST", headers, body: JSON.stringify(body) },
         30_000,
-        undefined,
+        signal,
         this.deps.fetch ?? globalThis.fetch,
       );
 
