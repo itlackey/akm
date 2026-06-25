@@ -1,5 +1,32 @@
 # AKM CLI — Architecture Refactor Plan (Design-Level)
 
+## Execution status (last updated 2026-06-25)
+
+All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: unit **5,211 / 0**, integration **1,578 / 0 fail**.
+
+| Task | Status | Notes |
+|---|---|---|
+| **R4** delete dead provider interface | ✅ DONE `65f2006b` | −574 LOC; zero-call-site v1 surface removed |
+| **X1** `withManagedDb`/`withStateDb` seam | ✅ DONE `f511e10c` `c3ec1aad` `1484b180` | Seam + async/path variants; **22 sites converted, 8 deliberately left** (long-lived run handles, guarded conditional opens, open-only try/catch — the seam can't express "soft-fail to undefined" or "catch open but not body") |
+| **X2** `callStructured()` template | ⚠️ PARTIAL `86797077` | Type-half done (LlmProfileConfig unification + context-overflow classifier merge). The full template across the ~20 `chatCompletion` callers is **not** done. |
+| **R3** registry cache-fetch Template + layering fix | ✅ DONE `7d9cb8a3` | |
+| **R1** typed PhaseResult (kill cast-injection) | ✅ DONE `cd9af204` | |
+| **D4** split `git.ts` | ✅ DONE `a4a37c28` | → git-provider / git-install / git-stash |
+| **D5** extract `WorkflowAssetLoader` | ✅ DONE `992157ba` | |
+| **R7** `defineGroupCommand` seam | ✅ DONE `0061d1b8` | |
+| **R9** dir-staleness pass extraction | ✅ DONE `05d4b1fa` | |
+| **R5** source-kind descriptor table | ⏭️ SKIPPED | Couldn't reach a clean behavior-preserving gate; the 4 switches weren't cleanly unifiable as scoped. Re-attempt with a different shape. |
+| **R6** collapse output/text+shapes wrappers | ⏭️ NOT VALID | Premise was wrong — those modules are registration entries delegating to output-layer helpers, **not** command-wrappers. Nothing to inline. Removed from scope. |
+| **R2** route `ensureSourceCaches` through `sync()` | ⏸️ NOT STARTED | |
+| **R8** `runImproveSession` lifecycle lift | ⏸️ NOT STARTED | |
+| **X3** `executeRunner()` kind-switch | ⏸️ NOT STARTED | |
+| **D1** decompose `improve.ts` (5,406 LOC) + **D1b** `withProcessLock` | ⏸️ DEFERRED | XL / high-risk / never-big-bang — needs human-supervised incremental work, NOT a one-shot agent |
+| **D2** `state-db` per-domain repositories | ⏸️ DEFERRED | XL; builds on the X1 seam |
+| **D3** decompose `consolidate.ts` (3,447 LOC) | ⏸️ DEFERRED | XL |
+| **X4** repository-owns-SQL lint ratchet | ⏸️ BLOCKED | Needs D2/D3 to clear the existing offenders first |
+
+> **Process note:** the executed work used a gated workflow (implement → gate → adversarial review → commit-or-revert). Lessons baked in: verify the resulting branch yourself (agents run `git reset`); a sync RAII loan can't wrap a handle held across an `await` (needs an async variant); `biome`/`bun run lint` exit 0 on *warnings* — count warning lines, don't trust the exit code.
+
 ## Executive summary
 
 The akm `src/` tree is structurally sound at the *boundary* level — the team has already shipped exemplary seams (the `StorageProvider` driver boundary, `OutputShapeHandler`/`AssetRenderer` registries, `TaskBackend` Strategy+Factory, `WorkflowRunsRepository` + `withWorkflowRunsRepo`, `withIndexDb`, `withIndexWriterLease`, `feature-gate.tryLlmFeature`, the AsyncLocalStorage usage-telemetry inversion). The problem is **half-finished application of patterns the codebase already proved work**, concentrated in two failure modes:
