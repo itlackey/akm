@@ -17,6 +17,7 @@ import { getOutputMode, type OutputMode } from "../output/context";
 import { DEFAULT_TEMPLATE, deliverRendered, escapeHtml, renderHtml, resolveTemplatePath } from "../output/html-render";
 import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
+import { hasSubcommand } from "./parse-args";
 
 // ── Exit codes ───────────────────────────────────────────────────────────────
 /**
@@ -126,6 +127,44 @@ export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCo
   return defineCommand({
     ...rest,
     run: (context: CommandContext<T>) => runWithJsonErrors(() => run(context)),
+  } as CommandDef<T>);
+}
+
+/**
+ * Define a citty subcommand-group command (env, secret, proposal, tasks, wiki,
+ * graph, …) that shares one wiring shape: a `subCommands` map, a routing set
+ * DERIVED from that map's keys (so the set can never silently desync from the
+ * registered subcommands), and a default body that fires ONLY for the bare
+ * group invocation — citty still runs the group body after dispatching a
+ * subcommand, so the shared guard short-circuits when `args._[0]` names a
+ * registered subcommand.
+ *
+ * The `defaultRun` body is wrapped in `runWithJsonErrors`, so it emits a
+ * byte-identical JSON error envelope on throw — exactly the per-site
+ * `run() { return runWithJsonErrors(() => { if (hasSubcommand(...)) return; … }); }`
+ * boilerplate this replaces.
+ */
+export function defineGroupCommand<const T extends ArgsDef = ArgsDef>(def: {
+  meta: CommandDef<T>["meta"];
+  args?: T;
+  // Mirrors citty's own `SubCommandsDef` (Record<string, CommandDef<any>>): the
+  // subcommands carry heterogeneous per-command arg shapes, and citty's
+  // `CommandDef` is invariant in its arg type, so a narrower element type would
+  // reject every concrete subcommand. Same precedent as `src/commands/completions.ts`.
+  // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
+  subCommands: Record<string, CommandDef<any>>;
+  defaultRun: (context: CommandContext<T>) => void | Promise<void>;
+}): CommandDef<T> {
+  const subcommandSet = new Set(Object.keys(def.subCommands));
+  return defineCommand({
+    meta: def.meta,
+    ...(def.args ? { args: def.args } : {}),
+    subCommands: def.subCommands,
+    run: (context: CommandContext<T>) =>
+      runWithJsonErrors(() => {
+        if (hasSubcommand(context.args, subcommandSet)) return;
+        return def.defaultRun(context);
+      }),
   } as CommandDef<T>);
 }
 

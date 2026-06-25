@@ -21,8 +21,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, hasSubcommand } from "../../cli/parse-args";
-import { output, runWithJsonErrors } from "../../cli/shared";
+import { getStringArg } from "../../cli/parse-args";
+import { defineGroupCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { deriveCanonicalAssetName } from "../../core/asset/asset-spec";
 import { loadConfig } from "../../core/config/config";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
@@ -258,28 +258,20 @@ const secretRemoveCommand = defineCommand({
   },
 });
 
-// Single source of truth: the routing set is derived from the subCommands keys
-// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
-const secretSubCommands = {
-  list: secretListCommand,
-  path: secretPathCommand,
-  run: secretRunCommand,
-  set: secretSetCommand,
-  remove: secretRemoveCommand,
-};
-const SECRET_SUBCOMMAND_SET = new Set(Object.keys(secretSubCommands));
-
-export const secretCommand = defineCommand({
+export const secretCommand = defineGroupCommand({
   meta: {
     name: "secret",
     description:
       "Manage secrets — a single sensitive value used on its own for authentication (an API token, a PEM private key, a TLS cert), one value per file. Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`.",
   },
-  subCommands: secretSubCommands,
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      if (hasSubcommand(args, SECRET_SUBCOMMAND_SET)) return;
-      output("secret-list", { secrets: listSecretsRecursive() });
-    });
+  subCommands: {
+    list: secretListCommand,
+    path: secretPathCommand,
+    run: secretRunCommand,
+    set: secretSetCommand,
+    remove: secretRemoveCommand,
+  },
+  defaultRun() {
+    output("secret-list", { secrets: listSecretsRecursive() });
   },
 });

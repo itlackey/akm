@@ -11,9 +11,8 @@
  * `runWithJsonErrors` form it replaces.
  */
 
-import { defineCommand } from "citty";
-import { hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -504,20 +503,7 @@ const proposalDrainCommand = defineJsonCommand({
 // that warn to stderr and delegate to the same command bodies; they are removed
 // in 0.9.0. Bare `akm proposal` behaves as `proposal list` (mirrors `akm env`).
 
-// Single source of truth: the routing set is derived from the subCommands keys
-// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
-const proposalSubCommands = {
-  list: proposalListCommand,
-  show: proposalShowCommand,
-  diff: proposalDiffCommand,
-  accept: proposalAcceptCommand,
-  reject: proposalRejectCommand,
-  revert: proposalRevertCommand,
-  drain: proposalDrainCommand,
-};
-const PROPOSAL_SUBCOMMAND_SET = new Set(Object.keys(proposalSubCommands));
-
-export const proposalCommand = defineCommand({
+export const proposalCommand = defineGroupCommand({
   meta: { name: "proposal", description: "Manage the proposal queue: list, show, diff, accept, reject, revert" },
   args: {
     status: {
@@ -527,20 +513,24 @@ export const proposalCommand = defineCommand({
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
     type: { type: "string", description: "Filter by asset type" },
   },
-  subCommands: proposalSubCommands,
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      // citty runs the group body even after a subcommand; short-circuit so the
-      // default-to-list body only fires for bare `akm proposal [--status …]`.
-      if (hasSubcommand(args, PROPOSAL_SUBCOMMAND_SET)) return;
-      const status = parseProposalStatus(args.status);
-      const result = akmProposalList({
-        status,
-        ref: args.ref,
-        type: args.type,
-        includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
-      });
-      output("proposal-list", result);
+  subCommands: {
+    list: proposalListCommand,
+    show: proposalShowCommand,
+    diff: proposalDiffCommand,
+    accept: proposalAcceptCommand,
+    reject: proposalRejectCommand,
+    revert: proposalRevertCommand,
+    drain: proposalDrainCommand,
+  },
+  // Default body fires only for bare `akm proposal [--status …]`.
+  defaultRun({ args }) {
+    const status = parseProposalStatus(args.status);
+    const result = akmProposalList({
+      status,
+      ref: args.ref,
+      type: args.type,
+      includeArchive: status === "accepted" || status === "rejected" || status === "reverted",
     });
+    output("proposal-list", result);
   },
 });

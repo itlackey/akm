@@ -11,9 +11,8 @@
  * form it replaces.
  */
 
-import { defineCommand } from "citty";
-import { hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import {
   akmGraphEntities,
   akmGraphEntity,
@@ -25,8 +24,6 @@ import {
   akmGraphUpdate,
 } from "./graph";
 
-// Single source of truth: the routing set is derived from the subCommands keys
-// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
 const graphSubCommands = {
   summary: defineJsonCommand({
     meta: { name: "summary", description: "Show entity-graph counts and quality telemetry" },
@@ -153,15 +150,10 @@ const graphSubCommands = {
     },
   }),
 };
-const GRAPH_SUBCOMMAND_SET = new Set(Object.keys(graphSubCommands));
-
-export const graphCommand = defineCommand({
+export const graphCommand = defineGroupCommand({
   meta: { name: "graph", description: "Inspect the indexed entity graph stored in SQLite" },
   subCommands: graphSubCommands,
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      if (hasSubcommand(args, GRAPH_SUBCOMMAND_SET)) return;
-      output("graph-summary", akmGraphSummary());
-    });
+  defaultRun() {
+    output("graph-summary", akmGraphSummary());
   },
 });

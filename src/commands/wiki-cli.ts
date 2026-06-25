@@ -13,8 +13,8 @@
  */
 
 import { defineCommand } from "citty";
-import { getStringArg, hasSubcommand, parsePositiveIntFlag } from "../cli/parse-args";
-import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
+import { getStringArg, parsePositiveIntFlag } from "../cli/parse-args";
+import { defineGroupCommand, defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { isHttpUrl, resolveStashDir } from "../core/common";
 import { loadConfig, resolveConfiguredSources } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
@@ -308,35 +308,27 @@ const wikiIngestCommand = defineJsonCommand({
   },
 });
 
-// Single source of truth: the routing set is derived from the subCommands keys
-// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
-const wikiSubCommands = {
-  create: wikiCreateCommand,
-  register: wikiRegisterCommand,
-  list: wikiListCommand,
-  show: wikiShowCommand,
-  remove: wikiRemoveCommand,
-  pages: wikiPagesCommand,
-  search: wikiSearchCommand,
-  stash: wikiStashCommand,
-  lint: wikiLintCommand,
-  ingest: wikiIngestCommand,
-};
-const WIKI_SUBCOMMAND_SET = new Set(Object.keys(wikiSubCommands));
-
-export const wikiCommand = defineCommand({
+export const wikiCommand = defineGroupCommand({
   meta: {
     name: "wiki",
     description:
       "Manage multiple markdown wikis (Karpathy-style). akm surfaces (lifecycle, raw/, lint, index); the agent writes pages.",
   },
-  subCommands: wikiSubCommands,
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      if (hasSubcommand(args, WIKI_SUBCOMMAND_SET)) return;
-      // Default action: list wikis
-      const { listWikis } = await import("../wiki/wiki.js");
-      output("wiki-list", { wikis: listWikis(resolveStashDir()) });
-    });
+  subCommands: {
+    create: wikiCreateCommand,
+    register: wikiRegisterCommand,
+    list: wikiListCommand,
+    show: wikiShowCommand,
+    remove: wikiRemoveCommand,
+    pages: wikiPagesCommand,
+    search: wikiSearchCommand,
+    stash: wikiStashCommand,
+    lint: wikiLintCommand,
+    ingest: wikiIngestCommand,
+  },
+  async defaultRun() {
+    // Default action: list wikis
+    const { listWikis } = await import("../wiki/wiki.js");
+    output("wiki-list", { wikis: listWikis(resolveStashDir()) });
   },
 });
