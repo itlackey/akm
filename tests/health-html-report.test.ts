@@ -8,7 +8,9 @@ import path from "node:path";
 import { type AkmHealthResult, akmHealth } from "../src/commands/health";
 import { buildHealthHtmlReplacements, type HealthHtmlReportOptions } from "../src/commands/health/html-report";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
-import { appendEvent } from "../src/core/events";
+import { type AppendEventInput, appendEvent } from "../src/core/events";
+import { getLogsDbPath } from "../src/core/logs-db";
+import { getStateDbPathInDataDir } from "../src/core/paths";
 import { openStateDatabase, recordImproveRun } from "../src/core/state-db";
 import { renderHtml, resolveTemplatePath } from "../src/output/html-render";
 import { type Cleanup, type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "./_helpers/sandbox";
@@ -16,9 +18,20 @@ import { type Cleanup, type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmS
 let storage: IsolatedAkmStorage;
 let cleanup: Cleanup = () => {};
 
+// Pin state.db/logs.db paths once per test (env is correct in beforeEach) so a
+// concurrent test FILE mutating XDG_DATA_HOME under `--parallel>1` can't
+// redirect a bare `openStateDatabase()` / `akmHealth({since})` to a foreign or
+// just-deleted DB. The in-memory DB pool is keyed by the resolved path, so a
+// redirected resolution lands on a different/empty pool entry and the seeded
+// run vanishes from the read. See health-command.test.ts for the full note.
+let pinnedStateDbPath = "";
+let pinnedLogsDbPath = "";
+
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   cleanup = storage.cleanup;
+  pinnedStateDbPath = getStateDbPathInDataDir();
+  pinnedLogsDbPath = getLogsDbPath();
 });
 
 afterEach(() => {
@@ -26,11 +39,21 @@ afterEach(() => {
   cleanup = () => {};
 });
 
+/** Open this test's pinned state.db (never re-resolves XDG_DATA_HOME). */
+function openState(): ReturnType<typeof openStateDatabase> {
+  return openStateDatabase(pinnedStateDbPath);
+}
+
+/** Append an event to this test's pinned state.db. */
+function event(input: AppendEventInput): void {
+  appendEvent(input, { dbPath: pinnedStateDbPath });
+}
+
 /** Seed one realistic improve run into the isolated state.db. */
 function seedImproveRun(id = "run-html-1", ok = true): void {
   const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
   const completedAt = new Date(Date.now() - 5 * 60_000).toISOString();
-  const db = openStateDatabase();
+  const db = openState();
   try {
     recordImproveRun(db, {
       id,
@@ -99,7 +122,12 @@ function buildOpts(partial: Partial<HealthHtmlReportOptions> = {}): HealthHtmlRe
 }
 
 function healthResult(): AkmHealthResult {
-  return akmHealth({ since: "24h", groupBy: "run" });
+  return akmHealth({
+    since: "24h",
+    groupBy: "run",
+    stateDbPath: pinnedStateDbPath,
+    logsDbPath: pinnedLogsDbPath,
+  });
 }
 
 describe("buildHealthHtmlReplacements", () => {
@@ -194,7 +222,7 @@ describe("buildHealthHtmlReplacements", () => {
     seedImproveRun("run-html-llm");
     // Seed two llm_usage events into the sandboxed state.db (default path under
     // the isolated XDG_DATA_HOME); akmHealth aggregates them into metrics.llmUsage.
-    appendEvent({
+    event({
       eventType: "llm_usage",
       metadata: {
         stage: "reflect",
@@ -206,7 +234,7 @@ describe("buildHealthHtmlReplacements", () => {
         reasoningTokens: 10,
       },
     });
-    appendEvent({
+    event({
       eventType: "llm_usage",
       metadata: {
         stage: "distill",
@@ -319,7 +347,7 @@ describe("buildHealthHtmlReplacements", () => {
 
   test("per-stage LLM token aggregate flows into the LLM_BY_STAGE_JSON token", () => {
     seedImproveRun("run-html-stages");
-    appendEvent({
+    event({
       eventType: "llm_usage",
       metadata: {
         stage: "reflect",

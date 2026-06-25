@@ -256,10 +256,30 @@ function uninstallGraph(): void {
   }
 }
 
+// Monotonic graph-version counter. The graph-boost module caches the parsed
+// graph context keyed by (stashPath, generatedAt); a test that re-installs the
+// graph twice (e.g. baseline → mutated-confidence) MUST bump generatedAt so the
+// second loadGraphBoostContext() doesn't hit the cache and serve the first
+// graph's nodes. Using `new Date().toISOString()` made generatedAt depend on
+// wall-clock millisecond resolution — two back-to-back installs within the same
+// ms produced an identical key, so under --parallel scheduler timing the cached
+// (stale) context leaked and the confidence/ordering asserts flaked. A strictly
+// increasing synthetic timestamp makes the key change every install,
+// deterministically, independent of the scheduler.
+const GRAPH_VERSION_EPOCH = Date.now();
+let graphVersionCounter = 0;
+function nextGeneratedAt(): string {
+  graphVersionCounter += 1;
+  // A valid, recent ISO timestamp that strictly increases per call (a fixed
+  // base captured at module load + a monotonic ms counter). Never collides
+  // across back-to-back installs regardless of wall-clock resolution.
+  return new Date(GRAPH_VERSION_EPOCH + graphVersionCounter).toISOString();
+}
+
 function installGraphWithMutator(mutator: (graph: GraphFile) => GraphFile): void {
   const mutated = mutator({
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nextGeneratedAt(),
     stashRoot: stashDir,
     files: [
       {
