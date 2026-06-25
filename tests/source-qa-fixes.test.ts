@@ -392,7 +392,12 @@ describe("issue #19: akm update website sources", () => {
 
     const result = await akmUpdate({ target: "test-git", stashDir });
     expect(result.processed).toEqual([]);
-    expect(syncSpy).toHaveBeenCalledTimes(1);
+    // updateGitSource must refresh via syncMirroredRepo (not treat the URL as a
+    // local path), passing force + the resolved writable flag. The subsequent
+    // re-index also refreshes every cache-backed source through the provider
+    // seam (ensureSourceCaches → provider.sync()), so this spy legitimately
+    // sees more than one call; the meaningful assertion is the direct call's
+    // arguments below.
     expect(syncSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "test-git" }), {
       force: true,
       writable: false,

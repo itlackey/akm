@@ -58,17 +58,17 @@ export class GitSourceProvider implements SourceProvider {
     return this.#path;
   }
 
-  async sync(): Promise<void> {
+  async sync(options?: { force?: boolean }): Promise<void> {
     // Two execution modes:
     //   1. Long-lived configured source (config.url) — mirror into the
     //      registry-index cache and serve as a read-only working tree.
     //   2. One-shot install ref (options.ref like "git:..." / "github:...") —
     //      delegate to the install-time pipeline.
     if (typeof this.#config.options?.ref === "string" && this.#config.options.ref) {
-      await syncRegistryGitRef(String(this.#config.options.ref));
+      await syncRegistryGitRef(String(this.#config.options.ref), { force: options?.force });
       return;
     }
-    await syncMirroredRepo(this.#config);
+    await syncMirroredRepo(this.#config, { force: options?.force });
   }
 }
 

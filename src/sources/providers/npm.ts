@@ -59,9 +59,9 @@ class NpmSourceProvider implements SourceProvider {
     );
   }
 
-  async sync(): Promise<void> {
+  async sync(options?: { force?: boolean }): Promise<void> {
     const ref = npmRefFromConfig(this.#config);
-    await syncNpmRef(ref);
+    await syncNpmRef(ref, { force: options?.force });
   }
 }
 

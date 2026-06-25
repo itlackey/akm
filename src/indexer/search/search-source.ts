@@ -7,13 +7,11 @@ import path from "node:path";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
-import { resolveSourceProviderFactory } from "../../sources/provider-factory";
+import { resolveSourceProviderFactory, resolveSourceProviders } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
 import "../../sources/providers/index";
 import { warn } from "../../core/warn";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../sources/providers/git";
-import { ensureWebsiteMirror } from "../../sources/website-ingest";
 
 // Legacy "context-hub" / "github" type aliases are normalized to "git" at
 // config-load time (see src/config.ts), so this set only contains the canonical
@@ -298,30 +296,18 @@ function isValidDirectory(dir: string): boolean {
 export async function ensureSourceCaches(config?: AkmConfig, options?: { force?: boolean }): Promise<void> {
   const cfg = config ?? loadConfig();
   const force = options?.force === true;
-  const entries = getSources(cfg);
-  for (const entry of entries) {
-    if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
+  // Polymorphic refresh: walk every enabled source through its registered
+  // provider and call `sync()`. Every cache-backed kind (git, website, npm)
+  // refreshes the same way — a bad source warns and is skipped without
+  // aborting the others. The git content/-subdir layout convention stays in
+  // resolveEntryContentDir.
+  for (const provider of resolveSourceProviders(cfg)) {
+    if (!provider.sync) continue;
     try {
-      const repo = parseGitRepoUrl(entry.url);
-      const cachePaths = getCachePaths(repo.canonicalUrl);
-      await ensureGitMirror(repo, cachePaths, {
-        requireRepoDir: true,
-        writable: entry.writable === true,
-        force,
-      });
+      await provider.sync({ force });
     } catch (err) {
       warn(
-        `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-  for (const entry of entries) {
-    if (entry.type !== "website" || !entry.url || entry.enabled === false) continue;
-    try {
-      await ensureWebsiteMirror(entry, { requireStashDir: true, force });
-    } catch (err) {
-      warn(
-        `Warning: failed to refresh website stash for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+        `Warning: failed to refresh ${provider.kind} source "${provider.name}": ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

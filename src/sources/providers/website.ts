@@ -17,8 +17,8 @@ registerSourceProvider("website", (config) => {
     path() {
       return getWebsiteCachePaths(url).stashDir;
     },
-    async sync() {
-      await ensureWebsiteMirror(config, { requireStashDir: true });
+    async sync(options?: { force?: boolean }) {
+      await ensureWebsiteMirror(config, { requireStashDir: true, force: options?.force });
     },
   };
 });

@@ -36,8 +36,12 @@ export interface SourceProvider {
    */
   path(): string;
 
-  /** Refresh the directory from upstream. No-op for filesystem. */
-  sync?(): Promise<void>;
+  /**
+   * Refresh the directory from upstream. No-op for filesystem.
+   *
+   * `force` bypasses the cache-freshness TTL and re-fetches unconditionally.
+   */
+  sync?(options?: { force?: boolean }): Promise<void>;
 }
 
 /** Factory that builds a provider for a configured source. */
