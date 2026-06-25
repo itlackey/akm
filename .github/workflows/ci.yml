@@ -73,3 +73,39 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}/8
         run: bash scripts/run-test-shard.sh unit
+
+  # Node and Bun are co-equal supported runtimes, so the Node path is gated on
+  # every commit (not just at release time). The `bun test` suite runs only under
+  # Bun, so this job exercises the Node code paths: it compiles the better-sqlite3
+  # native driver for each supported Node ABI, verifies it loads, builds dist/
+  # with Bun, then runs the smoke + parity suites UNDER NODE. (release-gates.yml
+  # keeps its own copy for the manual release gate.)
+  node-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: bun install
+      # Bun installs better-sqlite3 into its store but does NOT compile the native
+      # binding for Node's ABI; npm runs the node-gyp lifecycle. `--no-save` keeps
+      # the bun-managed manifest/lockfile untouched.
+      - name: Install + compile better-sqlite3 for Node ${{ matrix.node-version }}
+        run: npm install --no-save better-sqlite3@^11.8.0
+      - name: Verify better-sqlite3 native binding loads under Node
+        run: node -e "const D=require('better-sqlite3');const db=new D(':memory:');db.exec('CREATE TABLE t(x)');db.prepare('INSERT INTO t VALUES (?)').run(1);if(db.prepare('SELECT x FROM t').get().x!==1)process.exit(1);console.log('better-sqlite3 OK on Node '+process.versions.node)"
+      - name: Build dist (Bun)
+        run: bun run build
+      - name: Node smoke test (runs the built CLI under node)
+        run: bun run test:node-smoke
+      - name: Node compat parity tests (Bun vs Node feature parity)
+        run: bun run test:node-compat
+        env:
+          AKM_SMOKE_NODE: node
