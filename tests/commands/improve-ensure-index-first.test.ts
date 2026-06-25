@@ -1,8 +1,8 @@
 /**
  * Regression test for #339: `akmImprove` must run `ensureIndex` BEFORE
  * `collectEligibleRefs`, otherwise an empty/stale `entries` table (e.g. right
- * after a DB version upgrade that drops the table) makes the improve loop
- * silently no-op with `plannedRefs = []`.
+ * after a full reindex clears the table before repopulating) makes the improve
+ * loop silently no-op with `plannedRefs = []`.
  *
  * Before this fix: ensureIndex ran AFTER collectEligibleRefs, so the very
  * first run after a DB rebuild saw an empty entries table, captured
@@ -96,8 +96,8 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     writeLesson(stashDir, "lock-files", "Always commit lock files", "Adding deps");
 
     // Build the index so entries are populated, then wipe the entries table
-    // to simulate the post-DB-version-upgrade state where handleVersionUpgrade
-    // has dropped/cleared `entries`.
+    // to simulate a freshly-cleared `entries` table (e.g. mid-rebuild, before
+    // re-insertion).
     await akmIndex({ stashDir, full: true });
     const dbPathBefore = getDbPath();
     expect(fs.existsSync(dbPathBefore)).toBe(true);

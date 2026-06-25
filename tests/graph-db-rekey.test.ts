@@ -333,8 +333,9 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
 
   // AC#5 — version + graph-schema lock --------------------------------------
   // The graph re-key is migrated via a TARGETED graph-only path, NOT a DB_VERSION
-  // bump (a bump would nuke the entire index + embeddings via handleVersionUpgrade).
-  // So DB_VERSION must stay 17; GRAPH_SCHEMA_VERSION 4 marks the new graph shape.
+  // bump. index.db has no nuclear drop-and-rebuild path (a DB_VERSION mismatch is
+  // a forensic stamp only now), so DB_VERSION must stay 17; GRAPH_SCHEMA_VERSION 4
+  // marks the new graph shape.
   test("AC#5: DB_VERSION stays 17 (no nuclear bump), GRAPH_SCHEMA_VERSION is 4, graph DDL is the new shape", () => {
     expect(DB_VERSION).toBe(17);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
@@ -365,8 +366,8 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   });
 
   // AC#6 — THE SAFETY GUARANTEE: upgrading a legacy (entry_id-keyed) DB must
-  // (a) PRESERVE entries + embeddings (a DB_VERSION bump would nuke them via
-  // handleVersionUpgrade, forcing a catastrophic full re-embed), AND (b) MIGRATE
+  // (a) PRESERVE entries + embeddings (index.db has no nuclear drop, so a schema
+  // change never wipes them), AND (b) MIGRATE
   // the existing graph data into the new tables rather than dropping it (graph
   // re-extraction is ~19s/file of LLM work). This locks the targeted, data-
   // preserving graph-only migration.

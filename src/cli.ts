@@ -106,13 +106,7 @@ import {
   updateCommand,
   upgradeCommand,
 } from "./commands/sources/sources-cli";
-import {
-  dbCommand,
-  importKnowledgeCommand,
-  indexCommand,
-  infoCommand,
-  initCommand,
-} from "./commands/sources/stash-cli";
+import { importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/sources/stash-cli";
 import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
@@ -549,7 +543,6 @@ export const main = defineCommand({
     health: healthCommand,
     info: infoCommand,
     graph: graphCommand,
-    db: dbCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,

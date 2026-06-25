@@ -6,20 +6,20 @@
  * Stash-lifecycle command cluster — the create/index/ingest/inspect verbs for
  * the working stash and its index database: `akm init` (create the stash +
  * persist stashDir), `akm index` (build/refresh the search index), `akm import`
- * (ingest a knowledge doc/URL), `akm db` (+ nested `backups` — inspect the
- * SQLite data dir), and `akm info` (system capabilities + index stats).
+ * (ingest a knowledge doc/URL), and `akm info` (system capabilities + index
+ * stats).
  * Extracted verbatim from src/cli.ts (WS6) so the God Module shrinks; the
- * `main.subCommands.{init,index,import,db,info}` keys and every subcommand's
+ * `main.subCommands.{init,index,import,info}` keys and every subcommand's
  * args/output shape stay byte-identical.
  *
  * These share no private helper with any command still inline in cli.ts — every
  * dependency is already exported from a shared module (core/paths, core/warn,
  * core/errors, core/events, output/context, cli/shared, cli/parse-args, plus the
- * per-command implementations in ./init, ./indexer, ./info, ./db-cli, ./knowledge,
+ * per-command implementations in ./init, ./indexer, ./info, ./knowledge,
  * ./core/asset-create, ./core/common), so the cluster moves with zero hoisting.
  *
  * The leaf handlers whose body is a plain `runWithJsonErrors(...) + output(...)`
- * (`init`, `import`, `info`, `db`, `db backups`) are migrated onto
+ * (`init`, `import`, `info`) are migrated onto
  * `defineJsonCommand`, which emits the same JSON envelope (stdout/stderr/
  * exit-code) as the inline form. `index` keeps a plain `defineCommand` wrapping
  * `runWithJsonErrors` because its body owns a spinner, an AbortController, and
@@ -29,7 +29,6 @@
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
-import { hasSubcommand } from "../../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { isHttpUrl } from "../../core/common";
@@ -39,7 +38,6 @@ import { getCacheDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
-import { akmDbBackups } from "../db-cli";
 import { readKnowledgeInput, writeMarkdownAsset } from "../read/knowledge";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
@@ -163,38 +161,6 @@ export const infoCommand = defineJsonCommand({
   run() {
     const result = assembleInfo();
     output("info", result);
-  },
-});
-
-// MVP DB administration. Currently only `akm db backups`; restore is manual —
-// stop akm and run `scripts/migrations/restore-data-dir.sh <backup>`.
-// Single source of truth: the routing set is derived from the subCommands keys
-// (M10) so adding a subcommand can never silently desync from `hasSubcommand`.
-const dbSubCommands = {
-  backups: defineJsonCommand({
-    meta: {
-      name: "backups",
-      description:
-        "List pre-upgrade snapshots of the data directory (newest first). Backups are created automatically before destructive DB version upgrades unless AKM_DB_BACKUP=0.",
-    },
-    run() {
-      output("db-backups", akmDbBackups());
-    },
-  }),
-};
-const DB_SUBCOMMAND_SET = new Set(Object.keys(dbSubCommands));
-
-export const dbCommand = defineJsonCommand({
-  meta: {
-    name: "db",
-    description:
-      "Inspect the AKM SQLite data directory. Currently exposes `backups`; to restore from a snapshot, stop akm and run scripts/migrations/restore-data-dir.sh against the chosen backup.",
-  },
-  subCommands: dbSubCommands,
-  run({ args }) {
-    if (hasSubcommand(args, DB_SUBCOMMAND_SET)) return;
-    // Default action: list backups.
-    output("db-backups", akmDbBackups());
   },
 });
 

@@ -13,12 +13,12 @@
  *
  * ## Why a separate database from index.db
  *
- * index.db uses a single DB_VERSION integer: when the version changes it drops
- * ALL tables and recreates them. That is acceptable for the search index because
- * every entry is fully regenerable from the stash on disk. Events, proposals, and
- * task history are NON-REGENERABLE — losing them is data loss. They must live in
- * a database whose schema evolves via incremental, additive migrations that never
- * drop rows.
+ * index.db is a derived cache built by an idempotent baseline schema; it is fully
+ * regenerable from the stash on disk, so a corrupt index is recovered by deleting
+ * it and re-running `akm index` (no destructive version-bump rebuild). Events,
+ * proposals, and task history are NON-REGENERABLE — losing them is data loss. They
+ * must live in a database whose schema evolves via incremental, additive migrations
+ * that never drop rows.
  *
  * ## Migration-safety contract
  *
