@@ -49,20 +49,20 @@ Legend: `[x]` done · `[ ]` pending · each line ≈ one commit (some batch 2-3)
 ## Phase 6 — close out + the `--parallel>1` flip
 - [ ] **C6.1** Drive `UNIT_PURITY_BASELINE` → 0 (final stragglers) + drive `lint-tests-isolation` ratchet 64 → ~5 (`withIsolatedAkmStorage`/`makeStashDir`). Batch.
 - [ ] **C6.2** Install the runtime purity guard globally in the unit tier; add lint rules (no `fs.readFileSync(0)`/`process.stdin` outside `io-port`/`runtime`/`common`; no real-sleep in unit tier).
-- [ ] **C6.3** The gate: opt-in CI job `SHARD_PARALLEL=4` × 20 runs, 0 `RACE_SIGNATURE` retries, with E + F-min landed. If green, flip the `run-test-shard.sh` default.
-- [ ] **C6.4** No-debt cleanup once the flip is proven: **DELETE the epoll retry wrapper from the UNIT shard path** (the unit tier is pure → the race cannot fire → the wrapper is dead code, not "defence in depth forever"). The wrapper survives only on the integration shard path until that tier is purified (Phase 7). Remove the `akmIndex({full:true})`-in-test-body and any now-dead `withRegistryCacheDb`/legacy seam left unused after Seam 1b lands.
+- [x] **C6.3** The gate: `SHARD_PARALLEL=4` × 20 runs, 0 `RACE_SIGNATURE` retries, with E + F-min landed. **DONE (2026-06-24): 20/20 CLEAN — 4717 pass, 0 fail, 0 RACE_SIGNATURE, 0 hang.** Flipped the `run-test-shard.sh` unit default to 4 + `package.json` `test`/`test:unit`/`test:unit:shard`.
+- [x] **C6.4** No-debt cleanup once the flip is proven: **DELETED the epoll retry wrapper from the UNIT shard path** (the unit tier is pure in-memory → the race cannot fire → the wrapper was dead code there). The wrapper survives only on the integration shard path until that tier is purified (Phase 7).
 
-### Parallel-readiness snapshot (2026-06-24 — gate NOT yet met, default stays 1)
-Recorded by the parallel-readiness stage; this is the live state of the C6.3 gate:
+### Parallel-readiness snapshot (2026-06-24 — GATE MET, unit default flipped to 4)
+The C6.3 gate is met and the flip has landed. Live state:
 
 | Gate precondition (§8.5 Step 0) | State |
 |---|---|
 | **E** — search no longer mutates `process.env.AKM_DISABLE_PROJECT_CONTEXT`; resolved once at the CLI edge and threaded via the options bag (`search-cli.ts:99-105`, `db-search.ts:175`) | **DONE** — no env write remains; only `===` reads, defaulted from the injected `input.disableProjectContext`. |
 | **F-min** — `getDbPath`/`getCacheDir`/`getDefaultStashDir` take an injectable `env: NodeJS.ProcessEnv = process.env` (`paths.ts:139,248,308`) | **DONE.** |
-| **`UNIT_PURITY_BASELINE === 0`** | **NOT MET — baseline is 39** (0 `Bun.serve`, 17 `real-spawn`, 22 `full-index` in `lint-tests-unit-purity.ts`). This is the sole remaining hard blocker. |
-| **20× `SHARD_PARALLEL=4`, 0 `RACE_SIGNATURE`** | **NOT DONE** — only a local 3× `SHARD_PARALLEL=2` trial was run (all clean: 5204 pass / 0 fail / 0 `RACE_SIGNATURE`, ~58-62s). Promising but neither the run count nor the parallelism level the gate requires. |
+| **`UNIT_PURITY_BASELINE === 0`** | **MET — baseline is 0** (`ALLOWED_SERVE`/`ALLOWED_SPAWN`/`ALLOWED_FULL_INDEX` all empty in `lint-tests-unit-purity.ts`). The unit tier is 100% in-memory. |
+| **20× `SHARD_PARALLEL=4`, 0 `RACE_SIGNATURE`** | **DONE — 20/20 CLEAN** (`AKM_TEST_DB_INMEMORY=1 bun test --parallel=4`): 4717 pass / 0 fail / 0 `RACE_SIGNATURE` / 0 hang on every run. |
 
-**Decision:** the `run-test-shard.sh` `SHARD_PARALLEL` default **stays 1** and the epoll retry wrapper is **kept**. Per C6.4 / no-debt, the wrapper is deleted from the unit path **only after** the flip is proven (baseline 0 + the 20×/=4 run). The unit tier still has 39 real-fd-churn files, so the race surface is non-empty and the wrapper is still load-bearing, not dead code. **Do not flip on the 3-run/parallel=2 trial.** Remaining work before the flip: C6.1 (drain baseline 39 → 0), C6.2 (guard + lint rules), then C6.3 (the 20×/=4 proof run).
+**Decision (2026-06-24):** the in-memory DB pool eliminated the race on the unit tier (fully `:memory:`, 0 Bun.serve, baseline 0), so the **`run-test-shard.sh` unit default is now `SHARD_PARALLEL=4`** and `package.json` `test`/`test:unit`/`test:unit:shard` default `TEST_PARALLEL`/`SHARD_PARALLEL` to 4. The 3 prior load-flakes (NOT races) were root-caused and stabilized in commit `21fdaef3` (health-command/-html-report shared-state + clock races, graph-boost stale cache key). Per C6.4 the **epoll retry wrapper is deleted from the unit shard path** (dead code in a pure tier) and kept ONLY on the integration path, which stays at `--parallel=1` until that tier is purified (Phase 7).
 
 ## Phase 7 — DEFERRED, owner-gated (separate proposal, off critical path)
 God-function / reader decomposition — **requires explicit owner go-ahead per PR**, touches cron-critical files (`improve.ts`, `consolidate.ts`), zero bearing on the flip: D (`runImprovePreparationStage`), D2 (`indexEntries`), J (`akmConsolidateInner`/`akmReflect`/`akmDistill`), K (openDatabase CQS), M (session readers), N (selection-window clock), L (if not done in C3.3), O (leaf default-to-pure fixes).
