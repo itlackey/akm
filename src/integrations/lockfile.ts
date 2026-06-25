@@ -8,10 +8,10 @@ import { writeFileAtomic } from "../core/common";
 import { rethrowIfTestIsolationError } from "../core/errors";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
-import type { KitSource } from "../registry/types";
-// `KitSource` is the typed alias for the legacy install-source strings
-// ("npm" | "github" | "git" | "local"). It is now derived from
-// `SourceSpec["type"]` via `src/config.ts`.
+import type { InstallKind } from "../registry/types";
+// `InstallKind` is the install/registry source discriminator — exactly the
+// four kinds `parseRegistryRef` can emit ("npm" | "github" | "git" | "local").
+// The lockfile reader validates against this 4-set at runtime.
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ import type { KitSource } from "../registry/types";
 export interface LockfileEntry {
   /** Stable identifier. */
   id: string;
-  source: KitSource;
+  source: InstallKind;
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;

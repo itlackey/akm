@@ -7,7 +7,8 @@ import type { RegistryConfigEntry } from "../../core/config/config";
 import { asString } from "../../integrations/github";
 import { fetchCachedJson } from "../../storage/repositories/registry-cache";
 import { registerProvider } from "../factory";
-import type { RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
+import { buildInstallRef } from "../resolve";
+import type { InstallKind, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOptions } from "./types";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -363,7 +364,7 @@ function scoreAsset(asset: RegistryAssetEntry, tokens: string[]): number {
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 
-function asSource(value: unknown): "npm" | "github" | "git" | "local" | undefined {
+function asSource(value: unknown): InstallKind | undefined {
   if (value === "npm" || value === "github" || value === "git" || value === "local") return value;
   return undefined;
 }
@@ -372,17 +373,4 @@ function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const filtered = value.filter((v): v is string => typeof v === "string");
   return filtered.length > 0 ? filtered : undefined;
-}
-
-function buildInstallRef(source: string, ref: string): string {
-  switch (source) {
-    case "npm":
-      return `npm:${ref}`;
-    case "git":
-      return `git+${ref}`;
-    case "local":
-      return `file:${ref}`;
-    default:
-      return `github:${ref}`;
-  }
 }

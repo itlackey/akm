@@ -10,7 +10,6 @@
  * invokes its `sync()` method.
  */
 
-import type { SourceSpec } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { parseRegistryRef } from "../../registry/resolve";
 import type { ParsedLocalRef } from "../../registry/types";
@@ -31,9 +30,8 @@ export async function syncFromRef(ref: string, options?: SyncOptions): Promise<S
     return syncRegistryGitRef(ref, options);
   }
   // Exhaustiveness — `parseRegistryRef` only emits the four sources above.
-  throw new UsageError(
-    `No syncable provider for ref: ${ref} (source=${(parsed as { source: SourceSpec["type"] }).source})`,
-  );
+  const _exhaustive: never = parsed;
+  throw new UsageError(`No syncable provider for ref: ${ref}`);
 }
 
 function syncLocalRef(parsed: ParsedLocalRef, options?: SyncOptions): SourceLockData {

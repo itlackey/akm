@@ -17,8 +17,11 @@ import type { SourceSpec } from "../core/config/config";
  */
 export type KitSource = SourceSpec["type"];
 
+/** The install/registry source discriminator: exactly the kinds `parseRegistryRef` can emit. */
+export type InstallKind = ParsedRegistryRef["source"]; // "npm" | "github" | "git" | "local"
+
 export interface RegistryRefBase {
-  source: KitSource;
+  source: InstallKind;
   ref: string;
   id: string;
 }
@@ -52,7 +55,7 @@ export type ParsedRegistryRef = ParsedNpmRef | ParsedGithubRef | ParsedGitRef | 
 
 export interface ResolvedRegistryArtifact {
   id: string;
-  source: KitSource;
+  source: InstallKind;
   ref: string;
   artifactUrl: string;
   resolvedVersion?: string;
@@ -61,7 +64,7 @@ export interface ResolvedRegistryArtifact {
 
 export interface InstalledStashEntry {
   id: string;
-  source: KitSource;
+  source: InstallKind;
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
@@ -88,7 +91,7 @@ export interface RegistryAssetEntry {
 }
 
 export interface RegistrySearchHit {
-  source: KitSource;
+  source: InstallKind;
   id: string;
   title: string;
   description?: string;

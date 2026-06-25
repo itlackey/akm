@@ -11,6 +11,7 @@ import { fetchWithRetry, jsonWithByteCap } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
 import type {
+  InstallKind,
   ParsedGithubRef,
   ParsedGitRef,
   ParsedLocalRef,
@@ -88,6 +89,20 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   return parseGithubShorthand(ref, ref);
 }
 
+/** Inverse of {@link parseRegistryRef}: build the install ref for a source kind. */
+export function buildInstallRef(source: InstallKind, ref: string): string {
+  switch (source) {
+    case "npm":
+      return `npm:${ref}`;
+    case "git":
+      return `git+${ref}`;
+    case "local":
+      return `file:${ref}`;
+    case "github":
+      return `github:${ref}`;
+  }
+}
+
 /**
  * Known prefixes that `parseRegistryRef` handles as installable sources.
  * Anything with a colon that doesn't start with one of these is likely a
@@ -133,16 +148,16 @@ function detectRegistrySearchId(ref: string): string | undefined {
 }
 
 export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {
-  if (parsed.source === "npm") {
-    return resolveNpmArtifact(parsed);
+  switch (parsed.source) {
+    case "npm":
+      return resolveNpmArtifact(parsed);
+    case "local":
+      return resolveLocalArtifact(parsed);
+    case "git":
+      return resolveGitArtifact(parsed);
+    case "github":
+      return resolveGithubArtifact(parsed);
   }
-  if (parsed.source === "local") {
-    return resolveLocalArtifact(parsed);
-  }
-  if (parsed.source === "git") {
-    return resolveGitArtifact(parsed);
-  }
-  return resolveGithubArtifact(parsed);
 }
 
 function parseNpmRef(input: string, originalRef: string): ParsedNpmRef {
