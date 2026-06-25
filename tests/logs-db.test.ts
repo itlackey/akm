@@ -16,20 +16,15 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import path from "node:path";
 import {
-  attachStateDatabase,
   buildTaskRunId,
   getLoggedRunIds,
   getLogsDbPath,
   insertTaskLogLines,
   openLogsDatabase,
-  openLogsDatabaseWithState,
   purgeOldTaskLogs,
-  queryFailedRunLogLines,
   queryTaskLogs,
 } from "../src/core/logs-db";
-import { openStateDatabase, upsertTaskHistory } from "../src/core/state-db";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -159,86 +154,6 @@ describe("getLoggedRunIds", () => {
       const logged = getLoggedRunIds(db, ["a@1", "b@1", "c@1"]);
       expect(logged).toEqual(new Set(["a@1", "b@1"]));
       expect(getLoggedRunIds(db, []).size).toBe(0);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe("ATTACH cross-db join", () => {
-  test("queryFailedRunLogLines joins a failed task_history row to its log lines by run_id", () => {
-    const startedAt = new Date().toISOString();
-
-    // Seed state.db with one failed and one completed run.
-    const stateDb = openStateDatabase();
-    try {
-      upsertTaskHistory(stateDb, {
-        task_id: "flaky",
-        status: "failed",
-        started_at: startedAt,
-        completed_at: startedAt,
-        failed_at: startedAt,
-        log_path: null,
-        target_kind: "prompt",
-        target_ref: null,
-        metadata_json: "{}",
-      });
-      upsertTaskHistory(stateDb, {
-        task_id: "steady",
-        status: "completed",
-        started_at: startedAt,
-        completed_at: startedAt,
-        failed_at: null,
-        log_path: null,
-        target_kind: "prompt",
-        target_ref: null,
-        metadata_json: "{}",
-      });
-    } finally {
-      stateDb.close();
-    }
-
-    // Seed logs.db with lines for both runs.
-    const seedDb = openLogsDatabase();
-    try {
-      insertTaskLogLines(seedDb, {
-        taskId: "flaky",
-        runId: buildTaskRunId("flaky", startedAt),
-        ts: startedAt,
-        lines: [{ line: "starting" }, { stream: "stderr", level: "error", line: "exit_code=1" }],
-      });
-      insertTaskLogLines(seedDb, {
-        taskId: "steady",
-        runId: buildTaskRunId("steady", startedAt),
-        ts: startedAt,
-        lines: [{ line: "ok" }],
-      });
-    } finally {
-      seedDb.close();
-    }
-
-    const joined = openLogsDatabaseWithState();
-    try {
-      const rows = queryFailedRunLogLines(joined);
-      expect(rows.map((row) => row.line)).toEqual(["starting", "exit_code=1"]);
-      expect(rows.every((row) => row.task_id === "flaky" && row.status === "failed")).toBe(true);
-      expect(rows[0].run_id).toBe(buildTaskRunId("flaky", startedAt));
-
-      // since filter excludes the run when the bound is after started_at.
-      const future = new Date(Date.now() + 60_000).toISOString();
-      expect(queryFailedRunLogLines(joined, { since: future })).toHaveLength(0);
-      expect(queryFailedRunLogLines(joined, { limit: 1 }).map((row) => row.line)).toEqual(["starting"]);
-    } finally {
-      joined.close();
-    }
-  });
-
-  test("attachStateDatabase throws (and does not create a file) when state.db is missing", () => {
-    const db = openLogsDatabase();
-    const bogus = path.join(storage.dataDir, "nope", "state.db");
-    try {
-      expect(() => attachStateDatabase(db, bogus)).toThrow(/does not exist/);
-      expect(fs.existsSync(bogus)).toBe(false);
     } finally {
       db.close();
     }

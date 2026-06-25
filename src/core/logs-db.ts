@@ -17,8 +17,10 @@
  * Log lines are high-volume, append-only, and freely purgeable; state.db rows
  * (events, proposals, task_history) are durable records. Separating them keeps
  * state.db small and lets log retention be aggressive without touching durable
- * state. Cross-db queries (e.g. "failed task_history row → its log lines") use
- * SQLite ATTACH — see {@link attachStateDatabase}.
+ * state. Callers that need to correlate a task_history row with its log lines do
+ * an application-side join on the {@link buildTaskRunId} key (e.g. `health` via
+ * {@link getLoggedRunIds}) — no SQLite ATTACH, so the split survives a future
+ * provider change.
  *
  * ## run_id
  *
@@ -43,7 +45,6 @@ import { type Database, openDatabase, type SqlValue } from "../storage/database"
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { getDataDir } from "./paths";
-import { getStateDbPath } from "./state-db";
 
 // Re-export the boundary Database type so consumers can type their handles
 // against this owner module rather than the runtime boundary directly.
@@ -184,8 +185,8 @@ export interface TaskLogRow {
  * Encode a task run's identity — the unique `(task_id, started_at)` pair from
  * state.db `task_history` — as a single run_id string.
  *
- * The format MUST stay in sync with the SQL expression
- * `task_id || '@' || started_at` used by {@link queryFailedRunLogLines}.
+ * The format MUST stay in sync with the application-side join key that callers
+ * build from a `task_history` row's `task_id` and `started_at`.
  */
 export function buildTaskRunId(taskId: string, startedAtIso: string): string {
   return `${taskId}@${startedAtIso}`;
@@ -298,84 +299,6 @@ export function getLoggedRunIds(db: Database, runIds: readonly string[]): Set<st
     for (const row of rows) out.add(row.run_id);
   }
   return out;
-}
-
-// ── Cross-db: ATTACH state.db ────────────────────────────────────────────────
-
-/**
- * ATTACH state.db to an open logs.db handle under the schema name `state`,
- * enabling cross-db joins like task_history × task_logs.
- *
- * The state.db file must already exist (callers always open state.db first in
- * practice); attaching a non-existent path would silently create an empty,
- * unmigrated database file, so this throws instead.
- */
-export function attachStateDatabase(db: Database, stateDbPath?: string): void {
-  const resolved = stateDbPath ?? getStateDbPath();
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`Cannot ATTACH state.db: file does not exist at ${resolved}`);
-  }
-  // prepare().run() rather than db.run(): both drivers support parameterised
-  // ATTACH through a prepared statement, and no other call site uses db.run().
-  db.prepare("ATTACH DATABASE ? AS state").run(resolved);
-}
-
-/**
- * Convenience: open logs.db with state.db attached as `state`. The returned
- * handle supports cross-db queries such as {@link queryFailedRunLogLines}.
- * Close it like any other handle (DETACH is implicit on close).
- */
-export function openLogsDatabaseWithState(logsDbPath?: string, stateDbPath?: string): Database {
-  const db = openLogsDatabase(logsDbPath);
-  try {
-    attachStateDatabase(db, stateDbPath);
-  } catch (err) {
-    db.close();
-    throw err;
-  }
-  return db;
-}
-
-/** One joined row: a failed run's history columns plus one of its log lines. */
-export interface FailedRunLogLineRow {
-  task_id: string;
-  run_id: string;
-  started_at: string;
-  status: string;
-  ts: string;
-  stream: TaskLogStream;
-  level: TaskLogLevel;
-  line: string;
-}
-
-/**
- * Cross-db join: every log line belonging to a FAILED task_history run whose
- * `started_at` is `>= since` (all failed runs when omitted). Requires a handle
- * opened via {@link openLogsDatabaseWithState}.
- *
- * The join key is the run_id encoding documented on {@link buildTaskRunId}:
- * `task_logs.run_id = task_history.task_id || '@' || task_history.started_at`.
- */
-export function queryFailedRunLogLines(
-  db: Database,
-  options: { since?: string; limit?: number } = {},
-): FailedRunLogLineRow[] {
-  const conditions = ["th.status = 'failed'"];
-  const params: SqlValue[] = [];
-  if (options.since) {
-    conditions.push("th.started_at >= ?");
-    params.push(options.since);
-  }
-  const limit = options.limit !== undefined && options.limit >= 0 ? ` LIMIT ${Math.floor(options.limit)}` : "";
-  return db
-    .prepare(
-      `SELECT th.task_id, l.run_id, th.started_at, th.status, l.ts, l.stream, l.level, l.line
-       FROM state.task_history th
-       JOIN task_logs l ON l.run_id = th.task_id || '@' || th.started_at
-       WHERE ${conditions.join(" AND ")}
-       ORDER BY th.started_at DESC, l.id ASC${limit}`,
-    )
-    .all(...params) as FailedRunLogLineRow[];
 }
 
 // ── Retention ────────────────────────────────────────────────────────────────
