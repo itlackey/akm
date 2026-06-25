@@ -51,12 +51,11 @@
  * @module state-db
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import type { Proposal } from "../commands/proposal/validators/proposals";
-import { type Database, openDatabase, type SqlValue } from "../storage/database";
+import type { Database, SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
-import { applyStandardPragmas } from "../storage/sqlite-pragmas";
+import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
 import { classifyImproveAction } from "./improve-types";
@@ -109,20 +108,18 @@ export function getStateDbPath(): string {
  *     narrow when a post-inference reindex overlapped a parallel event write.
  */
 export function openStateDatabase(dbPath?: string): Database {
-  const resolvedPath = dbPath ?? getStateDbPath();
-  const dir = path.dirname(resolvedPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  return openManagedDatabase({ path: dbPath ?? getStateDbPath(), init: runMigrations });
+}
 
-  const db = openDatabase(resolvedPath);
-
-  // PRAGMAs must run before any DDL or DML.
-  applyStandardPragmas(db, { dataDir: dir });
-
-  runMigrations(db);
-
-  return db;
+/**
+ * Run `fn` against state.db, owning the handle unless one is borrowed. The loan
+ * helper for state.db, mirroring `withIndexDb` / `withWorkflowRunsRepo`. Pass
+ * `{ borrowed: ctx?.db }` to reuse an already-open run-scoped handle rather than
+ * opening + closing a fresh one — this replaces the hand-rolled
+ * `ctx?.db ?? open()` + `ownsDb` flag + `finally`/close idiom at call sites.
+ */
+export function withStateDb<T>(fn: (db: Database) => T, opts?: { borrowed?: Database }): T {
+  return withManagedDb(() => openStateDatabase(), fn, opts);
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────
