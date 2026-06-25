@@ -16,7 +16,7 @@ import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../../core/paths"
 import { sanitizeCommitMessage } from "../../core/write-source";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../../registry/resolve";
 import type { ParsedGitRef } from "../../registry/types";
-import type { ProviderContext, SourceProvider } from "../provider";
+import type { SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import {
@@ -70,13 +70,6 @@ class GitSourceProvider implements SourceProvider {
   constructor(config: SourceConfigEntry) {
     this.#config = config;
     this.name = config.name ?? "git";
-  }
-
-  async init(_ctx: ProviderContext): Promise<void> {
-    // Resolve the on-disk content directory once. For configured git sources
-    // this is the cached working tree; for one-shot install refs it's the
-    // path the install pipeline materialised.
-    this.#path = resolveGitContentDir(this.#config);
   }
 
   path(): string {

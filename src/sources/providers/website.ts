@@ -14,7 +14,6 @@ registerSourceProvider("website", (config) => {
   return {
     kind: "website" as const,
     name,
-    async init(_ctx) {},
     path() {
       return getWebsiteCachePaths(url).stashDir;
     },
