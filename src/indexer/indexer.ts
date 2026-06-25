@@ -45,7 +45,6 @@ import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import {
   clearStaleCacheEntries,
   closeDatabase,
-  type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByIds,
   deleteEntriesByStashDir,
@@ -53,9 +52,7 @@ import {
   getAllEntriesForEmbedding,
   getEmbeddableEntryCount,
   getEmbeddingCount,
-  getEntriesByDir,
   getEntryCount,
-  getIndexDirState,
   getMeta,
   isVecAvailable,
   openExistingDatabase,
@@ -73,6 +70,13 @@ import {
 } from "./db/db";
 import { deleteStoredGraph } from "./db/graph-db";
 import { withIndexWriterLease } from "./index-writer-lock";
+import {
+  canUseIncrementalSkip,
+  computeDirFingerprint,
+  getCachedZeroRowDirState,
+  getDirIndexState,
+  inferZeroRowReason,
+} from "./passes/dir-staleness";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
@@ -934,147 +938,6 @@ async function indexEntries(
   insertTransaction();
 
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
-}
-
-function getDirIndexState(
-  db: Database,
-  dirPath: string,
-  files: string[],
-  builtAtMs: number,
-): {
-  stale: boolean;
-  reason: {
-    kind:
-      | "unchanged"
-      | "no-previous-rows"
-      | "cached-zero-row-state"
-      | "mtime-changed"
-      | "file-set-changed"
-      | "missing-file";
-    detail?: string;
-  };
-  persistedRowCount: number;
-} {
-  const prevEntries = getEntriesByDir(db, dirPath);
-  const fingerprint = computeDirFingerprint(dirPath, files);
-  if (prevEntries.length > 0) {
-    const staleReason = getDirStaleReason(dirPath, files, prevEntries, builtAtMs);
-    if (!staleReason) {
-      return { stale: false, reason: { kind: "unchanged" }, persistedRowCount: prevEntries.length };
-    }
-    return { stale: true, reason: staleReason, persistedRowCount: prevEntries.length };
-  }
-
-  const cachedState = getIndexDirState(db, dirPath);
-  if (
-    cachedState &&
-    cachedState.fileSetHash === fingerprint.fileSetHash &&
-    cachedState.fileMtimeMaxMs === fingerprint.fileMtimeMaxMs
-  ) {
-    return {
-      stale: false,
-      reason: { kind: "cached-zero-row-state", detail: cachedState.reason },
-      persistedRowCount: 0,
-    };
-  }
-
-  return {
-    stale: true,
-    reason: { kind: "no-previous-rows", detail: cachedState ? `cached=${cachedState.reason}` : undefined },
-    persistedRowCount: 0,
-  };
-}
-
-function getCachedZeroRowDirState(
-  db: Database,
-  dirPath: string,
-  files: string[],
-  builtAtMs: number,
-  priorDirsChanged: boolean,
-): ReturnType<typeof getDirIndexState> | undefined {
-  const state = getDirIndexState(db, dirPath, files, builtAtMs);
-  if (state.stale || state.reason.kind !== "cached-zero-row-state") return undefined;
-  if (!canUseIncrementalSkip(state, priorDirsChanged)) return undefined;
-  return state;
-}
-
-function canUseIncrementalSkip(state: ReturnType<typeof getDirIndexState>, priorDirsChanged: boolean): boolean {
-  return !(
-    priorDirsChanged &&
-    state.reason.kind === "cached-zero-row-state" &&
-    state.reason.detail === "deduped-zero-row"
-  );
-}
-
-function computeDirFingerprint(_dirPath: string, files: string[]): { fileSetHash: string; fileMtimeMaxMs: number } {
-  const normalizedFiles = [...new Set(files.map((file) => path.basename(file)))].sort();
-  let fileMtimeMaxMs = 0;
-  for (const file of files) {
-    try {
-      fileMtimeMaxMs = Math.max(fileMtimeMaxMs, fs.statSync(file).mtimeMs);
-    } catch {
-      fileMtimeMaxMs = Number.POSITIVE_INFINITY;
-      break;
-    }
-  }
-  return {
-    fileSetHash: normalizedFiles.join("\0"),
-    fileMtimeMaxMs,
-  };
-}
-
-function getDirStaleReason(
-  _dirPath: string,
-  currentFiles: string[],
-  previousEntries: DbIndexedEntry[],
-  builtAtMs: number,
-):
-  | {
-      kind: "mtime-changed" | "file-set-changed" | "missing-file";
-      detail?: string;
-    }
-  | undefined {
-  const prevFileNames = new Set(
-    previousEntries
-      .map((ie) => {
-        const fromPath = path.basename(ie.filePath);
-        return fromPath || ie.entry.filename;
-      })
-      .filter((e): e is string => !!e),
-  );
-  const currFileNames = new Set(currentFiles.map((f) => path.basename(f)));
-  if (prevFileNames.size !== currFileNames.size) {
-    return { kind: "file-set-changed", detail: `${prevFileNames.size} -> ${currFileNames.size} files` };
-  }
-  for (const name of currFileNames) {
-    if (!prevFileNames.has(name)) return { kind: "file-set-changed", detail: name };
-  }
-
-  for (const file of currentFiles) {
-    try {
-      if (fs.statSync(file).mtimeMs > builtAtMs) return { kind: "mtime-changed", detail: path.basename(file) };
-    } catch {
-      return { kind: "missing-file", detail: path.basename(file) };
-    }
-  }
-
-  return undefined;
-}
-
-function inferZeroRowReason(
-  stash: StashFile | null,
-  priorReason: { kind: string; detail?: string } | undefined,
-  warnings: string[],
-  dirPath: string,
-  dedupedRows: number,
-): string {
-  if (dedupedRows > 0) return "deduped-zero-row";
-  const workflowNoise = warnings.some(
-    (warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath),
-  );
-  if (workflowNoise) return "workflow-noise";
-  if (!stash || stash.entries.length === 0) return "empty-generated-set";
-  return `zero-row:${priorReason?.kind ?? "unknown"}`;
 }
 
 async function enhanceDirsWithLlm(
