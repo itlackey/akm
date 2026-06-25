@@ -20,6 +20,7 @@ import {
   type TerminationReason,
   writeImproveResultFile,
 } from "./improve-result-file";
+import { runImproveSession } from "./improve-session";
 
 export const improveCommand = defineCommand({
   meta: {
@@ -174,67 +175,49 @@ export const improveCommand = defineCommand({
         }
       };
 
-      // M5 (code-health round 2): signal -> {exit code, reason, ack message}
-      // as an explicit table instead of three near-identical handlers. The
-      // persist of the terminated-run row MUST complete before process.exit so
-      // a SIGTERM'd run (e.g. cron timeout) always leaves a row in
-      // improve_runs. recordTerminatedImproveRun is fully synchronous
-      // (bun:sqlite writes are sync), so the in-line call below blocks until
-      // the row is flushed before we exit.
-      const SIGNAL_TABLE = {
-        SIGTERM: { code: 143, reason: "SIGTERM" as const, ack: true },
-        SIGINT: { code: 130, reason: "SIGINT" as const, ack: true },
-        SIGHUP: { code: 129, reason: "SIGHUP" as const, ack: false },
-      } satisfies Record<string, { code: number; reason: TerminationReason; ack: boolean }>;
-      const makeSignalHandler = (sig: keyof typeof SIGNAL_TABLE) => () => {
-        const { code, reason, ack } = SIGNAL_TABLE[sig];
-        // Hard-exit fallback: if the synchronous persist ever hangs (e.g. a
-        // stuck sqlite lock under contention), the watchdog still exits with
-        // the correct code instead of leaving a zombie process. .unref() keeps
-        // the timer from holding the loop open on the normal (fast) path.
-        const watchdog = setTimeout(() => process.exit(code), 2000);
-        if (typeof watchdog.unref === "function") watchdog.unref();
-        try {
-          persistTerminated(reason);
-        } finally {
-          clearTimeout(watchdog);
-        }
-        if (ack) {
-          process.stderr.write(`[improve] received ${sig}; recorded terminated run ${runId}\n`);
-        }
-        process.exit(code);
-      };
-      const sigtermHandler = makeSignalHandler("SIGTERM");
-      const sigintHandler = makeSignalHandler("SIGINT");
-      const sighupHandler = makeSignalHandler("SIGHUP");
-      process.once("SIGTERM", sigtermHandler);
-      process.once("SIGINT", sigintHandler);
-      process.once("SIGHUP", sighupHandler);
-
+      // R8: the signal table / handlers / watchdog / persist-before-exit
+      // choreography lives in `runImproveSession`. It registers the
+      // SIGTERM/SIGINT/SIGHUP handlers (each persists the terminated-run row
+      // BEFORE process.exit so a SIGTERM'd run — e.g. cron timeout — always
+      // leaves a row in improve_runs), awaits the work, then removes the
+      // handlers on the way out. `onTerminate` persists synchronously
+      // (recordTerminatedImproveRun -> bun:sqlite writes are sync), and the
+      // 2000ms watchdog inside the session force-exits if that ever hangs.
       let improveResult: Awaited<ReturnType<typeof akmImprove>>;
       try {
-        improveResult = await akmImprove({
-          scope: scopeArg,
-          task: taskArg,
-          dryRun,
-          target: targetArg,
-          autoAccept,
-          ...(runId !== undefined ? { runId } : {}),
-          ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
-          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-          ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
-          ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
-          ...(skipIfLocked ? { skipIfLocked } : {}),
-          ...(profileArg !== undefined ? { profile: profileArg } : {}),
-          ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
-          consolidateOptions: {
-            target: targetArg,
-            dryRun,
-            autoAccept,
-            task: taskArg,
-            ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
+        improveResult = await runImproveSession(
+          {
+            runWork: () =>
+              akmImprove({
+                scope: scopeArg,
+                task: taskArg,
+                dryRun,
+                target: targetArg,
+                autoAccept,
+                ...(runId !== undefined ? { runId } : {}),
+                ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
+                ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+                ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
+                ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
+                ...(skipIfLocked ? { skipIfLocked } : {}),
+                ...(profileArg !== undefined ? { profile: profileArg } : {}),
+                ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
+                consolidateOptions: {
+                  target: targetArg,
+                  dryRun,
+                  autoAccept,
+                  task: taskArg,
+                  ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
+                },
+              }),
           },
-        });
+          {
+            signalSource: process,
+            exit: process.exit,
+            onTerminate: (reason) => persistTerminated(reason),
+            ack: (message) => process.stderr.write(`[improve] ${message}; recorded terminated run ${runId}\n`),
+          },
+        );
       } catch (err) {
         // akmImprove threw — record the failure before letting runWithJsonErrors
         // emit the standard JSON error envelope. Without this, exceptions in
@@ -243,9 +226,6 @@ export const improveCommand = defineCommand({
         persistTerminated("exception", err instanceof Error ? err.message : String(err));
         throw err;
       } finally {
-        process.removeListener("SIGTERM", sigtermHandler);
-        process.removeListener("SIGINT", sigintHandler);
-        process.removeListener("SIGHUP", sighupHandler);
         clearLogFile();
       }
       const durationMs = Date.now() - startedAtMs;
