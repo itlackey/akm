@@ -6,12 +6,11 @@
  *   2. insertTaskLogLines round-trip: rows queryable by task_id, run_id, stream,
  *      and time window, in emission order.
  *   3. getLoggedRunIds bulk membership check.
- *   4. ATTACH cross-db join: failed task_history row → its log lines by run_id.
- *   5. purgeOldTaskLogs deletes only rows older than retentionDays and is
+ *   4. purgeOldTaskLogs deletes only rows older than retentionDays and is
  *      disabled for non-positive values.
  *
- * Each test runs inside an isolated storage root so `openLogsDatabase()` /
- * `openStateDatabase()` never touch the developer's real databases.
+ * Each test runs inside an isolated storage root so `openLogsDatabase()` never
+ * touches the developer's real databases.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

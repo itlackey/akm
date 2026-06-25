@@ -117,7 +117,7 @@ export interface OpenDatabaseOptions {
  * factories, NOT a DI container or a ports-and-adapters hierarchy: the
  * {@link Database} type IS the port and `open` IS the adapter.
  */
-export interface StorageProvider {
+interface StorageProvider {
   /** Stable identifier, for diagnostics and selection. */
   readonly name: string;
   /** Whether this provider can run in the current runtime. */
@@ -155,11 +155,6 @@ function selectProvider(): StorageProvider {
     throw new Error(`No storage provider supports the current runtime (${isBun ? "Bun" : "Node"}).`);
   }
   return provider;
-}
-
-/** The name of the active storage provider (e.g. "bun:sqlite"). For diagnostics. */
-export function activeProviderName(): string {
-  return selectProvider().name;
 }
 
 /**
