@@ -2,7 +2,7 @@
 
 ## Execution status (last updated 2026-06-25)
 
-All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: lint **0 warnings**, tsc **0 errors**, unit **5,256 / 0**, integration **1,545 / 0 fail**.
+All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: lint **0 warnings**, tsc **0 errors**, unit **5,261 / 0**, integration **1,545 / 0 fail**.
 
 > **Test-host note:** the integration suite (`bun run test:integration`, single-process `--parallel=1`) finishes in **~2 min** on an idle host but APPEARS to hang for 100+ min under CPU contention (concurrent workflow subagents, or a runaway `bun test` from a prior session pinning a core). It is NOT a code hang — kill stray `bun test` procs (`ps … | grep 'bun test'`) and re-run on idle cores to verify green. Bun buffers all test output until completion, so a contended run shows an empty log, not partial progress.
 
@@ -17,7 +17,7 @@ All work on branch `harden/integrity-floor` (off `main`, **not merged**). Each �
 | **D5** extract `WorkflowAssetLoader` | ✅ DONE `992157ba` | |
 | **R7** `defineGroupCommand` seam | ✅ DONE `0061d1b8` | |
 | **R9** dir-staleness pass extraction | ✅ DONE `05d4b1fa` | |
-| **R5** source-kind dispatch (was: descriptor table) | 🟢 DESIGNED `868dd5b4` | Design team REJECTED the table (all 3 lenses `isTableJustified:false`, compiler-probe receipt). Root cause of the prior gate-fail: `KitSource = SourceSpec["type"]` over-widens install fields to the 6-member config union, so `Record<KitSource,_>` demands website/filesystem arms the install switches lack. NEW shape: introduce `InstallKind` (real 4-set), re-point install-only `.source` fields, move `buildInstallRef` into resolve.ts as an exhaustive switch, drop a cast — **no table**, net ≈ −8 to −12 LOC, behavior-identical. Ready-to-execute TDD checklist in `docs/technical/r5-design.md`. |
+| **R5** source-kind dispatch (was: descriptor table) | ✅ DONE `5966a209` | Design team REJECTED the table (compiler-probe receipt: `KitSource = SourceSpec["type"]` over-widened install fields to the 6-member config union — why `Record<KitSource,_>` couldn't gate). Implemented the no-table shape via TDD (characterization-pinned `buildInstallRef` outputs): added `InstallKind` (real 4-set), re-pointed the 4 install-only `.source` fields, moved `buildInstallRef` static-index→resolve.ts as an **exhaustive switch** (github now an explicit case, was `default` — byte-identical), dropped the `SourceSpec` cast + `never`-exhaustiveness. Behavior byte-identical; production net-negative (+test). Design: `docs/technical/r5-design.md`. |
 | **R6** collapse output/text+shapes wrappers | ⏭️ NOT VALID | Premise was wrong — those modules are registration entries delegating to output-layer helpers, **not** command-wrappers. Nothing to inline. Removed from scope. |
 | **X3** `executeRunner()` kind-switch | ✅ DONE `bf84d441` | TDD; one dispatch in `integrations/agent/runner-dispatch.ts` + `RunnerSeams`; deleted both copied switches (reflect+drain) + `runProfileJudgment`. net −43 |
 | **R2** route `ensureSourceCaches` through `sync()` | ✅ DONE `eaef79a4` | TDD; **fixed the verified npm-never-refreshed bug** — two hardcoded loops → one `provider.sync({force})` loop. net −10 prod |
