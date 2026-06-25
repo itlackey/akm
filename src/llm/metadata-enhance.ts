@@ -13,8 +13,8 @@
 import metadataEnhanceSystemPrompt from "../assets/prompts/metadata-enhance-system.md" with { type: "text" };
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import type { StashEntry } from "../indexer/passes/metadata";
-import { chatCompletion, parseJsonResponse } from "./client";
-import { tryLlmFeature } from "./feature-gate";
+import { parseJsonResponse } from "./client";
+import { callStructured } from "./structured-call";
 
 const SYSTEM_PROMPT = metadataEnhanceSystemPrompt;
 
@@ -55,43 +55,41 @@ Generate improved metadata for this ${entry.type}. Return JSON with these fields
 
 Return ONLY the JSON object, no explanation.`;
 
-  const runLlm = async (): Promise<EnhancedMetadata> => {
-    const raw = await chatCompletion(
-      config,
-      [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      { signal },
-    );
+  // `parse` owns the raw response: the `!raw`/unparseable case ⇒ `{}`, plus the
+  // description/searchHints/tags shaping. `enhanceMetadata` never warns and
+  // never bumps telemetry, so `onError` (gated path only) just swallows to `{}`
+  // — identical to the surrounding control flow's pre-migration behaviour. The
+  // ungated path (akmConfig === undefined) propagates errors via callStructured.
+  return callStructured<EnhancedMetadata>({
+    feature: "metadata_enhance",
+    akmConfig,
+    config,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    request: { signal, timeoutMs: config.timeoutMs },
+    parse: (raw) => {
+      const parsed = raw ? parseJsonResponse<Record<string, unknown>>(raw) : undefined;
+      if (!parsed) return {};
 
-    const parsed = parseJsonResponse<Record<string, unknown>>(raw);
-    if (!parsed) return {};
+      const result: EnhancedMetadata = {};
 
-    const result: EnhancedMetadata = {};
+      if (typeof parsed.description === "string" && parsed.description) {
+        result.description = parsed.description;
+      }
+      if (Array.isArray(parsed.searchHints)) {
+        result.searchHints = parsed.searchHints
+          .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          .slice(0, 8);
+      }
+      if (Array.isArray(parsed.tags)) {
+        result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
+      }
 
-    if (typeof parsed.description === "string" && parsed.description) {
-      result.description = parsed.description;
-    }
-    if (Array.isArray(parsed.searchHints)) {
-      result.searchHints = parsed.searchHints
-        .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-        .slice(0, 8);
-    }
-    if (Array.isArray(parsed.tags)) {
-      result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
-    }
-
-    return result;
-  };
-
-  // When no akmConfig is provided, bypass the feature gate entirely: run the
-  // LLM call directly and let errors propagate to the caller (pre-gate
-  // behaviour). When akmConfig is present, honour the feature flag and swallow
-  // errors to {} via tryLlmFeature.
-  if (akmConfig === undefined) {
-    return runLlm();
-  }
-
-  return tryLlmFeature("metadata_enhance", akmConfig, runLlm, {}, { timeoutMs: config.timeoutMs });
+      return result;
+    },
+    onError: () => ({}),
+    fallback: {},
+  });
 }
