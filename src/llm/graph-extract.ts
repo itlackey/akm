@@ -27,8 +27,9 @@ import userPromptTemplate from "../assets/prompts/graph-extract-user-prompt.md" 
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { warn, warnVerbose } from "../core/warn";
-import { chatCompletion, isContextSizeError, LlmCallError, parseEmbeddedJsonResponse } from "./client";
+import { chatCompletion, isContextSizeError, parseEmbeddedJsonResponse } from "./client";
 import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
+import { callStructured } from "./structured-call";
 
 /**
  * Separator token used between assets in a batch prompt.
@@ -854,72 +855,66 @@ export async function extractGraphFromBody(
 
   const userPrompt = `${USER_PROMPT_PREFIX}${trimmedBody}`;
 
-  return tryLlmFeature(
-    "graph_extraction",
+  return callStructured<GraphExtraction>({
+    feature: "graph_extraction",
     akmConfig,
-    async () => {
-      try {
-        const raw = await chatCompletion(
-          llmConfig,
-          [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPrompt },
-          ],
-          {
-            temperature: 0.1,
-            timeoutMs: llmConfig.timeoutMs,
-            signal,
-            onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
-          },
-        );
-        if (!raw) return empty();
-        const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
-        if (!parsed) {
-          warn("graph extraction: invalid JSON response from LLM; skipping asset.");
-          bumpTelemetry(options.telemetry, "failureCount");
-          return empty("invalid_json", "failed");
-        }
+    config: llmConfig,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    request: {
+      temperature: 0.1,
+      timeoutMs: llmConfig.timeoutMs,
+      signal,
+      onRetryAttempt: () => bumpTelemetry(options.telemetry, "retryAttempts"),
+    },
+    parse: (raw) => {
+      if (!raw) return empty();
+      const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
+      if (!parsed) {
+        warn("graph extraction: invalid JSON response from LLM; skipping asset.");
+        bumpTelemetry(options.telemetry, "failureCount");
+        return empty("invalid_json", "failed");
+      }
 
-        const extraction = parseGraphExtraction(parsed);
-        bumpTelemetry(options.telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
-        bumpTelemetry(options.telemetry, "filteredInvalidRelations", extraction.filteredInvalidRelations ?? 0);
-        bumpTelemetry(
-          options.telemetry,
-          "filteredLowConfidenceRelations",
-          extraction.filteredLowConfidenceRelations ?? 0,
+      const extraction = parseGraphExtraction(parsed);
+      bumpTelemetry(options.telemetry, "filteredGenericEntities", extraction.filteredGenericEntities ?? 0);
+      bumpTelemetry(options.telemetry, "filteredInvalidRelations", extraction.filteredInvalidRelations ?? 0);
+      bumpTelemetry(
+        options.telemetry,
+        "filteredLowConfidenceRelations",
+        extraction.filteredLowConfidenceRelations ?? 0,
+      );
+      if (extraction.status === "failed") bumpTelemetry(options.telemetry, "failureCount");
+      return extraction;
+    },
+    onError: (cls, err) => {
+      const errMsg = toErrorMessage(err);
+      if (cls === "context_limit") {
+        bumpTelemetry(options.telemetry, "failureCount");
+        warn(
+          `graph extraction: context size exceeded for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}. ` +
+            `Consider increasing llm.contextLength in config.json.`,
         );
-        if (extraction.status === "failed") bumpTelemetry(options.telemetry, "failureCount");
-        return extraction;
-      } catch (err) {
-        const errMsg = toErrorMessage(err);
-        if (isContextSizeError(errMsg)) {
-          bumpTelemetry(options.telemetry, "failureCount");
-          warn(
-            `graph extraction: context size exceeded for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}. ` +
-              `Consider increasing llm.contextLength in config.json.`,
-          );
-          return empty("context_limit", "failed");
-        } else if (err instanceof LlmCallError && err.code === "provider_html_error") {
-          bumpTelemetry(options.telemetry, "htmlErrorCount");
-          warn(
-            `graph extraction: provider returned HTML instead of JSON for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}: ${errMsg}`,
-          );
-          return empty("llm_error", "failed");
-        } else {
-          bumpTelemetry(options.telemetry, "failureCount");
-          warn(
-            `graph extraction failed for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}: ${errMsg}`,
-          );
-          return empty("llm_error", "failed");
-        }
+        return empty("context_limit", "failed");
+      } else if (cls === "html") {
+        bumpTelemetry(options.telemetry, "htmlErrorCount");
+        warn(
+          `graph extraction: provider returned HTML instead of JSON for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}: ${errMsg}`,
+        );
+        return empty("llm_error", "failed");
+      } else {
+        bumpTelemetry(options.telemetry, "failureCount");
+        warn(
+          `graph extraction failed for asset; promptChars=${userPrompt.length}${formatContextHint(llmConfig)}: ${errMsg}`,
+        );
+        return empty("llm_error", "failed");
       }
     },
-    empty(),
-    {
-      timeoutMs: llmConfig.timeoutMs,
-      onFallback,
-    },
-  );
+    fallback: empty(),
+    onFallback,
+  });
 }
 
 // deduplicateGraph moved to src/indexer/graph-dedup.ts (pure utility, no LLM calls).
