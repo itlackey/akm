@@ -81,6 +81,35 @@ describe("mergeCurateSearchResponses", () => {
     expect(merged.warnings).toEqual(["base warning", "fallback warning"]);
     expect(merged.tip).toBeUndefined();
   });
+
+  test("keeps full-query (base) hits ABOVE higher-scored fallback-only hits (no keyword leapfrog)", () => {
+    // Regression for the curate-vs-search divergence: the full-query search
+    // returned the contextually-relevant memory at a moderate hybrid score,
+    // but a bare-keyword fallback search matched an unrelated asset on its exact
+    // title and normalized to ~0.95. The prior merge re-sorted the union by raw
+    // score, so the keyword junk leapfrogged the relevant hit. Base order MUST
+    // win; fallback-only hits append below.
+    const base = searchResponse({
+      hits: [stashHit({ type: "memory", name: "relevant", ref: "memory:relevant", path: "/tmp/r", score: 0.5 })],
+    });
+    const merged = mergeCurateSearchResponses(base, [
+      searchResponse({
+        hits: [
+          // Unrelated asset that scored high on a single-token title match.
+          stashHit({ type: "knowledge", name: "junk", ref: "knowledge:junk", path: "/tmp/j", score: 0.95 }),
+          // The relevant ref also surfaced via a key term → dup keeps MAX score.
+          stashHit({ type: "memory", name: "relevant", ref: "memory:relevant", path: "/tmp/r", score: 0.6 }),
+        ],
+      }),
+    ]);
+
+    expect(merged.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
+      "memory:relevant", // base hit stays first despite the 0.95 fallback-only junk
+      "knowledge:junk", // fallback-only appended below
+    ]);
+    // The dup base hit is bumped to the higher score for the downstream floor.
+    expect((merged.hits[0] as SourceSearchHit).score).toBe(0.6);
+  });
 });
 
 describe("curateSearchResults", () => {

@@ -395,37 +395,72 @@ export function deriveCurateFallbackQueries(query: string): string[] {
 }
 
 export function mergeCurateSearchResponses(base: SearchResponse, extras: SearchResponse[]): SearchResponse {
-  const hitsByRef = new Map<string, SourceSearchHit>();
-  for (const hit of base.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
-    hitsByRef.set(hit.ref, hit);
-  }
+  // The base (full-query) ranking is the relevance signal — keyword fallback
+  // searches exist only to ADD recall when that ranking is thin, never to
+  // re-rank it. So we PRESERVE base order and APPEND fallback-only hits below
+  // it. A single-token fallback match on an exact title/path normalizes to a
+  // high FTS score, but those scores are not comparable to the full-query
+  // (hybrid) scores; re-sorting the union by raw score (the prior behaviour)
+  // let that keyword junk leapfrog the contextually-relevant full-query hits.
+  // Dup refs (present in both base and a fallback) keep their base POSITION but
+  // take the MAX score, since matching both the full query and a key term is a
+  // stronger relevance signal for the downstream score floor.
+  const bestExtraStashScore = new Map<string, number>();
   for (const result of extras) {
     for (const hit of result.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
-      const existing = hitsByRef.get(hit.ref);
-      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
-        hitsByRef.set(hit.ref, hit);
-      }
+      const prev = bestExtraStashScore.get(hit.ref);
+      if (prev === undefined || (hit.score ?? 0) > prev) bestExtraStashScore.set(hit.ref, hit.score ?? 0);
     }
   }
-
-  const registryById = new Map<string, RegistrySearchResultHit>();
-  for (const hit of base.registryHits ?? []) {
-    registryById.set(hit.id, hit);
+  const baseRefs = new Set<string>();
+  const baseStash: SourceSearchHit[] = [];
+  for (const hit of base.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
+    baseRefs.add(hit.ref);
+    const extraScore = bestExtraStashScore.get(hit.ref);
+    baseStash.push(extraScore !== undefined && extraScore > (hit.score ?? 0) ? { ...hit, score: extraScore } : hit);
   }
+  const extraOnly = new Map<string, SourceSearchHit>();
+  for (const result of extras) {
+    for (const hit of result.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
+      if (baseRefs.has(hit.ref)) continue;
+      const existing = extraOnly.get(hit.ref);
+      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) extraOnly.set(hit.ref, hit);
+    }
+  }
+  const mergedHits = [...baseStash, ...[...extraOnly.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))];
+
+  // Registry hits are supplemental fill — same rule: base first (max score on
+  // dups), then fallback-only registry hits appended by score.
+  const bestExtraRegScore = new Map<string, number>();
   for (const result of extras) {
     for (const hit of result.registryHits ?? []) {
-      const existing = registryById.get(hit.id);
-      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
-        registryById.set(hit.id, hit);
-      }
+      const prev = bestExtraRegScore.get(hit.id);
+      if (prev === undefined || (hit.score ?? 0) > prev) bestExtraRegScore.set(hit.id, hit.score ?? 0);
+    }
+  }
+  const baseRegIds = new Set<string>();
+  const baseReg: RegistrySearchResultHit[] = [];
+  for (const hit of base.registryHits ?? []) {
+    baseRegIds.add(hit.id);
+    const extraScore = bestExtraRegScore.get(hit.id);
+    baseReg.push(extraScore !== undefined && extraScore > (hit.score ?? 0) ? { ...hit, score: extraScore } : hit);
+  }
+  const extraRegOnly = new Map<string, RegistrySearchResultHit>();
+  for (const result of extras) {
+    for (const hit of result.registryHits ?? []) {
+      if (baseRegIds.has(hit.id)) continue;
+      const existing = extraRegOnly.get(hit.id);
+      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) extraRegOnly.set(hit.id, hit);
     }
   }
 
   const warnings = Array.from(
     new Set([...(base.warnings ?? []), ...extras.flatMap((result) => result.warnings ?? [])]),
   );
-  const mergedHits = [...hitsByRef.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const mergedRegistryHits = [...registryById.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const mergedRegistryHits = [
+    ...baseReg,
+    ...[...extraRegOnly.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
+  ];
 
   return {
     ...base,
