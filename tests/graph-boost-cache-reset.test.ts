@@ -27,7 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, setMeta, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, setMeta, upsertEntry } from "../src/indexer/db/db";
 import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/db/graph-db";
 import { loadGraphBoostContext, resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph/graph-extraction";
@@ -83,7 +83,7 @@ function ensureAssetIndexed(): void {
   }
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     const entry = {
       name: "alpha",
@@ -123,7 +123,7 @@ function makeGraph(entities: string[]): GraphFile {
 }
 
 function installGraph(entities: string[]): void {
-  const db = openDatabase(getDbPath());
+  const db = openIndexDatabase(getDbPath());
   try {
     deleteStoredGraph(db, stashDir);
     replaceStoredGraph(db, makeGraph(entities));

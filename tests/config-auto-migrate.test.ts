@@ -114,6 +114,54 @@ function captureOutput(fn: () => void): { stdout: string[]; stderr: string[] } {
   return { stdout, stderr };
 }
 
+// ── #664 review: config downgrade protection ──────────────────────────────────
+
+describe("config downgrade protection", () => {
+  // Load the auto-migrate path, tolerating any downstream validation rejection of
+  // an intentionally-odd shape — we only assert whether the FILE was rewritten,
+  // which is the guard's sole contract.
+  function loadTolerant(): void {
+    try {
+      resetConfigCache();
+      loadUserConfig();
+    } catch {
+      /* the un-migrated shape may fail later validation; irrelevant here */
+    }
+  }
+
+  test("does NOT migrate (rewrite) a config whose configVersion is NEWER than this binary", () => {
+    // A future akm wrote this: a newer version plus the legacy `llm` shape the
+    // current migrator WOULD normally transform. The guard must leave the bytes
+    // untouched so we never strip fields a newer binary added.
+    writeConfig({ configVersion: "9.99.0", ...legacyConfig() });
+    const before = fs.readFileSync(configPath(), "utf8");
+    const { stdout } = captureOutput(loadTolerant);
+    expect(stdout.join("")).not.toContain("akm: auto-migrated config");
+    expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
+  });
+
+  test("does NOT migrate (rewrite) a config whose configVersion is present but unparseable", () => {
+    writeConfig({ configVersion: "not-a-version", ...legacyConfig() });
+    const before = fs.readFileSync(configPath(), "utf8");
+    captureOutput(loadTolerant);
+    expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
+  });
+
+  test("DOES still migrate a legacy config that has NO configVersion field", () => {
+    // Regression guard: the present-but-unparseable skip must NOT catch absent
+    // versions (compareConfigVersion returns undefined for both).
+    writeConfig(legacyConfig());
+    captureOutput(() => {
+      resetConfigCache();
+      loadUserConfig();
+    });
+    const disk = JSON.parse(fs.readFileSync(configPath(), "utf8"));
+    expect(disk.configVersion).toBe("0.8.0");
+    expect(disk.llm).toBeUndefined();
+    expect(disk.profiles?.llm).toBeDefined();
+  });
+});
+
 // ── WS-2: Auto-migration banner ───────────────────────────────────────────────
 
 describe("auto-migration banner (WS-2)", () => {

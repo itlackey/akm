@@ -4,7 +4,7 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { runCliCapture } from "./_helpers/cli";
@@ -85,7 +85,7 @@ describe("akm feedback", () => {
     });
     expect(envResult.stdout).not.toContain("super-secret-value");
 
-    const db = openDatabase(getDbPath());
+    const db = openIndexDatabase(getDbPath());
     try {
       const events = db
         .prepare(

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
 import { resetQuiet, resetVerbose, setVerbose } from "../../src/core/warn";
-import { closeDatabase, openDatabase } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
@@ -79,7 +79,7 @@ test("indexer admits valid workflows and writes their JSON to workflow_documents
   const result = await akmIndex({ stashDir, full: true });
   expect(result.totalEntries).toBe(1);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const row = db
       .prepare(
@@ -123,7 +123,7 @@ test("indexer rejects broken workflows and surfaces every error in IndexResponse
   expect(brokenWarning).toBeDefined();
   expect(brokenWarning).toMatch(/already used|Step ID/);
 
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const goodRow = db
       .prepare(

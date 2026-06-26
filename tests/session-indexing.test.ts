@@ -28,7 +28,7 @@ import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { AkmConfig } from "../src/core/config/config";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { getAllEntries, openIndexDatabase } from "../src/indexer/db/db";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import type {
@@ -201,7 +201,7 @@ describe("#561 session indexing — round-trip", () => {
     expect(hit?.name).toBe(`claude/${SESSION_ID}`);
 
     // The indexed entry carries the session type.
-    const db = openDatabase();
+    const db = openIndexDatabase();
     try {
       const entries = getAllEntries(db).filter((e) => e.entry.type === "session");
       expect(entries.length).toBe(1);

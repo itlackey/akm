@@ -18,7 +18,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir } from "../../core/paths";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { ParsedNpmRef } from "../../registry/types";
-import type { ProviderContext, SourceProvider } from "../provider";
+import type { SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import {
@@ -52,11 +52,6 @@ class NpmSourceProvider implements SourceProvider {
     this.name = config.name ?? config.url ?? "npm";
   }
 
-  async init(_ctx: ProviderContext): Promise<void> {
-    // Resolution happens lazily in path(): until `sync()` runs there's no
-    // reliable on-disk path. Init is the registration handshake.
-  }
-
   path(): string {
     if (this.#config.path) return this.#config.path;
     throw new ConfigError(
@@ -64,9 +59,9 @@ class NpmSourceProvider implements SourceProvider {
     );
   }
 
-  async sync(): Promise<void> {
+  async sync(options?: { force?: boolean }): Promise<void> {
     const ref = npmRefFromConfig(this.#config);
-    await syncNpmRef(ref);
+    await syncNpmRef(ref, { force: options?.force });
   }
 }
 

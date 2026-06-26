@@ -12,7 +12,7 @@
  *   - openStateDatabase()      (src/core/state-db.ts)
  *   - openWorkflowDatabase()   (src/workflows/db.ts)
  *   - openLogsDatabase()       (src/core/logs-db.ts)   ← the opener the issue missed
- *   - openDatabase()           (src/indexer/db/db.ts, main path)
+ *   - openIndexDatabase()           (src/indexer/db/db.ts, main path)
  *   - openExistingDatabase()   (src/indexer/db/db.ts, 2nd path)
  *
  * Modeled on tests/db-busy-timeout.test.ts: mkdtempSync temp dirs + afterEach
@@ -32,7 +32,7 @@ import path from "node:path";
 
 import { openLogsDatabase } from "../src/core/logs-db";
 import { openStateDatabase } from "../src/core/state-db";
-import { closeDatabase, openDatabase, openExistingDatabase } from "../src/indexer/db/db";
+import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../src/indexer/db/db";
 import type { Database } from "../src/storage/database";
 import { openDatabase as openRawDatabase } from "../src/storage/database";
 import {
@@ -163,9 +163,9 @@ describe("#628 AC-a: all 5 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
     });
   });
 
-  test("openDatabase() (indexer main path) reports delete", async () => {
+  test("openIndexDatabase() (indexer main path) reports delete", async () => {
     await withEnv({ AKM_SQLITE_JOURNAL_MODE: "DELETE" }, () => {
-      const db = openDatabase(makeTempDbPath("index.db"));
+      const db = openIndexDatabase(makeTempDbPath("index.db"));
       openHandles.push(() => closeDatabase(db));
       expect(journalModeOf(db)).toBe("delete");
     });
@@ -174,7 +174,7 @@ describe("#628 AC-a: all 5 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
   test("openExistingDatabase() (indexer 2nd path) reports delete", async () => {
     const dbPath = makeTempDbPath("index.db");
     // Build the schema first (default WAL) so the existing-open path has a file.
-    closeDatabase(openDatabase(dbPath));
+    closeDatabase(openIndexDatabase(dbPath));
     // bun:sqlite releases the underlying OS file lock on GC finalization, not
     // synchronously on close(). Force GC so the seed handle's lock is gone
     // before we reopen and switch WAL→DELETE in this SAME process (a test-only
@@ -220,7 +220,7 @@ describe("#628 AC-b: default mode unchanged (WAL) when env unset", () => {
       expect(foreignKeysOf(logs)).toBe(0);
 
       const idxPath = makeTempDbPath("index.db");
-      const idx = openDatabase(idxPath);
+      const idx = openIndexDatabase(idxPath);
       openHandles.push(() => closeDatabase(idx));
       expect(journalModeOf(idx)).toBe("wal");
       expect(busyTimeoutOf(idx)).toBe(EXPECTED_BUSY_TIMEOUT_MS);

@@ -15,7 +15,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
@@ -44,7 +44,7 @@ function seedGraph(stashDir: string): void {
 
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     upsertEntry(
       db,

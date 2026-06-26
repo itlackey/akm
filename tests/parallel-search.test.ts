@@ -6,7 +6,7 @@ import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
 import {
   closeDatabase,
-  openDatabase,
+  openIndexDatabase,
   rebuildFts,
   searchFts,
   setMeta,
@@ -268,7 +268,7 @@ describe("Parallel search: FTS empty", () => {
     // This test uses the low-level DB API to set up a scenario where
     // FTS has no matches but vec does (simulating semantic-only match)
     const dbPath = tmpDbPath("fts-empty");
-    const db = openDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
       const id = insertTestEntry(db, "semantic-tool", {
         description: "A tool found only via semantic similarity",

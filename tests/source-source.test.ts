@@ -13,6 +13,7 @@ import {
   resolveSourceEntries,
 } from "../src/indexer/search/search-source";
 import * as gitProvider from "../src/sources/providers/git";
+import { NpmSourceProvider } from "../src/sources/providers/npm";
 import * as websiteIngest from "../src/sources/website-ingest";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
@@ -331,6 +332,64 @@ describe("ensureSourceCaches", () => {
       ],
     };
     await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+  });
+
+  // R2 bug fix: npm sources are cache-backed too, but the old type-gated loops
+  // only handled git-stash + website, so an npm source's cache was NEVER
+  // refreshed. After routing through the provider registry's polymorphic
+  // sync(), every cache-backed kind (including npm) must be refreshed.
+  test("npm sources are refreshed (R2: routes through provider sync())", async () => {
+    const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockResolvedValue(undefined);
+    // Avoid real git/website network in the same run.
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
+      rootDir: "/tmp/root",
+      stashDir: "/tmp/stash",
+      manifestPath: "/tmp/manifest.json",
+    });
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [
+        {
+          type: "npm",
+          url: "npm:test-pkg@1.2.3",
+          name: "npm-source",
+          options: { ref: "npm:test-pkg@1.2.3" },
+        },
+      ],
+    };
+    try {
+      await ensureSourceCaches(config);
+      expect(npmSyncSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      npmSyncSpy.mockRestore();
+      gitSpy.mockRestore();
+      websiteSpy.mockRestore();
+    }
+  });
+
+  test("git and website sources are still refreshed via the consolidated loop (R2 characterization)", async () => {
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
+      rootDir: "/tmp/root",
+      stashDir: "/tmp/stash",
+      manifestPath: "/tmp/manifest.json",
+    });
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [
+        { type: "git", url: "https://github.com/example/repo", name: "git-source" },
+        { type: "website", url: "https://example.com/docs", name: "website-source" },
+      ],
+    };
+    try {
+      await ensureSourceCaches(config);
+      expect(gitSpy).toHaveBeenCalledTimes(1);
+      expect(websiteSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      gitSpy.mockRestore();
+      websiteSpy.mockRestore();
+    }
   });
 
   test("force option propagates to cache-backed sources", async () => {

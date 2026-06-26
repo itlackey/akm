@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openDatabase } from "../../src/indexer/db/db";
+import { openIndexDatabase } from "../../src/indexer/db/db";
 import { getUsageEvents, insertUsageEvent } from "../../src/indexer/usage/usage-events";
 import { withIndexDb } from "../../src/storage/repositories/index-db";
 
@@ -38,7 +38,7 @@ describe("withIndexDb loan helper (WS5)", () => {
     process.env.AKM_DATA_DIR = dataDir;
     // Seed the index.db at exactly the location withIndexDb will open.
     const dbPath = path.join(dataDir, "index.db");
-    const seed = openDatabase(dbPath);
+    const seed = openIndexDatabase(dbPath);
     insertUsageEvent(seed, { event_type: "search", query: "deploy", entry_ref: "skill:deploy" });
     seed.close();
   });

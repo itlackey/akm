@@ -548,6 +548,27 @@ describe("llm config", () => {
     expect(cfg.defaults?.llm).toBe("default");
   });
 
+  test("AKM_LLM_API_KEY applies to the IMPLICIT default profile when defaults.llm is unset", () => {
+    // profiles.llm.default present but defaults.llm absent — the env key must
+    // still reach it (routed through resolveDefaultLlmProfileName, not the raw
+    // defaults.llm field). Regression guard for the silent-no-op-run class.
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.8.0",
+        profiles: { llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } } },
+      }),
+    );
+    process.env.AKM_LLM_API_KEY = "sk-implicit-default";
+    try {
+      const cfg = loadConfig();
+      expect(cfg.defaults?.llm).toBeUndefined(); // genuinely relying on the implicit default
+      expect(cfg.profiles?.llm?.default?.apiKey).toBe("sk-implicit-default");
+    } finally {
+      delete process.env.AKM_LLM_API_KEY;
+    }
+  });
+
   test("loads llm config with apiKey", () => {
     writeRawConfig(
       getConfigPath(),

@@ -25,7 +25,6 @@ registerSourceProvider("filesystem", (entry) => {
   return {
     kind: "filesystem" as const,
     name,
-    async init(_ctx) {},
     path() {
       return stashDir;
     },

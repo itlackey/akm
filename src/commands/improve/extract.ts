@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig, LlmProfileConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -43,6 +43,7 @@ import {
   openStateDatabase,
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
+  withStateDb,
 } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
@@ -128,25 +129,16 @@ function resolveDefaultSinceMs(
 ): number {
   const floor = now - DEFAULT_SINCE_FLOOR_MS;
   if (opts.skipTracking) return floor;
-  let db: Database | undefined = opts.stateDb;
-  let opened = false;
   try {
-    if (!db) {
-      db = openStateDatabase(opts.stateDbPath);
-      opened = true;
-    }
-    const lastRun = getLastExtractRunAt(db, harnessName);
-    return lastRun != null ? Math.min(lastRun, floor) : floor;
+    return withStateDb(
+      (db) => {
+        const lastRun = getLastExtractRunAt(db, harnessName);
+        return lastRun != null ? Math.min(lastRun, floor) : floor;
+      },
+      { path: opts.stateDbPath, borrowed: opts.stateDb },
+    );
   } catch {
     return floor;
-  } finally {
-    if (opened && db) {
-      try {
-        db.close();
-      } catch {
-        // best-effort close
-      }
-    }
   }
 }
 
@@ -207,7 +199,7 @@ export interface AkmExtractOptions {
    * Override the LLM chat function (test seam). Defaults to {@link chatCompletion}.
    */
   chat?: (
-    config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
+    config: LlmProfileConfig,
     messages: ChatMessage[],
     options?: { timeoutMs?: number; responseSchema?: Record<string, unknown> },
   ) => Promise<string>;
@@ -444,7 +436,7 @@ async function processSession(
   sessionRef: SessionRef,
   stashDir: string,
   config: AkmConfig,
-  llmConfig: LlmConnectionConfig & { supportsJsonSchema?: boolean },
+  llmConfig: LlmProfileConfig,
   chat: NonNullable<AkmExtractOptions["chat"]>,
   ctx: ProposalsContext | undefined,
   sourceRun: string,
@@ -843,7 +835,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   //      (per-process override, matches reflect/distill/consolidate)
   //   2. config.defaults.llm (the default LLM profile)
   //   3. throw — extract requires an LLM.
-  let llmConfig: (LlmConnectionConfig & { supportsJsonSchema?: boolean }) | undefined;
+  let llmConfig: LlmProfileConfig | undefined;
   const runnerSpec = resolveImproveProcessRunnerFromProfile(extractProcess, config);
   if (runnerSpec) {
     if (!runnerIsLlm(runnerSpec)) {

@@ -13,7 +13,7 @@
  */
 
 import { fetchWithTimeout } from "../core/common";
-import { type LlmConnectionConfig, resolveSecret } from "../core/config/config";
+import { type LlmConnectionConfig, type LlmProfileConfig, resolveSecret } from "../core/config/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import { warnVerbose } from "../core/warn";
 import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
@@ -184,20 +184,30 @@ function retryBackoffMs(): number {
 }
 
 /**
- * Detect whether an error message indicates a context-size-exceeded condition.
- * Mirrors the heuristic in `graph-extract.ts` — retrying a context overflow
- * cannot shrink the input, so it must not be retried.
+ * Detect whether an error message indicates a context size exceeded condition.
+ * Covers common patterns from OpenAI-compatible APIs (LM Studio, Ollama, etc).
+ *
+ * Requires BOTH a context keyword AND token-count/overflow evidence so that
+ * model prose merely mentioning "context size" / "context length" (e.g. gemma
+ * narrating about a document) does not get misclassified as a provider
+ * context-limit error (#496).
+ *
+ * Canonical home: `graph-extract.ts` re-exports this so the index-pass
+ * graph extractor and the retry classifier (`isRetryable`) share one
+ * definition — retrying a context overflow cannot shrink the input, so it
+ * must never be retried.
  */
-function looksLikeContextOverflow(message: string): boolean {
+export function isContextSizeError(message: string): boolean {
   const lower = message.toLowerCase();
-  return (
-    lower.includes("context") &&
-    (lower.includes("context size") ||
-      lower.includes("context length") ||
-      lower.includes("context_window") ||
-      lower.includes("prompt too long") ||
-      lower.includes("exceeds"))
-  );
+  const contextKw = /context (size|length|window)|prompt too long|exceeds.*context/.test(lower);
+  if (!contextKw) {
+    return false;
+  }
+  const evidence =
+    /\b\d+\s*(token|tokens|tk)\b/.test(lower) ||
+    /max(imum)?\s+(context|token|input)/.test(lower) ||
+    /exceeded|over.*limit|too.*long/.test(lower);
+  return evidence;
 }
 
 /**
@@ -222,7 +232,7 @@ function looksLikeContextOverflow(message: string): boolean {
  * failure in the improve/reflect and capability-probe flows.
  */
 function isRetryable(err: LlmCallError): boolean {
-  if (looksLikeContextOverflow(err.message)) return false;
+  if (isContextSizeError(err.message)) return false;
   if (err.code === "provider_error") {
     return typeof err.statusCode === "number" && err.statusCode >= 500;
   }
@@ -251,7 +261,7 @@ interface ChatCompletionInternalOptions extends ChatCompletionOptions {
 }
 
 export async function chatCompletion(
-  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
+  config: LlmProfileConfig,
   messages: ChatMessage[],
   options?: ChatCompletionInternalOptions,
 ): Promise<string> {
@@ -291,7 +301,7 @@ export async function chatCompletion(
  * transient failures.
  */
 async function chatCompletionAttempt(
-  config: LlmConnectionConfig & { supportsJsonSchema?: boolean },
+  config: LlmProfileConfig,
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
   timeoutMs: number,

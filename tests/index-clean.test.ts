@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db/db";
+import { closeDatabase, getAllEntries, openIndexDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 
 let testConfigDir = "";
@@ -163,7 +163,7 @@ test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs p
   // Verify the entry is actually gone from the database.
   // totalEntries is computed before the clean pass runs, so the DB now has
   // (totalEntries - removed) rows.
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const remaining = getAllEntries(db);
     expect(remaining).toHaveLength(result.totalEntries - (result.clean?.removed ?? 0));
@@ -202,7 +202,7 @@ test("akmIndex --clean --dry-run with missing file: removed is 0, ref listed, en
   expect(result.clean?.removedRefs[0]).toContain("deploy");
 
   // Crucially: the entry must still exist in the database
-  const db = openDatabase();
+  const db = openIndexDatabase();
   try {
     const all = getAllEntries(db);
     const deployEntry = all.find((e) => e.filePath.includes("deploy"));

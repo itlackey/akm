@@ -14,7 +14,6 @@ import os from "node:os";
 import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry/factory";
 import type { RegistryProvider } from "../../src/registry/providers/types";
-import type { ParsedGithubRef, ParsedNpmRef } from "../../src/registry/types";
 import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // Trigger self-registration
@@ -119,101 +118,6 @@ describe("StaticIndexProvider", () => {
     expect(resolveProviderFactory("static-index")).not.toBeNull();
   });
 
-  describe("searchKits (v1-spec §3.1)", () => {
-    test("returns KitResult entries with installRef", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const kits = await provider.searchKits({ text: "skills", limit: 10 });
-      expect(kits.length).toBeGreaterThan(0);
-      for (const kit of kits) {
-        expect(typeof kit.id).toBe("string");
-        expect(typeof kit.title).toBe("string");
-        expect(typeof kit.installRef).toBe("string");
-      }
-    });
-
-    test("kit installRef is a valid akm add target", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const kits = await provider.searchKits({ text: "agent", limit: 10 });
-      const githubKit = kits.find((k) => k.id.startsWith("github:"));
-      expect(githubKit?.installRef).toBe("github:vercel-labs/agent-skills");
-    });
-
-    test("respects limit", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const kits = await provider.searchKits({ text: "agent skills opencode", limit: 1 });
-      expect(kits.length).toBeLessThanOrEqual(1);
-    });
-  });
-
-  describe("searchAssets (v1-spec §3.1)", () => {
-    test("returns AssetPreview entries scoped to kits", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const assets = await provider.searchAssets?.({ text: "deploy", limit: 10 });
-      expect(assets).toBeDefined();
-      const deploy = assets?.find((a) => a.name === "deploy");
-      expect(deploy?.type).toBe("skill");
-      expect(deploy?.kitId).toBe("github:vercel-labs/agent-skills");
-      expect(deploy?.cloneRef).toBe("github:vercel-labs/agent-skills");
-    });
-  });
-
-  describe("getKit (v1-spec §3.1)", () => {
-    test("returns a KitManifest for a known id", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const manifest = await provider.getKit("github:vercel-labs/agent-skills");
-      expect(manifest).not.toBeNull();
-      expect(manifest?.id).toBe("github:vercel-labs/agent-skills");
-      expect(manifest?.installRef).toBe("github:vercel-labs/agent-skills");
-      expect(manifest?.assets?.length ?? 0).toBeGreaterThan(0);
-    });
-
-    test("returns null for an unknown id", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const manifest = await provider.getKit("github:does-not-exist/anywhere");
-      expect(manifest).toBeNull();
-    });
-
-    test("preserves npm install refs", async () => {
-      const srv = serveJson(FIXTURE_INDEX);
-      const provider = makeProvider(srv.url);
-      const manifest = await provider.getKit("npm:@itlackey/openkit");
-      expect(manifest?.installRef).toBe("npm:@itlackey/openkit");
-    });
-  });
-
-  describe("canHandle (plan §9 item 2)", () => {
-    test("claims github refs", () => {
-      const srv = serveJson({ stashes: [] });
-      const provider = makeProvider(srv.url);
-      const ref: ParsedGithubRef = {
-        source: "github",
-        ref: "owner/repo",
-        id: "github:owner/repo",
-        owner: "owner",
-        repo: "repo",
-      };
-      expect(provider.canHandle(ref)).toBe(true);
-    });
-
-    test("claims npm refs (default catch-all)", () => {
-      const srv = serveJson({ stashes: [] });
-      const provider = makeProvider(srv.url);
-      const ref: ParsedNpmRef = {
-        source: "npm",
-        ref: "npm:foo",
-        id: "npm:foo",
-        packageName: "foo",
-      };
-      expect(provider.canHandle(ref)).toBe(true);
-    });
-  });
-
   describe("backwards-compat search", () => {
     test("legacy search() still returns RegistrySearchHit shape", async () => {
       const srv = serveJson(FIXTURE_INDEX);
@@ -247,9 +151,9 @@ describe("StaticIndexProvider", () => {
       const v2Index = { ...FIXTURE_INDEX, version: 2 };
       const srv = serveJson(v2Index);
       const provider = makeProvider(srv.url);
-      const kits = await provider.searchKits({ text: "agent", limit: 10 });
-      expect(kits.length).toBeGreaterThan(0);
-      expect(kits.some((k) => k.id === "github:vercel-labs/agent-skills")).toBe(true);
+      const result = await provider.search({ query: "agent", limit: 10 });
+      expect(result.hits.length).toBeGreaterThan(0);
+      expect(result.hits.some((h) => h.id === "github:vercel-labs/agent-skills")).toBe(true);
     });
 
     test("version 1 index returns null (unsupported)", async () => {

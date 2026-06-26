@@ -5,7 +5,7 @@ import path from "node:path";
 import { akmGraphUpdate } from "../../src/commands/graph/graph";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import type {
   GraphExtractionPassContext,
@@ -71,7 +71,7 @@ function seedIndex(): { k1Path: string; m1Path: string } {
 
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     upsertEntry(
       db,

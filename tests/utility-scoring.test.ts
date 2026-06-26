@@ -13,7 +13,7 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from "../src/indexer/db/db";
+import { closeDatabase, getUtilityScore, openIndexDatabase, upsertUtilityScore } from "../src/indexer/db/db";
 import { akmIndex, recomputeUtilityScores } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
@@ -91,7 +91,7 @@ afterEach(() => {
 describe("utility_scores table creation", () => {
   test("ensureSchema creates utility_scores table", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='utility_scores'").get() as
         | { name: string }
@@ -105,7 +105,7 @@ describe("utility_scores table creation", () => {
 
   test("utility_scores table has expected columns", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const columns = db.prepare("PRAGMA table_info(utility_scores)").all() as Array<{
         name: string;
@@ -130,7 +130,7 @@ describe("utility_scores table creation", () => {
 describe("upsertUtilityScore / getUtilityScore", () => {
   test("upsertUtilityScore writes and getUtilityScore reads correctly", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert a dummy entry first (utility_scores references entries)
       db.prepare(
@@ -163,7 +163,7 @@ describe("upsertUtilityScore / getUtilityScore", () => {
 
   test("upsertUtilityScore updates existing row", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       db.prepare(
         "INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -199,7 +199,7 @@ describe("upsertUtilityScore / getUtilityScore", () => {
 
   test("getUtilityScore returns undefined for missing entry", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const score = getUtilityScore(db, 99999);
       expect(score).toBeUndefined();
@@ -230,7 +230,7 @@ describe("Utility boost in search scoring", () => {
 
     // Now inject utility score for the boosted entry
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const boostedEntry = db.prepare("SELECT id FROM entries WHERE entry_key LIKE '%boosted-tool%'").get() as
         | { id: number }
@@ -312,7 +312,7 @@ describe("Utility boost cap", () => {
 
     // Inject an extremely high utility score for capped-a
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const cappedEntry = db.prepare("SELECT id FROM entries WHERE entry_key LIKE '%capped-a%'").get() as
         | { id: number }
@@ -364,7 +364,7 @@ describe("Recency decay on utility boost", () => {
     await buildTestIndex(stashDir, {});
 
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const recentEntry = db.prepare("SELECT id FROM entries WHERE entry_key LIKE '%recent-use%'").get() as
         | { id: number }
@@ -422,7 +422,7 @@ describe("Recency decay on utility boost", () => {
 describe("recomputeUtilityScores", () => {
   test("aggregates search and show events from usage_events", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert a test entry
       db.prepare(
@@ -474,7 +474,7 @@ describe("recomputeUtilityScores", () => {
 
   test("entries with no usage events get zero utility", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert a test entry with no usage events
       db.prepare(
@@ -520,7 +520,7 @@ describe("whyMatched includes usage history boost", () => {
 
     // Inject utility score
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const entry = db.prepare("SELECT id FROM entries WHERE entry_key LIKE '%why-util%'").get() as
         | { id: number }
@@ -568,7 +568,7 @@ describe("Production path end-to-end", () => {
 
     // Verify usage_events have entry_id
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const events = db
         .prepare("SELECT entry_id FROM usage_events WHERE event_type = 'search' AND entry_id IS NOT NULL")
@@ -599,7 +599,7 @@ describe("Production path end-to-end", () => {
     await buildTestIndex(currentStashDir, {});
 
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const entries = db.prepare("SELECT id FROM entries LIMIT 1").all() as Array<{ id: number }>;
       const realId = entries[0]?.id;

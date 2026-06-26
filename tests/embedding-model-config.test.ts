@@ -221,7 +221,7 @@ describe("dimension consistency on model change", () => {
     // This is already tested in db.test.ts but we verify the concept:
     // when embedding dimensions change (due to model change), the
     // database handles it by recreating the vec table
-    const { openDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../src/indexer/db/db");
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -231,7 +231,7 @@ describe("dimension consistency on model change", () => {
 
     try {
       // Open with old model dimension (384 = all-MiniLM-L6-v2)
-      let db = openDatabase(dbPath, { embeddingDim: 384 });
+      let db = openIndexDatabase(dbPath, { embeddingDim: 384 });
       if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("384");
       }
@@ -239,14 +239,14 @@ describe("dimension consistency on model change", () => {
 
       // Open with new model dimension (384 = bge-small-en-v1.5, same dims)
       // Both models happen to be 384-dim, so no recreation needed
-      db = openDatabase(dbPath, { embeddingDim: 384 });
+      db = openIndexDatabase(dbPath, { embeddingDim: 384 });
       if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("384");
       }
       closeDatabase(db);
 
       // But if someone uses a different-dimension model (e.g. 768), it should recreate
-      db = openDatabase(dbPath, { embeddingDim: 768 });
+      db = openIndexDatabase(dbPath, { embeddingDim: 768 });
       if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("768");
       }

@@ -24,7 +24,7 @@
  * in-process; each runCli call re-pins that env + resets the config/embedder/
  * graph caches so back-to-back invocations re-read the test's tempdirs,
  * restoring env in finally. The #193 tests never spawned the CLI — they
- * exercise openDatabase via dynamic import and are unchanged.
+ * exercise openIndexDatabase via dynamic import and are unchanged.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -168,12 +168,12 @@ describe("issue #192 — `akm list` after `akm init`", () => {
 });
 
 describe("issue #193 — database is locked under contention", () => {
-  test("openDatabase sets PRAGMA busy_timeout so contended writers wait", async () => {
-    // Use the actual openDatabase helper via dynamic import so we exercise
+  test("openIndexDatabase sets PRAGMA busy_timeout so contended writers wait", async () => {
+    // Use the actual openIndexDatabase helper via dynamic import so we exercise
     // the same code path the CLI uses.
-    const { openDatabase, closeDatabase } = await import("../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase } = await import("../src/indexer/db/db");
     const tmp = path.join(makeTempDir("akm-issue-193-"), "test.db");
-    const db = openDatabase(tmp);
+    const db = openIndexDatabase(tmp);
     try {
       const row = db.prepare("PRAGMA busy_timeout").get() as { timeout?: number };
       expect(row).toBeDefined();
@@ -186,9 +186,9 @@ describe("issue #193 — database is locked under contention", () => {
   });
 
   test("WAL journal mode is preserved (regression guard)", async () => {
-    const { openDatabase, closeDatabase } = await import("../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase } = await import("../src/indexer/db/db");
     const tmp = path.join(makeTempDir("akm-issue-193-wal-"), "test.db");
-    const db = openDatabase(tmp);
+    const db = openIndexDatabase(tmp);
     try {
       const row = db.prepare("PRAGMA journal_mode").get() as { journal_mode?: string };
       expect(row.journal_mode?.toLowerCase()).toBe("wal");

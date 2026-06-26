@@ -42,7 +42,7 @@ import {
   type TaskLogStream,
 } from "../core/logs-db";
 import { getTaskLogDir } from "../core/paths";
-import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
+import { getTaskHistory, queryTaskHistory, upsertTaskHistory, withStateDb } from "../core/state-db";
 import { error } from "../core/warn";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
@@ -575,8 +575,7 @@ function persistRunLog(input: {
 
 function appendHistory(result: TaskRunResult): void {
   try {
-    const db = openStateDatabase();
-    try {
+    withStateDb((db) => {
       upsertTaskHistory(db, {
         task_id: result.id,
         status: result.status,
@@ -592,9 +591,7 @@ function appendHistory(result: TaskRunResult): void {
           profile: result.target.kind === "prompt" ? result.target.profile : undefined,
         }),
       });
-    } finally {
-      db.close();
-    }
+    });
   } catch (err) {
     rethrowIfTestIsolationError(err);
     error(`[akm] task history DB write failed: ${String(err)}`);
@@ -612,8 +609,7 @@ export interface ReadHistoryOptions {
 }
 
 export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult[] {
-  const db = openStateDatabase();
-  try {
+  return withStateDb((db) => {
     let rows: TaskRunResult[];
     if (options.id) {
       const row = getTaskHistory(db, options.id);
@@ -626,9 +622,7 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
       return rows.slice(0, options.limit);
     }
     return rows;
-  } finally {
-    db.close();
-  }
+  });
 }
 
 /**

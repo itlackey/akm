@@ -12,12 +12,11 @@ import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
-import { type Database, openDatabase as openSqlite, type SqlValue } from "../../storage/database";
+import { type Database, openDatabase, type SqlValue } from "../../storage/database";
 import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
 import { ensureUsageEventsSchema } from "../usage/usage-events";
-import { backupDataDir, EMBEDDING_DIM_CHANGE_REASON } from "./db-backup";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,12 +53,12 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-// NOTE: do NOT bump DB_VERSION for graph-schema changes. A DB_VERSION mismatch
-// triggers handleVersionUpgrade()'s NUCLEAR drop of the ENTIRE index — entries,
-// embeddings, FTS, and the llm_enrichment_cache — forcing every user to re-embed
-// their whole corpus on upgrade. The graph tables are derived and cheap to
-// rebuild, so graph re-keying is migrated in a TARGETED, graph-only path
-// (migrateGraphFilesSchema) that leaves entries + embeddings untouched.
+// NOTE: schema changes are additive. DB_VERSION is a forensic stamp only — it
+// no longer gates any destructive path (the old nuclear drop-and-rebuild was
+// removed; index.db's idempotent CREATE … IF NOT EXISTS schema converges any
+// older/partial DB forward without dropping data). Graph re-keying uses a
+// TARGETED, graph-only migration (migrateGraphFilesSchema) — the model for any
+// incompatible change: migrate in place, never wipe the whole index.
 export const DB_VERSION = 17;
 export const EMBEDDING_DIM = 384;
 // #624-P1: graph_files re-keyed to (stash_root, file_path, body_hash). Bumped 3→4
@@ -68,14 +67,14 @@ export const GRAPH_SCHEMA_VERSION = 4;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
-export function openDatabase(dbPath?: string, options?: { embeddingDim?: number }): Database {
+export function openIndexDatabase(dbPath?: string, options?: { embeddingDim?: number }): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const dir = path.dirname(resolvedPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const db = openSqlite(resolvedPath);
+  const db = openDatabase(resolvedPath);
   applyStandardPragmas(db, { dataDir: dir });
 
   // Try to load sqlite-vec extension
@@ -87,7 +86,7 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
   // both are absent do we fall through to the no-clobber path, which keeps
   // ensureSchema from touching `index_meta.embeddingDim` at all.
   const resolvedDim = options?.embeddingDim ?? resolveConfiguredEmbeddingDim();
-  ensureSchema(db, resolvedDim, { dataDir: dir });
+  ensureSchema(db, resolvedDim);
 
   // Warn once at init if using JS fallback with many entries
   warnIfVecMissing(db, { once: true });
@@ -120,7 +119,7 @@ function resolveConfiguredEmbeddingDim(): number | undefined {
 export function openExistingDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const dir = path.dirname(resolvedPath);
-  const db = openSqlite(resolvedPath);
+  const db = openDatabase(resolvedPath);
   applyStandardPragmas(db, { dataDir: dir });
 
   // Existing-DB callers must not mutate schema or embedding metadata on open,
@@ -188,9 +187,8 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
 // ── Schema ──────────────────────────────────────────────────────────────────
 
 /** A row backed up out of the legacy `usage_events` table during a version upgrade. */
-type UsageEventRow = Record<string, string | number | null>;
 
-function ensureSchema(db: Database, embeddingDim: number | undefined, options?: { dataDir?: string }): void {
+function ensureSchema(db: Database, embeddingDim: number | undefined): void {
   // Create meta table first so we can check version
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
@@ -199,56 +197,16 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     );
   `);
 
-  // MVP DB-backup hook (0.8.x): when the stored DB version differs from the
-  // running binary's DB_VERSION, snapshot the data directory BEFORE
-  // `handleVersionUpgrade()` drops tables. This is best-effort —
-  // `backupDataDir` returns null on opt-out, missing data dir, low free
-  // space, or copy errors, and we proceed with the upgrade in all cases.
-  // The proper migration framework lands in 0.9.0; until then this lets
-  // operators recover with `scripts/migrations/restore-data-dir.sh`.
-  if (options?.dataDir) {
-    const storedVersionRaw = getMeta(db, "version");
-    const storedVersion =
-      storedVersionRaw !== undefined && storedVersionRaw !== "" ? Number.parseInt(storedVersionRaw, 10) : null;
-    const willUpgrade =
-      storedVersionRaw !== undefined && storedVersionRaw !== "" && storedVersionRaw !== String(DB_VERSION);
-    if (willUpgrade) {
-      try {
-        // Pass env explicitly so tests can override AKM_DB_BACKUP / AKM_DB_BACKUP_RETAIN
-        // without mutating process.env. Production callers default to process.env.
-        const result = backupDataDir({
-          dataDir: options.dataDir,
-          sourceVersion: storedVersion !== null && !Number.isNaN(storedVersion) ? storedVersion : null,
-          targetVersion: DB_VERSION,
-          env: process.env,
-        });
-        if (result) {
-          warn(
-            "[akm] data directory backed up to %s before v%s→v%d upgrade",
-            result.path,
-            storedVersionRaw,
-            DB_VERSION,
-          );
-        }
-      } catch (err) {
-        // Defensive — backupDataDir already swallows most errors, but if it
-        // throws for an unexpected reason we must still proceed with the
-        // upgrade so the user isn't locked out of their binary.
-        warn(
-          "[akm] pre-upgrade data dir backup raised an unexpected error — %s; upgrade will proceed without a snapshot",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
-  }
-
-  // Check stored version — if it differs from DB_VERSION, drop and recreate all tables.
-  // Usage events are preserved across version upgrades so that utility score
-  // history is not silently lost. The backup is captured here and threaded
-  // explicitly to `restoreUsageEventsBackup` below — the previous version
-  // attached `__usageBackup` to the Database instance via a typeless property
-  // injection, which was a source of fragile coupling.
-  const usageBackup: UsageEventRow[] = handleVersionUpgrade(db);
+  // index.db is a fully regenerable derived cache, so its schema is built
+  // idempotently below: every table is CREATE … IF NOT EXISTS and column
+  // additions go through guarded ALTERs (ensureDerivedFromColumn) and targeted
+  // migrations (migrateGraphFilesSchema / migrateGraphDataFromLegacy). Opening a
+  // database with an older or partial schema converges it forward WITHOUT ever
+  // dropping data — there is intentionally no "nuclear drop the whole index on a
+  // DB_VERSION mismatch" path (a destructive design the regenerable index never
+  // needed, and whose pre-drop data-dir backup it required). A genuinely
+  // incompatible change is handled by an additive/targeted migration; the few
+  // derived tables that ever must be rebuilt are regenerated by `akm index`.
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS entries (
@@ -534,17 +492,10 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     if (dimExplicit) {
       const storedDim = getMeta(db, "embeddingDim");
       if (storedDim && storedDim !== String(embeddingDim)) {
-        // Re-embedding the whole stash is expensive (LLM API calls + cache
-        // misses), so snapshot the data dir before we drop the vec table and
-        // wipe `embeddings`. This is the SAME hook the version-upgrade path
-        // uses earlier in this function, just gated on embedding-dim mismatch
-        // and tagged so operators can tell the two backup kinds apart.
-        backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-        bestEffort(() => db.exec("DROP TABLE IF EXISTS entries_vec"), "drop entries_vec on dim change");
-        // Delete stale BLOB embeddings so they don't produce silently wrong
-        // similarity scores against the new-dimension vec table.
-        bestEffort(() => db.exec("DELETE FROM embeddings"), "delete stale embeddings on dim change");
-        setMeta(db, "hasEmbeddings", "0");
+        // Stored vectors are incompatible with the new dimension. Drop the vec
+        // table so the block below recreates it at the new width; the BLOB rows
+        // go too. Regenerable from markdown — re-embedded by the next index.
+        purgeEmbeddings(db, { dropVecTable: true });
       }
     }
 
@@ -571,9 +522,8 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
     if (dimExplicit) {
       const storedDim = getMeta(db, "embeddingDim");
       if (storedDim && storedDim !== String(embeddingDim)) {
-        backupBeforeEmbeddingDimChange(options?.dataDir, storedDim, String(embeddingDim));
-        bestEffort(() => db.exec("DELETE FROM embeddings"), "delete embeddings on explicit dim change");
-        setMeta(db, "hasEmbeddings", "0");
+        // JS-fallback path: no vec table, just clear the stale BLOB vectors.
+        purgeEmbeddings(db);
       }
       setMeta(db, "embeddingDim", String(embeddingDim));
     }
@@ -586,178 +536,30 @@ function ensureSchema(db: Database, embeddingDim: number | undefined, options?: 
   // `akm search` does not hit the network on every invocation. The DDL is
   // defined in state-db.ts and shared here to avoid duplication.
   db.exec(REGISTRY_INDEX_CACHE_DDL);
-
-  // Restore usage_events backed up by the version-upgrade path above.
-  restoreUsageEventsBackup(db, usageBackup);
 }
 
 /**
- * Detect a stored DB version that differs from {@link DB_VERSION}, drop the
- * old schema, and return a backup of the previous `usage_events` rows so the
- * rest of `ensureSchema()` can restore them once the new table exists.
+ * Purge stored embeddings (BLOB rows in `embeddings`, plus the `entries_vec`
+ * virtual table) and mark the index as embedding-free. The single place that
+ * invalidates embeddings — used on a dimension change, a model/provider change,
+ * and a full rebuild.
  *
- * Returns an empty array when no upgrade is needed or when the previous
- * `usage_events` table is unreadable.
+ * No backup: embeddings are a derived cache, fully regenerable from the markdown
+ * by the next `akm index`. (Recovery model decided 2026-06-25.)
+ *
+ * `dropVecTable: true` DROPs `entries_vec` — used on a DIMENSION change, where
+ * the vec0 table must be recreated at the new width by the caller. The default
+ * clears its rows in place (same dimension, stale vectors).
  */
-function handleVersionUpgrade(db: Database): UsageEventRow[] {
-  const storedVersion = getMeta(db, "version");
-  // BUG-L4: distinguish "missing" (undefined) from "present but empty" — both
-  // were previously coerced through `!storedVersion` and treated as "no
-  // upgrade needed", which caused fresh databases (with no version row) to
-  // skip the upgrade path correctly, but also caused the upgrade path to be
-  // taken when a corrupted/empty version string was persisted. The current
-  // tables get dropped only when the stored version exists AND differs from
-  // DB_VERSION; missing or empty version means a fresh DB and no upgrade.
-  if (storedVersion === undefined || storedVersion === "" || storedVersion === String(DB_VERSION)) return [];
-
-  let usageBackup: UsageEventRow[] = [];
-  bestEffort(() => {
-    usageBackup = db.prepare("SELECT * FROM usage_events").all() as UsageEventRow[];
-  }, "usage_events table may not exist in older versions");
-
-  db.exec("DROP TABLE IF EXISTS utility_scores");
-  db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
-  db.exec("DROP INDEX IF EXISTS idx_utility_scores_scoped_entry_id");
-  db.exec("DROP TABLE IF EXISTS usage_events");
-  db.exec("DROP TABLE IF EXISTS embeddings");
-  db.exec("DROP TABLE IF EXISTS entries_vec");
-  db.exec("DROP TABLE IF EXISTS entries_fts");
-  db.exec("DROP TABLE IF EXISTS index_dir_state");
-  db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
-  db.exec("DROP INDEX IF EXISTS idx_llm_cache_updated");
-  db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
-  db.exec("DROP TABLE IF EXISTS graph_file_relations");
-  db.exec("DROP TABLE IF EXISTS graph_file_entities");
-  db.exec("DROP TABLE IF EXISTS graph_files");
-  db.exec("DROP TABLE IF EXISTS graph_meta");
-  db.exec("DROP TABLE IF EXISTS graph_relations");
-  db.exec("DROP TABLE IF EXISTS graph_entities");
-  db.exec("DROP TABLE IF EXISTS graph_nodes");
-  db.exec("DROP TABLE IF EXISTS graph_stashes");
-  db.exec("DROP INDEX IF EXISTS idx_entries_dir");
-  db.exec("DROP INDEX IF EXISTS idx_entries_type");
-  db.exec("DROP TABLE IF EXISTS entries");
-  db.exec("DELETE FROM index_meta");
-
-  warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
-  return usageBackup;
-}
-
-/**
- * Snapshot the data directory before the embedding-dimension drop path wipes
- * `embeddings` and recreates `entries_vec`. Re-embedding a real-world stash
- * is expensive (LLM calls + cache misses), so we capture the pre-drop state
- * here using the same MVP backup helper the version-upgrade hook uses
- * earlier in {@link ensureSchema}.
- *
- * The backup is tagged with the `embedding-dim-change` reason so it lands in
- * `<dataDir>/backups/<timestamp>-embedding-dim-change/` instead of the
- * version-upgrade-flavored `<timestamp>-pre-v<N>/` directory. Restoration
- * works identically via `scripts/migrations/restore-data-dir.sh`.
- *
- * Failures are non-fatal — they downgrade to a warning and the destructive
- * ops run anyway, matching the version-upgrade hook's behavior so a broken
- * backup cannot brick a binary that bumped the configured dim. Likewise,
- * `AKM_DB_BACKUP=0` opts out via the same path.
- */
-function backupBeforeEmbeddingDimChange(dataDir: string | undefined, fromDim: string, toDim: string): void {
-  if (!dataDir) return;
-  try {
-    const result = backupDataDir({
-      dataDir,
-      // The DB version isn't changing here — pass the current DB_VERSION for
-      // both source and target so the metadata sidecar still records the
-      // running binary's version for forensic context.
-      sourceVersion: DB_VERSION,
-      targetVersion: DB_VERSION,
-      reason: EMBEDDING_DIM_CHANGE_REASON,
-      env: process.env,
-    });
-    if (result) {
-      warn(
-        "[akm] embedding dimension changed %s→%s; data directory backed up to %s; embeddings will be regenerated",
-        fromDim,
-        toDim,
-        result.path,
-      );
-    }
-  } catch (err) {
-    // Defensive — backupDataDir already swallows most errors, but if it
-    // throws for an unexpected reason we must still proceed with the drop
-    // so the user isn't locked out of their binary on a changed dim.
-    warn(
-      "[akm] pre-embedding-dim-change data dir backup raised an unexpected error — %s; embeddings will be regenerated without a snapshot",
-      err instanceof Error ? err.message : String(err),
+export function purgeEmbeddings(db: Database, opts?: { dropVecTable?: boolean }): void {
+  bestEffort(() => db.exec("DELETE FROM embeddings"), "purge embeddings");
+  if (isVecAvailable(db)) {
+    bestEffort(
+      () => db.exec(opts?.dropVecTable ? "DROP TABLE IF EXISTS entries_vec" : "DELETE FROM entries_vec"),
+      "purge entries_vec",
     );
   }
-}
-
-/**
- * Re-insert backed-up `usage_events` rows into the freshly-created table.
- *
- * Wrapped in an outer try/catch because schema changes across versions may
- * make the backup incompatible with the new table definition; in that case
- * the backup is discarded silently rather than blocking startup.
- */
-function restoreUsageEventsBackup(db: Database, backup: UsageEventRow[]): void {
-  if (backup.length === 0) return;
-  try {
-    // BUG-H4: introspect the *target* table's columns rather than relying on
-    // `row[0]`'s keys. The backup may carry columns the new schema dropped,
-    // and the new schema may have NOT-NULL columns without DEFAULT that the
-    // old backup never carried. Project the backup onto the intersection so
-    // we don't silently lose every row to per-row INSERT errors, and warn
-    // once if any backup column was dropped from the new schema.
-    const targetCols = (db.prepare("PRAGMA table_info(usage_events)").all() as Array<{ name: string }>).map(
-      (c) => c.name,
-    );
-    if (targetCols.length === 0) {
-      warn("[db] restoreUsageEventsBackup: usage_events table missing — discarding %d backup row(s)", backup.length);
-      return;
-    }
-    const targetSet = new Set(targetCols);
-    const backupCols = Object.keys(backup[0] ?? {});
-    const projectedCols = backupCols.filter((c) => targetSet.has(c));
-    const droppedCols = backupCols.filter((c) => !targetSet.has(c));
-    if (projectedCols.length === 0) {
-      warn(
-        "[db] restoreUsageEventsBackup: no overlapping columns between backup and current schema — discarding %d row(s); dropped: %s",
-        backup.length,
-        droppedCols.join(", ") || "(none)",
-      );
-      return;
-    }
-    if (droppedCols.length > 0) {
-      warn(
-        "[db] restoreUsageEventsBackup: dropping columns no longer in usage_events schema: %s",
-        droppedCols.join(", "),
-      );
-    }
-
-    let restored = 0;
-    let failed = 0;
-    db.transaction(() => {
-      const placeholders = projectedCols.map(() => "?").join(", ");
-      const insert = db.prepare(`INSERT INTO usage_events (${projectedCols.join(", ")}) VALUES (${placeholders})`);
-      for (const row of backup) {
-        try {
-          insert.run(...projectedCols.map((c) => row[c]));
-          restored++;
-        } catch {
-          failed++;
-        }
-      }
-    })();
-    if (failed > 0) {
-      warn("[db] restoreUsageEventsBackup: restored %d row(s); skipped %d incompatible row(s)", restored, failed);
-    }
-  } catch (err) {
-    warn(
-      "[db] restoreUsageEventsBackup: discarded %d backup row(s) — %s",
-      backup.length,
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+  setMeta(db, "hasEmbeddings", "0");
 }
 
 // ── Meta helpers ────────────────────────────────────────────────────────────
@@ -913,9 +715,8 @@ function getUpsertStmts(db: Database): UpsertStmts {
  *
  * Ensures the `entries.derived_from` column + index exist on the open
  * connection. Called from `ensureSchema()` after the entries CREATE so that
- * legacy databases (created against a pre-v17 binary but reopened without
- * triggering `handleVersionUpgrade()`) still gain the new column without
- * data loss. Idempotent: a `PRAGMA table_info` lookup gates the ALTER.
+ * legacy databases (created against a pre-v17 binary) still gain the new column
+ * without data loss. Idempotent: a `PRAGMA table_info` lookup gates the ALTER.
  */
 function ensureDerivedFromColumn(db: Database): void {
   bestEffort(() => {

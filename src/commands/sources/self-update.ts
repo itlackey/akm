@@ -358,8 +358,8 @@ export async function performUpgrade(
  * The new binary's `akm index` does the work for us:
  *   1. loadConfig() runs at startup — auto-migrates legacy `stashes` →
  *      `sources` if the on-disk config still uses the old key.
- *   2. ensureSchema() detects DB_VERSION mismatch and rebuilds index.db
- *      tables (preserving usage_events).
+ *   2. ensureSchema() converges index.db forward via its idempotent baseline
+ *      schema + additive migrations (no destructive rebuild).
  *   3. The full reindex repopulates entries + workflow_documents + FTS.
  */
 function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {

@@ -12,7 +12,7 @@
  * common resilient-SQLite guidance and eliminated the observed failures.
  *
  * Covered open paths:
- *   - index.db:    openDatabase() and openExistingDatabase() (src/indexer/db/db.ts)
+ *   - index.db:    openIndexDatabase() and openExistingDatabase() (src/indexer/db/db.ts)
  *   - state.db:    openStateDatabase()                       (src/core/state-db.ts)
  *   - workflow.db: openWorkflowDatabase()                    (src/workflows/db.ts)
  *     (previously set NO busy_timeout at all → 0 ms default, instant
@@ -25,7 +25,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { openStateDatabase } from "../src/core/state-db";
-import { closeDatabase, openDatabase, openExistingDatabase } from "../src/indexer/db/db";
+import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../src/indexer/db/db";
 import type { Database } from "../src/storage/database";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../src/workflows/db";
 
@@ -59,8 +59,8 @@ afterEach(() => {
 });
 
 describe("#589: busy_timeout is 30 000 ms on every DB open path", () => {
-  test("index.db: openDatabase()", () => {
-    const db = openDatabase(makeTempDbPath("index.db"));
+  test("index.db: openIndexDatabase()", () => {
+    const db = openIndexDatabase(makeTempDbPath("index.db"));
     openHandles.push(() => closeDatabase(db));
     expect(busyTimeoutOf(db)).toBe(EXPECTED_BUSY_TIMEOUT_MS);
   });
@@ -68,7 +68,7 @@ describe("#589: busy_timeout is 30 000 ms on every DB open path", () => {
   test("index.db: openExistingDatabase()", () => {
     const dbPath = makeTempDbPath("index.db");
     // Create the schema first so the existing-DB open path has a real file.
-    closeDatabase(openDatabase(dbPath));
+    closeDatabase(openIndexDatabase(dbPath));
     const db = openExistingDatabase(dbPath);
     openHandles.push(() => closeDatabase(db));
     expect(busyTimeoutOf(db)).toBe(EXPECTED_BUSY_TIMEOUT_MS);

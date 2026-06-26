@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, upsertEntry } from "../src/indexer/db/db";
 import * as graphExtraction from "../src/indexer/graph/graph-extraction";
 import { collectEligibleFiles } from "../src/indexer/graph/graph-extraction";
 
@@ -45,7 +45,7 @@ let db: Database;
 beforeEach(() => {
   stash = makeStashDir();
   dbPath = path.join(stash.dir, "index.db");
-  db = openDatabase(dbPath);
+  db = openIndexDatabase(dbPath);
 });
 
 afterEach(() => {

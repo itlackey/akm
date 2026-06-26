@@ -13,12 +13,12 @@
  *
  * ## Why a separate database from index.db
  *
- * index.db uses a single DB_VERSION integer: when the version changes it drops
- * ALL tables and recreates them. That is acceptable for the search index because
- * every entry is fully regenerable from the stash on disk. Events, proposals, and
- * task history are NON-REGENERABLE — losing them is data loss. They must live in
- * a database whose schema evolves via incremental, additive migrations that never
- * drop rows.
+ * index.db is a derived cache built by an idempotent baseline schema; it is fully
+ * regenerable from the stash on disk, so a corrupt index is recovered by deleting
+ * it and re-running `akm index` (no destructive version-bump rebuild). Events,
+ * proposals, and task history are NON-REGENERABLE — losing them is data loss. They
+ * must live in a database whose schema evolves via incremental, additive migrations
+ * that never drop rows.
  *
  * ## Migration-safety contract
  *
@@ -51,12 +51,11 @@
  * @module state-db
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import type { Proposal } from "../commands/proposal/validators/proposals";
-import { type Database, openDatabase, type SqlValue } from "../storage/database";
+import type { Database, SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
-import { applyStandardPragmas } from "../storage/sqlite-pragmas";
+import { openManagedDatabase, withManagedDb, withManagedDbAsync } from "../storage/managed-db";
 import type { EventEnvelope } from "./events";
 import type { AkmImproveResult } from "./improve-types";
 import { classifyImproveAction } from "./improve-types";
@@ -109,20 +108,30 @@ export function getStateDbPath(): string {
  *     narrow when a post-inference reindex overlapped a parallel event write.
  */
 export function openStateDatabase(dbPath?: string): Database {
-  const resolvedPath = dbPath ?? getStateDbPath();
-  const dir = path.dirname(resolvedPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  return openManagedDatabase({ path: dbPath ?? getStateDbPath(), init: runMigrations });
+}
 
-  const db = openDatabase(resolvedPath);
+/**
+ * Run `fn` against state.db, owning the handle unless one is borrowed. The loan
+ * helper for state.db, mirroring `withIndexDb` / `withWorkflowRunsRepo`. Pass
+ * `{ borrowed: ctx?.db }` to reuse an already-open run-scoped handle rather than
+ * opening + closing a fresh one — this replaces the hand-rolled
+ * `ctx?.db ?? open()` + `ownsDb` flag + `finally`/close idiom at call sites.
+ */
+export function withStateDb<T>(fn: (db: Database) => T, opts?: { path?: string; borrowed?: Database }): T {
+  return withManagedDb(() => openStateDatabase(opts?.path), fn, opts);
+}
 
-  // PRAGMAs must run before any DDL or DML.
-  applyStandardPragmas(db, { dataDir: dir });
-
-  runMigrations(db);
-
-  return db;
+/**
+ * Async sibling of {@link withStateDb} — for `fn`s that hold the handle across
+ * an `await` (the sync version would close it too early). Same borrow/own +
+ * optional `path` override semantics.
+ */
+export function withStateDbAsync<T>(
+  fn: (db: Database) => Promise<T>,
+  opts?: { path?: string; borrowed?: Database },
+): Promise<T> {
+  return withManagedDbAsync(() => openStateDatabase(opts?.path), fn, opts);
 }
 
 // ── Migration engine ─────────────────────────────────────────────────────────

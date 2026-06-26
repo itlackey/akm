@@ -13,7 +13,7 @@ import {
 } from "../../src/commands/graph/graph";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { deleteStoredGraph, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
@@ -43,7 +43,7 @@ function seedGraphLookupIndex(): void {
 
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     upsertEntry(
       db,
@@ -87,7 +87,7 @@ function writeGraphArtifact(): string {
 
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     upsertEntry(
       db,
@@ -252,7 +252,7 @@ describe("akm graph", () => {
 
     const dbPath = getDbPath();
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       upsertEntry(
         db,
@@ -285,7 +285,7 @@ describe("akm graph", () => {
       closeDatabase(db);
     }
 
-    const graphDb = openDatabase(getDbPath());
+    const graphDb = openIndexDatabase(getDbPath());
     try {
       replaceStoredGraph(graphDb, {
         schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
@@ -363,7 +363,7 @@ function writeEntityFixture(): void {
 
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     const entries: Array<{ key: string; type: string; name: string; filePath: string; dirPath: string }> = [
       {
@@ -478,7 +478,7 @@ function writeOrphanFixture(): { orphanPath: string } {
 
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     const entries: Array<{ key: string; type: string; name: string; filePath: string; dirPath: string }> = [
       {
@@ -571,7 +571,7 @@ describe("graph rows survive entries removal (#624-P1)", () => {
 
     const dbPath = getDbPath();
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const entry = { name: "cascade", type: "knowledge", filename: "cascade.md" };
       upsertEntry(db, `${stashDir}:knowledge:cascade`, knowledgeDir, filePath, stashDir, entry, buildSearchText(entry));
@@ -661,7 +661,7 @@ describe("replaceStoredGraph incremental upsert", () => {
 
     const dbPath = getDbPath();
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       for (const name of ["f1", "f2", "f3", "f4"]) {
         const filePath = path.join(knowledgeDir, `${name}.md`);

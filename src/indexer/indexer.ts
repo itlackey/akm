@@ -45,7 +45,6 @@ import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import {
   clearStaleCacheEntries,
   closeDatabase,
-  type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByIds,
   deleteEntriesByStashDir,
@@ -53,13 +52,12 @@ import {
   getAllEntriesForEmbedding,
   getEmbeddableEntryCount,
   getEmbeddingCount,
-  getEntriesByDir,
   getEntryCount,
-  getIndexDirState,
   getMeta,
   isVecAvailable,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
+  purgeEmbeddings,
   rebuildFts,
   relinkUsageEvents,
   setMeta,
@@ -72,6 +70,13 @@ import {
 } from "./db/db";
 import { deleteStoredGraph } from "./db/graph-db";
 import { withIndexWriterLease } from "./index-writer-lock";
+import {
+  canUseIncrementalSkip,
+  computeDirFingerprint,
+  getCachedZeroRowDirState,
+  getDirIndexState,
+  inferZeroRowReason,
+} from "./passes/dir-staleness";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
@@ -89,11 +94,10 @@ import {
   classifySemanticFailure,
   clearSemanticStatus,
   deriveSemanticProviderFingerprint,
-  type SemanticSearchRuntimeStatus,
   writeSemanticStatus,
 } from "./search/semantic-status";
 import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage/usage-events";
-import type { IndexRunContext } from "./walk/index-context";
+import type { IndexRunContext, IndexVerification } from "./walk/index-context";
 import { walkStashFlat } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -131,19 +135,6 @@ export interface IndexResponse {
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
   /** Present when --clean was passed: stale-entry purge results. */
   clean?: IndexCleanResult;
-}
-
-export interface IndexVerification {
-  ok: boolean;
-  message: string;
-  guidance?: string;
-  semanticSearchEnabled: boolean;
-  semanticSearchMode: "off" | "auto";
-  semanticStatus: "disabled" | SemanticSearchRuntimeStatus;
-  embeddingProvider: "local" | "remote";
-  entryCount: number;
-  embeddingCount: number;
-  vecAvailable: boolean;
 }
 
 export interface IndexProgressEvent {
@@ -388,8 +379,8 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   onProgress({ phase: "verify", message: verification.message });
 
   // Store verification result and totalEntries on ctx for the caller to use
-  (ctx as IndexRunContext & { _verification: IndexVerification; _totalEntries: number })._verification = verification;
-  (ctx as IndexRunContext & { _verification: IndexVerification; _totalEntries: number })._totalEntries = totalEntries;
+  ctx.verification = verification;
+  ctx.totalEntries = totalEntries;
 
   // suppress unused warning — sources was previously used inline
   void sources;
@@ -466,7 +457,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // Open database — pass embedding dimension from config if available
     const dbPath = getDbPath();
     const embeddingDim = config.embedding?.dimension;
-    const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
+    const db = openIndexDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
 
     try {
       // Determine incremental vs full mode
@@ -525,10 +516,9 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       await runFinalizePhase(ctx);
       // ────────────────────────────────────────────────────────────────────────
 
-      const { _verification: verification, _totalEntries: totalEntries } = ctx as IndexRunContext & {
-        _verification: IndexVerification;
-        _totalEntries: number;
-      };
+      // runFinalizePhase always populates these before returning.
+      const verification = ctx.verification as IndexVerification;
+      const totalEntries = ctx.totalEntries as number;
       const { timing } = ctx;
 
       // ── Clean pass ───────────────────────────────────────────────────────────
@@ -950,147 +940,6 @@ async function indexEntries(
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
 }
 
-function getDirIndexState(
-  db: Database,
-  dirPath: string,
-  files: string[],
-  builtAtMs: number,
-): {
-  stale: boolean;
-  reason: {
-    kind:
-      | "unchanged"
-      | "no-previous-rows"
-      | "cached-zero-row-state"
-      | "mtime-changed"
-      | "file-set-changed"
-      | "missing-file";
-    detail?: string;
-  };
-  persistedRowCount: number;
-} {
-  const prevEntries = getEntriesByDir(db, dirPath);
-  const fingerprint = computeDirFingerprint(dirPath, files);
-  if (prevEntries.length > 0) {
-    const staleReason = getDirStaleReason(dirPath, files, prevEntries, builtAtMs);
-    if (!staleReason) {
-      return { stale: false, reason: { kind: "unchanged" }, persistedRowCount: prevEntries.length };
-    }
-    return { stale: true, reason: staleReason, persistedRowCount: prevEntries.length };
-  }
-
-  const cachedState = getIndexDirState(db, dirPath);
-  if (
-    cachedState &&
-    cachedState.fileSetHash === fingerprint.fileSetHash &&
-    cachedState.fileMtimeMaxMs === fingerprint.fileMtimeMaxMs
-  ) {
-    return {
-      stale: false,
-      reason: { kind: "cached-zero-row-state", detail: cachedState.reason },
-      persistedRowCount: 0,
-    };
-  }
-
-  return {
-    stale: true,
-    reason: { kind: "no-previous-rows", detail: cachedState ? `cached=${cachedState.reason}` : undefined },
-    persistedRowCount: 0,
-  };
-}
-
-function getCachedZeroRowDirState(
-  db: Database,
-  dirPath: string,
-  files: string[],
-  builtAtMs: number,
-  priorDirsChanged: boolean,
-): ReturnType<typeof getDirIndexState> | undefined {
-  const state = getDirIndexState(db, dirPath, files, builtAtMs);
-  if (state.stale || state.reason.kind !== "cached-zero-row-state") return undefined;
-  if (!canUseIncrementalSkip(state, priorDirsChanged)) return undefined;
-  return state;
-}
-
-function canUseIncrementalSkip(state: ReturnType<typeof getDirIndexState>, priorDirsChanged: boolean): boolean {
-  return !(
-    priorDirsChanged &&
-    state.reason.kind === "cached-zero-row-state" &&
-    state.reason.detail === "deduped-zero-row"
-  );
-}
-
-function computeDirFingerprint(_dirPath: string, files: string[]): { fileSetHash: string; fileMtimeMaxMs: number } {
-  const normalizedFiles = [...new Set(files.map((file) => path.basename(file)))].sort();
-  let fileMtimeMaxMs = 0;
-  for (const file of files) {
-    try {
-      fileMtimeMaxMs = Math.max(fileMtimeMaxMs, fs.statSync(file).mtimeMs);
-    } catch {
-      fileMtimeMaxMs = Number.POSITIVE_INFINITY;
-      break;
-    }
-  }
-  return {
-    fileSetHash: normalizedFiles.join("\0"),
-    fileMtimeMaxMs,
-  };
-}
-
-function getDirStaleReason(
-  _dirPath: string,
-  currentFiles: string[],
-  previousEntries: DbIndexedEntry[],
-  builtAtMs: number,
-):
-  | {
-      kind: "mtime-changed" | "file-set-changed" | "missing-file";
-      detail?: string;
-    }
-  | undefined {
-  const prevFileNames = new Set(
-    previousEntries
-      .map((ie) => {
-        const fromPath = path.basename(ie.filePath);
-        return fromPath || ie.entry.filename;
-      })
-      .filter((e): e is string => !!e),
-  );
-  const currFileNames = new Set(currentFiles.map((f) => path.basename(f)));
-  if (prevFileNames.size !== currFileNames.size) {
-    return { kind: "file-set-changed", detail: `${prevFileNames.size} -> ${currFileNames.size} files` };
-  }
-  for (const name of currFileNames) {
-    if (!prevFileNames.has(name)) return { kind: "file-set-changed", detail: name };
-  }
-
-  for (const file of currentFiles) {
-    try {
-      if (fs.statSync(file).mtimeMs > builtAtMs) return { kind: "mtime-changed", detail: path.basename(file) };
-    } catch {
-      return { kind: "missing-file", detail: path.basename(file) };
-    }
-  }
-
-  return undefined;
-}
-
-function inferZeroRowReason(
-  stash: StashFile | null,
-  priorReason: { kind: string; detail?: string } | undefined,
-  warnings: string[],
-  dirPath: string,
-  dedupedRows: number,
-): string {
-  if (dedupedRows > 0) return "deduped-zero-row";
-  const workflowNoise = warnings.some(
-    (warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath),
-  );
-  if (workflowNoise) return "workflow-noise";
-  if (!stash || stash.entries.length === 0) return "empty-generated-set";
-  return `zero-row:${priorReason?.kind ?? "unknown"}`;
-}
-
 async function enhanceDirsWithLlm(
   db: Database,
   config: import("../core/config/config").AkmConfig,
@@ -1314,19 +1163,9 @@ async function generateEmbeddingsForDb(
   const currentFingerprint = deriveSemanticProviderFingerprint(config.embedding);
   const storedFingerprint = getMeta(db, "embeddingFingerprint");
   if (storedFingerprint && storedFingerprint !== currentFingerprint) {
-    try {
-      db.exec("DELETE FROM embeddings");
-    } catch {
-      /* ignore */
-    }
-    if (isVecAvailable(db)) {
-      try {
-        db.exec("DELETE FROM entries_vec");
-      } catch {
-        /* ignore */
-      }
-    }
-    setMeta(db, "hasEmbeddings", "0");
+    // Model/provider changed → stored vectors are incompatible. Clear them
+    // (same dimension, so keep the vec table); re-embedded by this index run.
+    purgeEmbeddings(db);
   }
 
   try {

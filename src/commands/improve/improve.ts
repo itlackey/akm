@@ -32,6 +32,7 @@ import {
   persistPhaseThreshold,
   purgeOldEvents,
   purgeOldImproveRuns,
+  withStateDb,
 } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import {
@@ -41,8 +42,8 @@ import {
   getRetrievalCounts,
   getUtilityScoresByIds,
   getZeroResultSearches,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
 } from "../../indexer/db/db";
 import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
@@ -1026,20 +1027,19 @@ export function maybeAutoTuneThreshold(
   // Defensive: an inverted band disables tuning rather than clamping to nonsense.
   if (tuneConfig.minThreshold > tuneConfig.maxThreshold) return undefined;
 
-  const db = openStateDatabase(stateDbPath);
-  let summary: ReturnType<typeof summarizeCalibration>;
-  try {
-    const allDecisions = listProposalGateDecisions(db);
-    // WS-4 fix: when called with a phase label, restrict calibration to that
-    // phase's decision pool so a reflect-dominated run cannot tighten the
-    // consolidate gate (or vice-versa). The gate field is `improve:<phase>`,
-    // matching what improve-auto-accept.ts stamps at line ~163.
-    const gateLabel = phase ? `improve:${phase}` : undefined;
-    const decisions = gateLabel ? allDecisions.filter((d) => d.gate === gateLabel) : allDecisions;
-    summary = summarizeCalibration(gateDecisionsToSamples(decisions));
-  } finally {
-    db.close();
-  }
+  const summary = withStateDb(
+    (db) => {
+      const allDecisions = listProposalGateDecisions(db);
+      // WS-4 fix: when called with a phase label, restrict calibration to that
+      // phase's decision pool so a reflect-dominated run cannot tighten the
+      // consolidate gate (or vice-versa). The gate field is `improve:<phase>`,
+      // matching what improve-auto-accept.ts stamps at line ~163.
+      const gateLabel = phase ? `improve:${phase}` : undefined;
+      const decisions = gateLabel ? allDecisions.filter((d) => d.gate === gateLabel) : allDecisions;
+      return summarizeCalibration(gateDecisionsToSamples(decisions));
+    },
+    { path: stateDbPath },
+  );
 
   const result = computeThresholdAutoTune(currentThreshold, summary, tuneConfig);
   if (!result.adjusted) return undefined;
@@ -1076,12 +1076,9 @@ export function maybeAutoTuneThreshold(
   // next run. Best-effort — a write failure must not abort the improve run.
   if (phase) {
     try {
-      const persistDb = openStateDatabase(stateDbPath);
-      try {
-        persistPhaseThreshold(persistDb, phase, result.newThreshold);
-      } finally {
-        persistDb.close();
-      }
+      withStateDb((persistDb) => persistPhaseThreshold(persistDb, phase, result.newThreshold), {
+        path: stateDbPath,
+      });
     } catch (err) {
       warn(
         `[improve] calibration auto-tune: failed to persist phase threshold for ${phase}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1272,6 +1269,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         : undefined;
   };
 
+  // Holds our own process.on("exit") backstop so the finally can remove EXACTLY
+  // that handler (not every exit listener in the process). Declared in the scope
+  // shared by the try and its finally; assigned when the backstop is registered.
+  let exitBackstop: (() => void) | undefined;
+
   try {
     // #607: Per-process lock acquisition. Each process acquires only the lock(s)
     // it needs. The dry-run branch produces plannedRefs/memorySummary WITHOUT any
@@ -1284,6 +1286,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           releaseLockIfOwned(p, process.pid);
         }
       };
+      exitBackstop = releaseAllOnExit;
       process.on("exit", releaseAllOnExit);
 
       // #607 triage pre-pass: acquire triage.lock, drain the standing pending
@@ -1913,9 +1916,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // #607: release any per-process locks still held (backstop for error paths;
     // the normal path already released each lock after its stage completed).
     releaseAllProcessLocks();
-    // Drop the process.exit backstop so it does not fire later (or accumulate
-    // across repeated in-process calls).
-    process.removeAllListeners("exit");
+    // Drop ONLY our own process.exit backstop so it does not fire later (or
+    // accumulate across repeated in-process calls). Must NOT use
+    // removeAllListeners("exit") here: in the in-process model (tests and
+    // programmatic callers import cli.ts) that would silently destroy exit
+    // handlers owned by the host or other commands.
+    if (exitBackstop) {
+      process.removeListener("exit", exitBackstop);
+      exitBackstop = undefined;
+    }
     // I1: close the long-lived state.db connection opened at the top of the run.
     try {
       eventsDb?.close();
@@ -3169,37 +3178,36 @@ async function runImprovePreparationStage(args: {
   const salienceCfg = (options.config ?? loadConfig()).improve?.salience;
   const salienceThreshold = salienceCfg?.salienceThreshold ?? 0.75;
   const proactiveAndRetrievalSet = new Set([...highRetrievalRefs, ...proactiveRefs].map((r) => r.ref));
-  {
-    let dbForHighSalience: import("../../storage/database").Database | undefined;
-    try {
-      dbForHighSalience = openStateDatabase(eventsCtx?.dbPath);
-      const effectiveLimit = options.limit ?? 10;
-      const highSalienceCap = Math.max(1, Math.floor(effectiveLimit * 0.1));
-      const candidates = noFeedbackCandidates.filter((r) => !proactiveAndRetrievalSet.has(r.ref));
-      for (const r of candidates) {
-        if (highSalienceRefs.length >= highSalienceCap) break;
-        const row = getAssetSalience(dbForHighSalience, r.ref);
-        if (
-          row &&
-          isContentEncodingRow(row, parseAssetRef(r.ref).type) &&
-          row.encoding_salience >= salienceThreshold &&
-          !lastReflectProposalTs.has(r.ref)
-        ) {
-          highSalienceRefs.push(r);
+  try {
+    withStateDb(
+      (dbForHighSalience) => {
+        const effectiveLimit = options.limit ?? 10;
+        const highSalienceCap = Math.max(1, Math.floor(effectiveLimit * 0.1));
+        const candidates = noFeedbackCandidates.filter((r) => !proactiveAndRetrievalSet.has(r.ref));
+        for (const r of candidates) {
+          if (highSalienceRefs.length >= highSalienceCap) break;
+          const row = getAssetSalience(dbForHighSalience, r.ref);
+          if (
+            row &&
+            isContentEncodingRow(row, parseAssetRef(r.ref).type) &&
+            row.encoding_salience >= salienceThreshold &&
+            !lastReflectProposalTs.has(r.ref)
+          ) {
+            highSalienceRefs.push(r);
+          }
         }
-      }
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-      // best-effort: if DB unavailable, highSalienceRefs stays empty
-    } finally {
-      if (dbForHighSalience) dbForHighSalience.close();
-    }
-    if (highSalienceRefs.length > 0) {
-      info(
-        `[improve] high-salience lane admitted ${highSalienceRefs.length} content-scored ref(s) ` +
-          `(threshold=${salienceThreshold}, requires content-derived encoding_source)`,
-      );
-    }
+      },
+      { path: eventsCtx?.dbPath },
+    );
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // best-effort: if DB unavailable, highSalienceRefs stays empty
+  }
+  if (highSalienceRefs.length > 0) {
+    info(
+      `[improve] high-salience lane admitted ${highSalienceRefs.length} content-scored ref(s) ` +
+        `(threshold=${salienceThreshold}, requires content-derived encoding_source)`,
+    );
   }
 
   // Record an in-memory skip action for every zero-feedback ref that the
@@ -3331,97 +3339,96 @@ async function runImprovePreparationStage(args: {
   // Best-effort: outcome failures never block the salience or ranking pass.
   const outcomeSalienceByRef = new Map<string, number>();
   try {
-    const outcomeDb = eventsCtx?.db ?? openStateDatabase(eventsCtx?.dbPath);
-    const ownsOutcomeDb = !eventsCtx?.db;
-    try {
-      // Count accepted proposals per ref in one pass (avoid N separate queries).
-      // Scoped to primaryStashDir when available so multi-stash installs don't
-      // inflate counts with proposals from other stashes.
-      const acceptedCountByRef = new Map<string, number>();
-      try {
-        const acceptedProposals = listStateProposals(outcomeDb, {
-          status: "accepted",
-          ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
-        });
-        for (const p of acceptedProposals) {
-          acceptedCountByRef.set(p.ref, (acceptedCountByRef.get(p.ref) ?? 0) + 1);
-        }
-      } catch {
-        // best-effort: if proposals query fails, accepted counts stay at 0
-      }
-
-      // Update each ref's outcome row and collect the resulting outcome scores.
-      const rawOutcomeScores = new Map<string, number>();
-      const nowForOutcome = Date.now();
-      for (const r of mergedRefs) {
-        const fb = feedbackSummary.get(r.ref) ?? { positive: 0, negative: 0 };
-        const valenceResult = computeValenceScore(fb);
+    withStateDb(
+      (outcomeDb) => {
+        // Count accepted proposals per ref in one pass (avoid N separate queries).
+        // Scoped to primaryStashDir when available so multi-stash installs don't
+        // inflate counts with proposals from other stashes.
+        const acceptedCountByRef = new Map<string, number>();
         try {
-          const result = updateAssetOutcome(outcomeDb, {
-            ref: r.ref,
-            currentRetrievalCount: retrievalCounts.get(r.ref) ?? 0,
-            lastRetrievedAt: lastUseMsByRef.get(r.ref) ?? 0,
-            acceptedChangeCount: acceptedCountByRef.get(r.ref) ?? 0,
-            negativeFeedbackCount: fb.negative,
-            valence: valenceResult.valence,
-            utilityScore: utilityMap.get(r.ref),
-            now: nowForOutcome,
+          const acceptedProposals = listStateProposals(outcomeDb, {
+            status: "accepted",
+            ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
           });
-          rawOutcomeScores.set(r.ref, result.outcomeScore);
+          for (const p of acceptedProposals) {
+            acceptedCountByRef.set(p.ref, (acceptedCountByRef.get(p.ref) ?? 0) + 1);
+          }
         } catch {
-          // best-effort per-ref: skip this ref's outcome update on failure
-        }
-      }
-
-      // Compute stash-wide max outcome_score for normalisation (diversity floor).
-      // Read ALL rows (not just this run's batch) so the normalisation is
-      // stash-relative, not pool-relative.
-      let maxOutcomeScore = 0;
-      try {
-        const allOutcomes = getAllAssetOutcomes(outcomeDb);
-        for (const row of allOutcomes) {
-          if (row.outcome_score > maxOutcomeScore) maxOutcomeScore = row.outcome_score;
+          // best-effort: if proposals query fails, accepted counts stay at 0
         }
 
-        // Proxy-adequacy tripwire: emit a health event if outcome_score is
-        // negatively correlated with accepted_change_rate (inverted proxy).
-        const adequacy = computeProxyAdequacy(allOutcomes);
-        if (adequacy.isInverted) {
-          appendEvent(
-            {
-              eventType: "outcome_proxy_inverted",
-              ref: undefined,
-              metadata: {
-                correlation: adequacy.correlation,
-                n: adequacy.n,
-                note: "corr(outcome_score, accepted_change_rate) < −0.3: high-outcome_score assets have LOW accepted-change rates — the proxy's 'doing well' signal is inverted, so the coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
+        // Update each ref's outcome row and collect the resulting outcome scores.
+        const rawOutcomeScores = new Map<string, number>();
+        const nowForOutcome = Date.now();
+        for (const r of mergedRefs) {
+          const fb = feedbackSummary.get(r.ref) ?? { positive: 0, negative: 0 };
+          const valenceResult = computeValenceScore(fb);
+          try {
+            const result = updateAssetOutcome(outcomeDb, {
+              ref: r.ref,
+              currentRetrievalCount: retrievalCounts.get(r.ref) ?? 0,
+              lastRetrievedAt: lastUseMsByRef.get(r.ref) ?? 0,
+              acceptedChangeCount: acceptedCountByRef.get(r.ref) ?? 0,
+              negativeFeedbackCount: fb.negative,
+              valence: valenceResult.valence,
+              utilityScore: utilityMap.get(r.ref),
+              now: nowForOutcome,
+            });
+            rawOutcomeScores.set(r.ref, result.outcomeScore);
+          } catch {
+            // best-effort per-ref: skip this ref's outcome update on failure
+          }
+        }
+
+        // Compute stash-wide max outcome_score for normalisation (diversity floor).
+        // Read ALL rows (not just this run's batch) so the normalisation is
+        // stash-relative, not pool-relative.
+        let maxOutcomeScore = 0;
+        try {
+          const allOutcomes = getAllAssetOutcomes(outcomeDb);
+          for (const row of allOutcomes) {
+            if (row.outcome_score > maxOutcomeScore) maxOutcomeScore = row.outcome_score;
+          }
+
+          // Proxy-adequacy tripwire: emit a health event if outcome_score is
+          // negatively correlated with accepted_change_rate (inverted proxy).
+          const adequacy = computeProxyAdequacy(allOutcomes);
+          if (adequacy.isInverted) {
+            appendEvent(
+              {
+                eventType: "outcome_proxy_inverted",
+                ref: undefined,
+                metadata: {
+                  correlation: adequacy.correlation,
+                  n: adequacy.n,
+                  note: "corr(outcome_score, accepted_change_rate) < −0.3: high-outcome_score assets have LOW accepted-change rates — the proxy's 'doing well' signal is inverted, so the coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
+                },
               },
-            },
-            eventsCtx,
-          );
+              eventsCtx,
+            );
+          }
+        } catch {
+          // best-effort: tripwire failure never blocks ranking
         }
-      } catch {
-        // best-effort: tripwire failure never blocks ranking
-      }
 
-      // Convert raw outcome scores → normalised outcomeSalience values in [0,1].
-      for (const [ref, score] of rawOutcomeScores) {
-        const normalised = outcomeScoreToSalience(score, maxOutcomeScore);
-        outcomeSalienceByRef.set(ref, normalised);
-      }
-
-      // Also fetch outcome scores for refs NOT updated this run (stale or absent)
-      // so the outcomeSalience read path works for all refs in the batch.
-      const missingRefs = mergedRefs.map((r) => r.ref).filter((ref) => !rawOutcomeScores.has(ref));
-      if (missingRefs.length > 0) {
-        const storedScores = getOutcomeScoresByRef(outcomeDb, missingRefs);
-        for (const [ref, score] of storedScores) {
-          outcomeSalienceByRef.set(ref, outcomeScoreToSalience(score, maxOutcomeScore));
+        // Convert raw outcome scores → normalised outcomeSalience values in [0,1].
+        for (const [ref, score] of rawOutcomeScores) {
+          const normalised = outcomeScoreToSalience(score, maxOutcomeScore);
+          outcomeSalienceByRef.set(ref, normalised);
         }
-      }
-    } finally {
-      if (ownsOutcomeDb) outcomeDb.close();
-    }
+
+        // Also fetch outcome scores for refs NOT updated this run (stale or absent)
+        // so the outcomeSalience read path works for all refs in the batch.
+        const missingRefs = mergedRefs.map((r) => r.ref).filter((ref) => !rawOutcomeScores.has(ref));
+        if (missingRefs.length > 0) {
+          const storedScores = getOutcomeScoresByRef(outcomeDb, missingRefs);
+          for (const [ref, score] of storedScores) {
+            outcomeSalienceByRef.set(ref, outcomeScoreToSalience(score, maxOutcomeScore));
+          }
+        }
+      },
+      { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
+    );
   } catch (err) {
     rethrowIfTestIsolationError(err);
     // best-effort: outcome failures never block salience computation
@@ -3450,23 +3457,22 @@ async function runImprovePreparationStage(args: {
   // AND the derived `rank_score` keyed on real novelty/magnitude/prediction-error.
   // Refs that have never been content-scored keep the type-weight stub fallback.
   const storedEncodingByRef = new Map<string, number>();
-  {
-    let dbForStoredEncoding: import("../../storage/database").Database | undefined;
-    try {
-      dbForStoredEncoding = openStateDatabase(eventsCtx?.dbPath);
-      for (const r of mergedRefs) {
-        const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
-        const row = getAssetSalience(dbForStoredEncoding, r.ref);
-        if (row && isContentEncodingRow(row, type)) {
-          storedEncodingByRef.set(r.ref, row.encoding_salience);
+  try {
+    withStateDb(
+      (dbForStoredEncoding) => {
+        for (const r of mergedRefs) {
+          const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
+          const row = getAssetSalience(dbForStoredEncoding, r.ref);
+          if (row && isContentEncodingRow(row, type)) {
+            storedEncodingByRef.set(r.ref, row.encoding_salience);
+          }
         }
-      }
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-      // best-effort: if DB unavailable, fall back to type-weight stub (prior behaviour)
-    } finally {
-      if (dbForStoredEncoding) dbForStoredEncoding.close();
-    }
+      },
+      { path: eventsCtx?.dbPath },
+    );
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    // best-effort: if DB unavailable, fall back to type-weight stub (prior behaviour)
   }
 
   for (const r of mergedRefs) {
@@ -3546,133 +3552,133 @@ async function runImprovePreparationStage(args: {
   // empty on scenario A or when no candidates dropped below the threshold.
   let pendingForgettingRefs: string[] = [];
   try {
-    const stateDb = openStateDatabase(eventsCtx?.dbPath);
-    try {
-      // Step 7: stash-wide rank-change report BEFORE overwriting the table.
-      //
-      // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
-      const existingAllScores = getAllRankScores(stateDb);
-
-      if (existingAllScores.size === 0) {
-        // Scenario A: first WS-1 run — table empty.
+    withStateDb(
+      (stateDb) => {
+        // Step 7: stash-wide rank-change report BEFORE overwriting the table.
         //
-        // Reconstruct the old combinedEligibilityScore ordering for the current
-        // candidate pool using inputs that are already in-scope: utility from
-        // utilityMap and the attention term from feedbackSummary (positive/negative
-        // counts). Old formula: score = utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT.
-        //
-        // Limitation: this covers only the current-run candidate pool, not the full
-        // stash. The stash-wide ordering was never persisted (asset_salience is a new
-        // WS-1 table), so this is the most faithful comparison possible at cutover.
-        // See docs/design/improve-reconciliation-plan.md §WS-1 step 7.
-        const reconstructedOldScores = new Map<string, number>();
-        for (const ref of salienceMap.keys()) {
-          const utility = utilityMap.get(ref) ?? 0;
-          const fb = feedbackSummary.get(ref) ?? { positive: 0, negative: 0 };
-          const attention = computeValenceScore(fb).attention;
-          reconstructedOldScores.set(ref, utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT);
-        }
+        // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
+        const existingAllScores = getAllRankScores(stateDb);
 
-        // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
-        const toRanks = (scores: Map<string, number>): Map<string, number> => {
-          const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
-            b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
-          );
-          return new Map(sorted.map(([ref], i) => [ref, i + 1]));
-        };
+        if (existingAllScores.size === 0) {
+          // Scenario A: first WS-1 run — table empty.
+          //
+          // Reconstruct the old combinedEligibilityScore ordering for the current
+          // candidate pool using inputs that are already in-scope: utility from
+          // utilityMap and the attention term from feedbackSummary (positive/negative
+          // counts). Old formula: score = utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT.
+          //
+          // Limitation: this covers only the current-run candidate pool, not the full
+          // stash. The stash-wide ordering was never persisted (asset_salience is a new
+          // WS-1 table), so this is the most faithful comparison possible at cutover.
+          // See docs/design/improve-reconciliation-plan.md §WS-1 step 7.
+          const reconstructedOldScores = new Map<string, number>();
+          for (const ref of salienceMap.keys()) {
+            const utility = utilityMap.get(ref) ?? 0;
+            const fb = feedbackSummary.get(ref) ?? { positive: 0, negative: 0 };
+            const attention = computeValenceScore(fb).attention;
+            reconstructedOldScores.set(ref, utility * UTILITY_WEIGHT + attention * FEEDBACK_WEIGHT);
+          }
 
-        const oldRanks = toRanks(reconstructedOldScores);
-        const newRanks = toRanks(new Map([...salienceMap.entries()].map(([ref, v]) => [ref, v.rankScore])));
-        const firstRunReport = buildRankChangeReport(oldRanks, newRanks);
-        if (firstRunReport.forgettingCandidates.length > 0) {
-          warn(
-            `[improve/salience] WS-1 first-run rank-change report: ${firstRunReport.forgettingCandidates.length} asset(s) fell from top-200 to below position 500 (cutover formula change). ` +
-              `Top drops: ${firstRunReport.forgettingCandidates
-                .slice(0, 5)
-                .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
-                .join(", ")}`,
-          );
-          pendingForgettingRefs = firstRunReport.forgettingCandidates.map((e) => e.ref);
-        }
-        appendEvent(
-          {
-            eventType: "improve_salience_first_run",
-            ref: undefined,
-            metadata: {
-              candidateCount: salienceMap.size,
-              note: "first WS-1 salience run — partial reconstruction of old combinedEligibilityScore ordering for candidate pool (stash-wide ordering not available); see improve-reconciliation-plan.md §WS-1 step 7",
-              forgettingCandidates: firstRunReport.forgettingCandidates.length,
-              topDrops: firstRunReport.forgettingCandidates.slice(0, 10).map((e) => ({
-                ref: e.ref,
-                oldRank: e.oldRank,
-                newRank: e.newRank,
-              })),
+          // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
+          const toRanks = (scores: Map<string, number>): Map<string, number> => {
+            const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
+              b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
+            );
+            return new Map(sorted.map(([ref], i) => [ref, i + 1]));
+          };
+
+          const oldRanks = toRanks(reconstructedOldScores);
+          const newRanks = toRanks(new Map([...salienceMap.entries()].map(([ref, v]) => [ref, v.rankScore])));
+          const firstRunReport = buildRankChangeReport(oldRanks, newRanks);
+          if (firstRunReport.forgettingCandidates.length > 0) {
+            warn(
+              `[improve/salience] WS-1 first-run rank-change report: ${firstRunReport.forgettingCandidates.length} asset(s) fell from top-200 to below position 500 (cutover formula change). ` +
+                `Top drops: ${firstRunReport.forgettingCandidates
+                  .slice(0, 5)
+                  .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
+                  .join(", ")}`,
+            );
+            pendingForgettingRefs = firstRunReport.forgettingCandidates.map((e) => e.ref);
+          }
+          appendEvent(
+            {
+              eventType: "improve_salience_first_run",
+              ref: undefined,
+              metadata: {
+                candidateCount: salienceMap.size,
+                note: "first WS-1 salience run — partial reconstruction of old combinedEligibilityScore ordering for candidate pool (stash-wide ordering not available); see improve-reconciliation-plan.md §WS-1 step 7",
+                forgettingCandidates: firstRunReport.forgettingCandidates.length,
+                topDrops: firstRunReport.forgettingCandidates.slice(0, 10).map((e) => ({
+                  ref: e.ref,
+                  oldRank: e.oldRank,
+                  newRank: e.newRank,
+                })),
+              },
             },
-          },
-          eventsCtx,
-        );
-      } else {
-        // Scenario B: subsequent run — compare stash-wide old vs. new ranks.
-        //
-        // Build new scores by merging the full table with this run's updates.
-        // Refs in salienceMap override their stored value; refs not in this run
-        // retain their stored value unchanged. This gives a complete stash-wide
-        // picture of what the new ordering looks like after this run.
-        const mergedNewScores = new Map<string, number>(existingAllScores);
+            eventsCtx,
+          );
+        } else {
+          // Scenario B: subsequent run — compare stash-wide old vs. new ranks.
+          //
+          // Build new scores by merging the full table with this run's updates.
+          // Refs in salienceMap override their stored value; refs not in this run
+          // retain their stored value unchanged. This gives a complete stash-wide
+          // picture of what the new ordering looks like after this run.
+          const mergedNewScores = new Map<string, number>(existingAllScores);
+          for (const [ref, vector] of salienceMap) {
+            mergedNewScores.set(ref, vector.rankScore);
+          }
+
+          // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
+          const toRanks = (scores: Map<string, number>): Map<string, number> => {
+            const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
+              b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
+            );
+            return new Map(sorted.map(([ref], i) => [ref, i + 1]));
+          };
+
+          const oldRanks = toRanks(existingAllScores);
+          const newRanks = toRanks(mergedNewScores);
+
+          const report = buildRankChangeReport(oldRanks, newRanks);
+          if (report.forgettingCandidates.length > 0) {
+            warn(
+              `[improve/salience] WS-1 rank-change report: ${report.forgettingCandidates.length} asset(s) fell from top-200 to below position 500. ` +
+                `Top drops: ${report.forgettingCandidates
+                  .slice(0, 5)
+                  .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
+                  .join(", ")}`,
+            );
+            // Collect refs for protective consolidation pass (plan §WS-1 step 7).
+            // These are force-included in the candidate pool (mergedRefs) after
+            // this try block, bypassing cooldown/signal-delta gating.
+            pendingForgettingRefs = report.forgettingCandidates.map((e) => e.ref);
+          }
+          appendEvent(
+            {
+              eventType: "improve_salience_rank_change",
+              ref: undefined,
+              metadata: {
+                stashSize: existingAllScores.size,
+                totalChanged: report.allChanges.length,
+                forgettingCandidates: report.forgettingCandidates.length,
+                topDrops: report.forgettingCandidates.slice(0, 10).map((e) => ({
+                  ref: e.ref,
+                  oldRank: e.oldRank,
+                  newRank: e.newRank,
+                })),
+              },
+            },
+            eventsCtx,
+          );
+        }
+
         for (const [ref, vector] of salienceMap) {
-          mergedNewScores.set(ref, vector.rankScore);
+          upsertAssetSalience(stateDb, ref, vector, nowForSalience);
         }
-
-        // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
-        const toRanks = (scores: Map<string, number>): Map<string, number> => {
-          const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
-            b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
-          );
-          return new Map(sorted.map(([ref], i) => [ref, i + 1]));
-        };
-
-        const oldRanks = toRanks(existingAllScores);
-        const newRanks = toRanks(mergedNewScores);
-
-        const report = buildRankChangeReport(oldRanks, newRanks);
-        if (report.forgettingCandidates.length > 0) {
-          warn(
-            `[improve/salience] WS-1 rank-change report: ${report.forgettingCandidates.length} asset(s) fell from top-200 to below position 500. ` +
-              `Top drops: ${report.forgettingCandidates
-                .slice(0, 5)
-                .map((e) => `${e.ref} (#${e.oldRank}→#${e.newRank})`)
-                .join(", ")}`,
-          );
-          // Collect refs for protective consolidation pass (plan §WS-1 step 7).
-          // These are force-included in the candidate pool (mergedRefs) after
-          // this try block, bypassing cooldown/signal-delta gating.
-          pendingForgettingRefs = report.forgettingCandidates.map((e) => e.ref);
-        }
-        appendEvent(
-          {
-            eventType: "improve_salience_rank_change",
-            ref: undefined,
-            metadata: {
-              stashSize: existingAllScores.size,
-              totalChanged: report.allChanges.length,
-              forgettingCandidates: report.forgettingCandidates.length,
-              topDrops: report.forgettingCandidates.slice(0, 10).map((e) => ({
-                ref: e.ref,
-                oldRank: e.oldRank,
-                newRank: e.newRank,
-              })),
-            },
-          },
-          eventsCtx,
-        );
-      }
-
-      for (const [ref, vector] of salienceMap) {
-        upsertAssetSalience(stateDb, ref, vector, nowForSalience);
-      }
-    } finally {
-      stateDb.close();
-    }
+      },
+      { path: eventsCtx?.dbPath },
+    );
   } catch (err) {
     rethrowIfTestIsolationError(err);
     // best-effort: salience persistence failure never blocks ranking
@@ -3750,87 +3756,88 @@ async function runImprovePreparationStage(args: {
   const replayBudget = (options.config ?? loadConfig()).improve?.salience?.replayBudget ?? 0;
   const replayRefSet = new Set<string>();
   if (replayBudget > 0 && scope.mode !== "ref" && !options.requireFeedbackSignal) {
-    let replayDb: import("../../core/state-db").Database | undefined;
     try {
-      replayDb = openStateDatabase(eventsCtx?.dbPath);
-      const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
-      const allRankScores = getAllRankScores(replayDb);
-      // Candidate universe = every salience row NOT already in the pool, ordered by
-      // rank_score desc with a deterministic ref-string tie-break (mirrors the main
-      // sort). Converged refs (consecutive_no_ops >= dampener threshold) are fully
-      // EXCLUDED — a stronger skip than the dampener (which only halves order).
-      let convergedSkipped = 0;
-      const candidates: Array<{ ref: string; rankScore: number }> = [];
-      for (const [ref, rankScore] of allRankScores) {
-        if (alreadyInPool.has(ref)) continue;
-        const noOps = getConsecutiveNoOps(replayDb, ref);
-        if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
-          convergedSkipped++;
-          continue;
-        }
-        candidates.push({ ref, rankScore });
-      }
-      candidates.sort((a, b) =>
-        b.rankScore !== a.rankScore ? b.rankScore - a.rankScore : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0,
-      );
-      const candidatePool = candidates.length;
-      const selected = candidates.slice(0, replayBudget);
-      const newReplayRefs: ImproveEligibleRef[] = [];
-      for (const { ref } of selected) {
-        replayRefSet.add(ref);
-        // Synthesise a stub (mirror the forgetting-safety stub). Resolve the
-        // backing file from the planned-ref pool so the downstream existsSync
-        // guard keeps the ref (a replay candidate from asset_salience whose file
-        // is gone correctly drops out). Only refs present in the indexed pool can
-        // be revisited — refs without a planned entry get no filePath and are
-        // dropped by the disk check, which is the desired behavior.
-        const planned = plannedRefs.find((p) => p.ref === ref);
-        newReplayRefs.push({
-          ref,
-          reason: "scope-type",
-          eligibilitySource: "replay",
-          ...(planned?.filePath ? { filePath: planned.filePath } : {}),
-        });
-        // Seed the salienceMap so the sort/effectiveScore can rank the replay ref.
-        if (!salienceMap.has(ref)) {
-          salienceMap.set(ref, {
-            encoding: 0,
-            outcome: 0,
-            retrieval: 0,
-            rankScore: allRankScores.get(ref) ?? 0,
-          });
-        }
-      }
-      if (newReplayRefs.length > 0) {
-        mergedRefs = dedupeRefs([...mergedRefs, ...newReplayRefs]);
-        // Replay is the WEAKEST lane: stamp 'replay' ONLY for refs not already
-        // keyed by a stronger lane.
-        for (const ref of replayRefSet) {
-          if (!eligibilitySourceByRef.has(ref)) eligibilitySourceByRef.set(ref, "replay");
-        }
-        for (const r of mergedRefs) {
-          r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
-        }
-      }
-      // Aggregated observability event (never per-ref).
-      appendEvent(
-        {
-          eventType: "improve_replay_selected",
-          ref: undefined,
-          metadata: {
-            count: newReplayRefs.length,
-            budget: replayBudget,
-            convergedSkipped,
-            candidatePool,
-          },
+      withStateDb(
+        (replayDb) => {
+          const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
+          const allRankScores = getAllRankScores(replayDb);
+          // Candidate universe = every salience row NOT already in the pool, ordered by
+          // rank_score desc with a deterministic ref-string tie-break (mirrors the main
+          // sort). Converged refs (consecutive_no_ops >= dampener threshold) are fully
+          // EXCLUDED — a stronger skip than the dampener (which only halves order).
+          let convergedSkipped = 0;
+          const candidates: Array<{ ref: string; rankScore: number }> = [];
+          for (const [ref, rankScore] of allRankScores) {
+            if (alreadyInPool.has(ref)) continue;
+            const noOps = getConsecutiveNoOps(replayDb, ref);
+            if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
+              convergedSkipped++;
+              continue;
+            }
+            candidates.push({ ref, rankScore });
+          }
+          candidates.sort((a, b) =>
+            b.rankScore !== a.rankScore ? b.rankScore - a.rankScore : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0,
+          );
+          const candidatePool = candidates.length;
+          const selected = candidates.slice(0, replayBudget);
+          const newReplayRefs: ImproveEligibleRef[] = [];
+          for (const { ref } of selected) {
+            replayRefSet.add(ref);
+            // Synthesise a stub (mirror the forgetting-safety stub). Resolve the
+            // backing file from the planned-ref pool so the downstream existsSync
+            // guard keeps the ref (a replay candidate from asset_salience whose file
+            // is gone correctly drops out). Only refs present in the indexed pool can
+            // be revisited — refs without a planned entry get no filePath and are
+            // dropped by the disk check, which is the desired behavior.
+            const planned = plannedRefs.find((p) => p.ref === ref);
+            newReplayRefs.push({
+              ref,
+              reason: "scope-type",
+              eligibilitySource: "replay",
+              ...(planned?.filePath ? { filePath: planned.filePath } : {}),
+            });
+            // Seed the salienceMap so the sort/effectiveScore can rank the replay ref.
+            if (!salienceMap.has(ref)) {
+              salienceMap.set(ref, {
+                encoding: 0,
+                outcome: 0,
+                retrieval: 0,
+                rankScore: allRankScores.get(ref) ?? 0,
+              });
+            }
+          }
+          if (newReplayRefs.length > 0) {
+            mergedRefs = dedupeRefs([...mergedRefs, ...newReplayRefs]);
+            // Replay is the WEAKEST lane: stamp 'replay' ONLY for refs not already
+            // keyed by a stronger lane.
+            for (const ref of replayRefSet) {
+              if (!eligibilitySourceByRef.has(ref)) eligibilitySourceByRef.set(ref, "replay");
+            }
+            for (const r of mergedRefs) {
+              r.eligibilitySource = eligibilitySourceByRef.get(r.ref) ?? "unknown";
+            }
+          }
+          // Aggregated observability event (never per-ref).
+          appendEvent(
+            {
+              eventType: "improve_replay_selected",
+              ref: undefined,
+              metadata: {
+                count: newReplayRefs.length,
+                budget: replayBudget,
+                convergedSkipped,
+                candidatePool,
+              },
+            },
+            eventsCtx,
+          );
         },
-        eventsCtx,
+        { path: eventsCtx?.dbPath },
       );
     } catch (err) {
       rethrowIfTestIsolationError(err);
       // best-effort: if DB unavailable, replayRefSet stays empty
-    } finally {
-      if (replayDb) replayDb.close();
     }
   }
 
@@ -4923,7 +4930,10 @@ export async function runImproveMaintenancePasses(args: {
   let proposalsExpired = 0;
 
   const openIndexDb = () =>
-    openDatabase(getDbPath(), config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined);
+    openIndexDatabase(
+      getDbPath(),
+      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
+    );
 
   // #584: reindexFn opens its own write handle on the same index.db WAL file.
   // Holding our handle across that call produced SQLITE_BUSY / "database is
@@ -5203,53 +5213,47 @@ export async function runImproveMaintenancePasses(args: {
           // fallback path (state.db failed to open up-front) opens — and then
           // owns and closes — its own handle. C2 still holds: the fallback uses
           // the boundary-pinned path, never a live `process.env` re-read.
-          const ownsStateDb = !eventsCtx?.db;
-          let stateDb: ReturnType<typeof openStateDatabase> | undefined;
           try {
-            stateDb = eventsCtx?.db ?? openStateDatabase(eventsCtx?.dbPath);
-            const purgedCount = purgeOldEvents(stateDb, retentionDays);
-            if (purgedCount > 0) {
-              info(
-                `[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`,
-              );
-            }
-            appendEvent(
-              {
-                eventType: "events_purged",
-                ref: "events:_purge",
-                metadata: { purgedCount, retentionDays },
-              },
-              eventsCtx,
-            );
+            withStateDb(
+              (stateDb) => {
+                const purgedCount = purgeOldEvents(stateDb, retentionDays);
+                if (purgedCount > 0) {
+                  info(
+                    `[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`,
+                  );
+                }
+                appendEvent(
+                  {
+                    eventType: "events_purged",
+                    ref: "events:_purge",
+                    metadata: { purgedCount, retentionDays },
+                  },
+                  eventsCtx,
+                );
 
-            // improve_runs uses the same retention window as events — both are
-            // observability/audit data, both grow append-only, both have a
-            // dedicated purge helper. Mirroring the events purge here means a
-            // single retention knob (improve.eventRetentionDays) governs both.
-            const improveRunsPurged = purgeOldImproveRuns(stateDb, retentionDays);
-            if (improveRunsPurged > 0) {
-              info(
-                `[improve] improve_runs purge: ${improveRunsPurged} run(s) older than ${retentionDays}d removed from state.db`,
-              );
-            }
-            appendEvent(
-              {
-                eventType: "improve_runs_purged",
-                ref: "improve_runs:_purge",
-                metadata: { purgedCount: improveRunsPurged, retentionDays },
+                // improve_runs uses the same retention window as events — both are
+                // observability/audit data, both grow append-only, both have a
+                // dedicated purge helper. Mirroring the events purge here means a
+                // single retention knob (improve.eventRetentionDays) governs both.
+                const improveRunsPurged = purgeOldImproveRuns(stateDb, retentionDays);
+                if (improveRunsPurged > 0) {
+                  info(
+                    `[improve] improve_runs purge: ${improveRunsPurged} run(s) older than ${retentionDays}d removed from state.db`,
+                  );
+                }
+                appendEvent(
+                  {
+                    eventType: "improve_runs_purged",
+                    ref: "improve_runs:_purge",
+                    metadata: { purgedCount: improveRunsPurged, retentionDays },
+                  },
+                  eventsCtx,
+                );
               },
-              eventsCtx,
+              { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
             );
           } catch (err) {
             allWarnings.push(`events purge failed: ${err instanceof Error ? err.message : String(err)}`);
-          } finally {
-            if (ownsStateDb && stateDb) {
-              try {
-                stateDb.close();
-              } catch {
-                // best-effort
-              }
-            }
           }
 
           // task_logs in logs.db (#579) shares the same retention window as

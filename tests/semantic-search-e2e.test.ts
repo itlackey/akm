@@ -22,7 +22,7 @@ import {
   getEmbeddingCount,
   getEntryCount,
   getMeta,
-  openDatabase,
+  openIndexDatabase,
 } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import { searchLocal } from "../src/indexer/search/db-search";
@@ -349,7 +349,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     const dbPath = getDbPath();
     expect(fs.existsSync(dbPath)).toBe(true);
 
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       // Verify hasEmbeddings flag is set
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
@@ -609,7 +609,7 @@ describe("Semantic search graceful degradation", () => {
 
     // Check the database directly
     const dbPath = getDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "hasEmbeddings")).toBe("0");
       expect(getEntryCount(db)).toBeGreaterThan(0);

@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig, LlmConnectionConfig } from "../src/core/config/config";
-import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, upsertEntry } from "../src/indexer/db/db";
 import { loadStoredGraphSnapshot } from "../src/indexer/db/graph-db";
 import type { GraphExtractionResult } from "../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../src/indexer/search/search-fields";
@@ -165,7 +165,7 @@ function writeMemory(name: string, body: string): void {
     "graph-disable-batching.db",
     "graph-consistency.db",
   ]) {
-    const db = openDatabase(path.join(tmpStash, dbName));
+    const db = openIndexDatabase(path.join(tmpStash, dbName));
     try {
       const entry = { name, type: "memory", filename: `${name}.md` };
       upsertEntry(
@@ -205,7 +205,7 @@ describe("runGraphExtractionPass — batch path", () => {
       ];
     };
 
-    const db = openDatabase(path.join(tmpStash, "graph-batch.db"));
+    const db = openIndexDatabase(path.join(tmpStash, "graph-batch.db"));
     let parsed:
       | {
           schemaVersion: number;
@@ -265,7 +265,7 @@ describe("runGraphExtractionPass — batch path", () => {
 
     // Phase 1 perf fix: the default batch size moved from 1 → 4, so callers
     // that want the per-asset path must opt in with batchSize=1 explicitly.
-    const db = openDatabase(path.join(tmpStash, "graph-default.db"));
+    const db = openIndexDatabase(path.join(tmpStash, "graph-default.db"));
     let result: GraphExtractionResult;
     try {
       result = await runGraphExtractionPass({
@@ -300,7 +300,7 @@ describe("runGraphExtractionPass — batch path", () => {
     };
     singleExtractorStub = async () => ({ entities: ["E-final"], relations: [] });
 
-    const db = openDatabase(path.join(tmpStash, "graph-chunked.db"));
+    const db = openIndexDatabase(path.join(tmpStash, "graph-chunked.db"));
     let result: GraphExtractionResult;
     try {
       result = await runGraphExtractionPass({
@@ -336,7 +336,7 @@ describe("runGraphExtractionPass — batch path", () => {
       relations: [],
     });
 
-    const db = openDatabase(path.join(tmpStash, "graph-adaptive.db"));
+    const db = openIndexDatabase(path.join(tmpStash, "graph-adaptive.db"));
     try {
       const result = await runGraphExtractionPass({
         config: makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
@@ -360,7 +360,7 @@ describe("runGraphExtractionPass — batch path", () => {
     batchExtractorStub = async (_bodies) => ({ nope: true }) as unknown as GraphExtraction[];
     singleExtractorStub = async (body) => ({ entities: [body.match(/Entity\d+/)?.[0] ?? "fallback"], relations: [] });
 
-    const db = openDatabase(path.join(tmpStash, "graph-disable-batching.db"));
+    const db = openIndexDatabase(path.join(tmpStash, "graph-disable-batching.db"));
     try {
       const result = await runGraphExtractionPass({
         config: makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
@@ -410,7 +410,7 @@ describe("runGraphExtractionPass — batch path", () => {
       return { entities, relations };
     };
 
-    const db = openDatabase(path.join(tmpStash, "graph-consistency.db"));
+    const db = openIndexDatabase(path.join(tmpStash, "graph-consistency.db"));
     try {
       const result = await runGraphExtractionPass({
         config: makeConfig({ index: { graph: { graphExtractionBatchSize: 1 } } }),

@@ -27,7 +27,6 @@ const PASSTHROUGH_COMMANDS = [
   "agent-result",
   "clone",
   "config",
-  "db-backups",
   "disable",
   "enable",
   "env-create",

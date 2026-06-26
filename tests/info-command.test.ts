@@ -6,7 +6,7 @@ import { assembleInfo } from "../src/commands/sources/info";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import {
   closeDatabase,
-  openDatabase,
+  openIndexDatabase,
   rebuildFts,
   searchVec,
   setMeta,
@@ -126,7 +126,7 @@ describe("assembleInfo", () => {
 
     // Create an index with some entries
     const dbPath = path.join(tmpDir("db"), "test.db");
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     const entry = makeEntry("skill", "test-skill");
     upsertEntry(db, "skill:test-skill", "/fake/skill", "/fake/skill/test-skill", stashDir, entry, "test skill");
     rebuildFts(db);
@@ -144,7 +144,7 @@ describe("assembleInfo", () => {
     const stashDir = makeStashDir();
 
     const dbPath = path.join(tmpDir("db"), "test.db");
-    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     const entry = makeEntry("skill", "embed-skill");
     const id = upsertEntry(
       db,
@@ -164,7 +164,7 @@ describe("assembleInfo", () => {
 
     expect(info.indexStats.entryCount).toBe(1);
 
-    db = openDatabase(dbPath, { embeddingDim: 4 });
+    db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
       expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
     } finally {

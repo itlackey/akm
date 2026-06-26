@@ -17,7 +17,7 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db/db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { buildSearchText } from "../src/indexer/search/search-fields";
 import {
@@ -112,7 +112,7 @@ function buildFixture(): void {
   // derived_from extraction path. See `upsertEntry` + StashEntry.derivedFrom.
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   try {
     const entries: Array<{ entry: StashEntry; filePath: string; dirPath: string }> = [
       {

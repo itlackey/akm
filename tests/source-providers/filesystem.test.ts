@@ -39,20 +39,13 @@ describe("FilesystemSourceProvider", () => {
     expect(resolveSourceProviderFactory("filesystem")).toBeTruthy();
   });
 
-  test("init resolves and path returns the configured path", async () => {
+  test("path() returns the configured path", () => {
     const factory = resolveSourceProviderFactory("filesystem");
     expect(factory).toBeTruthy();
     if (!factory) throw new Error("expected filesystem factory to be registered");
 
     const stashDir = createTmpDir("akm-fs-init-");
     const provider = factory({ type: "filesystem", path: stashDir, name: "mine" });
-
-    await provider.init({
-      name: "mine",
-      options: {},
-      cacheDir: stashDir,
-      resolveOption: (v) => (typeof v === "string" ? v : undefined),
-    });
 
     expect(provider.kind).toBe("filesystem");
     expect(provider.name).toBe("mine");

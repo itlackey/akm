@@ -17,7 +17,7 @@ import {
   bumpUtilityScoresBatch,
   closeDatabase,
   getUtilityScoresByIds,
-  openDatabase,
+  openIndexDatabase,
   type ScopedUtilityRow,
   type UtilityScoreRow,
 } from "../src/indexer/db/db";
@@ -31,7 +31,7 @@ import type { Database } from "../src/storage/database";
 function makeTempDb(label: string): { db: Database; dbPath: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-scoped-util-${label}-`));
   const dbPath = path.join(dir, "index.db");
-  const db = openDatabase(dbPath);
+  const db = openIndexDatabase(dbPath);
   return { db, dbPath };
 }
 
@@ -288,7 +288,7 @@ describe("schema migration safety", () => {
     }
   });
 
-  test("existing utility_scores rows survive openDatabase (no data loss)", () => {
+  test("existing utility_scores rows survive openIndexDatabase (no data loss)", () => {
     const { db: existingDb, dbPath: existingPath } = makeTempDb("existing");
     try {
       // Add an entry and bump its global utility
@@ -304,7 +304,7 @@ describe("schema migration safety", () => {
 
       // Re-open the same DB (simulates a binary restart / second ensureSchema call)
       closeDatabase(existingDb);
-      const reopenedDb = openDatabase(existingPath);
+      const reopenedDb = openIndexDatabase(existingPath);
       const { global: after } = getUtilityScoresByIds(reopenedDb, [1]);
       const afterUtility = after.get(1)?.utility;
       expect(afterUtility).toBeGreaterThan(0);

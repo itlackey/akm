@@ -5,14 +5,14 @@ import { akmHistory } from "../../src/commands/sources/history";
 import { saveConfig } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openDatabase } from "../../src/indexer/db/db";
+import { closeDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage/usage-events";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
-// (tests/_helpers/cli.ts). The pure akmHistory tests use openDatabase(":memory:")
+// (tests/_helpers/cli.ts). The pure akmHistory tests use openIndexDatabase(":memory:")
 // and are untouched. The CLI tests seed a stash (memories + akmIndex + feedback
 // events) in-process, then read it back through the in-process CLI — both share
 // the same sandboxed XDG dirs from the preload (tests/_preload.ts). Per-test
@@ -57,7 +57,7 @@ afterEach(() => {
 
 describe("akmHistory programmatic API", () => {
   test("returns an empty entry list when no events have been recorded", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       const result = await akmHistory({ db });
@@ -71,7 +71,7 @@ describe("akmHistory programmatic API", () => {
   });
 
   test("returns stash-wide history in chronological order when no ref is provided", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "search", query: "deploy" });
@@ -96,7 +96,7 @@ describe("akmHistory programmatic API", () => {
   });
 
   test("filters per-asset history when --ref is provided", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1 });
@@ -119,7 +119,7 @@ describe("akmHistory programmatic API", () => {
   });
 
   test("rejects malformed refs with a UsageError", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       await expect(akmHistory({ db, ref: "" })).rejects.toThrow();
@@ -130,7 +130,7 @@ describe("akmHistory programmatic API", () => {
   });
 
   test("filters by --since when provided", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // Manually insert rows with explicit timestamps so the test is
@@ -157,7 +157,7 @@ describe("akmHistory programmatic API", () => {
   });
 
   test("rejects malformed --since values", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       await expect(akmHistory({ db, since: "definitely-not-a-date" })).rejects.toThrow();
@@ -198,7 +198,7 @@ describe("akm history CLI", () => {
     expect((stashWideJson.totalCount as number) >= 1).toBe(true);
 
     // Confirm the database actually contains the feedback row we created.
-    const db = openDatabase(getDbPath());
+    const db = openIndexDatabase(getDbPath());
     try {
       const events = db
         .prepare("SELECT entry_ref, event_type FROM usage_events WHERE event_type = 'feedback'")
@@ -236,7 +236,7 @@ describe("akm history CLI", () => {
 
 describe("akmHistory --include-proposals", () => {
   test("sources field is ['usage_events'] by default", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       const result = await akmHistory({ db });
@@ -248,7 +248,7 @@ describe("akmHistory --include-proposals", () => {
 
   test("sources field includes state.db when includeProposals is true", async () => {
     const dbFile = path.join(makeTempDir("akm-history-events-"), "state.db");
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       const result = await akmHistory({
@@ -264,7 +264,7 @@ describe("akmHistory --include-proposals", () => {
 
   test("proposal accept event (promoted) appears in history with --include-proposals", async () => {
     const stateDbPath = path.join(makeTempDir("akm-history-proposal-"), "state.db");
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // Simulate `akm proposal accept` emitting a promoted event.
@@ -297,7 +297,7 @@ describe("akmHistory --include-proposals", () => {
 
   test("proposal reject event (rejected) appears in history with --include-proposals", async () => {
     const stateDbPath = path.join(makeTempDir("akm-history-reject-"), "state.db");
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       appendEvent(
@@ -327,7 +327,7 @@ describe("akmHistory --include-proposals", () => {
 
   test("non-proposal events in state.db are excluded even with --include-proposals", async () => {
     const stateDbPath = path.join(makeTempDir("akm-history-filter-"), "state.db");
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // These event types should NOT appear in history even with --include-proposals.
@@ -355,7 +355,7 @@ describe("akmHistory --include-proposals", () => {
 
   test("usage events and proposal events are merged chronologically", async () => {
     const stateDbPath = path.join(makeTempDir("akm-history-merge-"), "state.db");
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // Insert usage events with explicit timestamps (early, then late).
@@ -397,7 +397,7 @@ describe("akmHistory --include-proposals", () => {
 
   test("--include-proposals ref filter shows only matching ref events", async () => {
     const stateDbPath = path.join(makeTempDir("akm-history-ref-filter-"), "state.db");
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // Two proposal events for different refs.
@@ -464,7 +464,7 @@ describe("akmHistory --include-proposals", () => {
 
 describe("akmHistory --source filter", () => {
   test("returns all events when source filter is not provided", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "search", query: "deploy", source: "user" });
@@ -478,7 +478,7 @@ describe("akmHistory --source filter", () => {
   });
 
   test("filters to only user events when source=user", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "search", query: "user query", source: "user" });
@@ -493,7 +493,7 @@ describe("akmHistory --source filter", () => {
   });
 
   test("filters to only improve events when source=improve", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "search", query: "user query", source: "user" });
@@ -508,7 +508,7 @@ describe("akmHistory --source filter", () => {
   });
 
   test("source field is present in history entries", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1, source: "improve" });
@@ -521,7 +521,7 @@ describe("akmHistory --source filter", () => {
   });
 
   test("source defaults to user when not specified in insert", async () => {
-    const db = openDatabase(":memory:");
+    const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1 });
@@ -547,7 +547,7 @@ describe("akm history --generator CLI flag", () => {
     expect(feedback.status).toBe(0);
 
     // Insert an improve event directly.
-    const db = openDatabase(getDbPath());
+    const db = openIndexDatabase(getDbPath());
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });

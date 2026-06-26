@@ -25,7 +25,7 @@
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
-import { getPhaseThreshold, openStateDatabase } from "../../core/state-db";
+import { getPhaseThreshold, withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { promoteProposal, recordGateDecision } from "../proposal/validators/proposals";
 
@@ -336,12 +336,9 @@ export function makeGateConfig(
   let phaseThreshold: number | undefined;
   if (shared.stateDbPath && shared.globalThreshold !== undefined) {
     try {
-      const db = openStateDatabase(shared.stateDbPath);
-      try {
-        phaseThreshold = getPhaseThreshold(db, phase) ?? undefined;
-      } finally {
-        db.close();
-      }
+      phaseThreshold = withStateDb((db) => getPhaseThreshold(db, phase) ?? undefined, {
+        path: shared.stateDbPath,
+      });
     } catch {
       // DB unavailable — fall back to globalThreshold silently.
     }

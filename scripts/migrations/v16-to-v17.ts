@@ -3,11 +3,12 @@
  * v16 → v17 migration helper.
  *
  * The v17 schema bump was a purely additive column change: `entries` gained a
- * nullable `derived_from TEXT` column. The `handleVersionUpgrade()` path in
- * `src/indexer/db/db.ts` nonetheless treats every version mismatch as a full
- * drop-and-rebuild because it can't tell additive changes from destructive
- * ones without a per-version migration table — that fix is on the 0.9.0
- * roadmap.
+ * nullable `derived_from TEXT` column. Historically (pre-0.9) a DB_VERSION
+ * mismatch triggered a destructive drop-and-rebuild of the whole index; this
+ * one-time helper existed to scavenge `usage_events` from a pre-upgrade backup.
+ * That destructive path has since been removed — `index.db` now converges
+ * forward additively (`ensureDerivedFromColumn` adds the column in place), so
+ * this script is retained only for historical pre-0.9 recovery.
  *
  * For v17 specifically the only table the upgrade *intentionally* preserves
  * across the rebuild is `usage_events` (it's read out, the schema is

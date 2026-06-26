@@ -73,7 +73,7 @@ const {
   getLlmCacheEntry,
   upsertLlmCacheEntry,
   clearStaleCacheEntries,
-  openDatabase,
+  openIndexDatabase,
   closeDatabase,
   upsertEntry,
 } = await import("../src/indexer/db/db");
@@ -169,7 +169,7 @@ beforeEach(() => {
   process.env.XDG_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-llm-cache-state-"));
 
   tmpDbPath = path.join(tmpStash, "test.db");
-  db = openDatabase(tmpDbPath);
+  db = openIndexDatabase(tmpDbPath);
 
   graphExtractCallCount = 0;
   memoryCompressCallCount = 0;

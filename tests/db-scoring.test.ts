@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   closeDatabase,
-  openDatabase,
+  openIndexDatabase,
   rebuildFts,
   sanitizeFtsQuery,
   searchFts,
@@ -166,7 +166,7 @@ describe("sanitizeFtsQuery — identifier preservation (Issue #2)", () => {
 
 describe("searchFts — hyphenated identifier search (Issue #2)", () => {
   test("searching for 'code-review' matches entry with code-review in search text", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "code-review", {
         description: "code-review skill for reviewing pull requests",
@@ -188,7 +188,7 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
   });
 
   test("AND semantics: multi-word query only matches entries containing all terms", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-tool", {
         description: "deploy applications to production servers",
@@ -227,7 +227,7 @@ describe("sanitizeFtsQuery — single-char tokens (Issue #9)", () => {
   });
 
   test("single character query returns FTS results when content matches", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "r-lang", {
         searchText: "R programming language for statistics",

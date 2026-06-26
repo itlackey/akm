@@ -54,10 +54,9 @@ import {
   decayUnseenRecombineHypotheses,
   findMatchingRecombineHypothesis,
   getRecombineHypothesis,
-  getStateDbPath,
   markRecombineHypothesisPromoted,
-  openStateDatabase,
   recordRecombineInduction,
+  withStateDbAsync,
 } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
@@ -690,11 +689,6 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
     return finish({ clustersFormed: 0 });
   }
 
-  // #625 — open the confirmation-count store once per run via the ctx seam,
-  // reusing a long-lived ctx.db handle when the caller provided one (mirrors
-  // proposals.ts). Only handles WE opened are closed in the finally below.
-  const ownStateDb = opts.ctx?.db ? undefined : openStateDatabase(opts.ctx?.dbPath ?? getStateDbPath());
-  const stateDb = opts.ctx?.db ?? ownStateDb;
   // Refs re-induced (defensible generalization passed the quality gate) THIS
   // run — everything else is decayed after the loop.
   const seenThisRun = new Set<string>();
@@ -703,228 +697,232 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
   // standards. Resolved ONCE per run and passed to each cluster prompt.
   const standardsContext = resolveStashStandards(stashDir);
 
-  try {
-    for (const cluster of clusters) {
-      if (opts.signal?.aborted) {
-        warnings.push("aborted-mid-run");
-        break;
-      }
-      clustersFormed += 1;
+  // #625 — open the confirmation-count store once per run via the ctx seam,
+  // reusing a long-lived ctx.db handle when the caller provided one (mirrors
+  // proposals.ts). Only handles WE opened are closed by the seam.
+  await withStateDbAsync(
+    async (stateDb) => {
+      for (const cluster of clusters) {
+        if (opts.signal?.aborted) {
+          warnings.push("aborted-mid-run");
+          break;
+        }
+        clustersFormed += 1;
 
-      const prompt = buildClusterPrompt(cluster, standardsContext);
-      const raw = await llmFn(prompt);
-      const generalization = parseGeneralization(raw);
+        const prompt = buildClusterPrompt(cluster, standardsContext);
+        const raw = await llmFn(prompt);
+        const generalization = parseGeneralization(raw);
 
-      if (!generalization) {
-        nullsReturned += 1;
-        appendEvent(
-          {
-            eventType: "recombine_invoked",
-            ref: deriveRecombineLessonRef(cluster),
-            metadata: {
-              signal: cluster.signature,
-              memberCount: cluster.members.length,
-              outcome: "null_returned",
-              sourceRun,
+        if (!generalization) {
+          nullsReturned += 1;
+          appendEvent(
+            {
+              eventType: "recombine_invoked",
+              ref: deriveRecombineLessonRef(cluster),
+              metadata: {
+                signal: cluster.signature,
+                memberCount: cluster.members.length,
+                outcome: "null_returned",
+                sourceRun,
+              },
             },
-          },
-          opts.ctx,
-        );
-        continue;
-      }
+            opts.ctx,
+          );
+          continue;
+        }
 
-      // #633 — the confirmation identity is decoupled from the EXACT member
-      // set. We first look for an existing pending hypothesis row under the
-      // SAME signature whose membership overlaps this cluster (Jaccard >=
-      // threshold) and, if found, REUSE that row's stable ref so a
-      // drifting-but-overlapping cluster keeps accumulating its streak under one
-      // row instead of spawning a fresh row (count=1) every run. With no match
-      // (first induction, or membership drifted past the overlap floor) we fall
-      // back to the deterministic member-set ref exactly as before.
-      const memberKey = recombineMemberKey(cluster);
-      const derivedRef = deriveRecombineLessonRef(cluster);
-      const matchedRow = stateDb
-        ? findMatchingRecombineHypothesis(stateDb, {
-            signature: cluster.signature,
-            memberKey,
-            minOverlap: DEFAULT_RECOMBINE_OVERLAP,
-          })
-        : undefined;
-      const lessonRef = matchedRow?.hypothesis_ref ?? derivedRef;
-      const sourceRefs = cluster.members.map((m) => `memory:${m.entry.name}`);
+        // #633 — the confirmation identity is decoupled from the EXACT member
+        // set. We first look for an existing pending hypothesis row under the
+        // SAME signature whose membership overlaps this cluster (Jaccard >=
+        // threshold) and, if found, REUSE that row's stable ref so a
+        // drifting-but-overlapping cluster keeps accumulating its streak under one
+        // row instead of spawning a fresh row (count=1) every run. With no match
+        // (first induction, or membership drifted past the overlap floor) we fall
+        // back to the deterministic member-set ref exactly as before.
+        const memberKey = recombineMemberKey(cluster);
+        const derivedRef = deriveRecombineLessonRef(cluster);
+        const matchedRow = stateDb
+          ? findMatchingRecombineHypothesis(stateDb, {
+              signature: cluster.signature,
+              memberKey,
+              minOverlap: DEFAULT_RECOMBINE_OVERLAP,
+            })
+          : undefined;
+        const lessonRef = matchedRow?.hypothesis_ref ?? derivedRef;
+        const sourceRefs = cluster.members.map((m) => `memory:${m.entry.name}`);
 
-      // Quality gate (always-run): the frontmatter description must be present
-      // and non-truncated. This runs BEFORE createProposal on BOTH the
-      // hypothesis and the promotion paths — never bypassed.
-      const fmCheck = validateProposalFrontmatter({ description: generalization.description });
-      if (!fmCheck.ok) {
-        appendEvent(
-          {
-            eventType: "recombine_invoked",
-            ref: lessonRef,
-            metadata: {
-              signal: cluster.signature,
-              memberCount: cluster.members.length,
-              outcome: "quality_rejected",
-              reason: fmCheck.reason,
-              sourceRun,
+        // Quality gate (always-run): the frontmatter description must be present
+        // and non-truncated. This runs BEFORE createProposal on BOTH the
+        // hypothesis and the promotion paths — never bypassed.
+        const fmCheck = validateProposalFrontmatter({ description: generalization.description });
+        if (!fmCheck.ok) {
+          appendEvent(
+            {
+              eventType: "recombine_invoked",
+              ref: lessonRef,
+              metadata: {
+                signal: cluster.signature,
+                memberCount: cluster.members.length,
+                outcome: "quality_rejected",
+                reason: fmCheck.reason,
+                sourceRun,
+              },
             },
-          },
-          opts.ctx,
-        );
-        continue;
-      }
+            opts.ctx,
+          );
+          continue;
+        }
 
-      // A defensible generalization was produced this run — record it so it is
-      // NOT decayed by the unseen sweep below.
-      seenThisRun.add(lessonRef);
+        // A defensible generalization was produced this run — record it so it is
+        // NOT decayed by the unseen sweep below.
+        seenThisRun.add(lessonRef);
 
-      // #625/#633 — record the re-induction and read the prior promotion state.
-      // `lessonRef` is the matched row's ref (overlap match) or the freshly
-      // derived member-set ref (first/non-overlapping induction). The induction
-      // refreshes the row's `member_key` to the current membership so the
-      // overlap window slides with the drifting cluster.
-      const nowIso = new Date().toISOString();
-      const priorRow = stateDb ? getRecombineHypothesis(stateDb, lessonRef) : undefined;
-      const alreadyPromoted = priorRow?.promoted_at != null;
-      const count = stateDb
-        ? recordRecombineInduction(stateDb, {
-            hypothesisRef: lessonRef,
-            signature: cluster.signature,
-            memberKey,
-            seenAt: nowIso,
-            run: sourceRun,
-          })
-        : 0;
+        // #625/#633 — record the re-induction and read the prior promotion state.
+        // `lessonRef` is the matched row's ref (overlap match) or the freshly
+        // derived member-set ref (first/non-overlapping induction). The induction
+        // refreshes the row's `member_key` to the current membership so the
+        // overlap window slides with the drifting cluster.
+        const nowIso = new Date().toISOString();
+        const priorRow = stateDb ? getRecombineHypothesis(stateDb, lessonRef) : undefined;
+        const alreadyPromoted = priorRow?.promoted_at != null;
+        const count = stateDb
+          ? recordRecombineInduction(stateDb, {
+              hypothesisRef: lessonRef,
+              signature: cluster.signature,
+              memberKey,
+              seenAt: nowIso,
+              run: sourceRun,
+            })
+          : 0;
 
-      // Promote to a `type: lesson` proposal when the confirmation streak
-      // reaches the threshold AND the hypothesis has not already been promoted.
-      const promote = stateDb != null && !alreadyPromoted && count >= confirmThreshold;
-      const proposalType = promote ? "lesson" : "hypothesis";
+        // Promote to a `type: lesson` proposal when the confirmation streak
+        // reaches the threshold AND the hypothesis has not already been promoted.
+        const promote = stateDb != null && !alreadyPromoted && count >= confirmThreshold;
+        const proposalType = promote ? "lesson" : "hypothesis";
 
-      const frontmatter: Record<string, unknown> = {
-        type: proposalType,
-        description: generalization.description,
-        ...(generalization.when_to_use ? { when_to_use: generalization.when_to_use } : {}),
-        source_refs: sourceRefs,
-      };
-      const content = assembleContent(frontmatter, generalization.body);
+        const frontmatter: Record<string, unknown> = {
+          type: proposalType,
+          description: generalization.description,
+          ...(generalization.when_to_use ? { when_to_use: generalization.when_to_use } : {}),
+          source_refs: sourceRefs,
+        };
+        const content = assembleContent(frontmatter, generalization.body);
 
-      if (promote && stateDb) {
-        // Supersede the prior pending `type: hypothesis` proposal for this ref so
-        // the queue never shows two proposals for one ref. The promoted lesson
-        // proposal has different content (type changed), so content-hash dedup
-        // would otherwise let both co-exist.
-        for (const stale of listProposals(stashDir, { status: "pending", ref: lessonRef }, opts.ctx)) {
-          if (stale.source === "recombine") {
-            archiveProposal(stashDir, stale.id, "rejected", "superseded by recombine lesson promotion", opts.ctx);
+        if (promote && stateDb) {
+          // Supersede the prior pending `type: hypothesis` proposal for this ref so
+          // the queue never shows two proposals for one ref. The promoted lesson
+          // proposal has different content (type changed), so content-hash dedup
+          // would otherwise let both co-exist.
+          for (const stale of listProposals(stashDir, { status: "pending", ref: lessonRef }, opts.ctx)) {
+            if (stale.source === "recombine") {
+              archiveProposal(stashDir, stale.id, "rejected", "superseded by recombine lesson promotion", opts.ctx);
+            }
           }
+        }
+
+        const proposalResult = createProposal(
+          stashDir,
+          {
+            ref: lessonRef,
+            source: "recombine",
+            sourceRun,
+            payload: { content, frontmatter: { description: generalization.description } },
+            eligibilitySource,
+            // The promotion is a distinct asset (lesson) for the same ref; force
+            // past the duplicate-pending guard (the stale hypothesis was just
+            // superseded, but force keeps the path robust to ordering).
+            ...(promote ? { force: true } : {}),
+          },
+          opts.ctx,
+        );
+
+        if (isProposalSkipped(proposalResult)) {
+          appendEvent(
+            {
+              eventType: "recombine_invoked",
+              ref: lessonRef,
+              metadata: {
+                signal: cluster.signature,
+                memberCount: cluster.members.length,
+                outcome: "skipped",
+                skipReason: proposalResult.reason,
+                sourceRun,
+              },
+            },
+            opts.ctx,
+          );
+          continue;
+        }
+
+        if (promote && stateDb) {
+          markRecombineHypothesisPromoted(stateDb, lessonRef, nowIso);
+          lessonsPromoted += 1;
+          appendEvent(
+            {
+              eventType: "recombine_invoked",
+              ref: lessonRef,
+              metadata: {
+                signal: cluster.signature,
+                memberCount: cluster.members.length,
+                outcome: "promoted",
+                proposalId: proposalResult.id,
+                confirmationCount: count,
+                sourceRun,
+              },
+            },
+            opts.ctx,
+          );
+        } else {
+          proposalsEmitted += 1;
+          appendEvent(
+            {
+              eventType: "recombine_invoked",
+              ref: lessonRef,
+              metadata: {
+                signal: cluster.signature,
+                memberCount: cluster.members.length,
+                outcome: "queued",
+                proposalId: proposalResult.id,
+                confirmationCount: count,
+                sourceRun,
+              },
+            },
+            opts.ctx,
+          );
         }
       }
 
-      const proposalResult = createProposal(
-        stashDir,
-        {
-          ref: lessonRef,
-          source: "recombine",
-          sourceRun,
-          payload: { content, frontmatter: { description: generalization.description } },
-          eligibilitySource,
-          // The promotion is a distinct asset (lesson) for the same ref; force
-          // past the duplicate-pending guard (the stale hypothesis was just
-          // superseded, but force keeps the path robust to ordering).
-          ...(promote ? { force: true } : {}),
-        },
-        opts.ctx,
-      );
-
-      if (isProposalSkipped(proposalResult)) {
-        appendEvent(
-          {
-            eventType: "recombine_invoked",
-            ref: lessonRef,
-            metadata: {
-              signal: cluster.signature,
-              memberCount: cluster.members.length,
-              outcome: "skipped",
-              skipReason: proposalResult.reason,
-              sourceRun,
+      // #625 — decay hypotheses NOT re-induced this run (reset their consecutive
+      // streak) so confirmation is per-consecutive-run and conservative (AC4).
+      // #658 — but a hypothesis whose cluster genuinely re-formed this run and was
+      // merely cap-displaced (outside the top-`maxClustersPerRun` slice) must NOT
+      // be decayed — that is a scheduling miss, not a substance miss. We pass
+      // EVERY cluster that formed this run (the full pre-cap `rankedClusters`) as
+      // `presentClusters`; decay spares any row that Jaccard-matches a present
+      // cluster under the SAME overlap rule used for re-induction. Only rows with
+      // no matching current cluster (the corpus stopped supporting them) decay.
+      if (stateDb) {
+        const presentClusters = rankedClusters.map((c) => ({
+          signature: c.signature,
+          memberKey: recombineMemberKey(c),
+        }));
+        const decayedCount = decayUnseenRecombineHypotheses(stateDb, sourceRun, [...seenThisRun], {
+          presentClusters,
+          minOverlap: DEFAULT_RECOMBINE_OVERLAP,
+        });
+        if (decayedCount > 0) {
+          appendEvent(
+            {
+              eventType: "recombine_invoked",
+              metadata: { outcome: "decayed", decayedCount, sourceRun },
             },
-          },
-          opts.ctx,
-        );
-        continue;
+            opts.ctx,
+          );
+        }
       }
-
-      if (promote && stateDb) {
-        markRecombineHypothesisPromoted(stateDb, lessonRef, nowIso);
-        lessonsPromoted += 1;
-        appendEvent(
-          {
-            eventType: "recombine_invoked",
-            ref: lessonRef,
-            metadata: {
-              signal: cluster.signature,
-              memberCount: cluster.members.length,
-              outcome: "promoted",
-              proposalId: proposalResult.id,
-              confirmationCount: count,
-              sourceRun,
-            },
-          },
-          opts.ctx,
-        );
-      } else {
-        proposalsEmitted += 1;
-        appendEvent(
-          {
-            eventType: "recombine_invoked",
-            ref: lessonRef,
-            metadata: {
-              signal: cluster.signature,
-              memberCount: cluster.members.length,
-              outcome: "queued",
-              proposalId: proposalResult.id,
-              confirmationCount: count,
-              sourceRun,
-            },
-          },
-          opts.ctx,
-        );
-      }
-    }
-
-    // #625 — decay hypotheses NOT re-induced this run (reset their consecutive
-    // streak) so confirmation is per-consecutive-run and conservative (AC4).
-    // #658 — but a hypothesis whose cluster genuinely re-formed this run and was
-    // merely cap-displaced (outside the top-`maxClustersPerRun` slice) must NOT
-    // be decayed — that is a scheduling miss, not a substance miss. We pass
-    // EVERY cluster that formed this run (the full pre-cap `rankedClusters`) as
-    // `presentClusters`; decay spares any row that Jaccard-matches a present
-    // cluster under the SAME overlap rule used for re-induction. Only rows with
-    // no matching current cluster (the corpus stopped supporting them) decay.
-    if (stateDb) {
-      const presentClusters = rankedClusters.map((c) => ({
-        signature: c.signature,
-        memberKey: recombineMemberKey(c),
-      }));
-      const decayedCount = decayUnseenRecombineHypotheses(stateDb, sourceRun, [...seenThisRun], {
-        presentClusters,
-        minOverlap: DEFAULT_RECOMBINE_OVERLAP,
-      });
-      if (decayedCount > 0) {
-        appendEvent(
-          {
-            eventType: "recombine_invoked",
-            metadata: { outcome: "decayed", decayedCount, sourceRun },
-          },
-          opts.ctx,
-        );
-      }
-    }
-  } finally {
-    if (ownStateDb) ownStateDb.close();
-  }
+    },
+    { path: opts.ctx?.dbPath, borrowed: opts.ctx?.db },
+  );
 
   return finish({ clustersFormed, proposalsEmitted, lessonsPromoted, nullsReturned });
 }

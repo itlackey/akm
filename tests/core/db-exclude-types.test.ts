@@ -32,7 +32,7 @@ import path from "node:path";
 import {
   closeDatabase,
   getAllEntries,
-  openDatabase,
+  openIndexDatabase,
   rebuildFts,
   searchFts,
   upsertEntry,
@@ -90,7 +90,7 @@ function seedMixedIndex(db: Database): void {
 
 describe("#627 searchFts excludeTypes", () => {
   test("searchFts(db, q, limit, undefined, ['session']) returns skill+memory but NOT session", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       seedMixedIndex(db);
 
@@ -111,7 +111,7 @@ describe("#627 searchFts excludeTypes", () => {
   });
 
   test("excludeTypes applies on the prefix-fallback path too", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       // Token only matches via prefix fallback (no exact term match).
       insertTyped(db, "skill-pre", "skill", "sessionization");
@@ -130,7 +130,7 @@ describe("#627 searchFts excludeTypes", () => {
   });
 
   test("empty excludeTypes [] is a no-op (does not produce a SQL error / always-false clause)", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       seedMixedIndex(db);
       const hits = searchFts(db, "shared", 50, undefined, []);
@@ -144,7 +144,7 @@ describe("#627 searchFts excludeTypes", () => {
   });
 
   test("explicit entryType include filter is independent of excludeTypes (include wins narrow)", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       seedMixedIndex(db);
       // Asking explicitly for sessions returns the session even if it were on an
@@ -162,7 +162,7 @@ describe("#627 searchFts excludeTypes", () => {
 
 describe("#627 getAllEntries excludeTypes", () => {
   test("getAllEntries(db, undefined, ['session']) excludes sessions, keeps others", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       seedMixedIndex(db);
 
@@ -181,7 +181,7 @@ describe("#627 getAllEntries excludeTypes", () => {
 
   // AC4b: the exclude list is generic, not a session hardcode.
   test("getAllEntries with ['session','wiki'] excludes BOTH types generically", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTyped(db, "skill-one", "skill", "shared");
       insertTyped(db, "memory-one", "memory", "shared");
@@ -205,7 +205,7 @@ describe("#627 getAllEntries excludeTypes", () => {
 
 describe("#627 exclusion is pure query-layer (AC6 guard)", () => {
   test("getAllEntries(db) with no excludeTypes still returns the full set including sessions", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       seedMixedIndex(db);
 

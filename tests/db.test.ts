@@ -17,8 +17,8 @@ import {
   getEntryRefRowsForStashRoot,
   getMeta,
   isVecAvailable,
-  openDatabase,
   openExistingDatabase,
+  openIndexDatabase,
   rebuildFts,
   searchFts,
   searchVec,
@@ -103,9 +103,9 @@ function insertTestEntry(
 // ── Section 1.1: Schema ────────────────────────────────────────────────────
 
 describe("Schema", () => {
-  test("openDatabase creates schema with correct version", () => {
+  test("openIndexDatabase creates schema with correct version", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       expect(getMeta(db, "version")).toBe(String(DB_VERSION));
     } finally {
@@ -113,29 +113,29 @@ describe("Schema", () => {
     }
   });
 
-  test("openDatabase with mismatched version drops and recreates tables", () => {
+  test("openIndexDatabase with a stale version marker preserves data (no nuclear drop)", () => {
     const dbPath = tmpDbPath();
 
-    // Open and insert some data, then tamper with the version
-    let db = openDatabase(dbPath);
+    // Open, insert data, stamp an OLDER version than DB_VERSION.
+    let db = openIndexDatabase(dbPath);
     insertTestEntry(db, "old-entry");
     expect(getEntryCount(db)).toBe(1);
     setMeta(db, "version", "0");
     closeDatabase(db);
 
-    // Reopen — should detect mismatch, drop tables, recreate
-    db = openDatabase(dbPath);
+    // Reopen — the stale marker must NOT drop tables (the nuclear-drop path was
+    // removed); the regenerable index converges forward and the entry survives.
+    db = openIndexDatabase(dbPath);
     try {
-      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
-      expect(getEntryCount(db)).toBe(0);
+      expect(getEntryCount(db)).toBe(1);
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("openDatabase creates FTS5 table", () => {
+  test("openIndexDatabase creates FTS5 table", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_fts'").get() as
         | { name: string }
@@ -149,7 +149,7 @@ describe("Schema", () => {
 
   test("isVecAvailable returns true when sqlite-vec is installed", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       expect(isVecAvailable(db)).toBe(true);
     } finally {
@@ -160,7 +160,7 @@ describe("Schema", () => {
   test("embeddingDim is stored and triggers vec table recreation", () => {
     const dbPath = tmpDbPath();
 
-    let db = openDatabase(dbPath, { embeddingDim: 512 });
+    let db = openIndexDatabase(dbPath, { embeddingDim: 512 });
     try {
       if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("512");
@@ -170,7 +170,7 @@ describe("Schema", () => {
     }
 
     // Reopen with a different dimension
-    db = openDatabase(dbPath, { embeddingDim: 768 });
+    db = openIndexDatabase(dbPath, { embeddingDim: 768 });
     try {
       if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("768");
@@ -185,7 +185,7 @@ describe("Schema", () => {
 
 describe("Entry CRUD", () => {
   test("upsertEntry inserts a new entry and returns its id", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const id = insertTestEntry(db, "my-tool");
       expect(id).toBeGreaterThan(0);
@@ -196,7 +196,7 @@ describe("Entry CRUD", () => {
   });
 
   test("upsertEntry updates on conflict (same entry_key)", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "my-tool", { description: "original description" });
       expect(getEntryCount(db)).toBe(1);
@@ -215,7 +215,7 @@ describe("Entry CRUD", () => {
   });
 
   test("getEntryById returns the entry or undefined", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const id = insertTestEntry(db, "fetch-tool", { description: "Fetches data" });
 
@@ -234,7 +234,7 @@ describe("Entry CRUD", () => {
   });
 
   test("getEntriesByDir returns entries for a directory", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "tool-a", { dirPath: "/project/alpha" });
       insertTestEntry(db, "tool-b", { dirPath: "/project/alpha" });
@@ -254,7 +254,7 @@ describe("Entry CRUD", () => {
   });
 
   test("getAllEntries returns all entries", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "entry-1");
       insertTestEntry(db, "entry-2");
@@ -268,7 +268,7 @@ describe("Entry CRUD", () => {
   });
 
   test("getAllEntries with type filter", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "script-1", { type: "script" });
       insertTestEntry(db, "script-2", { type: "script" });
@@ -289,7 +289,7 @@ describe("Entry CRUD", () => {
   });
 
   test("deleteEntriesByDir removes entries", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "del-1", { dirPath: "/to-delete" });
       insertTestEntry(db, "del-2", { dirPath: "/to-delete" });
@@ -309,7 +309,7 @@ describe("Entry CRUD", () => {
   // Since the `vault` type was removed (0.9.0) every indexed entry is
   // embeddable, so the embeddable count always equals the full entry count.
   test("getEmbeddableEntryCount equals total entry count", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "asset-1", { type: "skill" });
       insertTestEntry(db, "asset-2", { type: "command" });
@@ -327,7 +327,7 @@ describe("Entry CRUD", () => {
 
 describe("FTS search", () => {
   test("searchFts returns results ranked by BM25", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-tool", {
         description: "Deploy applications to production servers",
@@ -349,7 +349,7 @@ describe("FTS search", () => {
   });
 
   test("searchFts with type filter", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "build-script", {
         type: "script",
@@ -375,7 +375,7 @@ describe("FTS search", () => {
   });
 
   test("searchFts sanitizes query tokens", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "hello-tool", {
         description: "hello world 123 greeting",
@@ -394,7 +394,7 @@ describe("FTS search", () => {
   });
 
   test("searchFts returns empty for garbage query", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "some-tool", { searchText: "some useful tool" });
       rebuildFts(db);
@@ -410,7 +410,7 @@ describe("FTS search", () => {
   // sanitizeFtsQuery is private, so we test it indirectly through searchFts.
 
   test("query that becomes empty after sanitization returns no results", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "target", { searchText: "some useful content" });
       rebuildFts(db);
@@ -425,7 +425,7 @@ describe("FTS search", () => {
   });
 
   test("query with only 1-character tokens returns no results when content has no matching single-char terms", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
       rebuildFts(db);
@@ -440,7 +440,7 @@ describe("FTS search", () => {
   });
 
   test("FTS5 syntax injection is neutralized", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "foo-tool", { description: "foo bar baz", searchText: "foo bar baz" });
       insertTestEntry(db, "bar-tool", { description: "bar qux quux", searchText: "bar qux quux" });
@@ -462,7 +462,7 @@ describe("FTS search", () => {
   });
 
   test("normal multi-word query returns correct results", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-prod", {
         description: "deploy application production servers",
@@ -483,7 +483,7 @@ describe("FTS search", () => {
   });
 
   test("rebuildFts synchronizes FTS with entries table", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "alpha", { description: "alpha functionality", searchText: "alpha functionality" });
       insertTestEntry(db, "beta", { description: "beta functionality", searchText: "beta functionality" });
@@ -507,7 +507,7 @@ describe("FTS search", () => {
 
 describe("Meta helpers", () => {
   test("getMeta returns undefined for missing key", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       const val = getMeta(db, "nonexistent-key");
       expect(val).toBeUndefined();
@@ -517,7 +517,7 @@ describe("Meta helpers", () => {
   });
 
   test("setMeta and getMeta round-trip", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       setMeta(db, "test-key", "test-value");
       expect(getMeta(db, "test-key")).toBe("test-value");
@@ -527,7 +527,7 @@ describe("Meta helpers", () => {
   });
 
   test("setMeta overwrites existing key", () => {
-    const db = openDatabase(tmpDbPath());
+    const db = openIndexDatabase(tmpDbPath());
     try {
       setMeta(db, "overwrite-key", "first");
       expect(getMeta(db, "overwrite-key")).toBe("first");
@@ -543,9 +543,9 @@ describe("Meta helpers", () => {
 // ── Section 1.5: Vector / Embedding integration ────────────────────────────
 
 describe("Vector / Embedding integration", () => {
-  test("openDatabase creates vec table when extension available", () => {
+  test("openIndexDatabase creates vec table when extension available", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       expect(isVecAvailable(db)).toBe(true);
       const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_vec'").get() as
@@ -560,7 +560,7 @@ describe("Vector / Embedding integration", () => {
 
   test("upsertEmbedding stores and searchVec retrieves by similarity", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
       expect(isVecAvailable(db)).toBe(true);
 
@@ -585,7 +585,7 @@ describe("Vector / Embedding integration", () => {
 
   test("upsertEmbedding overwrites existing embedding for same entry", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
       const id = insertTestEntry(db, "vec-update", { searchText: "update test" });
 
@@ -610,7 +610,7 @@ describe("Vector / Embedding integration", () => {
 
   test("searchVec respects k limit", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
       // Insert 5 entries with embeddings
       for (let i = 0; i < 5; i++) {
@@ -629,7 +629,7 @@ describe("Vector / Embedding integration", () => {
 
   test("deleteEntriesByDir also removes vec rows", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     try {
       const id1 = insertTestEntry(db, "vec-del-1", { dirPath: "/del-dir", searchText: "delete me" });
       const id2 = insertTestEntry(db, "vec-del-2", { dirPath: "/keep-dir", searchText: "keep me" });
@@ -655,7 +655,7 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath();
 
     // Open with dim=4 and insert an embedding
-    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     const id = insertTestEntry(db, "dim-change", { searchText: "dimension test" });
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     let results = searchVec(db, [1, 0, 0, 0], 10);
@@ -663,7 +663,7 @@ describe("Vector / Embedding integration", () => {
     closeDatabase(db);
 
     // Reopen with dim=8 — vec table should be recreated, old embeddings gone
-    db = openDatabase(dbPath, { embeddingDim: 8 });
+    db = openIndexDatabase(dbPath, { embeddingDim: 8 });
     try {
       expect(getMeta(db, "embeddingDim")).toBe("8");
       // Old embedding was dim=4 and table was recreated for dim=8, so no results
@@ -677,7 +677,7 @@ describe("Vector / Embedding integration", () => {
   test("openExistingDatabase preserves existing embedding dimension and embeddings", () => {
     const dbPath = tmpDbPath();
 
-    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
     const id = insertTestEntry(db, "dim-stable", { searchText: "dimension stable" });
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     setMeta(db, "hasEmbeddings", "1");
@@ -723,7 +723,7 @@ describe("rebuildFts incremental", () => {
   }
 
   test("upsertEntry marks rows dirty; incremental rebuild only re-indexes them", () => {
-    const db = openDatabase(tmpDbPath("inc-fts"));
+    const db = openIndexDatabase(tmpDbPath("inc-fts"));
     try {
       upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha", "first"), "alpha first");
       upsertEntry(db, "k2", "/d", "/d/k2.md", "/stash", makeEntry("bravo", "second"), "bravo second");
@@ -750,7 +750,7 @@ describe("rebuildFts incremental", () => {
   });
 
   test("incremental rebuild with empty dirty queue is a no-op", () => {
-    const db = openDatabase(tmpDbPath("inc-fts-empty"));
+    const db = openIndexDatabase(tmpDbPath("inc-fts-empty"));
     try {
       upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha"), "alpha");
       rebuildFts(db, { incremental: false });
@@ -764,7 +764,7 @@ describe("rebuildFts incremental", () => {
   });
 
   test("full rebuild also drains the dirty queue", () => {
-    const db = openDatabase(tmpDbPath("inc-fts-full"));
+    const db = openIndexDatabase(tmpDbPath("inc-fts-full"));
     try {
       upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha"), "alpha");
       expect(dirtyCount(db)).toBe(1);
@@ -777,7 +777,7 @@ describe("rebuildFts incremental", () => {
   });
 
   test("deleteEntriesByDir purges FTS rows + dirty markers immediately", () => {
-    const db = openDatabase(tmpDbPath("inc-fts-del"));
+    const db = openIndexDatabase(tmpDbPath("inc-fts-del"));
     try {
       upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha"), "alpha");
       upsertEntry(db, "k2", "/d", "/d/k2.md", "/stash", makeEntry("bravo"), "bravo");
@@ -814,7 +814,7 @@ describe("collectTagSetFromEntries", () => {
 
   test("collects the union of all tags across all entries, normalised + deduped", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       seedTagged(db, "skill-a", "skill", ["Deploy", "networking"]);
       seedTagged(db, "memory-b", "memory", ["AUTH", " deploy "]); // dup of deploy after trim/lower
@@ -829,7 +829,7 @@ describe("collectTagSetFromEntries", () => {
 
   test("filters by entry_type when a type is provided", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       seedTagged(db, "skill-a", "skill", ["deploy", "networking"]);
       seedTagged(db, "lesson-c", "lesson", ["deploy"]);
@@ -843,7 +843,7 @@ describe("collectTagSetFromEntries", () => {
 
   test("skips entries with missing, non-array, or blank tags and malformed JSON", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       seedTagged(db, "no-tags", "skill", undefined);
       seedTagged(db, "non-array", "skill", "deploy");
@@ -861,7 +861,7 @@ describe("collectTagSetFromEntries", () => {
 
   test("returns an empty set when there are no entries", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       expect(collectTagSetFromEntries(db, undefined).size).toBe(0);
       expect(collectTagSetFromEntries(db, "lesson").size).toBe(0);
@@ -886,7 +886,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / g
 
   test("getEntryIdByFilePath resolves the row id by exact file_path, undefined when no match", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const id = seedAt(db, "skill-a", "/s/skill-a.md", "/s", "skill");
       expect(getEntryIdByFilePath(db, "/s/skill-a.md")).toBe(id);
@@ -901,7 +901,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / g
 
   test("getEntryFilePathById returns the file_path by id, undefined when no match", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const id = seedAt(db, "lesson-x", "/s/lesson-x.md", "/s", "lesson");
       expect(getEntryFilePathById(db, id)).toBe("/s/lesson-x.md");
@@ -913,7 +913,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / g
 
   test("getEntryFilePathById still returns the path when entry_json is corrupt (no JSON parse)", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       const id = seedAt(db, "broken", "/s/broken.md", "/s", "skill");
       db.prepare("UPDATE entries SET entry_json = ? WHERE id = ?").run("{not json", id);
@@ -929,7 +929,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / g
 
   test("getEntryRefRowsForStashRoot matches by stash_dir OR file_path prefix; dedupe stays with caller", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     try {
       // Matches by exact stash_dir.
       seedAt(db, "in-stash", "/elsewhere/in-stash.md", "/root", "skill");
@@ -953,7 +953,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / g
 
   test("ref rows survive db.close() — result set fully materialised (WS5 lifetime rule)", () => {
     const dbPath = tmpDbPath();
-    const db = openDatabase(dbPath);
+    const db = openIndexDatabase(dbPath);
     seedAt(db, "a", "/root/a.md", "/root", "skill");
     seedAt(db, "b", "/root/b.md", "/root", "memory");
     const rows = getEntryRefRowsForStashRoot(db, "/root");

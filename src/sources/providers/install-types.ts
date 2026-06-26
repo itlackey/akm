@@ -16,7 +16,7 @@
  * architecture spec §2.1.
  */
 
-import type { SourceSpec } from "../../core/config/config";
+import type { InstallKind } from "../../registry/types";
 
 export interface SyncOptions {
   /** Force a fresh fetch even when cached content is still valid. */
@@ -32,8 +32,8 @@ export interface SyncOptions {
 export interface SourceLockData {
   /** Stable identifier for the source (e.g. npm package name, git owner/repo, local path). */
   id: string;
-  /** Source kind — the discriminator string of the originating {@link SourceSpec}. */
-  source: SourceSpec["type"];
+  /** Source kind — the install/registry discriminator ("npm" | "github" | "git" | "local"). */
+  source: InstallKind;
   /** The original ref that was synced (e.g. `npm:foo@1.2.3`). */
   ref: string;
   /** Resolved registry/upstream URL for the artifact, if any. */
