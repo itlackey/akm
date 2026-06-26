@@ -1,8 +1,16 @@
 # AKM CLI — Architecture Refactor Plan (Design-Level)
 
-## Execution status (last updated 2026-06-25, post-merge)
+## Execution status (last updated 2026-06-26, D-series in progress)
 
-**✅ MERGED to `main` via PR #667** (merge commit `b1f7960a`; full commit history preserved, not squashed). Each ✅ was an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the work was verified by hand AND green in CI: lint **0 warnings**, tsc **0 errors**, unit **5,261 / 0**, integration **1,545 / 0 fail**, node-compat **22 / 0** (both runtimes). **Every non-deferred item (R1–R9, X1–X3) is DONE and shipped.** The only remaining work is the deferred D-series (D1/D2/D3 + X4) — see the priming section below before starting it.
+**✅ R/X core MERGED to `main` via PR #667** (merge commit `b1f7960a`; full history). **Every non-deferred item (R1–R9, X1–X3) is DONE and shipped.**
+
+**D-series progress (each its own branch + PR off `main`):**
+- **D3** — ✅ MERGED, PR #669 (`consolidate.ts` 3,442 → 2,790).
+- **D2** — ✅ MERGED, PR #670 (scoped: migration registry isolated + index-cache DDL relocated; per-table CRUD split deliberately skipped as cohesion-only — see row).
+- **D1 + D1b + D1c** — 🟡 OPEN, PR #671 (`improve.ts` **5,395 → 1,443 LOC**). All gates green: lint 0 / tsc 0 / unit 5,274 / integration 1,558 / node-compat 22.
+- **X4** — 🟡 DONE on PR #671 (narrow repository-boundary lint ratchet; the plan's broad "all SQL in repositories" form was verified a non-fit — see row). **The entire D-series is now complete pending #671 merge.**
+
+Each ✅/🟡 was individually verified by hand AND gated (tsc 0 / biome 0 warnings / unit + integration + node-compat green).
 
 > **CI/Node-parity note (added during the PR):** the PR also fixed `tests/integration/node-compat.test.ts`, which had been `skipIf(!ENABLED)`-gated and **pre-existingly 10/22-failing on `main`** (verified by building+running main directly) — exposed only when the new `node-smoke` job (`f7d753bb`) first ran it. 8 were test bugs (commands invoked with wrong names/syntax, a same-process `spawnSync` deadlock in the URL-import test, a duplicate-import collision, the init test pointing `--dir` at a pre-created dir); **1 was a real production bug** — `setup --yes` leaked @clack's backup banner to **stdout**, corrupting `setup --yes | jq` on BOTH runtimes (fixed by routing it to stderr in JSON mode, `b1157544`); 1 (`history` crash) was resolved by indexing first so both runtimes succeed identically. **No parity assertions were weakened.**
 
@@ -24,10 +32,10 @@
 | **X3** `executeRunner()` kind-switch | ✅ DONE `bf84d441` | TDD; one dispatch in `integrations/agent/runner-dispatch.ts` + `RunnerSeams`; deleted both copied switches (reflect+drain) + `runProfileJudgment`. net −43 |
 | **R2** route `ensureSourceCaches` through `sync()` | ✅ DONE `eaef79a4` | TDD; **fixed the verified npm-never-refreshed bug** — two hardcoded loops → one `provider.sync({force})` loop. net −10 prod |
 | **R8** `runImproveSession` lifecycle lift | ✅ DONE `5e16311e` | TDD; SIGNAL_TABLE + handlers + persist-before-exit lifted to testable `improve/improve-session.ts` (fake-SIGTERM unit test, no child process). net −20 CLI |
-| **D1** decompose `improve.ts` (5,406 LOC) + **D1b** `withProcessLock` | ⏸️ DEFERRED | XL / high-risk / never-big-bang — needs human-supervised incremental work, NOT a one-shot agent |
-| **D2** `state-db` per-domain repositories | ⏸️ DEFERRED | XL; builds on the X1 seam |
-| **D3** decompose `consolidate.ts` (3,447 LOC) | ⏸️ DEFERRED | XL |
-| **X4** repository-owns-SQL lint ratchet | ⏸️ BLOCKED | Needs D2/D3 to clear the existing offenders first |
+| **D3** decompose `consolidate.ts` (3,442 LOC) | ✅ MERGED PR #669 | → orchestrator + `consolidate/{types,chunking,sanitize,eligibility,merge}.ts` (behavior-identical moves behind re-export shims; 3,442→2,790). SUBTRACT-FIRST shrank scope: journal cluster NOT extracted (relocate-without-decouple — all callers private/in-orchestrator), `clusterMemoriesBySimilarity` NOT extracted (embedder coupling), BOTH X2 `callStructured` migrations SKIPPED (fit-test grep = 0; chunk-plan call has a retry the seam can't model, merge leaf ungated). Design: `docs/technical/d3-design.md`. |
+| **D2** `state-db` per-domain repositories | ✅ MERGED PR #670 (scoped) | Landed the 2 coupling-deleting moves only: `MIGRATIONS` registry → `core/state/migrations.ts` as ONE ordered literal (rejected per-repo fragments — migration `001` creates 3 tables in one un-splittable fragment), and relocated misplaced `REGISTRY_INDEX_CACHE_DDL` → indexer/db. `state-db.ts` 2,452→1,682. **Per-table CRUD split deliberately SKIPPED** — verified cohesion-only (the "transitive load" benefit is false in TS/Bun; X1 already removed lifecycle coupling) and unlocks nothing downstream. `Proposal` core→commands type-only cycle left as-is (deferred). Design: `docs/technical/d2-design.md`. |
+| **D1** decompose `improve.ts` + **D1b** `withProcessLock` + **D1c** prep/stage extraction | 🟡 OPEN PR #671 | `improve.ts` **5,395→1,443**. D1b: lock primitives → `improve/locks.ts` + `withOptionalProcessLock` RAII (3 stage locks) + 3 invariant pins. D1c: prep pipeline → `improve/preparation.ts` (+ `runSessionExtractPass`, `runValidationAndRepairPass` extracted from it), loop/post-loop/maintenance → `improve/loop-stages.ts`, candidate-selection → `improve/eligibility.ts`. SKIPPED (verified): `runWithTelemetry` (really 1 clean site, not "8+"), recombine/procedural registry (incompatible signatures), `ImproveBaseContext` (per-stage bags genuinely distinct). NOT extractable as pure moves: the prep `salienceMap` cross-phase accumulator blocks (Outcome loop / selectors / replay) — need an accumulator-passing redesign, left in place. Design: `docs/technical/d1-design.md`. |
+| **X4** repository-owns-SQL lint ratchet | ✅ DONE PR #671 | `scripts/lint-repository-sql.ts` (wired into `bun run lint`) + meta-test. SCOPE REALITY (verified): the plan's literal "repository owns ALL SQL" doesn't fit — ~17 command/indexer modules legitimately open index.db read-side, and SQL isn't funnelled through one directory; a blanket rule = a 17-file status-quo allowlist (machinery). The plan's actual targets (registry providers + `runs.ts` reaching into index.db) were ALREADY cleared by R3/D5 (0 remaining). So X4 = a NARROW architectural-fitness ratchet: `src/registry/**` + `src/workflows/runtime/**` must reach storage only via `src/storage/repositories/**` (no `indexer/db`/`core/state-db` imports, no direct DB opens). 0 violations today; meta-test pins baseline=0 AND proves the guard fires. The command-layer `asset_salience`/`asset_outcome` raw SQL (salience.ts/outcome-loop.ts/homeostatic.ts) is left as-is — consolidating it into `state/salience-repo.ts` is a separate future refactor, NOT a lint concern. |
 
 > **Process note:** the executed work used a gated workflow (implement → gate → adversarial review → commit-or-revert). Lessons baked in: verify the resulting branch yourself (agents run `git reset`); a sync RAII loan can't wrap a handle held across an `await` (needs an async variant); `biome`/`bun run lint` exit 0 on *warnings* — count warning lines, don't trust the exit code.
 
@@ -37,11 +45,12 @@
 
 Everything below the cross-subsystem/per-subsystem sections is still accurate as *design*. This section is the **operational handoff**: current state, what's been de-risked, the playbook that worked, and the traps to avoid. Read it first, then the per-item D sections.
 
-### Current state (start here)
-- **PR #667 is MERGED to `main`** (`b1f7960a`). All R/X work is shipped and green in CI (incl. `node-smoke`). D1/D2/D3/X4 are the only remaining items and are **untouched**.
-- **Start the D-series on a fresh branch off the current `main`** (e.g. `decompose/improve-d1`). Each D item is its own branch + PR — do NOT bundle them; the last PR was 40 commits and that was already a lot to review.
-- The plan of record is this file; `docs/technical/r5-design.md` is the worked example of the "design-team-first" pattern (see below).
-- **The `node-smoke` CI job now gates the Node runtime path** (Node 20 + 22 run the full `node-compat` parity suite). Any D-series change that touches a command's output shape, DB open path, or stdout/stderr discipline MUST keep both runtimes identical — run `bun run build && AKM_NODE_COMPAT_TESTS=1 AKM_SMOKE_NODE=node bun test tests/integration/node-compat.test.ts` locally before pushing, or node-smoke will catch it.
+### Current state — D-series COMPLETE (pending #671 merge)
+- All R/X work + **D3 (#669, merged)** + **D2 (#670, merged, scoped)** are on `main`. **D1/D1b/D1c + X4 (#671) is OPEN** — review/merge it to close out the entire architecture refactor.
+- Design docs: `d1-design.md`, `d2-design.md`, `d3-design.md`, `r5-design.md` (the design-team-first worked examples).
+- **The `node-smoke` CI job gates the Node runtime path** — run `bun run build && AKM_NODE_COMPAT_TESTS=1 AKM_SMOKE_NODE=node bun test tests/integration/node-compat.test.ts` before pushing any DB/output-shape change.
+- **Verified-and-skipped (do NOT re-attempt as pure moves):** the D-series repeatedly found the plan over-scoped (R5 table, X2 "20 callers", D2 per-table CRUD, D1 `runWithTelemetry`/registry/`ImproveBaseContext`, X4 "all SQL in repositories"). Each was verified — don't redo them.
+- **Genuine future follow-ups (out of this refactor's scope):** (1) the `improve.ts` prep-internal accumulator blocks (`salienceMap`) need a passing-redesign, not a move; (2) consolidating the command-layer `asset_salience`/`asset_outcome` raw SQL (`salience.ts`/`outcome-loop.ts`/`homeostatic.ts`) into `state/salience-repo.ts` + `state/outcome-repo.ts` — then the X4 guard could widen to cover the improve command layer too.
 
 ### Prerequisites now satisfied (this is *why* the D-series is safer than it was)
 - **D2 (`state-db.ts` → per-domain repos)** depends on the **X1 seam, which is DONE** (`withStateDb`/`withManagedDb`, sync+async+path). The repos can be cut behind `withStateDb` instead of re-rolling open/try/finally/close. The migration-ordering contract is the one real hazard — keep the registry an **explicit ordered array literal**, never renumber fragments.
