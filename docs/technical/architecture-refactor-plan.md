@@ -1,8 +1,10 @@
 # AKM CLI — Architecture Refactor Plan (Design-Level)
 
-## Execution status (last updated 2026-06-25)
+## Execution status (last updated 2026-06-25, post-merge)
 
-All work is on branch `harden/integrity-floor`, **submitted as PR #667 against `main`** (open, awaiting review — not yet merged). Each ✅ is an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the branch as a whole was verified by hand: lint **0 warnings**, tsc **0 errors**, unit **5,261 / 0**, integration **1,545 / 0 fail**. **Every non-deferred item (R1–R9, X1–X3) is DONE.** The only remaining work is the deferred D-series (D1/D2/D3 + X4) — see the priming section below before starting it.
+**✅ MERGED to `main` via PR #667** (merge commit `b1f7960a`; full commit history preserved, not squashed). Each ✅ was an individually-verified commit (tsc 0 / biome 0 warnings / affected tests green); the work was verified by hand AND green in CI: lint **0 warnings**, tsc **0 errors**, unit **5,261 / 0**, integration **1,545 / 0 fail**, node-compat **22 / 0** (both runtimes). **Every non-deferred item (R1–R9, X1–X3) is DONE and shipped.** The only remaining work is the deferred D-series (D1/D2/D3 + X4) — see the priming section below before starting it.
+
+> **CI/Node-parity note (added during the PR):** the PR also fixed `tests/integration/node-compat.test.ts`, which had been `skipIf(!ENABLED)`-gated and **pre-existingly 10/22-failing on `main`** (verified by building+running main directly) — exposed only when the new `node-smoke` job (`f7d753bb`) first ran it. 8 were test bugs (commands invoked with wrong names/syntax, a same-process `spawnSync` deadlock in the URL-import test, a duplicate-import collision, the init test pointing `--dir` at a pre-created dir); **1 was a real production bug** — `setup --yes` leaked @clack's backup banner to **stdout**, corrupting `setup --yes | jq` on BOTH runtimes (fixed by routing it to stderr in JSON mode, `b1157544`); 1 (`history` crash) was resolved by indexing first so both runtimes succeed identically. **No parity assertions were weakened.**
 
 > **Test-host note:** the integration suite (`bun run test:integration`, single-process `--parallel=1`) finishes in **~2 min** on an idle host but APPEARS to hang for 100+ min under CPU contention (concurrent workflow subagents, or a runaway `bun test` from a prior session pinning a core). It is NOT a code hang — kill stray `bun test` procs (`ps … | grep 'bun test'`) and re-run on idle cores to verify green. Bun buffers all test output until completion, so a contended run shows an empty log, not partial progress.
 
@@ -36,9 +38,10 @@ All work is on branch `harden/integrity-floor`, **submitted as PR #667 against `
 Everything below the cross-subsystem/per-subsystem sections is still accurate as *design*. This section is the **operational handoff**: current state, what's been de-risked, the playbook that worked, and the traps to avoid. Read it first, then the per-item D sections.
 
 ### Current state (start here)
-- **Branch `harden/integrity-floor`** = PR #667. All R/X work landed and is green. D1/D2/D3/X4 are the only remaining items and are **untouched**.
-- **Do the D-series on a NEW branch off `main` *after* #667 merges** (or off `harden/integrity-floor` if you must start before merge — but rebase once #667 lands). Do NOT pile D-work onto #667; it's already a 38-commit review.
+- **PR #667 is MERGED to `main`** (`b1f7960a`). All R/X work is shipped and green in CI (incl. `node-smoke`). D1/D2/D3/X4 are the only remaining items and are **untouched**.
+- **Start the D-series on a fresh branch off the current `main`** (e.g. `decompose/improve-d1`). Each D item is its own branch + PR — do NOT bundle them; the last PR was 40 commits and that was already a lot to review.
 - The plan of record is this file; `docs/technical/r5-design.md` is the worked example of the "design-team-first" pattern (see below).
+- **The `node-smoke` CI job now gates the Node runtime path** (Node 20 + 22 run the full `node-compat` parity suite). Any D-series change that touches a command's output shape, DB open path, or stdout/stderr discipline MUST keep both runtimes identical — run `bun run build && AKM_NODE_COMPAT_TESTS=1 AKM_SMOKE_NODE=node bun test tests/integration/node-compat.test.ts` locally before pushing, or node-smoke will catch it.
 
 ### Prerequisites now satisfied (this is *why* the D-series is safer than it was)
 - **D2 (`state-db.ts` → per-domain repos)** depends on the **X1 seam, which is DONE** (`withStateDb`/`withManagedDb`, sync+async+path). The repos can be cut behind `withStateDb` instead of re-rolling open/try/finally/close. The migration-ordering contract is the one real hazard — keep the registry an **explicit ordered array literal**, never renumber fragments.
@@ -59,6 +62,10 @@ Everything below the cross-subsystem/per-subsystem sections is still accurate as
 - **A sync RAII loan can't wrap a handle held across an `await`** — that's why X1 needed `withManagedDbAsync`/`withStateDbAsync`. D2's repos will have async methods; use the async loan.
 - **Migration ordering is append-only.** Both state.db and index.db migration fragments must concatenate in an explicit ordered literal; renumbering an existing fragment corrupts the `schema_migrations` ledger. This is D2's single biggest hazard.
 - **Verify the *effective* runtime config, not just the code default** (the #632 inert-feature footgun). For any "registry-as-source-of-truth" change (D1's process registry), confirm `config.json` doesn't pin the old value.
+- **Before fixing a "regression", confirm it IS one — diff against `main` (cheapest decisive experiment).** PR #667's `node-smoke` failure looked like the PR broke Node; building+running `main` directly proved the suite was already 10/22-failing there (the new *gate* surfaced a pre-existing-broken, always-skipped suite). Attribution first saved fixing the wrong thing. Corollary: **adding a gating CI job for a `skipIf`-gated suite first requires confirming that suite actually passes** — a never-run test suite is presumed broken.
+- **JSON-output commands must keep stdout pure — progress/banner output goes to stderr.** The real bug `node-compat` caught: `setup --yes` wrote @clack `p.log.info` banners to stdout, corrupting `cmd --yes | jq`. Any command emitting a structured envelope must gate human-progress notices on `getOutputMode().format !== "json"` (route to stderr otherwise). Relevant to D1/D3 (improve/consolidate emit JSON envelopes + lots of progress logging).
+- **A test HTTP server in the same process that then calls `spawnSync` deadlocks.** `spawnSync` blocks the event loop, so an in-process `http.Server` can never accept the child's connection → timeout. If a D-series test needs a server feeding a spawned child, serve from a `file://` URL or a detached process, never the bun-test process itself.
+- **`bun:sqlite` and `better-sqlite3` emit different error strings/codes** (e.g. "unable to open database file" vs "no such table: …"). Node↔Bun parity tests must compare on the SUCCESS path (valid stash/index), not on error-message text. When a D-series change alters a DB open/error path, make it succeed identically rather than asserting around the runtime difference.
 
 ## Executive summary
 
