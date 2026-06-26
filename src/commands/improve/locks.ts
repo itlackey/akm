@@ -138,3 +138,31 @@ export function releaseHeldLocksIfOwned(pid: number): void {
     releaseLockIfOwned(p, pid);
   }
 }
+
+/**
+ * RAII for the "best-effort stage" lock pattern: acquire the lock if available,
+ * run `body` REGARDLESS of acquisition, and release the lock in a `finally` iff
+ * we acquired it (on both the normal and the throw path). This makes
+ * release-on-throw LOCAL instead of relying on a distant outer catch.
+ *
+ * Behaviour matches the hand-rolled `acquired = tryAcquire(...) === "acquired";
+ * …run stage…; if (acquired) release` idiom it replaces:
+ *   - When the lock is held and `skipIfLocked` is set, `tryAcquireProcessLock`
+ *     returns "skipped" → the stage still runs (unlocked), nothing to release.
+ *   - When the lock is held and `skipIfLocked` is NOT set, `tryAcquireProcessLock`
+ *     throws (propagated here before `body` runs; nothing acquired, nothing released).
+ *   - The process-exit backstop (`releaseHeldLocksIfOwned`) still covers a
+ *     `process.exit` that skips this `finally`.
+ */
+export async function withOptionalProcessLock<T>(
+  opts: { lockPath: string; staleAfterMs: number; skipIfLocked: boolean | undefined; label: string },
+  body: () => Promise<T>,
+): Promise<T> {
+  const acquired =
+    tryAcquireProcessLock(opts.lockPath, opts.staleAfterMs, opts.skipIfLocked, opts.label) === "acquired";
+  try {
+    return await body();
+  } finally {
+    if (acquired) releaseProcessLock(opts.lockPath);
+  }
+}

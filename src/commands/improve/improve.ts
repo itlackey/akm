@@ -107,6 +107,7 @@ import {
   releaseHeldLocksIfOwned,
   releaseProcessLock,
   tryAcquireProcessLock,
+  withOptionalProcessLock,
 } from "./locks";
 import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
@@ -1485,29 +1486,30 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // #607: acquire consolidate.lock for the preparation stage (consolidate,
       // ensureIndex, extract all write index.db). Released immediately after.
       const consolidateLPath = processLockPath(lockBaseDir, "consolidate");
-      const consolidatePrepAcquired =
-        tryAcquireProcessLock(
-          consolidateLPath,
-          PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
-          options.skipIfLocked,
-          "consolidate",
-        ) === "acquired";
-      preparation = await runImprovePreparationStageImpl({
-        scope,
-        options,
-        plannedRefs,
-        memoryCleanupPlan,
-        primaryStashDir,
-        memorySummary,
-        reindexFn,
-        startMs,
-        budgetMs,
-        eventsCtx,
-        initialCleanupWarnings: preEnsureCleanupWarnings,
-        improveProfile,
-        budgetSignal: budgetAbortController.signal,
-      });
-      if (consolidatePrepAcquired) releaseProcessLock(consolidateLPath);
+      preparation = await withOptionalProcessLock(
+        {
+          lockPath: consolidateLPath,
+          staleAfterMs: PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
+          skipIfLocked: options.skipIfLocked,
+          label: "consolidate",
+        },
+        () =>
+          runImprovePreparationStageImpl({
+            scope,
+            options,
+            plannedRefs,
+            memoryCleanupPlan,
+            primaryStashDir,
+            memorySummary,
+            reindexFn,
+            startMs,
+            budgetMs,
+            eventsCtx,
+            initialCleanupWarnings: preEnsureCleanupWarnings,
+            improveProfile,
+            budgetSignal: budgetAbortController.signal,
+          }),
+      );
       prepGateCount += preparation.gateAutoAcceptedCount;
       prepGateFailedCount += preparation.gateAutoAcceptFailedCount;
 
@@ -1526,63 +1528,64 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // #607: acquire reflect-distill.lock for the loop stage (reflect + distill
       // both write proposals to state.db). Released immediately after.
       const reflectDistillLPath = processLockPath(lockBaseDir, "reflectDistill");
-      const reflectDistillAcquired =
-        tryAcquireProcessLock(
-          reflectDistillLPath,
-          PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
-          options.skipIfLocked,
-          "reflect-distill",
-        ) === "acquired";
+      const loopResult = await withOptionalProcessLock(
+        {
+          lockPath: reflectDistillLPath,
+          staleAfterMs: PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
+          skipIfLocked: options.skipIfLocked,
+          label: "reflect-distill",
+        },
+        () => {
+          // Post-lock cooldown re-filter for proactive refs (#SELECT-TIME-LEAK).
+          // Planning built `lastReflectProposalTs` BEFORE acquiring this lock, so a
+          // concurrent run's `reflect_invoked` writes are invisible to it. Now that
+          // we hold the lock, re-read fresh timestamp maps for the proactive subset
+          // and drop any ref whose cooldown has been consumed by the concurrent run.
+          const proactiveLoopRefs = preparation.loopRefs.filter((r) => r.eligibilitySource === "proactive");
+          let postLockLoopRefs = preparation.loopRefs;
+          if (proactiveLoopRefs.length > 0) {
+            const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
+            const freshReflectTs = buildLatestProposalTsMap(proactiveRefStrs, "reflect");
+            const freshDistillTs = buildLatestProposalTsMap(proactiveRefStrs, "distill");
+            const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
+            const stillDue = new Set(
+              filterProactiveDue(proactiveLoopRefs, freshReflectTs, freshDistillTs, pmDueDays, Date.now()).map(
+                (r) => r.ref,
+              ),
+            );
+            const dropped = proactiveLoopRefs.filter((r) => !stillDue.has(r.ref));
+            if (dropped.length > 0) {
+              info(
+                `[improve] post-lock cooldown re-filter: dropped ${dropped.length} proactive ref(s) claimed by concurrent run (${dropped.map((r) => r.ref).join(", ")})`,
+              );
+              postLockLoopRefs = preparation.loopRefs.filter(
+                (r) => r.eligibilitySource !== "proactive" || stillDue.has(r.ref),
+              );
+            }
+          }
 
-      // Post-lock cooldown re-filter for proactive refs (#SELECT-TIME-LEAK).
-      // Planning built `lastReflectProposalTs` BEFORE acquiring this lock, so a
-      // concurrent run's `reflect_invoked` writes are invisible to it. Now that
-      // we hold the lock, re-read fresh timestamp maps for the proactive subset
-      // and drop any ref whose cooldown has been consumed by the concurrent run.
-      const proactiveLoopRefs = preparation.loopRefs.filter((r) => r.eligibilitySource === "proactive");
-      let postLockLoopRefs = preparation.loopRefs;
-      if (proactiveLoopRefs.length > 0) {
-        const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
-        const freshReflectTs = buildLatestProposalTsMap(proactiveRefStrs, "reflect");
-        const freshDistillTs = buildLatestProposalTsMap(proactiveRefStrs, "distill");
-        const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
-        const stillDue = new Set(
-          filterProactiveDue(proactiveLoopRefs, freshReflectTs, freshDistillTs, pmDueDays, Date.now()).map(
-            (r) => r.ref,
-          ),
-        );
-        const dropped = proactiveLoopRefs.filter((r) => !stillDue.has(r.ref));
-        if (dropped.length > 0) {
-          info(
-            `[improve] post-lock cooldown re-filter: dropped ${dropped.length} proactive ref(s) claimed by concurrent run (${dropped.map((r) => r.ref).join(", ")})`,
-          );
-          postLockLoopRefs = preparation.loopRefs.filter(
-            (r) => r.eligibilitySource !== "proactive" || stillDue.has(r.ref),
-          );
-        }
-      }
-
-      const loopResult = await runImproveLoopStageImpl({
-        scope,
-        options,
-        primaryStashDir,
-        reflectFn,
-        distillFn,
-        loopRefs: postLockLoopRefs,
-        actions: preparation.actions,
-        signalBearingSet: preparation.signalBearingSet,
-        distillCooledRefs: preparation.distillCooledRefs,
-        distillOnlyRefs: preparation.distillOnlyRefs,
-        recentErrors: preparation.recentErrors,
-        rejectedProposalsByRef,
-        utilityMap: preparation.utilityMap,
-        startMs,
-        budgetMs,
-        eventsCtx,
-        improveProfile,
-        budgetSignal: budgetAbortController.signal,
-      });
-      if (reflectDistillAcquired) releaseProcessLock(reflectDistillLPath);
+          return runImproveLoopStageImpl({
+            scope,
+            options,
+            primaryStashDir,
+            reflectFn,
+            distillFn,
+            loopRefs: postLockLoopRefs,
+            actions: preparation.actions,
+            signalBearingSet: preparation.signalBearingSet,
+            distillCooledRefs: preparation.distillCooledRefs,
+            distillOnlyRefs: preparation.distillOnlyRefs,
+            recentErrors: preparation.recentErrors,
+            rejectedProposalsByRef,
+            utilityMap: preparation.utilityMap,
+            startMs,
+            budgetMs,
+            eventsCtx,
+            improveProfile,
+            budgetSignal: budgetAbortController.signal,
+          });
+        },
+      );
       const loopGateCountThisCycle = loopResult.gateAutoAcceptedCount;
       reflectsWithErrorContext += loopResult.reflectsWithErrorContext;
       loopGateCount += loopResult.gateAutoAcceptedCount;
@@ -1596,28 +1599,29 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // #607: acquire consolidate.lock for the post-loop stage (memoryInference +
       // graphExtraction both write index.db). Released immediately after.
       const consolidatePostLPath = processLockPath(lockBaseDir, "consolidate");
-      const consolidatePostAcquired =
-        tryAcquireProcessLock(
-          consolidatePostLPath,
-          PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
-          options.skipIfLocked,
-          "consolidate",
-        ) === "acquired";
-      const postLoopResult = await runImprovePostLoopStageImpl({
-        scope,
-        options,
-        primaryStashDir,
-        actionableRefs: preparation.actionableRefs,
-        appliedCleanup: preparation.appliedCleanup,
-        cleanupWarnings: preparation.cleanupWarnings,
-        memoryRefsForInference,
-        reindexFn,
-        eventsCtx,
-        budgetSignal: budgetAbortController.signal,
-        improveProfile,
-        consolidationRan: preparation.consolidationRan,
-      });
-      if (consolidatePostAcquired) releaseProcessLock(consolidatePostLPath);
+      const postLoopResult = await withOptionalProcessLock(
+        {
+          lockPath: consolidatePostLPath,
+          staleAfterMs: PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
+          skipIfLocked: options.skipIfLocked,
+          label: "consolidate",
+        },
+        () =>
+          runImprovePostLoopStageImpl({
+            scope,
+            options,
+            primaryStashDir,
+            actionableRefs: preparation.actionableRefs,
+            appliedCleanup: preparation.appliedCleanup,
+            cleanupWarnings: preparation.cleanupWarnings,
+            memoryRefsForInference,
+            reindexFn,
+            eventsCtx,
+            budgetSignal: budgetAbortController.signal,
+            improveProfile,
+            consolidationRan: preparation.consolidationRan,
+          }),
+      );
       const postLoopGateCountThisCycle = postLoopResult.gateAutoAcceptedCount;
       // Last-wins point-in-time objects.
       memoryInference = postLoopResult.memoryInference;
