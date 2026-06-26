@@ -109,6 +109,13 @@ describe("mergeCurateSearchResponses", () => {
     ]);
     // The dup base hit is bumped to the higher score for the downstream floor.
     expect((merged.hits[0] as SourceSearchHit).score).toBe(0.6);
+    // Load-bearing: the fallback-only hit's score is restamped strictly BELOW the
+    // base score. Order alone is not enough — selectCuratedStashHits re-sorts by
+    // score and derives its floor from the top score, so an un-capped 0.95 here
+    // would re-leapfrog the relevant base hit downstream (the real prod bug).
+    const baseScore = (merged.hits[0] as SourceSearchHit).score ?? 0;
+    const fallbackScore = (merged.hits[1] as SourceSearchHit).score ?? 0;
+    expect(fallbackScore).toBeLessThan(baseScore);
   });
 });
 

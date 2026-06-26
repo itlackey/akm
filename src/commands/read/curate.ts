@@ -427,7 +427,22 @@ export function mergeCurateSearchResponses(base: SearchResponse, extras: SearchR
       if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) extraOnly.set(hit.ref, hit);
     }
   }
-  const mergedHits = [...baseStash, ...[...extraOnly.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))];
+  // Fallback-only hits must rank BELOW every full-query hit through the rest of
+  // the pipeline. The downstream selector (`selectCuratedStashHits`) RE-SORTS by
+  // score and derives its relevance floor from the top score, so preserving
+  // order here is not enough — a single-token FTS match (normalized ~0.9) would
+  // otherwise become the leader and evict the contextual full-query memories.
+  // We therefore restamp fallback-only scores into a band strictly below the
+  // minimum base score (keeping their own relative order). When there are no
+  // base hits, fallback IS the result, so scores are kept as-is.
+  const sortedExtra = [...extraOnly.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const minBaseScore = baseStash.length
+    ? Math.min(...baseStash.map((hit) => hit.score ?? 0))
+    : Number.POSITIVE_INFINITY;
+  const cappedExtra = baseStash.length
+    ? sortedExtra.map((hit, i) => ({ ...hit, score: minBaseScore - 1e-6 * (i + 1) }))
+    : sortedExtra;
+  const mergedHits = [...baseStash, ...cappedExtra];
 
   // Registry hits are supplemental fill — same rule: base first (max score on
   // dups), then fallback-only registry hits appended by score.
