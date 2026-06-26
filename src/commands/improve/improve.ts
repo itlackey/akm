@@ -10,9 +10,8 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AkmAssetType, daysToMs, isAssetType } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
-import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
 import type {
   AkmImproveResult,
   EligibilitySource,
@@ -99,6 +98,16 @@ import {
   resolveProcessEnabled,
   shouldSkipRef,
 } from "./improve-profiles";
+// #607 per-process lock primitives live in ./locks. Imported for internal use;
+// resetHeldProcessLocks is re-exported (the test seam imports it from here).
+import {
+  PROCESS_LOCK_DEFS,
+  processLockPath,
+  releaseAllProcessLocks,
+  releaseHeldLocksIfOwned,
+  releaseProcessLock,
+  tryAcquireProcessLock,
+} from "./locks";
 import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
 import { analyzeMemoryCleanup, applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
@@ -132,123 +141,7 @@ import {
   upsertAssetSalience,
 } from "./salience";
 
-// #607 Lock Decomposition: fine-grained per-process locks replace the single
-// `improve.lock`. Three independent locks allow concurrent improve runs when
-// they touch different subsystems (e.g. quick-shredder consolidate can run
-// alongside daily reflect+distill).
-//
-//   consolidate.lock   — protects consolidate + memoryInference (both write index.db)
-//   reflect-distill.lock — protects reflect + distill (both write state.db proposals)
-//   triage.lock         — protects triage (writes proposal promotions)
-//
-// Stale timeouts are per-lock, tuned to the expected runtime of the protected
-// processes: consolidate is disk-bound (1h), reflect+distill is GPU-bound (2h),
-// triage is fast (30min).
-
-const PROCESS_LOCK_DEFS = {
-  consolidate: { fileName: "consolidate.lock", staleAfterMs: 60 * 60 * 1000 },
-  reflectDistill: { fileName: "reflect-distill.lock", staleAfterMs: 2 * 60 * 60 * 1000 },
-  triage: { fileName: "triage.lock", staleAfterMs: 30 * 60 * 1000 },
-} as const;
-
-const heldProcessLocks = new Set<string>();
-
-export function resetHeldProcessLocks(): void {
-  heldProcessLocks.clear();
-}
-
-function processLockPath(lockBaseDir: string, lockName: keyof typeof PROCESS_LOCK_DEFS): string {
-  return path.join(lockBaseDir, PROCESS_LOCK_DEFS[lockName].fileName);
-}
-
-function tryAcquireProcessLock(
-  lockPath: string,
-  staleAfterMs: number,
-  skipIfLocked: boolean | undefined,
-  lockLabel: string,
-): "acquired" | "skipped" {
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
-  if (tryAcquireLockSync(lockPath, lockPayload())) {
-    heldProcessLocks.add(lockPath);
-    return "acquired";
-  }
-
-  const probe = probeLock(lockPath, { staleAfterMs });
-  const rawContent = probe.state === "absent" ? undefined : probe.rawContent;
-  const lock = rawContent
-    ? (() => {
-        try {
-          return JSON.parse(rawContent) as { pid: number; startedAt: string };
-        } catch {
-          return null;
-        }
-      })()
-    : null;
-
-  if (probe.state === "stale") {
-    try {
-      appendEvent({
-        eventType: "improve_lock_recovered",
-        metadata: {
-          lockName: lockLabel,
-          stalePid: lock?.pid ?? null,
-          lockedAt: lock?.startedAt ?? null,
-          recoveredAt: new Date().toISOString(),
-          lockAgeMs: probe.ageMs ?? null,
-          reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
-        },
-      });
-    } catch {
-      /* event emission is best-effort; never block lock recovery */
-    }
-    releaseLock(lockPath);
-    if (tryAcquireLockSync(lockPath, lockPayload())) {
-      heldProcessLocks.add(lockPath);
-      return "acquired";
-    }
-    if (skipIfLocked) {
-      warn(`[improve] ${lockLabel} lock acquired by another run during stale recovery; skipping (--skip-if-locked)`);
-      return "skipped";
-    }
-    throw new ConfigError(
-      `akm improve ${lockLabel} is already running. Delete ${lockPath} to force.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-
-  if (skipIfLocked) {
-    warn(
-      `[improve] ${lockLabel} lock held by another run (PID ${lock?.pid}, started ${lock?.startedAt}); skipping (--skip-if-locked)`,
-    );
-    return "skipped";
-  }
-
-  throw new ConfigError(
-    `akm improve ${lockLabel} is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${lockPath} to force.`,
-    "INVALID_CONFIG_FILE",
-  );
-}
-
-function releaseProcessLock(lockPath: string): void {
-  try {
-    fs.unlinkSync(lockPath);
-  } catch {
-    // ignore
-  }
-  heldProcessLocks.delete(lockPath);
-}
-
-function releaseAllProcessLocks(): void {
-  for (const p of heldProcessLocks) {
-    try {
-      fs.unlinkSync(p);
-    } catch {
-      // ignore
-    }
-  }
-  heldProcessLocks.clear();
-}
+export { resetHeldProcessLocks } from "./locks";
 
 export interface AkmImproveOptions {
   scope?: string;
@@ -1281,11 +1174,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (!options.dryRun) {
       // Backstop release on process.exit() (signal handler / budget watchdog),
       // which skips the finally below. Removed in that finally on the normal path.
-      const releaseAllOnExit = (): void => {
-        for (const p of heldProcessLocks) {
-          releaseLockIfOwned(p, process.pid);
-        }
-      };
+      const releaseAllOnExit = (): void => releaseHeldLocksIfOwned(process.pid);
       exitBackstop = releaseAllOnExit;
       process.on("exit", releaseAllOnExit);
 
