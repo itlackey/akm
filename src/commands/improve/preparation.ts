@@ -686,6 +686,84 @@ async function runSessionExtractPass(args: {
   return { extractResults, gateAutoAcceptedCount, gateAutoAcceptFailedCount, warnings, extractGateCfg };
 }
 
+/**
+ * Phase 1 — validation + schema-repair pass. Scans postCleanupRefs for assets
+ * with structural problems (missing file, missing lesson description), attempts
+ * LLM schema repair, and returns the still-failing ref set + the repair records.
+ */
+async function runValidationAndRepairPass(args: {
+  postCleanupRefs: ImproveEligibleRef[];
+  options: AkmImproveOptions;
+  startMs: number;
+  budgetMs: number;
+}): Promise<{
+  validationFailures: Array<{ ref: string; reason: string }>;
+  validationFailureRefs: Set<string>;
+  schemaRepairs: ImprovePreparationResult["schemaRepairs"];
+}> {
+  const { postCleanupRefs, options, startMs, budgetMs } = args;
+  const validationFailures: Array<{ ref: string; reason: string }> = [];
+  for (const candidate of postCleanupRefs) {
+    try {
+      // #591: use the path pre-resolved at planning time when it is still on
+      // disk — a serial async DB lookup per ref cost ~500 s on a 9 000-ref
+      // stash. Fall back to findAssetFilePath only for refs that bypassed
+      // collectEligibleRefs' index scan or whose file moved since planning.
+      const filePath =
+        candidate.filePath && fs.existsSync(candidate.filePath)
+          ? candidate.filePath
+          : await findAssetFilePath(candidate.ref, options.stashDir);
+      if (!filePath) {
+        validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
+        continue;
+      }
+      if (path.extname(filePath).toLowerCase() !== ".md") {
+        continue;
+      }
+      if (isLessonCandidate(candidate.ref)) {
+        const raw = fs.readFileSync(filePath, "utf8");
+        const fm = parseFrontmatter(raw).data;
+        if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
+      }
+    } catch (e) {
+      validationFailures.push({ ref: candidate.ref, reason: String(e) });
+    }
+  }
+  if (validationFailures.length > 0) {
+    info(`[improve] ${validationFailures.length} assets have validation issues (will attempt schema repair):`);
+    for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
+  }
+
+  let schemaRepairs: ImprovePreparationResult["schemaRepairs"] = [];
+  let repairedRefs = new Set<string>();
+
+  // Schema repair pass: attempt to fix validation failures via LLM before skipping.
+  if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
+    const baseConfigForRepair = options.config ?? loadConfig();
+    const llmCfg = getDefaultLlmConfig(baseConfigForRepair);
+    if (llmCfg) {
+      const result = await runSchemaRepairPass(validationFailures, {
+        startMs,
+        budgetMs,
+        llmConfig: llmCfg,
+        stashDir: options.stashDir,
+        findFilePath: findAssetFilePath,
+        isLessonCandidateFn: isLessonCandidate,
+      });
+      schemaRepairs = result.repairs;
+      repairedRefs = result.repairedRefs;
+    }
+  }
+
+  const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
+  if (repairedRefs.size > 0) {
+    info(
+      `[improve] schema repair fixed ${repairedRefs.size}/${validationFailures.length} validation failures; ${validationFailureRefs.size} remain`,
+    );
+  }
+  return { validationFailures, validationFailureRefs, schemaRepairs };
+}
+
 export async function runImprovePreparationStage(args: {
   scope: ImproveScope;
   options: AkmImproveOptions;
@@ -826,65 +904,12 @@ export async function runImprovePreparationStage(args: {
     }
   }
 
-  const validationFailures: Array<{ ref: string; reason: string }> = [];
-  for (const candidate of postCleanupRefs) {
-    try {
-      // #591: use the path pre-resolved at planning time when it is still on
-      // disk — a serial async DB lookup per ref cost ~500 s on a 9 000-ref
-      // stash. Fall back to findAssetFilePath only for refs that bypassed
-      // collectEligibleRefs' index scan or whose file moved since planning.
-      const filePath =
-        candidate.filePath && fs.existsSync(candidate.filePath)
-          ? candidate.filePath
-          : await findAssetFilePath(candidate.ref, options.stashDir);
-      if (!filePath) {
-        validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
-        continue;
-      }
-      if (path.extname(filePath).toLowerCase() !== ".md") {
-        continue;
-      }
-      if (isLessonCandidate(candidate.ref)) {
-        const raw = fs.readFileSync(filePath, "utf8");
-        const fm = parseFrontmatter(raw).data;
-        if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
-      }
-    } catch (e) {
-      validationFailures.push({ ref: candidate.ref, reason: String(e) });
-    }
-  }
-  if (validationFailures.length > 0) {
-    info(`[improve] ${validationFailures.length} assets have validation issues (will attempt schema repair):`);
-    for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
-  }
-
-  let schemaRepairs: ImprovePreparationResult["schemaRepairs"] = [];
-  let repairedRefs = new Set<string>();
-
-  // Schema repair pass: attempt to fix validation failures via LLM before skipping.
-  if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
-    const baseConfigForRepair = options.config ?? loadConfig();
-    const llmCfg = getDefaultLlmConfig(baseConfigForRepair);
-    if (llmCfg) {
-      const result = await runSchemaRepairPass(validationFailures, {
-        startMs,
-        budgetMs,
-        llmConfig: llmCfg,
-        stashDir: options.stashDir,
-        findFilePath: findAssetFilePath,
-        isLessonCandidateFn: isLessonCandidate,
-      });
-      schemaRepairs = result.repairs;
-      repairedRefs = result.repairedRefs;
-    }
-  }
-
-  const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
-  if (repairedRefs.size > 0) {
-    info(
-      `[improve] schema repair fixed ${repairedRefs.size}/${validationFailures.length} validation failures; ${validationFailureRefs.size} remain`,
-    );
-  }
+  const { validationFailures, validationFailureRefs, schemaRepairs } = await runValidationAndRepairPass({
+    postCleanupRefs,
+    options,
+    startMs,
+    budgetMs,
+  });
 
   // Phase 0.5 — structural hygiene pass
   let lintSummary: { fixed: number; flagged: number } | undefined;
