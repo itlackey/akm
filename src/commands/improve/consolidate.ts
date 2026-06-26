@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { parse as yamlParse } from "yaml";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
@@ -20,7 +19,6 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import {
-  hasHotCaptureMode,
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
   MERGE_SHRINK_RATIO_MIN,
@@ -76,56 +74,48 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-interface ConsolidateMergeOp {
-  op: "merge";
-  primary: string;
-  secondaries: string[];
-  mergeStrategy: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
+// Shared consolidate domain types live in ./consolidate/types (the cluster's
+// dependency sink). Re-exported here so existing importers keep resolving.
+import type { ConsolidateOperation, MemoryEntry, RawChunkPlan } from "./consolidate/types";
 
-interface ConsolidateDeleteOp {
-  op: "delete";
-  ref: string;
-  reason: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
+export type {
+  ConsolidateContradictOp,
+  ConsolidateDeleteOp,
+  ConsolidateMergeOp,
+  ConsolidateOperation,
+  ConsolidatePromoteOp,
+  MemoryEntry,
+  RawChunkPlan,
+} from "./consolidate/types";
 
-export interface ConsolidatePromoteOp {
-  op: "promote";
-  ref: string;
-  knowledgeRef: string;
-  reason: string;
-  /** One-sentence description for the new knowledge asset's frontmatter. */
-  description?: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
+// Chunk sizing + per-chunk prompt assembly live in ./consolidate/chunking.
+// Imported for internal use by the orchestrator and re-exported for importers.
+import { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 
-/**
- * Contradict op (C-3 / #382): two memories make mutually exclusive factual
- * claims. The consolidate engine writes `contradictedBy` frontmatter edges
- * so `resolveFamilyContradictions` in `memory-improve.ts` can resolve them
- * via its SCC algorithm. Zep arXiv:2501.13956 §3.
- */
-interface ConsolidateContradictOp {
-  op: "contradict";
-  /** The memory that should be marked as contradicted. */
-  ref: string;
-  /** The memory that contradicts it. */
-  contradictedByRef: string;
-  reason: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
+export { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 
-export type ConsolidateOperation =
-  | ConsolidateMergeOp
-  | ConsolidateDeleteOp
-  | ConsolidatePromoteOp
-  | ConsolidateContradictOp;
+// LLM-output sanitization (pure string/frontmatter transforms) lives in
+// ./consolidate/sanitize. Imported for internal use + re-exported for importers.
+import { normalizeUpdatedField, sanitizeMergedContent } from "./consolidate/sanitize";
+
+export { normalizeUpdatedField, sanitizeMergedContent, stripOuterCodeFence } from "./consolidate/sanitize";
+
+// Eligibility / safety predicates live in ./consolidate/eligibility. Imported
+// for internal guard use; the two public predicates are re-exported.
+import {
+  type ConsolidateGuardVerdict,
+  consolidateGuardStatus,
+  isConsolidationEligibleMemoryName,
+  isHotCapturedMemory,
+} from "./consolidate/eligibility";
+
+export { isConsolidationEligibleMemoryName, isHotCapturedMemory } from "./consolidate/eligibility";
+
+// Plan parsing / merging (pure op-reconciliation algebra) lives in
+// ./consolidate/merge. Imported for internal use; mergePlans re-exported.
+import { isValidOp, mergePlans } from "./consolidate/merge";
+
+export { mergePlans } from "./consolidate/merge";
 
 export interface ConsolidateResult {
   schemaVersion: 1;
@@ -435,143 +425,6 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
-// ── Memory loading ───────────────────────────────────────────────────────────
-
-export interface MemoryEntry {
-  name: string;
-  filePath: string;
-  description: string;
-  tags: string[];
-  stashDir: string;
-}
-
-export function isConsolidationEligibleMemoryName(name: string): boolean {
-  return !name.endsWith(".derived");
-}
-
-/**
- * Returns true when the memory file has `captureMode: hot` in its frontmatter.
- *
- * Hot memories are USER-EXPLICIT (written via `akm remember` on the hot path).
- * The consolidate LLM is forbidden from deleting or auto-merging them — the
- * user wrote them on purpose and only the user can decide to retire them.
- *
- * Reads the file once per check; consolidate runs against ~10 memories per
- * chunk so the IO cost is trivial. Returns false on any read/parse error
- * (fail-safe: an unparseable file is treated as not-hot, but the broader
- * consolidate flow already guards against unparseable memories elsewhere).
- *
- * Defends against four observed defect classes (see
- * `memory:akm-improve-critical-review-2026-05-20`):
- *   - LLM marks a memory contradicted then deletes (dangling contradictedBy)
- *   - LLM merges two unrelated memories sharing a topic keyword
- *   - LLM judges a recent durable design memo as "redundant"
- *   - Cascade deletes (LLM uses ref:X as `contradictedBy` for ref:Y then deletes both)
- */
-export function isHotCapturedMemory(filePath: string): boolean {
-  try {
-    if (!fs.existsSync(filePath)) return false;
-    const content = fs.readFileSync(filePath, "utf8");
-    const parsed = parseFrontmatter(content);
-    return hasHotCaptureMode(parsed.data as Record<string, unknown> | undefined);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Strict guard for the consolidate delete/merge paths.
- *
- * Returns a verdict that distinguishes "hot" (refuse, user-explicit) from
- * "unparseable" (refuse, frontmatter integrity broken — could have hidden a
- * hot flag) from "safe" (proceed). The legacy `isHotCapturedMemory` returns
- * false on read/parse errors, which would let consolidate delete a memory
- * whose frontmatter was corrupted between capture and consolidate runs.
- *
- * Use this for any destructive operation; use `isHotCapturedMemory` only
- * when a missing/unparseable file is genuinely safe to ignore.
- */
-type ConsolidateGuardVerdict = "hot" | "safe" | "unparseable" | "missing";
-
-function consolidateGuardStatus(filePath: string): ConsolidateGuardVerdict {
-  if (!fs.existsSync(filePath)) return "missing";
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return "unparseable";
-  }
-  let parsed: ReturnType<typeof parseFrontmatter>;
-  try {
-    parsed = parseFrontmatter(content);
-  } catch {
-    return "unparseable";
-  }
-  const data = parsed.data as Record<string, unknown> | undefined;
-  if (!data || Object.keys(data).length === 0) return "unparseable";
-  return hasHotCaptureMode(data) ? "hot" : "safe";
-}
-
-// ── Chunk sizing ─────────────────────────────────────────────────────────────
-
-/**
- * Conservative chars-per-token estimate used when computing prompt budgets.
- * English text averages roughly 4 chars/token for most LLM tokenizers. We use
- * 3 to stay conservative (shorter tokens = more tokens per char).
- */
-const CHARS_PER_TOKEN = 3;
-
-/**
- * Overhead budget reserved for the system prompt, chunk header lines, and per-
- * memory metadata lines (name, description, tags, separator). Measured at
- * roughly 600 chars for the system prompt + ~100 chars of header + ~50 chars
- * per memory × chunk size.  We round up to 2 000 tokens to leave room for the
- * model's own output.
- */
-const PROMPT_OVERHEAD_TOKENS = 2_000;
-
-/**
- * Default effective token budget used when the default LLM profile's
- * `contextLength` is not set. This is intentionally conservative (4 096)
- * rather than being set to the model's actual context window, because:
- *
- *   - When the agent path is used, the agent CLI (e.g. opencode)
- *     prepends its own large system prompt + conversation history before
- *     forwarding to the model. That overhead easily consumes 30K+ tokens on
- *     a model with a 16K context window, leaving very little room for
- *     chunk content.
- *   - When the HTTP path is used (an LLM profile is selected), only the akm
- *     system prompt and user prompt are sent, so the budget can be set to the
- *     model's actual context length via profiles.llm[defaults.llm].contextLength.
- *
- * Set profiles.llm[defaults.llm].contextLength in your config file to the
- * model's actual context window to allow larger chunks on the HTTP path.
- */
-export const DEFAULT_CONTEXT_LENGTH_TOKENS = 4_096;
-
-/**
- * Given the model's context window and the per-memory body truncation limit,
- * return the maximum number of memories that can safely fit in one chunk
- * without the prompt overflowing the context window.
- *
- * The formula is:
- *   usableTokens = contextLength - PROMPT_OVERHEAD_TOKENS
- *   tokensPerMemory = ceil(bodyTruncation / CHARS_PER_TOKEN)
- *   chunkSize = floor(usableTokens / tokensPerMemory)
- *
- * Result is clamped between 1 and 50 to avoid degenerate values.
- *
- * @param contextLength - Model context window in tokens.
- * @param bodyTruncation - Max chars per memory body included in the prompt.
- * @param maxChunkSize - Optional override for the hardcoded cap of 50 (1–50).
- */
-export function computeSafeChunkSize(contextLength: number, bodyTruncation: number, maxChunkSize?: number): number {
-  const usableTokens = Math.max(contextLength - PROMPT_OVERHEAD_TOKENS, 0);
-  const tokensPerMemory = Math.max(Math.ceil(bodyTruncation / CHARS_PER_TOKEN), 1);
-  const raw = Math.floor(usableTokens / tokensPerMemory);
-  return Math.max(1, Math.min(maxChunkSize ?? 50, raw));
-}
-
 // ── Similarity clustering (C-1 / #380) ──────────────────────────────────────
 
 /**
@@ -741,107 +594,6 @@ async function clusterMemoriesBySimilarity(
 // ── Chunk helpers ────────────────────────────────────────────────────────────
 
 /**
- * Build the per-chunk user prompt fed to the consolidate LLM.
- *
- * Each memory is annotated with two flags that drive the system-prompt
- * rules at lines 181-186:
- *   - `(captureMode: hot)` — user-explicit memory; system prompt rule 2
- *     forbids proposing delete. ~60 wasted LLM verdicts/4h on this user's
- *     stack before this annotation.
- *   - `(already queued)` — the memory's body hash matches a pending
- *     consolidate proposal; system prompt rule 3 forbids proposing
- *     promote/merge/contradict. ~107/4h before this annotation.
- *
- * Both annotations are visible to the LLM. `pendingProposalBodyHashes`
- * is precomputed once per run by `loadPendingConsolidateProposalHashes`
- * so the cost stays O(memories) inside the chunk loop.
- */
-export function buildChunkPrompt(
-  sourceName: string,
-  memories: MemoryEntry[],
-  chunkIndex: number,
-  totalChunks: number,
-  bodyTruncation: number,
-  pendingProposalBodyHashes: Set<string> = new Set(),
-  standardsContext = "",
-): string {
-  const start = memories[0] ? `memory:${memories[0].name}` : "";
-  const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
-
-  // First pass: classify each memory's annotations + collect hot refs so a
-  // prominent top-of-prompt list can be emitted. 2026-05-27 controlled
-  // diagnostic (/tmp/akm-health-investigations/ministral-prompt-annotation-diagnostic.md)
-  // measured ministral-3-3b compliance:
-  //   - inline `(captureMode: hot)` only → 40% honored
-  //   - inline parens + top-of-prompt explicit list → 100% honored
-  // The `(already queued)` annotation tops out at ~60% regardless of
-  // format, so it stays inline-only here — a separate chunk-filter is
-  // the right approach for queued refs (deferred per user direction).
-  type MemoryAnnotation = { isHot: boolean; isAlreadyQueued: boolean; body: string };
-  const annotationsByIndex: MemoryAnnotation[] = [];
-  const hotRefs: string[] = [];
-  for (const m of memories) {
-    let body = "";
-    try {
-      body = fs.readFileSync(m.filePath, "utf8");
-    } catch {
-      body = "(unreadable)";
-    }
-    const parsed = parseFrontmatter(body);
-    const isHot = parsed.data.captureMode === "hot";
-    // Use cacheHash (case-preserving stripped body) to match the domain used
-    // by loadPendingConsolidateProposalHashes and the body-embedding cache.
-    const bodyHash = cacheHash(body);
-    const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
-    annotationsByIndex.push({ isHot, isAlreadyQueued, body });
-    if (isHot) hotRefs.push(`memory:${m.name}`);
-  }
-
-  const lines: string[] = [
-    `Source: ${sourceName}`,
-    `Chunk ${chunkIndex + 1} of ${totalChunks}, memories ${start}–${end}:`,
-    "",
-  ];
-
-  if (standardsContext.trim()) {
-    lines.push("Standards to follow (the rulebook for this target):");
-    lines.push(standardsContext.trim());
-    lines.push("");
-  }
-
-  // Top-of-prompt protection block for hot refs. Neutral phrasing — avoid
-  // op-words like "promote", "merge", "contradict" so the model doesn't
-  // accidentally treat the warning as a hint to use that op elsewhere
-  // (variant B leaked the word "contradict" into the control sample
-  // during the diagnostic).
-  if (hotRefs.length > 0) {
-    lines.push(
-      "⛔ DO NOT propose any `delete` operation for these refs — they are user-explicit (captureMode: hot) and the downstream guard refuses them regardless. Proposing delete for any of these only wastes tokens.",
-    );
-    for (const ref of hotRefs) lines.push(`  - ${ref}`);
-    lines.push("");
-  }
-
-  for (let i = 0; i < memories.length; i++) {
-    const m = memories[i];
-    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i];
-
-    const annotations: string[] = [];
-    if (isHot) annotations.push("captureMode: hot");
-    if (isAlreadyQueued) annotations.push("already queued");
-    const annotationSuffix = annotations.length > 0 ? ` (${annotations.join("; ")})` : "";
-
-    lines.push(`[${i + 1}] memory:${m.name}${annotationSuffix}`);
-    lines.push(`Description: ${m.description || "(none)"}`);
-    lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
-    lines.push("---");
-    lines.push(body.slice(0, bodyTruncation));
-    lines.push("");
-  }
-  return lines.join("\n");
-}
-
-/**
  * Precompute body-hashes of all currently-pending consolidate proposals so
  * the per-chunk prompt can annotate memories whose body would just produce
  * a deterministic `dedup_pending_proposal` skip. Uses `cacheHash` (case-
@@ -864,165 +616,6 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
     // listProposals throws on missing stash dir during tests — empty set is safe
   }
   return hashes;
-}
-
-// ── Plan parsing / merging ───────────────────────────────────────────────────
-
-interface RawChunkPlan {
-  operations?: unknown[];
-  warnings?: unknown[];
-}
-
-function isValidOp(op: unknown): op is ConsolidateOperation {
-  if (typeof op !== "object" || op === null) return false;
-  const o = op as Record<string, unknown>;
-  if (o.op === "merge") {
-    return typeof o.primary === "string" && Array.isArray(o.secondaries);
-  }
-  if (o.op === "delete") {
-    return typeof o.ref === "string";
-  }
-  if (o.op === "promote") {
-    return typeof o.ref === "string" && typeof o.knowledgeRef === "string";
-  }
-  if (o.op === "contradict") {
-    return typeof o.ref === "string" && typeof o.contradictedByRef === "string";
-  }
-  return false;
-}
-
-export function mergePlans(
-  chunks: ConsolidateOperation[][],
-  knownRefs?: Set<string>,
-): { ops: ConsolidateOperation[]; warnings: string[] } {
-  const mergeOps = new Map<string, ConsolidateMergeOp>();
-  const deleteOps = new Map<string, ConsolidateDeleteOp>();
-  const promoteOps = new Map<string, ConsolidatePromoteOp>();
-  // C-3 / #382: contradict ops keyed by `ref|contradictedByRef` to deduplicate.
-  const contradictOps = new Map<string, ConsolidateContradictOp>();
-  const warnings: string[] = [];
-
-  for (const chunk of chunks) {
-    for (const op of chunk) {
-      if (op.op === "merge") {
-        // Drop ops whose primary the LLM hallucinated (not in the loaded memory
-        // pool). Without this guard, a hallucinated primary flows all the way to
-        // Phase B where !memoryByRef.has(primary) fires and charges every real
-        // secondary with merge_primary_missing — masking LLM hallucinations as
-        // filter regressions in health metrics.
-        if (knownRefs && !knownRefs.has(op.primary)) {
-          warnings.push(
-            `mergePlans: primary ${op.primary} not in loaded memory pool (LLM hallucination) — dropping op before execution.`,
-          );
-          // Use a dedicated skip reason so dashboards can distinguish
-          // hallucinated primaries from stale-DB regressions.
-          // Secondaries are real refs; they are NOT charged here — they remain
-          // available for other ops to claim.
-          continue;
-        }
-        // Filter hallucinated secondaries while preserving real ones.
-        let mergeOp: ConsolidateMergeOp = op;
-        if (knownRefs) {
-          const filteredSecondaries = op.secondaries.filter((sec) => {
-            if (!knownRefs.has(sec)) {
-              warnings.push(
-                `mergePlans: secondary ${sec} not in loaded memory pool (LLM hallucination) — dropping from op.`,
-              );
-              return false;
-            }
-            return true;
-          });
-          if (filteredSecondaries.length !== op.secondaries.length) {
-            mergeOp = { ...op, secondaries: filteredSecondaries };
-          }
-        }
-        // merge wins over delete
-        if (deleteOps.has(mergeOp.primary)) {
-          deleteOps.delete(mergeOp.primary);
-        }
-        for (const sec of mergeOp.secondaries) {
-          if (deleteOps.has(sec)) deleteOps.delete(sec);
-        }
-        mergeOps.set(mergeOp.primary, mergeOp);
-      } else if (op.op === "delete") {
-        // merge and promote both win over delete. A promote is non-destructive
-        // (creates a proposal) but the source memory is counted in `promoted`;
-        // if a delete also fires, the ref lands in both `promoted` and
-        // `skipReasons`, breaking the invariant by +1.
-        if (!mergeOps.has(op.ref) && !promoteOps.has(op.ref)) {
-          deleteOps.set(op.ref, op);
-        }
-      } else if (op.op === "promote") {
-        // C-2 / #381: when both a promote and a merge target the same ref,
-        // queue the promote FIRST rather than discarding it. The promote op
-        // routes through createProposal (the human-gated proposal queue), so
-        // it is non-destructive. The merge follows after the proposal is
-        // created. This preserves the human reviewer's ability to inspect the
-        // promotion before the source memory is merged/deleted.
-        // AGM K*8 — retain the maximally informative consistent subset.
-        promoteOps.set(op.ref, op);
-      } else if (op.op === "contradict") {
-        // Deduplicate by ref+contradictedByRef pair.
-        const key = `${op.ref}|${op.contradictedByRef}`;
-        if (!contradictOps.has(key)) {
-          contradictOps.set(key, op);
-        }
-      }
-    }
-  }
-
-  // Second pass: enforce merge-wins-over-delete and deduplicate secondaries.
-  //
-  // 1. Delete/secondary ordering bug: the per-chunk loop removes delete ops
-  //    for secondaries that were already in deleteOps, but misses the case
-  //    where the delete chunk came first. A full sweep here fixes both orders.
-  //
-  // 2. Cross-merge secondary dedup: if ref A is a secondary in two merge ops,
-  //    only the first (insertion-order) retains it. Without this, a successful
-  //    merge credits A to mergedSecondaries and a later merge's emitMerge-
-  //    FailureSkips also charges A to skipReasons — double-counting A while
-  //    processed has it only once.
-  //
-  // 3. Primary-as-secondary dedup: if ref A is a primary in one merge op and
-  //    a secondary in another, remove A from the secondary list. Both merges
-  //    would otherwise claim A (merged++ for A, then mergedSecondaries++ for A)
-  //    breaking the invariant the same way.
-  // Also remove delete ops for any ref claimed by a promote op (handles the
-  // case where the delete chunk appeared before the promote chunk).
-  for (const ref of promoteOps.keys()) {
-    deleteOps.delete(ref);
-  }
-
-  const claimedSecondaries = new Set<string>();
-  for (const mergeOp of mergeOps.values()) {
-    deleteOps.delete(mergeOp.primary);
-    mergeOp.secondaries = mergeOp.secondaries.filter((sec) => {
-      if (mergeOps.has(sec)) {
-        warnings.push(
-          `Merge: secondary ${sec} is also a merge primary — removing from secondary list to avoid double-count.`,
-        );
-        return false;
-      }
-      if (claimedSecondaries.has(sec)) {
-        warnings.push(`Merge: secondary ${sec} appears in multiple merge ops — retaining in first op only.`);
-        return false;
-      }
-      claimedSecondaries.add(sec);
-      deleteOps.delete(sec);
-      return true;
-    });
-  }
-
-  // C-2 / #381: promote ops are ordered BEFORE merge ops so that the
-  // human-gated proposal queue entry is created before any destructive merge.
-  // Phase B processes ops in array order, so promote executes first.
-  const ops: ConsolidateOperation[] = [
-    ...promoteOps.values(),
-    ...mergeOps.values(),
-    ...deleteOps.values(),
-    ...contradictOps.values(),
-  ];
-  return { ops, warnings };
 }
 
 // ── Journal helpers ──────────────────────────────────────────────────────────
@@ -2831,251 +2424,6 @@ async function akmConsolidateInner(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-// ── LLM-output sanitization ─────────────────────────────────────────────────
-//
-// Three classes of LLM defect have been observed across hundreds of
-// consolidate proposals (see audit notes in this branch):
-//
-//   1. Code-fence leakage: the entire merged asset is wrapped in
-//      ```markdown … ``` (or ```yaml … ```) despite the prompt forbidding
-//      fences. The post-processor used to pass this through verbatim, so the
-//      first character of the asset content became a backtick rather than
-//      `---`, defeating the frontmatter parser.
-//   2. YAML quote-escaping bugs: descriptions like `'"Specialty intro...:`
-//      with unbalanced quotes that break the YAML reader. The post-processor
-//      historically passed the LLM's raw scalar straight into a manually
-//      assembled `description: <raw>` line.
-//   3. Truncated descriptions hitting token cutoffs — the model's max_tokens
-//      runs out mid-sentence, leaving things like
-//      `description: "Tables in narrow column containers need max-width:100% +"`
-//      with no closing context.
-//
-// `sanitizeMergedContent` and `validateProposalFrontmatter` defend against
-// all three at the point where LLM output is consumed.
-
-/**
- * Attempt to recover a frontmatter block that is missing its closing `---`.
- *
- * Scans lines after the opening `---` for the first blank line or the first
- * line that cannot be a YAML scalar (i.e. not a key-value, indented
- * continuation, comment, or list item). Injects `---` before that line so
- * the normal parser can proceed.
- *
- * Returns the patched string on success, or `null` if the structure is too
- * ambiguous to recover safely (e.g. no opening `---`, or no body content
- * found after the frontmatter key-value lines).
- */
-function recoverMalformedFrontmatter(raw: string): string | null {
-  if (!raw.startsWith("---")) return null;
-  const lines = raw.split(/\r?\n/);
-  // Skip the opening `---` line (index 0).
-  let insertAt = -1;
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    // A blank line marks the end of the frontmatter block in many YAML variants.
-    if (line.trim() === "") {
-      insertAt = i;
-      break;
-    }
-    // A line that is clearly body content: doesn't look like a YAML key, an
-    // indented continuation, a comment, or a sequence item.
-    const isYaml =
-      /^\w[\w-]*\s*:/.test(line) || // key: value
-      /^\s+\S/.test(line) || // indented continuation / nested
-      /^\s*#/.test(line) || // YAML comment
-      /^\s*-\s/.test(line); // sequence item
-    if (!isYaml) {
-      insertAt = i;
-      break;
-    }
-  }
-  if (insertAt < 0) return null;
-  const result = [...lines.slice(0, insertAt), "---", ...lines.slice(insertAt)].join("\n");
-  return result;
-}
-
-/**
- * Outer-fence stripper specific to consolidate. Unlike the shared
- * `stripMarkdownFences` helper (which only handles markdown fences), this
- * variant additionally recognises `yaml` and bare-language fences and refuses
- * to strip an unbalanced fence — i.e. a leading ``` with no trailing ``` is
- * treated as a malformed response, not partially sanitized.
- *
- * Returns `null` when only one half of a fence pair is present (caller
- * should reject the response entirely).
- */
-export function stripOuterCodeFence(raw: string): { content: string; stripped: boolean } | null {
-  const trimmed = raw.trim();
-  const leading = trimmed.match(/^```(?:markdown|md|yaml|yml)?\s*\r?\n/i);
-  const trailing = trimmed.match(/\r?\n```\s*$/);
-  if (!leading && !trailing) return { content: trimmed, stripped: false };
-  if (!leading || !trailing) return null; // unbalanced — refuse
-  const inner = trimmed.slice(leading[0].length, trimmed.length - trailing[0].length).trim();
-  return { content: inner, stripped: true };
-}
-
-/**
- * Sanitize raw LLM output destined to be written as an asset body:
- *   1. Strip outer code fences (rejects unbalanced fences).
- *   2. Verify the remaining payload starts with `---\n` (frontmatter sentinel).
- *   3. Re-serialise the frontmatter via the `yaml` library so any unbalanced
- *      quoting or odd escaping the LLM produced gets normalised. If yaml.parse
- *      throws, return `null` — the response is unusable.
- */
-interface SanitizedMergedContent {
-  /** Clean markdown with re-serialised frontmatter. */
-  content: string;
-  /** Parsed frontmatter object (after yaml round-trip). */
-  frontmatter: Record<string, unknown>;
-}
-
-export function sanitizeMergedContent(
-  raw: string,
-): { ok: true; result: SanitizedMergedContent } | { ok: false; reason: string } {
-  // Step 1: Strip outer code fence.
-  // Recovery path: if only the leading fence is present, strip it and continue
-  // provided the inner content starts with `---`. Trailing-only fences are NOT
-  // recovered — a trailing ``` is more likely a body code block than a forgotten
-  // wrapper, so recovering would silently corrupt the body.
-  let body: string;
-  {
-    const fenceResult = stripOuterCodeFence(raw);
-    if (fenceResult) {
-      body = fenceResult.content;
-    } else {
-      const trimmed = raw.trim();
-      const leadingMatch = trimmed.match(/^```(?:markdown|md|yaml|yml)?\s*\r?\n([\s\S]*)$/i);
-      const inner = leadingMatch ? leadingMatch[1].trim() : null;
-      if (!inner?.startsWith("---")) {
-        return { ok: false, reason: "UNBALANCED_CODE_FENCE" };
-      }
-      body = inner;
-    }
-  }
-
-  // Strip <think> blocks (some local models still emit them despite system prompts).
-  body = body.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-
-  // Step 2: Verify frontmatter sentinel.
-  // Recovery path: LLM sometimes emits 1-2 lines of preamble (e.g. "Here is the
-  // merged content:") before the `---`. Accept if `---` appears within 300 chars.
-  // Beyond that it's more likely a body section divider, not a frontmatter start.
-  if (!body.startsWith("---")) {
-    const nlIdx = body.indexOf("\n---");
-    if (nlIdx >= 0 && nlIdx < 300) {
-      body = body.slice(nlIdx + 1);
-    } else {
-      return { ok: false, reason: "MISSING_FRONTMATTER_SENTINEL" };
-    }
-  }
-
-  // Extract frontmatter block.
-  // Recovery path: LLM sometimes omits the closing `---` delimiter. Detect this
-  // by scanning lines after the opening `---` for the first blank line or the
-  // first line that isn't a YAML key-value pair, then inject `---` there.
-  let match = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
-  if (!match) {
-    const recovered = recoverMalformedFrontmatter(body);
-    if (recovered) {
-      match = recovered.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
-    }
-    if (!match) {
-      return { ok: false, reason: "MALFORMED_FRONTMATTER_BLOCK" };
-    }
-  }
-
-  // Re-parse via the yaml library so any quote-escaping mistakes either get
-  // normalised or surface as a parse error we can reject.
-  // Recovery: if the strict yaml library fails, fall back to the lenient
-  // hand-rolled parseFrontmatter parser, which tolerates common LLM YAML
-  // quirks (unescaped special chars, bare scalars, etc.). If it recovers
-  // at least one key, proceed — serializeFrontmatter below will re-serialize
-  // cleanly. Only reject if both parsers fail to extract any data.
-  let parsedFm: unknown;
-  try {
-    parsedFm = yamlParse(match[1]);
-  } catch (e) {
-    const fallback = parseFrontmatter(`---\n${match[1]}\n---\n${match[2]}`);
-    if (fallback.frontmatter !== null && Object.keys(fallback.data).length > 0) {
-      parsedFm = fallback.data;
-    } else {
-      return { ok: false, reason: `INVALID_YAML: ${e instanceof Error ? e.message : String(e)}` };
-    }
-  }
-  if (parsedFm === null || typeof parsedFm !== "object" || Array.isArray(parsedFm)) {
-    return { ok: false, reason: "FRONTMATTER_NOT_OBJECT" };
-  }
-  const fm = parsedFm as Record<string, unknown>;
-
-  // Normalise placeholder leaks like `updated: today`, `updated: {today: null}`,
-  // `updated: now`, etc. The consolidate prompt instructs the LLM not to emit
-  // these, but small models still do. Replace any such leak with today's ISO
-  // date OR drop the field if we can't safely normalise it.
-  normalizeUpdatedField(fm);
-
-  // Re-serialise via yaml.stringify to fix any quoting quirks.
-  let serialized: string;
-  try {
-    serialized = serializeFrontmatter(fm);
-  } catch (e) {
-    return { ok: false, reason: `YAML_STRINGIFY_FAILED: ${e instanceof Error ? e.message : String(e)}` };
-  }
-
-  const cleaned = assembleAssetFromString(serialized, match[2]);
-  return { ok: true, result: { content: cleaned, frontmatter: fm } };
-}
-
-/**
- * Mutate `fm.updated` in place to normalise placeholder leaks emitted by the
- * LLM. The consolidate prompt forbids these, but small models still produce
- * literal `today` / `{today: null}` / `now` values.
- *
- * Rules:
- *   - A real ISO-style date string (YYYY-MM-DD, optionally with time) stays as-is.
- *   - A Date object (some YAML parsers materialise dates) is converted to its
- *     ISO yyyy-mm-dd form.
- *   - A placeholder string ("today", "now", "{today}", "${today}", template
- *     variables) is replaced with today's ISO date.
- *   - A map/object (e.g. `{today: null}`) is replaced with today's ISO date.
- *   - `null`, empty string, missing → left alone (no field added; reviewers
- *     should not silently gain metadata they didn't write).
- *
- * Exported for unit testing.
- */
-export function normalizeUpdatedField(fm: Record<string, unknown>): void {
-  if (!("updated" in fm)) return;
-  const v = fm.updated;
-  if (v === null || v === undefined || v === "") return;
-  const todayIso = new Date().toISOString().slice(0, 10);
-  if (v instanceof Date) {
-    fm.updated = v.toISOString().slice(0, 10);
-    return;
-  }
-  if (typeof v === "string") {
-    const trimmed = v.trim().toLowerCase();
-    if (/^\d{4}-\d{2}-\d{2}/.test(v.trim())) return; // already a real date
-    if (
-      trimmed === "today" ||
-      trimmed === "now" ||
-      trimmed === "{today}" ||
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: matches the literal user-typed placeholder text "${today}" so we can normalize it to today's ISO date
-      trimmed === "${today}" ||
-      trimmed === "{{today}}" ||
-      /^\{?\s*today\s*\}?$/.test(trimmed)
-    ) {
-      fm.updated = todayIso;
-      return;
-    }
-    // Unknown string format — leave alone so it's visible in the diff.
-    return;
-  }
-  if (typeof v === "object") {
-    // Maps like `{today: null}`, `{now: null}` — clearly a template leak.
-    fm.updated = todayIso;
-    return;
-  }
-}
 
 /**
  * Normalise a knowledge slug for variant-aware deduplication. Collapses:
