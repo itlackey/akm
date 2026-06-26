@@ -503,81 +503,29 @@ export async function runConsolidationPass(args: {
   return { consolidation, consolidationRan, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
 }
 
-export async function runImprovePreparationStage(args: {
-  scope: ImproveScope;
+/**
+ * Phase 0.4 — session-extract pass. Reads native session files through the
+ * SessionLogHarness registry, asks a bounded LLM for candidate proposals, gates
+ * them, and drains the extract backlog. Failures are non-fatal (collected into
+ * `warnings`). Returns the extract results + the gate counters seeded from the
+ * consolidation pass and accumulated here.
+ */
+async function runSessionExtractPass(args: {
   options: AkmImproveOptions;
-  plannedRefs: ImproveEligibleRef[];
-  memoryCleanupPlan?: MemoryCleanupPlan;
   primaryStashDir?: string;
-  memorySummary: { eligible: number; derived: number };
-  reindexFn: (options: { stashDir: string }) => Promise<unknown>;
-  startMs: number;
-  budgetMs: number;
-  eventsCtx?: EventsContext;
-  /** Warnings accumulated in akmImprove() prior to this stage (e.g. from the hoisted ensureIndex call). */
-  initialCleanupWarnings?: string[];
-  /** Active improve profile, resolved from profile name + config. */
   improveProfile: import("./improve-profiles").ImproveProfileConfig;
-  /** Budget signal forwarded to the consolidation pass for graceful drain on timeout. */
-  budgetSignal?: AbortSignal;
-}): Promise<ImprovePreparationResult> {
-  const {
-    scope,
-    options,
-    plannedRefs,
-    memoryCleanupPlan,
-    primaryStashDir,
-    memorySummary,
-    reindexFn,
-    startMs,
-    budgetMs,
-    eventsCtx,
-    initialCleanupWarnings,
-    improveProfile,
-    budgetSignal,
-  } = args;
-
-  const actions: ImproveActionResult[] = [];
-  const cleanupWarnings: string[] = initialCleanupWarnings ? [...initialCleanupWarnings] : [];
-
-  // Phase 0 — MEMORY.md budget check (200-line cap; warn at 180)
-  let memoryIndexHealth: { lineCount: number; overBudget: boolean } | undefined;
-  if (primaryStashDir) {
-    const memoryMdPath = path.join(primaryStashDir, "memories", "MEMORY.md");
-    if (fs.existsSync(memoryMdPath)) {
-      try {
-        const lines = fs.readFileSync(memoryMdPath, "utf8").split("\n").length;
-        const overBudget = lines >= 180;
-        memoryIndexHealth = { lineCount: lines, overBudget };
-        if (overBudget) {
-          cleanupWarnings.push(`MEMORY.md has ${lines} lines (budget: 200). Consolidation strongly recommended.`);
-        }
-      } catch {
-        // best-effort
-      }
-    }
-  }
-
-  // Phase 0.3 — memory consolidation pass (#551).
-  //
-  // Consolidation runs BEFORE the session-extract pass. This is the structural
-  // half of the #551 fix: extract auto-accept writes brand-new memory .md files
-  // on every run, which previously made the consolidation pool-delta gate fire
-  // unconditionally (any new file => "memory updated since last consolidate").
-  // By running consolidation first, the gate and akmConsolidate only ever see
-  // memories that existed at the start of the run — current-run extract
-  // promotions are not on disk yet. The complementary smarter-gate logic
-  // (excluding adjacent-run promotions) lives in `runConsolidationPass`.
-  const consolidationPass = await runConsolidationPass({
-    options,
-    primaryStashDir,
-    memorySummary,
-    improveProfile,
-    eventsCtx,
-    budgetSignal,
-    runBudgetMs: budgetMs,
-  });
-
+  eventsCtx?: EventsContext;
+  seedGateAccepted: number;
+  seedGateFailed: number;
+}): Promise<{
+  extractResults?: AkmExtractResult[];
+  gateAutoAcceptedCount: number;
+  gateAutoAcceptFailedCount: number;
+  warnings: string[];
+  extractGateCfg: ReturnType<typeof makeGateConfig>;
+}> {
+  const { options, primaryStashDir, improveProfile, eventsCtx, seedGateAccepted, seedGateFailed } = args;
+  const warnings: string[] = [];
   // Phase 0.4 — session-extract pass.
   //
   // Reads native session files (claude-code JSONL, opencode storage tree)
@@ -600,8 +548,8 @@ export async function runImprovePreparationStage(args: {
   // Seed the preparation-stage gate counters with consolidation's auto-accept
   // gate results (#551: consolidation now runs in this stage), then accumulate
   // extract's gate results on top.
-  let gateAutoAcceptedCount = consolidationPass.gateAutoAcceptedCount;
-  let gateAutoAcceptFailedCount = consolidationPass.gateAutoAcceptFailedCount;
+  let gateAutoAcceptedCount = seedGateAccepted;
+  let gateAutoAcceptFailedCount = seedGateFailed;
   const extractConfig = options.config ?? loadConfig();
   const extractGateCfg = makeGateConfig("extract", {
     globalThreshold: options.autoAccept,
@@ -705,7 +653,7 @@ export async function runImprovePreparationStage(args: {
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          cleanupWarnings.push(`extract(${h.name}) failed: ${msg}`);
+          warnings.push(`extract(${h.name}) failed: ${msg}`);
         }
       }
       if (extractResults.length === 0) {
@@ -735,6 +683,97 @@ export async function runImprovePreparationStage(args: {
       gateAutoAcceptFailedCount += backlogGr.failed.length;
     }
   }
+  return { extractResults, gateAutoAcceptedCount, gateAutoAcceptFailedCount, warnings, extractGateCfg };
+}
+
+export async function runImprovePreparationStage(args: {
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  plannedRefs: ImproveEligibleRef[];
+  memoryCleanupPlan?: MemoryCleanupPlan;
+  primaryStashDir?: string;
+  memorySummary: { eligible: number; derived: number };
+  reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  startMs: number;
+  budgetMs: number;
+  eventsCtx?: EventsContext;
+  /** Warnings accumulated in akmImprove() prior to this stage (e.g. from the hoisted ensureIndex call). */
+  initialCleanupWarnings?: string[];
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  /** Budget signal forwarded to the consolidation pass for graceful drain on timeout. */
+  budgetSignal?: AbortSignal;
+}): Promise<ImprovePreparationResult> {
+  const {
+    scope,
+    options,
+    plannedRefs,
+    memoryCleanupPlan,
+    primaryStashDir,
+    memorySummary,
+    reindexFn,
+    startMs,
+    budgetMs,
+    eventsCtx,
+    initialCleanupWarnings,
+    improveProfile,
+    budgetSignal,
+  } = args;
+
+  const actions: ImproveActionResult[] = [];
+  const cleanupWarnings: string[] = initialCleanupWarnings ? [...initialCleanupWarnings] : [];
+
+  // Phase 0 — MEMORY.md budget check (200-line cap; warn at 180)
+  let memoryIndexHealth: { lineCount: number; overBudget: boolean } | undefined;
+  if (primaryStashDir) {
+    const memoryMdPath = path.join(primaryStashDir, "memories", "MEMORY.md");
+    if (fs.existsSync(memoryMdPath)) {
+      try {
+        const lines = fs.readFileSync(memoryMdPath, "utf8").split("\n").length;
+        const overBudget = lines >= 180;
+        memoryIndexHealth = { lineCount: lines, overBudget };
+        if (overBudget) {
+          cleanupWarnings.push(`MEMORY.md has ${lines} lines (budget: 200). Consolidation strongly recommended.`);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  // Phase 0.3 — memory consolidation pass (#551).
+  //
+  // Consolidation runs BEFORE the session-extract pass. This is the structural
+  // half of the #551 fix: extract auto-accept writes brand-new memory .md files
+  // on every run, which previously made the consolidation pool-delta gate fire
+  // unconditionally (any new file => "memory updated since last consolidate").
+  // By running consolidation first, the gate and akmConsolidate only ever see
+  // memories that existed at the start of the run — current-run extract
+  // promotions are not on disk yet. The complementary smarter-gate logic
+  // (excluding adjacent-run promotions) lives in `runConsolidationPass`.
+  const consolidationPass = await runConsolidationPass({
+    options,
+    primaryStashDir,
+    memorySummary,
+    improveProfile,
+    eventsCtx,
+    budgetSignal,
+    runBudgetMs: budgetMs,
+  });
+
+  // Phase 0.4 — session-extract pass (see runSessionExtractPass).
+  const extractPass = await runSessionExtractPass({
+    options,
+    primaryStashDir,
+    improveProfile,
+    eventsCtx,
+    seedGateAccepted: consolidationPass.gateAutoAcceptedCount,
+    seedGateFailed: consolidationPass.gateAutoAcceptFailedCount,
+  });
+  const extractResults = extractPass.extractResults;
+  const gateAutoAcceptedCount = extractPass.gateAutoAcceptedCount;
+  const gateAutoAcceptFailedCount = extractPass.gateAutoAcceptFailedCount;
+  if (extractPass.warnings.length > 0) cleanupWarnings.push(...extractPass.warnings);
 
   // eligibleCount = raw pre-filter count (before cooldown/signal/cleanup filters).
   // improve_completed.plannedRefs = post-filter count of refs that actually entered the loop.
@@ -2118,7 +2157,7 @@ export async function runImprovePreparationStage(args: {
   if (options.autoAccept !== undefined && extractTuneDbPath) {
     try {
       maybeAutoTuneThreshold(
-        extractGateCfg.phaseThreshold ?? options.autoAccept,
+        extractPass.extractGateCfg.phaseThreshold ?? options.autoAccept,
         options.config ?? loadConfig(),
         extractTuneDbPath,
         undefined,
