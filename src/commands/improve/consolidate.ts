@@ -76,56 +76,27 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-interface ConsolidateMergeOp {
-  op: "merge";
-  primary: string;
-  secondaries: string[];
-  mergeStrategy: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
+// Shared consolidate domain types live in ./consolidate/types (the cluster's
+// dependency sink). Re-exported here so existing importers keep resolving.
+import type {
+  ConsolidateContradictOp,
+  ConsolidateDeleteOp,
+  ConsolidateMergeOp,
+  ConsolidateOperation,
+  ConsolidatePromoteOp,
+  MemoryEntry,
+  RawChunkPlan,
+} from "./consolidate/types";
 
-interface ConsolidateDeleteOp {
-  op: "delete";
-  ref: string;
-  reason: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
-
-export interface ConsolidatePromoteOp {
-  op: "promote";
-  ref: string;
-  knowledgeRef: string;
-  reason: string;
-  /** One-sentence description for the new knowledge asset's frontmatter. */
-  description?: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
-
-/**
- * Contradict op (C-3 / #382): two memories make mutually exclusive factual
- * claims. The consolidate engine writes `contradictedBy` frontmatter edges
- * so `resolveFamilyContradictions` in `memory-improve.ts` can resolve them
- * via its SCC algorithm. Zep arXiv:2501.13956 §3.
- */
-interface ConsolidateContradictOp {
-  op: "contradict";
-  /** The memory that should be marked as contradicted. */
-  ref: string;
-  /** The memory that contradicts it. */
-  contradictedByRef: string;
-  reason: string;
-  /** LLM self-reported confidence in [0, 1]. Used by the auto-accept gate. */
-  confidence?: number;
-}
-
-export type ConsolidateOperation =
-  | ConsolidateMergeOp
-  | ConsolidateDeleteOp
-  | ConsolidatePromoteOp
-  | ConsolidateContradictOp;
+export type {
+  ConsolidateContradictOp,
+  ConsolidateDeleteOp,
+  ConsolidateMergeOp,
+  ConsolidateOperation,
+  ConsolidatePromoteOp,
+  MemoryEntry,
+  RawChunkPlan,
+} from "./consolidate/types";
 
 export interface ConsolidateResult {
   schemaVersion: 1;
@@ -436,14 +407,6 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 // ── Memory loading ───────────────────────────────────────────────────────────
-
-export interface MemoryEntry {
-  name: string;
-  filePath: string;
-  description: string;
-  tags: string[];
-  stashDir: string;
-}
 
 export function isConsolidationEligibleMemoryName(name: string): boolean {
   return !name.endsWith(".derived");
@@ -867,11 +830,6 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
 }
 
 // ── Plan parsing / merging ───────────────────────────────────────────────────
-
-interface RawChunkPlan {
-  operations?: unknown[];
-  warnings?: unknown[];
-}
 
 function isValidOp(op: unknown): op is ConsolidateOperation {
   if (typeof op !== "object" || op === null) return false;
