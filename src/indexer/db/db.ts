@@ -8,7 +8,6 @@ import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { bestEffort } from "../../core/best-effort";
 import { getDbPath } from "../../core/paths";
-import { REGISTRY_INDEX_CACHE_DDL } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
@@ -185,6 +184,42 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
 }
 
 // ── Schema ──────────────────────────────────────────────────────────────────
+
+/**
+ * DDL for the `registry_index_cache` table. This table lives in index.db
+ * (managed by this module), so its DDL belongs here next to the `ensureSchema`
+ * that applies it — not in state-db.ts.
+ *
+ * Created with CREATE TABLE IF NOT EXISTS so it is safe to call inside
+ * `ensureSchema()`. Caches the result of resolving and fetching remote registry
+ * stash indexes so `akm search` does not hit the network on every invocation.
+ *
+ * Indexed (query) columns:
+ *   registry_url  TEXT PK   — canonical URL of the registry; cache key.
+ *   fetched_at    TEXT      — ISO-8601; used to detect stale entries (TTL).
+ *   etag          TEXT      — HTTP ETag for conditional GET (If-None-Match).
+ *   last_modified TEXT      — HTTP Last-Modified for conditional GET.
+ *
+ * Non-indexed payload:
+ *   index_json    TEXT      — JSON blob of the fetched registry index document.
+ *
+ * ADD COLUMN extension points (future migrations):
+ *   ALTER TABLE registry_index_cache ADD COLUMN schema_version INTEGER DEFAULT 1;
+ *   ALTER TABLE registry_index_cache ADD COLUMN kit_count INTEGER DEFAULT NULL;
+ *   ALTER TABLE registry_index_cache ADD COLUMN error_message TEXT DEFAULT NULL;
+ */
+const REGISTRY_INDEX_CACHE_DDL = `
+  CREATE TABLE IF NOT EXISTS registry_index_cache (
+    registry_url  TEXT    PRIMARY KEY,
+    fetched_at    TEXT    NOT NULL,
+    etag          TEXT,
+    last_modified TEXT,
+    index_json    TEXT    NOT NULL DEFAULT '{}'
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_registry_cache_fetched
+    ON registry_index_cache(fetched_at);
+`;
 
 /** A row backed up out of the legacy `usage_events` table during a version upgrade. */
 
@@ -533,8 +568,7 @@ function ensureSchema(db: Database, embeddingDim: number | undefined): void {
   ensureUsageEventsSchema(db);
 
   // Registry index cache table — caches remote registry index documents so
-  // `akm search` does not hit the network on every invocation. The DDL is
-  // defined in state-db.ts and shared here to avoid duplication.
+  // `akm search` does not hit the network on every invocation.
   db.exec(REGISTRY_INDEX_CACHE_DDL);
 }
 
