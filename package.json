@@ -69,7 +69,7 @@
     "lint:devto-posts:fix": "bun scripts/lint-devto-posts.ts --fix",
     "publish:devto": "npx -y @sinedied/devto-cli push \"docs/posts/**/*.md\" --token \"$DEVTO_TOKEN\" --repo \"$GITHUB_REPOSITORY\" --branch \"${GITHUB_REF_NAME:-main}\" --reconcile",
     "release:check": "./tests/release-check.sh",
-    "lint": "bunx biome check src/ tests/ && bun scripts/lint-tests-isolation.ts && bun scripts/lint-license-headers.ts && bun scripts/lint-runtime-boundary.ts",
+    "lint": "bunx biome check src/ tests/ && bun scripts/lint-tests-isolation.ts && bun scripts/lint-license-headers.ts && bun scripts/lint-runtime-boundary.ts && bun scripts/lint-repository-sql.ts",
     "lint:runtime-boundary": "bun scripts/lint-runtime-boundary.ts",
     "lint:tests-isolation": "bun scripts/lint-tests-isolation.ts",
     "lint:fix": "bunx biome check --write src/ tests/",
