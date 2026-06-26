@@ -49,6 +49,7 @@ import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProf
 import { defaultProfileName, v1ProfilePlatform } from "../integrations/harnesses";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
+import { getOutputMode } from "../output/context";
 import { getDirname, spawn } from "../runtime";
 import { saveGitStash } from "../sources/providers/git";
 import { backendNameForPlatform } from "../tasks/backends";
@@ -2421,10 +2422,30 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
  */
 function backupAndAnnounce(configPath: string): void {
   const result = backupExistingConfig(configPath);
-  if (result) {
-    p.log.info(`Config backed up to ${result.timestamped}`);
+  const message = result ? `Config backed up to ${result.timestamped}` : "No existing config to back up.";
+  // In JSON output mode the structured envelope (which already carries
+  // `configPath`) MUST be the only thing on stdout — `setup --yes | jq` is a
+  // supported scripting contract. @clack's `p.log.info` writes to stdout, which
+  // would corrupt that envelope, so route this human-progress notice to stderr
+  // when emitting JSON. Interactive/text runs keep the inline clack banner.
+  if (isJsonOutputMode()) {
+    process.stderr.write(`${message}\n`);
   } else {
-    p.log.info("No existing config to back up.");
+    p.log.info(message);
+  }
+}
+
+/**
+ * True when the process-level output mode is JSON (the default machine format).
+ * Defensive: setup is also invoked programmatically (tests) where the output
+ * mode singleton may not be initialized — treat that as "not JSON" so the
+ * human-readable clack banner is used.
+ */
+function isJsonOutputMode(): boolean {
+  try {
+    return getOutputMode().format === "json";
+  } catch {
+    return false;
   }
 }
 
