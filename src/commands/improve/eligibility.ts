@@ -41,31 +41,6 @@ export function resolveImproveScope(scope: string | undefined): { mode: "all" | 
 }
 
 /**
- * Render the end-of-run stash-sync commit message, expanding `{token}`
- * placeholders against this run's results. Unknown tokens are passed through
- * verbatim so adding new tokens later never breaks an existing template, and so
- * a literal brace in a message is harmless.
- *
- * Supported tokens (the "free" set — derived from data already on the result):
- *   {timestamp}  `YYYY-MM-DD HH:MM:SS` (UTC)
- *   {date}       `YYYY-MM-DD` (UTC)
- *   {time}       `HH:MM:SS` (UTC)
- *   {scope}      scope value (e.g. a ref/type) or the scope mode (`all`)
- *   {refs}       number of planned refs this run processed
- *   {accepted}   number of proposals auto-accepted by the confidence gate
- *   {triage_promoted}  proposals promoted by the triage pre-pass (0 if triage did not run)
- *   {triage_rejected}  proposals rejected by the triage pre-pass (0 if triage did not run)
- *   {runId}      this run's id (empty string when absent)
- *
- * The result is still passed through `sanitizeCommitMessage` downstream in
- * `saveGitStash`, so token values never widen the commit-message attack surface
- * (newlines/control chars are collapsed there).
- *
- * `nowMs` is injected (not read from `Date.now()`) so the function is pure and
- * deterministically testable.
- */
-
-/**
  * Dedupe a list of eligible refs by `ref`, preserving first-seen order. Used to
  * merge the three eligibility sources (feedback-signal, P0-A high-retrieval,
  * Layer-2 proactive-maintenance) without admitting a ref into the loop twice.
@@ -234,12 +209,6 @@ export function isEntryInScope(entryStashDir: string, filePath: string, stashDir
  * directories. Entries from read-only registry caches or remote stashes that
  * the user has not marked writable must never enter the improve/distill loop.
  */
-
-/**
- * Return true when the indexed entry belongs to one of the writable source
- * directories. Entries from read-only registry caches or remote stashes that
- * the user has not marked writable must never enter the improve/distill loop.
- */
 export function isEntryInWritableSource(entryStashDir: string, filePath: string, writableDirSet: Set<string>): boolean {
   const resolvedEntryStashDir = path.resolve(entryStashDir);
   const resolvedFilePath = path.resolve(filePath);
@@ -309,27 +278,6 @@ export function isLessonCandidate(ref: string): boolean {
  * message returned, and no work was ever done. See
  * `tests/commands/improve-distill-planner-skip-lessons.test.ts`.
  */
-
-/**
- * Planner-side check: should this ref enter the distill queue?
- *
- * Distill produces lessons from non-lesson sources. Two cases are eligible:
- *
- *   1. Memory refs that pass {@link shouldDistillMemoryRef} (the existing
- *      memory→lesson/knowledge promotion path).
- *
- * Refs whose `type` is in {@link DISTILL_REFUSED_INPUT_TYPES} (currently
- * `lesson:*`) are explicitly excluded — distill refuses them at runtime and
- * queuing them just produces a no-op `skipped` outcome per ref per hour. That
- * planner waste was the bug fixed in commit
- * fix(improve): drop distill-refused types from planner.
- *
- * Note: prior to this fix the gate used `isLessonCandidate(ref)` directly,
- * which was true *only* for `lesson:*` refs — exactly the set distill refuses.
- * The result: every hourly run re-queued the same lesson refs, the same skip
- * message returned, and no work was ever done. See
- * `tests/commands/improve-distill-planner-skip-lessons.test.ts`.
- */
 export function isDistillCandidateRef(ref: string, stashDir?: string): boolean {
   const parsed = parseAssetRef(ref);
   if (isDistillRefusedInputType(parsed.type)) return false;
@@ -370,17 +318,6 @@ export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean 
  * metadata events are ignored so a stray `akm feedback <ref>` invocation
  * without a flag doesn't trigger downstream re-processing.
  */
-
-/**
- * Latest feedback event timestamp per ref in the active window. Reads all
- * `feedback` events newer than `sinceIso` in one query and indexes by ref,
- * keeping the maximum `ts` per ref.
- *
- * Only events with a meaningful payload count as "signal" — `metadata.signal`
- * (positive/negative) OR `metadata.note` (a free-form annotation). Empty
- * metadata events are ignored so a stray `akm feedback <ref>` invocation
- * without a flag doesn't trigger downstream re-processing.
- */
 export function buildLatestFeedbackTsMap(refs: ReadonlyArray<string>, sinceIso: string): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
@@ -397,16 +334,6 @@ export function buildLatestFeedbackTsMap(refs: ReadonlyArray<string>, sinceIso: 
   }
   return out;
 }
-
-/**
- * Latest proposal timestamp per input-ref, filtered by source ('reflect' or
- * 'distill'). Reads the corresponding `*_invoked` events from state.db —
- * these events are emitted at proposal creation time and carry the *input*
- * asset ref (memory:foo, skill:bar, etc.) directly. We use them rather than
- * `listProposals` because distill proposals are keyed by the derived
- * lesson/knowledge ref, not the source memory — joining back through the
- * payload would be fragile.
- */
 
 /**
  * Latest proposal timestamp per input-ref, filtered by source ('reflect' or
@@ -441,17 +368,6 @@ export function buildLatestProposalTsMap(
   }
   return out;
 }
-
-/**
- * Signal-delta eligibility predicate.
- *
- * True iff `latestFeedback[ref]` is defined AND either no prior proposal
- * exists for this (ref, source) OR `latestFeedback[ref] > lastProposal[ref]`.
- *
- * Refs with no feedback signal at all are ineligible by definition — the
- * high-retrieval fallback path (see `noFeedbackCandidates` later in the
- * planner) handles never-touched-but-frequently-read assets separately.
- */
 
 /**
  * Signal-delta eligibility predicate.

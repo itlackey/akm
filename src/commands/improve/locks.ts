@@ -52,6 +52,20 @@ export function tryAcquireProcessLock(
   }
 
   const probe = probeLock(lockPath, { staleAfterMs });
+
+  // Race: the holder released the lock between our failed `tryAcquireLockSync`
+  // and this probe, so the probe sees no file (`absent`). Retry acquisition once
+  // rather than falling through to the contended skip/throw below — otherwise we
+  // would warn/throw with a null PID for a lock that nobody actually holds.
+  // (Mirrors the absent/stale reclaim-and-retry in `acquireExtractSessionLock`.)
+  if (probe.state === "absent") {
+    if (tryAcquireLockSync(lockPath, lockPayload())) {
+      heldProcessLocks.add(lockPath);
+      return "acquired";
+    }
+    // Re-grabbed by another racer in the window — fall through and treat as held.
+  }
+
   const rawContent = probe.state === "absent" ? undefined : probe.rawContent;
   const lock = rawContent
     ? (() => {
