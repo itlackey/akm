@@ -4,7 +4,6 @@ Use this when tuning `akm curate` ranking, fallback, or family-collapsing behavi
 
 Related context:
 
-- Implementation plan: `docs/0.9.0-curate-quality-implementation-plan.md`
 - Workmap: `docs/agents/curate-workmap.md`
 - Primary eval test: `tests/curate-relevance-eval.test.ts`
 - Logic tests: `tests/curate-logic.test.ts`
