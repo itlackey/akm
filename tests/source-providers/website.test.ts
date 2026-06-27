@@ -248,6 +248,74 @@ describe("WebsiteSourceProvider", () => {
     );
   });
 
+  test("built-in YouTube fetcher canonicalizes watch URLs with extra query params", async () => {
+    await withMockedFetch(
+      async () => {
+        const snapshot = await fetchWebsiteMarkdownSnapshot(
+          "https://www.youtube.com/watch?is=abc123&v=abc123&feature=youtu.be",
+        );
+        expect(snapshot.url).toBe("https://www.youtube.com/watch?v=abc123");
+        expect(snapshot.preferredName).toBe("youtube/abc123");
+        expect(snapshot.content).toContain("## Transcript");
+      },
+      (url) => {
+        if (url === "https://www.youtube.com/watch?v=abc123") {
+          return new Response(
+            [
+              "<html><body><script>",
+              'var ytInitialPlayerResponse = {"videoDetails":{"title":"Transcript Title","shortDescription":"Line one"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc123&lang=en","languageCode":"en"}]}}};',
+              "</script></body></html>",
+            ].join(""),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            },
+          );
+        }
+        if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {
+          return new Response("<transcript><text>Transcript body</text></transcript>", {
+            status: 200,
+            headers: { "Content-Type": "application/xml; charset=utf-8" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+  });
+
+  test("built-in YouTube fetcher handles embed URLs", async () => {
+    await withMockedFetch(
+      async () => {
+        const snapshot = await fetchWebsiteMarkdownSnapshot("https://www.youtube.com/embed/abc123");
+        expect(snapshot.url).toBe("https://www.youtube.com/watch?v=abc123");
+        expect(snapshot.preferredName).toBe("youtube/abc123");
+        expect(snapshot.content).toContain("## Transcript");
+      },
+      (url) => {
+        if (url === "https://www.youtube.com/watch?v=abc123") {
+          return new Response(
+            [
+              "<html><body><script>",
+              'var ytInitialPlayerResponse = {"videoDetails":{"title":"Embed Title","shortDescription":"Line one"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc123&lang=en","languageCode":"en"}]}}};',
+              "</script></body></html>",
+            ].join(""),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            },
+          );
+        }
+        if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {
+          return new Response("<transcript><text>Embed transcript</text></transcript>", {
+            status: 200,
+            headers: { "Content-Type": "application/xml; charset=utf-8" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+  });
+
   test("built-in YouTube fetcher still runs when no stash directory is available to load custom fetchers", async () => {
     await withEnv({ AKM_STASH_DIR: undefined }, async () => {
       await withMockedFetch(
