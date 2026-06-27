@@ -77,13 +77,13 @@ resolved hostname). They do not replace those defaults.
 ```ts
 export default {
   name: "youtube-transcript",
-  matches(url: URL) {
+  matches(url: URL, _context: FetcherContext) {
     return (
       (url.hostname === "www.youtube.com" && url.pathname === "/watch") ||
       url.hostname === "youtu.be"
     );
   },
-  async fetch(url: URL) {
+  async fetch(url: URL, _context: FetcherContext) {
     const videoId = url.hostname === "youtu.be" ? url.pathname.slice(1) : url.searchParams.get("v");
     if (!videoId) return null;
 
