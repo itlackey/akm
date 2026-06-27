@@ -178,27 +178,25 @@ export async function fetchWebsiteMarkdownSnapshot(
   const normalizedUrl = validateWebsiteInputUrl(rawUrl);
   const parsedUrl = new URL(normalizedUrl);
   const stashDir = resolveFetcherStashDir(options?.stashDir);
-  if (stashDir) {
-    const context: FetcherContext = {
-      stashDir,
-      timeoutMs: options?.timeoutMs ?? 15_000,
-      signal: options?.signal,
-    };
+  const context: FetcherContext = {
+    stashDir: stashDir ?? "",
+    timeoutMs: options?.timeoutMs ?? 15_000,
+    signal: options?.signal,
+  };
 
-    for (const fetcher of await loadWikiSnapshotFetchers(stashDir)) {
-      try {
-        if (!fetcher.matches(parsedUrl, context)) continue;
-        const snapshot = await fetcher.fetch(parsedUrl, context);
-        if (!snapshot) continue;
-        return websiteMarkdownSnapshotFromResult(snapshot);
-      } catch (error) {
-        warn(
-          "[akm] wiki-fetcher %s threw on %s: %s",
-          fetcher.name,
-          normalizedUrl,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
+  for (const fetcher of await loadWikiSnapshotFetchers(stashDir)) {
+    try {
+      if (!fetcher.matches(parsedUrl, context)) continue;
+      const snapshot = await fetcher.fetch(parsedUrl, context);
+      if (!snapshot) continue;
+      return websiteMarkdownSnapshotFromResult(snapshot);
+    } catch (error) {
+      warn(
+        "[akm] wiki-fetcher %s threw on %s: %s",
+        fetcher.name,
+        normalizedUrl,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 

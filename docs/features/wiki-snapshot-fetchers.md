@@ -3,6 +3,9 @@
 `akm wiki stash <url>` and every other URL-based knowledge read path now pass
 through a pluggable fetcher seam before the built-in website scraper.
 
+akm currently ships one built-in fetcher: `youtube-transcript`, which extracts
+the video description and transcript when captions are available.
+
 ## Why
 
 Some sites need custom extraction logic that the generic HTML-to-markdown path
@@ -102,3 +105,5 @@ export default {
   knowledge reads that use `fetchWebsiteMarkdownSnapshot()`.
 - The built-in website scraper remains the default path when no custom fetcher
   matches.
+- Stash-local fetchers are loaded before built-ins, so you can override the
+  built-in YouTube behavior for your own workflow when needed.

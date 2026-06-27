@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { warn } from "../../core/warn";
+import youtubeFetcher from "./youtube";
 
 export interface WikiSnapshotResult {
   url: string;
@@ -29,6 +30,7 @@ export interface WikiSnapshotFetcher {
 
 const FETCHER_DIR = path.join("scripts", "wiki-fetchers");
 const FETCHER_FILE_PATTERN = /\.(?:ts|js|mjs)$/i;
+const BUILTIN_FETCHERS: readonly WikiSnapshotFetcher[] = [youtubeFetcher];
 
 function isWikiSnapshotFetcher(value: unknown): value is WikiSnapshotFetcher {
   if (!value || typeof value !== "object") return false;
@@ -40,30 +42,36 @@ function isWikiSnapshotFetcher(value: unknown): value is WikiSnapshotFetcher {
   );
 }
 
-export async function loadWikiSnapshotFetchers(stashDir: string): Promise<WikiSnapshotFetcher[]> {
-  const fetcherDir = path.join(stashDir, FETCHER_DIR);
+export async function loadWikiSnapshotFetchers(stashDir?: string | null): Promise<WikiSnapshotFetcher[]> {
   const fetchers: WikiSnapshotFetcher[] = [];
 
-  try {
-    const entries = fs.readdirSync(fetcherDir).sort();
-    for (const entry of entries) {
-      if (!FETCHER_FILE_PATTERN.test(entry)) continue;
+  if (stashDir) {
+    const fetcherDir = path.join(stashDir, FETCHER_DIR);
+    try {
+      const entries = fs.readdirSync(fetcherDir).sort();
+      for (const entry of entries) {
+        if (!FETCHER_FILE_PATTERN.test(entry)) continue;
 
-      try {
-        const fileUrl = pathToFileURL(path.join(fetcherDir, entry)).toString();
-        const mod = await import(fileUrl);
-        if (isWikiSnapshotFetcher(mod.default)) {
-          fetchers.push(mod.default);
-        } else {
-          warn("[akm] wiki-fetcher %s skipped: missing { name, matches, fetch }", entry);
+        try {
+          const fileUrl = pathToFileURL(path.join(fetcherDir, entry)).toString();
+          const mod = await import(fileUrl);
+          if (isWikiSnapshotFetcher(mod.default)) {
+            fetchers.push(mod.default);
+          } else {
+            warn("[akm] wiki-fetcher %s skipped: missing { name, matches, fetch }", entry);
+          }
+        } catch (error) {
+          warn(
+            "[akm] wiki-fetcher %s failed to load: %s",
+            entry,
+            error instanceof Error ? error.message : String(error),
+          );
         }
-      } catch (error) {
-        warn("[akm] wiki-fetcher %s failed to load: %s", entry, error instanceof Error ? error.message : String(error));
       }
+    } catch {
+      // Missing directory means no custom fetchers.
     }
-  } catch {
-    // Missing directory means no custom fetchers.
   }
 
-  return fetchers;
+  return [...fetchers, ...BUILTIN_FETCHERS];
 }

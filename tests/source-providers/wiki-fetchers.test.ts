@@ -18,12 +18,12 @@ afterEach(() => {
 });
 
 describe("wiki fetcher registry", () => {
-  test("returns an empty list when the fetcher directory does not exist", async () => {
+  test("includes built-in fetchers when the stash has no custom fetcher directory", async () => {
     const fetchers = await loadWikiSnapshotFetchers(process.env.AKM_STASH_DIR ?? "");
-    expect(fetchers).toEqual([]);
+    expect(fetchers.map((fetcher) => fetcher.name)).toContain("youtube-transcript");
   });
 
-  test("loads valid fetchers in alphabetical filename order and skips invalid modules", async () => {
+  test("loads valid custom fetchers before built-ins and skips invalid modules", async () => {
     const fetcherDir = path.join(process.env.AKM_STASH_DIR ?? "", "scripts", "wiki-fetchers");
     fs.mkdirSync(fetcherDir, { recursive: true });
     fs.writeFileSync(
@@ -39,6 +39,7 @@ describe("wiki fetcher registry", () => {
     fs.writeFileSync(path.join(fetcherDir, "broken.ts"), 'export default { name: "broken" };\n', "utf8");
 
     const fetchers = await loadWikiSnapshotFetchers(process.env.AKM_STASH_DIR ?? "");
-    expect(fetchers.map((fetcher) => fetcher.name)).toEqual(["a", "b"]);
+    expect(fetchers.slice(0, 2).map((fetcher) => fetcher.name)).toEqual(["a", "b"]);
+    expect(fetchers.map((fetcher) => fetcher.name)).toContain("youtube-transcript");
   });
 });
