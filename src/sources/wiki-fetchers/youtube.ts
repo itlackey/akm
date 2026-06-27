@@ -48,9 +48,18 @@ function canonicalWatchUrl(videoId: string): string {
 }
 
 function decodeEntities(value: string): string {
+  const safeFromCodePoint = (codePoint: number, fallback: string) => {
+    if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return fallback;
+    try {
+      return String.fromCodePoint(codePoint);
+    } catch {
+      return fallback;
+    }
+  };
+
   return value
-    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#([0-9]+);/g, (_m, dec) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, hex) => safeFromCodePoint(Number.parseInt(hex, 16), m))
+    .replace(/&#([0-9]+);/g, (m, dec) => safeFromCodePoint(Number.parseInt(dec, 10), m))
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&lt;/g, "<")
