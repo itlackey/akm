@@ -54,14 +54,12 @@ export function listFixtures(): string[] {
 /**
  * Synchronous, deterministic SHA-256 hex of every file under the named
  * fixture. Hash input is `<relative-path>\0<file-bytes>\0` for each file in
- * sorted-relative-path order. Used by `bench compare` to refuse cross-fixture
- * diffs.
+ * sorted-relative-path order. Used to refuse cross-fixture diffs.
  *
  * Also exported as `computeFixtureContentHash` for callers that prefer the
- * `compute*` naming convention used by sibling helpers in `tests/bench/`
- * (see `computeTaskCorpusHash` in corpus.ts). The two names point at the
- * SAME implementation — there is exactly one fixture-content hash function
- * in this codebase, and `LoadedFixtureStash.contentHash` reuses it.
+ * `compute*` naming convention. The two names point at the SAME
+ * implementation — there is exactly one fixture-content hash function in this
+ * codebase, and `LoadedFixtureStash.contentHash` reuses it.
  */
 export function fixtureContentHash(name: string): string {
   const root = fixtureSourceDir(name);
@@ -77,10 +75,10 @@ export function fixtureContentHash(name: string): string {
 }
 
 /**
- * Alias for `fixtureContentHash` matching the `compute*` naming used by
- * sibling helpers in `tests/bench/`. Reuses the SAME implementation —
- * defining a separate hash function for the same content would risk drift
- * between the report-stamping path and `LoadedFixtureStash.contentHash`.
+ * Alias for `fixtureContentHash` matching the `compute*` naming convention.
+ * Reuses the SAME implementation — defining a separate hash function for the
+ * same content would risk drift between the report-stamping path and
+ * `LoadedFixtureStash.contentHash`.
  */
 export const computeFixtureContentHash = fixtureContentHash;
 
