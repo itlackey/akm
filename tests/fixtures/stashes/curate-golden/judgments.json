@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "corpus": "curate-golden",
+  "note": "Hand-labeled relevance ground truth for the deterministic curate benchmark. 'relevant' = order-independent relevant set (recall); 'idealOrder' = ranked ideal; 'banned' = clearly off-topic refs that must never outrank a relevant ref (embedder-robust leapfrog gate). Labels are semantic ground truth, independent of what any akm version currently returns.",
+  "queries": [
+    {
+      "id": "docker-homelab-deploy",
+      "query": "deploy docker compose services in my homelab",
+      "relevant": ["skill:docker-homelab", "knowledge:docker-compose-reference", "memory:homelab-backup-strategy"],
+      "idealOrder": ["skill:docker-homelab", "knowledge:docker-compose-reference", "memory:homelab-backup-strategy"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "release-coordination",
+      "query": "coordinate a multi package release across repos with changelog",
+      "relevant": ["memory:release-coordination", "knowledge:changelog-conventions", "script:bump-version.sh"],
+      "idealOrder": ["memory:release-coordination", "knowledge:changelog-conventions", "script:bump-version.sh"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "testing-practices",
+      "query": "write reliable deterministic tests",
+      "relevant": ["skill:testing-practices", "script:flaky-test-finder.sh"],
+      "idealOrder": ["skill:testing-practices", "script:flaky-test-finder.sh"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research", "memory:incident-postmortem-template"],
+      "limit": 6
+    },
+    {
+      "id": "git-workflow",
+      "query": "git branching and pull request workflow",
+      "relevant": ["skill:git-workflow"],
+      "idealOrder": ["skill:git-workflow"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "code-review",
+      "query": "review my code for bugs and quality",
+      "relevant": ["agent:code-reviewer", "skill:git-workflow"],
+      "idealOrder": ["agent:code-reviewer", "skill:git-workflow"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "ci-pipeline",
+      "query": "configure continuous integration jobs and caching",
+      "relevant": ["knowledge:ci-pipeline"],
+      "idealOrder": ["knowledge:ci-pipeline"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "deploy-production",
+      "query": "deploy an application to production",
+      "relevant": ["command:deploy", "skill:docker-homelab"],
+      "idealOrder": ["command:deploy", "skill:docker-homelab"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "seo-marketing",
+      "query": "seo keyword research for a marketing site",
+      "relevant": ["knowledge:seo-keyword-research", "command:newsletter"],
+      "idealOrder": ["knowledge:seo-keyword-research", "command:newsletter"],
+      "banned": ["skill:docker-homelab", "command:release"],
+      "limit": 6
+    },
+    {
+      "id": "residue-docker",
+      "query": "the docker",
+      "relevant": ["skill:docker-homelab", "knowledge:docker-compose-reference", "memory:homelab-backup-strategy"],
+      "idealOrder": ["skill:docker-homelab", "knowledge:docker-compose-reference"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    },
+    {
+      "id": "residue-release",
+      "query": "how release",
+      "relevant": ["memory:release-coordination", "command:release", "script:bump-version.sh"],
+      "idealOrder": ["memory:release-coordination", "command:release"],
+      "banned": ["command:newsletter", "knowledge:seo-keyword-research"],
+      "limit": 6
+    }
+  ]
+}
