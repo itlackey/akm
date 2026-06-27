@@ -15,7 +15,7 @@
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
-import { isHttpUrl, resolveStashDir } from "../core/common";
+import { resolveStashDir } from "../core/common";
 import { loadConfig, resolveConfiguredSources } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
@@ -184,13 +184,6 @@ const wikiStashCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { stashRaw } = await import("../wiki/wiki.js");
-    const { content, preferredName } = await (async () => {
-      if (!isHttpUrl(args.source)) return readKnowledgeInput(args.source);
-      const { fetchWebsiteMarkdownSnapshot } = await import("../sources/website-ingest");
-      const snapshot = await fetchWebsiteMarkdownSnapshot(args.source);
-      return { content: snapshot.content, preferredName: args.as ?? snapshot.preferredName };
-    })();
-
     let stashDir: string;
     if (args.target) {
       // Resolve the named source to its filesystem path.
@@ -215,6 +208,8 @@ const wikiStashCommand = defineJsonCommand({
     } else {
       stashDir = resolveStashDir();
     }
+
+    const { content, preferredName } = await readKnowledgeInput(args.source, { stashDir });
 
     const result = stashRaw({
       stashDir,

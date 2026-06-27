@@ -116,9 +116,12 @@ export function readKnowledgeContent(source: string): { content: string; preferr
  * URLs are fetched via `fetchWebsiteMarkdownSnapshot`; local sources delegate
  * to `readKnowledgeContent`.
  */
-export async function readKnowledgeInput(source: string): Promise<{ content: string; preferredName?: string }> {
+export async function readKnowledgeInput(
+  source: string,
+  options?: { stashDir?: string },
+): Promise<{ content: string; preferredName?: string }> {
   if (!isHttpUrl(source)) return readKnowledgeContent(source);
-  const snapshot = await fetchWebsiteMarkdownSnapshot(source);
+  const snapshot = await fetchWebsiteMarkdownSnapshot(source, { stashDir: options?.stashDir });
   return { content: snapshot.content, preferredName: snapshot.preferredName };
 }
 

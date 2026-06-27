@@ -5,12 +5,13 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap } from "../core/common";
+import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir } from "../core/common";
 import type { SourceConfigEntry } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getRegistryIndexCacheDir } from "../core/paths";
 import { warn } from "../core/warn";
 import { isExpired, sanitizeString } from "./providers/provider-utils";
+import { type FetcherContext, loadWikiSnapshotFetchers, type WikiSnapshotResult } from "./wiki-fetchers/registry";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
 const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -50,6 +51,21 @@ export interface WebsiteMarkdownSnapshot {
   markdown: string;
   preferredName: string;
   content: string;
+}
+
+export interface FetchSnapshotOptions {
+  stashDir?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+function resolveFetcherStashDir(explicitStashDir?: string): string | null {
+  if (explicitStashDir) return explicitStashDir;
+  try {
+    return resolveStashDir({ readOnly: true });
+  } catch {
+    return null;
+  }
 }
 
 export function getWebsiteCachePaths(siteUrl: string): {
@@ -155,21 +171,66 @@ async function scrapeWebsiteToStash(
   }
 }
 
-export async function fetchWebsiteMarkdownSnapshot(rawUrl: string): Promise<WebsiteMarkdownSnapshot> {
+export async function fetchWebsiteMarkdownSnapshot(
+  rawUrl: string,
+  options?: FetchSnapshotOptions,
+): Promise<WebsiteMarkdownSnapshot> {
   const normalizedUrl = validateWebsiteInputUrl(rawUrl);
+  const parsedUrl = new URL(normalizedUrl);
+  const stashDir = resolveFetcherStashDir(options?.stashDir);
+  if (stashDir) {
+    const context: FetcherContext = {
+      stashDir,
+      timeoutMs: options?.timeoutMs ?? 15_000,
+      signal: options?.signal,
+    };
+
+    for (const fetcher of await loadWikiSnapshotFetchers(stashDir)) {
+      try {
+        if (!fetcher.matches(parsedUrl, context)) continue;
+        const snapshot = await fetcher.fetch(parsedUrl, context);
+        if (!snapshot) continue;
+        return websiteMarkdownSnapshotFromResult(snapshot);
+      } catch (error) {
+        warn(
+          "[akm] wiki-fetcher %s threw on %s: %s",
+          fetcher.name,
+          normalizedUrl,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  }
+
   const fetched = await fetchWebsitePage(normalizedUrl);
   if (!fetched) {
     throw new UsageError(`No content could be fetched from ${normalizedUrl}`);
   }
 
-  const preferredName = deriveImportPath(fetched.page.url);
-  const slug = preferredName.split("/").pop() ?? preferredName;
-  return {
+  return websiteMarkdownSnapshotFromResult({
     url: fetched.page.url,
     title: fetched.page.title,
     markdown: fetched.page.markdown,
+  });
+}
+
+function websiteMarkdownSnapshotFromResult(snapshot: WikiSnapshotResult): WebsiteMarkdownSnapshot {
+  const preferredName = snapshot.preferredName ?? deriveImportPath(snapshot.url);
+  const slug = preferredName.split("/").pop() ?? preferredName;
+  return {
+    url: snapshot.url,
+    title: snapshot.title,
+    markdown: snapshot.markdown,
     preferredName,
-    content: buildMarkdownSnapshot(fetched.page, slug || "website"),
+    content: buildMarkdownSnapshot(
+      {
+        url: snapshot.url,
+        title: snapshot.title,
+        markdown: snapshot.markdown,
+      },
+      slug || "website",
+      snapshot.tags,
+    ),
   };
 }
 
@@ -269,11 +330,12 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
   };
 }
 
-function buildMarkdownSnapshot(page: WebsitePage, slug: string): string {
+function buildMarkdownSnapshot(page: WebsitePage, slug: string, tags?: string[]): string {
   const title = sanitizeString(page.title, 200) || slug;
   const description = sanitizeString(`Snapshot of ${page.url}`, 500);
   const host = sanitizeString(new URL(page.url).hostname, 120);
   const content = page.markdown.trim() || `Source: ${page.url}`;
+  const normalizedTags = Array.from(new Set(["website", host, ...(tags ?? [])]));
 
   return [
     "---",
@@ -282,8 +344,7 @@ function buildMarkdownSnapshot(page: WebsitePage, slug: string): string {
     `sourceUrl: ${JSON.stringify(page.url)}`,
     `title: ${JSON.stringify(title)}`,
     "tags:",
-    `  - ${JSON.stringify("website")}`,
-    `  - ${JSON.stringify(host)}`,
+    ...normalizedTags.map((tag) => `  - ${JSON.stringify(tag)}`),
     "---",
     "",
     `# ${title}`,

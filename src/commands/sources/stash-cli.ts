@@ -32,10 +32,12 @@ import { defineCommand } from "citty";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { isHttpUrl } from "../../core/common";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { getCacheDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
+import { resolveWriteTarget } from "../../core/write-source";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
 import { readKnowledgeInput, writeMarkdownAsset } from "../read/knowledge";
@@ -199,7 +201,8 @@ export const importKnowledgeCommand = defineJsonCommand({
   async run({ args }) {
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
     assertFlatAssetName(args.name);
-    const { content, preferredName } = await readKnowledgeInput(args.source);
+    const stashDir = resolveWriteTarget(loadConfig(), args.target).source.path;
+    const { content, preferredName } = await readKnowledgeInput(args.source, { stashDir });
     const result = await writeMarkdownAsset({
       type: "knowledge",
       content,
