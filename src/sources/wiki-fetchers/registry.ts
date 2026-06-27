@@ -68,7 +68,16 @@ export async function loadWikiSnapshotFetchers(stashDir?: string | null): Promis
           );
         }
       }
-    } catch {
+    } catch (error) {
+      const code =
+        typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined;
+      if (code !== "ENOENT") {
+        warn(
+          "[akm] wiki-fetcher directory %s could not be read: %s",
+          fetcherDir,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       // Missing directory means no custom fetchers.
     }
   }
