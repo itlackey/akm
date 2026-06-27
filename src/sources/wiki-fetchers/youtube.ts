@@ -40,6 +40,10 @@ function extractVideoId(url: URL): string | null {
     const id = url.pathname.slice("/shorts/".length).split("/")[0]?.trim();
     return id || null;
   }
+  if (url.pathname.startsWith("/embed/")) {
+    const id = url.pathname.slice("/embed/".length).split("/")[0]?.trim();
+    return id || null;
+  }
   return null;
 }
 

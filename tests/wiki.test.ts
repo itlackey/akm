@@ -586,10 +586,12 @@ describe("buildIngestWorkflow", () => {
     expect(result.wiki).toBe("research");
     expect(result.path).toBe(path.join(stash, WIKIS_SUBDIR, "research"));
     expect(result.schemaPath).toBe(path.join(stash, WIKIS_SUBDIR, "research", SCHEMA_MD));
-    expect(result.workflow).toContain("akm wiki stash research");
+    expect(result.workflow).toContain("ALREADY present under");
+    expect(result.workflow).toContain("uncited-raw");
     expect(result.workflow).toContain("akm wiki lint research");
     expect(result.workflow).toContain("akm wiki search research");
     expect(result.workflow).toContain("akm index");
+    expect(result.workflow).not.toContain("akm wiki stash research");
   });
 });
 
