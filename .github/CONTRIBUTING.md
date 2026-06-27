@@ -44,12 +44,6 @@ A symlink into that chain means any `bun install -g akm-cli` (or `akm upgrade`) 
 bun test
 ```
 
-Run the scoring benchmark suite:
-
-```bash
-bun run tests/benchmark-suite.ts
-```
-
 ### Linting
 
 ```bash

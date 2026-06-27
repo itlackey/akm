@@ -22,3 +22,9 @@ _debug_agent.ts
 /docs/example-stash/.akm-run/
 today.html
 test.sh
+
+# akm-eval real-query suite is mined from a personal live index.db (PII-ish,
+# non-reproducible). Generate it on demand with gen-real-query-suite.ts; do not
+# commit the output. Keep the dir (.gitkeep) and the generator.
+scripts/akm-eval/cases/real-query/rq-*.json
+scripts/akm-eval/cases/real-query.manifest.json

@@ -187,44 +187,24 @@ The Docker smoke test in `tests/docker/smoke-test.sh` verifies:
 
 ### 4. Benchmark (agent utility)
 
-Run benchmarks after any change to `src/output/`, `src/commands/show.ts`, fixture
-stashes, APPLY directives, or other content that affects what agents see.
+The LLM-provider-driven, multi-seed agent-utility benchmark (`akm-bench`) now
+lives in the standalone repo **[itlackey/akm-bench](https://github.com/itlackey/akm-bench)**.
+Run it from there after any change to `src/output/`, `src/commands/show.ts`,
+APPLY directives, or other content that affects what agents see.
 
-Benches are run via config files under `tests/bench/configs/`. Set `BENCH_OPENCODE_MODEL` to the model identifier before running.
-
-**Smoke test** (quick, always before pushing after the above changes):
-
-```sh
-bun run tests/bench/cli.ts tests/bench/configs/nano-quick.json 2>&1 | tee /tmp/bench-nano-$(date +%Y%m%d-%H%M%S).log
-```
-
-5 tasks × 2 seeds, ~10 min.
-
-**Full corpus** (deeper changes or before a release):
+For curate/search ranking quality — which stays in this repo — use the
+deterministic, rank-aware curate benchmark instead (no LLM provider needed):
 
 ```sh
-bun run tests/bench/cli.ts tests/bench/configs/full.json --json > /tmp/bench-full-$(date +%Y%m%d-%H%M%S).json
+# Single scorecard for the current source
+scripts/akm-eval/bin/akm-eval-curate-bench --akm "bun src/cli.ts"
+
+# Compare two checkouts and fail on a per-case regression
+scripts/akm-eval/bin/akm-eval-curate-bench \
+  --akm "bun /path/to/baseline/src/cli.ts" --compare "bun src/cli.ts" --fail-on-regression
 ```
 
-40 tasks × 5 seeds, ~2–3 hours.
-
-**Targeted batch** (fixing specific tasks):
-
-Add a new JSON config to `tests/bench/configs/` following the schema in
-`tests/bench/configs/bench-run-config.schema.json`, then run it the same way.
-See `tests/bench/BENCH.md` for full config-file documentation.
-
-**Reading results**: stderr shows `[N/total] task-id arm pass|fail Xs` per run;
-final lines show per-task pass rate and overall. Look for regressions vs baseline.
-
-**Fixture validity**: stash assets must teach HOW (YAML syntax, flags, schema),
-not WHAT (task-specific values). Review new content before committing.
-
-**Doctor check** (if harness was recently modified):
-
-```sh
-bun run tests/bench/doctor.ts
-```
+See `docs/technical/curate-performance-evals.md` and `docs/akm-eval.md`.
 
 ## Recommended Workflow
 

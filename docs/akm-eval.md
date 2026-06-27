@@ -56,6 +56,14 @@ scores the result set against:
 Tells you whether retrieval finds the right things for the queries you
 care about.
 
+> **Retrieval vs. curate.** This runner shells out to `akm search`, which does
+> NOT exercise curate's fallback-merge + selector stages (where the "keyword
+> leapfrog" bug lived), and it scores set-membership (recall), not rank — so a
+> junk hit ranked above a good hit still scores 1.0. For rank-aware, hybrid-path
+> curate measurement that is reproducible across versions, use the deterministic
+> **curate benchmark**: `scripts/akm-eval/bin/akm-eval-curate-bench` (see
+> `docs/technical/curate-performance-evals.md`).
+
 ### Proposal quality
 
 Reads the proposal queue from `state.db` (or
@@ -426,6 +434,14 @@ drop reasons (`too-short`, `synthetic-probe`, `free-text-prompt`,
 `no-engaged-refs`, `below-max-cases-cutoff`). The manifest is written
 **outside** the suite dir because the orchestrator parses every `*.json`
 under a suite dir as a case.
+
+> **The generated `rq-*.json` output is NOT committed** (gitignored). It is
+> mined from a personal live `index.db` — PII-ish and non-reproducible on
+> another machine — so it is a local, on-demand *trend* tool, not a portable
+> benchmark. For a reproducible cross-version corpus benchmark, use the frozen,
+> synthetic, deterministic curate benchmark instead (`akm-eval-curate-bench`;
+> `docs/technical/curate-performance-evals.md`). Regenerate the local suite with
+> the command above whenever you want a fresh trend snapshot.
 
 This suite is the **corpus-quality benchmark**: its aggregate score, tracked
 across runs, is the "did retrieval get better or worse" signal. Pass

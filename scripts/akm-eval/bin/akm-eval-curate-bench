@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# akm-eval-curate-bench — reproducible rank-aware curate benchmark.
+#
+# Thin wrapper around scripts/akm-eval/src/curate-bench.ts.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/curate-bench.ts" "$@"

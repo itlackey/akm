@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { writeFileAtomic } from "../../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../../core/config/config";
 import { getCacheDir, getSemanticStatusPath } from "../../core/paths";
+import { DETERMINISTIC_EMBED_MODEL_ID, isDeterministicEmbedEnabled } from "../../llm/embedders/deterministic";
 import { DEFAULT_LOCAL_MODEL } from "../../llm/embedders/local";
 
 export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "ready-vec" | "blocked";
@@ -38,6 +39,9 @@ export interface SemanticSearchStatus {
 }
 
 export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectionConfig): string {
+  if (isDeterministicEmbedEnabled()) {
+    return `deterministic:${DETERMINISTIC_EMBED_MODEL_ID}`;
+  }
   if (embedding?.endpoint) {
     return `remote:${embedding.endpoint}|${embedding.model}|${embedding.dimension ?? "default"}`;
   }

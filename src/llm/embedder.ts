@@ -24,6 +24,11 @@
 
 import type { EmbeddingConnectionConfig } from "../core/config/config";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "./embedders/cache";
+import {
+  DETERMINISTIC_EMBED_MODEL_ID,
+  deterministicEmbed,
+  isDeterministicEmbedEnabled,
+} from "./embedders/deterministic";
 import { DEFAULT_LOCAL_MODEL, isTransformersAvailable, LocalEmbedder } from "./embedders/local";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
@@ -75,6 +80,11 @@ export async function embed(
   embeddingConfig?: EmbeddingConnectionConfig,
   signal?: AbortSignal,
 ): Promise<EmbeddingVector> {
+  // Deterministic mode (env-gated, test/bench only): model-free, stable.
+  if (isDeterministicEmbedEnabled()) {
+    return deterministicEmbed(text);
+  }
+
   const key = embedCacheKey(text, embeddingConfig);
 
   const cached = getCachedEmbedding(key);
@@ -101,6 +111,11 @@ export async function embedBatch(
   signal?: AbortSignal,
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return [];
+
+  // Deterministic mode (env-gated, test/bench only): model-free, stable.
+  if (isDeterministicEmbedEnabled()) {
+    return texts.map((t) => deterministicEmbed(t));
+  }
 
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
     return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal);
@@ -144,6 +159,7 @@ export { cosineSimilarity } from "./embedders/types";
  *   - No config: use `DEFAULT_LOCAL_MODEL` (the shared singleton model).
  */
 export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionConfig): string {
+  if (isDeterministicEmbedEnabled()) return DETERMINISTIC_EMBED_MODEL_ID;
   if (!embeddingConfig) return DEFAULT_LOCAL_MODEL;
   if (hasRemoteEndpoint(embeddingConfig)) return embeddingConfig.model ?? "remote";
   return embeddingConfig.localModel ?? DEFAULT_LOCAL_MODEL;
@@ -157,6 +173,10 @@ export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionCon
 export async function checkEmbeddingAvailability(
   embeddingConfig?: EmbeddingConnectionConfig,
 ): Promise<EmbeddingCheckResult> {
+  // Deterministic mode (env-gated): always available — no model, no network.
+  if (isDeterministicEmbedEnabled()) {
+    return { available: true };
+  }
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
     try {
       await new RemoteEmbedder(embeddingConfig).embed("test");
