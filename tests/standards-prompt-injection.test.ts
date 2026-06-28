@@ -4,7 +4,7 @@
 
 /**
  * Unit tests for standards PROMPT INJECTION (standards plan,
- * docs/design/standards-wiki-schema-PLAN.md).
+ * docs/archive/standards-wiki-schema-PLAN.md).
  *
  * The resolvers/dispatch are tested in standards-resolvers.test.ts and
  * standards-dispatch.test.ts. THIS file proves that every LLM prompt that

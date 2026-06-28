@@ -1,6 +1,6 @@
 /**
  * Unit tests for the standards dispatch resolver (Step 2 of the
- * standards plan, docs/design/standards-wiki-schema-PLAN.md):
+ * standards plan, docs/archive/standards-wiki-schema-PLAN.md):
  *
  *   resolveStandardsContext(ref, stashRoot) — the single place that selects
  *   which standards feature fires for a write target, mutually exclusively:

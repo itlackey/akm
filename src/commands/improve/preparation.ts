@@ -1684,7 +1684,7 @@ export async function runImprovePreparationStage(args: {
   //    stash-wide), but it is the most faithful comparison possible at cutover and
   //    allows the top-200→below-500 forgetting guard to fire if the formula change
   //    dramatically reorders the candidate pool.
-  //    See docs/design/improve-reconciliation-plan.md §WS-1 step 7 — the stash-wide
+  //    See docs/archive/improve-reconciliation-plan.md §WS-1 step 7 — the stash-wide
   //    ordering was unreconstructable (no prior state.db snapshot), so this candidate-
   //    pool partial reconstruction is the documented resolution for the first-run case.
   //    Emit `improve_salience_first_run` to mark the cutover moment and include the
@@ -1728,7 +1728,7 @@ export async function runImprovePreparationStage(args: {
           // Limitation: this covers only the current-run candidate pool, not the full
           // stash. The stash-wide ordering was never persisted (asset_salience is a new
           // WS-1 table), so this is the most faithful comparison possible at cutover.
-          // See docs/design/improve-reconciliation-plan.md §WS-1 step 7.
+          // See docs/archive/improve-reconciliation-plan.md §WS-1 step 7.
           const reconstructedOldScores = new Map<string, number>();
           for (const ref of salienceMap.keys()) {
             const utility = utilityMap.get(ref) ?? 0;

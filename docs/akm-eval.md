@@ -17,7 +17,7 @@ This page documents Phases 1–7 (read-only deterministic runner, paired
 mode, compare/trend/collect, regression diffing, memory-safety +
 workflow-compliance suites, judge-calibration probe, graph A/B ablation,
 deterministic replay, and optional LLM judging with guardrails). See
-`docs/technical/akm-eval-implementation-plan.md` for the full eight-phase
+`docs/archive/akm-eval-implementation-plan.md` for the full eight-phase
 plan and `scripts/akm-eval/README.md` for the operator quick-start.
 
 ## Quick start
@@ -523,7 +523,7 @@ real PASS/FAIL. Override the compared runs with `--baseline-run <id>` /
 
 ## Status
 
-All eight phases of `docs/technical/akm-eval-implementation-plan.md` are
+All eight phases of `docs/archive/akm-eval-implementation-plan.md` are
 implemented and CI-gated via `.github/workflows/akm-eval-smoke.yml` (Phase 8).
 The smoke suite + deterministic replay + memory-regression suite run on every
 PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
@@ -532,7 +532,7 @@ PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
 
 - [`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md) —
   operator quick-start.
-- [`docs/technical/akm-eval-implementation-plan.md`](technical/akm-eval-implementation-plan.md) —
+- [`docs/archive/akm-eval-implementation-plan.md`](technical/akm-eval-implementation-plan.md) —
   the full eight-phase plan.
 - `akm health` (0.8.0+) — built-in per-improve-run + window analysis
   ([health-command-enhancements.md](technical/health-command-enhancements.md)).

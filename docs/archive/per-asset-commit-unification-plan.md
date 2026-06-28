@@ -1,6 +1,6 @@
 # Per-Asset Commit → Batch-at-Boundary Unification (0.9.0)
 
-Status: deferred follow-on (does NOT block 0.8.x)
+Status: ✅ Shipped in 0.9.0 (#507 — per-asset commit path retired; see src/core/write-source.ts).
 Origin: `docs/technical/improve-autosync-investigation.md` §"Per-asset commit: can/should we remove it?"
 
 ## Problem
