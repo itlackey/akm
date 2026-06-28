@@ -31,7 +31,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
-import { resolveAkmInvocation } from "../resolveAkmBin";
+import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { parseSchedule, translateToCron } from "../schedule";
 import type { TaskDocument } from "../schema";
 import type { InstalledTaskRef, TaskBackend } from "./index";

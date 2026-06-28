@@ -278,6 +278,3 @@ export async function runOpencodeSdk(
     await client.session.delete({ path: { id: sessionId } }).catch(() => {});
   }
 }
-
-/** @deprecated Use {@link runOpencodeSdk} instead. */
-export const runAgentSdk = runOpencodeSdk;

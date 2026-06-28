@@ -160,7 +160,7 @@ export interface StashFile {
   warnings?: string[];
 }
 
-export interface LegacyStashLoadOptions {
+export interface LoadStashFileOptions {
   requireFilename?: boolean;
 }
 
@@ -217,7 +217,7 @@ export function stashFilePath(dirPath: string): string {
   return path.join(dirPath, STASH_FILENAME);
 }
 
-export function loadStashFile(dirPath: string, options?: LegacyStashLoadOptions): StashFile | null {
+export function loadStashFile(dirPath: string, options?: LoadStashFileOptions): StashFile | null {
   const filePath = stashFilePath(dirPath);
   if (!fs.existsSync(filePath)) return null;
   try {

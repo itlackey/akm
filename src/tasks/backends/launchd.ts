@@ -29,7 +29,7 @@ import path from "node:path";
 import launchdTemplate from "../../assets/backends/launchd-template.xml" with { type: "text" };
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
-import { resolveAkmInvocation } from "../resolveAkmBin";
+import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../schedule";
 import type { TaskDocument } from "../schema";
 import { escapeXml, nodeExec, nodeFs } from "./exec-utils";

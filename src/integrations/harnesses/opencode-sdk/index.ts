@@ -6,7 +6,7 @@
  * OpenCode SDK harness (#564).
  *
  * Per-harness barrel for the SDK-mode dispatch path:
- *   - agent runner → ./sdk-runner.ts (runOpencodeSdk / runAgentSdk)
+ *   - agent runner → ./sdk-runner.ts (runOpencodeSdk)
  *
  * It also defines {@link OpencodeSdkHarness}, the {@link AkmHarness} descriptor
  * that `HARNESS_REGISTRY` registers.
@@ -20,7 +20,7 @@
 
 import { BaseHarness, type HarnessCapabilities } from "../types";
 
-export { closeServer, runAgentSdk, runOpencodeSdk } from "./sdk-runner";
+export { closeServer, runOpencodeSdk } from "./sdk-runner";
 
 function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
   return {

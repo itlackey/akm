@@ -69,11 +69,6 @@ export function isRemoteUrl(value: string | undefined): boolean {
   );
 }
 
-export function filterNonEmptyStrings(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
-}
-
 // ── Validators ──────────────────────────────────────────────────────────────
 
 /**

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs, type TaskLogRow } from "../src/core/logs-db";
 import type { AgentRunResult } from "../src/integrations/agent";
-import { resolveAkmInvocation } from "../src/tasks/resolveAkmBin";
+import { resolveAkmInvocation } from "../src/tasks/resolve-akm-bin";
 import { exitCodeForStatus, readTaskHistory, runTask } from "../src/tasks/runner";
 
 type FakeWorkflowRunner = (

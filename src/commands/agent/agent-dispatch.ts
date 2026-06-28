@@ -24,7 +24,7 @@ import type { AgentConfig } from "../../integrations/agent/config";
 import { requireAgentProfile } from "../../integrations/agent/config";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
 import { runAgent } from "../../integrations/agent/spawn";
-import { runAgentSdk } from "../../integrations/harnesses/opencode-sdk";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 
 export interface AkmAgentDispatchOptions {
   profileName: string;
@@ -140,7 +140,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
     ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
   };
   const result: AgentRunResult = profile.sdkMode
-    ? await runAgentSdk(profile, prompt ?? "", runOptions, options.llmConfig)
+    ? await runOpencodeSdk(profile, prompt ?? "", runOptions, options.llmConfig)
     : await runAgent(profile, prompt, runOptions);
 
   return {

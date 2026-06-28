@@ -37,7 +37,7 @@ import path from "node:path";
 import schtasksTemplate from "../../assets/backends/schtasks-template.xml" with { type: "text" };
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
-import { resolveAkmInvocation } from "../resolveAkmBin";
+import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../schedule";
 import type { TaskDocument } from "../schema";
 import { escapeXml, nodeExec, nodeFs } from "./exec-utils";

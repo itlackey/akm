@@ -31,7 +31,7 @@ import {
 } from "../../integrations/agent";
 import { resolveProcessAgentProfile } from "../../integrations/agent/config";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
-import { runAgentSdk } from "../../integrations/harnesses/opencode-sdk";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import {
   baseFailureFields,
   enoentHintMessage,
@@ -210,7 +210,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
     };
     result = profile.sdkMode
-      ? await runAgentSdk(profile, prompt ?? "", runOptions)
+      ? await runOpencodeSdk(profile, prompt ?? "", runOptions)
       : await runAgent(profile, prompt, runOptions);
   }
 

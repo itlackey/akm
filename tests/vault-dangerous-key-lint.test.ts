@@ -13,13 +13,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmLint } from "../src/commands/lint";
 import {
   checkVaultForDangerousKeys,
   DANGEROUS_VAULT_KEY_PATTERNS,
   DANGEROUS_VAULT_KEYS,
   isDangerousVaultKey,
 } from "../src/commands/lint/env-key-rules";
+import { akmLint } from "../src/commands/lint/index";
 
 // ── Temp dir helpers ──────────────────────────────────────────────────────────
 
