@@ -34,6 +34,15 @@ describe("built-in profile resolution", () => {
     expect(merged?.envPassthrough).toContain("PATH"); // built-in retained
   });
 
+  test("user-configured timeoutMs override is honored (config-only timeout, no CLI flag)", async () => {
+    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
+    // profiles.agent.<name>.timeoutMs must flow onto the resolved profile so
+    // runAgent (spawn.ts) picks it up when no per-call timeout is passed —
+    // e.g. `akm wiki ingest` without `--timeout-ms`.
+    const merged = resolveAgentProfile("opencode", { platform: "opencode", timeoutMs: 6_000_000 });
+    expect(merged?.timeoutMs).toBe(6_000_000);
+  });
+
   test("user-defined profile (no built-in) requires bin", async () => {
     const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
     expect(resolveAgentProfile("rover", undefined)).toBeUndefined();
