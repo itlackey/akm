@@ -308,21 +308,34 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
   });
 });
 
-// ── #462: registries/sources reject unknown fields at set time ──────────────
-
-describe("registries/sources reject unknown fields at set time (#462)", () => {
-  test("set sources rejects an unknown field on a source entry", () => {
+// ── #462 (relaxed): unknown fields on sources/registries are tolerated ───────
+// The config-wide unknown-key policy is now lenient (passthrough) so cross-
+// version config skew never becomes INVALID_CONFIG_FILE. That also relaxes the
+// #462 strict typo-catching on source/registry entries: unknown fields are now
+// preserved rather than rejected. Known fields are still type-validated.
+describe("registries/sources tolerate unknown fields at set time (lenient policy)", () => {
+  test("set sources tolerates and preserves an unknown field on a source entry", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
-    expect(() =>
-      setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git","secret":"oops"}]'),
-    ).toThrow(/Unrecognized key/);
+    const updated = setConfigValue(
+      base,
+      "sources",
+      '[{"type":"git","name":"x","url":"https://example.com/r.git","secret":"oops"}]',
+    );
+    const src = (updated.sources?.[0] ?? {}) as Record<string, unknown>;
+    expect(src.name).toBe("x");
+    expect(src.secret).toBe("oops"); // preserved, not rejected
   });
 
-  test("set registries rejects an unknown field on a registry entry", () => {
+  test("set registries tolerates and preserves an unknown field on a registry entry", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
-    expect(() =>
-      setConfigValue(base, "registries", '[{"name":"x","url":"https://example.com/r.json","secret":"oops"}]'),
-    ).toThrow(/Unrecognized key/);
+    const updated = setConfigValue(
+      base,
+      "registries",
+      '[{"name":"x","url":"https://example.com/r.json","secret":"oops"}]',
+    );
+    const reg = (updated.registries?.[0] ?? {}) as Record<string, unknown>;
+    expect(reg.name).toBe("x");
+    expect(reg.secret).toBe("oops");
   });
 });
 

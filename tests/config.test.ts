@@ -772,7 +772,9 @@ describe("search config", () => {
     expect(() => loadConfig()).toThrow(/maxHops/);
   });
 
-  test("rejects unknown search.graphBoost keys (typos surface at load time)", () => {
+  test("tolerates unknown search.graphBoost keys (lenient unknown-key policy)", () => {
+    // Lenient policy: unknown keys are preserved, not rejected — cross-version
+    // config skew must not become INVALID_CONFIG_FILE. Known keys still validate.
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
@@ -785,8 +787,10 @@ describe("search config", () => {
       }),
     );
 
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/unsupportedNested/);
+    expect(() => loadConfig()).not.toThrow();
+    const gb = loadConfig().search?.graphBoost as Record<string, unknown>;
+    expect(gb.maxHops).toBe(2);
+    expect(gb.unsupportedNested).toBe("x");
   });
 });
 
