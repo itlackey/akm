@@ -234,6 +234,21 @@ describe("WebsiteSourceProvider", () => {
             },
           );
         }
+        if (url.includes("youtubei/v1/player")) {
+          // ANDROID InnerTube player returns ungated caption tracks.
+          return new Response(
+            JSON.stringify({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [
+                    { baseUrl: "https://www.youtube.com/api/timedtext?v=abc123&lang=en", languageCode: "en" },
+                  ],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {
           return new Response(
             '<transcript><text start="0" dur="1">Hello &amp; welcome</text><text start="1" dur="1">Second line</text></transcript>',
@@ -272,11 +287,71 @@ describe("WebsiteSourceProvider", () => {
             },
           );
         }
+        if (url.includes("youtubei/v1/player")) {
+          // ANDROID InnerTube player returns ungated caption tracks.
+          return new Response(
+            JSON.stringify({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [
+                    { baseUrl: "https://www.youtube.com/api/timedtext?v=abc123&lang=en", languageCode: "en" },
+                  ],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {
           return new Response("<transcript><text>Transcript body</text></transcript>", {
             status: 200,
             headers: { "Content-Type": "application/xml; charset=utf-8" },
           });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+  });
+
+  test("built-in YouTube fetcher parses format-3 <p> timedtext (the InnerTube shape)", async () => {
+    await withMockedFetch(
+      async () => {
+        const snapshot = await fetchWebsiteMarkdownSnapshot("https://www.youtube.com/watch?v=abc123");
+        expect(snapshot.content).toContain("## Transcript");
+        expect(snapshot.content).toContain("Never gonna give you up");
+        expect(snapshot.content).toContain("Never gonna let you down");
+        expect(snapshot.content).toContain('  - "transcript"');
+      },
+      (url) => {
+        if (url === "https://www.youtube.com/watch?v=abc123") {
+          return new Response(
+            '<html><body><script>var ytInitialPlayerResponse = {"videoDetails":{"title":"Fmt3","shortDescription":"d"}};</script></body></html>',
+            { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
+          );
+        }
+        if (url.includes("youtubei/v1/player")) {
+          return new Response(
+            JSON.stringify({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [
+                    { baseUrl: "https://www.youtube.com/api/timedtext?v=abc123&lang=en", languageCode: "en" },
+                  ],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {
+          // Real ANDROID InnerTube caption shape: <timedtext format="3"> with <p> cues.
+          return new Response(
+            '<?xml version="1.0" encoding="utf-8" ?><timedtext format="3"><body>' +
+              '<p t="18640" d="3240">Never gonna give you up</p>' +
+              '<p t="21880" d="3000">Never gonna let you down</p>' +
+              "</body></timedtext>",
+            { status: 200, headers: { "Content-Type": "application/xml; charset=utf-8" } },
+          );
         }
         return new Response("not found", { status: 404 });
       },
@@ -303,6 +378,21 @@ describe("WebsiteSourceProvider", () => {
               status: 200,
               headers: { "Content-Type": "text/html; charset=utf-8" },
             },
+          );
+        }
+        if (url.includes("youtubei/v1/player")) {
+          // ANDROID InnerTube player returns ungated caption tracks.
+          return new Response(
+            JSON.stringify({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [
+                    { baseUrl: "https://www.youtube.com/api/timedtext?v=abc123&lang=en", languageCode: "en" },
+                  ],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
         if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {
@@ -336,6 +426,21 @@ describe("WebsiteSourceProvider", () => {
                 status: 200,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
               },
+            );
+          }
+          if (url.includes("youtubei/v1/player")) {
+            // ANDROID InnerTube player returns ungated caption tracks.
+            return new Response(
+              JSON.stringify({
+                captions: {
+                  playerCaptionsTracklistRenderer: {
+                    captionTracks: [
+                      { baseUrl: "https://www.youtube.com/api/timedtext?v=abc123&lang=en", languageCode: "en" },
+                    ],
+                  },
+                },
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
             );
           }
           if (url === "https://www.youtube.com/api/timedtext?v=abc123&lang=en") {

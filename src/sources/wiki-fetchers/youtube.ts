@@ -26,6 +26,22 @@ type YoutubePlayerResponse = {
 const YOUTUBE_HOSTS = new Set(["www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be"]);
 const WATCH_HOST = "https://www.youtube.com/watch?v=";
 
+// Captions: the WEB watch-page caption baseUrls are now Proof-of-Origin-Token
+// gated (they carry `exp=xpe` and return an empty body without a `pot` token).
+// The ANDROID InnerTube `player` client still returns UNGATED caption baseUrls
+// that serve the transcript, so captions are sourced from there. See
+// https://github.com/yt-dlp/yt-dlp/issues/13075.
+const INNERTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player";
+// Long-stable public InnerTube key; only authorizes the player call (not auth).
+const DEFAULT_INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+const ANDROID_INNERTUBE_CLIENT = {
+  clientName: "ANDROID",
+  clientVersion: "20.10.38",
+  androidSdkVersion: 34,
+  hl: "en",
+  gl: "US",
+} as const;
+
 function extractVideoId(url: URL): string | null {
   if (!YOUTUBE_HOSTS.has(url.hostname)) return null;
   if (url.hostname === "youtu.be") {
@@ -153,11 +169,52 @@ async function fetchText(url: string, timeoutMs: number, signal?: AbortSignal): 
 }
 
 function parseTranscript(xml: string): string | null {
-  const texts = [...xml.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/g)]
-    .map((match) => decodeEntities(stripTags(match[1] ?? "")).trim())
-    .filter(Boolean);
+  // Two timedtext shapes: legacy srv1 `<text>` cues, and the format-3
+  // `<timedtext format="3">` `<p>` cues that the ANDROID InnerTube caption
+  // URLs return. Strip any nested `<s>` word tags via stripTags.
+  const matches = [...xml.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/g), ...xml.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)];
+  const texts = matches.map((match) => decodeEntities(stripTags(match[1] ?? "")).trim()).filter(Boolean);
   if (texts.length === 0) return null;
   return texts.join("\n");
+}
+
+/**
+ * Fetch caption tracks via the ANDROID InnerTube `player` endpoint, whose
+ * caption baseUrls are not POT-gated. Returns [] on any failure so the caller
+ * can fall back to the (usually empty) watch-page tracks and degrade to a
+ * description-only snapshot.
+ */
+async function fetchInnertubeCaptionTracks(
+  videoId: string,
+  apiKey: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<YoutubeCaptionTrack[]> {
+  try {
+    const response = await fetchWithRetry(
+      `${INNERTUBE_PLAYER_URL}?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip",
+        },
+        body: JSON.stringify({ context: { client: ANDROID_INNERTUBE_CLIENT }, videoId }),
+        signal,
+      },
+      { timeout: timeoutMs, retries: 1 },
+    );
+    if (!response.ok) return [];
+    const json = (await response.json()) as YoutubePlayerResponse;
+    return json.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Extract the page's InnerTube API key, falling back to the stable default. */
+function extractInnertubeKey(html: string): string {
+  return html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1] ?? DEFAULT_INNERTUBE_KEY;
 }
 
 const youtubeFetcher: WikiSnapshotFetcher = {
@@ -188,7 +245,14 @@ const youtubeFetcher: WikiSnapshotFetcher = {
       sections.push("## Description", "", description);
     }
 
-    const tracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+    // Prefer ungated ANDROID InnerTube caption tracks; fall back to the
+    // (now usually empty) watch-page tracks so a description-only snapshot
+    // still works when InnerTube is unavailable.
+    const apiKey = extractInnertubeKey(watchHtml);
+    let tracks = await fetchInnertubeCaptionTracks(videoId, apiKey, context.timeoutMs, context.signal);
+    if (tracks.length === 0) {
+      tracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+    }
     const captionUrl = chooseCaptionTrack(tracks);
     if (captionUrl) {
       const transcriptXml = await fetchText(captionUrl, context.timeoutMs, context.signal);
