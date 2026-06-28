@@ -20,9 +20,9 @@ import type { InstalledStashEntry } from "../../registry/types";
 /**
  * Canonical list of valid agent harness / platform ids. Re-exported from the
  * unified harness registry (#562) so the Zod `AgentPlatformSchema` enum, the
- * `AgentProfileConfigV2` platform union, `parseAgentProfilesMapV2`'s membership
- * check, and setup's `DetectedHarness` union all derive from one place and
- * cannot drift. Add a harness in `src/integrations/harnesses/index.ts`.
+ * `AgentProfileConfig` platform union, and setup's `DetectedHarness` union all
+ * derive from one place and cannot drift. Add a harness in
+ * `src/integrations/harnesses/index.ts`.
  */
 export { VALID_HARNESS_IDS };
 
@@ -119,12 +119,18 @@ export interface LlmProfileConfig extends LlmConnectionConfig {
   supportsJsonSchema?: boolean;
 }
 
-export interface AgentProfileConfigV2 {
+export interface AgentProfileConfig {
   platform: HarnessId;
   bin?: string;
   args?: string[];
   workspace?: string;
   model?: string;
+  /**
+   * Per-call timeout (ms) for this agent profile. Used when a command does not
+   * pass an explicit timeout (e.g. `akm wiki ingest` without `--timeout-ms`).
+   * Mirrors `AgentProfileConfigSchema.timeoutMs`. null = no timeout.
+   */
+  timeoutMs?: number | null;
 }
 
 export interface ImproveProcessConfig {
@@ -898,7 +904,7 @@ export interface AkmConfig {
   /** Named LLM and agent profiles. */
   profiles?: {
     llm?: Record<string, LlmProfileConfig>;
-    agent?: Record<string, AgentProfileConfigV2>;
+    agent?: Record<string, AgentProfileConfig>;
     improve?: Record<string, ImproveProfileConfig>;
   };
   /** Default profile names and improve pipeline defaults. */

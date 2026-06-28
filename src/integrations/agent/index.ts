@@ -10,7 +10,7 @@
  * Surface:
  *   • Types: AgentProfile, AgentConfig, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
- *   • Config: parseAgentConfig, resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
+ *   • Config: resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
  *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
@@ -21,15 +21,11 @@
 export { runAgentSdk } from "../harnesses/opencode-sdk";
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
 export { getCommandBuilder } from "./builders";
-export type {
-  AgentConfig,
-  AgentProfileConfig,
-} from "./config";
+export type { AgentConfig } from "./config";
 export {
   DEFAULT_AGENT_TIMEOUT_MS,
   listAgentProfileNames,
   listResolvedAgentProfiles,
-  parseAgentConfig,
   requireAgentProfile,
   resolveAgentProfile,
   resolveDefaultProfileName,

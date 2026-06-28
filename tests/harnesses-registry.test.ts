@@ -46,7 +46,7 @@ describe("HARNESS_REGISTRY membership", () => {
   });
 
   it("config-types re-exports the SAME derived id list (single source of truth)", () => {
-    // The Zod schema, the AgentProfileConfigV2 platform union, and setup's
+    // The Zod schema, the AgentProfileConfig platform union, and setup's
     // DetectedHarness all derive from this exact array.
     expect([...CONFIG_VALID_HARNESS_IDS]).toEqual([...VALID_HARNESS_IDS]);
   });

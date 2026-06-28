@@ -13,14 +13,10 @@
  * No LLM SDK is imported here. The runtime path is shell-out only (see
  * `./spawn.ts`).
  */
-import type { AgentProfileConfigV2, AkmConfig } from "../../core/config/config";
-import { VALID_HARNESS_IDS } from "../../core/config/config";
+import type { AgentProfileConfig, AkmConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { warn } from "../../core/warn";
 import {
-  type AgentParseMode,
   type AgentProfile,
-  type AgentStdioMode,
   BUILTIN_AGENT_PROFILE_NAMES,
   getBuiltinAgentProfile,
   listBuiltinAgentProfiles,
@@ -31,31 +27,6 @@ import {
  * `docs/configuration.md`).
  */
 export const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
-
-/**
- * Persisted form of `profiles.agent[<name>]` after the 0.8.0 migration.
- * Every field is optional so users can override one piece of a built-in
- * without re-stating the rest.
- */
-export interface AgentProfileConfig {
-  bin?: string;
-  args?: string[];
-  stdio?: AgentStdioMode;
-  env?: Record<string, string>;
-  envPassthrough?: string[];
-  timeoutMs?: number;
-  parseOutput?: AgentParseMode;
-  /** Model to use when the platform is opencode-sdk. */
-  model?: string;
-  /** OpenAI-compatible endpoint when platform is opencode-sdk. */
-  endpoint?: string;
-  /** API key when platform is opencode-sdk. */
-  apiKey?: string;
-  /** Override which builder handles argv construction for this profile. */
-  commandBuilder?: string;
-  /** User-defined model aliases for this platform. Keys are lowercase alias strings. */
-  modelAliases?: Record<string, string>;
-}
 
 /**
  * Backwards-compatible alias type. After 0.8.0, the "agent config" lives on
@@ -69,7 +40,7 @@ export type AgentConfig = AkmConfig;
  * user override (`profiles.agent[name]`) on top of the built-in profile (if
  * any). Returns `undefined` when neither yields a usable profile.
  */
-export function resolveAgentProfile(name: string, overrides?: AgentProfileConfigV2): AgentProfile | undefined {
+export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig): AgentProfile | undefined {
   const builtin = getBuiltinAgentProfile(name);
   const platform = overrides?.platform;
   // For opencode-sdk profiles, allow synthesizing without a built-in.
@@ -97,7 +68,12 @@ export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig
     stdio: base.stdio,
     env: base.env,
     envPassthrough: base.envPassthrough,
-    timeoutMs: base.timeoutMs,
+    // Honor a user-configured `profiles.agent.<name>.timeoutMs` override; fall
+    // back to the built-in profile's value. (Previously always used base, so
+    // the documented config override was silently ignored — callers had to pass
+    // a CLI flag like `--timeout-ms`.) runAgent (spawn.ts) reads profile.timeoutMs
+    // when no per-call timeout is supplied, so this makes the config knob work.
+    timeoutMs: overrides.timeoutMs ?? base.timeoutMs,
     parseOutput: base.parseOutput,
     ...(sdkMode ? { sdkMode: true } : {}),
     model: overrides.model ?? base.model,
@@ -206,54 +182,4 @@ export function listResolvedAgentProfiles(config?: AkmConfig): AgentProfile[] {
     if (profile) resolved.push(profile);
   }
   return resolved;
-}
-
-/**
- * Parse the v2 `profiles.agent` map (AgentProfileConfigV2 shape with required
- * `platform` field). Returns a map of profile name → AgentProfileConfigV2.
- */
-export function parseAgentProfilesMapV2(value: unknown): Record<string, AgentProfileConfigV2> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const out: Record<string, AgentProfileConfigV2> = {};
-  // Derives from the canonical harness-id source of truth (#565).
-  const VALID_PLATFORMS = VALID_HARNESS_IDS;
-  for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      warn(`[akm] Ignoring profiles.agent["${name}"]: expected an object.`);
-      continue;
-    }
-    const obj = raw as Record<string, unknown>;
-    if (!VALID_PLATFORMS.includes(obj.platform as (typeof VALID_PLATFORMS)[number])) {
-      warn(
-        `[akm] Ignoring profiles.agent["${name}"]: missing or invalid "platform" (must be one of: ${VALID_PLATFORMS.join(", ")}).`,
-      );
-      continue;
-    }
-    const profile: AgentProfileConfigV2 = {
-      platform: obj.platform as (typeof VALID_PLATFORMS)[number],
-    };
-    if (typeof obj.bin === "string" && obj.bin.trim()) profile.bin = obj.bin.trim();
-    if (Array.isArray(obj.args) && obj.args.every((a) => typeof a === "string")) {
-      profile.args = obj.args as string[];
-    }
-    if (typeof obj.workspace === "string" && obj.workspace.trim()) profile.workspace = obj.workspace.trim();
-    if (typeof obj.model === "string" && obj.model.trim()) profile.model = obj.model.trim();
-    out[name] = profile;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/**
- * Stub kept for source-compat with callers that previously used the v1 agent
- * config parser. After 0.8.0 there is no separate `agent` block to parse — the
- * loaded `AkmConfig` already carries the agent data on `profiles.agent` and
- * `defaults.agent`. This function is a no-op alias for those callers.
- *
- * @deprecated v0.8.0 — the unified `AkmConfig` IS the agent config. Use the
- * profile/defaults accessors above instead.
- */
-export function parseAgentConfig(_value: unknown): AgentConfig | undefined {
-  // No-op: there is no separate agent block in 0.8.0. Callers should pass
-  // their loaded `AkmConfig` directly to `requireAgentProfile` etc.
-  return undefined;
 }
