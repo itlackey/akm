@@ -481,3 +481,29 @@ describe("config audit 0.9.0: previously-drifted knobs are now schema-validated"
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 });
+
+// saveConfig is the whole-config validation gate that runs the cross-field
+// superRefine GUARDS (not just leaf checks). This is what stops an `akm config
+// set` — leaf OR object form — from persisting a guard-violating value (e.g.
+// re-introducing the removed `feedbackDistillation` process key via an
+// object-valued set, which the per-leaf walker schema alone would let through).
+// Lock that the guard fires at save so it can never silently regress.
+describe("config audit 0.9.0: saveConfig runs superRefine guards (object-form set cannot bypass)", () => {
+  test("saveConfig rejects the removed feedbackDistillation process key with the migration hint", () => {
+    expect(() =>
+      saveConfig({
+        semanticSearchMode: "off",
+        profiles: { improve: { default: { processes: { feedbackDistillation: { enabled: true } } } } },
+      } as unknown as AkmConfig),
+    ).toThrow(/feedbackDistillation was removed/);
+  });
+
+  test("saveConfig rejects writable: true on a non-filesystem/git source (superRefine)", () => {
+    expect(() =>
+      saveConfig({
+        semanticSearchMode: "off",
+        sources: [{ type: "website", name: "docs", url: "https://example.com", writable: true }],
+      } as unknown as AkmConfig),
+    ).toThrow(ConfigError);
+  });
+});
