@@ -1,6 +1,6 @@
 # AKM Standards — Final Implementation Plan (two separate features)
 
-Status: build-ready. Supersedes the prior drafts and `docs/design/standards-wiki-schema-DRAFT-INPUT.md`.
+Status: ✅ Shipped in 0.9.0 (`src/core/standards/`). Supersedes the prior drafts and `docs/design/standards-wiki-schema-DRAFT-INPUT.md`.
 
 ## The central correction: these are TWO features, not one
 

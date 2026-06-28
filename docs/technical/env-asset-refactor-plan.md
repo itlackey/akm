@@ -1,6 +1,6 @@
 # Implementation Plan: `vault` → `env` asset type refactor (0.8.0)
 
-> Status: proposed. Derived from the multi-agent design debate (see synthesis in
+> Status: ✅ Shipped in 0.9.0 (`vault` removed; `env`/`secret` asset types live). Derived from the multi-agent design debate (see synthesis in
 > the workflow transcript). Decisions locked by the repo owner:
 >
 > - **Scope:** full rename now (new `env` type + `vault` deprecation shim + copy-migration in 0.8.0).
