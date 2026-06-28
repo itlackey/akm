@@ -1,5 +1,5 @@
 /**
- * RED contract test for the `callStructured<T>()` seam (X2).
+ * Contract tests for the `callStructured<T>()` seam (X2).
  *
  * `callStructured` centralizes the replicated
  *   `tryLlmFeature -> chatCompletion -> classify(context/html/other) ->
@@ -16,8 +16,8 @@
  *   6. UNGATED (akmConfig === undefined) throw -> error PROPAGATES (rejects)
  *   7. `onRetryAttempt` is forwarded into the chat call options
  *
- * The seam does NOT exist yet — this import MUST fail to resolve / the calls
- * MUST throw, proving RED.
+ * Verifies the callStructured seam's observable wiring (gated success/failure,
+ * context-size + html error handling, ungated propagation, retry forwarding).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -39,7 +39,7 @@ const MESSAGES: ChatMessage[] = [
 // (FEATURE_LOCATION default is `?? true`). Used as the GATED akmConfig.
 const GATED: AkmConfig = {} as AkmConfig;
 
-describe("callStructured contract (RED)", () => {
+describe("callStructured contract", () => {
   test("(1) gated success -> parse runs on raw, returns T", async () => {
     let parsedRaw: string | undefined = "UNSET";
     const result = await callStructured<{ ok: boolean; raw?: string }>({

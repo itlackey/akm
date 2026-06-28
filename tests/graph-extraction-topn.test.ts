@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// #624 P2 (RED): TDD failing tests for utility-ranked, top-N-capped graph
-// extraction. The feature does not exist yet — these tests assert the target
-// behavior of the new `rankCandidatesByUtility` helper and the `topN` option
-// on GraphExtractionPassOptions. They MUST fail now (helper unexported / option
-// untyped) for the RIGHT reason: the feature is absent.
+// #624 P2: tests for utility-ranked, top-N-capped graph extraction —
+// the `rankCandidatesByUtility` helper and the `topN` option on
+// GraphExtractionPassOptions.
 //
 // DEFAULT-PRESERVING invariant (#624 mandate): with topN unset, ranking is
 // never invoked and the eligible set is byte-identical to today.
@@ -22,11 +20,8 @@ import { collectEligibleFiles } from "../src/indexer/graph/graph-extraction";
 
 type Candidate = { absPath: string; type: string; body: string };
 
-// The new helper under test — exported from graph-extraction.ts once P2 lands.
-// Accessed via the namespace so this test file LOADS even while the named
-// export is absent (Bun ESM aborts the whole file on a missing named import);
-// each test then fails individually on the absent feature, which is the RIGHT
-// RED reason. After P2 the cast resolves to the real function.
+// `rankCandidatesByUtility` is exported from graph-extraction.ts. Accessed via
+// the namespace import for ESM-safety; the cast resolves to the real function.
 const rankCandidatesByUtility = (
   graphExtraction as unknown as {
     rankCandidatesByUtility: (db: Database, candidates: Candidate[], stashRoot: string) => Candidate[];

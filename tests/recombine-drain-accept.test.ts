@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * RED tests for Phase 2: recombine drain-accept path via requireType filter.
+ * Tests for the recombine drain-accept path via requireType filter (Phase 2, #624).
  *
  * Covers:
  *   (a) recombine type:lesson proposal within diff band → ACCEPTED by PERSONAL_STASH

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #626 — extract session-triage pre-LLM heuristic gate (RED step).
+ * #626 — extract session-triage pre-LLM heuristic gate (scoreSessionTriage, wired in extract.ts).
  *
  * A pure, deterministic heuristic scorer (`scoreSessionTriage`) decides — BEFORE
  * the extraction LLM call — whether a session carries enough signal to be worth
@@ -21,8 +21,8 @@
  * commits) with NO narrative-lesson markers must still PASS — the procedural
  * sub-scores alone clear the bar so ordered-action data is never dropped.
  *
- * These tests import the not-yet-existing `triage.ts` module and assert behaviour
- * not yet wired into extract.ts — they MUST fail now (RED).
+ * These tests drive the triage.ts module (scoreSessionTriage, resolveTriageConfig)
+ * and its integration in extract.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -40,7 +40,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/
 
 const TIMEOUT_MS = 20_000;
 
-// ── Triage module (does not exist yet — RED step) ──────────────────────────────
+// ── Triage module (src/commands/improve/triage.ts) ─────────────────────────────
 //
 // Imported dynamically inside each unit test so the missing module only fails
 // the UNIT tests; the INTEGRATION tests below drive the real `akmExtract` and

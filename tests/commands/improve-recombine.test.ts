@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #609 — recombine / synthesize pass (RED — feature not yet implemented).
+ * #609 — recombine / synthesize pass (src/commands/improve/recombine.ts).
  *
  * The recombine pass is a whole-corpus synthesis stage that runs AFTER
  * consolidation and is OPT-IN (default disabled via IMPROVE_PROCESS_DEFAULTS).
@@ -14,9 +14,7 @@
  * proposal queue + quality gate. A justified null (no defensible
  * generalization) is an acceptable outcome and produces no proposal.
  *
- * Contract under test (the planned API surface — these imports/behaviours do
- * not exist yet, so every assertion here is expected to FAIL until the feature
- * lands):
+ * Contract under test (the recombine API surface):
  *   - `akmRecombine(opts)` from `src/commands/improve/recombine.ts` returns a
  *     `RecombineResult` and accepts an injected `recombineLlmFn` seam.
  *   - `resolveProcessEnabled("recombine", profile)` is `false` by default.
@@ -33,7 +31,7 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
-// NOTE: this module does not exist yet — the RED import is intentional.
+// Imported from the module under test (now shipped).
 import { akmRecombine } from "../../src/commands/improve/recombine";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
 import { listProposals } from "../../src/commands/proposal/validators/proposals";

@@ -13,9 +13,8 @@
  * injected signalSource and asserts the terminated-run row is persisted BEFORE
  * the injected exit is called, with the exit code that matches the signal.
  *
- * It must FAIL today because `runImproveSession` does not exist yet — the
- * lifecycle is trapped inside `improveCommand.run` and only reachable by
- * spawning a process and sending it a real OS signal.
+ * Drives `runImproveSession` (src/commands/improve/improve-session.ts) in-process
+ * so the terminated-run persistence is testable without spawning a real signal.
  */
 
 import { describe, expect, test } from "bun:test";

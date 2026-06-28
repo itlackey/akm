@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * RED tests for #641 — triage: procedural-aware floor (opt-in, sequenced last).
+ * Tests for #641 — triage: procedural-aware floor (opt-in, sequenced last).
  *
  * The feature adds a `proceduralAwareFloor` option to `TriageConfig`. When
  * enabled, a session PASSES if and only if:
@@ -20,8 +20,8 @@
  * the pre-#641 implementation.
  *
  * All tests are UNIT-tier: pure functions only, no Bun.spawn/Bun.serve,
- * no timeouts >= 60s. Every test is expected to FAIL until the implementation
- * lands in src/commands/improve/triage.ts.
+ * All tests are UNIT-tier: pure functions only, no Bun.spawn/Bun.serve,
+ * no timeouts >= 60s. They drive src/commands/improve/triage.ts.
  *
  * Acceptance cases:
  *   1. (floor enabled) low-signal read-only Q&A (score passes, markers=0,
@@ -278,7 +278,7 @@ describe("#641 — procedural-aware floor: enabled path", () => {
     //   editCommit = 0 (no file edits, no commit events)
     // With the procedural-aware floor enabled, the session must FAIL (pass=false).
     //
-    // FAILS in RED state: scoreSessionTriage ignores the third config argument
+    // Verifies a low-signal read-only session is triaged out when the floor is enabled.
     // and returns pass=true for this session (score >= DEFAULT_TRIAGE_MIN_SCORE).
     const data = lowSignalReadonlySession("low-signal-1");
 
@@ -299,8 +299,7 @@ describe("#641 — procedural-aware floor: enabled path", () => {
 
   test("2: session with markers >= 1 (no edits) PASSES when floor enabled", () => {
     // markers >= 1 satisfies the OR condition → pass=true even with floor enabled.
-    // FAILS in RED state IF the third arg is rejected or if the floor incorrectly
-    // rejects sessions with markers >= 1.
+    // Verifies markers >= 1 satisfies the OR condition (the floor accepts it).
     const data = markerOnlySession("marker-only-2");
     const result = scoreWithFloor(data, DEFAULT_TRIAGE_MIN_SCORE);
 
@@ -310,7 +309,7 @@ describe("#641 — procedural-aware floor: enabled path", () => {
 
   test("3: session with editCommit >= 0.5 (no markers) PASSES when floor enabled", () => {
     // editCommit >= 0.5 satisfies the OR condition → pass=true even with floor enabled.
-    // FAILS in RED state IF the floor incorrectly rejects sessions with edits.
+    // Verifies editCommit >= 0.5 satisfies the OR condition (the floor accepts it).
     const data = editOnlySession("edit-only-3");
     const result = scoreWithFloor(data, DEFAULT_TRIAGE_MIN_SCORE);
 
@@ -320,7 +319,7 @@ describe("#641 — procedural-aware floor: enabled path", () => {
 
   test("4: session with BOTH markers >= 1 AND editCommit >= 0.5 PASSES when floor enabled", () => {
     // Both conditions met — definitively passes the floor.
-    // FAILS in RED state IF the floor logic has any bug that rejects good sessions.
+    // Verifies a session meeting both conditions definitively passes the floor.
     const data = markerAndEditSession("marker-edit-4");
     const result = scoreWithFloor(data, DEFAULT_TRIAGE_MIN_SCORE);
 
@@ -350,7 +349,7 @@ describe("#641 — resolveTriageConfig: proceduralAwareFloor field", () => {
   test("6: resolveTriageConfig returns proceduralAwareFloor:false when absent", () => {
     // The resolved config must always include proceduralAwareFloor.
     // When the field is not in the user config, it defaults to false (DEFAULT OFF).
-    // FAILS in RED state: resolveTriageConfig does not return proceduralAwareFloor.
+    // Verifies resolveTriageConfig defaults proceduralAwareFloor to false when absent.
     const resolved = resolveTriageConfig({ triage: { enabled: true } });
     expect((resolved as { proceduralAwareFloor?: boolean }).proceduralAwareFloor).toBe(false);
   });
@@ -358,7 +357,7 @@ describe("#641 — resolveTriageConfig: proceduralAwareFloor field", () => {
   test("7: resolveTriageConfig returns proceduralAwareFloor:true when set", () => {
     // When the user sets proceduralAwareFloor: true, the resolved config must
     // reflect it so the caller (e.g. akmExtract) can gate the behavior.
-    // FAILS in RED state: resolveTriageConfig ignores the field.
+    // Verifies resolveTriageConfig returns proceduralAwareFloor:true when set.
     const resolved = resolveTriageConfig({
       triage: { enabled: true, proceduralAwareFloor: true } as TriageConfig,
     });

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #628 RED tests: configurable SQLite journal mode (AKM_SQLITE_JOURNAL_MODE)
+ * #628 — configurable SQLite journal mode (AKM_SQLITE_JOURNAL_MODE)
  * with optional network-filesystem auto-fallback (WAL → DELETE).
  *
  * These tests pin the contract for src/storage/sqlite-pragmas.ts (the new

@@ -26,10 +26,10 @@
  *   AC4 — budget gate: a cycle is NOT started once remainingBudgetMs is exhausted.
  *   AC5 — result.cyclesRun reports the number of cycles executed (>1).
  *
- * RED step (#616, TDD step 1): the seam options `maxCycles`,
+ * #616 bounded multi-cycle phasing seam: the options `maxCycles`,
  * `collectEligibleRefsFn`, `runImprovePreparationStageFn`,
- * `runImproveLoopStageFn`, `runImprovePostLoopStageFn` and the result field
- * `cyclesRun` do NOT exist yet — these tests are expected to FAIL.
+ * `runImproveLoopStageFn`, `runImprovePostLoopStageFn`, and the result field
+ * `cyclesRun`.
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";

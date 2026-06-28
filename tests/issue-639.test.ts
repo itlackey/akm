@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * RED tests for #639 — reflect: deterministic semantic-value-floor + paired
+ * Tests for #639 — reflect: deterministic semantic-value-floor + paired
  * minConfidence gate.
  *
  * Part A: 'low-value' tier in reflect-noise.ts
@@ -137,20 +137,17 @@ Other prose line unchanged here.
 
 describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
   test("A1: ~2-line prose rewrite with few changed tokens => 'low-value'", () => {
-    // The 'low-value' classification does not exist yet — classifyReflectChange
-    // currently only returns 'noop' | 'cosmetic' | 'substantive'. The return
-    // type ReflectChangeKind does not include 'low-value'. This test FAILS
-    // because the current implementation returns 'substantive', not 'low-value'.
+    // Verifies a ~2-line prose rewrite with few changed tokens is classified
+    // 'low-value' by classifyReflectChange.
     const result = classifyReflectChange(PROSE_REWRITE_SOURCE, PROSE_REWRITE_CANDIDATE);
     expect(result).toBe("low-value" as ReflectChangeKind);
   });
 
   test("A2: one-word negation/flag-correction is EXEMPT and classified as 'substantive'", () => {
     // Even though only ~2 words change, negation is a semantically significant
-    // flag-correction and must bypass the low-value filter. This test will PASS
-    // in RED state IF the low-value tier is not implemented yet (returns 'substantive'
-    // always). Once A1 is implemented, A2 verifies the exemption logic is correct.
-    // We list it here to make the exemption contract explicit.
+    // Even though only ~2 words change, negation is a semantically significant
+    // flag-correction and is EXEMPT from the low-value filter — it stays
+    // 'substantive'. Makes the exemption contract explicit.
     const result = classifyReflectChange(NEGATION_SOURCE, NEGATION_CANDIDATE);
     expect(result).toBe("substantive");
   });
@@ -167,7 +164,7 @@ describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
   test("A4: frontmatter-only value change is EXEMPT from low-value token count", () => {
     // Frontmatter value changes are exempt — they land in 'substantive' even
     // if only a few words change, because description/when_to_use are semantic.
-    // This test PASSES in RED state (current impl returns 'substantive').
+    // Verifies the frontmatter-value-change exemption is preserved.
     // Once A1 lands, verifies the exemption is preserved.
     const result = classifyReflectChange(FM_VALUE_SOURCE, FM_VALUE_CANDIDATE);
     expect(result).toBe("substantive");
