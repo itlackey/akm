@@ -1,6 +1,6 @@
 # AKM `src/` Reorganization Plan — Architectural Decision
 
-**Status:** PROPOSED (design only; no files moved)
+**Status:** PARTIALLY EXECUTED (2026-06, D-series) — `commands/improve/`, `commands/proposal/`, `commands/graph/`, `commands/env/` slices moved; kernel/indexer nesting still pending.
 **Branch context:** `release/0.9.0`, post-#490 (COMPLETE)
 **Author role:** Lead architect adjudication of three proposed layouts (A: pure vertical slice, B: refined layered, C: pragmatic hybrid)
 **Controlling precedent:** `docs/technical/490-refactor-plan.md` (COMPLETE) — this plan builds on it and must not undo it.

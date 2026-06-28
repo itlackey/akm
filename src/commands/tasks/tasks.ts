@@ -22,7 +22,7 @@ import { listAgentProfileNames } from "../../integrations/agent";
 import { resolveAssetPath } from "../../sources/resolve";
 import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
 import { parseTaskDocument } from "../../tasks/parser";
-import { resolveAkmInvocation } from "../../tasks/resolveAkmBin";
+import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from "../../tasks/runner";
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../../tasks/schedule";
 import type { TaskDocument } from "../../tasks/schema";

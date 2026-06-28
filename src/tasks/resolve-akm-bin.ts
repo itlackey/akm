@@ -65,8 +65,8 @@ export function resolveAkmInvocation(
 /**
  * From the URL of a module inside `src/tasks/` figure out the CLI entry.
  *
- *   • dev      `…/src/tasks/resolveAkmBin.ts`   → `…/src/cli.ts`
- *   • build    `…/dist/tasks/resolveAkmBin.js`  → `…/dist/cli.js`
+ *   • dev      `…/src/tasks/resolve-akm-bin.ts`   → `…/src/cli.ts`
+ *   • build    `…/dist/tasks/resolve-akm-bin.js`  → `…/dist/cli.js`
  */
 function resolveCliEntry(moduleUrl: string): string | undefined {
   let modulePath: string;

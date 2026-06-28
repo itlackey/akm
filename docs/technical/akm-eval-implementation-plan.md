@@ -35,7 +35,7 @@ The proposal writes eval cases to `.akm/evals/cases/`. `release/0.8.0`
 already uses `<stash>/.akm/eval-cases/` for a different purpose: the
 improve loop auto-writes a `<slug>.md` file there every time a
 `distill_quality_rejected` or `proposal_rejected` event fires
-(`src/commands/eval-cases.ts`, called from `src/commands/improve.ts`
+(`src/commands/improve/eval-cases.ts`, called from `src/commands/improve/improve.ts`
 lines 2088 and 2104; surfaced in the run envelope as `evalCasesWritten`).
 Those files are **automatically captured regression cases**, not
 human-authored eval cases. To avoid confusion:

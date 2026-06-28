@@ -17,14 +17,13 @@
 
 import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import type { LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import type { AgentDispatchRequest } from "../../integrations/agent/builders";
-import type { AgentConfig } from "../../integrations/agent/config";
 import { requireAgentProfile } from "../../integrations/agent/config";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
 import { runAgent } from "../../integrations/agent/spawn";
-import { runAgentSdk } from "../../integrations/harnesses/opencode-sdk";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 
 export interface AkmAgentDispatchOptions {
   profileName: string;
@@ -32,7 +31,7 @@ export interface AkmAgentDispatchOptions {
   commandRef?: string;
   workflowRef?: string;
   args?: string[];
-  agentConfig?: AgentConfig;
+  agentConfig?: AkmConfig;
   llmConfig?: LlmConnectionConfig;
   timeoutMs?: number;
   /**
@@ -140,7 +139,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
     ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
   };
   const result: AgentRunResult = profile.sdkMode
-    ? await runAgentSdk(profile, prompt ?? "", runOptions, options.llmConfig)
+    ? await runOpencodeSdk(profile, prompt ?? "", runOptions, options.llmConfig)
     : await runAgent(profile, prompt, runOptions);
 
   return {

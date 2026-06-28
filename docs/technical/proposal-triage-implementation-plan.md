@@ -1,6 +1,6 @@
 # Proposal-Queue Triage — Implementation Plan
 
-Status: proposed
+Status: ✅ Shipped in 0.9.0 (`src/commands/improve/triage.ts`; drain integration in `commands/proposal/drain.ts`).
 Author: design synthesis (skeptic-reviewed)
 Target: 0.8.x (additive, opt-in) → cleanup in 0.9.0
 

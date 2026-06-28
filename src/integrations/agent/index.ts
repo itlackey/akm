@@ -8,20 +8,15 @@
  * sake of grouping imports.
  *
  * Surface:
- *   • Types: AgentProfile, AgentConfig, AgentRunResult, AgentFailureReason.
+ *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
  *   • Config: resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
  *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
 
-// The OpenCode SDK runner moved to its harness directory in #564
-// (`harnesses/opencode-sdk/`). Re-exported here so existing `agent/index`
-// import sites keep working.
-export { runAgentSdk } from "../harnesses/opencode-sdk";
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
 export { getCommandBuilder } from "./builders";
-export type { AgentConfig } from "./config";
 export {
   DEFAULT_AGENT_TIMEOUT_MS,
   listAgentProfileNames,
@@ -55,7 +50,6 @@ export {
   buildSchemaRepairPrompt,
   extractDraftConfidence,
   parseAgentProposalPayload,
-  stripJsonFences,
 } from "./prompts";
 export type {
   AgentFailureReason,

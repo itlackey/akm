@@ -31,7 +31,7 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getHyphenatedArg } from "../../output/context";
-import { akmLint } from "../lint";
+import { akmLint } from "../lint/index";
 import { akmPropose } from "../proposal/propose";
 import { akmAgentDispatch } from "./agent-dispatch";
 

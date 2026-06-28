@@ -10,9 +10,9 @@
  * profile can import from here rather than copy-pasting.
  */
 
+import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import {
-  type AgentConfig,
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
@@ -29,7 +29,7 @@ import {
  * `defaults.agent`). This helper remains for source-compat with callers that
  * still expect an "AgentConfig"; it now returns the loaded `AkmConfig`.
  */
-export function loadAgentConfigFromDisk(): AgentConfig | undefined {
+export function loadAgentConfigFromDisk(): AkmConfig | undefined {
   return loadConfig();
 }
 
@@ -39,7 +39,7 @@ export function loadAgentConfigFromDisk(): AgentConfig | undefined {
  */
 export function resolveAgentProfile(options: {
   agentProfile?: AgentProfile;
-  agentConfig?: AgentConfig;
+  agentConfig?: AkmConfig;
   profile?: string;
 }): AgentProfile {
   if (options.agentProfile) return options.agentProfile;

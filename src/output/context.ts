@@ -39,11 +39,11 @@ export interface OutputDefaults {
   detail?: DetailLevel | "brief" | "normal" | "full";
 }
 
-export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md", "html"];
-export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
-export const SHAPE_MODES: ShapeMode[] = ["human", "agent", "summary"];
+const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md", "html"];
+const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
+const SHAPE_MODES: ShapeMode[] = ["human", "agent", "summary"];
 
-export function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
+function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
   if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
   throw new UsageError(
@@ -61,7 +61,7 @@ export function parseDetailLevel(value: string | undefined): DetailLevel | undef
   );
 }
 
-export function parseShapeMode(value: string | undefined): ShapeMode | undefined {
+function parseShapeMode(value: string | undefined): ShapeMode | undefined {
   if (!value) return undefined;
   if ((SHAPE_MODES as string[]).includes(value)) return value as ShapeMode;
   throw new UsageError(

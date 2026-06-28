@@ -18,11 +18,11 @@ import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { resolveStashDir } from "../../core/common";
+import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import {
-  type AgentConfig,
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
@@ -31,7 +31,7 @@ import {
 } from "../../integrations/agent";
 import { resolveProcessAgentProfile } from "../../integrations/agent/config";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
-import { runAgentSdk } from "../../integrations/harnesses/opencode-sdk";
+import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import {
   baseFailureFields,
   enoentHintMessage,
@@ -56,7 +56,7 @@ export interface AkmProposeOptions {
   stashDir?: string;
   agentProfile?: AgentProfile;
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
-  agentConfig?: AgentConfig;
+  agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
   /**
    * Named process to use for per-process agent config lookup. Defaults to
@@ -210,7 +210,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
     };
     result = profile.sdkMode
-      ? await runAgentSdk(profile, prompt ?? "", runOptions)
+      ? await runOpencodeSdk(profile, prompt ?? "", runOptions)
       : await runAgent(profile, prompt, runOptions);
   }
 

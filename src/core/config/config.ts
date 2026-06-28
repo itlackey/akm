@@ -22,9 +22,6 @@ export { stripJsonComments } from "./config-io";
 import { getCacheDir, getConfigPath } from "../paths";
 import { warn } from "../warn";
 
-// Re-export the AgentConfig alias (now `= AkmConfig`) for source-compat with
-// pre-0.8.0 callers that imported it from this module.
-export type { AgentConfig } from "../../integrations/agent/config";
 // Re-export type surface from config-types.ts so call sites don't need to
 // move (the runtime values live here; the types are documentation-only).
 export type {

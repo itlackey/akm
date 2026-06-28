@@ -29,13 +29,6 @@ import {
 export const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
 
 /**
- * Backwards-compatible alias type. After 0.8.0, the "agent config" lives on
- * the loaded {@link AkmConfig} — there is no separate top-level `agent` block.
- * This type alias keeps the call-site API stable.
- */
-export type AgentConfig = AkmConfig;
-
-/**
  * Resolve the effective `AgentProfile` for `name` by merging the optional
  * user override (`profiles.agent[name]`) on top of the built-in profile (if
  * any). Returns `undefined` when neither yields a usable profile.

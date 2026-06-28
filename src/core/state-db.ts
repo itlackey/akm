@@ -626,20 +626,70 @@ export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDi
  * need the write lock BEFORE those reads so concurrent processes serialize on
  * the live queue state rather than clobbering each other.
  */
+/**
+ * Errors `BEGIN IMMEDIATE` can throw under concurrent-writer contention that are
+ * transient (the statement did NOT start a usable transaction) and safe to
+ * retry after clearing any phantom transaction state:
+ *   - "database is locked" / SQLITE_BUSY — another writer holds the lock.
+ *   - "cannot start a transaction within a transaction" — bun:sqlite can leave
+ *     the connection reporting an open transaction after a contended busy-wait
+ *     on BEGIN IMMEDIATE (observed only under heavy parallel load, e.g. the
+ *     proposal-queue worker race). A ROLLBACK clears that phantom state.
+ * These are start-of-transaction failures only; an error thrown by `fn` is a
+ * real failure and is NEVER retried.
+ */
+function isRetryableBeginError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("within a transaction") ||
+    msg.includes("database is locked") ||
+    msg.includes("database table is locked")
+  );
+}
+
+const WITH_IMMEDIATE_TX_MAX_ATTEMPTS = 5;
+
+/** Portable synchronous sleep (works under both Bun and Node). */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = fn();
-    db.exec("COMMIT");
-    return result;
-  } catch (err) {
+  let lastBeginErr: unknown;
+  for (let attempt = 1; attempt <= WITH_IMMEDIATE_TX_MAX_ATTEMPTS; attempt++) {
     try {
-      db.exec("ROLLBACK");
-    } catch {
-      // Ignore rollback failures so the original error is preserved.
+      db.exec("BEGIN IMMEDIATE");
+    } catch (err) {
+      lastBeginErr = err;
+      if (isRetryableBeginError(err) && attempt < WITH_IMMEDIATE_TX_MAX_ATTEMPTS) {
+        // Clear any phantom/stale transaction left by the contended BEGIN, then
+        // retry with a small backoff so concurrent writers serialize cleanly.
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // No active transaction to roll back — fine.
+        }
+        sleepSyncMs(2 ** (attempt - 1));
+        continue;
+      }
+      throw err;
     }
-    throw err;
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // Ignore rollback failures so the original error is preserved.
+      }
+      throw err; // a real error inside the transaction body — never retried.
+    }
   }
+  // Exhausted retries on transient begin failures.
+  throw lastBeginErr;
 }
 
 // ── task_history table helpers ───────────────────────────────────────────────
