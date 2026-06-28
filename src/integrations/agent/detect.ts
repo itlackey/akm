@@ -16,7 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentConfig } from "./config";
+import type { AkmConfig } from "../../core/config/config";
 import { listResolvedAgentProfiles } from "./config";
 import type { AgentProfile } from "./profiles";
 
@@ -78,7 +78,7 @@ export interface AgentDetectionResult {
  *               built-ins.
  * @param whichFn  Binary lookup. Tests should inject a stub.
  */
-export function detectAgentCliProfiles(agent?: AgentConfig, whichFn: WhichFn = defaultWhich): AgentDetectionResult[] {
+export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = defaultWhich): AgentDetectionResult[] {
   const profiles = listResolvedAgentProfiles(agent);
   return profiles.map((profile) => probeProfile(profile, whichFn));
 }

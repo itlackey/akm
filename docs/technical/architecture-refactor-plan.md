@@ -7,8 +7,8 @@
 **D-series progress (each its own branch + PR off `main`):**
 - **D3** — ✅ MERGED, PR #669 (`consolidate.ts` 3,442 → 2,790).
 - **D2** — ✅ MERGED, PR #670 (scoped: migration registry isolated + index-cache DDL relocated; per-table CRUD split deliberately skipped as cohesion-only — see row).
-- **D1 + D1b + D1c** — 🟡 OPEN, PR #671 (`improve.ts` **5,395 → 1,443 LOC**). All gates green: lint 0 / tsc 0 / unit 5,274 / integration 1,558 / node-compat 22.
-- **X4** — 🟡 DONE on PR #671 (narrow repository-boundary lint ratchet; the plan's broad "all SQL in repositories" form was verified a non-fit — see row). **The entire D-series is now complete pending #671 merge.**
+- **D1 + D1b + D1c** — ✅ MERGED, PR #671 (`cf398d83`) (`improve.ts` **5,395 → 1,443 LOC**). All gates green: lint 0 / tsc 0 / unit 5,274 / integration 1,558 / node-compat 22.
+- **X4** — ✅ MERGED on PR #671 (narrow repository-boundary lint ratchet; the plan's broad "all SQL in repositories" form was verified a non-fit — see row). **The entire D-series is complete.**
 
 Each ✅/🟡 was individually verified by hand AND gated (tsc 0 / biome 0 warnings / unit + integration + node-compat green).
 

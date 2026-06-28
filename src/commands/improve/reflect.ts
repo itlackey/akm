@@ -32,7 +32,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
+import type { AkmConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
@@ -41,7 +41,6 @@ import { lintLessonContent } from "../../core/lesson-lint";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { lookup } from "../../indexer/indexer";
 import {
-  type AgentConfig,
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
@@ -99,8 +98,8 @@ export interface AkmReflectOptions {
   agentProfile?: AgentProfile;
   /** Test seam: forwarded to runAgent for fake spawn / timers. */
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
-  /** Test seam: pre-resolved AgentConfig (skips config load). */
-  agentConfig?: AgentConfig;
+  /** Test seam: pre-resolved AkmConfig (skips config load). */
+  agentConfig?: AkmConfig;
   /** Test seam: stable id / clock for proposal creation. */
   ctx?: ProposalsContext;
   /**

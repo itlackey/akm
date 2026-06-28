@@ -18,11 +18,11 @@ import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { resolveStashDir } from "../../core/common";
+import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import {
-  type AgentConfig,
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
@@ -56,7 +56,7 @@ export interface AkmProposeOptions {
   stashDir?: string;
   agentProfile?: AgentProfile;
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
-  agentConfig?: AgentConfig;
+  agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
   /**
    * Named process to use for per-process agent config lookup. Defaults to

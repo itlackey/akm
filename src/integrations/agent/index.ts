@@ -8,7 +8,7 @@
  * sake of grouping imports.
  *
  * Surface:
- *   • Types: AgentProfile, AgentConfig, AgentRunResult, AgentFailureReason.
+ *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
  *   • Config: resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
  *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
@@ -17,7 +17,6 @@
 
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
 export { getCommandBuilder } from "./builders";
-export type { AgentConfig } from "./config";
 export {
   DEFAULT_AGENT_TIMEOUT_MS,
   listAgentProfileNames,
@@ -51,7 +50,6 @@ export {
   buildSchemaRepairPrompt,
   extractDraftConfidence,
   parseAgentProposalPayload,
-  stripJsonFences,
 } from "./prompts";
 export type {
   AgentFailureReason,

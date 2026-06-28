@@ -627,12 +627,3 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
   }
   return out;
 }
-
-/**
- * Strip `\`\`\`json … \`\`\`` fences and `<think>…</think>` reasoning blocks
- * from agent output. Thin wrapper around `core/parse` helpers, kept exported
- * for backward compatibility (re-exported from `integrations/agent/index.ts`).
- */
-export function stripJsonFences(text: string): string {
-  return stripCodeFences(stripThinkBlocks(text));
-}
