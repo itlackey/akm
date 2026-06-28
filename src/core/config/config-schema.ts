@@ -23,8 +23,14 @@
  * - Two exceptions (hard-rejected): openviking source type and legacy
  *   `stashes[]` key. Both have explicit migration paths; silently dropping
  *   would mask user data loss.
- * - `.strict()` walls still gate `registries[]`, `sources[]`, `profiles.*`
- *   sub-shapes so typos in those structured records are caught (#462).
+ * - UNKNOWN-KEY POLICY: object schemas use passthrough (unknown keys are
+ *   preserved and ignored, NOT rejected). akm runs across multiple installed
+ *   versions sharing one config.json; a newer version writes keys an older
+ *   version's schema doesn't know yet, so hard-rejecting unknown keys turned
+ *   benign version skew into `INVALID_CONFIG_FILE` failures. Known keys are
+ *   still type-checked; passthrough preserves unknown keys across a
+ *   load→save round trip so an older reader never strips a newer writer's
+ *   settings. (Replaced the prior strict-mode object walls.)
  * - `defaultWriteTarget` resolution and similar cross-field invariants are
  *   enforced at save time via `superRefine` on the top-level schema.
  */
@@ -60,7 +66,7 @@ const LlmCapabilitiesSchema = z
   .object({
     structuredOutput: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 
 /**
  * Connection config used for both top-level `llm` (after migration) and
@@ -86,17 +92,17 @@ export const LlmConnectionConfigSchema = z
     judgeModel: z.string().min(1).optional(),
     enableThinking: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 
 export const LlmProfileConfigSchema = LlmConnectionConfigSchema.extend({
   supportsJsonSchema: z.boolean().optional(),
-}).strict();
+}).passthrough();
 
 const EmbeddingOllamaOptionsSchema = z
   .object({
     num_ctx: positiveInt.optional(),
   })
-  .strict();
+  .passthrough();
 
 /**
  * Embedding connection config. Both `endpoint` and `model` are optional:
@@ -121,7 +127,7 @@ export const EmbeddingConnectionConfigSchema = z
     contextLength: positiveInt.optional(),
     ollamaOptions: EmbeddingOllamaOptionsSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Agent profiles ──────────────────────────────────────────────────────────
 
@@ -137,7 +143,7 @@ export const AgentProfileConfigSchema = z
     workspace: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Improve profile / process ──────────────────────────────────────────────
 
@@ -170,7 +176,7 @@ export const ImproveProcessConfigSchema = z
         // with care — cost is O(n²).
         cosineCandidateLimit: z.number().int().positive().optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // Consolidate process: judged-state cache (#581). When enabled, a memory
     // whose current content hash equals its cached judged hash is SKIPPED from
@@ -179,9 +185,9 @@ export const ImproveProcessConfigSchema = z
     // time-window slice. Default OFF — when absent the consolidate pass behaves
     // byte-identically to today (the incrementalSince path is unaffected). Only
     // meaningful on the `consolidate` process.
-    judgedCache: z.object({ enabled: z.boolean().optional() }).strict().optional(),
-    qualityGate: z.object({ enabled: z.boolean().optional() }).strict().optional(),
-    contradictionDetection: z.object({ enabled: z.boolean().optional() }).strict().optional(),
+    judgedCache: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
+    qualityGate: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
+    contradictionDetection: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     // Extract process config (only meaningful for extract process)
     defaultSince: z.string().min(1).optional(),
     maxTotalChars: positiveInt.optional(),
@@ -255,7 +261,7 @@ export const ImproveProcessConfigSchema = z
         // Demotion factor: multiply retrievalSalience by this when stale (default 0.5).
         demotionFactor: z.number().min(0).max(1).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
     // body embedding is within epsilon of an existing derived-layer lesson/knowledge
@@ -272,7 +278,7 @@ export const ImproveProcessConfigSchema = z
         // to pass the quality gate and create redundant stash entries.
         confidencePenalty: z.number().min(0).max(1).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // WS-3b: Hot-probation intake buffer (step 0c, #604). New system-generated
     // extractions enter captureMode: hot-probation and spend ONE consolidation
@@ -282,7 +288,7 @@ export const ImproveProcessConfigSchema = z
       .object({
         enabled: z.boolean().optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
     // from collapsing too aggressively and losing diversity.
@@ -297,7 +303,7 @@ export const ImproveProcessConfigSchema = z
         lexicalDiversityCheck: z.boolean().optional(),
         randomClusterFraction: z.number().min(0).max(1).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // WS-3b: CLS (Complementary Learning System) interleaving (step 9).
     // distill/memoryInference prompts include embedding-retrieved existing adjacent
@@ -309,7 +315,7 @@ export const ImproveProcessConfigSchema = z
         // Number of adjacent lessons/knowledge to include in prompts (default 3).
         adjacentCount: z.number().int().min(1).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
     // check it against its cited source memories; a contradiction flag forces
@@ -318,7 +324,7 @@ export const ImproveProcessConfigSchema = z
       .object({
         enabled: z.boolean().optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     // #609 — recombine process: minimum related-memory cluster size before an
     // LLM generalization call. Default 3. Only meaningful on `recombine`.
@@ -361,7 +367,7 @@ export const ImproveProcessConfigSchema = z
     // enabled, proposals classified as "low-value" by the deterministic noise
     // gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
     // byte-identical behaviour). Only meaningful on the `reflect` process.
-    lowValueFilter: z.object({ enabled: z.boolean().optional() }).strict().optional(),
+    lowValueFilter: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     // #641 — procedural-aware floor for the `extract` process triage gate.
     // When true, a session must have markers>=1 OR editCommit>=0.5 to pass, even
     // if score>=minScore. DEFAULT OFF (absent/false = pre-#641 byte-identical).
@@ -379,10 +385,10 @@ export const ImproveProcessConfigSchema = z
         profile: z.string().min(1).optional(),
         timeoutMs: z.union([positiveInt, z.null()]).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
   })
-  .strict();
+  .passthrough();
 
 const ImproveProfileProcessesSchema = z
   .object({
@@ -400,38 +406,18 @@ const ImproveProfileProcessesSchema = z
   .passthrough()
   .superRefine((val, ctx) => {
     // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
-    // a thin wrapper around `processes.distill.enabled`. Single source of truth.
-    const raw = val as Record<string, unknown>;
-    if ("feedbackDistillation" in raw) {
+    // a thin wrapper around `processes.distill.enabled`. Keep the migration
+    // hint so a stale config gets an actionable message rather than silently
+    // doing nothing. All OTHER unknown process keys are tolerated (passthrough)
+    // — see the unknown-key policy in this file's header. Hard-rejecting them
+    // turned benign cross-version skew into INVALID_CONFIG_FILE failures.
+    if ("feedbackDistillation" in (val as Record<string, unknown>)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
           "feedbackDistillation was removed in 0.8.0 — use processes.distill.enabled instead. " +
           "It now controls both the orchestration gate and the LLM-call gate.",
       });
-      return;
-    }
-    const allowed = new Set([
-      "reflect",
-      "distill",
-      "consolidate",
-      "memoryInference",
-      "graphExtraction",
-      "validation",
-      "extract",
-      "triage",
-      "proactiveMaintenance",
-      "recombine",
-      "procedural",
-    ]);
-    for (const k of Object.keys(raw)) {
-      if (!allowed.has(k)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.unrecognized_keys,
-          keys: [k],
-          message: `Unrecognized improve process key: "${k}".`,
-        });
-      }
     }
   });
 
@@ -457,10 +443,10 @@ export const ImproveProfileConfigSchema = z
         push: z.boolean().optional(),
         message: z.string().min(1).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Profiles / defaults ────────────────────────────────────────────────────
 
@@ -470,7 +456,7 @@ export const ProfilesSchema = z
     agent: z.record(z.string(), AgentProfileConfigSchema).optional(),
     improve: z.record(z.string(), ImproveProfileConfigSchema).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const DefaultsSchema = z
   .object({
@@ -478,7 +464,7 @@ export const DefaultsSchema = z
     agent: z.string().min(1).optional(),
     improve: z.string().min(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Sources / registries / installed ────────────────────────────────────────
 
@@ -505,7 +491,7 @@ export const SourceConfigEntrySchema = z
     options: SourceConfigEntryOptionsSchema.optional(),
     wikiName: z.string().min(1).optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((entry, ctx) => {
     if (entry.writable === true && (entry.type === "website" || entry.type === "npm")) {
       ctx.addIssue({
@@ -526,7 +512,7 @@ export const RegistryConfigEntrySchema = z
     provider: z.string().min(1).optional(),
     options: z.record(z.unknown()).optional(),
   })
-  .strict();
+  .passthrough();
 
 const KitSourceSchema = z.enum(["filesystem", "git", "npm", "github", "website", "local"]);
 
@@ -544,7 +530,7 @@ export const InstalledStashEntrySchema = z
     resolvedRevision: z.string().min(1).optional(),
     wikiName: z.string().min(1).optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((entry, ctx) => {
     if (entry.writable === true && entry.source !== "git" && entry.source !== "filesystem") {
       ctx.addIssue({
@@ -561,7 +547,7 @@ export const OutputConfigSchema = z
     format: z.enum(["json", "yaml", "text"]).optional(),
     detail: z.enum(["brief", "normal", "full"]).optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
@@ -577,16 +563,16 @@ const SearchGraphBoostSchema = z
     /** Range [0, 1]; values > 1 hard-error (no silent clamp). */
     confidenceWeight: z.number().finite().min(0).max(1).default(0.2).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const SearchConfigSchema = z
   .object({
     minScore: nonNegativeNumber.optional(),
     defaultExcludeTypes: z.array(nonEmptyString).optional(),
-    curateRerank: z.object({ enabled: z.boolean().optional() }).strict().optional(),
+    curateRerank: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     graphBoost: SearchGraphBoostSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Feedback ────────────────────────────────────────────────────────────────
 
@@ -595,7 +581,7 @@ export const FeedbackConfigSchema = z
     requireReason: z.boolean().optional(),
     allowedFailureModes: z.array(nonEmptyString).optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Improve top-level (utility decay, event retention) ─────────────────────
 
@@ -604,7 +590,7 @@ const ImproveUtilityDecaySchema = z
     halfLifeDays: z.number().finite().min(0.1).optional(),
     feedbackStabilityBoost: z.number().finite().min(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 // #612 / WS-4 — auto-accept gate calibration + bounded, opt-in per-phase
 // threshold auto-tune. DEFAULT OFF: when absent (or `autoTune: false`) no
@@ -628,7 +614,7 @@ const ImproveCalibrationSchema = z
     /** Target realized accept rate in [0, 1]. Default 0.9. */
     targetAcceptRate: z.number().finite().min(0).max(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 // WS-4 — exploration budget: a fixed fraction of proposals accepted per run
 // regardless of confidence. DEFAULT OFF.
@@ -645,7 +631,7 @@ const ImproveExplorationSchema = z
      */
     budgetFraction: z.number().finite().min(0).max(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 const ImproveSalienceSchema = z
   .object({
@@ -668,7 +654,7 @@ const ImproveSalienceSchema = z
      */
     replayBudget: z.number().int().min(0).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const ImproveConfigSchema = z
   .object({
@@ -678,7 +664,7 @@ export const ImproveConfigSchema = z
     exploration: ImproveExplorationSchema.optional(),
     salience: ImproveSalienceSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
 
@@ -768,14 +754,14 @@ export const IndexPassConfigSchema = z.preprocess(
     .passthrough(),
 );
 
-const MetadataEnhanceSchema = z.object({ enabled: z.boolean().optional() }).strict();
+const MetadataEnhanceSchema = z.object({ enabled: z.boolean().optional() }).passthrough();
 
 const StalenessDetectionSchema = z
   .object({
     enabled: z.boolean().optional(),
     thresholdDays: positiveInt.optional(),
   })
-  .strict();
+  .passthrough();
 
 /**
  * Index config is a union of reserved feature sections and per-pass entries.
@@ -859,13 +845,13 @@ export const SetupTaskSchedulesSchema = z
     improve: z.string().min(1).optional(),
     index: z.string().min(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const SetupConfigSchema = z
   .object({
     taskSchedules: SetupTaskSchedulesSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 // ── Top-level AkmConfig ────────────────────────────────────────────────────
 
@@ -900,7 +886,7 @@ export const AkmConfigShape = {
   setup: SetupConfigSchema.optional(),
 } as const;
 
-export const AkmConfigBaseSchema = z.object(AkmConfigShape).strict();
+export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   // #464.a: defaultWriteTarget must name a configured source when sources

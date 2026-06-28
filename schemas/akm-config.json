@@ -58,7 +58,7 @@
                     "type": "boolean"
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": true
               },
               "extraParams": {
                 "type": "object",
@@ -83,7 +83,7 @@
               "endpoint",
               "model"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "agent": {
@@ -121,7 +121,7 @@
             "required": [
               "platform"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "improve": {
@@ -192,7 +192,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -201,7 +201,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -210,7 +210,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -219,7 +219,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -303,7 +303,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -322,7 +322,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -331,7 +331,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -352,7 +352,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -365,7 +365,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -374,7 +374,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -436,7 +436,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -490,10 +490,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "distill": {
                     "type": "object",
@@ -551,7 +551,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -560,7 +560,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -569,7 +569,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -578,7 +578,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -662,7 +662,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -681,7 +681,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -690,7 +690,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -711,7 +711,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -724,7 +724,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -733,7 +733,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -795,7 +795,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -849,10 +849,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "consolidate": {
                     "type": "object",
@@ -910,7 +910,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -919,7 +919,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -928,7 +928,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -937,7 +937,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -1021,7 +1021,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -1040,7 +1040,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -1049,7 +1049,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -1070,7 +1070,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -1083,7 +1083,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -1092,7 +1092,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -1154,7 +1154,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -1208,10 +1208,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "memoryInference": {
                     "type": "object",
@@ -1269,7 +1269,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -1278,7 +1278,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -1287,7 +1287,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -1296,7 +1296,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -1380,7 +1380,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -1399,7 +1399,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -1408,7 +1408,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -1429,7 +1429,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -1442,7 +1442,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -1451,7 +1451,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -1513,7 +1513,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -1567,10 +1567,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "graphExtraction": {
                     "type": "object",
@@ -1628,7 +1628,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -1637,7 +1637,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -1646,7 +1646,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -1655,7 +1655,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -1739,7 +1739,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -1758,7 +1758,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -1767,7 +1767,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -1788,7 +1788,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -1801,7 +1801,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -1810,7 +1810,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -1872,7 +1872,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -1926,10 +1926,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "validation": {
                     "type": "object",
@@ -1987,7 +1987,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -1996,7 +1996,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -2005,7 +2005,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -2014,7 +2014,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -2098,7 +2098,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -2117,7 +2117,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -2126,7 +2126,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -2147,7 +2147,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -2160,7 +2160,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -2169,7 +2169,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -2231,7 +2231,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -2285,10 +2285,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "triage": {
                     "type": "object",
@@ -2346,7 +2346,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -2355,7 +2355,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -2364,7 +2364,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -2373,7 +2373,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -2457,7 +2457,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -2476,7 +2476,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -2485,7 +2485,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -2506,7 +2506,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -2519,7 +2519,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -2528,7 +2528,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -2590,7 +2590,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -2644,10 +2644,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "proactiveMaintenance": {
                     "type": "object",
@@ -2705,7 +2705,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -2714,7 +2714,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -2723,7 +2723,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -2732,7 +2732,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -2816,7 +2816,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -2835,7 +2835,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -2844,7 +2844,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -2865,7 +2865,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -2878,7 +2878,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -2887,7 +2887,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -2949,7 +2949,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -3003,10 +3003,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "recombine": {
                     "type": "object",
@@ -3064,7 +3064,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -3073,7 +3073,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -3082,7 +3082,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -3091,7 +3091,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -3175,7 +3175,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -3194,7 +3194,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -3203,7 +3203,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -3224,7 +3224,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -3237,7 +3237,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -3246,7 +3246,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -3308,7 +3308,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -3362,10 +3362,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "procedural": {
                     "type": "object",
@@ -3423,7 +3423,7 @@
                             "exclusiveMinimum": 0
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "judgedCache": {
                         "type": "object",
@@ -3432,7 +3432,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "qualityGate": {
                         "type": "object",
@@ -3441,7 +3441,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "contradictionDetection": {
                         "type": "object",
@@ -3450,7 +3450,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "defaultSince": {
                         "type": "string",
@@ -3534,7 +3534,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -3553,7 +3553,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "hotProbation": {
                         "type": "object",
@@ -3562,7 +3562,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "antiCollapse": {
                         "type": "object",
@@ -3583,7 +3583,7 @@
                             "maximum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "cls": {
                         "type": "object",
@@ -3596,7 +3596,7 @@
                             "minimum": 1
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "fidelityCheck": {
                         "type": "object",
@@ -3605,7 +3605,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "minClusterSize": {
                         "type": "integer",
@@ -3667,7 +3667,7 @@
                             "type": "boolean"
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proceduralAwareFloor": {
                         "type": "boolean"
@@ -3721,10 +3721,10 @@
                             ]
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "additionalProperties": true
@@ -3758,14 +3758,14 @@
                     "minLength": 1
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
-            "additionalProperties": false
+            "additionalProperties": true
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "defaults": {
       "type": "object",
@@ -3783,7 +3783,7 @@
           "minLength": 1
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "stashDir": {
       "type": "string",
@@ -3844,10 +3844,10 @@
               "exclusiveMinimum": 0
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "index": {
       "type": "object",
@@ -3859,7 +3859,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "stalenessDetection": {
           "type": "object",
@@ -3872,7 +3872,7 @@
               "exclusiveMinimum": 0
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "additionalProperties": {
@@ -3980,7 +3980,7 @@
           "cacheDir",
           "installedAt"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "registries": {
@@ -4010,7 +4010,7 @@
         "required": [
           "url"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "sources": {
@@ -4060,7 +4060,7 @@
         "required": [
           "type"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "output": {
@@ -4083,7 +4083,7 @@
           ]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "writable": {
       "type": "boolean"
@@ -4113,7 +4113,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "graphBoost": {
           "type": "object",
@@ -4155,10 +4155,10 @@
               "default": 0.2
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "feedback": {
       "type": "object",
@@ -4174,7 +4174,7 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "archiveRetentionDays": {
       "type": "number",
@@ -4195,7 +4195,7 @@
               "minimum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "eventRetentionDays": {
           "type": "number",
@@ -4231,7 +4231,7 @@
               "maximum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "exploration": {
           "type": "object",
@@ -4245,7 +4245,7 @@
               "maximum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "salience": {
           "type": "object",
@@ -4263,10 +4263,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "setup": {
       "type": "object",
@@ -4283,13 +4283,13 @@
               "minLength": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
-  "additionalProperties": false,
+  "additionalProperties": true,
   "$defs": {
     "AkmConfig": {
       "type": "object",
@@ -4347,7 +4347,7 @@
                         "type": "boolean"
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   "extraParams": {
                     "type": "object",
@@ -4372,7 +4372,7 @@
                   "endpoint",
                   "model"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "agent": {
@@ -4410,7 +4410,7 @@
                 "required": [
                   "platform"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "improve": {
@@ -4481,7 +4481,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -4490,7 +4490,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -4499,7 +4499,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -4508,7 +4508,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -4592,7 +4592,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -4611,7 +4611,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -4620,7 +4620,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -4641,7 +4641,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -4654,7 +4654,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -4663,7 +4663,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -4725,7 +4725,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -4779,10 +4779,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "distill": {
                         "type": "object",
@@ -4840,7 +4840,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -4849,7 +4849,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -4858,7 +4858,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -4867,7 +4867,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -4951,7 +4951,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -4970,7 +4970,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -4979,7 +4979,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -5000,7 +5000,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -5013,7 +5013,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -5022,7 +5022,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -5084,7 +5084,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -5138,10 +5138,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "consolidate": {
                         "type": "object",
@@ -5199,7 +5199,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -5208,7 +5208,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -5217,7 +5217,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -5226,7 +5226,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -5310,7 +5310,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -5329,7 +5329,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -5338,7 +5338,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -5359,7 +5359,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -5372,7 +5372,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -5381,7 +5381,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -5443,7 +5443,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -5497,10 +5497,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "memoryInference": {
                         "type": "object",
@@ -5558,7 +5558,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -5567,7 +5567,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -5576,7 +5576,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -5585,7 +5585,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -5669,7 +5669,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -5688,7 +5688,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -5697,7 +5697,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -5718,7 +5718,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -5731,7 +5731,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -5740,7 +5740,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -5802,7 +5802,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -5856,10 +5856,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "graphExtraction": {
                         "type": "object",
@@ -5917,7 +5917,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -5926,7 +5926,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -5935,7 +5935,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -5944,7 +5944,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -6028,7 +6028,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -6047,7 +6047,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -6056,7 +6056,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -6077,7 +6077,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -6090,7 +6090,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -6099,7 +6099,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -6161,7 +6161,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -6215,10 +6215,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "validation": {
                         "type": "object",
@@ -6276,7 +6276,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -6285,7 +6285,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -6294,7 +6294,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -6303,7 +6303,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -6387,7 +6387,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -6406,7 +6406,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -6415,7 +6415,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -6436,7 +6436,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -6449,7 +6449,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -6458,7 +6458,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -6520,7 +6520,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -6574,10 +6574,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "triage": {
                         "type": "object",
@@ -6635,7 +6635,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -6644,7 +6644,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -6653,7 +6653,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -6662,7 +6662,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -6746,7 +6746,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -6765,7 +6765,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -6774,7 +6774,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -6795,7 +6795,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -6808,7 +6808,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -6817,7 +6817,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -6879,7 +6879,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -6933,10 +6933,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "proactiveMaintenance": {
                         "type": "object",
@@ -6994,7 +6994,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -7003,7 +7003,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -7012,7 +7012,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -7021,7 +7021,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -7105,7 +7105,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -7124,7 +7124,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -7133,7 +7133,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -7154,7 +7154,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -7167,7 +7167,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -7176,7 +7176,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -7238,7 +7238,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -7292,10 +7292,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "recombine": {
                         "type": "object",
@@ -7353,7 +7353,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -7362,7 +7362,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -7371,7 +7371,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -7380,7 +7380,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -7464,7 +7464,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -7483,7 +7483,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -7492,7 +7492,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -7513,7 +7513,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -7526,7 +7526,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -7535,7 +7535,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -7597,7 +7597,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -7651,10 +7651,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       },
                       "procedural": {
                         "type": "object",
@@ -7712,7 +7712,7 @@
                                 "exclusiveMinimum": 0
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "judgedCache": {
                             "type": "object",
@@ -7721,7 +7721,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "qualityGate": {
                             "type": "object",
@@ -7730,7 +7730,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "contradictionDetection": {
                             "type": "object",
@@ -7739,7 +7739,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "defaultSince": {
                             "type": "string",
@@ -7823,7 +7823,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -7842,7 +7842,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "hotProbation": {
                             "type": "object",
@@ -7851,7 +7851,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "antiCollapse": {
                             "type": "object",
@@ -7872,7 +7872,7 @@
                                 "maximum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "cls": {
                             "type": "object",
@@ -7885,7 +7885,7 @@
                                 "minimum": 1
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "fidelityCheck": {
                             "type": "object",
@@ -7894,7 +7894,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "minClusterSize": {
                             "type": "integer",
@@ -7956,7 +7956,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           },
                           "proceduralAwareFloor": {
                             "type": "boolean"
@@ -8010,10 +8010,10 @@
                                 ]
                               }
                             },
-                            "additionalProperties": false
+                            "additionalProperties": true
                           }
                         },
-                        "additionalProperties": false
+                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -8047,14 +8047,14 @@
                         "minLength": 1
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": true
               }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "defaults": {
           "type": "object",
@@ -8072,7 +8072,7 @@
               "minLength": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "stashDir": {
           "type": "string",
@@ -8133,10 +8133,10 @@
                   "exclusiveMinimum": 0
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "index": {
           "type": "object",
@@ -8148,7 +8148,7 @@
                   "type": "boolean"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "stalenessDetection": {
               "type": "object",
@@ -8161,7 +8161,7 @@
                   "exclusiveMinimum": 0
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
           "additionalProperties": {
@@ -8269,7 +8269,7 @@
               "cacheDir",
               "installedAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "registries": {
@@ -8299,7 +8299,7 @@
             "required": [
               "url"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "sources": {
@@ -8349,7 +8349,7 @@
             "required": [
               "type"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "output": {
@@ -8372,7 +8372,7 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "writable": {
           "type": "boolean"
@@ -8402,7 +8402,7 @@
                   "type": "boolean"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "graphBoost": {
               "type": "object",
@@ -8444,10 +8444,10 @@
                   "default": 0.2
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "feedback": {
           "type": "object",
@@ -8463,7 +8463,7 @@
               }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "archiveRetentionDays": {
           "type": "number",
@@ -8484,7 +8484,7 @@
                   "minimum": 1
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "eventRetentionDays": {
               "type": "number",
@@ -8520,7 +8520,7 @@
                   "maximum": 1
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "exploration": {
               "type": "object",
@@ -8534,7 +8534,7 @@
                   "maximum": 1
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "salience": {
               "type": "object",
@@ -8552,10 +8552,10 @@
                   "minimum": 0
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "setup": {
           "type": "object",
@@ -8572,13 +8572,13 @@
                   "minLength": 1
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "LlmProfileConfig": {
       "type": "object",
@@ -8617,7 +8617,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "extraParams": {
           "type": "object",
@@ -8642,7 +8642,7 @@
         "endpoint",
         "model"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "EmbeddingConnectionConfig": {
       "type": "object",
@@ -8691,10 +8691,10 @@
               "exclusiveMinimum": 0
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ImproveProcessConfig": {
       "type": "object",
@@ -8752,7 +8752,7 @@
               "exclusiveMinimum": 0
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "judgedCache": {
           "type": "object",
@@ -8761,7 +8761,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "qualityGate": {
           "type": "object",
@@ -8770,7 +8770,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "contradictionDetection": {
           "type": "object",
@@ -8779,7 +8779,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "defaultSince": {
           "type": "string",
@@ -8863,7 +8863,7 @@
               "maximum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "schemaSimilarity": {
           "type": "object",
@@ -8882,7 +8882,7 @@
               "maximum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "hotProbation": {
           "type": "object",
@@ -8891,7 +8891,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "antiCollapse": {
           "type": "object",
@@ -8912,7 +8912,7 @@
               "maximum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "cls": {
           "type": "object",
@@ -8925,7 +8925,7 @@
               "minimum": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "fidelityCheck": {
           "type": "object",
@@ -8934,7 +8934,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "minClusterSize": {
           "type": "integer",
@@ -8996,7 +8996,7 @@
               "type": "boolean"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "proceduralAwareFloor": {
           "type": "boolean"
@@ -9050,10 +9050,10 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ImproveProfileConfig": {
       "type": "object",
@@ -9121,7 +9121,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -9130,7 +9130,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -9139,7 +9139,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -9148,7 +9148,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -9232,7 +9232,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -9251,7 +9251,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -9260,7 +9260,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -9281,7 +9281,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -9294,7 +9294,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -9303,7 +9303,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -9365,7 +9365,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -9419,10 +9419,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "distill": {
               "type": "object",
@@ -9480,7 +9480,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -9489,7 +9489,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -9498,7 +9498,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -9507,7 +9507,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -9591,7 +9591,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -9610,7 +9610,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -9619,7 +9619,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -9640,7 +9640,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -9653,7 +9653,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -9662,7 +9662,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -9724,7 +9724,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -9778,10 +9778,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "consolidate": {
               "type": "object",
@@ -9839,7 +9839,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -9848,7 +9848,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -9857,7 +9857,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -9866,7 +9866,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -9950,7 +9950,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -9969,7 +9969,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -9978,7 +9978,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -9999,7 +9999,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -10012,7 +10012,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -10021,7 +10021,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -10083,7 +10083,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -10137,10 +10137,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "memoryInference": {
               "type": "object",
@@ -10198,7 +10198,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -10207,7 +10207,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -10216,7 +10216,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -10225,7 +10225,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -10309,7 +10309,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -10328,7 +10328,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -10337,7 +10337,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -10358,7 +10358,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -10371,7 +10371,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -10380,7 +10380,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -10442,7 +10442,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -10496,10 +10496,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "graphExtraction": {
               "type": "object",
@@ -10557,7 +10557,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -10566,7 +10566,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -10575,7 +10575,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -10584,7 +10584,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -10668,7 +10668,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -10687,7 +10687,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -10696,7 +10696,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -10717,7 +10717,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -10730,7 +10730,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -10739,7 +10739,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -10801,7 +10801,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -10855,10 +10855,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "validation": {
               "type": "object",
@@ -10916,7 +10916,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -10925,7 +10925,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -10934,7 +10934,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -10943,7 +10943,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -11027,7 +11027,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -11046,7 +11046,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -11055,7 +11055,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -11076,7 +11076,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -11089,7 +11089,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -11098,7 +11098,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -11160,7 +11160,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -11214,10 +11214,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "triage": {
               "type": "object",
@@ -11275,7 +11275,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -11284,7 +11284,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -11293,7 +11293,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -11302,7 +11302,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -11386,7 +11386,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -11405,7 +11405,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -11414,7 +11414,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -11435,7 +11435,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -11448,7 +11448,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -11457,7 +11457,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -11519,7 +11519,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -11573,10 +11573,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "proactiveMaintenance": {
               "type": "object",
@@ -11634,7 +11634,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -11643,7 +11643,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -11652,7 +11652,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -11661,7 +11661,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -11745,7 +11745,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -11764,7 +11764,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -11773,7 +11773,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -11794,7 +11794,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -11807,7 +11807,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -11816,7 +11816,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -11878,7 +11878,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -11932,10 +11932,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "recombine": {
               "type": "object",
@@ -11993,7 +11993,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -12002,7 +12002,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -12011,7 +12011,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -12020,7 +12020,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -12104,7 +12104,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -12123,7 +12123,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -12132,7 +12132,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -12153,7 +12153,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -12166,7 +12166,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -12175,7 +12175,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -12237,7 +12237,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -12291,10 +12291,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "procedural": {
               "type": "object",
@@ -12352,7 +12352,7 @@
                       "exclusiveMinimum": 0
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "judgedCache": {
                   "type": "object",
@@ -12361,7 +12361,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "qualityGate": {
                   "type": "object",
@@ -12370,7 +12370,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "contradictionDetection": {
                   "type": "object",
@@ -12379,7 +12379,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "defaultSince": {
                   "type": "string",
@@ -12463,7 +12463,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -12482,7 +12482,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "hotProbation": {
                   "type": "object",
@@ -12491,7 +12491,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "antiCollapse": {
                   "type": "object",
@@ -12512,7 +12512,7 @@
                       "maximum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "cls": {
                   "type": "object",
@@ -12525,7 +12525,7 @@
                       "minimum": 1
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "fidelityCheck": {
                   "type": "object",
@@ -12534,7 +12534,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "minClusterSize": {
                   "type": "integer",
@@ -12596,7 +12596,7 @@
                       "type": "boolean"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "proceduralAwareFloor": {
                   "type": "boolean"
@@ -12650,10 +12650,10 @@
                       ]
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
           "additionalProperties": true
@@ -12687,10 +12687,10 @@
               "minLength": 1
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "RegistryConfigEntry": {
       "type": "object",
@@ -12717,7 +12717,7 @@
       "required": [
         "url"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "StashConfigEntry": {
       "type": "object",
@@ -12764,7 +12764,7 @@
       "required": [
         "type"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   }
 }

@@ -90,7 +90,9 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(consolidate?.minPoolSize).toBe(25);
   });
 
-  test("an unknown process sub-key hard-errors at load (chosen resolution: strict, not silent drop)", () => {
+  test("an unknown process sub-key is tolerated and preserved at load (lenient unknown-key policy)", () => {
+    // Policy reversal: unknown keys are tolerated (passthrough) so cross-version
+    // config skew never becomes INVALID_CONFIG_FILE. Known keys still validate.
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -101,7 +103,10 @@ describe("#598 process-level config fields survive a load→save→load round tr
       }),
     );
     resetConfigCache();
-    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).not.toThrow();
+    const procs = loadConfig().profiles?.improve?.default?.processes?.consolidate as Record<string, unknown>;
+    expect(procs.incrementalSince).toBe("4h");
+    expect(procs.bogusKey).toBe(1); // preserved, not dropped
   });
 
   test("#609 recombine + #615 procedural are RECOGNIZED process keys (load does not throw; fields round-trip)", () => {
@@ -193,7 +198,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(salience?.outcomeWeightEnabled ?? false).toBe(false);
   });
 
-  test("WS-2 unknown key under improve.salience hard-errors at load (ImproveSalienceSchema.strict())", () => {
+  test("WS-2 unknown key under improve.salience is tolerated and preserved (lenient policy)", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -203,13 +208,16 @@ describe("#598 process-level config fields survive a load→save→load round tr
         improve: {
           salience: {
             outcomeWeightEnabled: true,
-            bogus: "should-be-rejected",
+            bogus: "tolerated",
           },
         },
       }),
     );
     resetConfigCache();
-    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).not.toThrow();
+    const salience = loadConfig().improve?.salience as Record<string, unknown>;
+    expect(salience.outcomeWeightEnabled).toBe(true);
+    expect(salience.bogus).toBe("tolerated");
   });
 
   test("WS-3a: cosineCandidateLimit and p90ChunkSecondsDefault survive a round trip and are not rejected", () => {
@@ -320,9 +328,9 @@ describe("#598 process-level config fields survive a load→save→load round tr
     }
   });
 
-  test("#624 P2 an unknown sibling of graphExtraction.topN still hard-errors at load (no passthrough hole)", () => {
-    // Negative-direction guard: adding topN must NOT open a passthrough on the
-    // graphExtraction process object — unknown sibling keys must still throw.
+  test("#624 P2 graphExtraction.topN known key validates; unknown sibling tolerated (lenient policy)", () => {
+    // topN (known) round-trips; an unknown sibling is now tolerated rather than
+    // rejected — known keys are still type-checked.
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -335,10 +343,13 @@ describe("#598 process-level config fields survive a load→save→load round tr
       }),
     );
     resetConfigCache();
-    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).not.toThrow();
+    const gx = loadConfig().profiles?.improve?.default?.processes?.graphExtraction as Record<string, unknown>;
+    expect(gx.topN).toBe(10);
+    expect(gx.bogusGraphKey).toBe(1);
   });
 
-  test("WS-4 unknown key under improve.exploration hard-errors at load (ImproveExplorationSchema.strict())", () => {
+  test("WS-4 unknown key under improve.exploration is tolerated and preserved (lenient policy)", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -348,13 +359,16 @@ describe("#598 process-level config fields survive a load→save→load round tr
         improve: {
           exploration: {
             enabled: true,
-            bogus: "should-be-rejected",
+            bogus: "tolerated",
           },
         },
       }),
     );
     resetConfigCache();
-    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).not.toThrow();
+    const exploration = loadConfig().improve?.exploration as Record<string, unknown>;
+    expect(exploration.enabled).toBe(true);
+    expect(exploration.bogus).toBe("tolerated");
   });
 
   test("#616 profiles.improve.<profile>.maxCycles survives a load→save→load round trip (positiveInt)", () => {

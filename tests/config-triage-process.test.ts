@@ -43,21 +43,24 @@ describe("triage improve-process config schema", () => {
     // maxAcceptsPerRun must be a positive integer
     expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
     expect(ImproveProcessConfigSchema.safeParse({ maxDiffLines: -1 }).success).toBe(false);
-    // judgment is a strict object — unknown keys rejected
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm", bogus: 1 } }).success).toBe(false);
+    // judgment tolerates unknown keys (lenient policy) but still type-checks known ones
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm", bogus: 1 } }).success).toBe(true);
     // judgment.mode is constrained to llm|agent|sdk
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "human" } }).success).toBe(false);
     // judgment.timeoutMs accepts null
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
   });
 
-  test("a genuinely-unknown process key is still rejected by the superRefine", () => {
+  test("a genuinely-unknown process key is tolerated (lenient unknown-key policy)", () => {
+    // Unknown process keys are no longer rejected — cross-version config skew
+    // (a newer akm writing a process key an older schema lacks) must not break
+    // loading. Known process shapes are still validated.
     const result = ImproveProfileConfigSchema.safeParse({
       processes: {
         triage: { enabled: true },
         notARealProcess: { enabled: true },
       },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });
