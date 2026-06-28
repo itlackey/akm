@@ -282,7 +282,7 @@ scripts/akm-eval/bin/akm-eval-run --suite judge-calibration \
   --akm /path/to/akm/dist/cli.js --format md
 ```
 
-When `profiles.improve.default.processes.feedbackDistillation.enabled` is
+When `profiles.improve.default.processes.distill.enabled` is
 disabled in the test env the judge returns `skipped` for every probe —
 that's expected; the case scores low but the runner machinery and the
 metrics block still work.

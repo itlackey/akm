@@ -210,7 +210,7 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 3. Read feedback events via `readEvents({ ref, type: "feedback" })`. Apply `excludeFeedbackFromRefs` filtering before the LLM sees the events.
 4. Memory promotion fast path: when `proposalKind` is `"auto"` or `"knowledge"` and `assessMemoryKnowledgePromotionCandidate` returns `promote: true`, create a `knowledge:` proposal immediately without an LLM call.
 5. LLM call: `tryLlmFeature("feedback_distillation", config, () => chat(getDefaultLlmConfig(config), messages), null)`.
-   - Feature gate: disabled if `profiles.improve.default.processes.feedbackDistillation.enabled` is `false`.
+   - Feature gate: disabled if `profiles.improve.default.processes.distill.enabled` is `false` (0.8.0 unified the legacy `feedback_distillation` flag into `distill.enabled`).
    - Hard timeout: 30 seconds enforced by `tryLlmFeature`.
    - Returns `null` on gate-disabled, timeout, or error — treated as a graceful skip (exit 0, no proposal).
 6. Strip markdown fences and `<think>` blocks from the raw LLM output.
@@ -330,7 +330,7 @@ Before the per-asset loop, `akm improve` builds Sets of all refs that are curren
 
 | Feature flag (name passed to `isLlmFeatureEnabled` / `tryLlmFeature`) | Config path | Controls |
 |---|---|---|
-| `feedback_distillation` | `profiles.improve.default.processes.feedbackDistillation.enabled` | Whether `akmDistill` issues an LLM call. Disabled → outcome `"skipped"`, no proposal, exit 0. Enforced by `tryLlmFeature` with a 30 s hard timeout. |
+| `feedback_distillation` | `profiles.improve.default.processes.distill.enabled` | Whether `akmDistill` issues an LLM call. Disabled → outcome `"skipped"`, no proposal, exit 0. Enforced by `tryLlmFeature` with a 30 s hard timeout. (Internal flag key is still `feedback_distillation`; the config path was unified into `distill.enabled` in 0.8.0.) |
 | `memory_consolidation` | `profiles.improve.default.processes.consolidate.enabled` | Whether `akmConsolidate` runs Phase A or B at all. Disabled → immediate no-op return with `processed: 0`. Also gates the `generateMergedContent` call inside Phase B via a second `tryLlmFeature` call. |
 
 Agent path vs. HTTP path in consolidate is determined at runtime by resolving the

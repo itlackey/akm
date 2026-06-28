@@ -501,7 +501,7 @@ Run only inside the sandbox.
 ### 15.3 improve / lesson
 
 - [ ] `akm improve skill:k8s-deploy` returns `outcome: "skipped"` when
-      `profiles.improve.default.processes.feedbackDistillation.enabled` is
+      `profiles.improve.default.processes.distill.enabled` is
       `false`, or queues a lesson proposal when enabled.
 - [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
       accepts valid refs.
