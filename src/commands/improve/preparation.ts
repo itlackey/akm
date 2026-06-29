@@ -33,7 +33,7 @@ import {
   gateDecisionsToSamples,
   summarizeCalibration,
 } from "./calibration";
-import { akmConsolidate, type ConsolidateResult } from "./consolidate";
+import { akmConsolidate, type ConsolidateResult, isSessionCaptureMemoryName } from "./consolidate";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
   buildLatestFeedbackTsMap,
@@ -1341,7 +1341,12 @@ export async function runImprovePreparationStage(args: {
       (dbForHighSalience) => {
         const effectiveLimit = options.limit ?? 10;
         const highSalienceCap = Math.max(1, Math.floor(effectiveLimit * 0.1));
-        const candidates = noFeedbackCandidates.filter((r) => !proactiveAndRetrievalSet.has(r.ref));
+        // #632/#4 — session-capture telemetry (checkpoints) must never consume
+        // the scarce high-salience budget. Even with a content-scored row, these
+        // are pipeline bookkeeping, not assets worth reflecting/rewriting.
+        const candidates = noFeedbackCandidates.filter(
+          (r) => !proactiveAndRetrievalSet.has(r.ref) && !isSessionCaptureMemoryName(parseAssetRef(r.ref).name),
+        );
         for (const r of candidates) {
           if (highSalienceRefs.length >= highSalienceCap) break;
           const row = getAssetSalience(dbForHighSalience, r.ref);

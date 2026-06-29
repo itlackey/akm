@@ -391,7 +391,15 @@ function parseGraphExtraction(raw: unknown): GraphExtraction {
       const normalized = normalizeEntityName(value);
       if (!normalized) continue;
       const normalizedKey = normalized.toLowerCase();
-      if (!/[a-z0-9]/i.test(normalized) || GENERIC_ENTITIES.has(normalizedKey)) {
+      // Drop generic/empty entities AND raw file/dir paths (anything with a
+      // path separator) — the prompt no longer asks for them and isJunkEntity
+      // discards them downstream, so emitting them is pure waste/junk (#632).
+      if (
+        !/[a-z0-9]/i.test(normalized) ||
+        GENERIC_ENTITIES.has(normalizedKey) ||
+        normalized.includes("/") ||
+        normalized.includes("\\")
+      ) {
         filteredGenericEntities += 1;
         continue;
       }

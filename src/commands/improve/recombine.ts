@@ -70,7 +70,7 @@ import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integ
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
 import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
-import { isConsolidationEligibleMemoryName } from "./consolidate";
+import { isConsolidationEligibleMemoryName, isSessionCaptureMemoryName } from "./consolidate";
 
 export type { RecombineResult } from "../../core/improve-types";
 
@@ -248,24 +248,10 @@ const JUNK_ENTITY_NORMS = new Set([
   "status",
 ]);
 
-/**
- * #632 — AKM session-capture telemetry memories: auto-generated session-end
- * checkpoints named `<harness>-session-<YYYYMMDD>-<id>` or
- * `<harness>-checkpoint-<YYYYMMDD…>-<id>`, carrying an embedded
- * `akm_memory_kind: session_checkpoint` metadata block. Their bodies are
- * pipeline bookkeeping, so the graph extracts their metadata FIELDS
- * (`session_checkpoint`, `harness`, `buffered observations`, `tool_*_observed`,
- * …) as ENTITIES — which then dominate entity clustering as bland, stash-wide
- * mega-buckets (the #632 symptom, just under an `entity:` signature). They are
- * session telemetry, not durable knowledge to generalize, so recombine excludes
- * them from its pool. The `\d{8}` datestamp anchor is what distinguishes a
- * capture name from a durable memory that merely MENTIONS session/checkpoint
- * (e.g. `akm-plugins-session-end-extract-hook`, `session-checkpoint-lint-skips`),
- * which stay in the pool.
- */
-export function isSessionCaptureMemoryName(name: string): boolean {
-  return /-(session|checkpoint)-\d{8}/.test(name);
-}
+// #632 — `isSessionCaptureMemoryName` now lives in ./consolidate/eligibility so
+// both recombine and consolidate can reuse it without a circular import. It is
+// re-exported here for back-compat (existing importers + tests).
+export { isSessionCaptureMemoryName };
 
 /**
  * #632 — an entity carries no clustering signal (and must be skipped) when it is
