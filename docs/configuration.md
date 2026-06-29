@@ -9,12 +9,11 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-When akm runs inside a project, it also looks for project config files named
-`.akm/config.json` in the current directory and each parent directory, then
-merges them on top of the user config. Closer project directories win for
-scalar/object settings, while project `sources` are appended after user-level
-sources. This makes it easy to add project-specific sources without
-changing your global config.
+akm reads a **single** config layer — the user config above. Project-level
+`.akm/config.json` files are **no longer merged** (multi-layer project config was
+removed after the 0.8.x deprecation). If one is found in the current directory or
+an ancestor, akm prints a one-time deprecation warning and ignores it; move any
+settings you still need into the user config.
 
 For a guided first-run experience, use `akm setup` to choose a stash directory,
 configure embeddings/LLM settings, review registries, and add sources.
@@ -35,7 +34,7 @@ akm config migrate                  # Apply config v2 migration
 ```
 
 `akm config set` / `unset` write the user config in your platform config
-directory. Project config files are meant to be edited directly in the project.
+directory.
 
 ## 0.8.0 Config Shape
 
@@ -76,14 +75,12 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
             "enabled": true,
             "mode": "llm",
             "profile": "openai-mini",
-            "timeoutMs": 90000,
-            "cooldownByType": { "memory": 2, "lesson": 7, "knowledge": 30 }
+            "timeoutMs": 90000
           },
           "distill": { "enabled": true, "mode": "llm", "profile": "openai-mini" },
           "consolidate": { "enabled": true, "mode": "llm", "profile": "openai-mini" },
           "memoryInference": { "enabled": true },
-          "graphExtraction": { "enabled": true, "profile": "openai-mini" },
-          "feedbackDistillation": { "enabled": true }
+          "graphExtraction": { "enabled": true, "profile": "openai-mini" }
         }
       }
     }
@@ -118,22 +115,26 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `profiles.agent.<name>` | object | — | Named agent profile (`platform: "opencode"\|"claude"\|"opencode-sdk"`). See [Profile types](#profile-types). |
 | `defaults.llm` | string | — | Default LLM profile name. Used when a features entry omits `profile`. Also the target for `AKM_LLM_API_KEY` injection. |
 | `defaults.agent` | string | — | Default agent profile name. Fallback for `mode: "agent"` or `mode: "sdk"` entries that omit `profile`. |
-| `defaults.improve` | string | `"default"` | Default improve profile name. Selects one of the built-ins (`default`, `quick`, `thorough`, `memory-focus`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
-| `profiles.improve.<name>` | object | — | Improve profile defining per-process gating, type filters, cooldowns, and run-level `autoAccept` / `limit` defaults. See [Improve profiles](#improve-profiles). |
-| `profiles.improve.<name>.processes.<process>` | object | — | Per-process binding (`reflect`, `distill`, `consolidate`, `memoryInference`, `graphExtraction`, `feedbackDistillation`, `validation`). Shape: `{ enabled, mode, profile, timeoutMs, qualityGate?, contradictionDetection?, cooldownByType?, allowedTypes? }`. |
+| `defaults.improve` | string | `"default"` | Default improve profile name. Selects a built-in (`default`, `thorough`, `quick`, `frequent`, `catchup`, `consolidate`, `graph-refresh`, `memory-focus`, `synthesize`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
+| `profiles.improve.<name>` | object | — | Improve profile defining per-process gating, type filters, and run-level `autoAccept` / `limit` / `maxCycles` / `symmetricValence` / `sync` defaults. See [Improve profiles](#improve-profiles). |
+| `profiles.improve.<name>.processes.<process>` | object | — | Per-process binding. Processes: `reflect`, `distill`, `consolidate`, `memoryInference`, `graphExtraction`, `extract`, `validation`, `triage`, `proactiveMaintenance`, `recombine`, `procedural`. Common shape: `{ enabled, mode, profile, timeoutMs, allowedTypes?, qualityGate? }` plus process-specific knobs (see [Known process names](#known-process-names) and the [JSON schema](https://itlackey.github.io/akm/schemas/akm-config.json)). |
 | `index.metadataEnhance.enabled` | boolean | `false` | Toggles the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` entry. |
 | `index.stalenessDetection.enabled` | boolean | `false` | Toggles the `akm index` staleness-detection pass. |
 | `index.stalenessDetection.thresholdDays` | integer | `90` | Days before a memory is re-evaluated for staleness. |
 | `search.curateRerank.enabled` | boolean | `false` | Toggles the `akm curate` LLM-rerank pass. Replaces the legacy `features.search.curate_rerank` entry. |
 | `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. |
 | `embedding` | object | null (local) | Embedding connection settings. Unchanged from v1. |
-| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`, `jsonl`). |
-| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`, `summary`, `agent`). |
+| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`). |
+| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`). |
 | `sources` | array | `[]` | Source entries — directories, git repos, websites, npm packages. |
 | `defaultWriteTarget` | string | — | Source name for `akm remember` / `akm import` writes when `--target` is omitted. |
 | `writable` | boolean | `false` | Whether the primary stash pushes on `akm sync`. |
-| `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project sources compose with global ones. |
 | `registries` | array | official + skills.sh | Configured registries. |
+| `archiveRetentionDays` | number | `90` | Days to retain soft-invalidated memory assets in `.akm/archive/`. `0` disables TTL cleanup. |
+| `feedback.requireReason` | boolean | `true` | When true, negative `akm feedback` without `--reason` errors. |
+| `feedback.allowedFailureModes` | array | curated set | Restrict the accepted `--failure-mode` values. |
+| `improve.utilityDecay` / `calibration` / `exploration` / `salience` | object | — | Improve-pipeline tuning. See [Advanced improve tuning](#advanced-improve-tuning). |
+| `improve.eventRetentionDays` | number | `90` | Retention window (days) for `state.db` `events`. `0` disables purging. |
 | `stashDir` | string | platform default | Path to the working stash. |
 | `search.minScore` | number | `0.2` | Minimum score floor for semantic-only hits. |
 | `search.graphBoost.directBoostPerEntity` | number | `0.25` | Additive direct-match graph boost per matched entity. |
@@ -235,18 +236,18 @@ the full field reference and model alias documentation.
 
 ## Process entry shape
 
-Every `features.<section>.<name>` entry uses the same unified shape. Three
-shorthand forms are accepted:
+Every process entry under `profiles.improve.<name>.processes` uses the same
+unified shape:
 
 ```jsonc
-"X": true                    // enabled, all defaults resolved at load time
-"X": false                   // disabled — caller short-circuits (no runner resolved)
 "X": {
-  "enabled": true,           // optional; default true
+  "enabled": true,           // optional; default depends on the process
   "mode": "llm",             // "llm" | "agent" | "sdk" — optional, inferred if omitted
   "profile": "<name>",       // optional; falls back to defaults.llm or defaults.agent
-  "timeoutMs": 60000,        // optional; null = unlimited
-  "options": { /* ... */ }   // optional; process-specific tuning
+  "timeoutMs": 60000         // optional; null = unlimited
+  // ...plus any process-specific tuning knobs as FLAT sibling fields
+  // (e.g. consolidate.minPoolSize, extract.minNewSessions) — there is no
+  // nested `options` wrapper. See "Known process names" below.
 }
 ```
 
@@ -257,31 +258,35 @@ shorthand forms are accepted:
    `"opencode"` / `"claude"` platform → `"agent"`.
 2. If neither is set: `defaults.llm` is set → `"llm"`; else `defaults.agent` → `"agent"`.
 
-**`options`** holds process-specific tuning that doesn't fit the generic fields.
-Unknown keys under `options` warn-and-ignore.
-
-Reflect/distill cooldowns, per-process type filters, and per-process gating
-all live under [`profiles.improve.<name>.processes.*`](#improve-profiles)
-in 0.8.0.
+Per-process type filters (`allowedTypes`) and per-process gating all live under
+[`profiles.improve.<name>.processes.*`](#improve-profiles).
 
 ## Known process names
 
 ### `profiles.improve.<name>.processes.*`
 
 Each entry under `processes` is either absent (use the built-in default
-for the named profile) or an object of the form
-`{ enabled?, mode?, profile?, timeoutMs?, allowedTypes?, qualityGate?, contradictionDetection?, defaultSince?, maxTotalChars? }`.
-(Not all fields apply to all processes: `allowedTypes` is for reflect/distill; `qualityGate` and `contradictionDetection` for specific processes; `defaultSince` and `maxTotalChars` only for extract.)
+for the named profile) or an object with the common fields
+`{ enabled?, mode?, profile?, timeoutMs?, allowedTypes?, qualityGate? }`
+**plus process-specific tuning knobs as flat fields**. Not all fields apply to
+all processes — the per-knob reference (which process each applies to, its
+default, and range) lives in the field comments of
+[`config-schema.ts`](https://github.com/itlackey/akm/blob/main/src/core/config/config-schema.ts)
+and the published [JSON schema](https://itlackey.github.io/akm/schemas/akm-config.json).
 
-| Process | Default (built-in `default` profile) | Description |
+| Process | Default (built-in `default` profile) | Description & key knobs |
 | --- | --- | --- |
-| `reflect` | enabled, all markdown types | Reflection pass — generates per-asset proposals. Optional `qualityGate.enabled` runs an LLM-as-judge check before queuing. |
-| `distill` | enabled, `memory` only | Turns feedback into lesson proposals. Optional `qualityGate.enabled`. |
-| `consolidate` | enabled, `memory` only | Memory deduplication / promotion. Optional `contradictionDetection.enabled` runs pairwise checks. |
-| `memoryInference` | enabled | Derives structured memories from pending memory files. |
-| `graphExtraction` | enabled | Extracts entities and relations for graph-boosted search. |
-| `extract` | enabled | Reads native session files (Claude Code JSONL, opencode logs) and extracts insight proposals via LLM. Configure `defaultSince` (discovery window, e.g. `"24h"`) and `maxTotalChars` (event-budget, default `80000`) to tune extraction scope. |
-| `validation` | unset → falls back to `defaults.llm` | Lower-tier classifier model used by staleness detection, confidence scoring, and lesson classification. Configure with a smaller/cheaper LLM profile to keep validation cycles cheap. |
+| `reflect` | enabled, all markdown types | Reflection pass — generates per-asset proposals. `qualityGate.enabled` runs an LLM-as-judge check; `lowValueFilter.enabled` defers low-value proposals. |
+| `distill` | enabled, `memory` only | Turns feedback into lesson proposals. `qualityGate.enabled`, `requirePlannedRefs`, `cls`, `fidelityCheck`. |
+| `consolidate` | enabled, `memory` only | Memory dedup / promotion. `minPoolSize`, `incrementalSince`, `dedup`, `judgedCache`, `homeostaticDemotion`, `schemaSimilarity`, `antiCollapse`, `contradictionDetection`. |
+| `memoryInference` | enabled | Derives structured memories from pending memory files. `minPendingCount`, `cls`. |
+| `graphExtraction` | enabled | Extracts entities/relations for graph-boosted search. `fullScan`, `topN`. |
+| `extract` | enabled | Reads native session files and extracts insight proposals via LLM. `defaultSince`, `maxTotalChars`, `minContentChars`, `minNewSessions`, `maxSessionsPerRun`, `indexSessions`, `minSessionDuration`, `triage` (`{enabled, minScore}`), `hotProbation`. |
+| `validation` | disabled → falls back to `defaults.llm` | Lower-tier classifier (staleness/confidence/lesson classification). Point at a smaller/cheaper LLM profile. |
+| `triage` | disabled | Drains the standing pending-proposal backlog via a deterministic policy. `applyMode` (`queue`\|`promote`), `policy`, `maxAcceptsPerRun`, `maxDiffLines`, `rejectEmpty`, `judgment`. |
+| `proactiveMaintenance` | disabled | Surfaces top-N highest-priority *due* assets for refresh on a schedule. `dueDays` (30), `maxPerRun`/`limit` (25). |
+| `recombine` | disabled | Clusters memories by relatedness and induces cross-episodic generalizations. `minClusterSize`, `maxClustersPerRun`, `maxClusterSize`, `excludeTags`, `excludeEntities`, `relatednessSource` (`tags`\|`graph`\|`both`), `confirmThreshold`. |
+| `procedural` | disabled | Compiles recurring successful action sequences into workflow proposals. `minRecurrence`, `maxProposalsPerRun`, `emitAs`. |
 
 #### Configuring the extract process
 
@@ -332,6 +337,46 @@ Leave the section absent to use the previous fixed 30-day formula
 unchanged — the feedback-count query is skipped entirely when `utilityDecay`
 is not configured, so there's zero overhead on the search hot path.
 
+#### Advanced improve tuning
+
+Three optional top-level `improve.*` sub-trees tune the auto-accept gate and the
+salience-weighted selection lanes. **All default OFF** — when absent, improve
+behaves byte-identically to the un-tuned baseline. Enable them only after
+measuring with `scripts/akm-eval` + the health report.
+
+```jsonc
+{
+  "improve": {
+    "calibration": {
+      "autoTune": false,          // master switch for bounded threshold auto-tune (default false)
+      "minThreshold": 50,         // lower bound (0-100) the tuned threshold may never drop below
+      "maxThreshold": 85,         // upper bound (0-100); default 85 (prevents pure exploitation)
+      "maxStep": 5,               // max adjustment per tune step (points)
+      "minSamples": 20,           // min acted-on samples before any adjustment
+      "targetAcceptRate": 0.9     // target realized accept rate [0,1] (default 0.9)
+    },
+    "exploration": {
+      "enabled": false,           // accept a fixed fraction of proposals regardless of confidence
+      "budgetFraction": 0.05      // fraction per run [0,1] (default 0.05 = 5%)
+    },
+    "salience": {
+      "outcomeWeightEnabled": false, // enable the WS-2 outcome-weight term in salience (default false)
+      "salienceThreshold": 0.75,     // min encoding salience for the high-salience lane; 1.0 disables it
+      "replayBudget": 0              // additive per-run top-salience refs to revisit (default 0 = no replay)
+    }
+  }
+}
+```
+
+- **`calibration`** controls the opt-in per-phase auto-tune of the confidence
+  gate (persisted in `state.db`). The reliability summary on `akm health` is
+  always computed; this block only governs whether the threshold is adjusted.
+- **`exploration`** reserves a slice of accepts for below-threshold proposals so
+  the gate can't converge to pure exploitation (which would starve novelty).
+- **`salience`** governs the encoding-salience selection lane and the additive
+  replay budget. Per-knob semantics are documented in
+  [`config-schema.ts`](https://github.com/itlackey/akm/blob/main/src/core/config/config-schema.ts).
+
 ### `index.*`
 
 | Section | Default | Description |
@@ -340,11 +385,21 @@ is not configured, so there's zero overhead on the search hot path.
 | `index.stalenessDetection.enabled` | `false` | Run the staleness-detection validator pass during `akm index`. |
 | `index.stalenessDetection.thresholdDays` | `90` | Days before a memory is re-evaluated for staleness. |
 
+Any **other** key under `index` is treated as a per-pass entry (keyed by pass
+name, e.g. `index.graph`). Per-pass entries accept: `llm` (boolean — set
+`false` to opt a single pass out of its LLM call), `graphExtractionBatchSize`
+(default 4), `graphExtractionIncludeTypes` (array), `memoryInferenceBatchSize`
+(default 1), and `lazyGraphExtraction` (boolean, default false). Per-pass
+alternate-provider configuration is not supported — configure
+provider/model/endpoint under `profiles.llm` only.
+
 ### `search.*`
 
 | Section | Default | Description |
 | --- | --- | --- |
 | `search.curateRerank.enabled` | `false` | LLM re-ranking during `akm curate`. |
+| `search.minScore` | `0.2` | Minimum score floor for semantic-only hits. `0` disables. |
+| `search.defaultExcludeTypes` | `["session"]` | Asset types excluded from default (untyped) `akm search` / `akm curate`. Explicit `[]` disables exclusion; never applies when `--type` is given. |
 
 ## Improve profiles
 
@@ -358,10 +413,17 @@ processes, per-process runner / cooldown overrides, and run-level
 
 | Name | Description | Sync behavior |
 | --- | --- | --- |
-| `default` | Standard improve pass — all sub-processes, markdown asset types. | Auto-commit + push |
-| `quick` | Reflect-only — distill, consolidate, memoryInference, graphExtraction all disabled. | Sync disabled |
-| `thorough` | All sub-processes enabled (currently identical to `default`; reserved for future divergence). | Auto-commit + push |
-| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. | Sync disabled |
+| `default` | Standard pass — reflect, distill, consolidate, memoryInference, graphExtraction, extract; markdown asset types. | Auto-commit + push |
+| `thorough` | Like `default` but also enables the `triage` process (drains the pending-proposal backlog). | Auto-commit + push |
+| `quick` | Reflect-only — distill / consolidate / memoryInference / graphExtraction / extract all disabled. | Auto-commit + push |
+| `frequent` | Lightweight recurring pass — reflect + memoryInference + graphExtraction + extract (with `minNewSessions`). | Auto-commit + push |
+| `consolidate` | Consolidate-only, tuned for a dedicated consolidation run (`maxChunkSize` 25, `minPoolSize` 500). | Auto-commit + push |
+| `catchup` | Consolidate (`maxChunkSize` 50, `minPoolSize` 0) + `triage` (queue, `personal-stash` policy) for clearing a backlog. | Auto-commit + push |
+| `graph-refresh` | `graphExtraction` only, with `fullScan: true` — a scheduled full-corpus graph rebuild. | Auto-commit + push |
+| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. | Auto-commit + push |
+| `synthesize` | Synthesis-only — `recombine` (cross-episodic generalization) + `procedural` (workflow compilation); all generative/extract passes off. Opt-in periodic pass. | Auto-commit + push |
+
+> All built-ins now auto-commit (and push when the stash is writable with a remote). `saveGitStash` no-ops a clean working tree, so sync costs nothing when a run writes nothing. Use `--no-sync` / `--no-push` to suppress for a single run.
 
 ### Schema
 
@@ -372,15 +434,15 @@ processes, per-process runner / cooldown overrides, and run-level
       "description": "Human-readable summary (optional).",
       "autoAccept": 90,             // optional — default proposal auto-accept threshold (0-100)
       "limit": 25,                  // optional — default refs per run; overridden by --limit
+      "maxCycles": 1,               // optional — bounded multi-cycle phasing (default 1)
+      "symmetricValence": false,    // optional — weight |valence| (both +/- feedback) in ranking
       "processes": {
         "reflect": {
           "enabled": true,
           "mode": "llm",            // optional — "llm" | "agent" | "sdk"
           "profile": "openai-mini", // optional — runner profile name (profiles.llm.* / profiles.agent.*)
           "timeoutMs": 60000,       // optional
-          "allowedTypes": ["memory", "lesson"],      // optional — whitelist of asset types
-          "cooldownByType": { "memory": 1 },         // optional — per-type cooldown (days)
-          "cooldownDays": 7                          // optional — uniform cooldown
+          "allowedTypes": ["memory", "lesson"]       // optional — whitelist of asset types
         },
         "distill": { "enabled": true, "allowedTypes": ["memory"] },
         "consolidate": { "enabled": true },
@@ -409,7 +471,7 @@ presence of a `.git` directory in the stash — no remote is required.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | boolean | true (default/thorough), false (quick/memory-focus) | Whether to auto-commit at run end |
+| `enabled` | boolean | true (all built-ins) | Whether to auto-commit at run end |
 | `push` | boolean | true | Whether to push after commit (only applies when `enabled: true` and stash is writable) |
 | `message` | string | `"akm improve auto-sync"` | Commit message template; supports `{token}` placeholders |
 

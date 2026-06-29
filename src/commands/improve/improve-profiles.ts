@@ -9,6 +9,7 @@ import profileFrequent from "../../assets/profiles/frequent.json" with { type: "
 import profileGraphRefresh from "../../assets/profiles/graph-refresh.json" with { type: "json" };
 import profileMemoryFocus from "../../assets/profiles/memory-focus.json" with { type: "json" };
 import profileQuick from "../../assets/profiles/quick.json" with { type: "json" };
+import profileSynthesize from "../../assets/profiles/synthesize.json" with { type: "json" };
 import profileThorough from "../../assets/profiles/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -38,6 +39,7 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
   frequent: profileFrequent as ImproveProfileConfig,
   consolidate: profileConsolidate as ImproveProfileConfig,
   catchup: profileCatchup as ImproveProfileConfig,
+  synthesize: profileSynthesize as ImproveProfileConfig,
 };
 
 /**

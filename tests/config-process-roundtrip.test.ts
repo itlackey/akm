@@ -408,3 +408,102 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 });
+
+// Config audit 0.9.0 — schema/type drift closure. These four knobs previously
+// existed only in the TS type (or only in the schema), riding `.passthrough()`
+// without validation, because the Zod schema and the hand-written interface were
+// two hand-synced sources of truth. The interfaces are now DERIVED from the
+// schema via `z.infer` (config-types.ts) and the missing fields were added to
+// the schema (config-schema.ts). These tests lock that each is a first-class,
+// VALIDATED field — round-tripping when valid AND rejected when mistyped.
+describe("config audit 0.9.0: previously-drifted knobs are now schema-validated", () => {
+  test("graphExtraction.fullScan round-trips (was TS-only)", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      profiles: { improve: { default: { processes: { graphExtraction: { enabled: true, fullScan: true } } } } },
+    } as unknown as AkmConfig);
+    resetConfigCache();
+    expect(() => loadConfig()).not.toThrow();
+    const gx = loadConfig().profiles?.improve?.default?.processes?.graphExtraction;
+    expect(gx?.fullScan).toBe(true);
+  });
+
+  test("extract.triage { enabled, minScore } round-trips (was TS-only)", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      profiles: {
+        improve: { default: { processes: { extract: { enabled: true, triage: { enabled: true, minScore: 3 } } } } },
+      },
+    } as unknown as AkmConfig);
+    resetConfigCache();
+    expect(() => loadConfig()).not.toThrow();
+    const extract = loadConfig().profiles?.improve?.default?.processes?.extract;
+    expect(extract?.triage?.enabled).toBe(true);
+    expect(extract?.triage?.minScore).toBe(3);
+  });
+
+  test("processes.extract is now a VALIDATED process — a mistyped known field is rejected (closes C2)", () => {
+    // Before the fix `extract` was absent from ImproveProfileProcessesSchema, so
+    // the whole block rode top-level passthrough and `minNewSessions: "lots"`
+    // was silently accepted. It must now hard-error at load.
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        semanticSearchMode: "off",
+        profiles: { improve: { default: { processes: { extract: { minNewSessions: "lots" } } } } },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  test("profiles.agent.<name>.timeoutMs round-trips (number) and rejects a mistyped value", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      profiles: { agent: { opencode: { platform: "opencode", timeoutMs: 120000 } } },
+    } as unknown as AkmConfig);
+    resetConfigCache();
+    expect(() => loadConfig()).not.toThrow();
+    expect(loadConfig().profiles?.agent?.opencode?.timeoutMs).toBe(120000);
+
+    // A string timeoutMs must now be rejected (it is a known, typed field).
+    const configPath = getConfigPath();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        semanticSearchMode: "off",
+        profiles: { agent: { opencode: { platform: "opencode", timeoutMs: "soon" } } },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+});
+
+// saveConfig is the whole-config validation gate that runs the cross-field
+// superRefine GUARDS (not just leaf checks). This is what stops an `akm config
+// set` — leaf OR object form — from persisting a guard-violating value (e.g.
+// re-introducing the removed `feedbackDistillation` process key via an
+// object-valued set, which the per-leaf walker schema alone would let through).
+// Lock that the guard fires at save so it can never silently regress.
+describe("config audit 0.9.0: saveConfig runs superRefine guards (object-form set cannot bypass)", () => {
+  test("saveConfig rejects the removed feedbackDistillation process key with the migration hint", () => {
+    expect(() =>
+      saveConfig({
+        semanticSearchMode: "off",
+        profiles: { improve: { default: { processes: { feedbackDistillation: { enabled: true } } } } },
+      } as unknown as AkmConfig),
+    ).toThrow(/feedbackDistillation was removed/);
+  });
+
+  test("saveConfig rejects writable: true on a non-filesystem/git source (superRefine)", () => {
+    expect(() =>
+      saveConfig({
+        semanticSearchMode: "off",
+        sources: [{ type: "website", name: "docs", url: "https://example.com", writable: true }],
+      } as unknown as AkmConfig),
+    ).toThrow(ConfigError);
+  });
+});

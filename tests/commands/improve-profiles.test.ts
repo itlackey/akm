@@ -55,8 +55,10 @@ describe("resolveImproveProfile", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(false);
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
-    // Lightweight pass opts out of end-of-run auto-sync (no surprise commit/push).
-    expect(profile.sync?.enabled).toBe(false);
+    // Sync is enabled (consistent with every built-in): reflect can auto-accept
+    // and write, so the run must commit rather than leave a silent backlog.
+    // saveGitStash no-ops a clean tree, so this is free when nothing is written.
+    expect(profile.sync?.enabled).toBe(true);
   });
 
   test("resolves named built-in 'thorough'", () => {
@@ -75,8 +77,9 @@ describe("resolveImproveProfile", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(true);
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
-    // Limited pass opts out of end-of-run auto-sync (no surprise commit/push).
-    expect(profile.sync?.enabled).toBe(false);
+    // Sync is enabled (consistent with every built-in): reflect + memoryInference
+    // both write, so the run must commit rather than leave a silent backlog.
+    expect(profile.sync?.enabled).toBe(true);
   });
 
   test("unknown name falls back to default built-in", () => {

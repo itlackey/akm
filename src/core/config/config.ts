@@ -357,9 +357,14 @@ export function saveConfig(config: AkmConfig): void {
 
   const sanitized = sanitizeConfigForWrite(config);
 
-  // Final validation gate before bytes hit disk. Catches schema violations
-  // (unknown keys in registries[] / sources[] / profiles.*; out-of-range
-  // numbers; etc. — closes #462) before we corrupt the user's config.
+  // Final validation gate before bytes hit disk. Runs the FULL schema —
+  // including the cross-field superRefine guards (removed `feedbackDistillation`
+  // process key, `defaultWriteTarget` resolution, writable npm/website sources)
+  // and all type/enum/range checks — so an `akm config set` (leaf OR object
+  // form) cannot persist a guard-violating or mistyped value. NOTE: unknown
+  // keys are intentionally NOT rejected here — object schemas are `.passthrough()`
+  // so cross-version skew round-trips (see config-schema.ts header); the lenient
+  // tolerance is by design, not an oversight.
   const parseResult = AkmConfigSchema.safeParse(sanitized);
   if (!parseResult.success) {
     const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");

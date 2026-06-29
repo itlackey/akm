@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 import profileCatchup from "../../src/assets/profiles/catchup.json";
 import profileConsolidate from "../../src/assets/profiles/consolidate.json";
 import profileFrequent from "../../src/assets/profiles/frequent.json";
+import profileSynthesize from "../../src/assets/profiles/synthesize.json";
 import { resolveImproveProfile } from "../../src/commands/improve/improve-profiles";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
@@ -85,6 +86,23 @@ describe("default improve profiles (#552)", () => {
     expect(JSON.stringify(profileFrequent)).not.toContain("minPoolSize");
     expect(JSON.stringify(profileConsolidate)).toContain("minPoolSize");
     expect(JSON.stringify(profileCatchup)).toContain("minPoolSize");
+  });
+
+  test("synthesize: validates against the live schema", () => {
+    expect(() => ImproveProfileConfigSchema.parse(profileSynthesize)).not.toThrow();
+  });
+
+  test("synthesize resolves to recombine + procedural ON, all generative/extract passes OFF", () => {
+    const p = resolveImproveProfile("synthesize", MINIMAL_CONFIG);
+    expect(p.processes?.recombine?.enabled).toBe(true);
+    expect(p.processes?.procedural?.enabled).toBe(true);
+    expect(p.processes?.reflect?.enabled).toBe(false);
+    expect(p.processes?.distill?.enabled).toBe(false);
+    expect(p.processes?.consolidate?.enabled).toBe(false);
+    expect(p.processes?.memoryInference?.enabled).toBe(false);
+    expect(p.processes?.graphExtraction?.enabled).toBe(false);
+    expect(p.processes?.extract?.enabled).toBe(false);
+    expect(p.sync?.push).toBe(true);
   });
 
   test("minNewSessions (#554) lives only on the frequent profile's extract process", () => {

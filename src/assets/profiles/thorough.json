@@ -1,5 +1,5 @@
 {
-  "description": "All sub-processes enabled (currently identical to default; reserved for future divergence).",
+  "description": "Like default, plus the triage process (drains the pending-proposal backlog).",
   "processes": {
     "reflect": {
       "enabled": true,

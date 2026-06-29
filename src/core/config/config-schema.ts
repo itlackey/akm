@@ -142,6 +142,10 @@ export const AgentProfileConfigSchema = z
     args: z.array(z.string()).optional(),
     workspace: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
+    // Per-call timeout (ms) used when a command does not pass an explicit
+    // timeout (e.g. `akm wiki ingest` without `--timeout-ms`). null = no
+    // timeout. Honored by resolveAgentProfile (integrations/agent/config.ts).
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
   })
   .passthrough();
 
@@ -220,6 +224,23 @@ export const ImproveProcessConfigSchema = z
     // high-signal-first sweep). Unset = process all eligible (current
     // behavior). Only meaningful on `graphExtraction`.
     topN: positiveInt.optional(),
+    // graphExtraction process: full-corpus scan. When true, graph extraction
+    // runs on ALL stash files instead of only files touched by actionable refs
+    // in the current run. Used by the `graph-refresh` built-in profile / a
+    // scheduled weekly task. Only meaningful on `graphExtraction`.
+    fullScan: z.boolean().optional(),
+    // #626 — extract process: pre-LLM heuristic triage gate. When enabled, a
+    // deterministic scorer decides BEFORE the extraction LLM call whether a
+    // session carries enough signal to be worth extracting; low-signal sessions
+    // are skipped at zero LLM cost. Default OFF. Only meaningful on `extract`.
+    // `minScore` is the minimum total heuristic score to PASS (default 2).
+    triage: z
+      .object({
+        enabled: z.boolean().optional(),
+        minScore: z.number().min(0).optional(),
+      })
+      .passthrough()
+      .optional(),
     // MemoryInference process: minimum pending memory count to run the pass.
     minPendingCount: z.number().int().min(0).optional(),
     // Extract process: minimum number of new (unseen, in-window) candidate
@@ -397,6 +418,7 @@ const ImproveProfileProcessesSchema = z
     consolidate: ImproveProcessConfigSchema.optional(),
     memoryInference: ImproveProcessConfigSchema.optional(),
     graphExtraction: ImproveProcessConfigSchema.optional(),
+    extract: ImproveProcessConfigSchema.optional(),
     validation: ImproveProcessConfigSchema.optional(),
     triage: ImproveProcessConfigSchema.optional(),
     proactiveMaintenance: ImproveProcessConfigSchema.optional(),
