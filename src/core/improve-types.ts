@@ -110,7 +110,7 @@ export type ImproveActionMode =
   | "error";
 
 /** Coarse audit bucket an {@link ImproveActionMode} contributes to. */
-export type ImproveActionClass = "accepted" | "rejected" | "error" | "noop";
+export type ImproveActionClass = "accepted" | "rejected" | "skipped" | "error" | "noop";
 
 /**
  * Map an {@link ImproveActionMode} to its coarse audit bucket. Single source of
@@ -121,16 +121,18 @@ export type ImproveActionClass = "accepted" | "rejected" | "error" | "noop";
  *
  * Buckets:
  * - `accepted` — a write/content-authoring action succeeded.
- * - `rejected` — the action was deliberately not applied (cooldown, skip,
- *   distill-skip, or a content-policy guard rejection). NOTE: as of the
- *   round-2 health pass `reflect-guard-rejected` is bucketed here. Previously
- *   the `state-db.ts` switch omitted it entirely (no case, no default), so a
- *   guard rejection silently vanished from accepted/rejected/error totals — a
- *   data-integrity miscount. It is a deliberate non-application of the action,
- *   so it belongs with the other "rejected" outcomes.
+ * - `skipped` — the ref was GATED OUT before any content was produced: a
+ *   cooldown, a signal-delta/eligibility skip, or a distill pool-delta skip.
+ *   These are NOT rejections of produced content — they are the run declining
+ *   to act on a ref it had no new reason to touch, and they scale with the
+ *   whole indexed-ref pool (~13k/run), so folding them into `rejected` made the
+ *   "accept rate" meaningless (deep-tuning analysis 2026-06-29, finding #1).
+ * - `rejected` — the run PRODUCED a change and a content-policy guard then
+ *   rejected it (`reflect-guard-rejected`). This is the genuine value-rejection
+ *   signal; it is small and meaningful, no longer drowned by gated skips.
  * - `error` — the action failed (LLM/runtime error).
  * - `noop` — bookkeeping that is neither a write nor a rejection (memory-prune);
- *   intentionally counted in none of the three numeric buckets.
+ *   intentionally counted in none of the numeric buckets.
  *
  * The `default: assertNever(mode)` arm makes any future union variant a
  * compile-time error here, forcing an explicit bucket choice.
@@ -145,6 +147,7 @@ export function classifyImproveAction(mode: ImproveActionMode): ImproveActionCla
     case "reflect-cooldown":
     case "reflect-skipped":
     case "distill-skipped":
+      return "skipped";
     case "reflect-guard-rejected":
       return "rejected";
     case "reflect-failed":

@@ -971,8 +971,10 @@ export interface ImproveRunMetrics {
   actionsCount: number;
   /** Action modes that imply a write (reflect/distill/memory-inference/graph-extraction succeeded). */
   acceptedCount: number;
-  /** Action modes that were skipped (cooldown / skipped / failed). */
+  /** Genuine value-rejections: a change was produced then rejected by a content guard. */
   rejectedCount: number;
+  /** Gated skips (cooldown / signal-delta skip / distill pool-delta skip) — NOT rejections. */
+  skippedCount: number;
   /** Subset of actions whose underlying result claimed `autoAccepted: true`. */
   autoAcceptedCount: number;
   /** Action modes that ended in `error`. */
@@ -993,22 +995,26 @@ export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMe
 
   let acceptedCount = 0;
   let rejectedCount = 0;
+  let skippedCount = 0;
   let autoAcceptedCount = 0;
   let errorCount = 0;
 
   for (const action of actions) {
     // Bucketing delegated to the shared classifyImproveAction so this aggregate
     // and the improve_completed event in improve.ts can never disagree, and so a
-    // new union variant is a compile error rather than a silent drop. Note:
-    // `reflect-guard-rejected` now counts as "rejected" (previously this switch
-    // omitted it entirely — a data-integrity miscount). "noop" (memory-prune) is
-    // intentionally counted in none of the three numeric buckets.
+    // new union variant is a compile error rather than a silent drop. Gated skips
+    // (cooldown / signal-delta / distill pool-delta) bucket to "skipped", NOT
+    // "rejected" — only a guard-rejected produced change is a true rejection.
+    // "noop" (memory-prune) is intentionally counted in none of the buckets.
     switch (classifyImproveAction(action.mode)) {
       case "accepted":
         acceptedCount++;
         break;
       case "rejected":
         rejectedCount++;
+        break;
+      case "skipped":
+        skippedCount++;
         break;
       case "error":
         errorCount++;
@@ -1024,7 +1030,7 @@ export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMe
   // Add gate-promoted count from the unified PostPhaseAutoAcceptGate (all phases).
   autoAcceptedCount += result.gateAutoAcceptedCount ?? 0;
 
-  return { plannedCount, actionsCount, acceptedCount, rejectedCount, autoAcceptedCount, errorCount };
+  return { plannedCount, actionsCount, acceptedCount, rejectedCount, skippedCount, autoAcceptedCount, errorCount };
 }
 
 /**

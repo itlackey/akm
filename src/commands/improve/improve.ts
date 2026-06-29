@@ -1271,7 +1271,7 @@ function emitImproveCompletedEvent(
   // Coarse audit buckets, derived from the SAME classifyImproveAction the
   // persisted metrics_json uses (state-db.ts#computeImproveRunMetrics) so the
   // emitted event and the stored row can never disagree.
-  const classCounts = { accepted: 0, rejected: 0, error: 0, noop: 0 };
+  const classCounts = { accepted: 0, rejected: 0, skipped: 0, error: 0, noop: 0 };
   for (const action of result.actions ?? []) {
     classCounts[classifyImproveAction(action.mode)] += 1;
     // Per-variant counters for the event metadata. The default arm makes any
@@ -1341,6 +1341,7 @@ function emitImproveCompletedEvent(
         reflectGuardRejectedActions: actionCounts.reflectGuardRejected,
         acceptedActions: classCounts.accepted,
         rejectedActions: classCounts.rejected,
+        skippedActions: classCounts.skipped,
         noopActions: classCounts.noop,
         reflectsWithErrorContext: result.reflectsWithErrorContext ?? 0,
         coverageGapCount: result.coverageGaps?.length ?? 0,

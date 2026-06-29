@@ -247,7 +247,9 @@ describe("recordImproveRun", () => {
       expect(metrics.plannedCount).toBe(3);
       expect(metrics.actionsCount).toBe(4);
       expect(metrics.acceptedCount).toBe(2);
-      expect(metrics.rejectedCount).toBe(1);
+      // reflect-cooldown is a gated skip, not a rejection (deep-tuning #1).
+      expect(metrics.rejectedCount).toBe(0);
+      expect(metrics.skippedCount).toBe(1);
       expect(metrics.autoAcceptedCount).toBe(1);
       expect(metrics.errorCount).toBe(1);
     } finally {
@@ -293,6 +295,7 @@ describe("recordImproveRun", () => {
       actionsCount: 1,
       acceptedCount: 1,
       rejectedCount: 0,
+      skippedCount: 0,
       autoAcceptedCount: 0,
       errorCount: 0,
     });
