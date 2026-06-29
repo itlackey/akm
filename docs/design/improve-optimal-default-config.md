@@ -13,7 +13,7 @@
 
 On a fresh install the only scheduled improve task that ships is the nightly `improve.yml` → **`default` profile**. That profile leaves **`proactiveMaintenance` OFF**. On a *mature* stash, `reflect` is signal-delta-gated to ~0 actionable refs per run (verified in production logs: `279 of 13197 indexed refs blocked by reflect signal-delta … 0 actionable`). **`proactiveMaintenance` is the only lane that keeps producing once the stash is no longer new.** With it off, a fresh install does useful work for the first week, then goes silent — exactly the failure observed on this machine on 2026-06-28.
 
-**Primary recommendation:** ship `proactiveMaintenance: { enabled: true, dueDays: 30, maxPerRun: 15 }` in the `default` profile, and ship the monthly proactive-verdict task enabled so the lane self-disables if it underperforms.
+**Primary recommendation:** ship `proactiveMaintenance: { enabled: true, dueDays: 30, maxPerRun: 15 }` in the `default` profile. Its value is being validated *before 0.9.0* on the maintainer's local stash using the `scripts/akm-eval/` verdict instrument (see §4) — that local evaluation, plus the production evidence above, is the basis for shipping it on. The verdict kill-switch itself is a **dev/testing tool and is intentionally NOT shipped** in the release.
 
 ---
 
@@ -42,7 +42,7 @@ Legend: **current** = today's code default; **recommend** = proposed ship defaul
 | **consolidate** | ON | **ON**, `minPoolSize: 500` | 99.3% (8096/8153) | High yield. Exclude session-checkpoint telemetry from pools (~20% noise). |
 | **memoryInference** | ON | **ON** | — | Core; cheap; derives facts post-cycle. |
 | **graphExtraction** | ON | **ON** | — | Core; powers entity clustering used by recombine/curate. |
-| **proactiveMaintenance** | **OFF** | **★ ON**, `dueDays: 30`, `maxPerRun: 15` | (feeds reflect) | **The sustaining lane.** Without it a mature stash → 0 actionable. `maxPerRun:15` is the proven value from this machine's working config. Gate with the monthly verdict task. |
+| **proactiveMaintenance** | **OFF** | **★ ON**, `dueDays: 30`, `maxPerRun: 15` | (feeds reflect) | **The sustaining lane.** Without it a mature stash → 0 actionable. `maxPerRun:15` is the proven value from this machine's working config. Value validated pre-release via the local `scripts/akm-eval/` verdict (not a shipped gate). |
 | **triage** | OFF | **OFF** (default), ON in `thorough` | — | The shipped nightly cmd already uses `--auto-accept safe`, so the pending backlog stays small; triage is redundant in `default`. Keep it as the `thorough` differentiator. |
 | **distill** | ON | **ON but cap cost** — `requirePlannedRefs: true` | **13.9% (5/36)** | Highest-noise lane here: 86% rejected, mostly local-model validation failures (truncated/unbalanced descriptions). Keep on (it produces the only *content* salience scores) but cap with `requirePlannedRefs` so it rides reflect's selection instead of scanning the full backlog. |
 | **recombine** | OFF | **OFF in `default`; ON only in `synthesize`** | **36.8% (14/38)** | Data still shows it noisy. The entity-clustering fix (`relatednessSource:"both"`, session-telemetry exclusion, #632/beta.44) is recent and not yet proven in prod accept-rate. Keep opt-in via the `synthesize` profile; revisit default-on once a post-fix window shows ≥60% accept. |
@@ -88,13 +88,13 @@ Legend: **current** = today's code default; **recommend** = proposed ship defaul
 
 `IMPROVE_PROCESS_DEFAULTS` (the fallback for profiles that don't mention a lane) can stay as-is — the change above is profile-level, which is the right altitude (a code-default flip to `proactiveMaintenance:true` would silently turn it on for *every* profile including `quick`/`graph-refresh`, which is not wanted).
 
-**Also ship enabled:** the monthly proactive-verdict task (`akm-improve-proactive-verdict-monthly` already exists in the cron template) so proactiveMaintenance is empirically gated: PASS requires proactive-accept ≥ 0.9× reactive-accept, reversion ≤ 0.15, retrieval-delta ≥ 0; FAIL → auto-disable. This is what makes default-on safe.
+**Pre-release validation (NOT a shipped gate):** the value of the proactive lane is verified on the maintainer's local stash with the `scripts/akm-eval/` verdict instrument (`scripts/akm-eval/bin/akm-eval-proactive-verdict`): PASS requires proactive-accept ≥ 0.9× reactive-accept, reversion ≤ 0.15, retrieval-delta ≥ 0; FAIL → the lane is reconsidered before 0.9.0. This runner — and the local `akm-improve-proactive-verdict-monthly` cron that drives it on this dev machine — is a **dev/testing instrument and is deliberately excluded from the release**. The decision to ship `proactiveMaintenance` on rests on that local validation plus the production evidence above, not on a shipped auto-disable mechanism. Do **not** add the verdict task to `src/assets/tasks/`.
 
 ---
 
 ## 5. Where I disagree with the raw memory synthesis
 
-- The memories say "proactiveMaintenance disabled in all shipped profiles as of beta.44" — that reflects a *cautious rollout state*, not the optimal end-state. The production data (this very regression) shows the lane is **required** for a mature stash to keep improving. Ship it on, gated by the verdict task.
+- The memories say "proactiveMaintenance disabled in all shipped profiles as of beta.44" — that reflects a *cautious rollout state*, not the optimal end-state. The production data (this very regression) shows the lane is **required** for a mature stash to keep improving. Ship it on; its value is being validated pre-release via the local `scripts/akm-eval/` verdict, which is itself excluded from the release.
 - The memory synthesis suggested `recombine` default-on in `default`. The live accept rate (37%) doesn't support that yet; keep it in `synthesize` until a post-#632 window proves it.
 
 ---

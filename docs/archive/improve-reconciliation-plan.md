@@ -207,7 +207,7 @@ omitted. `[exp]` Gap 6 is **partially promoted** out of "deferred" (see S3).
 - **`[exp]` Diversity floor:** cap the max rank uplift from retrieval-alone so rare-but-correct assets can't be permanently outcompeted.
 - **`[exp]` Proxy-adequacy tripwire:** monitor `corr(outcome_score, accepted_change_rate)`; if it goes negative (popular assets are also the ones most needing fixes), the proxy is inverted and the 0.10+ rich signal is no longer deferrable. Surface in the health report.
 - **Documented validity gap:** "led to an accepted change" is not a clean usefulness proxy (a confirming asset is useful yet yields no change). Rich in-session retrieve→act→outcome trace is **0.10+** (Gap 2 proper).
-**Steps:** (1) add table + writer; (2) `salience.outcomeSalience` reads `outcome_score`; (3) calibration reroute lives in WS-4 (avoids the circular dep); (4) kill-criterion verdict stays the population guardrail.
+**Steps:** (1) add table + writer; (2) `salience.outcomeSalience` reads `outcome_score`; (3) calibration reroute lives in WS-4 (avoids the circular dep); (4) kill-criterion verdict stays the population guardrail — _note (2026-06-29): the `scripts/akm-eval/` verdict runner is a **local pre-release dev/eval instrument, intentionally not shipped** in the release cron; it validates lane value before 0.9.0, it is not a shipped runtime guardrail._
 
 ### WS-3 — Unify the CONSOLIDATION pipeline (S3)
 **Splinter:** #617 (own hash/loader/embed), #581 judgedCache, consolidate (own hash/embed), incremental knobs, divergent hashes.
