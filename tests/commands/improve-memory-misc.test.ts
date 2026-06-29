@@ -616,7 +616,15 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
         profiles: {
           llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
           improve: {
-            default: { processes: { memoryInference: { enabled: false }, graphExtraction: { enabled: false } } },
+            default: {
+              processes: {
+                memoryInference: { enabled: false },
+                graphExtraction: { enabled: false },
+                // default profile now ships proactiveMaintenance ON; disable it so
+                // this test pins the zero-SIGNAL gate, not the proactive lane.
+                proactiveMaintenance: { enabled: false },
+              },
+            },
           },
         },
         defaults: { llm: "default" },

@@ -99,7 +99,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
-describe("proactive maintenance — disabled by default", () => {
+describe("proactive maintenance — explicitly disabled", () => {
   test("a never-reflected, no-signal asset is NOT selected when the process is off", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "deploy", "Deploy steps.");
@@ -109,6 +109,9 @@ describe("proactive maintenance — disabled by default", () => {
     const res = await akmImprove({
       scope: "skill",
       stashDir: stash,
+      // The `default` profile now ships proactiveMaintenance ON (the sustaining
+      // lane), so this test must disable it explicitly to pin the "off" behaviour.
+      config: enabledConfig({ enabled: false }),
       minRetrievalCount: 5, // P0-A would also not pick (no retrievals)
       ...noopIndexFns,
       reflectFn: async ({ ref }) => {

@@ -21,6 +21,15 @@ import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema"
 const MINIMAL_CONFIG: AkmConfig = { semanticSearchMode: "off" };
 
 describe("default improve profiles (#552)", () => {
+  test("default profile ships the sustaining proactiveMaintenance lane ON", () => {
+    // Intentional default (deep-tuning 2026-06-29): on a mature stash, reflect is
+    // signal-delta-gated to ~0 actionable, so proactiveMaintenance is the lane
+    // that keeps the nightly default-profile cron producing. This pins that the
+    // default profile resolves it ON (other built-ins inherit the OFF code default).
+    const p = resolveImproveProfile("default", MINIMAL_CONFIG);
+    expect(p.processes?.proactiveMaintenance?.enabled).toBe(true);
+  });
+
   test("frequent: validates against the live schema", () => {
     expect(() => ImproveProfileConfigSchema.parse(profileFrequent)).not.toThrow();
   });
