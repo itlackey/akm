@@ -6,7 +6,7 @@
     "consolidate": { "enabled": false },
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": true },
-    "extract": { "enabled": true, "minNewSessions": 3 },
+    "extract": { "enabled": true, "minNewSessions": 3, "triage": { "enabled": true, "minScore": 2 } },
     "triage": { "enabled": false }
   },
   "sync": { "enabled": true, "push": true }

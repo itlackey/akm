@@ -92,10 +92,11 @@ describe("default improve profiles (#552)", () => {
     expect(() => ImproveProfileConfigSchema.parse(profileSynthesize)).not.toThrow();
   });
 
-  test("synthesize resolves to recombine + procedural ON, all generative/extract passes OFF", () => {
+  test("synthesize resolves to recombine ON, procedural OFF (held until cross-project scoping), all generative/extract passes OFF", () => {
     const p = resolveImproveProfile("synthesize", MINIMAL_CONFIG);
     expect(p.processes?.recombine?.enabled).toBe(true);
-    expect(p.processes?.procedural?.enabled).toBe(true);
+    // #615 procedural is held OFF everywhere — it over-fits one-off sequences (0% accept, deep-tuning analysis 2026-06-29).
+    expect(p.processes?.procedural?.enabled).toBe(false);
     expect(p.processes?.reflect?.enabled).toBe(false);
     expect(p.processes?.distill?.enabled).toBe(false);
     expect(p.processes?.consolidate?.enabled).toBe(false);

@@ -1,5 +1,5 @@
 {
-  "description": "Synthesis-only — cross-episodic recombination (#609) + procedural workflow compilation (#615). Opt-in periodic pass; all generative/extract passes off.",
+  "description": "Synthesis-only — cross-episodic recombination (#609). Opt-in periodic pass; all generative/extract passes off. (Procedural compilation (#615) is held OFF until cross-project scoping lands — it over-fits one-off sequences, 0% accept.)",
   "processes": {
     "reflect": { "enabled": false },
     "distill": { "enabled": false },
@@ -9,7 +9,7 @@
     "extract": { "enabled": false },
     "triage": { "enabled": false },
     "recombine": { "enabled": true },
-    "procedural": { "enabled": true }
+    "procedural": { "enabled": false }
   },
   "sync": { "enabled": true, "push": true }
 }
