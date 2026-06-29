@@ -1,15 +1,20 @@
 {
-  "description": "Standard improve pass — all sub-processes, markdown asset types.",
+  "description": "Standard improve pass — all sub-processes + sustaining proactive lane.",
   "processes": {
     "reflect": {
       "enabled": true,
+      "limit": 25,
       "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"]
     },
-    "distill": { "enabled": true, "allowedTypes": ["memory"] },
-    "consolidate": { "enabled": true, "allowedTypes": ["memory"] },
+    "distill": { "enabled": true, "allowedTypes": ["memory"], "requirePlannedRefs": true },
+    "consolidate": { "enabled": true, "allowedTypes": ["memory"], "minPoolSize": 500 },
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": true },
-    "triage": { "enabled": false, "applyMode": "queue", "policy": "personal-stash" }
+    "extract": { "enabled": true },
+    "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 },
+    "triage": { "enabled": false, "applyMode": "queue", "policy": "personal-stash" },
+    "recombine": { "enabled": false },
+    "procedural": { "enabled": false }
   },
   "sync": { "enabled": true, "push": true }
 }
