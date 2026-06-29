@@ -2,11 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Type-only imports (erased at runtime → no import cycle with config-schema,
-// which imports VALID_HARNESS_IDS from here at runtime). The improve/agent
-// process shapes are DERIVED from the Zod schema via `z.infer` so the type and
-// the validator cannot drift — the schema in ./config-schema.ts is the single
-// source of truth (see its field comments for per-knob docs).
+// The improve/agent process shapes are DERIVED from the Zod schema via
+// `z.infer` so the type and the validator cannot drift — config-schema.ts is the
+// single source of truth (see its field comments for per-knob docs). The schema
+// values are referenced via inline `typeof import("./config-schema").<Schema>`
+// type queries rather than an `import type {...}`: this is unambiguously
+// type-only under any tsconfig/toolchain and creates no runtime import cycle
+// (config-schema imports VALID_HARNESS_IDS from here at runtime).
 import type { z } from "zod";
 // VALID_HARNESS_IDS now derives from the unified HARNESS_REGISTRY (#562), which
 // is the single source of truth replacing the previously-disconnected
@@ -25,7 +27,6 @@ import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
  * `bunx tsc` surfaces drift through call-site errors.
  */
 import type { InstalledStashEntry } from "../../registry/types";
-import type { AgentProfileConfigSchema, ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "./config-schema";
 
 /**
  * Canonical list of valid agent harness / platform ids. Re-exported from the
@@ -134,7 +135,7 @@ export interface LlmProfileConfig extends LlmConnectionConfig {
  * {@link AgentProfileConfigSchema}; fields: `platform`, `bin`, `args`,
  * `workspace`, `model`, `timeoutMs` (null = no timeout).
  */
-export type AgentProfileConfig = z.infer<typeof AgentProfileConfigSchema>;
+export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentProfileConfigSchema>;
 
 /**
  * Per-process config (`profiles.improve.<profile>.processes.<process>`).
@@ -146,7 +147,7 @@ export type AgentProfileConfig = z.infer<typeof AgentProfileConfigSchema>;
  * graphExtraction; `minClusterSize`/`relatednessSource` = recombine;
  * `minRecurrence`/`emitAs` = procedural).
  */
-export type ImproveProcessConfig = z.infer<typeof ImproveProcessConfigSchema>;
+export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
 
 /**
  * A named improve profile (`profiles.improve.<name>`). Derived from
@@ -154,7 +155,7 @@ export type ImproveProcessConfig = z.infer<typeof ImproveProcessConfigSchema>;
  * profile-level knobs (`autoAccept`, `limit`, `maxCycles`, `symmetricValence`,
  * `sync`). See config-schema.ts for per-field docs.
  */
-export type ImproveProfileConfig = z.infer<typeof ImproveProfileConfigSchema>;
+export type ImproveProfileConfig = z.infer<typeof import("./config-schema").ImproveProfileConfigSchema>;
 
 export interface RegistryConfigEntry {
   /** URL of the registry index */
