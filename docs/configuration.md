@@ -115,7 +115,7 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `profiles.agent.<name>` | object | — | Named agent profile (`platform: "opencode"\|"claude"\|"opencode-sdk"`). See [Profile types](#profile-types). |
 | `defaults.llm` | string | — | Default LLM profile name. Used when a features entry omits `profile`. Also the target for `AKM_LLM_API_KEY` injection. |
 | `defaults.agent` | string | — | Default agent profile name. Fallback for `mode: "agent"` or `mode: "sdk"` entries that omit `profile`. |
-| `defaults.improve` | string | `"default"` | Default improve profile name. Selects a built-in (`default`, `thorough`, `quick`, `frequent`, `catchup`, `consolidate`, `graph-refresh`, `memory-focus`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
+| `defaults.improve` | string | `"default"` | Default improve profile name. Selects a built-in (`default`, `thorough`, `quick`, `frequent`, `catchup`, `consolidate`, `graph-refresh`, `memory-focus`, `synthesize`) or a user-defined entry under `profiles.improve`. Overridden by `--profile <name>`. |
 | `profiles.improve.<name>` | object | — | Improve profile defining per-process gating, type filters, and run-level `autoAccept` / `limit` / `maxCycles` / `symmetricValence` / `sync` defaults. See [Improve profiles](#improve-profiles). |
 | `profiles.improve.<name>.processes.<process>` | object | — | Per-process binding. Processes: `reflect`, `distill`, `consolidate`, `memoryInference`, `graphExtraction`, `extract`, `validation`, `triage`, `proactiveMaintenance`, `recombine`, `procedural`. Common shape: `{ enabled, mode, profile, timeoutMs, allowedTypes?, qualityGate? }` plus process-specific knobs (see [Known process names](#known-process-names) and the [JSON schema](https://itlackey.github.io/akm/schemas/akm-config.json)). |
 | `index.metadataEnhance.enabled` | boolean | `false` | Toggles the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` entry. |
@@ -415,14 +415,15 @@ processes, per-process runner / cooldown overrides, and run-level
 | --- | --- | --- |
 | `default` | Standard pass — reflect, distill, consolidate, memoryInference, graphExtraction, extract; markdown asset types. | Auto-commit + push |
 | `thorough` | Like `default` but also enables the `triage` process (drains the pending-proposal backlog). | Auto-commit + push |
-| `quick` | Reflect-only — distill / consolidate / memoryInference / graphExtraction / extract all disabled. | **Sync disabled** |
+| `quick` | Reflect-only — distill / consolidate / memoryInference / graphExtraction / extract all disabled. | Auto-commit + push |
 | `frequent` | Lightweight recurring pass — reflect + memoryInference + graphExtraction + extract (with `minNewSessions`). | Auto-commit + push |
 | `consolidate` | Consolidate-only, tuned for a dedicated consolidation run (`maxChunkSize` 25, `minPoolSize` 500). | Auto-commit + push |
 | `catchup` | Consolidate (`maxChunkSize` 50, `minPoolSize` 0) + `triage` (queue, `personal-stash` policy) for clearing a backlog. | Auto-commit + push |
 | `graph-refresh` | `graphExtraction` only, with `fullScan: true` — a scheduled full-corpus graph rebuild. | Auto-commit + push |
-| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. | **Sync disabled** |
+| `memory-focus` | Reflect + memoryInference only; restricted to `memory` and `lesson` types. | Auto-commit + push |
+| `synthesize` | Synthesis-only — `recombine` (cross-episodic generalization) + `procedural` (workflow compilation); all generative/extract passes off. Opt-in periodic pass. | Auto-commit + push |
 
-> Two built-ins ship with `sync.enabled: false`: **`quick`** (reflect-only, fast iteration) and **`memory-focus`**. Note `memory-focus` *produces* proposals but does not auto-commit/push them — commit manually or run a sync-enabled profile if you want them persisted to the git stash.
+> All built-ins now auto-commit (and push when the stash is writable with a remote). `saveGitStash` no-ops a clean working tree, so sync costs nothing when a run writes nothing. Use `--no-sync` / `--no-push` to suppress for a single run.
 
 ### Schema
 
@@ -470,7 +471,7 @@ presence of a `.git` directory in the stash — no remote is required.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | boolean | true (default/thorough), false (quick/memory-focus) | Whether to auto-commit at run end |
+| `enabled` | boolean | true (all built-ins) | Whether to auto-commit at run end |
 | `push` | boolean | true | Whether to push after commit (only applies when `enabled: true` and stash is writable) |
 | `message` | string | `"akm improve auto-sync"` | Commit message template; supports `{token}` placeholders |
 

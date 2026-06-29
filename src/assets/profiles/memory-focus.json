@@ -8,5 +8,5 @@
     "graphExtraction": { "enabled": false },
     "triage": { "enabled": false }
   },
-  "sync": { "enabled": false }
+  "sync": { "enabled": true, "push": true }
 }
