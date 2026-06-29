@@ -284,6 +284,10 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
             agentProcess: options.agentProcess ?? "reflect",
             eventSource: "improve" as const,
+            // #639 — resolve the low-value filter from the ACTIVE improve profile
+            // (default off when unset), so the running profile decides instead of
+            // a hardcoded profiles.improve.default path.
+            lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
             ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
             ...(reflectProfileRunner ? { runner: reflectProfileRunner } : {}),
             // Attribution: carry the eligibility lane so reflect stamps it on

@@ -136,6 +136,16 @@ export interface AkmReflectOptions {
    */
   eventSource?: "user" | "improve";
   /**
+   * #639 low-value filter (DEFAULT OFF). When true, "low-value" changes — a
+   * 2-3 changed-token prose micro-rewrite with no code/frontmatter/structural/
+   * negation/decision signal (see classifyReflectChange) — are deferred like
+   * noop/cosmetic instead of becoming proposals. The improve loop resolves this
+   * from the ACTIVE profile's `processes.reflect.lowValueFilter.enabled`; the
+   * standalone `akm reflect` command leaves it off. (Previously read from a
+   * hardcoded `profiles.improve.default` path that ignored the active profile.)
+   */
+  lowValueFilter?: boolean;
+  /**
    * Maximum number of iterative self-refinement passes (R-1 / #372).
    * Default: 1 (single-shot, no refinement — preserves existing behaviour).
    * Capped at 3 to prevent runaway loops.
@@ -1538,12 +1548,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // (new-asset proposals have nothing to diff against).
   if (assetContent !== undefined) {
     const changeKind = classifyReflectChange(assetContent, payload.content);
-    // 'low-value' is config-gated (#639): only defer when
-    // profiles.improve.default.processes.reflect.lowValueFilter.enabled is
-    // explicitly true. DEFAULT OFF — absent flag = byte-identical pre-#639
-    // behaviour (low-value treated the same as substantive).
-    const lowValueFilterEnabled =
-      runtimeConfig?.profiles?.improve?.default?.processes?.reflect?.lowValueFilter?.enabled === true;
+    // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
+    // pre-#639 behaviour (low-value treated the same as substantive). Resolved
+    // by the caller from the ACTIVE improve profile's
+    // `processes.reflect.lowValueFilter.enabled` and passed via options, so the
+    // running profile (not a hardcoded `profiles.improve.default`) decides.
+    const lowValueFilterEnabled = options.lowValueFilter === true;
     const isDeferred =
       changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);
     if (isDeferred) {
