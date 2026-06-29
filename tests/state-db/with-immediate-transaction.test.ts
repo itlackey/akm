@@ -49,6 +49,36 @@ describe("withImmediateTransaction", () => {
     expect(count).toBe(1);
   });
 
+  test("retries when BEGIN IMMEDIATE returns WITHOUT opening a transaction (phantom)", () => {
+    // The CI-only failure mode: bun:sqlite returns from BEGIN IMMEDIATE under
+    // contention without actually opening a transaction (no throw), which used to
+    // surface as "cannot commit - no transaction is active" at COMMIT — after the
+    // body already ran in autocommit. The helper now detects !inTransaction BEFORE
+    // the body and retries. Simulated by swallowing the FIRST BEGIN IMMEDIATE so
+    // the connection reports no open transaction; the retry runs a real one.
+    let beginCount = 0;
+    const fake = {
+      exec: (sql: string) => {
+        if (sql === "BEGIN IMMEDIATE" && ++beginCount === 1) return; // phantom: no transaction opens
+        db.exec(sql);
+      },
+      get inTransaction() {
+        return db.inTransaction;
+      },
+    } as unknown as Database;
+
+    let bodyCalls = 0;
+    withImmediateTransaction(fake, () => {
+      bodyCalls += 1;
+      db.exec("CREATE TABLE IF NOT EXISTS t (x INTEGER)");
+      db.prepare("INSERT INTO t (x) VALUES (7)").run();
+    });
+
+    expect(beginCount).toBe(2); // first BEGIN was phantom → retried once
+    expect(bodyCalls).toBe(1); // body ran exactly once, on the real transaction
+    expect((db.prepare("SELECT count(*) AS c FROM t").get() as { c: number }).c).toBe(1);
+  });
+
   test("commits the transaction body and returns its value", () => {
     const result = withImmediateTransaction(db, () => {
       db.exec("CREATE TABLE IF NOT EXISTS t (x INTEGER)");

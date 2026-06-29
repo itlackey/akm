@@ -97,6 +97,13 @@ export interface Database {
    * the wrapped function (and commits/rolls back) when invoked.
    */
   transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R;
+  /**
+   * Whether a transaction is currently open on this connection. Both drivers
+   * (`bun:sqlite`, `better-sqlite3`) expose this. Used to detect the phantom
+   * state where `BEGIN IMMEDIATE` returns without actually opening a transaction
+   * under writer contention (see `withImmediateTransaction`).
+   */
+  readonly inTransaction: boolean;
   /** Close the underlying database handle. */
   close(): void;
 }

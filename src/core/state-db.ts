@@ -643,7 +643,10 @@ function isRetryableBeginError(err: unknown): boolean {
   return (
     msg.includes("within a transaction") ||
     msg.includes("database is locked") ||
-    msg.includes("database table is locked")
+    msg.includes("database table is locked") ||
+    // Phantom BEGIN (see below) — synthesized when BEGIN IMMEDIATE returns
+    // without opening a transaction. Safe to retry: fn() has not run.
+    msg.includes("did not open a transaction")
   );
 }
 
@@ -660,6 +663,15 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
   for (let attempt = 1; attempt <= WITH_IMMEDIATE_TX_MAX_ATTEMPTS; attempt++) {
     try {
       db.exec("BEGIN IMMEDIATE");
+      // bun:sqlite can return from BEGIN IMMEDIATE under writer contention WITHOUT
+      // actually opening a transaction (no throw). That phantom state otherwise
+      // surfaces as "cannot commit - no transaction is active" at COMMIT — AFTER
+      // fn() has already run in autocommit, so its writes escaped the intended
+      // serialization (the concurrent proposal-queue race). Detect it here, before
+      // fn(), and route it through the same retry path as a contended BEGIN.
+      if (!db.inTransaction) {
+        throw new Error("BEGIN IMMEDIATE did not open a transaction (phantom contention state)");
+      }
     } catch (err) {
       lastBeginErr = err;
       if (isRetryableBeginError(err) && attempt < WITH_IMMEDIATE_TX_MAX_ATTEMPTS) {
