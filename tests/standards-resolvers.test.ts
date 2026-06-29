@@ -1,6 +1,6 @@
 /**
  * Unit tests for the two standards leaf resolvers (Step 1 of the standards
- * plan, docs/design/standards-wiki-schema-PLAN.md):
+ * plan, docs/archive/standards-wiki-schema-PLAN.md):
  *
  *   - `loadWikiSchema`        (Feature A — wiki schema body delivery)
  *   - `resolveStashStandards` (Feature B — convention/meta fact bodies)

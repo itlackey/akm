@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// #624 P3 (RED): TDD failing tests for the lazy-graph-extraction pass drain
-// (AC5), the default byte-identical no-op (AC6), and the show/curate gating
-// contract (AC3/AC4) expressed through the directly drivable seams.
-//
-// The feature does NOT exist yet — these tests MUST fail now for the RIGHT
-// reason: `drainExtractionQueue`/`enqueueGraphExtraction` are unexported, the
-// `graph_extraction_queue` table is absent, runGraphExtractionPass does not yet
-// drain the queue before its ranked sweep, and `index.graph.lazyGraphExtraction`
-// is not a recognized config key. Deferred symbols are accessed via the module
-// namespace so the file LOADS while exports are missing (Bun ESM aborts the
-// whole file on a missing NAMED import); each test then fails individually on
-// the absent feature.
+// #624 P3: tests for the lazy-graph-extraction pass drain (AC5), the default
+// byte-identical no-op (AC6), and the show/curate gating contract (AC3/AC4)
+// expressed through the directly drivable seams: `drainExtractionQueue` /
+// `enqueueGraphExtraction`, the `graph_extraction_queue` table,
+// runGraphExtractionPass draining the queue before its ranked sweep, and the
+// `index.graph.lazyGraphExtraction` config key. Symbols are accessed via the
+// module namespace for ESM-safety.
 //
 // runGraphExtractionPass is exercised against a local Bun HTTP server (the same
 // harness the existing graph-extraction tests use) — it is the real transport,
@@ -34,9 +29,8 @@ import { makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "./_help
 
 // ── Deferred (not-yet-exported) P3 accessors ─────────────────────────────────
 
-// Required (non-optional) casts so the file type-checks while the real exports
-// are absent; at runtime they resolve to `undefined` and the first call throws
-// (RED for the right reason). Same pattern as graph-extraction-topn.test.ts.
+// Accessed via namespace casts for ESM-safety; they resolve to the real
+// exports. Same pattern as graph-extraction-topn.test.ts.
 const enqueueGraphExtraction = (
   graphDb as unknown as {
     enqueueGraphExtraction: (

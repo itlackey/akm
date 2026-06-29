@@ -10,7 +10,7 @@
  * the engine behind `akm proposal drain` and (later) the `triage` improve
  * pre-pass.
  *
- * Design (see docs/technical/proposal-triage-implementation-plan.md):
+ * Design (see docs/archive/proposal-triage-implementation-plan.md):
  *   - Reuses `listProposals` (no source filter — generator filtering is
  *     in-memory) and the `akmProposalAccept` / `akmProposalReject` wrappers from
  *     `proposal.ts` so the standard `promoted` / `rejected` events are emitted.

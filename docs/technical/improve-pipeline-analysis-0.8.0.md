@@ -587,7 +587,7 @@ Sprint plan:
 This document was originally written as a roadmap. Five of the twelve
 items are now implemented and shipping, all via the
 `scripts/akm-eval/` standalone toolkit (see
-`docs/technical/akm-eval-implementation-plan.md` and
+`docs/archive/akm-eval-implementation-plan.md` and
 `docs/akm-eval.md`). The CI gate in `.github/workflows/akm-eval-smoke.yml`
 runs the smoke suite, deterministic replay, and memory-regression suite
 on every PR touching the toolkit, `src/`, or `docs/example-stash/`.
@@ -595,7 +595,7 @@ on every PR touching the toolkit, `src/`, or `docs/example-stash/`.
 | Roadmap item | Status | Implementation |
 |---|---|---|
 | **R1** Versioned benchmark suite with frozen golden traces | **Done** (smoke surface) | `scripts/akm-eval/cases/{improve-smoke,memory-regression,workflow-compliance,judge-calibration}/` — 5 retrieval + 3 proposal-quality + 5 memory-safety + 4 workflow-compliance + 8 judge-calibration probes shipping today; deterministic replay (R8) supplies the "frozen trace" property without paying for LLM tokens on re-run. |
-| **R2** Risk-tier proposal classes (Tier 0–3) with per-tier auto-accept | **Pending** — akm-side change | Toolkit prepared via heuristic source→tier mapping (`docs/technical/akm-eval-implementation-plan.md` §8). Awaits a `Proposal.riskTier` field in `src/core/proposals.ts` and a per-tier `--auto-accept` policy in `src/commands/improve.ts`. |
+| **R2** Risk-tier proposal classes (Tier 0–3) with per-tier auto-accept | **Pending** — akm-side change | Toolkit prepared via heuristic source→tier mapping (`docs/archive/akm-eval-implementation-plan.md` §8). Awaits a `Proposal.riskTier` field in `src/core/proposals.ts` and a per-tier `--auto-accept` policy in `src/commands/improve.ts`. |
 | **R3** Judge calibration as a published metric | **Done** | `scripts/akm-eval/src/runners/judge-calibration.ts` + 8 hand-graded probes across the four MT-Bench bands (queued / review_needed / quality_rejected / validation_failed). Reports `metrics.judgeCalibration.{agreementRate, perBand, medianVariance, flipRate, perProbe}` in the run envelope. |
 | **R4** Replace pure-Jaccard Self-Consistency with weighted scoring | **Pending** — akm-side change | Awaits domain scorers (`lintLessonContent`, frontmatter validators, schema parsers) wired into the Self-Consistency vote in `src/commands/improve.ts`. Toolkit can measure the impact via paired-mode runs once the change ships. |
 | **R5** Graph A/B harness with on/off comparison | **Done** | `scripts/akm-eval/bin/akm-eval-graph-ablation` drives two sandboxes (graph-on vs graph-off via planted config) and reports retrieval / contradiction / latency / token-cost deltas plus a verdict heuristic. |

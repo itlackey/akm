@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// #624 P3 (RED): TDD failing tests for the lazy graph-extraction queue
-// accessors (`enqueueGraphExtraction` / `drainExtractionQueue`) and the
-// per-file extractor (`extractGraphForSingleFile`).
-//
-// The feature does NOT exist yet — these tests assert the target behavior and
-// MUST fail now for the RIGHT reason: the `graph_extraction_queue` table and
-// the new exported functions are absent. Named imports of the absent functions
-// would abort the whole file at module load (Bun ESM), so the not-yet-exported
-// symbols are accessed via the module namespace and resolve to `undefined`
-// today (call -> "not a function" -> RED for the right reason). After P3 lands
-// the casts resolve to the real exports.
+// #624 P3: tests for the lazy graph-extraction queue accessors
+// (`enqueueGraphExtraction` / `drainExtractionQueue`) and the per-file
+// extractor (`extractGraphForSingleFile`), backed by the
+// `graph_extraction_queue` table. Symbols are accessed via the module namespace
+// for ESM-safety.
 //
 // P3 is OPT-IN / DEFAULT-PRESERVING: nothing here exercises a real
 // LLM/spawn/serve and no test exceeds a few ms, so this is a UNIT test and
@@ -33,10 +27,8 @@ import { makeStashDir, type SandboxedDir } from "./_helpers/sandbox";
 //
 // Accessed via the namespace so the file LOADS while the exports are absent.
 
-// NOTE: the casts declare the symbols as REQUIRED (non-optional) so the file
-// type-checks while the real exports are still absent — at runtime they resolve
-// to `undefined` and the first call throws "not a function" (RED for the right
-// reason). Same pattern as tests/graph-extraction-topn.test.ts (#624-P2).
+// Accessed via namespace casts for ESM-safety; they resolve to the real
+// exports. Same pattern as tests/graph-extraction-topn.test.ts (#624-P2).
 const enqueueGraphExtraction = (
   graphDb as unknown as {
     enqueueGraphExtraction: (

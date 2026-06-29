@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #627 — query-layer type exclusion (RED — feature not yet implemented).
+ * #627 — query-layer type exclusion (excludeTypes on searchFts / getAllEntries).
  *
  * The default (untyped) `akm search` / `akm curate` path should be able to
  * exclude noisy asset types (notably `session`) from results WITHOUT changing
@@ -17,10 +17,8 @@
  *   - `getAllEntries(db, entryType?, excludeTypes?)` — appends the same clause
  *     to the enumerate-all path.
  *
- * The `excludeTypes` parameter does not exist yet, so the assertions that the
- * excluded type is filtered out are expected to FAIL until the feature lands.
- * (The calls themselves are typed against the planned signature; if the param
- * is silently ignored today the filtering assertions fail — the RIGHT reason.)
+ * Verifies that searchFts and getAllEntries filter out the types listed in
+ * the excludeTypes parameter (typed against their current signatures).
  *
  * All tests use a sandboxed temp DB and never touch real host state.
  */

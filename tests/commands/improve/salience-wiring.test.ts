@@ -747,9 +747,8 @@ describe("#608 high-salience admission gate", () => {
 
 // ── #610: bounded replay budget ───────────────────────────────────────────────
 //
-// RED-step tests for the additive replay-budget selection lane. The feature does
-// not exist yet (no `improve.salience.replayBudget` config key, no `'replay'`
-// eligibility lane), so every assertion here MUST fail until #610 lands.
+// Tests for the additive replay-budget selection lane (#610): the
+// `improve.salience.replayBudget` config key and the `'replay'` eligibility lane.
 //
 // Observability model (mirrors the #608 high-salience tests above):
 //   - A ref that enters the per-ref loop fires EITHER reflectFn (reflect-eligible)

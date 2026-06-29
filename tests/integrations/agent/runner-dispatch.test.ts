@@ -7,8 +7,7 @@ import type { LlmConnectionConfig } from "../../../src/core/config/config";
 import type { AgentRunResult } from "../../../src/integrations/agent";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
-// X3: the unified RunnerSpec dispatch seam. This module does not exist yet —
-// this is the RED test that pins the target behavior before implementation.
+// X3: the unified RunnerSpec dispatch seam (executeRunner in runner-dispatch.ts).
 import { executeRunner, type RunnerSeams } from "../../../src/integrations/agent/runner-dispatch";
 
 function okResult(stdout: string): AgentRunResult {

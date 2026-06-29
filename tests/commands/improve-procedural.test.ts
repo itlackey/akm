@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #615 — procedural-compilation pass (RED — feature not yet implemented).
+ * #615 — procedural-compilation pass (src/commands/improve/procedural.ts).
  *
  * The procedural pass is an OPT-IN post-loop improve stage (default disabled
  * via IMPROVE_PROCESS_DEFAULTS.procedural). It reads assets that carry an
@@ -13,9 +13,7 @@
  * `outcomeData`), and emits ONE normal `type: workflow` proposal per recurring
  * sequence through the existing proposal queue + quality gate.
  *
- * Contract under test (the planned API surface — these imports/behaviours do
- * NOT exist yet, so every assertion here is expected to FAIL until the feature
- * lands):
+ * Contract under test (the procedural API surface):
  *   - `akmProcedural(opts)` from `src/commands/improve/procedural.ts` returns a
  *     `ProceduralCompilationResult` and accepts an injected `proceduralLlmFn`
  *     seam (no real network).
@@ -36,7 +34,7 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
-// NOTE: this module does not exist yet — the RED import is intentional.
+// Imported from the module under test (now shipped).
 import { akmProcedural, normalizeSequence } from "../../src/commands/improve/procedural";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
 import { listProposals } from "../../src/commands/proposal/validators/proposals";

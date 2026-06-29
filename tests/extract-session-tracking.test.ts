@@ -7,8 +7,7 @@
 // content is byte-identical to the last processed run; any content change (or a
 // hash-less legacy row) forces a re-process.
 //
-// RED phase: these tests are written against the NEW (post-#602) API and MUST
-// fail until the feature lands:
+// Tests for the #602 content-hash session-skip API:
 //   - shouldSkipAlreadyExtractedSession(prior, currentContentHash: string)
 //   - ExtractedSessionRow.content_hash
 //   - upsertExtractedSession({ ..., contentHash })
@@ -40,12 +39,8 @@ import type {
 } from "../src/integrations/session-logs/types";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
-// #602 target API: hashSessionContent does not exist yet. Reach it via the
-// namespace import so this test file LOADS (a static named import of a missing
-// export is a module-level SyntaxError that aborts every test before it runs,
-// masking the intended per-test RED failures). Each call below throws
-// "hashSessionContent is not a function" until the feature lands — the correct
-// RED reason (feature absent).
+// hashSessionContent (#602) is reached via the namespace import for ESM-safety;
+// it resolves to the real export from extract.ts.
 const hashSessionContent = (data: SessionData): string =>
   (extractModule as { hashSessionContent: (d: SessionData) => string }).hashSessionContent(data);
 

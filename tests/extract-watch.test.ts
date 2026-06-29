@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// TDD (RED) for #606 — watch-mode core for `akm extract --watch`.
+// Tests for #606 — watch-mode core for `akm extract --watch`.
 //
 // These tests drive the TESTABLE watch-mode core in
 // src/commands/improve/extract-watch.ts via an INJECTED event source + an

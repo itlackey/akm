@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #625 — recombine SECOND-PASS promotion (RED — feature not yet implemented).
+ * #625 — recombine SECOND-PASS promotion via the recombine_hypotheses table (migration 014).
  *
  * The first pass (#609, tests/commands/improve-recombine.test.ts) only ever
  * emits `type: hypothesis` proposals. This second pass tracks how many
@@ -16,9 +16,7 @@
  * write. Hypotheses NOT re-induced in a run have their consecutive streak reset
  * (decay-to-zero), so confirmation is per exact member-set and conservative.
  *
- * Contract under test (the planned API surface — these behaviours do NOT exist
- * yet, so every promotion assertion here is expected to FAIL until the feature
- * lands):
+ * Contract under test (the recombine_hypotheses second-pass API):
  *   - `akmRecombine(opts)` accepts `confirmThreshold?: number` (default 2) and
  *     threads it from `improveProfile.processes.recombine.confirmThreshold`.
  *   - `RecombineResult` gains a `lessonsPromoted: number` counter.
@@ -41,7 +39,7 @@ import { listProposals } from "../../src/commands/proposal/validators/proposals"
 import type { AkmConfig } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
-// NOTE: getRecombineHypothesis does not exist yet — the RED import is intentional.
+// Imported from src/core/state-db.ts (migration 014).
 import { getRecombineHypothesis, openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";

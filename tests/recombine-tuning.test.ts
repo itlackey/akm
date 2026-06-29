@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #632 + #633 — recombine clustering tuning + confirmation-loop fix (RED).
+ * #632 + #633 — recombine clustering tuning + confirmation-loop Jaccard fix.
  *
  * #632 (clusters too coarse): `buildRelatednessClusters` groups by tag, keeps
  *   groups >= minClusterSize, then sorts LARGEST-first and slices the top
@@ -25,9 +25,9 @@
  *   (Jaccard >= threshold) and increments the existing streak instead of
  *   inserting a fresh row, so drifting-but-overlapping membership accumulates.
  *
- * These tests assert the NEW behaviour; until the feature lands they are
- * expected to FAIL (the #632 ones reference an unimplemented knob; the #633 one
- * watches the streak reset to 1 each run instead of accumulating).
+ * #632 verifies the maxClusterSize / excludeEntities knobs cap over-broad
+ * clusters; #633 verifies the Jaccard-overlap streak accumulates across
+ * drifting membership instead of resetting each run.
  *
  * #632 cases drive the PURE `buildRelatednessClusters` function with synthetic
  * entries (no index / DB / LLM). #633 drives the full `akmRecombine` pass with

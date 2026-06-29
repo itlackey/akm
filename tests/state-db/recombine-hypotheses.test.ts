@@ -3,15 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #625 — recombine_hypotheses state.db table + accessors (RED — not yet built).
+ * #625 — recombine_hypotheses state.db table + accessors (migration 014 + accessors).
  *
  * Direct table-level tests for the confirmation-count store that backs the
  * recombine second-pass promotion. These exercise the migration (014) and the
  * accessor helpers in isolation, separate from the end-to-end promotion flow in
  * tests/commands/improve-recombine-promote.test.ts.
- *
- * Contract under test (none of these exist yet — the RED imports are
- * intentional):
+ * Contract under test:
  *   - Migration `014-recombine-hypotheses` is applied by openStateDatabase().
  *   - recordRecombineInduction(db, {...}) → INSERT…ON CONFLICT increment,
  *     returns the new consecutive_count; same-run re-call is idempotent.
@@ -23,7 +21,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-// NOTE: these symbols do not exist yet — the RED imports are intentional.
+// Imported from state-db.ts (migration 014).
 import {
   type Database,
   decayUnseenRecombineHypotheses,

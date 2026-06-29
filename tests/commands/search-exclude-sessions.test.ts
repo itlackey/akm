@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #627 — default search/curate excludes `session` assets (RED).
+ * #627 — default search/curate excludes `session` assets via config.search.defaultExcludeTypes.
  *
  * Session assets are a first-class indexed `entry_type` (so search can find
  * them when explicitly requested), but they pollute the DEFAULT untyped
@@ -16,9 +16,8 @@
  *   - `akmSearch({ includeSessions: true })` re-includes sessions on the
  *     otherwise-default path.
  *
- * `akmSearch` does not yet accept `includeSessions`, and the
- * `defaultExcludeTypes` exclusion does not exist — so the assertions that
- * sessions are filtered are expected to FAIL until the feature lands.
+ * Verifies `akmSearch` / `akmCurate` exclude `session` assets by default (via
+ * `config.search.defaultExcludeTypes`) and re-include them on request.
  *
  * Tests use `withIsolatedAkmStorage` + a real index, never touch host state.
  */

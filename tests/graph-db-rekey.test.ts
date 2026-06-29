@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * RED tests for #624-P1 — re-key the graph tables on
+ * Tests for #624-P1 — re-key the graph tables on
  * (stash_root, file_path, body_hash) and drop the entries.id dependency.
  *
  * THE HEADLINE WIN (AC#2): graph data must SURVIVE an entries delete +
@@ -12,9 +12,8 @@
  * ON DELETE CASCADE, so deleting the entries row wipes the graph rows — this
  * test proves the new self-keyed shape keeps them.
  *
- * These tests are written to FAIL against the current (schema v3 / DB v17)
- * code for the RIGHT reason: the feature (composite key, hasGraphData,
- * re-keyed getEntitiesByEntryIds, survival on reindex) is not implemented yet.
+ * These tests cover the self-keyed shape: composite key, hasGraphData,
+ * re-keyed getEntitiesByEntryIds, and graph-data survival across a reindex.
  *
  * Isolation: no host state. A temp .db file per test; XDG sandboxed so any
  * config read inside openIndexDatabase cannot touch the developer's real config.
@@ -37,12 +36,8 @@ import {
 import * as graphDb from "../src/indexer/db/graph-db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/db/graph-db";
 
-// hasGraphData is a NEW P1 deliverable. It is not exported yet, so a static
-// `import { hasGraphData }` would throw at module load and abort the whole
-// file before any AC can demonstrate its own RED reason. Reference it via the
-// namespace so resolution is deferred to call time: today it is `undefined`
-// (the AC#2 invocation throws "not a function" — RED for the right reason),
-// and once P1 lands it resolves to the real export.
+// hasGraphData (P1 deliverable) is referenced via the namespace for ESM-safety;
+// the cast resolves to the real export from graph-db.ts.
 const hasGraphData = (graphDb as { hasGraphData?: (db: Database, stashRoot: string, filePath: string) => boolean })
   .hasGraphData as (db: Database, stashRoot: string, filePath: string) => boolean;
 
