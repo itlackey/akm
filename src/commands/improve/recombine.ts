@@ -695,6 +695,40 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
         }
         clustersFormed += 1;
 
+        // #9 — promotion is terminal. If this cluster Jaccard-matches a
+        // hypothesis that was ALREADY promoted, generating again can at best
+        // re-queue a redundant `type: hypothesis` for a settled ref (promotion
+        // gates on !alreadyPromoted below), so the LLM output is wasted. Skip the
+        // per-cluster call entirely. The decay sweep still spares the row — it
+        // matches a present cluster via `presentClusters` (independent of
+        // `seenThisRun`), so the promotion record is preserved.
+        if (stateDb) {
+          const promotedMatch = findMatchingRecombineHypothesis(stateDb, {
+            signature: cluster.signature,
+            memberKey: recombineMemberKey(cluster),
+            minOverlap: DEFAULT_RECOMBINE_OVERLAP,
+          });
+          if (
+            promotedMatch?.hypothesis_ref &&
+            getRecombineHypothesis(stateDb, promotedMatch.hypothesis_ref)?.promoted_at != null
+          ) {
+            appendEvent(
+              {
+                eventType: "recombine_invoked",
+                ref: promotedMatch.hypothesis_ref,
+                metadata: {
+                  signal: cluster.signature,
+                  memberCount: cluster.members.length,
+                  outcome: "skipped_promoted",
+                  sourceRun,
+                },
+              },
+              opts.ctx,
+            );
+            continue;
+          }
+        }
+
         const prompt = buildClusterPrompt(cluster, standardsContext);
         const raw = await llmFn(prompt);
         const generalization = parseGeneralization(raw);
