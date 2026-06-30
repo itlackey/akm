@@ -1,5 +1,37 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { normalizeShowArgv } from "../../src/commands/read/show";
+import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
+
+const CLI = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
+
+let cleanup: Cleanup = () => {};
+
+afterEach(() => {
+  cleanup();
+  cleanup = () => {};
+});
+
+function useStorage(): ReturnType<typeof withIsolatedAkmStorage> {
+  const storage = withIsolatedAkmStorage();
+  cleanup = storage.cleanup;
+  return storage;
+}
+
+function writeFixture(filePath: string, content: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf8");
+}
+
+function runEntrypoint(args: string[]) {
+  return spawnSync("bun", [CLI, ...args], {
+    encoding: "utf8",
+    env: { ...process.env },
+    timeout: 30_000,
+  });
+}
 
 // Regression: normalizeShowArgv splits global flags from positional view-mode
 // args and rebuilds argv. The global-flag allowlist must preserve the 0.8
@@ -33,5 +65,60 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
       "Auth",
       "--verbose",
     ]);
+  });
+
+  test("global flags before show are preserved when view-mode args are rewritten", () => {
+    const out = normalizeShowArgv([
+      "bun",
+      "akm",
+      "--format=json",
+      "--shape",
+      "summary",
+      "show",
+      "knowledge:guide",
+      "toc",
+    ]);
+    expect(out).toEqual([
+      "bun",
+      "akm",
+      "--format=json",
+      "--shape",
+      "summary",
+      "show",
+      "knowledge:guide",
+      "--akmView",
+      "toc",
+    ]);
+  });
+});
+
+describe("entrypoint global --shape=summary ordering", () => {
+  test("allows global --shape=summary before show", () => {
+    const storage = useStorage();
+    writeFixture(
+      path.join(storage.stashDir, "commands", "release.md"),
+      "---\ndescription: Release\n---\nRun release {{version}}\n",
+    );
+
+    const result = runEntrypoint(["--format=json", "--shape=summary", "show", "command:release.md"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const json = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(json.type).toBe("command");
+    expect(json.name).toBe("release.md");
+    expect(json.description).toBe("Release");
+    expect(json).not.toHaveProperty("template");
+  });
+
+  test("rejects global --shape=summary before non-show commands before they run", () => {
+    const storage = useStorage();
+
+    const result = runEntrypoint(["--format=json", "--shape=summary", "remember", "do not write"]);
+
+    expect(result.status).toBe(2);
+    const error = JSON.parse(result.stderr) as Record<string, unknown>;
+    expect(error.code).toBe("INVALID_SHAPE_VALUE");
+    expect(fs.readdirSync(path.join(storage.stashDir, "memories"))).toEqual([]);
   });
 });

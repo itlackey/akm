@@ -117,7 +117,7 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     },
     rendererName: "env-file",
     actionBuilder: (ref) =>
-      `akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with the whole .env injected (values never reach stdout); akm env export ${ref} --out <file> -> write a sourceable script to a file`,
+      `akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with the whole .env injected (prefer --clean to minimize inherited parent env; child stdout is not redacted); akm env export ${ref} --out <file> -> write a sourceable script to a file`,
   },
   // Secrets — a single sensitive value used on its own for authentication (a
   // PEM key, API token, TLS cert). Unlike `env` (a group of related .env

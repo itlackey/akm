@@ -377,7 +377,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         confidence: aa.promoted + aa.validationFailed > 0 ? "high" : "low",
         message:
           aa.validationFailed > 0
-            ? `${aa.validationFailed} proposal(s) passed confidence threshold but failed auto-accept validation (truncated description, invalid frontmatter, etc.) — they remain in the queue for manual review.`
+            ? `${aa.validationFailed} auto-accept validation attempt(s) failed after passing the confidence threshold (truncated description, invalid frontmatter, etc.) — the affected proposals remain pending for manual review.`
             : aa.promoted > 0
               ? `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
               : "Auto-accept gate did not run (disabled or no proposals above threshold).",

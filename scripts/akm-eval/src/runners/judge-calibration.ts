@@ -47,10 +47,11 @@
  *     by `run.ts`.
  *   - `score`: linear blend of agreement (0.6) and inverse variance (0.4).
  *
- * When `feedback_distillation` is disabled in the test env the judge returns
- * `skipped` for every probe — the runner machinery is still verified; the
- * case scores low because no probe will match a human grade other than
- * (intentionally) none.
+ * The harness writes a sandbox-local distill-only improve profile using the
+ * current `profiles.improve.default.processes.*` shape. When the outer env has
+ * no resolvable LLM path (`defaults.llm` / `profiles.llm`), the case is
+ * skipped with an actionable precondition instead of generating stale all-
+ * `skipped` disagreement noise.
  */
 
 import fs from "node:fs";
@@ -61,16 +62,28 @@ import { createSandbox } from "../sources/sandbox";
 import { StateDbSources, type EventRow } from "../sources/state-db";
 import type { EvalCase, EvalCaseResult, EvalContext } from "../types";
 
-// Match src/commands/distill.ts:DistillOutcome. Duplicated here because the
-// toolkit MUST NOT import akm internals (per the standalone-toolkit charter).
-type DistillOutcome =
+type HumanGradedOutcome =
   | "queued"
-  | "skipped"
   | "review_needed"
   | "quality_rejected"
   | "validation_failed";
 
-const HUMAN_GRADED_OUTCOMES: DistillOutcome[] = [
+// Match the realized outcomes emitted by src/commands/improve/distill.ts.
+// Duplicated here because the toolkit MUST NOT import akm internals.
+type DistillProbeOutcome =
+  | HumanGradedOutcome
+  | "skipped"
+  | "config_disabled"
+  | "llm_failed";
+
+export interface JudgeCalibrationSandboxConfigResolution {
+  ok: boolean;
+  sourceConfigPath?: string;
+  config?: Record<string, unknown>;
+  reason?: string;
+}
+
+const HUMAN_GRADED_OUTCOMES: HumanGradedOutcome[] = [
   "queued",
   "review_needed",
   "quality_rejected",
@@ -96,7 +109,7 @@ interface ProbeFile {
   };
   feedback: ProbeFeedback[];
   humanGrade: {
-    expectedOutcome: DistillOutcome;
+    expectedOutcome: HumanGradedOutcome;
     expectedScoreBand?: [number, number];
     rationale?: string;
   };
@@ -105,8 +118,8 @@ interface ProbeFile {
 interface PerProbeMetric {
   probeId: string;
   assetRef: string;
-  expected: DistillOutcome;
-  actual: DistillOutcome[];
+  expected: HumanGradedOutcome;
+  actual: DistillProbeOutcome[];
   agreementCount: number;
   variance: number;
   scoreSamples: number[];
@@ -118,17 +131,170 @@ interface JudgeCalibrationMetrics {
   totalProbes: number;
   samplesPerProbe: number;
   agreementRate: number;
-  perBand: Record<DistillOutcome, { probes: number; agreedSamples: number; rate: number }>;
+  perBand: Record<HumanGradedOutcome, { probes: number; agreedSamples: number; rate: number }>;
   medianVariance: number;
   meanVariance: number;
   flipRate: number;
   perProbe: Array<{
     probeId: string;
-    expected: DistillOutcome;
-    actual: DistillOutcome[];
+    expected: HumanGradedOutcome;
+    actual: DistillProbeOutcome[];
     agreementCount: number;
     variance: number;
   }>;
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+function collectConfigCandidates(env: Record<string, string>): string[] {
+  const candidates: string[] = [];
+  const push = (candidate: string | undefined): void => {
+    if (!candidate || candidates.includes(candidate)) return;
+    candidates.push(candidate);
+  };
+
+  const akmConfigDir = asNonEmptyString(env.AKM_CONFIG_DIR);
+  if (akmConfigDir) push(path.join(akmConfigDir, "config.json"));
+
+  const xdgConfigHome = asNonEmptyString(env.XDG_CONFIG_HOME);
+  if (xdgConfigHome) push(path.join(xdgConfigHome, "akm", "config.json"));
+
+  const stashDir = asNonEmptyString(env.AKM_STASH_DIR);
+  if (stashDir) push(path.join(stashDir, ".akm", "config.json"));
+
+  const home = asNonEmptyString(env.HOME);
+  if (home) push(path.join(home, ".config", "akm", "config.json"));
+
+  return candidates;
+}
+
+function resolveDefaultLlmProfileNameFromConfig(config: Record<string, unknown>): string | undefined {
+  const defaults = config.defaults;
+  if (defaults && typeof defaults === "object") {
+    const explicit = asNonEmptyString((defaults as Record<string, unknown>).llm);
+    if (explicit) return explicit;
+  }
+  const profiles = config.profiles;
+  if (!profiles || typeof profiles !== "object") return undefined;
+  const llmProfiles = (profiles as Record<string, unknown>).llm;
+  if (!llmProfiles || typeof llmProfiles !== "object") return undefined;
+  return Object.prototype.hasOwnProperty.call(llmProfiles, "default") ? "default" : undefined;
+}
+
+function collectEnvReferences(value: unknown, out: Set<string>): void {
+  if (typeof value === "string") {
+    const envRef = value.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}$|^\$([A-Za-z_][A-Za-z0-9_]*)$/);
+    const name = envRef?.[1] ?? envRef?.[2];
+    if (name) out.add(name);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectEnvReferences(item, out);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const child of Object.values(value as Record<string, unknown>)) collectEnvReferences(child, out);
+}
+
+function collectSandboxSecrets(config: Record<string, unknown>, env: Record<string, string>): Record<string, string> {
+  const needed = new Set<string>();
+  collectEnvReferences(config, needed);
+  const copied: Record<string, string> = {};
+  for (const name of needed) {
+    const value = env[name];
+    if (typeof value === "string" && value !== "") copied[name] = value;
+  }
+  return copied;
+}
+
+export function resolveJudgeCalibrationSandboxConfig(
+  env: Record<string, string>,
+): JudgeCalibrationSandboxConfigResolution {
+  for (const configPath of collectConfigCandidates(env)) {
+    if (!fs.existsSync(configPath)) continue;
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `judge-calibration could not parse ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    const llmProfileName = resolveDefaultLlmProfileNameFromConfig(parsed);
+    if (!llmProfileName) {
+      return {
+        ok: false,
+        reason:
+          `judge-calibration requires an LLM path. ${configPath} does not define ` +
+          "`defaults.llm` (or an implicit `profiles.llm.default`). Configure a default LLM profile and re-run.",
+      };
+    }
+
+    const llmProfiles = (parsed.profiles as Record<string, unknown> | undefined)?.llm;
+    const llmConfig = llmProfiles && typeof llmProfiles === "object" ? (llmProfiles as Record<string, unknown>)[llmProfileName] : undefined;
+    if (!llmConfig || typeof llmConfig !== "object") {
+      return {
+        ok: false,
+        reason:
+          `judge-calibration requires an LLM path. ${configPath} points defaults.llm at ` +
+          `"${llmProfileName}", but profiles.llm.${llmProfileName} is missing.`,
+      };
+    }
+
+    return {
+      ok: true,
+      sourceConfigPath: configPath,
+      config: {
+        defaults: {
+          llm: llmProfileName,
+          improve: "default",
+        },
+        profiles: {
+          llm: {
+            [llmProfileName]: llmConfig,
+          },
+          improve: {
+            default: {
+              description: "judge-calibration distill-only sandbox profile",
+              processes: {
+                reflect: { enabled: false },
+                distill: { enabled: true, allowedTypes: ["memory"], requirePlannedRefs: false },
+                consolidate: { enabled: false },
+                memoryInference: { enabled: false },
+                graphExtraction: { enabled: false },
+                extract: { enabled: false },
+                proactiveMaintenance: { enabled: false },
+                triage: { enabled: false },
+                recombine: { enabled: false },
+                procedural: { enabled: false },
+              },
+              sync: { enabled: false, push: false },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    ok: false,
+    reason:
+      "judge-calibration requires an LLM path, but no AKM config with `defaults.llm` / `profiles.llm` was found in " +
+      "AKM_CONFIG_DIR, XDG_CONFIG_HOME, AKM_STASH_DIR/.akm, or HOME/.config/akm. Configure an LLM profile, then re-run the suite.",
+  };
+}
+
+function writeJudgeCalibrationSandboxConfig(sandboxRoot: string, config: Record<string, unknown>): string {
+  const configDir = path.join(sandboxRoot, ".config", "akm");
+  fs.mkdirSync(configDir, { recursive: true });
+  const configPath = path.join(configDir, "config.json");
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return configPath;
 }
 
 /** Resolve where a probe asset's file should live inside the sandboxed stash. */
@@ -235,7 +401,7 @@ function readLatestDistillEvent(dbPath: string, ref: string): EventRow | undefin
 }
 
 /** Compute mode-count / N. Higher == more consistent; 1.0 means all samples agree. */
-function modeFraction(samples: DistillOutcome[]): number {
+function modeFraction(samples: DistillProbeOutcome[]): number {
   if (samples.length === 0) return 0;
   const counts: Record<string, number> = {};
   for (const s of samples) counts[s] = (counts[s] ?? 0) + 1;
@@ -244,7 +410,7 @@ function modeFraction(samples: DistillOutcome[]): number {
 }
 
 /** Variance = 1 - mode-fraction (so 0 == all agree, 1 == perfectly split). */
-function disagreementVariance(samples: DistillOutcome[]): number {
+function disagreementVariance(samples: DistillProbeOutcome[]): number {
   return 1 - modeFraction(samples);
 }
 
@@ -264,10 +430,15 @@ async function runProbeOnce(
   probe: ProbeFile,
   ctx: EvalContext,
   improveArgs: string[],
-): Promise<{ outcome: DistillOutcome; score?: number; reason?: string; errors: string[] }> {
+  sandboxConfig: Record<string, unknown>,
+): Promise<{ outcome: DistillProbeOutcome; score?: number; reason?: string; errors: string[] }> {
   const errors: string[] = [];
   const sandbox = createSandbox({ prefix: "akm-eval-judge-", inheritEnv: true });
   try {
+    const configPath = writeJudgeCalibrationSandboxConfig(sandbox.root, sandboxConfig);
+    sandbox.env.AKM_CONFIG_DIR = path.dirname(configPath);
+    Object.assign(sandbox.env, collectSandboxSecrets(sandboxConfig, ctx.env));
+
     // Materialize the probe asset.
     materializeProbeAsset(sandbox.stashDir, probe);
 
@@ -278,7 +449,8 @@ async function runProbeOnce(
     const idx0 = cli.index();
     if (idx0.status !== 0) {
       errors.push(`initial index failed (exit ${idx0.status}): ${idx0.stderr.trim().slice(0, 200)}`);
-      return { outcome: "skipped" as DistillOutcome, errors };
+      errors.push(`sandbox config: ${configPath}`);
+      return { outcome: "skipped", errors };
     }
 
     // Record each feedback event.
@@ -302,7 +474,7 @@ async function runProbeOnce(
 
     // Drive improve. We don't read the JSON envelope here — the durable
     // signal is the `distill_invoked` event in state.db.
-    const imp = cli.improve(["--json-to-stdout", ...improveArgs]);
+    const imp = cli.improve(["--scope", probe.assetRef, "--json-to-stdout", ...improveArgs]);
     if (imp.status !== 0) {
       errors.push(`improve failed (exit ${imp.status}): ${imp.stderr.trim().slice(0, 200)}`);
       // Even on non-zero exit a distill_invoked event may have been written
@@ -314,9 +486,9 @@ async function runProbeOnce(
       // No event recorded — improve didn't pick the ref up, or the feature
       // gate suppressed the event. Treat as `skipped` so the case still
       // produces a measurable outcome.
-      return { outcome: "skipped" as DistillOutcome, errors };
+      return { outcome: "skipped", errors };
     }
-    const outcome = (event.metadata?.outcome as DistillOutcome | undefined) ?? "skipped";
+    const outcome = (event.metadata?.outcome as DistillProbeOutcome | undefined) ?? "skipped";
     const score = typeof event.metadata?.score === "number" ? (event.metadata.score as number) : undefined;
     const reason = typeof event.metadata?.reason === "string" ? (event.metadata.reason as string) : undefined;
     return { outcome, score, reason, errors };
@@ -339,6 +511,23 @@ export async function runJudgeCalibrationCase(c: EvalCase, ctx: EvalContext): Pr
     ? probesDirRel
     : path.join(suiteDir, probesDirRel);
 
+  const sandboxConfig = resolveJudgeCalibrationSandboxConfig(ctx.env);
+  if (!sandboxConfig.ok || !sandboxConfig.config) {
+    return {
+      caseId: c.id,
+      type: "judge-calibration",
+      score: 1,
+      passed: true,
+      skipped: true,
+      skipReason: sandboxConfig.reason ?? "judge-calibration precondition not met",
+      metrics: {},
+      evidence: {
+        precondition: sandboxConfig.reason,
+      },
+      durationMs: Date.now() - start,
+    };
+  }
+
   let probes: ProbeFile[];
   try {
     probes = loadProbes(probesDirAbs);
@@ -353,17 +542,17 @@ export async function runJudgeCalibrationCase(c: EvalCase, ctx: EvalContext): Pr
   const perProbe: PerProbeMetric[] = [];
   for (const probe of probes) {
     const sampleErrors: string[] = [];
-    const actual: DistillOutcome[] = [];
+    const actual: DistillProbeOutcome[] = [];
     const scoreSamples: number[] = [];
     for (let i = 0; i < samplesPerProbe; i++) {
       try {
-        const { outcome, score, errors } = await runProbeOnce(probe, ctx, improveArgs);
+        const { outcome, score, errors } = await runProbeOnce(probe, ctx, improveArgs, sandboxConfig.config);
         actual.push(outcome);
         if (typeof score === "number" && Number.isFinite(score)) scoreSamples.push(score);
         if (errors.length > 0) sampleErrors.push(...errors.map((e) => `[${probe.id}#${i}] ${e}`));
       } catch (err) {
         sampleErrors.push(`[${probe.id}#${i}] uncaught: ${err instanceof Error ? err.message : String(err)}`);
-        actual.push("skipped" as DistillOutcome);
+        actual.push("skipped");
       }
     }
     const expectedOutcome = probe.humanGrade.expectedOutcome;
@@ -392,9 +581,8 @@ export async function runJudgeCalibrationCase(c: EvalCase, ctx: EvalContext): Pr
   const totalAgreed = perProbe.reduce((a, p) => a + p.agreementCount, 0);
   const agreementRate = totalSamples === 0 ? 0 : totalAgreed / totalSamples;
 
-  const perBand: Record<DistillOutcome, { probes: number; agreedSamples: number; rate: number }> = {
+  const perBand: Record<HumanGradedOutcome, { probes: number; agreedSamples: number; rate: number }> = {
     queued: { probes: 0, agreedSamples: 0, rate: 0 },
-    skipped: { probes: 0, agreedSamples: 0, rate: 0 },
     review_needed: { probes: 0, agreedSamples: 0, rate: 0 },
     quality_rejected: { probes: 0, agreedSamples: 0, rate: 0 },
     validation_failed: { probes: 0, agreedSamples: 0, rate: 0 },
@@ -404,7 +592,7 @@ export async function runJudgeCalibrationCase(c: EvalCase, ctx: EvalContext): Pr
     b.probes += 1;
     b.agreedSamples += p.agreementCount;
   }
-  for (const key of Object.keys(perBand) as DistillOutcome[]) {
+  for (const key of Object.keys(perBand) as HumanGradedOutcome[]) {
     const b = perBand[key];
     const denom = b.probes * samplesPerProbe;
     b.rate = denom === 0 ? 0 : b.agreedSamples / denom;

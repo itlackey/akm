@@ -34,6 +34,7 @@ import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, parseFlagValue } from "../../output/context";
 import { readStdin } from "../../runtime";
+import { buildChildEnv } from "./child-env";
 
 /**
  * Walk each stash's env files and return one entry per `.env` file, using the
@@ -233,7 +234,10 @@ const envExportCommand = defineCommand({
  * the child process env — never via a shell — after scanning the injected keys
  * for process-hijacking variables.
  */
-async function runEnvInjected(target: string, opts: { only?: string[]; except?: string[] }): Promise<void> {
+async function runEnvInjected(
+  target: string,
+  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[] },
+): Promise<void> {
   const dashIndex = process.argv.indexOf("--");
   if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
     throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
@@ -333,7 +337,10 @@ async function runEnvInjected(target: string, opts: { only?: string[]; except?: 
     process.stderr.write(`warning: ${detail} Injecting anyway (first-party stash).\n`);
   }
 
-  const mergedEnv = { ...process.env };
+  const mergedEnv = buildChildEnv(process.env, {
+    clean: opts.clean === true,
+    inherit: opts.inherit ?? [],
+  });
   for (const [envKey, envValue] of Object.entries(envValues)) {
     mergedEnv[envKey] = envValue;
   }
@@ -388,7 +395,7 @@ const envRunCommand = defineCommand({
     name: "run",
     description:
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${secret:NAME}` token syntax documented for users, not interpolation
-      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${secret:NAME}` tokens, replaced at run time with the sibling `secret:NAME` value from the same stash.",
+      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${secret:NAME}` tokens, replaced at run time with the sibling `secret:NAME` value from the same stash. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },
@@ -397,12 +404,25 @@ const envRunCommand = defineCommand({
       description: "Inject ONLY these keys (comma-separated). Mutually exclusive with --except.",
     },
     except: { type: "string", description: "Inject all keys EXCEPT these (comma-separated)." },
+    clean: {
+      type: "boolean",
+      description:
+        "Start the child with a minimal inherited environment (PATH/HOME/locale/terminal basics) instead of the full parent environment.",
+      default: false,
+    },
+    inherit: {
+      type: "string",
+      description:
+        "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(() =>
       runEnvInjected(args.target, {
         only: parseKeyListFlag(getHyphenatedArg<string>(args, "only")),
         except: parseKeyListFlag(getHyphenatedArg<string>(args, "except")),
+        clean: getHyphenatedArg<boolean>(args, "clean") === true,
+        inherit: parseKeyListFlag(getHyphenatedArg<string>(args, "inherit")) ?? [],
       }),
     );
   },

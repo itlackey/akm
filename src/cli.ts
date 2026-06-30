@@ -74,7 +74,8 @@ process.on("uncaughtException", (err) => {
 
 import fs from "node:fs";
 import path from "node:path";
-import { defineCommand, runMain } from "citty";
+import { type ArgsDef, defineCommand, runMain } from "citty";
+import { findCittyTopLevelCommand } from "./cli/parse-args";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -581,6 +582,8 @@ export const main = defineCommand({
   },
 });
 
+const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
+
 // ── Exit codes ──────────────────────────────────────────────────────────────
 // Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
 // the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
@@ -629,7 +632,8 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // output-shaping time after the side effect has already happened. The
   // shape-registry gate in shapeForCommand() remains as defense-in-depth (and
   // covers the in-process test harness, which skips this startup block).
-  if (getOutputMode().shape === "summary" && process.argv[2] !== "show") {
+  const topLevelCommand = findCittyTopLevelCommand(process.argv.slice(2), MAIN_TOP_LEVEL_ARGS);
+  if (getOutputMode().shape === "summary" && topLevelCommand !== "show") {
     emitJsonError(new UsageError("'--shape summary' is only valid on 'akm show'.", "INVALID_SHAPE_VALUE"));
   }
 

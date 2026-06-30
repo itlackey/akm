@@ -1370,29 +1370,34 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `list` | List all env files across all stashes with key names only |
-| `run <ref> -- <command>` | Run a command with the env injected (the **agent-safe** path — values never reach stdout). `--only` / `--except` filter which keys are injected |
+| `run <ref> -- <command>` | Run a command with the env injected. `--only` / `--except` filter which keys are injected; `--clean` starts from a minimal inherited environment |
 | `create <name>` | Create an env file. Empty by default; seed with `--from-file <path>` or `--from-stdin` |
 | `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
 | `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
 
-#### env run — the primary (and agent-safe) path
+#### env run — the primary value path
 
 ```sh
 akm env run env:prod -- <command>
 akm env run env:prod -- $SHELL          # interactive: a shell with the env loaded
 akm env run env:prod --only A,B -- cmd  # inject only A and B
 akm env run env:prod --except DEBUG -- cmd
+akm env run env:prod --clean -- cmd
+akm env run env:prod --clean --inherit SSH_AUTH_SOCK -- cmd
 ```
 
 Runs the command with the env file's values injected **directly into the child
-process** — never through a shell, and never into akm's stdout. **This is the
-only value path safe for AI agents:** the secrets reach the subprocess without
-ever passing through the agent's captured output/context. `--only` / `--except`
-(comma-separated key names, mutually exclusive) restrict which variables are
-injected. Before spawning, the injected key names are scanned for known
-process-hijacking variables (`LD_PRELOAD`, `PATH`, …): a first-party stash warns
-and proceeds; a third-party-sourced stash is refused.
+process** — never through a shell, and never into akm's own structured output.
+However, the child process controls its own stdout/stderr: if it prints its
+environment, those values will appear in your terminal or agent transcript.
+`--only` / `--except` (comma-separated key names, mutually exclusive) restrict
+which env-file keys are injected. `--clean` starts from a minimal inherited
+environment (PATH/HOME/locale/terminal basics) instead of inheriting the full
+parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
+through in clean mode. Before spawning, the injected key names are scanned for
+known process-hijacking variables (`LD_PRELOAD`, `PATH`, `GIT_CONFIG_*`, ...):
+a first-party stash warns and proceeds; a third-party-sourced stash is refused.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
 > as a [secret](#secret) and use `akm secret run secret:<name> <VAR> -- …`, or
@@ -1400,7 +1405,9 @@ and proceeds; a third-party-sourced stash is refused.
 
 > Values injected via `env run` live in the child process environment for its
 > entire lifetime and are visible to all subprocesses it spawns. Avoid
-> `env run` for long-lived daemon or server processes.
+> `env run` for long-lived daemon or server processes, and do not use commands
+> like `env`, `printenv`, shell tracing, or verbose diagnostics in agent
+> contexts unless you explicitly intend to expose the child environment.
 
 #### env create
 
@@ -1537,17 +1544,23 @@ printed.
 
 ```sh
 akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+akm secret run secret:deploy-token GITHUB_TOKEN --clean -- gh auth status
 ```
 
 Runs one subprocess with the secret's value set as `$VAR` in the child's
 environment. **The value never appears in akm's structured output** — it is
 passed directly to the child process. The target variable name is validated and
 known process-hijacking names (`LD_PRELOAD`, `PATH`, etc.) are rejected.
+`--clean` starts from a minimal inherited environment instead of inheriting the
+full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
+through in clean mode.
 
 > Secrets injected via `secret run` live in the child process environment for
 > its entire lifetime and are visible to all subprocesses it spawns. For
 > long-lived daemons, prefer `secret path` so the process reads the file
-> directly and the value never sits in an environment variable.
+> directly and the value never sits in an environment variable. Avoid commands
+> that print the environment in agent contexts unless you explicitly intend to
+> expose the child environment.
 
 #### Sensitive marker
 

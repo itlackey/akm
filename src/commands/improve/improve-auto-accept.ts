@@ -27,7 +27,14 @@ import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { getPhaseThreshold, withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
-import { promoteProposal, recordGateDecision } from "../proposal/validators/proposals";
+import type { Proposal } from "../proposal/validators/proposals";
+import { getProposal, promoteProposal, recordGateDecision } from "../proposal/validators/proposals";
+
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,6 +101,11 @@ export interface AutoAcceptGateResult {
   /** Proposal IDs where `promoteProposal` threw — warning already emitted. */
   failed: string[];
   /**
+   * Proposals skipped because a previous unchanged gate attempt already stamped
+   * `gateDecision.outcome=auto-rejected`. These are not new validation attempts.
+   */
+  suppressed: string[];
+  /**
    * Why each failed proposal was rejected, bucketed by reason (e.g. a
    * `validateProposal` finding kind like `description-quality`, or
    * `promote-error` for non-validation throws). Turns the previously-blind
@@ -101,6 +113,8 @@ export interface AutoAcceptGateResult {
    * (surfaced via the gate decision + health `autoAccept.failedByReason`).
    */
   failedByReason: Record<string, number>;
+  /** Failed promotion attempts grouped by proposal source, when available. */
+  failedBySource: Record<string, number>;
 }
 
 /**
@@ -136,7 +150,14 @@ export async function runAutoAcceptGate(
   cfg: AutoAcceptGateConfig,
   promoteFn: typeof promoteProposal = promoteProposal,
 ): Promise<AutoAcceptGateResult> {
-  const result: AutoAcceptGateResult = { promoted: [], skipped: [], failed: [], failedByReason: {} };
+  const result: AutoAcceptGateResult = {
+    promoted: [],
+    skipped: [],
+    failed: [],
+    suppressed: [],
+    failedByReason: {},
+    failedBySource: {},
+  };
 
   // --- Guard: gate is disabled or context is incomplete ---
   if (cfg.dryRun || cfg.globalThreshold === undefined || !cfg.stashDir) {
@@ -179,6 +200,13 @@ export async function runAutoAcceptGate(
 
   for (const candidate of candidates) {
     const { proposalId, confidence } = candidate;
+    let currentProposal: Proposal | undefined;
+    try {
+      currentProposal = cfg.stashDir ? getProposal(cfg.stashDir, proposalId) : undefined;
+    } catch {
+      currentProposal = undefined;
+    }
+    const currentContentHash = currentProposal ? await sha256Hex(currentProposal.payload.content) : undefined;
 
     // Determine if this candidate is exploration-eligible: below-threshold
     // (would normally be deferred) but with a valid confidence score and budget
@@ -202,6 +230,15 @@ export async function runAutoAcceptGate(
     if (isExploration) explorationRemaining -= 1;
     const promoteReason = isExploration ? "exploration-budget" : "above-threshold";
 
+    if (
+      currentProposal?.gateDecision?.outcome === "auto-rejected" &&
+      currentProposal.gateDecision.contentHash !== undefined &&
+      currentProposal.gateDecision.contentHash === currentContentHash
+    ) {
+      result.suppressed.push(proposalId);
+      continue;
+    }
+
     try {
       const promotion = await promoteFn(cfg.stashDir, resolvedConfig, proposalId, {}, undefined);
       stamp(promotion.proposal.id, {
@@ -209,6 +246,7 @@ export async function runAutoAcceptGate(
         reason: promoteReason,
         confidence,
         thresholds: { autoAccept: effectiveThreshold },
+        ...(currentContentHash !== undefined ? { contentHash: currentContentHash } : {}),
         gate: gateLabel,
       });
       // Resolve the eligibilitySource: exploration-promoted proposals get
@@ -265,6 +303,7 @@ export async function runAutoAcceptGate(
         reason,
         confidence,
         thresholds: { autoAccept: effectiveThreshold },
+        ...(currentContentHash !== undefined ? { contentHash: currentContentHash } : {}),
         gate: gateLabel,
       });
       // If exploration budget was consumed but promotion failed, restore the slot

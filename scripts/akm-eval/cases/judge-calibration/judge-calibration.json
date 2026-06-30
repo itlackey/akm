@@ -18,7 +18,7 @@
     "passThreshold": 0.8
   },
   "requires": {
-    "features": ["feedback_distillation"],
+    "features": ["distill"],
     "minAkmVersion": "0.8.0"
   },
   "tags": ["judge", "calibration", "r3", "phase4"]
