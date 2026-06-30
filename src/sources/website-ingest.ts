@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir } from "../core/common";
 import type { SourceConfigEntry } from "../core/config/config";
@@ -38,6 +39,7 @@ const WEBSITE_PAGE_BYTE_CAP = 5 * 1024 * 1024;
  * whole crawl and return what we have when time runs out.
  */
 const WEBSITE_CRAWL_WALL_CLOCK_MS = 10 * 60 * 1000;
+const WEBSITE_MAX_REDIRECTS = 8;
 
 interface WebsitePage {
   url: string;
@@ -276,20 +278,7 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
 }
 
 async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; links: URL[] } | null> {
-  const parsedUrl = new URL(pageUrl);
-  if (parsedUrl.hostname.endsWith(".invalid")) {
-    throw new Error(`Refusing to fetch reserved invalid hostname: ${parsedUrl.hostname}`);
-  }
-  const response = await fetchWithRetry(
-    pageUrl,
-    {
-      headers: {
-        Accept: "text/html, text/markdown, text/plain;q=0.9, application/xhtml+xml;q=0.8",
-        "User-Agent": "akm-cli website provider",
-      },
-    },
-    { timeout: 15_000, retries: 1 },
-  );
+  const response = await fetchWebsiteResponse(pageUrl);
 
   if (!response.ok) {
     if (response.status === 404) return null;
@@ -305,6 +294,7 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
     throw err;
   }
   const finalUrl = normalizeCrawlUrl(response.url || pageUrl) ?? pageUrl;
+  assertWebsiteRequestUrl(finalUrl);
 
   if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeMarkup(body)) {
     const title = extractHtmlTitle(body) || new URL(finalUrl).hostname;
@@ -326,6 +316,36 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
     },
     links: [],
   };
+}
+
+async function fetchWebsiteResponse(pageUrl: string, redirectCount = 0): Promise<Response> {
+  assertWebsiteRequestUrl(pageUrl);
+  const response = await fetchWithRetry(
+    pageUrl,
+    {
+      headers: {
+        Accept: "text/html, text/markdown, text/plain;q=0.9, application/xhtml+xml;q=0.8",
+        "User-Agent": "akm-cli website provider",
+      },
+      redirect: "manual",
+    },
+    { timeout: 15_000, retries: 1 },
+  );
+
+  if (response.status >= 300 && response.status < 400) {
+    if (redirectCount >= WEBSITE_MAX_REDIRECTS) {
+      throw new Error(`Too many redirects while fetching ${pageUrl}`);
+    }
+    const location = response.headers.get("location");
+    if (!location) {
+      throw new Error(`Redirect response from ${pageUrl} did not include a Location header`);
+    }
+    const nextUrl = new URL(location, pageUrl).toString();
+    assertWebsiteRequestUrl(nextUrl);
+    return fetchWebsiteResponse(nextUrl, redirectCount + 1);
+  }
+
+  return response;
 }
 
 function buildMarkdownSnapshot(page: WebsitePage, slug: string, tags?: string[]): string {
@@ -380,6 +400,7 @@ function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigErr
   if (parsed.username || parsed.password) {
     throw new ErrorType("Website URL must not contain embedded credentials");
   }
+  assertWebsiteRequestUrl(parsed.toString(), ErrorType);
 
   parsed.hash = "";
   return normalizeSiteUrl(parsed.toString());
@@ -582,6 +603,58 @@ function isAssetLikePath(pathname: string): boolean {
 
 function isSafeLinkUrl(url: URL): boolean {
   return url.protocol === "http:" || url.protocol === "https:";
+}
+
+type WebsiteUrlErrorCtor = new (message: string) => Error;
+
+function assertWebsiteRequestUrl(rawUrl: string, ErrorType: WebsiteUrlErrorCtor = Error): void {
+  const parsedUrl = new URL(rawUrl);
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname.endsWith(".invalid")) {
+    throw new ErrorType(`Refusing to fetch reserved invalid hostname: ${parsedUrl.hostname}`);
+  }
+  if (isForbiddenWebsiteHostname(hostname)) {
+    throw new ErrorType(`Refusing to fetch non-public website host: ${parsedUrl.hostname}`);
+  }
+}
+
+function isForbiddenWebsiteHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "metadata.google.internal") {
+    return true;
+  }
+
+  const ipVersion = isIP(hostname);
+  if (ipVersion === 4) return isForbiddenIpv4(hostname);
+  if (ipVersion === 6) return isForbiddenIpv6(hostname);
+  return false;
+}
+
+function isForbiddenIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function isForbiddenIpv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "::" ||
+    normalized === "::1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  );
 }
 
 function stripDangerousBlockTag(value: string, tagName: string): string {

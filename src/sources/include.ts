@@ -113,10 +113,14 @@ function copyDirectoryContents(sourceDir: string, destinationDir: string): void 
 }
 
 function copyPath(sourcePath: string, destinationPath: string): void {
-  const stat = fs.statSync(sourcePath);
+  const stat = fs.lstatSync(sourcePath);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Path in akm.include must not be a symlink: ${sourcePath}`);
+  }
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
   if (stat.isDirectory()) {
-    fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
+    fs.mkdirSync(destinationPath, { recursive: true });
+    copyDirectoryContents(sourcePath, destinationPath);
     return;
   }
   fs.copyFileSync(sourcePath, destinationPath);

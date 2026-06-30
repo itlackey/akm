@@ -37,7 +37,11 @@ try {
 //    These let `node dist/cli-node.mjs` run akm end-to-end on Node (the bun:*
 //    text-import that Bun loads natively needs a loader hook on Node). They are
 //    plain Node ESM (.mjs), copied verbatim — never imported under Bun.
-const nodeRuntimeFiles = ["scripts/node-runtime/cli-node.mjs", "scripts/node-runtime/text-import-hook.mjs"];
+const nodeRuntimeFiles = [
+  "scripts/node-runtime/cli-node.mjs",
+  "scripts/node-runtime/migrate-storage-node.mjs",
+  "scripts/node-runtime/text-import-hook.mjs",
+];
 for (const src of nodeRuntimeFiles) {
   const dest = src.replace(/^scripts\/node-runtime\//, "dist/");
   await mkdir(dirname(dest), { recursive: true });
@@ -61,7 +65,7 @@ for (const entry of migrationEntrypoints) {
   await mkdir(dirname(outfile), { recursive: true });
   const result = await Bun.build({
     entrypoints: [entry],
-    target: "bun",
+    target: "node",
     outdir: dirname(outfile),
     naming: outfile.split("/").pop()!,
     minify: false,

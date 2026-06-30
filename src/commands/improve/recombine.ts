@@ -68,7 +68,11 @@ import {
 } from "../../indexer/db/db";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
-import { validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
+import {
+  isValidDescription,
+  isValidWhenToUse,
+  validateProposalFrontmatter,
+} from "../proposal/validators/proposal-quality-validators";
 import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
 import { isConsolidationEligibleMemoryName, isSessionCaptureMemoryName } from "./consolidate";
 
@@ -538,6 +542,24 @@ export function deriveRecombineLessonRef(cluster: MemoryCluster): string {
   return `lesson:recombined/${slug || "cluster"}-${hash}`;
 }
 
+function validatePromotedLessonFrontmatter(
+  ref: string,
+  frontmatter: { description: unknown; when_to_use: unknown },
+): { ok: true } | { ok: false; reason: string } {
+  const descCheck = isValidDescription(frontmatter.description, ref);
+  if (!descCheck.ok) return { ok: false, reason: descCheck.reason };
+  const whenToUseCheck = isValidWhenToUse(frontmatter.when_to_use, ref);
+  if (!whenToUseCheck.ok) return { ok: false, reason: whenToUseCheck.reason };
+  if (
+    typeof frontmatter.description === "string" &&
+    typeof frontmatter.when_to_use === "string" &&
+    frontmatter.description.trim().toLowerCase() === frontmatter.when_to_use.trim().toLowerCase()
+  ) {
+    return { ok: false, reason: "description and when_to_use are identical" };
+  }
+  return { ok: true };
+}
+
 /**
  * The membership fingerprint of a cluster: its member entryKeys sorted and
  * joined. Single source of truth shared by {@link deriveRecombineLessonRef}'s
@@ -771,9 +793,20 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
         const lessonRef = matchedRow?.hypothesis_ref ?? derivedRef;
         const sourceRefs = cluster.members.map((m) => `memory:${m.entry.name}`);
 
+        const priorRow = stateDb ? getRecombineHypothesis(stateDb, lessonRef) : undefined;
+        const alreadyPromoted = priorRow?.promoted_at != null;
+        const nextCount =
+          stateDb == null
+            ? 0
+            : priorRow == null
+              ? 1
+              : priorRow.last_run === sourceRun
+                ? priorRow.consecutive_count
+                : priorRow.consecutive_count + 1;
+
         // Quality gate (always-run): the frontmatter description must be present
-        // and non-truncated. This runs BEFORE createProposal on BOTH the
-        // hypothesis and the promotion paths — never bypassed.
+        // and non-truncated. Promotion adds the full lesson frontmatter check so
+        // `when_to_use` never bypasses validation on the promote=true path.
         const fmCheck = validateProposalFrontmatter({ description: generalization.description });
         if (!fmCheck.ok) {
           appendEvent(
@@ -793,31 +826,49 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
           continue;
         }
 
+        const promote = stateDb != null && !alreadyPromoted && nextCount >= confirmThreshold;
+        if (promote) {
+          const lessonFmCheck = validatePromotedLessonFrontmatter(lessonRef, {
+            description: generalization.description,
+            when_to_use: generalization.when_to_use,
+          });
+          if (!lessonFmCheck.ok) {
+            appendEvent(
+              {
+                eventType: "recombine_invoked",
+                ref: lessonRef,
+                metadata: {
+                  signal: cluster.signature,
+                  memberCount: cluster.members.length,
+                  outcome: "quality_rejected",
+                  reason: lessonFmCheck.reason,
+                  sourceRun,
+                },
+              },
+              opts.ctx,
+            );
+            continue;
+          }
+        }
+
         // A defensible generalization was produced this run — record it so it is
         // NOT decayed by the unseen sweep below.
         seenThisRun.add(lessonRef);
 
-        // #625/#633 — record the re-induction and read the prior promotion state.
-        // `lessonRef` is the matched row's ref (overlap match) or the freshly
-        // derived member-set ref (first/non-overlapping induction). The induction
-        // refreshes the row's `member_key` to the current membership so the
-        // overlap window slides with the drifting cluster.
-        const nowIso = new Date().toISOString();
-        const priorRow = stateDb ? getRecombineHypothesis(stateDb, lessonRef) : undefined;
-        const alreadyPromoted = priorRow?.promoted_at != null;
+        // #625/#633 — record the re-induction only AFTER the quality gate passed.
+        // Quality-rejected outputs must not advance the confirmation streak.
         const count = stateDb
           ? recordRecombineInduction(stateDb, {
               hypothesisRef: lessonRef,
               signature: cluster.signature,
               memberKey,
-              seenAt: nowIso,
+              seenAt: new Date().toISOString(),
               run: sourceRun,
             })
           : 0;
 
         // Promote to a `type: lesson` proposal when the confirmation streak
         // reaches the threshold AND the hypothesis has not already been promoted.
-        const promote = stateDb != null && !alreadyPromoted && count >= confirmThreshold;
         const proposalType = promote ? "lesson" : "hypothesis";
 
         const frontmatter: Record<string, unknown> = {
@@ -846,7 +897,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
             ref: lessonRef,
             source: "recombine",
             sourceRun,
-            payload: { content, frontmatter: { description: generalization.description } },
+            payload: { content, frontmatter },
             eligibilitySource,
             // The promotion is a distinct asset (lesson) for the same ref; force
             // past the duplicate-pending guard (the stale hypothesis was just
@@ -875,7 +926,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
         }
 
         if (promote && stateDb) {
-          markRecombineHypothesisPromoted(stateDb, lessonRef, nowIso);
+          markRecombineHypothesisPromoted(stateDb, lessonRef, new Date().toISOString());
           lessonsPromoted += 1;
           appendEvent(
             {

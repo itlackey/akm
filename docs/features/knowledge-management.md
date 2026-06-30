@@ -202,5 +202,5 @@ a secret needs to be expunged from history.
 - [Search & Discovery](search-discovery.md) — finding assets you have captured
 - [Sources & Registries](sources-registries.md) — bringing in external knowledge at scale
 - [Workflows](workflows.md) — structured procedures as a knowledge format
-- [CLI Reference](../cli.md) — full flag documentation for `remember`, `import`, `wiki`, `vault`
+- [CLI Reference](../cli.md) — full flag documentation for `remember`, `import`, `wiki`, `env`, and `secret`
 - [Wikis](../wikis.md) — detailed wiki lifecycle and ingest workflow

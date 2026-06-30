@@ -54,11 +54,17 @@ describe("migration help", () => {
     expect(bundled.length).toBeGreaterThan(0);
     // Sanity: every known prior release has a note. Adding a new file to
     // docs/migration/release-notes/ should be all it takes to extend this.
-    for (const version of ["0.0.13", "0.1.0", "0.2.0", "0.3.0", "0.5.0", "0.6.0", "0.7.5"]) {
+    for (const version of ["0.0.13", "0.1.0", "0.2.0", "0.3.0", "0.5.0", "0.6.0", "0.7.5", "0.9.0"]) {
       expect(bundled).toContain(version);
       const result = renderMigrationHelp(version, undefined);
       expect(result).toContain(`Migration notes for akm v${version}`);
     }
+  });
+
+  test("latest alias resolves to the 0.9.0 release target", () => {
+    const result = renderMigrationHelp("latest");
+    expect(result).toContain("Migration notes for akm v0.9.0");
+    expect(result).toContain("## [0.9.0]");
   });
 
   test("renders dedicated message when no bundled note or changelog entry exists", () => {

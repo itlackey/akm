@@ -295,6 +295,51 @@ describe("recombine promotion — quality gate on promote (AC1b)", () => {
     },
     TIMEOUT_MS,
   );
+
+  test(
+    "a promotion run with missing when_to_use is REJECTED (no lesson queued)",
+    async () => {
+      const iso = isolated();
+      const stash = iso.stashDir;
+      seedAuthTrio(stash);
+      await buildIndex(stash);
+
+      const config = promoteConfig(2);
+
+      await akmRecombine({
+        stashDir: stash,
+        config,
+        sourceRun: "run-1",
+        relatednessSource: "tags",
+        minClusterSize: 3,
+        confirmThreshold: 2,
+        recombineLlmFn: async () => GOOD_GENERALIZATION(),
+      });
+
+      const res2 = await akmRecombine({
+        stashDir: stash,
+        config,
+        sourceRun: "run-2",
+        relatednessSource: "tags",
+        minClusterSize: 3,
+        confirmThreshold: 2,
+        recombineLlmFn: async () =>
+          JSON.stringify({
+            description: "Authentication state is short-lived and continuously re-verified across flows.",
+            body: "A well-formed generalization body that says something none of the inputs states alone.",
+          }),
+      });
+
+      expect(res2.lessonsPromoted).toBe(0);
+      expect(pendingByType(stash, "lesson").length).toBe(0);
+
+      const { events } = readEvents({ type: "recombine_invoked" });
+      expect(events.some((e) => String((e.metadata as { reason?: string }).reason ?? "").includes("when_to_use"))).toBe(
+        true,
+      );
+    },
+    TIMEOUT_MS,
+  );
 });
 
 // ── AC2: below threshold never promotes ─────────────────────────────────────────

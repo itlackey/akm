@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { cloneRepo } from "../src/sources/providers/git";
+import { classifyCloneFailure, cloneRepo } from "../src/sources/providers/git";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,5 +55,31 @@ describe("cloneRepo: safe staging on failure", () => {
     const siblings = fs.readdirSync(parentDir);
     const tmpSiblings = siblings.filter((f) => f.includes(".tmp-"));
     expect(tmpSiblings).toHaveLength(0);
+  });
+});
+
+describe("classifyCloneFailure: credential redaction", () => {
+  test("redacts embedded credentials in the reported clone URL", () => {
+    const message = classifyCloneFailure(
+      "https://token:super-secret@example.com/org/repo.git",
+      "fatal: Authentication failed for 'https://token:super-secret@example.com/org/repo.git/'",
+      undefined,
+    );
+
+    expect(message).toContain("https://[REDACTED]@example.com/org/repo.git");
+    expect(message).not.toContain("super-secret");
+    expect(message).not.toContain("token:");
+  });
+
+  test("redacts embedded credentials from fallback stderr detail", () => {
+    const message = classifyCloneFailure(
+      "https://token:super-secret@example.com/org/repo.git",
+      "fatal: unable to access 'https://token:super-secret@example.com/org/repo.git/': TLS handshake failed",
+      undefined,
+    );
+
+    expect(message).toContain("https://[REDACTED]@example.com/org/repo.git");
+    expect(message).not.toContain("super-secret");
+    expect(message).not.toContain("token:super-secret@");
   });
 });

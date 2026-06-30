@@ -4,8 +4,11 @@
 
 import path from "node:path";
 import { buildWorkflowAction } from "../../output/renderers";
-import { toPosix } from "../common";
 import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
+
+function toPosix(input: string): string {
+  return input.replace(/\\/g, "/");
+}
 
 const buildTaskAction = (ref: string): string =>
   `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`;

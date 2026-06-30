@@ -394,7 +394,8 @@ All asset files live under `$STASH/` in type-specific subdirectories defined by 
 | `workflows/<name>.md` | workflow | YAML-FM + Markdown |
 | `scripts/<name>.<ext>` | script | sh / ts / js / ps1 etc. |
 | `memories/<name>.md` | memory | YAML-FM + Markdown |
-| `vaults/<name>.env` | vault | `KEY=VALUE` pairs |
+| `env/<name>.env` | env | `KEY=VALUE` pairs |
+| `secrets/<name>` | secret | raw secret bytes |
 | `wikis/<name>/` | wiki | See wiki structure below |
 | `lessons/<name>.md` | lesson | YAML-FM + Markdown (required: `description`, `when_to_use`) |
 | `tasks/<name>.yml` | task | pure YAML (see `docs/migration/v0.7-to-v0.8.md` for the `.md` → `.yml` conversion) |

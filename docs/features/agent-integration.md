@@ -14,7 +14,7 @@ the agent that `akm` is available and how to discover it.
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, workflows, vaults, wikis, lessons, and memories via the `akm` CLI.
+knowledge, workflows, env files, secrets, wikis, lessons, and memories via the `akm` CLI.
 Use `akm -h` for details.
 ```
 

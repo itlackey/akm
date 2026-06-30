@@ -35,7 +35,7 @@ run_step "Type Check" bunx tsc --noEmit
 run_step "Build Package" bun run build
 run_step \
 	"Verify npm bin target" \
-	node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); const bin = pkg.bin?.akm; if (!bin || !fs.existsSync(bin)) { console.error(`Missing npm bin target: ${bin ?? "<undefined>"}`); process.exit(1); } if (fs.existsSync("dist/tests")) { console.error("Publish build should not emit dist/tests"); process.exit(1); }'
+	node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); const bins = [["akm", "dist/cli-node.mjs"], ["akm-migrate-storage", "dist/migrate-storage-node.mjs"]]; for (const [name, expected] of bins) { const actual = pkg.bin?.[name]; if (actual !== expected) { console.error(`npm bin ${name} must point at ${expected}, got ${actual ?? "<undefined>"}`); process.exit(1); } if (!fs.existsSync(actual)) { console.error(`Missing npm bin target: ${actual}`); process.exit(1); } const entry = fs.readFileSync(actual, "utf8"); if (!entry.startsWith("#!/usr/bin/env node")) { console.error(`npm bin ${name} must be a Node wrapper`); process.exit(1); } } if (pkg.engines?.node !== ">=20.12.0") { console.error(`package engines.node must be >=20.12.0, got ${pkg.engines?.node ?? "<undefined>"}`); process.exit(1); } if (fs.existsSync("dist/tests")) { console.error("Publish build should not emit dist/tests"); process.exit(1); }'
 run_step \
   "Install and Setup Regression Suite" \
   bun test tests/setup.test.ts ./tests/integration/setup-run.integration.ts tests/install-script.test.ts tests/setup-wizard.test.ts

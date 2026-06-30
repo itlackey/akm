@@ -74,6 +74,10 @@ export async function akmSearch(input: {
    * `session`). No effect when an explicit `type` is supplied.
    */
   includeSessions?: boolean;
+  /** Disable the automatic project-context ranking boost for this search only. */
+  disableProjectContext?: boolean;
+  /** Disable scoped-utility ranking and usage-score bumps for this search only. */
+  disableScopedUtility?: boolean;
   /**
    * When true, skip logging usage events. Used by internal callers
    * (curate, improve context gathering) to avoid polluting user
@@ -175,6 +179,8 @@ export async function akmSearch(input: {
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
           includeExcludedTypes: input.includeSessions === true,
+          disableProjectContext: input.disableProjectContext === true,
+          disableScopedUtility: input.disableScopedUtility === true,
         });
 
   const registryResult =
@@ -192,7 +198,15 @@ export async function akmSearch(input: {
       warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
-    if (!input.skipLogging) logSearchEvent(query, response, localResult?.mode ?? "keyword", input.eventSource);
+    if (!input.skipLogging) {
+      logSearchEvent(
+        query,
+        response,
+        localResult?.mode ?? "keyword",
+        input.eventSource,
+        input.disableScopedUtility === true,
+      );
+    }
     return response;
   }
 
@@ -229,7 +243,8 @@ export async function akmSearch(input: {
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
+    if (!input.skipLogging)
+      logSearchEvent(query, response, undefined, input.eventSource, input.disableScopedUtility === true);
     return response;
   }
 
@@ -248,7 +263,8 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
-  if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
+  if (!input.skipLogging)
+    logSearchEvent(query, response, undefined, input.eventSource, input.disableScopedUtility === true);
   return response;
 }
 
@@ -291,6 +307,7 @@ function logSearchEvent(
   response: SearchResponse,
   mode: "semantic" | "keyword" = "keyword",
   eventSource: "user" | "improve" = "user",
+  disableScopedUtility = false,
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
@@ -322,8 +339,7 @@ function logSearchEvent(
         let scopeKey: string | undefined;
         try {
           const stashPath = response.stashDir;
-          const disabled =
-            process.env.AKM_DISABLE_SCOPED_UTILITY === "1" || (stashPath && isTransientStashPath(stashPath));
+          const disabled = disableScopedUtility || (stashPath && isTransientStashPath(stashPath));
           scopeKey = disabled ? undefined : getCurrentWorkflowScopeKey();
         } catch {
           // Non-fatal — fall back to global-only bumps on any error.

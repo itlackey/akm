@@ -133,6 +133,10 @@ export async function searchLocal(input: {
    * `session`). No effect when an explicit `--type` is supplied.
    */
   includeExcludedTypes?: boolean;
+  /** Disable project-context ranking for this invocation only. */
+  disableProjectContext?: boolean;
+  /** Disable scoped-utility ranking for this invocation only. */
+  disableScopedUtility?: boolean;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -148,6 +152,8 @@ export async function searchLocal(input: {
   const beliefFilter = input.beliefFilter ?? "all";
   const restrictToSources = input.restrictToSources === true;
   const includeExcludedTypes = input.includeExcludedTypes === true;
+  const disableProjectContext = input.disableProjectContext === true;
+  const disableScopedUtility = input.disableScopedUtility === true;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -222,6 +228,8 @@ export async function searchLocal(input: {
       beliefFilter,
       restrictToSources,
       includeExcludedTypes,
+      disableProjectContext,
+      disableScopedUtility,
     );
     return {
       hits,
@@ -256,6 +264,8 @@ async function searchDatabase(
   beliefFilter: BeliefFilterMode = "all",
   restrictToSources = false,
   includeExcludedTypes = false,
+  disableProjectContext = false,
+  disableScopedUtility = false,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -389,7 +399,7 @@ async function searchDatabase(
   // Resolve project-context tokens from the current working directory once
   // per search invocation. Returns null when running from home dir / /tmp,
   // or when the caller has set AKM_DISABLE_PROJECT_CONTEXT=1.
-  const projectContext = process.env.AKM_DISABLE_PROJECT_CONTEXT === "1" ? null : resolveProjectContext(process.cwd());
+  const projectContext = disableProjectContext ? null : resolveProjectContext(process.cwd());
 
   // Phase 2A / Rec 5: resolve forgetting-curve config and skip the feedback
   // count query when the boost cannot make a difference (default ≤ 1.0 means
@@ -414,7 +424,7 @@ async function searchDatabase(
   // AKM_DISABLE_SCOPED_UTILITY=1 opts out (e.g. for registry searches or tests).
   let scopeKey: string | undefined;
   try {
-    scopeKey = process.env.AKM_DISABLE_SCOPED_UTILITY === "1" ? undefined : getCurrentWorkflowScopeKey();
+    scopeKey = disableScopedUtility ? undefined : getCurrentWorkflowScopeKey();
   } catch {
     // Non-fatal — ranking proceeds without scoped utility on any error.
   }

@@ -97,9 +97,6 @@ export const searchCommand = defineJsonCommand({
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
     const includeSessions = getHyphenatedBoolean(args, "include-sessions");
-    // --no-project-context sets env so searchDatabase picks it up without
-    // threading the flag through the entire call stack.
-    if (noProjectContext) process.env.AKM_DISABLE_PROJECT_CONTEXT = "1";
     const result = await akmSearch({
       query,
       type,
@@ -109,6 +106,8 @@ export const searchCommand = defineJsonCommand({
       includeProposed,
       belief,
       includeSessions,
+      disableProjectContext: noProjectContext,
+      disableScopedUtility: noProjectContext,
       eventSource: resolveEventSource(),
     });
     output("search", result);

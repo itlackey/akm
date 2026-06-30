@@ -87,8 +87,8 @@ path that mutates the live stash.
 ```sh
 akm improve <ref>                              # Produce an improvement proposal for an existing asset
 akm improve <ref> --task "tighten the description"
-akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
-akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
+akm propose <type> <name> --task "..."         # Draft a new asset proposal from a description
+akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
 akm proposal list                              # List pending proposals
 akm proposal list --status pending|accepted|rejected
 akm proposal show <id>                          # Render the proposal body and metadata
@@ -103,7 +103,9 @@ akm history                                    # Per-asset (or stash-wide) state
 akm history --ref <ref>
 ```
 
-The `akm improve` command replaces both `akm reflect` and `akm distill` workflows.
+`akm improve` replaces the old direct reflect workflow for existing assets.
+New asset drafts use `akm propose`, and lesson distillation still lands in the
+same proposal queue.
 The six proposal subcommands are now accessed via the `proposal` noun group:
 - `akm proposal list` (was `akm proposals`)
 - `akm proposal show` (was `akm show proposal`)

@@ -75,7 +75,9 @@ function rewriteKey(config: AkmConfig, key: string): string {
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
   const k = rewriteKey(config, key);
-  return configGet(config as unknown as Record<string, unknown>, k);
+  const value = configGet(config as unknown as Record<string, unknown>, k);
+  if (k.split(".").at(-1) === "apiKey") return null;
+  return omitApiKeysForOutput(value);
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
@@ -168,7 +170,18 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   if (config.improve) result.improve = config.improve;
   if (config.archiveRetentionDays !== undefined) result.archiveRetentionDays = config.archiveRetentionDays;
   if (config.configVersion !== undefined) result.configVersion = config.configVersion;
-  return result;
+  return omitApiKeysForOutput(result) as Record<string, unknown>;
+}
+
+function omitApiKeysForOutput(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitApiKeysForOutput);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "apiKey") continue;
+    out[key] = omitApiKeysForOutput(child);
+  }
+  return out;
 }
 
 export { unknownKeyHint };

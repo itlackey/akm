@@ -7,8 +7,8 @@
 [![license](https://img.shields.io/github/license/itlackey/akm)](https://github.com/itlackey/akm/blob/main/LICENSE)
 
 `akm` is a package manager for AI agent capabilities -- scripts, skills, commands,
-agents, knowledge, memories, workflows, wikis, vaults, lessons, and scheduled
-tasks. It works with any AI coding assistant that can run shell commands,
+agents, knowledge, memories, workflows, wikis, env files, secrets, lessons, and
+scheduled tasks. It works with any AI coding assistant that can run shell commands,
 including [Claude Code](https://claude.ai/code),
 [OpenCode](https://opencode.ai), [Cursor](https://cursor.com), and more.
 
@@ -30,9 +30,17 @@ irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 bun install -g akm-cli
 ```
 
+**Option 3 — Node.js (requires Node.js >= 20.12):**
+
+```sh
+npm install -g akm-cli
+```
+
 Upgrade in place with `akm upgrade`.
 
-> **AKM 0.8 requires the prebuilt binary or the Bun runtime. Node.js / npm / pnpm are not supported in 0.8.0** — running `npm install -g akm-cli` on a Node.js-only machine will print an error from the preinstall hook and exit without installing. Cross-runtime support (Node, npm, pnpm) is planned for 0.9.0.
+> **AKM 0.9.0 supports three install paths:** prebuilt binary, Bun, or Node.js >= 20.12.
+> The old `vault` asset type was removed in 0.9.0; use `env` for whole `.env`
+> groups and `secret` for standalone sensitive values.
 
 ## Quick Start
 
@@ -59,7 +67,7 @@ Add this to your `AGENTS.md`, `CLAUDE.md`, or system prompt:
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, memories, workflows, wikis, vaults, lessons, and scheduled tasks
+knowledge, memories, workflows, wikis, env files, secrets, lessons, and scheduled tasks
 via the `akm` CLI. Use `akm -h` for details.
 ```
 

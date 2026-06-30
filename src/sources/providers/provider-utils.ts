@@ -113,13 +113,22 @@ export function copyDirectoryContents(sourceDir: string, destinationDir: string)
     if (entry.name === ".git") continue;
     const src = path.join(sourceDir, entry.name);
     const dest = path.join(destinationDir, entry.name);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    if (entry.isDirectory()) {
-      fs.cpSync(src, dest, { recursive: true, force: true });
-    } else {
-      fs.copyFileSync(src, dest);
-    }
+    copyPathWithoutSymlinks(src, dest);
   }
+}
+
+function copyPathWithoutSymlinks(sourcePath: string, destinationPath: string): void {
+  const stat = fs.lstatSync(sourcePath);
+  if (stat.isSymbolicLink()) return;
+
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+  if (stat.isDirectory()) {
+    fs.mkdirSync(destinationPath, { recursive: true });
+    copyDirectoryContents(sourcePath, destinationPath);
+    return;
+  }
+
+  fs.copyFileSync(sourcePath, destinationPath);
 }
 
 export function isDirectory(target: string): boolean {

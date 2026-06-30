@@ -421,7 +421,7 @@ Each asset entry supports:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `type` | yes | Any registered asset type (e.g. `script`, `skill`, `command`, `agent`, `knowledge`, `memory`, `workflow`, `vault`, `wiki`, `lesson`). The renderer registry is the authority — see v1 spec §4.1. |
+| `type` | yes | Any registered asset type (e.g. `script`, `skill`, `command`, `agent`, `knowledge`, `memory`, `workflow`, `env`, `secret`, `wiki`, `lesson`). The renderer registry is the authority — see v1 spec §4.1. |
 | `name` | yes | Asset name |
 | `description` | no | One-line summary |
 | `tags` | no | Searchable keywords |

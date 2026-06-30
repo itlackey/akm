@@ -102,6 +102,10 @@ export const DANGEROUS_VAULT_KEY_PATTERNS: ReadonlyArray<{ pattern: RegExp; reas
     pattern: /^BASH_FUNC_/,
     reason: "Shellshock-class bash function injection (CVE-2014-6271)",
   },
+  {
+    pattern: /^GIT_CONFIG_/,
+    reason: "Git config injection through environment override variables",
+  },
 ];
 
 /**

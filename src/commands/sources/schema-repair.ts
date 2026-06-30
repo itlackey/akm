@@ -23,7 +23,7 @@ import { authoringRulesForType } from "../../core/authoring-rules";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { appendEvent, readEvents } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
-import { info, warn } from "../../core/warn";
+import { info } from "../../core/warn";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { createProposal, isProposalSkipped } from "../proposal/validators/proposals";
@@ -64,7 +64,7 @@ export interface SchemaRepairOptions {
   budgetMs: number;
   /** LLM config to use for repair calls. */
   llmConfig: LlmConnectionConfig;
-  /** Optional stash directory for proposal queue writes (M-3 / #387). When absent, falls back to direct write. */
+  /** Stash directory for proposal-queue writes. Required: schema-repair never writes directly. */
   stashDir?: string;
   /** Override the asset file-path resolver (test seam). */
   findFilePath?: (ref: string, stashDir?: string) => Promise<string | null> | string | null;
@@ -112,6 +112,10 @@ export async function runSchemaRepairPass(
     isLessonCandidateFn = defaultIsLessonCandidate,
     chatFn = chatCompletion,
   } = options;
+
+  if (!stashDir) {
+    throw new Error("runSchemaRepairPass requires stashDir so repairs route through the proposal queue");
+  }
 
   for (const failure of failures) {
     if (Date.now() - startMs >= budgetMs) break;
@@ -172,9 +176,9 @@ export async function runSchemaRepairPass(
 
       const bodyPreview = (fm.content ?? raw).slice(0, 2000);
       // Standards "rulebook" for this target — wiki schema (wiki page) or stash
-      // convention/meta facts (non-wiki asset); empty when neither fires or no
-      // stash dir is available. `resolveStandardsContext` dispatches on the ref.
-      const standardsContext = stashDir ? resolveStandardsContext(failure.ref, stashDir) : "";
+      // convention/meta facts (non-wiki asset). `resolveStandardsContext`
+      // dispatches on the ref.
+      const standardsContext = resolveStandardsContext(failure.ref, stashDir);
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
@@ -215,51 +219,35 @@ export async function runSchemaRepairPass(
       // them human-reviewable before they affect search ranking and curate hints.
       // mem0 open gaps (arXiv:2504.19413) — any LLM write to a memory field
       // should be human-reviewable.
-      if (stashDir) {
-        const proposalResult = createProposal(stashDir, {
-          ref: failure.ref,
-          source: "schema-repair",
-          payload: {
-            content: newContent,
-            ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),
-          },
-        });
+      const proposalResult = createProposal(stashDir, {
+        ref: failure.ref,
+        source: "schema-repair",
+        payload: {
+          content: newContent,
+          ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),
+        },
+      });
 
-        if (isProposalSkipped(proposalResult)) {
-          info(`[improve] schema-repair proposal skipped for ${failure.ref}: ${proposalResult.message}`);
-          repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-          continue;
-        }
-
-        info(`[improve] schema-repair queued: ${failure.ref} (proposal id: ${proposalResult.id})`);
-        appendEvent({
-          eventType: "schema_repair_invoked",
-          ref: failure.ref,
-          metadata: { outcome: "queued", reason: failure.reason, proposalId: proposalResult.id },
-        });
-        repairs.push({
-          ref: failure.ref,
-          reason: failure.reason,
-          outcome: "queued",
-          proposalId: proposalResult.id,
-        });
-        // Mark as repaired so the caller removes it from the validation-failure set.
-        repairedRefs.add(failure.ref);
-      } else {
-        // Fallback: no stash dir available — write directly (legacy path).
-        // This should not occur in production; stashDir is always provided by
-        // `runSchemaRepairPass` callers in improve.ts.
-        warn(`[improve] schema-repair: no stashDir available for ${failure.ref}, falling back to direct write`);
-        fs.writeFileSync(filePath, newContent, "utf8");
-        info(`[improve] schema-repair written: ${failure.ref}`);
-        appendEvent({
-          eventType: "schema_repair_invoked",
-          ref: failure.ref,
-          metadata: { outcome: "written", reason: failure.reason },
-        });
-        repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "written" });
-        repairedRefs.add(failure.ref);
+      if (isProposalSkipped(proposalResult)) {
+        info(`[improve] schema-repair proposal skipped for ${failure.ref}: ${proposalResult.message}`);
+        repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+        continue;
       }
+
+      info(`[improve] schema-repair queued: ${failure.ref} (proposal id: ${proposalResult.id})`);
+      appendEvent({
+        eventType: "schema_repair_invoked",
+        ref: failure.ref,
+        metadata: { outcome: "queued", reason: failure.reason, proposalId: proposalResult.id },
+      });
+      repairs.push({
+        ref: failure.ref,
+        reason: failure.reason,
+        outcome: "queued",
+        proposalId: proposalResult.id,
+      });
+      // Mark as repaired so the caller removes it from the validation-failure set.
+      repairedRefs.add(failure.ref);
     } catch (e) {
       appendEvent({
         eventType: "schema_repair_invoked",

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import * as actualAgentIntegration from "../../src/integrations/agent";
 
 const DEFAULT_STASH_DIR = "/tmp/akm-default-stash";
 const DEFAULT_CONFIG_PATH = "/tmp/akm-config/config.json";
@@ -85,10 +86,27 @@ function resetSetupState(): void {
   setupState.vecAvailable = false;
 }
 
+function installAgentIntegrationMock(): void {
+  mock.module("../../src/integrations/agent", () => ({
+    ...actualAgentIntegration,
+    detectAgentCliProfiles: () => [],
+    pickDefaultAgentProfile: () => undefined,
+  }));
+}
+
+function installDefaultTasksMock(): void {
+  mock.module("../../src/commands/tasks/default-tasks", () => ({
+    detectServerDefault: () => false,
+    isCiEnvironment: () => false,
+    registerDefaultTasks: async () => ({ skipped: false, created: [], existing: [], toggled: [] }),
+  }));
+}
+
 beforeEach(() => {
   resetPromptState();
   resetSetupState();
   mock.restore();
+  installDefaultTasksMock();
 });
 
 afterEach(() => {
@@ -171,7 +189,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -192,10 +210,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
@@ -287,7 +302,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -308,10 +323,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
@@ -408,7 +420,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -429,10 +441,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
@@ -519,7 +528,7 @@ describe("runSetupWizard", () => {
         message: "connection refused",
       }),
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -537,10 +546,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "nomic-embed-text", "llama3.2", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
@@ -618,7 +624,7 @@ describe("runSetupWizard", () => {
         message: "@huggingface/transformers is not installed.",
       }),
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -636,10 +642,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
@@ -710,7 +713,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -730,10 +733,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
@@ -801,7 +801,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -819,10 +819,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, false, true);
@@ -885,7 +882,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
@@ -902,10 +899,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
@@ -965,7 +959,7 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../../src/commands/init", () => ({
+    mock.module("../../src/commands/sources/init", () => ({
       akmInit: async () => {
         throw new Error("EACCES stash init");
       },
@@ -980,10 +974,7 @@ describe("runSetupWizard", () => {
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
-    mock.module("../../src/integrations/agent", () => ({
-      detectAgentCliProfiles: () => [],
-      pickDefaultAgentProfile: () => undefined,
-    }));
+    installAgentIntegrationMock();
 
     promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);

@@ -13,11 +13,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
+import type { AssetRef } from "../../core/asset/asset-ref";
 import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
+import {
+  commitWriteTargetBoundary,
+  deleteAssetFromSource,
+  resolveWriteTarget,
+  writeAssetToSource,
+} from "../../core/write-source";
 import { listAgentProfileNames } from "../../integrations/agent";
 import { resolveAssetPath } from "../../sources/resolve";
 import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
@@ -80,7 +87,8 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
   const backend = backendNameForPlatform();
   parseSchedule(input.schedule, backend);
 
-  const stashDir = resolveStashDir();
+  const target = resolveTaskWriteTarget();
+  const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
   fs.mkdirSync(typeRoot, { recursive: true });
 
@@ -113,7 +121,8 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
   const task = parseTaskDocument({ yaml, filePath: assetPath, id });
   await validateTaskDocument(task, { backend, stashDir });
 
-  fs.writeFileSync(assetPath, yaml.endsWith("\n") ? yaml : `${yaml}\n`, "utf8");
+  const ref = taskAssetRef(id);
+  await writeAssetToSource(target.source, target.config, ref, yaml);
 
   // Install in the OS scheduler. If install fails after the file was written,
   // delete the file so the on-disk state never claims a task is registered
@@ -123,12 +132,13 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
     await sched.install(task);
   } catch (err) {
     try {
-      fs.rmSync(assetPath, { force: true });
+      await deleteAssetFromSource(target.source, target.config, ref);
     } catch {
       /* ignore */
     }
     throw err;
   }
+  commitWriteTargetBoundary(target, `Update task:${id}`);
 
   return {
     id,
@@ -270,16 +280,28 @@ export async function akmTasksShow(id: string): Promise<{
 
 export async function akmTasksRemove(id: string): Promise<{ id: string; removed: true; backend: string }> {
   const normalised = normaliseTaskId(id);
-  const stashDir = resolveStashDir();
+  const target = resolveTaskWriteTarget();
+  const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
-  const filePath = await resolveAssetPath(stashDir, "task", normalised);
+  await resolveAssetPath(stashDir, "task", normalised);
+  const ref = taskAssetRef(normalised);
   const sched = selectBackend();
+  let uninstallError: unknown;
+  let deleteError: unknown;
   try {
     await sched.uninstall(normalised);
-  } finally {
-    fs.rmSync(filePath, { force: true });
+  } catch (err) {
+    uninstallError = err;
   }
+  try {
+    await deleteAssetFromSource(target.source, target.config, ref);
+  } catch (err) {
+    deleteError = err;
+  }
+  if (uninstallError !== undefined) throw uninstallError;
+  if (deleteError !== undefined) throw deleteError;
+  commitWriteTargetBoundary(target, `Remove task:${normalised}`);
   return { id: normalised, removed: true, backend: sched.name };
 }
 
@@ -288,13 +310,15 @@ export async function akmTasksSetEnabled(
   enabled: boolean,
 ): Promise<{ id: string; enabled: boolean; backend: string }> {
   const normalised = normaliseTaskId(id);
-  const stashDir = resolveStashDir();
+  const target = resolveTaskWriteTarget();
+  const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const yaml = fs.readFileSync(filePath, "utf8");
   const updated = setEnabledInYaml(yaml, enabled);
-  fs.writeFileSync(filePath, updated, "utf8");
+  const ref = taskAssetRef(normalised);
+  await writeAssetToSource(target.source, target.config, ref, updated);
   const sched = selectBackend();
   try {
     // Reinstall from the (just-updated) definition rather than only toggling
@@ -307,9 +331,10 @@ export async function akmTasksSetEnabled(
   } catch (err) {
     // Roll the file back so the YAML source-of-truth and the OS
     // scheduler don't diverge silently when the backend call fails.
-    fs.writeFileSync(filePath, yaml, "utf8");
+    await writeAssetToSource(target.source, target.config, ref, yaml);
     throw err;
   }
+  commitWriteTargetBoundary(target, `Update task:${normalised}`);
   return { id: normalised, enabled, backend: sched.name };
 }
 
@@ -514,6 +539,14 @@ function normaliseTaskId(raw: string): string {
     );
   }
   return id;
+}
+
+function taskAssetRef(id: string): AssetRef {
+  return { type: "task", name: id };
+}
+
+function resolveTaskWriteTarget() {
+  return resolveWriteTarget(loadConfig());
 }
 
 interface RenderInput {
