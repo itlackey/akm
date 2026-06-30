@@ -122,6 +122,7 @@ export interface MemoryInferenceResult {
 
 export interface MemoryInferencePassOptions {
   candidateRefs?: ReadonlySet<string>;
+  compressMemoryToDerivedMemory?: typeof memoryInfer.compressMemoryToDerivedMemory;
 }
 
 /** Progress event emitted by {@link runMemoryInferencePass}. */
@@ -167,6 +168,8 @@ interface MemoryRecord {
  */
 export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): Promise<MemoryInferenceResult> {
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
+  const compressMemoryToDerivedMemory =
+    options.compressMemoryToDerivedMemory ?? memoryInfer.compressMemoryToDerivedMemory;
   const result: MemoryInferenceResult = {
     considered: 0,
     cacheHits: 0,
@@ -281,7 +284,7 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
             record.body,
             reEnrich ?? false,
             () =>
-              memoryInfer.compressMemoryToDerivedMemory(
+              compressMemoryToDerivedMemory(
                 llmConfig,
                 record.body,
                 signal,
@@ -301,7 +304,7 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
               },
             },
           )
-        : await memoryInfer.compressMemoryToDerivedMemory(
+        : await compressMemoryToDerivedMemory(
             llmConfig,
             record.body,
             signal,

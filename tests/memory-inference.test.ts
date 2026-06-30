@@ -12,20 +12,13 @@
  *     processed, inferred children are not deleted when toggled off)
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { AkmConfig } from "../src/core/config/config";
 import type { SearchSource } from "../src/indexer/search/search-source";
-
-// ── Module-level LLM stub ───────────────────────────────────────────────────
-//
-// `mock.module` must run before the module under test is imported, so we set
-// up the stub here at the top of the file. The behaviour is controlled by
-// the mutable `compressor` variable — each test sets it to whatever
-// deterministic draft it wants.
 
 type Draft = {
   title: string;
@@ -36,14 +29,23 @@ type Draft = {
 };
 
 let compressor: (body: string) => Draft | undefined = () => undefined;
-mock.module("../src/llm/memory-infer", () => ({
-  compressMemoryToDerivedMemory: async (_config: unknown, body: string) => compressor(body),
-}));
 
-// Import AFTER mock.module so the pass picks up the stub.
-const { runMemoryInferencePass, isPendingMemory, collectPendingMemories } = await import(
-  "../src/indexer/passes/memory-inference"
-);
+const {
+  runMemoryInferencePass: runMemoryInferencePassImpl,
+  isPendingMemory,
+  collectPendingMemories,
+} = await import("../src/indexer/passes/memory-inference");
+
+function memoryInferenceOptions() {
+  return {
+    compressMemoryToDerivedMemory: async (_config: unknown, body: string) => compressor(body),
+  };
+}
+
+function runMemoryInferencePass(...args: Parameters<typeof runMemoryInferencePassImpl>) {
+  const [ctx] = args;
+  return runMemoryInferencePassImpl({ ...ctx, options: { ...ctx.options, ...memoryInferenceOptions() } });
+}
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -60,7 +62,6 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
-  mock.restore();
 });
 
 function writeMemory(name: string, frontmatter: Record<string, unknown>, body: string): string {

@@ -59,6 +59,24 @@ export interface FetchSnapshotOptions {
   stashDir?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  allowPrivateHosts?: boolean;
+}
+
+interface WebsiteValidationOptions {
+  allowPrivateHosts?: boolean;
+}
+
+export function shouldAllowPrivateWebsiteHostsForTests(): boolean {
+  return process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
+}
+
+export function shouldAllowPrivateWebsiteUrlForTests(rawUrl: string): boolean {
+  if (!shouldAllowPrivateWebsiteHostsForTests()) return false;
+  try {
+    return isLoopbackWebsiteHostname(new URL(rawUrl).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function resolveFetcherStashDir(explicitStashDir?: string): string | null {
@@ -86,10 +104,10 @@ export function getWebsiteCachePaths(siteUrl: string): {
 
 export async function ensureWebsiteMirror(
   config: SourceConfigEntry,
-  options?: { requireStashDir?: boolean; force?: boolean },
+  options?: { requireStashDir?: boolean; force?: boolean; allowPrivateHosts?: boolean },
 ): Promise<ReturnType<typeof getWebsiteCachePaths>> {
   const rawUrl = config.url ?? "";
-  const normalizedUrl = validateWebsiteUrl(rawUrl);
+  const normalizedUrl = validateWebsiteUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   const cachePaths = getWebsiteCachePaths(normalizedUrl);
   const requireStashDir = options?.requireStashDir === true;
   const force = options?.force === true;
@@ -115,6 +133,7 @@ export async function ensureWebsiteMirror(
     await scrapeWebsiteToStash(normalizedUrl, cachePaths.stashDir, {
       maxPages: coercePositiveInt(config.options?.maxPages, MAX_PAGES_DEFAULT),
       maxDepth: coercePositiveInt(config.options?.maxDepth, MAX_DEPTH_DEFAULT),
+      allowPrivateHosts: options?.allowPrivateHosts,
     });
     fs.writeFileSync(
       cachePaths.manifestPath,
@@ -150,7 +169,7 @@ function hasExtractedSite(stashDir: string): boolean {
 async function scrapeWebsiteToStash(
   startUrl: string,
   stashDir: string,
-  options: { maxPages: number; maxDepth: number },
+  options: { maxPages: number; maxDepth: number; allowPrivateHosts?: boolean },
 ): Promise<void> {
   const pages = await crawlWebsite(startUrl, options);
   if (pages.length === 0) {
@@ -177,7 +196,7 @@ export async function fetchWebsiteMarkdownSnapshot(
   rawUrl: string,
   options?: FetchSnapshotOptions,
 ): Promise<WebsiteMarkdownSnapshot> {
-  const normalizedUrl = validateWebsiteInputUrl(rawUrl);
+  const normalizedUrl = validateWebsiteInputUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   const parsedUrl = new URL(normalizedUrl);
   const stashDir = resolveFetcherStashDir(options?.stashDir);
   const context: FetcherContext = {
@@ -202,7 +221,7 @@ export async function fetchWebsiteMarkdownSnapshot(
     }
   }
 
-  const fetched = await fetchWebsitePage(normalizedUrl);
+  const fetched = await fetchWebsitePage(normalizedUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   if (!fetched) {
     throw new UsageError(`No content could be fetched from ${normalizedUrl}`);
   }
@@ -234,7 +253,10 @@ function websiteMarkdownSnapshotFromResult(snapshot: WikiSnapshotResult): Websit
   };
 }
 
-async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDepth: number }): Promise<WebsitePage[]> {
+async function crawlWebsite(
+  startUrl: string,
+  options: { maxPages: number; maxDepth: number; allowPrivateHosts?: boolean },
+): Promise<WebsitePage[]> {
   const start = new URL(normalizeSiteUrl(startUrl));
   const allowedOrigin = start.origin;
   const queue: Array<{ url: string; depth: number }> = [{ url: start.toString(), depth: 0 }];
@@ -250,7 +272,7 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
     if (!normalized || visited.has(normalized)) continue;
     visited.add(normalized);
 
-    const fetched = await fetchWebsitePage(normalized);
+    const fetched = await fetchWebsitePage(normalized, { allowPrivateHosts: options.allowPrivateHosts });
     if (!fetched) continue;
     pages.push(fetched.page);
 
@@ -277,8 +299,11 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
   return pages;
 }
 
-async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; links: URL[] } | null> {
-  const response = await fetchWebsiteResponse(pageUrl);
+async function fetchWebsitePage(
+  pageUrl: string,
+  options?: WebsiteValidationOptions,
+): Promise<{ page: WebsitePage; links: URL[] } | null> {
+  const response = await fetchWebsiteResponse(pageUrl, 0, options);
 
   if (!response.ok) {
     if (response.status === 404) return null;
@@ -294,7 +319,7 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
     throw err;
   }
   const finalUrl = normalizeCrawlUrl(response.url || pageUrl) ?? pageUrl;
-  assertWebsiteRequestUrl(finalUrl);
+  assertWebsiteRequestUrl(finalUrl, Error, options);
 
   if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeMarkup(body)) {
     const title = extractHtmlTitle(body) || new URL(finalUrl).hostname;
@@ -318,8 +343,12 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
   };
 }
 
-async function fetchWebsiteResponse(pageUrl: string, redirectCount = 0): Promise<Response> {
-  assertWebsiteRequestUrl(pageUrl);
+async function fetchWebsiteResponse(
+  pageUrl: string,
+  redirectCount = 0,
+  options?: WebsiteValidationOptions,
+): Promise<Response> {
+  assertWebsiteRequestUrl(pageUrl, Error, options);
   const response = await fetchWithRetry(
     pageUrl,
     {
@@ -341,8 +370,8 @@ async function fetchWebsiteResponse(pageUrl: string, redirectCount = 0): Promise
       throw new Error(`Redirect response from ${pageUrl} did not include a Location header`);
     }
     const nextUrl = new URL(location, pageUrl).toString();
-    assertWebsiteRequestUrl(nextUrl);
-    return fetchWebsiteResponse(nextUrl, redirectCount + 1);
+    assertWebsiteRequestUrl(nextUrl, Error, options);
+    return fetchWebsiteResponse(nextUrl, redirectCount + 1, options);
   }
 
   return response;
@@ -374,15 +403,19 @@ function buildMarkdownSnapshot(page: WebsitePage, slug: string, tags?: string[])
   ].join("\n");
 }
 
-export function validateWebsiteUrl(rawUrl: string): string {
-  return validateWebsiteUrlWithError(rawUrl, ConfigError);
+export function validateWebsiteUrl(rawUrl: string, options?: WebsiteValidationOptions): string {
+  return validateWebsiteUrlWithError(rawUrl, ConfigError, options);
 }
 
-export function validateWebsiteInputUrl(rawUrl: string): string {
-  return validateWebsiteUrlWithError(rawUrl, UsageError);
+export function validateWebsiteInputUrl(rawUrl: string, options?: WebsiteValidationOptions): string {
+  return validateWebsiteUrlWithError(rawUrl, UsageError, options);
 }
 
-function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigError | typeof UsageError): string {
+function validateWebsiteUrlWithError(
+  rawUrl: string,
+  ErrorType: typeof ConfigError | typeof UsageError,
+  options?: WebsiteValidationOptions,
+): string {
   if (!rawUrl) {
     throw new ErrorType("Website provider requires a URL");
   }
@@ -400,7 +433,7 @@ function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigErr
   if (parsed.username || parsed.password) {
     throw new ErrorType("Website URL must not contain embedded credentials");
   }
-  assertWebsiteRequestUrl(parsed.toString(), ErrorType);
+  assertWebsiteRequestUrl(parsed.toString(), ErrorType, options);
 
   parsed.hash = "";
   return normalizeSiteUrl(parsed.toString());
@@ -607,18 +640,23 @@ function isSafeLinkUrl(url: URL): boolean {
 
 type WebsiteUrlErrorCtor = new (message: string) => Error;
 
-function assertWebsiteRequestUrl(rawUrl: string, ErrorType: WebsiteUrlErrorCtor = Error): void {
+function assertWebsiteRequestUrl(
+  rawUrl: string,
+  ErrorType: WebsiteUrlErrorCtor = Error,
+  options?: WebsiteValidationOptions,
+): void {
   const parsedUrl = new URL(rawUrl);
   const hostname = parsedUrl.hostname.toLowerCase();
   if (hostname.endsWith(".invalid")) {
     throw new ErrorType(`Refusing to fetch reserved invalid hostname: ${parsedUrl.hostname}`);
   }
-  if (isForbiddenWebsiteHostname(hostname)) {
+  if (isForbiddenWebsiteHostname(hostname, options)) {
     throw new ErrorType(`Refusing to fetch non-public website host: ${parsedUrl.hostname}`);
   }
 }
 
-function isForbiddenWebsiteHostname(hostname: string): boolean {
+function isForbiddenWebsiteHostname(hostname: string, options?: WebsiteValidationOptions): boolean {
+  if (options?.allowPrivateHosts === true) return false;
   if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "metadata.google.internal") {
     return true;
   }
@@ -626,6 +664,14 @@ function isForbiddenWebsiteHostname(hostname: string): boolean {
   const ipVersion = isIP(hostname);
   if (ipVersion === 4) return isForbiddenIpv4(hostname);
   if (ipVersion === 6) return isForbiddenIpv6(hostname);
+  return false;
+}
+
+function isLoopbackWebsiteHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  const ipVersion = isIP(hostname);
+  if (ipVersion === 4) return hostname.startsWith("127.");
+  if (ipVersion === 6) return hostname === "::1";
   return false;
 }
 

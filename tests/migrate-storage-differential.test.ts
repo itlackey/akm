@@ -158,14 +158,17 @@ function snapshotTree(root: string): Record<string, { sha: string; mode: string 
 }
 
 let fx: Fixture;
+let previousExitCode: number | undefined;
 
 beforeEach(() => {
+  previousExitCode = typeof process.exitCode === "number" ? process.exitCode : undefined;
+  process.exitCode = 0;
   fx = makeFixture();
 });
 
 afterEach(() => {
   fs.rmSync(fx.tmp, { recursive: true, force: true });
-  process.exitCode = undefined;
+  process.exitCode = previousExitCode ?? 0;
 });
 
 // ── Golden snapshots (captured against the PRE-refactor script) ────────────────
@@ -298,6 +301,6 @@ describe("migrate-storage fixture-stash differential (WS3b cutover gate)", () =>
     expect(success.length).toBe(6);
     expect(skipped.length).toBe(4);
     // No failure → exit code must remain unset (printGroupedSummary sets 1 only on failure).
-    expect(process.exitCode).toBeUndefined();
+    expect(process.exitCode).toBe(0);
   });
 });

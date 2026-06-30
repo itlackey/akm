@@ -21,7 +21,7 @@ import type { InstalledStashEntry } from "../../registry/types";
 import { parseGitRepoUrl, syncMirroredRepo } from "../../sources/providers/git";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../../sources/types";
-import { ensureWebsiteMirror } from "../../sources/website-ingest";
+import { ensureWebsiteMirror, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
 import { listWikis, resolveWikisRoot } from "../../wiki/wiki";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
@@ -234,7 +234,11 @@ async function updateWebsiteSource(
   websiteSource: ReturnType<typeof getSources>[number],
 ): Promise<UpdateResponse> {
   // TODO: full incremental re-crawl with delta tracking (#19)
-  await ensureWebsiteMirror(websiteSource, { requireStashDir: true, force: true });
+  await ensureWebsiteMirror(websiteSource, {
+    requireStashDir: true,
+    force: true,
+    ...(shouldAllowPrivateWebsiteUrlForTests(websiteSource.url ?? "") ? { allowPrivateHosts: true } : {}),
+  });
   return buildUpdateResponse(stashDir, target, all, []);
 }
 

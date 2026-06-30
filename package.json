@@ -46,8 +46,8 @@
     "docs/data-and-telemetry.md"
   ],
   "bin": {
-    "akm": "dist/cli-node.mjs",
-    "akm-migrate-storage": "dist/migrate-storage-node.mjs"
+    "akm": "dist/akm",
+    "akm-migrate-storage": "dist/akm-migrate-storage"
   },
   "scripts": {
     "preinstall": "node -e \"var ua=process.env.npm_config_user_agent||'';var v=(process.versions.node||'0').split('.').map(function(n){return parseInt(n,10)||0});var ok=v[0]>20||(v[0]===20&&(v[1]>12||(v[1]===12&&v[2]>=0)));if(process.versions.bun||ua.startsWith('bun/')||process.env.BUN_INSTALL||ok){process.exit(0)}console.error('\\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh), Node.js >= 20.12, or the prebuilt binary.\\n  Install options:\\n    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\\n    2. Node:   upgrade to Node.js 20.12 or newer (https://nodejs.org)\\n    3. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\\n');process.exit(1)\"",

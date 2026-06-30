@@ -226,6 +226,7 @@ describe("loadConfig", () => {
     const originalWarn = console.warn;
     const warnings: string[] = [];
     try {
+      setQuiet(false);
       console.warn = (...args: unknown[]) => {
         warnings.push(args.map(String).join(" "));
       };
@@ -234,6 +235,7 @@ describe("loadConfig", () => {
       expect((config as unknown as Record<string, unknown>).stashes).toBeUndefined();
     } finally {
       console.warn = originalWarn;
+      setQuiet(true);
     }
     expect(warnings.some((w) => w.includes("stashes[]") && w.includes("sources[]"))).toBe(true);
   });
@@ -252,6 +254,7 @@ describe("loadConfig", () => {
     const originalWarn = console.warn;
     const warnings: string[] = [];
     try {
+      setQuiet(false);
       console.warn = (...args: unknown[]) => {
         warnings.push(args.map(String).join(" "));
       };
@@ -260,6 +263,7 @@ describe("loadConfig", () => {
       expect(config.sources?.[0]?.name).toBe("keep");
     } finally {
       console.warn = originalWarn;
+      setQuiet(true);
     }
     expect(warnings.some((w) => w.includes("openviking") && w.includes("my-ov"))).toBe(true);
   });

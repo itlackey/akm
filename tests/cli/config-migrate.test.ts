@@ -135,21 +135,17 @@ describe("migrateConfigShape (CLI wrapper)", () => {
 
   test("warns and drops defaults.improve.preset (no longer supported)", () => {
     const input = { defaults: { improve: { preset: "fast", limit: 10 } } };
-    const originalWarn = console.warn;
     const messages: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      messages.push(args.map((a) => String(a)).join(" "));
-    };
-    try {
-      const { changed, result } = migrateConfigShape(input);
-      expect(changed).toBe(true);
-      const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
-        .default as Record<string, unknown>;
-      expect(defaultProfile.limit).toBe(10);
-      expect(messages.some((m) => m.includes("preset"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
+    const { changed, result } = migrateConfigShape(input, {
+      warn: (...args: unknown[]) => {
+        messages.push(args.map((a) => String(a)).join(" "));
+      },
+    });
+    expect(changed).toBe(true);
+    const defaultProfile = ((result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
+      .default as Record<string, unknown>;
+    expect(defaultProfile.limit).toBe(10);
+    expect(messages.some((m) => m.includes("preset"))).toBe(true);
   });
 
   test("strips improve.schedule", () => {
@@ -259,33 +255,23 @@ describe("migrateConfigShape (CLI wrapper)", () => {
   });
 
   describe("catch-all migration for unknown features.* keys", () => {
-    /** Capture warn output across a single block of code. */
-    function captureStderr<T>(fn: () => T): { result: T; messages: string[] } {
+    /** Capture migration warnings without patching process-global stderr sinks. */
+    function captureStderr<T>(fn: (captureWarn: (...args: unknown[]) => void) => T): { result: T; messages: string[] } {
       const messages: string[] = [];
-      const originalWarn = console.warn;
-      const originalError = console.error;
-      console.warn = (...args: unknown[]) => {
-        messages.push(args.map((a) => String(a)).join(" "));
-      };
-      console.error = (...args: unknown[]) => {
-        messages.push(args.map((a) => String(a)).join(" "));
-      };
-      // The harness sets quiet=true by default; opt into noisy mode so that
-      // warn() calls inside migrateConfigShape reach the patched console.warn.
-      setQuiet(false);
+      setQuiet(true);
       try {
-        const result = fn();
+        const result = fn((...args: unknown[]) => {
+          messages.push(args.map((a) => String(a)).join(" "));
+        });
         return { result, messages };
       } finally {
-        console.warn = originalWarn;
-        console.error = originalError;
         setQuiet(true); // restore harness default
       }
     }
 
     test("features.improve.<unknown> boolean → profiles.improve.default.processes.<camelKey>.enabled with warn", () => {
       const input = { features: { improve: { my_custom_process: true } } };
-      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const { result, messages } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const procs = ((result.result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
         .default as { processes?: Record<string, { enabled?: boolean }> };
       expect(procs.processes?.myCustomProcess?.enabled).toBe(true);
@@ -308,7 +294,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
           },
         },
       };
-      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const { result, messages } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const procs = ((result.result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
         .default as { processes?: Record<string, Record<string, unknown>> };
       const entry = procs.processes?.customAgentProcess;
@@ -324,7 +310,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
 
     test("features.index.<unknown> boolean → index.<camelKey>.enabled with warn", () => {
       const input = { features: { index: { custom_pass: true } } };
-      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const { result, messages } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const index = result.result.index as { customPass?: { enabled?: boolean } };
       expect(index.customPass?.enabled).toBe(true);
       expect(messages.some((m) => m.includes("custom_pass") && m.includes("customPass"))).toBe(true);
@@ -336,7 +322,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
           index: { custom_pass: { enabled: true, options: { threshold: 0.5, mode: "strict" } } },
         },
       };
-      const { result } = captureStderr(() => migrateConfigShape(input));
+      const { result } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const index = result.result.index as {
         customPass?: { enabled?: boolean; options?: Record<string, unknown> };
       };
@@ -346,7 +332,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
 
     test("features.search.<unknown> boolean → search.<camelKey>.enabled with warn", () => {
       const input = { features: { search: { fancy_rerank: false } } };
-      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const { result, messages } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const search = result.result.search as { fancyRerank?: { enabled?: boolean } };
       expect(search.fancyRerank?.enabled).toBe(false);
       expect(messages.some((m) => m.includes("fancy_rerank") && m.includes("fancyRerank"))).toBe(true);
@@ -358,7 +344,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
           search: { fancy_rerank: { enabled: true, options: { topN: 25 } } },
         },
       };
-      const { result } = captureStderr(() => migrateConfigShape(input));
+      const { result } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const search = result.result.search as {
         fancyRerank?: { enabled?: boolean; options?: Record<string, unknown> };
       };
@@ -369,7 +355,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     test("unknown features.improve key with unrecognized value type warns and drops", () => {
       // A bare string value is not a recognized ProcessEntry shape.
       const input = { features: { improve: { weird_key: "totally-unknown-value" } } };
-      const { result, messages } = captureStderr(() => migrateConfigShape(input));
+      const { result, messages } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       // No target created.
       const profiles = result.result.profiles as Record<string, unknown> | undefined;
       const improve = profiles?.improve as Record<string, unknown> | undefined;
@@ -396,7 +382,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
           },
         },
       };
-      const { result } = captureStderr(() => migrateConfigShape(input));
+      const { result } = captureStderr((captureWarn) => migrateConfigShape(input, { warn: captureWarn }));
       const procs = ((result.result.profiles as Record<string, unknown>).improve as Record<string, unknown>)
         .default as { processes?: Record<string, { enabled?: boolean }> };
       // Known.

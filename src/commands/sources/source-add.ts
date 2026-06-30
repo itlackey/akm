@@ -15,7 +15,11 @@ import type { InstalledStashEntry } from "../../registry/types";
 import { detectStashRoot } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import type { AddResponse } from "../../sources/types";
-import { ensureWebsiteMirror, validateWebsiteInputUrl } from "../../sources/website-ingest";
+import {
+  ensureWebsiteMirror,
+  shouldAllowPrivateWebsiteUrlForTests,
+  validateWebsiteInputUrl,
+} from "../../sources/website-ingest";
 import { ensureWikiNameAvailable, validateWikiName } from "../../wiki/wiki";
 
 const VALID_OVERRIDE_TYPES = new Set(["wiki"]);
@@ -168,7 +172,8 @@ async function addWebsiteSource(
   options?: Record<string, unknown>,
   wikiName?: string,
 ): Promise<AddResponse> {
-  const normalizedUrl = validateWebsiteInputUrl(ref);
+  const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(ref);
+  const normalizedUrl = validateWebsiteInputUrl(ref, { allowPrivateHosts });
   const config = loadUserConfig();
   const sources = [...getSources(config)];
   let entry = sources.find(
@@ -198,7 +203,10 @@ async function addWebsiteSource(
     if (changed) saveConfig({ ...config, sources });
   }
 
-  const cachePaths = await ensureWebsiteMirror(entry, { requireStashDir: true });
+  const cachePaths = await ensureWebsiteMirror(entry, {
+    requireStashDir: true,
+    ...(allowPrivateHosts ? { allowPrivateHosts: true } : {}),
+  });
   const index = await akmIndex({ stashDir });
   const updatedConfig = loadConfig();
 
