@@ -160,17 +160,18 @@ describe("extractWikiNameFromRef", () => {
 // ── Lifecycle: create / list / show / remove ────────────────────────────────
 
 describe("createWiki", () => {
-  test("scaffolds schema, index, log, raw/.gitkeep", () => {
+  test("scaffolds schema, index, log, raw/.gitkeep, pages/.gitkeep", () => {
     const stash = makeStash();
     const result = createWiki(stash, "research");
     const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
     expect(result.ref).toBe("wiki:research");
     expect(result.path).toBe(wikiDir);
-    expect(result.created.length).toBe(4);
+    expect(result.created.length).toBe(5);
     expect(fs.existsSync(path.join(wikiDir, SCHEMA_MD))).toBe(true);
     expect(fs.existsSync(path.join(wikiDir, INDEX_MD))).toBe(true);
     expect(fs.existsSync(path.join(wikiDir, LOG_MD))).toBe(true);
     expect(fs.existsSync(path.join(wikiDir, "raw", ".gitkeep"))).toBe(true);
+    expect(fs.existsSync(path.join(wikiDir, "pages", ".gitkeep"))).toBe(true);
   });
 
   test("is idempotent — re-creating skips existing files", () => {
@@ -178,7 +179,7 @@ describe("createWiki", () => {
     createWiki(stash, "research");
     const second = createWiki(stash, "research");
     expect(second.created.length).toBe(0);
-    expect(second.skipped.length).toBeGreaterThanOrEqual(3);
+    expect(second.skipped.length).toBeGreaterThanOrEqual(4);
   });
 
   test("rejects creating a stash-owned wiki when that name is already registered", () => {

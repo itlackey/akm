@@ -14,21 +14,21 @@ A wiki is a directory. Full stop.
 <stashDir>/
   wikis/
     <wiki-name>/
-      schema.md            rulebook the agent reads first
-      index.md             catalog of pages, regenerable
-      log.md               append-only activity log
-      raw/                 immutable ingested sources (never edit)
-      <page>.md            agent-authored pages
-      <topic>/<page>.md    optional nesting
+      schema.md                  rulebook the agent reads first
+      index.md                   catalog of pages, regenerable
+      log.md                     append-only activity log
+      raw/                       immutable ingested sources (never edit)
+      pages/<page>.md            agent-authored pages
+      pages/<topic>/<page>.md    optional nesting
 ```
 
 Three layers, from Karpathy's gist:
 
 - **Raw sources** (`raw/`) — what you ingest. Articles, papers,
   transcripts, notes. Immutable.
-- **Wiki pages** (`<page>.md`, optionally nested) — what the agent writes.
-  Summaries, entity pages, concept pages, FAQs. Cross-referenced via
-  `xrefs:` frontmatter.
+- **Wiki pages** (`pages/<page>.md`, optionally nested) — what the agent
+  writes. Summaries, entity pages, concept pages, FAQs. Cross-referenced
+  via `xrefs:` frontmatter.
 - **Schema** (`schema.md`) — the per-wiki configuration: voice, page
   kinds, contradiction policy, any conventions the agent should follow.
   You edit it freely; akm never touches it after `create`.
@@ -95,7 +95,7 @@ them too, mixed with skills, commands, and everything else. Raw sources
 under `raw/` plus the wiki root infrastructure files `schema.md`,
 `index.md`, and `log.md` are intentionally excluded from the search
 index and search results. Both commands return canonical refs such as
-`wiki:<name>/<page>` that you can pass directly to `akm show`.
+`wiki:<name>/pages/<page>` that you can pass directly to `akm show`.
 
 ### The one akm-owned write
 
@@ -142,8 +142,8 @@ find and link it:
 description: one-sentence summary used in search and lint
 pageKind: entity | concept | question | note | <your-custom-kind>
 xrefs:
-  - wiki:<this-wiki>/other-page
-  - wiki:<other-wiki>/relevant-page   # cross-wiki xrefs are allowed
+  - wiki:<this-wiki>/pages/other-page
+  - wiki:<other-wiki>/pages/relevant-page   # cross-wiki xrefs are allowed
 sources:
   - raw/<slug>.md
 ---
@@ -214,14 +214,14 @@ akm search "attention" --type wiki
 
 ## Filesystem layout and refs
 
-Wiki pages are addressable as `wiki:<name>/<page-path>`:
+Wiki pages are addressable as `wiki:<name>/pages/<page-path>`:
 
 | File | Ref |
 | --- | --- |
-| `wikis/research/ml-basics.md` | `wiki:research/ml-basics` |
-| `wikis/research/sub/page.md` | `wiki:research/sub/page` |
+| `wikis/research/pages/ml-basics.md` | `wiki:research/pages/ml-basics` |
+| `wikis/research/pages/sub/page.md` | `wiki:research/pages/sub/page` |
 
-Use `akm show wiki:research/ml-basics` to read a page with the standard
+Use `akm show wiki:research/pages/ml-basics` to read a page with the standard
 akm show machinery — `toc`, `section <heading>`, `lines <start> <end>`,
 and `frontmatter` views all work.
 

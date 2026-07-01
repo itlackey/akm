@@ -48,8 +48,8 @@ empty and the caller explicitly asked for interactive ingest.
    ```sh
    akm wiki search {{WIKI_NAME}} "<key terms from the raw source>"
    ```
-   Read the top hits with `akm show wiki:{{WIKI_NAME}}/<page>`. Use
-   `akm show wiki:{{WIKI_NAME}}/<page> toc` for large pages.
+   Read the top hits with `akm show wiki:{{WIKI_NAME}}/pages/<page>`. Use
+   `akm show wiki:{{WIKI_NAME}}/pages/<page> toc` for large pages.
 
 4. **Decide for each candidate.** For each related page:
    - **Append**: add a section or paragraph under the relevant heading.
@@ -58,10 +58,11 @@ empty and the caller explicitly asked for interactive ingest.
      Follow the schema's contradiction policy.
    - **Skip**: source doesn't add to this page — move on.
 
-5. **Create new pages for concepts/entities the source introduces.** Each
-   new page must have frontmatter with `description`, `pageKind`,
-   `xrefs`, and `sources`. Cross-reference with related pages both
-   directions.
+5. **Create new pages for concepts/entities the source introduces**, under
+   `{{WIKI_DIR}}/pages/` (never at the wiki root — only `schema.md`,
+   `index.md`, and `log.md` belong there). Each new page must have
+   frontmatter with `description`, `pageKind`, `xrefs`, and `sources`.
+   Cross-reference with related pages both directions.
 
 6. **Update xrefs both ways.** If page A now xrefs page B, page B must xref
    page A. `akm wiki lint {{WIKI_NAME}}` will flag violations.

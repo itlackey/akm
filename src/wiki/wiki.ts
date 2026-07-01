@@ -63,6 +63,8 @@ export const SCHEMA_MD = "schema.md";
 export const INDEX_MD = "index.md";
 export const LOG_MD = "log.md";
 export const RAW_SUBDIR = "raw";
+/** Canonical location for agent-authored pages, mirroring RAW_SUBDIR. */
+export const PAGES_SUBDIR = "pages";
 
 /** Files at a wiki root that are not pages. */
 const WIKI_SPECIAL_FILES: ReadonlySet<string> = new Set([SCHEMA_MD, INDEX_MD, LOG_MD]);
@@ -480,17 +482,19 @@ export function createWiki(stashDir: string, name: string): WikiCreateResult {
     created.push(absPath);
   }
 
-  // Ensure raw/ exists with a .gitkeep so empty wikis survive clean clones.
-  // Handle the dir-exists-but-no-.gitkeep case too (partial scaffolds,
+  // Ensure raw/ and pages/ exist with a .gitkeep so empty wikis survive clean
+  // clones. Handle the dir-exists-but-no-.gitkeep case too (partial scaffolds,
   // user-created directories) so the invariant always holds after `create`.
-  const rawDir = path.join(wikiDir, RAW_SUBDIR);
-  fs.mkdirSync(rawDir, { recursive: true });
-  const gitkeepPath = path.join(rawDir, ".gitkeep");
-  if (fs.existsSync(gitkeepPath)) {
-    skipped.push(gitkeepPath);
-  } else {
-    fs.writeFileSync(gitkeepPath, "", "utf8");
-    created.push(gitkeepPath);
+  for (const subdir of [RAW_SUBDIR, PAGES_SUBDIR]) {
+    const dir = path.join(wikiDir, subdir);
+    fs.mkdirSync(dir, { recursive: true });
+    const gitkeepPath = path.join(dir, ".gitkeep");
+    if (fs.existsSync(gitkeepPath)) {
+      skipped.push(gitkeepPath);
+    } else {
+      fs.writeFileSync(gitkeepPath, "", "utf8");
+      created.push(gitkeepPath);
+    }
   }
 
   return { name, ref: `wiki:${name}`, path: wikiDir, created, skipped };
