@@ -78,12 +78,20 @@ export function relativeImproveResultPath(runId: string): string {
  * dry-run column is indexed so productivity audits can filter cleanly
  * (closes the dry-run/real-run artifact-trap recorded in MEMORY.md
  * `feedback_akm_dryrun_artifact_trap`).
+ *
+ * @param profile - The `--profile` value passed to this invocation (e.g.
+ * `quick`, `reflect-distill`), or `null`/`undefined` when no profile was
+ * given. Mirrors {@link recordTerminatedImproveRun}'s `ctx.profile`
+ * convention so successful and terminated runs are equally queryable by
+ * profile. Previously hardcoded to `null` here, which meant only
+ * abnormally-terminated runs recorded their profile in state.db.
  */
 export function writeImproveResultFile(
   stashDir: string,
   runId: string,
   result: AkmImproveResult,
   startedAt?: string,
+  profile?: string | null,
 ): string {
   withStateDb((db) => {
     const completedAt = new Date().toISOString();
@@ -99,7 +107,7 @@ export function writeImproveResultFile(
       completedAt,
       stashDir,
       dryRun: Boolean(result.dryRun),
-      profile: null,
+      profile: profile ?? null,
       scopeMode: result.scope?.mode ?? "all",
       scopeValue: result.scope?.value ?? null,
       guidance: result.guidance ?? null,
