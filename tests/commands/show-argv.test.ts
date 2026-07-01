@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeShowArgv } from "../../src/commands/read/show";
+import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const CLI = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
@@ -25,7 +26,21 @@ function writeFixture(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function runEntrypoint(args: string[]) {
+async function runEntrypoint(args: string[]): Promise<{ status: number; stdout: string; stderr: string }> {
+  const { code, stdout, stderr } = await runCliCapture(args);
+  return { status: code, stdout, stderr };
+}
+
+// HARNESS GAP — KEPT AS A SUBPROCESS: `--shape summary` is rejected for every
+// non-`show` command by an early, pre-execution gate in the guarded startup
+// block of src/cli.ts (before any command runs). Per that block's own
+// comment, the in-process harness (tests/_helpers/cli.ts `runCliCapture`)
+// intentionally skips this startup block, so it only enforces the later,
+// post-execution `shapeForCommand()` gate — by which point a write command
+// like `remember` has already run. This test asserts the write did NOT
+// happen, which only holds for the real subprocess entry point, so it stays
+// on `spawnSync` rather than being converted.
+function runEntrypointSpawn(args: string[]) {
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     env: { ...process.env },
@@ -93,14 +108,14 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
 });
 
 describe("entrypoint global --shape=summary ordering", () => {
-  test("allows global --shape=summary before show", () => {
+  test("allows global --shape=summary before show", async () => {
     const storage = useStorage();
     writeFixture(
       path.join(storage.stashDir, "commands", "release.md"),
       "---\ndescription: Release\n---\nRun release {{version}}\n",
     );
 
-    const result = runEntrypoint(["--format=json", "--shape=summary", "show", "command:release.md"]);
+    const result = await runEntrypoint(["--format=json", "--shape=summary", "show", "command:release.md"]);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
@@ -114,7 +129,7 @@ describe("entrypoint global --shape=summary ordering", () => {
   test("rejects global --shape=summary before non-show commands before they run", () => {
     const storage = useStorage();
 
-    const result = runEntrypoint(["--format=json", "--shape=summary", "remember", "do not write"]);
+    const result = runEntrypointSpawn(["--format=json", "--shape=summary", "remember", "do not write"]);
 
     expect(result.status).toBe(2);
     const error = JSON.parse(result.stderr) as Record<string, unknown>;

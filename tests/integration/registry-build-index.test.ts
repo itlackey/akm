@@ -3,10 +3,10 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildRegistryIndex, writeRegistryIndex } from "../src/registry/build-index";
-import { sandboxXdgCacheHome } from "./_helpers/sandbox";
+import { buildRegistryIndex, writeRegistryIndex } from "../../src/registry/build-index";
+import { sandboxXdgCacheHome } from "../_helpers/sandbox";
 
-const CLI = path.join(import.meta.dir, "..", "src", "cli.ts");
+const CLI = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 const servers: Array<ReturnType<typeof Bun.serve>> = [];
 
@@ -486,7 +486,7 @@ describe("akm registry build-index", () => {
           serverBase,
         ],
         {
-          cwd: path.join(import.meta.dir, ".."),
+          cwd: path.join(import.meta.dir, "..", ".."),
           stdio: ["ignore", "pipe", "pipe"],
           env: {
             ...process.env,

@@ -19,13 +19,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import path from "node:path";
 
-import type { AkmConfig } from "../src/core/config/config";
-import { closeDatabase, computeBodyHash, openIndexDatabase, upsertEntry } from "../src/indexer/db/db";
-import * as graphDb from "../src/indexer/db/graph-db";
-import { buildSearchText } from "../src/indexer/search/search-fields";
-import type { SearchSource } from "../src/indexer/search/search-source";
-import type { Database } from "../src/storage/database";
-import { makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "./_helpers/sandbox";
+import type { AkmConfig } from "../../src/core/config/config";
+import { closeDatabase, computeBodyHash, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
+import * as graphDb from "../../src/indexer/db/graph-db";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
+import type { SearchSource } from "../../src/indexer/search/search-source";
+import type { Database } from "../../src/storage/database";
+import { makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "../_helpers/sandbox";
 
 // ── Deferred (not-yet-exported) P3 accessors ─────────────────────────────────
 
@@ -92,7 +92,7 @@ const llmServer = Bun.serve({
   },
 });
 
-const { runGraphExtractionPass } = await import("../src/indexer/graph/graph-extraction");
+const { runGraphExtractionPass } = await import("../../src/indexer/graph/graph-extraction");
 
 // ── Fixture / sandbox plumbing ───────────────────────────────────────────────
 //

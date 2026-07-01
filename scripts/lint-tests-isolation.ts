@@ -159,7 +159,7 @@ const ALLOWED_FILES = new Set<string>([
   // commands/search.test.ts: buildTestIndex and several tests set AKM_STASH_DIR
   // to per-test fixture stash dirs so akmIndex and akmSearch read the right content.
   // XDG vars are sandboxed via beforeEach/afterEach.
-  "tests/commands/search.test.ts",
+  "tests/integration/search.test.ts",
 
   // parallel-search.test.ts: buildTestIndex sets AKM_STASH_DIR to the per-test
   // tmpStash() so akmIndex and akmSearch read the right fixture stash.
@@ -193,25 +193,25 @@ const ALLOWED_FILES = new Set<string>([
   "tests/config.test.ts",
   "tests/commands/consolidate/consolidate-promote-dedup.test.ts",
   "tests/contracts/v1-spec-section-11-proposal-queue.test.ts",
-  "tests/core/write-source.test.ts",
+  "tests/integration/write-source.test.ts",
   "tests/commands/distill/distill-cli-flag.test.ts",
   "tests/commands/distill/distill-response-schema.test.ts",
   "tests/distill.test.ts",
-  "tests/graph-extraction-batch.test.ts",
-  "tests/graph-extraction.test.ts",
+  "tests/integration/graph-extraction-batch.test.ts",
+  "tests/integration/graph-extraction.test.ts",
   // tests/health-command.test.ts — migrated to withIsolatedAkmStorage (C2/#499).
   "tests/commands/improve/improve-dry-run-side-effects.test.ts",
   "tests/commands/improve/improve-no-hang.test.ts",
   "tests/index-clean.test.ts",
   "tests/lessons-coverage.test.ts",
-  "tests/llm-enrichment-cache.test.ts",
+  "tests/integration/llm-enrichment-cache.test.ts",
   "tests/commands/reflect/reflect-completed-on-failure.test.ts",
   "tests/commands/reflect/reflect-pipeline-fixes.test.ts",
-  "tests/registry-cli.test.ts",
+  "tests/integration/registry-cli.test.ts",
   "tests/integration/registry-install.test.ts",
   "tests/search-source-filter.test.ts",
   "tests/setup-tmp-stash-guard.test.ts",
-  "tests/source-qa-fixes.test.ts",
+  "tests/integration/source-qa-fixes.test.ts",
   "tests/source-source.test.ts",
   "tests/tasks-legacy-md-warning.test.ts",
   "tests/test-isolation-no-swallow.test.ts",

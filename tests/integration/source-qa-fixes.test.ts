@@ -13,13 +13,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmListSources, akmUpdate } from "../src/commands/sources/installed-stashes";
-import { akmAdd } from "../src/commands/sources/source-add";
-import { addStash } from "../src/commands/sources/source-manage";
-import { loadConfig, saveConfig } from "../src/core/config/config";
-import { ConfigError } from "../src/core/errors";
-import * as gitProvider from "../src/sources/providers/git";
-import * as syncFromRefModule from "../src/sources/providers/sync-from-ref";
+import { akmListSources, akmUpdate } from "../../src/commands/sources/installed-stashes";
+import { akmAdd } from "../../src/commands/sources/source-add";
+import { addStash } from "../../src/commands/sources/source-manage";
+import { loadConfig, saveConfig } from "../../src/core/config/config";
+import { ConfigError } from "../../src/core/errors";
+import * as gitProvider from "../../src/sources/providers/git";
+import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
 
 const createdTmpDirs: string[] = [];
 
