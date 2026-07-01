@@ -696,12 +696,13 @@ async function runValidationAndRepairPass(args: {
   options: AkmImproveOptions;
   startMs: number;
   budgetMs: number;
+  primaryStashDir?: string;
 }): Promise<{
   validationFailures: Array<{ ref: string; reason: string }>;
   validationFailureRefs: Set<string>;
   schemaRepairs: ImprovePreparationResult["schemaRepairs"];
 }> {
-  const { postCleanupRefs, options, startMs, budgetMs } = args;
+  const { postCleanupRefs, options, startMs, budgetMs, primaryStashDir } = args;
   const validationFailures: Array<{ ref: string; reason: string }> = [];
   for (const candidate of postCleanupRefs) {
     try {
@@ -746,7 +747,14 @@ async function runValidationAndRepairPass(args: {
         startMs,
         budgetMs,
         llmConfig: llmCfg,
-        stashDir: options.stashDir,
+        // #591/#379 regression: options.stashDir is the raw, unresolved CLI
+        // flag (only set when --stash-dir is passed explicitly — never true
+        // for the scheduled tasks). primaryStashDir is the already-resolved
+        // source path and is what runSchemaRepairPass's `stashDir` param
+        // documents itself as needing ("proposal-queue writes"). Passing
+        // options.stashDir here made every schema-repair attempt throw
+        // `runSchemaRepairPass requires stashDir` on every cron invocation.
+        stashDir: primaryStashDir,
         findFilePath: findAssetFilePath,
         isLessonCandidateFn: isLessonCandidate,
       });
@@ -909,6 +917,7 @@ export async function runImprovePreparationStage(args: {
     options,
     startMs,
     budgetMs,
+    primaryStashDir,
   });
 
   // Phase 0.5 — structural hygiene pass

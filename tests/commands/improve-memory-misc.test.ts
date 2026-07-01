@@ -503,6 +503,74 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     const fileContent = fs.readFileSync(memFile, "utf8");
     expect(fileContent).not.toContain("Auth content description.");
   });
+
+  // Regression: the real `akm improve` CLI has no `--stash-dir` flag and never
+  // sets AkmImproveOptions.stashDir — every production/cron invocation reaches
+  // preparation.ts's schema-repair call site with options.stashDir undefined.
+  // A prior change wired `stashDir: options.stashDir` into the
+  // runSchemaRepairPass call instead of the already-resolved `primaryStashDir`
+  // in scope at that call site, so the `if (!stashDir) throw` guard fired on
+  // EVERY real invocation that reached schema repair, aborting the whole
+  // improve run with an uncaught exception. This drives the real akmImprove()
+  // entrypoint the same way the CLI does (no `stashDir` field in options,
+  // resolution via AKM_STASH_DIR env only) to prove the call chain no longer
+  // throws that error.
+  test("akmImprove (no options.stashDir, matching the real CLI) does not throw 'requires stashDir' when schema repair is reached", async () => {
+    const stashDir = makeTempDir("akm-m3-cli-parity-");
+    const lessonFile = path.join(stashDir, "lessons", "no-description.md");
+    fs.mkdirSync(path.dirname(lessonFile), { recursive: true });
+    // No `description` field — triggers the "missing description" validation
+    // failure for lesson candidates, routing into the schema-repair pass.
+    fs.writeFileSync(lessonFile, "---\nwhen_to_use: trigger\n---\n\nBody text.\n", "utf8");
+    await buildIndex(stashDir);
+    saveConfig({
+      semanticSearchMode: "off",
+      profiles: { llm: { default: { endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test" } } },
+      defaults: { llm: "default" },
+    });
+
+    const { appendEvent: appendFeedbackEvent } = await import("../../src/core/events");
+    appendFeedbackEvent({ eventType: "feedback", ref: "lesson:no-description", metadata: { signal: "positive" } });
+
+    const reflectFn = async ({ ref }: { ref?: string }): Promise<AkmReflectResult> => ({
+      schemaVersion: 1,
+      ok: true,
+      proposal: makeProposal(ref ?? "lesson:no-description"),
+      ref: ref ?? "",
+      agentProfile: "test",
+      durationMs: 1,
+    });
+    const distillFn = async ({ ref }: { ref: string }): Promise<AkmDistillResult> => ({
+      schemaVersion: 1,
+      ok: true,
+      outcome: "queued",
+      inputRef: ref,
+      lessonRef: `lesson:${ref.replace(/[:/]/g, "-")}-lesson`,
+    });
+    const reindexFn = async () => ({
+      schemaVersion: 1 as const,
+      ok: true as const,
+      indexed: 0,
+      warnings: [],
+      errors: [],
+      durationMs: 0,
+    });
+
+    // Regression assertion: prior to the fix, this rejected with "runSchemaRepairPass
+    // requires stashDir so repairs route through the proposal queue" — an uncaught
+    // exception that aborted the whole run. It must now resolve normally (the LLM
+    // call to the unreachable endpoint above is expected to fail gracefully as a
+    // per-item schema-repair "error" outcome, not as a thrown exception).
+    const result = await akmImprove({
+      scope: "lesson",
+      minRetrievalCount: 0,
+      ensureIndexFn: async () => false,
+      reindexFn,
+      reflectFn,
+      distillFn,
+    });
+    expect(result.ok).toBe(true);
+  });
 });
 
 // ── O-3 / #376 — reindex between consolidate and graph extraction ─────────────
