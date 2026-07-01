@@ -135,6 +135,23 @@ describe("WebsiteSourceProvider", () => {
     expect(() => validateWebsiteInputUrl("http://169.254.169.254/latest/meta-data")).toThrow("non-public website host");
   });
 
+  test("validateWebsiteInputUrl rejects bracketed IPv6 loopback and link-local hosts", () => {
+    expect(() => validateWebsiteInputUrl("http://[::1]/docs")).toThrow("non-public website host");
+    expect(() => validateWebsiteInputUrl("http://[fe80::1]/docs")).toThrow("non-public website host");
+  });
+
+  test("validateWebsiteInputUrl rejects IPv4-mapped IPv6 loopback literals", () => {
+    expect(() => validateWebsiteInputUrl("http://[::ffff:127.0.0.1]/docs")).toThrow("non-public website host");
+    expect(() => validateWebsiteInputUrl("http://[0:0:0:0:0:ffff:127.0.0.1]/docs")).toThrow("non-public website host");
+    expect(() => validateWebsiteInputUrl("http://[::ffff:169.254.169.254]/latest/meta-data")).toThrow(
+      "non-public website host",
+    );
+  });
+
+  test("validateWebsiteInputUrl allows public IPv6 hosts", () => {
+    expect(() => validateWebsiteInputUrl("http://[2001:db8::1]/docs")).not.toThrow();
+  });
+
   test("getWebsiteCachePaths is stable for normalized URLs", () => {
     const a = getWebsiteCachePaths("https://example.com/docs/");
     const b = getWebsiteCachePaths("https://example.com/docs");

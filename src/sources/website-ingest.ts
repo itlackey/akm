@@ -655,23 +655,34 @@ function assertWebsiteRequestUrl(
   }
 }
 
+// WHATWG URL.hostname wraps IPv6 literals in brackets (e.g. "[::1]"), but
+// node:net's isIP() only recognizes the bare address form and returns 0 for
+// anything bracketed — silently skipping all IPv6 forbidden-host checks
+// below for every hostname parsed off a URL. Strip the brackets before any
+// isIP()/isForbiddenIpv6() call so those checks actually run.
+function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
 function isForbiddenWebsiteHostname(hostname: string, options?: WebsiteValidationOptions): boolean {
   if (options?.allowPrivateHosts === true) return false;
   if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "metadata.google.internal") {
     return true;
   }
 
-  const ipVersion = isIP(hostname);
-  if (ipVersion === 4) return isForbiddenIpv4(hostname);
-  if (ipVersion === 6) return isForbiddenIpv6(hostname);
+  const bareHostname = stripIpv6Brackets(hostname);
+  const ipVersion = isIP(bareHostname);
+  if (ipVersion === 4) return isForbiddenIpv4(bareHostname);
+  if (ipVersion === 6) return isForbiddenIpv6(bareHostname);
   return false;
 }
 
 function isLoopbackWebsiteHostname(hostname: string): boolean {
   if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
-  const ipVersion = isIP(hostname);
-  if (ipVersion === 4) return hostname.startsWith("127.");
-  if (ipVersion === 6) return hostname === "::1";
+  const bareHostname = stripIpv6Brackets(hostname);
+  const ipVersion = isIP(bareHostname);
+  if (ipVersion === 4) return bareHostname.startsWith("127.");
+  if (ipVersion === 6) return bareHostname === "::1";
   return false;
 }
 
@@ -689,8 +700,24 @@ function isForbiddenIpv4(hostname: string): boolean {
   );
 }
 
+/**
+ * Extracts the embedded IPv4 address from an IPv4-mapped IPv6 literal
+ * (`::ffff:a.b.c.d` or its canonical hex form `::ffff:xxxx:yyyy`), or
+ * returns null if `hostname` isn't one.
+ */
+function extractIpv4MappedAddress(normalizedHostname: string): string | null {
+  const match = normalizedHostname.match(/^::ffff:(?:(\d{1,3}(?:\.\d{1,3}){3})|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
+  if (!match) return null;
+  if (match[1]) return match[1];
+  const high = Number.parseInt(match[2], 16);
+  const low = Number.parseInt(match[3], 16);
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
 function isForbiddenIpv6(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
+  const mappedIpv4 = extractIpv4MappedAddress(normalized);
+  if (mappedIpv4) return isForbiddenIpv4(mappedIpv4);
   return (
     normalized === "::" ||
     normalized === "::1" ||
