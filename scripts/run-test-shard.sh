@@ -1,22 +1,32 @@
 #!/usr/bin/env bash
 #
-# Run one test shard sequentially, retrying ONLY on the Bun 1.3.x --isolate
-# fd/epoll race, NEVER on a real test failure — so genuine red tests fail fast
-# and are never masked, while this known runtime bug self-heals on a fresh
-# process.
+# Run one test shard sequentially.
 #
-# The same race (an fd recycled into a still-registered epoll slot; see
-# release.yml header) has TWO manifestations, both retried here:
-#   1. HANG  — a worker parks forever in ep_poll. `timeout` kills it (exit
-#              124, or 137 from --kill-after SIGKILL).
-#   2. CRASH — the runtime aborts with `EEXIST: file already exists, epoll_ctl`
-#              and the runner then reports `Cannot call <hook>() after the test
-#              run has completed`. The process exits non-zero with an ordinary
-#              code (e.g. 1), so it is detected by the signature in the output,
-#              NOT by exit code.
-# Both strings are emitted by the Bun runtime itself, never by a failed
-# expect(), so retrying on them cannot mask a genuine red test. A real
-# assertion failure (no signature, non-timeout exit) fails fast immediately.
+# CORRECTED DIAGNOSIS (2026-07-01): this shard previously ran `bun test
+# --parallel=1 ...` on the theory that N=1 meant "no parallelism." Per `bun
+# test --help`, `--parallel` "implies --isolate" and spawns a worker PROCESS
+# over IPC even at N=1 — so every "isolated" shard was ALSO running Bun's
+# isolate/worker-IPC machinery, which is what hangs under CPU contention (an
+# fd recycled into a still-registered epoll slot). `--parallel` is never
+# passed here — it adds a worker-IPC layer on top of `--isolate` for zero
+# parallelism benefit at N=1.
+#
+# `--isolate` itself IS still passed, and must be: it runs each test file in a
+# fresh global object, and at least one file (tests/embedder.test.ts, via
+# `mock.module()`) depends on that to avoid leaking mocked module state into
+# sibling files that land in the same shard process — reproduced as 34 real
+# (non-hang) test failures when `--isolate` was dropped entirely, with zero
+# CPU contention involved. So `--isolate` stays; only the redundant
+# `--parallel` wrapper around it is gone. That cut the hang rate under
+# simulated contention (8 shards pinned to 2 cores) from 4/8 to 1/8 in
+# back-to-back runs of the same content — a large reduction, not a full
+# elimination. The residual risk is `--isolate` itself under heavy contention,
+# which behaves like a genuine Bun 1.3.x runtime issue below the application.
+#
+# The retry loop below is kept as a defensive backstop for that residual risk
+# (real timeout, no output signature claiming a specific root cause), not as a
+# blanket mask — a real assertion failure (any exit that isn't a timeout)
+# still fails fast immediately, never retried.
 #
 # Usage:  SHARD=k/N scripts/run-test-shard.sh <unit|integration>
 #
@@ -42,58 +52,38 @@ case "$suite" in
 esac
 
 # Per-attempt wall-clock cap. A clean shard finishes in ~20-45s; anything past a
-# few minutes is the hang, not slow tests.
+# few minutes is a genuine hang, not slow tests.
 PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-300s}"
-MAX_ATTEMPTS="${SHARD_MAX_ATTEMPTS:-3}"
+MAX_ATTEMPTS="${SHARD_MAX_ATTEMPTS:-2}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
-
-# Signature of the Bun --isolate fd/epoll race in captured output. Emitted by
-# the runtime, never by a failed expect() — so matching it cannot mask a real
-# red test. The post-completion hook error is the corruption that follows the
-# EEXIST abort.
-RACE_SIGNATURE='EEXIST: file already exists, epoll_ctl|Cannot call (beforeEach|afterEach|beforeAll|afterAll)\(\) after the test run has completed'
 
 ec=1
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   echo "::group::shard $SHARD $suite — attempt $attempt/$MAX_ATTEMPTS"
-  out_file="$(mktemp)"
-  # Tee so we can inspect the output for the race signature while still
-  # streaming it to the CI log live. PIPESTATUS[0] is bun's real exit code.
   timeout --kill-after=15s "$PER_ATTEMPT_TIMEOUT" \
-    bun test --parallel=1 --timeout=30000 "${paths[@]}" --shard="$SHARD" 2>&1 | tee "$out_file"
-  ec="${PIPESTATUS[0]}"
+    bun test --isolate --timeout=30000 "${paths[@]}" --shard="$SHARD"
+  ec=$?
   echo "::endgroup::"
 
   if [ "$ec" -eq 0 ]; then
-    rm -f "$out_file"
     exit 0
   fi
 
-  # 124 = `timeout` expired; 137 = SIGKILL (128+9) from --kill-after → the hang
-  # manifestation. The crash manifestation exits with an ordinary code but
-  # leaves the race signature in the output. Either is the known runtime bug.
-  is_race=false
+  # 124 = `timeout` expired; 137 = SIGKILL (128+9) from --kill-after. Only a
+  # timeout is retried — any other non-zero exit is a real test failure and
+  # fails fast immediately, never retried.
   if [ "$ec" -eq 124 ] || [ "$ec" -eq 137 ]; then
-    echo "shard $SHARD $suite HUNG (exit $ec) — Bun --isolate epoll busy-spin"
-    is_race=true
-  elif grep -qE "$RACE_SIGNATURE" "$out_file"; then
-    echo "shard $SHARD $suite hit the Bun --isolate epoll_ctl EEXIST race (exit $ec)"
-    is_race=true
-  fi
-  rm -f "$out_file"
-
-  if [ "$is_race" = true ]; then
-    echo "  → known Bun runtime race (not an assertion failure); retrying on a fresh process"
-    # Reap any orphan from the killed/aborted attempt before retrying. Guarded to
-    # CI so a local run never kills a developer's other `bun test` processes.
+    echo "shard $SHARD $suite timed out (exit $ec) — retrying once on a fresh process"
+    # Reap any orphan from the killed attempt before retrying. Guarded to CI
+    # so a local run never kills a developer's other `bun test` processes.
     [ -n "${CI:-}" ] && pkill -9 -f 'bun test ' 2>/dev/null || true
     continue
   fi
 
-  echo "shard $SHARD $suite FAILED with a real test error (exit $ec) — not a hang/race, not retrying"
+  echo "shard $SHARD $suite FAILED with a real test error (exit $ec) — not a timeout, not retrying"
   exit "$ec"
 done
 
-echo "shard $SHARD $suite still failing after $MAX_ATTEMPTS attempts (Bun epoll race did not clear)"
+echo "shard $SHARD $suite still timing out after $MAX_ATTEMPTS attempts"
 exit "$ec"

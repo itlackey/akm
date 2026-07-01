@@ -21,10 +21,27 @@ jobs:
   #
   # The fix that keeps full coverage AND is fast: shard across SEPARATE runner
   # jobs (each shard a separate OS process tree => separate fd table => no
-  # cross-shard epoll collisions) and run `--parallel=1` WITHIN each shard. Each
-  # shard is race-free sequential; the matrix runs the shards concurrently, so
-  # wall-clock is ~total/N. (A full sequential unit run is ~100s, integration
-  # ~115s; sharded /4 each completes in ~20-30s.)
+  # cross-shard epoll collisions). Each shard runs `bun test --isolate` (no
+  # `--parallel` flag at any N) — `--parallel=1` was previously passed here on
+  # the theory that N=1 disabled parallelism, but per `bun test --help`,
+  # `--parallel` "implies --isolate" and spawns a worker process over IPC even
+  # at N=1 (confirmed: it prints a "1x PARALLEL" banner and is measurably
+  # slower than a bare invocation), so it was adding a redundant worker-IPC
+  # layer on top of `--isolate` for zero parallelism benefit at N=1.
+  #
+  # `--isolate` itself stays: it runs each test file in a fresh global object,
+  # and at least one file (tests/embedder.test.ts, via `mock.module()`) needs
+  # that to avoid leaking mocked module state into sibling files sharing a
+  # shard process — dropping `--isolate` entirely reproduced 34 real (non-hang)
+  # test failures with zero CPU contention involved, so it is not optional.
+  # Confirmed via stress test (8 concurrent shards pinned to 2 cores): hung 4/8
+  # with `--parallel=1`, 1/8 with `--isolate` alone — a large reduction, not a
+  # full elimination. The residual risk is `--isolate` itself under heavy
+  # contention, which behaves like a genuine Bun 1.3.x runtime issue below the
+  # application; `run-test-shard.sh`'s single retry-on-timeout is the backstop
+  # for it. The matrix runs shards concurrently, so wall-clock is ~total/N. (A
+  # full sequential unit run is ~100s, integration ~115s; sharded /4 each
+  # completes in ~20-30s.)
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
