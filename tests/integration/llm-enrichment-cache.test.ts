@@ -12,13 +12,13 @@
  * no global state pollution between test files.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmConfig } from "../src/core/config/config";
-import type { SearchSource } from "../src/indexer/search/search-source";
-import type { Database } from "../src/storage/database";
+import type { AkmConfig } from "../../src/core/config/config";
+import type { SearchSource } from "../../src/indexer/search/search-source";
+import type { Database } from "../../src/storage/database";
 
 // ── Local LLM server (graph extraction) ──────────────────────────────────────
 // A real HTTP server on a random port stands in for the LLM endpoint.
@@ -43,10 +43,6 @@ const llmServer = Bun.serve({
   },
 });
 
-// ── Memory inference stub ─────────────────────────────────────────────────────
-// memory-infer is not tested by any other file in the suite, so mock.module
-// here is safe and does not leak.
-
 let memoryCompressCallCount = 0;
 let memoryCompressor: (body: string) =>
   | {
@@ -58,16 +54,10 @@ let memoryCompressor: (body: string) =>
     }
   | undefined = () => undefined;
 
-mock.module("../src/llm/memory-infer", () => ({
-  compressMemoryToDerivedMemory: async (_config: unknown, body: string) => {
-    memoryCompressCallCount++;
-    return memoryCompressor(body);
-  },
-}));
-
-// Import AFTER mock.module so the passes pick up the stubs.
-const { runGraphExtractionPass } = await import("../src/indexer/graph/graph-extraction");
-const { runMemoryInferencePass } = await import("../src/indexer/passes/memory-inference");
+const { runGraphExtractionPass } = await import("../../src/indexer/graph/graph-extraction");
+const { runMemoryInferencePass: runMemoryInferencePassImpl } = await import(
+  "../../src/indexer/passes/memory-inference"
+);
 const {
   computeBodyHash,
   getLlmCacheEntry,
@@ -76,9 +66,23 @@ const {
   openIndexDatabase,
   closeDatabase,
   upsertEntry,
-} = await import("../src/indexer/db/db");
-const { loadStoredGraphSnapshot } = await import("../src/indexer/db/graph-db");
-const { buildSearchText } = await import("../src/indexer/search/search-fields");
+} = await import("../../src/indexer/db/db");
+const { loadStoredGraphSnapshot } = await import("../../src/indexer/db/graph-db");
+const { buildSearchText } = await import("../../src/indexer/search/search-fields");
+
+function memoryInferenceOptions() {
+  return {
+    compressMemoryToDerivedMemory: async (_config: unknown, body: string) => {
+      memoryCompressCallCount++;
+      return memoryCompressor(body);
+    },
+  };
+}
+
+function runMemoryInferencePass(...args: Parameters<typeof runMemoryInferencePassImpl>) {
+  const [ctx] = args;
+  return runMemoryInferencePassImpl({ ...ctx, options: { ...ctx.options, ...memoryInferenceOptions() } });
+}
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -190,7 +194,6 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  mock.restore();
   llmServer.stop(true);
 });
 
@@ -380,7 +383,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     // hashes is `parseFrontmatter(raw).content` which equals
     // "\n\nA brand new memory body.\n" for our writeFile helper.
     // We read the actual file and parse it to get the exact string the pass sees.
-    const { parseFrontmatter } = await import("../src/core/asset/frontmatter");
+    const { parseFrontmatter } = await import("../../src/core/asset/frontmatter");
     const raw = fs.readFileSync(freshPath, "utf8");
     const parsed = parseFrontmatter(raw);
     const exactBody = parsed.content; // exactly what the pass hashes
@@ -418,7 +421,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     memoryCompressor = () => sampleDraft("Fresh");
 
     // Pre-populate a valid cache entry with the exact parsed body hash.
-    const { parseFrontmatter } = await import("../src/core/asset/frontmatter");
+    const { parseFrontmatter } = await import("../../src/core/asset/frontmatter");
     const raw = fs.readFileSync(filePath, "utf8");
     const exactBody = parseFrontmatter(raw).content;
     upsertLlmCacheEntry(db, filePath, computeBodyHash(exactBody), JSON.stringify(sampleDraft("Cached")));

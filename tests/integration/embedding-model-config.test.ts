@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig, EmbeddingConnectionConfig } from "../src/core/config/config";
-import { setQuiet } from "../src/core/warn";
-import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import type { AkmConfig, EmbeddingConnectionConfig } from "../../src/core/config/config";
+import { setQuiet } from "../../src/core/warn";
+import { type Cleanup, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 mock.module("@huggingface/transformers", () => ({
   pipeline: async () => {
@@ -20,7 +20,7 @@ mock.module("@huggingface/transformers", () => ({
 }));
 
 beforeEach(async () => {
-  const { clearEmbeddingCache, resetLocalEmbedder } = await import("../src/llm/embedder");
+  const { clearEmbeddingCache, resetLocalEmbedder } = await import("../../src/llm/embedder");
   clearEmbeddingCache();
   resetLocalEmbedder();
 });
@@ -29,12 +29,12 @@ beforeEach(async () => {
 
 describe("DEFAULT_LOCAL_MODEL", () => {
   test("is exported and has the expected value", async () => {
-    const { DEFAULT_LOCAL_MODEL } = await import("../src/llm/embedder");
+    const { DEFAULT_LOCAL_MODEL } = await import("../../src/llm/embedder");
     expect(DEFAULT_LOCAL_MODEL).toBe("Xenova/bge-small-en-v1.5");
   });
 
   test("is a non-empty string", async () => {
-    const { DEFAULT_LOCAL_MODEL } = await import("../src/llm/embedder");
+    const { DEFAULT_LOCAL_MODEL } = await import("../../src/llm/embedder");
     expect(typeof DEFAULT_LOCAL_MODEL).toBe("string");
     expect(DEFAULT_LOCAL_MODEL.length).toBeGreaterThan(0);
   });
@@ -66,14 +66,14 @@ describe("EmbeddingConnectionConfig localModel field", () => {
 
 describe("embed model selection", () => {
   test("embed() falls back to local when no config is provided", async () => {
-    const { embed } = await import("../src/llm/embedder");
+    const { embed } = await import("../../src/llm/embedder");
     const result = await embed("hello");
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);
   });
 
   test("embed() uses localModel from config when no remote endpoint", async () => {
-    const { embed } = await import("../src/llm/embedder");
+    const { embed } = await import("../../src/llm/embedder");
     const config: EmbeddingConnectionConfig = {
       endpoint: "",
       model: "",
@@ -136,7 +136,7 @@ describe("remote endpoint independence", () => {
     });
 
     try {
-      const { embed } = await import("../src/llm/embedder");
+      const { embed } = await import("../../src/llm/embedder");
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "remote-model",
@@ -172,7 +172,7 @@ describe("remote endpoint independence", () => {
     });
 
     try {
-      const { embed } = await import("../src/llm/embedder");
+      const { embed } = await import("../../src/llm/embedder");
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "remote-model",
@@ -195,7 +195,7 @@ describe("remote endpoint independence", () => {
 
 describe("dimension consistency on model change", () => {
   test("cosineSimilarity returns 0 for dimension mismatch (different models produce different dims)", async () => {
-    const { cosineSimilarity } = await import("../src/llm/embedder");
+    const { cosineSimilarity } = await import("../../src/llm/embedder");
     const originalWarn = console.warn;
     const warnings: string[] = [];
     // Simulate a 384-dim vector (old model) vs 768-dim vector (new model)
@@ -221,7 +221,7 @@ describe("dimension consistency on model change", () => {
     // This is already tested in db.test.ts but we verify the concept:
     // when embedding dimensions change (due to model change), the
     // database handles it by recreating the vec table
-    const { openIndexDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../../src/indexer/db/db");
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -276,7 +276,7 @@ describe("config file parsing for localModel", () => {
   });
 
   test("parseEmbeddingConfig preserves localModel from raw config object", async () => {
-    const { loadConfig } = await import("../src/core/config/config");
+    const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",
@@ -301,7 +301,7 @@ describe("config file parsing for localModel", () => {
   });
 
   test("local-only config: endpoint and model are undefined when only localModel is set", async () => {
-    const { loadConfig } = await import("../src/core/config/config");
+    const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",
@@ -344,7 +344,7 @@ describe("parseEmbeddingConfig edge cases", () => {
   test("endpoint+localModel without model passes through as-is (no sentinel, no warn)", async () => {
     // warn-and-drop preprocessing was removed in 393de77; partial embedding
     // configs are now passed through by Zod as-is.
-    const { loadConfig } = await import("../src/core/config/config");
+    const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",
@@ -371,7 +371,7 @@ describe("parseEmbeddingConfig edge cases", () => {
     // The old parseEmbeddingConfig returned undefined when only endpoint was
     // set (no model/localModel). That helper was deleted in 393de77; the Zod
     // schema now accepts any combination of optional fields.
-    const { loadConfig } = await import("../src/core/config/config");
+    const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
       semanticSearchMode: "auto",

@@ -274,6 +274,11 @@ export interface ProposalGateDecision {
     /** Minimum body-line floor that deferred the proposal (drain gate). */
     minContentLines?: number;
   };
+  /**
+   * SHA-256 hash of the proposal content the gate evaluated, when the gate needs
+   * to distinguish an unchanged retry from a reset/content edit.
+   */
+  contentHash?: string;
   /** Label of the gate that recorded the decision (e.g. `triage:personal-stash`, `improve:reflect`). */
   gate?: string;
   /** ISO timestamp the decision was recorded. */

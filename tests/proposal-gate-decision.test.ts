@@ -15,6 +15,7 @@
 // sandbox owns HOME/XDG, so no extra env helper is required.
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -321,6 +322,36 @@ describe("runAutoAcceptGate records a gate decision per path (#577)", () => {
     });
 
     expect(getProposal(stash, p.id).gateDecision).toBeUndefined();
+  });
+
+  test("unchanged auto-rejected proposal is suppressed instead of retried", async () => {
+    const stash = makeStashDir();
+    const p = seed(stash, "lesson:retry", "extract", VALID_LESSON);
+    const proposal = getProposal(stash, p.id);
+    recordGateDecision(stash, p.id, {
+      outcome: "auto-rejected",
+      reason: "validation:invalid-description",
+      confidence: 0.95,
+      thresholds: { autoAccept: 0.9 },
+      contentHash: createHash("sha256").update(proposal.payload.content).digest("hex"),
+      gate: "improve:extract",
+    });
+    const initial = getProposal(stash, p.id);
+    expect(initial.gateDecision?.outcome).toBe("auto-rejected");
+
+    const result = await runAutoAcceptGate([{ proposalId: p.id, confidence: 0.95 }], {
+      phase: "extract",
+      globalThreshold: 90,
+      dryRun: false,
+      stashDir: stash,
+      config: makeConfig(stash),
+      eventsCtx: undefined,
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.promoted).toEqual([]);
+    expect(result.suppressed).toEqual([p.id]);
+    expect(getProposal(stash, p.id).gateDecision).toEqual(initial.gateDecision);
   });
 });
 

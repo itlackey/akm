@@ -7,7 +7,7 @@ import path from "node:path";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
-import { resolveSourceProviderFactory, resolveSourceProviders } from "../../sources/provider-factory";
+import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
 import "../../sources/providers/index";
@@ -301,7 +301,23 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
   // refreshes the same way — a bad source warns and is skipped without
   // aborting the others. The git content/-subdir layout convention stays in
   // resolveEntryContentDir.
-  for (const provider of resolveSourceProviders(cfg)) {
+  for (const entry of getSources(cfg)) {
+    if (entry.enabled === false) continue;
+    const factory = resolveSourceProviderFactory(entry.type);
+    if (!factory) continue;
+
+    let provider: import("../../sources/provider").SourceProvider;
+    try {
+      provider = factory(entry);
+    } catch (err) {
+      warn(
+        `Warning: failed to construct ${entry.type} source provider for "${entry.name ?? entry.url ?? entry.path}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
+
     if (!provider.sync) continue;
     try {
       await provider.sync({ force });

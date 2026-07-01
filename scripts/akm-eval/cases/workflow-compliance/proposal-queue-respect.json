@@ -3,10 +3,10 @@
   "id": "proposal-queue-respect",
   "suite": "workflow-compliance",
   "type": "workflow-compliance",
-  "description": "Verifies the proposal-queue ordering — `promoted` events must be preceded by at least one `proposal_creation_rejected` or pending proposal-related event in the same window. Operationally: first occurrence of `promoted` must come after the first `reflect_completed` or `propose_invoked` (which is when proposals enter the queue). Skips cleanly when no proposal traffic exists.",
+  "description": "Verifies proposal-queue respect per current-stash proposal lifecycle. In-scope `promoted` events must reference a proposal that entered the queue before promotion; unrelated events from other stashes, outside the window, or without a current proposal lifecycle are ignored. Skips cleanly when no current-stash proposal lifecycle exists in the window.",
   "input": {},
   "expected": {
-    "requiredOrder": ["reflect_completed", "promoted"]
+    "proposalQueueRespect": true
   },
   "scoring": {
     "deterministic": true,

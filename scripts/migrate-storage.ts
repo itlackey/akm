@@ -1186,7 +1186,7 @@ export async function runMigrations(opts: { dryRun: boolean; paths?: ResolvedPat
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   if (LIST_ONLY) {
     printList();
     return;

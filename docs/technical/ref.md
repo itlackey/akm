@@ -20,7 +20,7 @@ Asset refs use this wire format:
 | Part | Required | Description |
 | --- | --- | --- |
 | `origin` | no | Configured source name (e.g. `team`, `local`) that owns the asset. Separated from the rest of the ref by `//`. |
-| `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `vault`, or `wiki`. |
+| `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `env`, `secret`, or `wiki`. |
 | `name` | yes | Asset filename or path relative to the type directory. |
 
 Asset refs are parsed by `parseAssetRef` in `src/core/asset-ref.ts`. The

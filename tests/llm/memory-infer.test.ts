@@ -59,8 +59,9 @@ mock.module("../../src/core/warn", () => ({
   },
 }));
 
-// Import AFTER the mocks so the module under test binds the stubbed deps.
-const { compressMemoryToDerivedMemory } = await import("../../src/llm/memory-infer");
+// Import the implementation file directly so this characterization test keeps
+// exercising the real logic even when sibling files stub `../src/llm/memory-infer`.
+const { compressMemoryToDerivedMemory } = await import("../../src/llm/memory-infer-impl");
 const { LlmCallError } = realClient;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────

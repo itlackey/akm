@@ -115,10 +115,20 @@ describe("DANGEROUS_VAULT_KEY_PATTERNS", () => {
     expect(hit).toBe(true);
   });
 
+  test("includes the GIT_CONFIG_ prefix pattern", () => {
+    const hit = DANGEROUS_VAULT_KEY_PATTERNS.some(({ pattern }) => pattern.test("GIT_CONFIG_GLOBAL"));
+    expect(hit).toBe(true);
+  });
+
   test("isDangerousVaultKey matches BASH_FUNC_-prefixed names", () => {
     expect(isDangerousVaultKey("BASH_FUNC_x%%")).toBe(true);
     expect(isDangerousVaultKey("BASH_FUNC_evil()")).toBe(true);
     expect(isDangerousVaultKey("BASH_FUNC_foo")).toBe(true);
+  });
+
+  test("isDangerousVaultKey matches GIT_CONFIG_-prefixed names", () => {
+    expect(isDangerousVaultKey("GIT_CONFIG_GLOBAL")).toBe(true);
+    expect(isDangerousVaultKey("GIT_CONFIG_COUNT")).toBe(true);
   });
 
   test("isDangerousVaultKey does NOT match unrelated keys containing BASH_FUNC", () => {
@@ -233,6 +243,15 @@ describe("checkVaultForDangerousKeys", () => {
 
     expect(findings).toHaveLength(1);
     expect(findings[0].detail).toContain("GIT_SSH_COMMAND");
+  });
+
+  test("flags GIT_CONFIG_* variables (git config injection family)", () => {
+    const stashDir = makeTempStash();
+    const vaultPath = writeVault(stashDir, "git-config.env", "GIT_CONFIG_GLOBAL=/evil/gitconfig\nSAFE=ok\n");
+    const findings = checkVaultForDangerousKeys(vaultPath, "vaults/git-config.env", "vault:git-config");
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].detail).toContain("GIT_CONFIG_GLOBAL");
   });
 
   test("flags NODE_TLS_REJECT_UNAUTHORIZED (MITM enabler)", () => {

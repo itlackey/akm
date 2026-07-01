@@ -9,19 +9,22 @@
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 20: `@clack/core` (prompts) imports
+// the supported entry. The hard floor is Node 20.12: `@clack/core` (prompts) imports
 // `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
-    const major = Number.parseInt((process.versions.node ?? "0").split(".")[0], 10);
-    if (Number.isNaN(major) || major < 20) {
+    const [major = 0, minor = 0, patch = 0] = (process.versions.node ?? "0")
+      .split(".")
+      .map((part) => Number.parseInt(part, 10) || 0);
+    const nodeOk = major > 20 || (major === 20 && (minor > 12 || (minor === 12 && patch >= 0)));
+    if (!nodeOk) {
       console.error(
-        "\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh) or Node.js >= 20.\n" +
+        "\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh) or Node.js >= 20.12.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
           "  Install options:\n" +
           "    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\n" +
-          "    2. Node:   upgrade to Node.js 20 or newer (https://nodejs.org)\n" +
+          "    2. Node:   upgrade to Node.js 20.12 or newer (https://nodejs.org)\n" +
           "    3. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n",
       );
       process.exit(1);
@@ -71,7 +74,8 @@ process.on("uncaughtException", (err) => {
 
 import fs from "node:fs";
 import path from "node:path";
-import { defineCommand, runMain } from "citty";
+import { type ArgsDef, defineCommand, runMain } from "citty";
+import { findCittyTopLevelCommand } from "./cli/parse-args";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -578,6 +582,8 @@ export const main = defineCommand({
   },
 });
 
+const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
+
 // ── Exit codes ──────────────────────────────────────────────────────────────
 // Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
 // the local call sites terse. EXIT_HEALTH_WARN (4) is the `akm health` "warn"
@@ -626,7 +632,8 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // output-shaping time after the side effect has already happened. The
   // shape-registry gate in shapeForCommand() remains as defense-in-depth (and
   // covers the in-process test harness, which skips this startup block).
-  if (getOutputMode().shape === "summary" && process.argv[2] !== "show") {
+  const topLevelCommand = findCittyTopLevelCommand(process.argv.slice(2), MAIN_TOP_LEVEL_ARGS);
+  if (getOutputMode().shape === "summary" && topLevelCommand !== "show") {
     emitJsonError(new UsageError("'--shape summary' is only valid on 'akm show'.", "INVALID_SHAPE_VALUE"));
   }
 

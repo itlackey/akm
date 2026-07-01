@@ -202,18 +202,19 @@ export function classifyCloneFailure(
   stderr: string | undefined | null,
   spawnError: NodeJS.ErrnoException | Error | undefined,
 ): string {
+  const safeUrl = redactUrlUserinfo(url);
   const raw = (stderr ?? "").trim();
   const spawnMsg = spawnError?.message ?? "";
 
   // `git` binary not on PATH.
   if ((spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-    return `Failed to clone ${url}: 'git' is not installed or not on PATH. Install git, then re-run.`;
+    return `Failed to clone ${safeUrl}: 'git' is not installed or not on PATH. Install git, then re-run.`;
   }
 
   // Auth-prompt fall-through (the headline #487 case).
   if (/could not read Username|terminal prompts disabled|Authentication failed|fatal: Authentication/i.test(raw)) {
     return (
-      `Failed to clone ${url}: repository not found or private. ` +
+      `Failed to clone ${safeUrl}: repository not found or private. ` +
       `If the repository is public, double-check the URL and try again. ` +
       `If it is private, set GH_TOKEN (or configure a git credential helper) before re-running.`
     );
@@ -222,7 +223,7 @@ export function classifyCloneFailure(
   // 404-style messages from git http.
   if (/repository '.*' not found|HTTP 404|fatal: remote error|not found:|Not Found/i.test(raw)) {
     return (
-      `Failed to clone ${url}: repository not found. ` +
+      `Failed to clone ${safeUrl}: repository not found. ` +
       `Check the URL — for GitHub, the form is 'owner/repo' or 'github:owner/repo'.`
     );
   }
@@ -232,7 +233,7 @@ export function classifyCloneFailure(
     /Permission denied \(publickey\)|kex_exchange_identification|Connection refused|Connection timed out/i.test(raw)
   ) {
     return (
-      `Failed to clone ${url}: network or SSH failure. ` +
+      `Failed to clone ${safeUrl}: network or SSH failure. ` +
       `Check connectivity, your SSH agent, and the remote host's availability.`
     );
   }
@@ -240,11 +241,15 @@ export function classifyCloneFailure(
   // Branch / ref-specific failures.
   if (/Remote branch .* not found in upstream origin|couldn't find remote ref/i.test(raw)) {
     return (
-      `Failed to clone ${url}: the requested branch/tag does not exist on the remote. ` +
+      `Failed to clone ${safeUrl}: the requested branch/tag does not exist on the remote. ` +
       `Verify the ref name and re-run.`
     );
   }
 
   const detail = raw || spawnMsg || "unknown error";
-  return `Failed to clone ${url}: ${detail}`;
+  return `Failed to clone ${safeUrl}: ${redactUrlUserinfo(detail)}`;
+}
+
+function redactUrlUserinfo(text: string): string {
+  return text.replace(/\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^\s/@]+)@/g, "$1[REDACTED]@");
 }

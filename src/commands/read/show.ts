@@ -20,6 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
@@ -604,6 +605,15 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
 
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
+const SHOW_ARGV_TOP_LEVEL_ARGS = {
+  format: { type: "string" },
+  output: { type: "string" },
+  detail: { type: "string" },
+  shape: { type: "string" },
+  quiet: { type: "boolean", alias: "q" },
+  verbose: { type: "boolean" },
+} satisfies CittyArgsDefinitionForScan;
+
 /**
  * Normalize argv so positional view-mode arguments after the asset ref
  * are rewritten into internal flags that citty can parse.
@@ -617,17 +627,25 @@ const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines
  * Returns a new array; the input is never modified.
  */
 export function normalizeShowArgv(argv: string[]): string[] {
-  // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
-  if (argv[2] !== "show") return argv;
-  if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
+  const rawArgs = argv.slice(2);
+  const commandIndex = findCittyTopLevelCommandIndex(rawArgs, SHOW_ARGV_TOP_LEVEL_ARGS);
+  if (commandIndex < 0 || rawArgs[commandIndex] !== "show") return argv;
+
+  const commandArgs = rawArgs.slice(commandIndex + 1);
+  if (
+    commandArgs.includes("--view") ||
+    commandArgs.includes("--heading") ||
+    commandArgs.includes("--start") ||
+    commandArgs.includes("--end")
+  ) {
     throw new UsageError(
       'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',
     );
   }
 
   // Separate global flags from positional/show-specific args
-  const prefix = argv.slice(0, 3); // [bun, script, show]
-  const rest = argv.slice(3);
+  const prefix = [...argv.slice(0, 2), ...rawArgs.slice(0, commandIndex + 1)];
+  const rest = commandArgs;
 
   const globalFlags: string[] = [];
   const showArgs: string[] = [];

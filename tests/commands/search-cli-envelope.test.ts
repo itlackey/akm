@@ -83,6 +83,18 @@ describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
     expect((env.hits as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
   });
 
+  test("search --no-project-context does not mutate process env", async () => {
+    const stash = await makeIndexedStash();
+    delete process.env.AKM_DISABLE_PROJECT_CONTEXT;
+    delete process.env.AKM_DISABLE_SCOPED_UTILITY;
+
+    const { status } = await runCli(["--json", "search", "deploy", "--no-project-context"], stash);
+
+    expect(status).toBe(0);
+    expect(process.env.AKM_DISABLE_PROJECT_CONTEXT).toBeUndefined();
+    expect(process.env.AKM_DISABLE_SCOPED_UTILITY).toBeUndefined();
+  });
+
   test("search: missing query → byte-identical {ok:false} usage envelope on stderr", async () => {
     const stash = await makeIndexedStash();
     const { stderr, status } = await runCli(["--json", "search"], stash);

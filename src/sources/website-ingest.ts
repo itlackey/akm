@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir } from "../core/common";
 import type { SourceConfigEntry } from "../core/config/config";
@@ -38,6 +39,7 @@ const WEBSITE_PAGE_BYTE_CAP = 5 * 1024 * 1024;
  * whole crawl and return what we have when time runs out.
  */
 const WEBSITE_CRAWL_WALL_CLOCK_MS = 10 * 60 * 1000;
+const WEBSITE_MAX_REDIRECTS = 8;
 
 interface WebsitePage {
   url: string;
@@ -57,6 +59,24 @@ export interface FetchSnapshotOptions {
   stashDir?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  allowPrivateHosts?: boolean;
+}
+
+interface WebsiteValidationOptions {
+  allowPrivateHosts?: boolean;
+}
+
+export function shouldAllowPrivateWebsiteHostsForTests(): boolean {
+  return process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
+}
+
+export function shouldAllowPrivateWebsiteUrlForTests(rawUrl: string): boolean {
+  if (!shouldAllowPrivateWebsiteHostsForTests()) return false;
+  try {
+    return isLoopbackWebsiteHostname(new URL(rawUrl).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function resolveFetcherStashDir(explicitStashDir?: string): string | null {
@@ -84,10 +104,10 @@ export function getWebsiteCachePaths(siteUrl: string): {
 
 export async function ensureWebsiteMirror(
   config: SourceConfigEntry,
-  options?: { requireStashDir?: boolean; force?: boolean },
+  options?: { requireStashDir?: boolean; force?: boolean; allowPrivateHosts?: boolean },
 ): Promise<ReturnType<typeof getWebsiteCachePaths>> {
   const rawUrl = config.url ?? "";
-  const normalizedUrl = validateWebsiteUrl(rawUrl);
+  const normalizedUrl = validateWebsiteUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   const cachePaths = getWebsiteCachePaths(normalizedUrl);
   const requireStashDir = options?.requireStashDir === true;
   const force = options?.force === true;
@@ -113,6 +133,7 @@ export async function ensureWebsiteMirror(
     await scrapeWebsiteToStash(normalizedUrl, cachePaths.stashDir, {
       maxPages: coercePositiveInt(config.options?.maxPages, MAX_PAGES_DEFAULT),
       maxDepth: coercePositiveInt(config.options?.maxDepth, MAX_DEPTH_DEFAULT),
+      allowPrivateHosts: options?.allowPrivateHosts,
     });
     fs.writeFileSync(
       cachePaths.manifestPath,
@@ -148,7 +169,7 @@ function hasExtractedSite(stashDir: string): boolean {
 async function scrapeWebsiteToStash(
   startUrl: string,
   stashDir: string,
-  options: { maxPages: number; maxDepth: number },
+  options: { maxPages: number; maxDepth: number; allowPrivateHosts?: boolean },
 ): Promise<void> {
   const pages = await crawlWebsite(startUrl, options);
   if (pages.length === 0) {
@@ -175,7 +196,7 @@ export async function fetchWebsiteMarkdownSnapshot(
   rawUrl: string,
   options?: FetchSnapshotOptions,
 ): Promise<WebsiteMarkdownSnapshot> {
-  const normalizedUrl = validateWebsiteInputUrl(rawUrl);
+  const normalizedUrl = validateWebsiteInputUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   const parsedUrl = new URL(normalizedUrl);
   const stashDir = resolveFetcherStashDir(options?.stashDir);
   const context: FetcherContext = {
@@ -200,7 +221,7 @@ export async function fetchWebsiteMarkdownSnapshot(
     }
   }
 
-  const fetched = await fetchWebsitePage(normalizedUrl);
+  const fetched = await fetchWebsitePage(normalizedUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   if (!fetched) {
     throw new UsageError(`No content could be fetched from ${normalizedUrl}`);
   }
@@ -232,7 +253,10 @@ function websiteMarkdownSnapshotFromResult(snapshot: WikiSnapshotResult): Websit
   };
 }
 
-async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDepth: number }): Promise<WebsitePage[]> {
+async function crawlWebsite(
+  startUrl: string,
+  options: { maxPages: number; maxDepth: number; allowPrivateHosts?: boolean },
+): Promise<WebsitePage[]> {
   const start = new URL(normalizeSiteUrl(startUrl));
   const allowedOrigin = start.origin;
   const queue: Array<{ url: string; depth: number }> = [{ url: start.toString(), depth: 0 }];
@@ -248,7 +272,7 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
     if (!normalized || visited.has(normalized)) continue;
     visited.add(normalized);
 
-    const fetched = await fetchWebsitePage(normalized);
+    const fetched = await fetchWebsitePage(normalized, { allowPrivateHosts: options.allowPrivateHosts });
     if (!fetched) continue;
     pages.push(fetched.page);
 
@@ -275,21 +299,11 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
   return pages;
 }
 
-async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; links: URL[] } | null> {
-  const parsedUrl = new URL(pageUrl);
-  if (parsedUrl.hostname.endsWith(".invalid")) {
-    throw new Error(`Refusing to fetch reserved invalid hostname: ${parsedUrl.hostname}`);
-  }
-  const response = await fetchWithRetry(
-    pageUrl,
-    {
-      headers: {
-        Accept: "text/html, text/markdown, text/plain;q=0.9, application/xhtml+xml;q=0.8",
-        "User-Agent": "akm-cli website provider",
-      },
-    },
-    { timeout: 15_000, retries: 1 },
-  );
+async function fetchWebsitePage(
+  pageUrl: string,
+  options?: WebsiteValidationOptions,
+): Promise<{ page: WebsitePage; links: URL[] } | null> {
+  const response = await fetchWebsiteResponse(pageUrl, 0, options);
 
   if (!response.ok) {
     if (response.status === 404) return null;
@@ -305,6 +319,7 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
     throw err;
   }
   const finalUrl = normalizeCrawlUrl(response.url || pageUrl) ?? pageUrl;
+  assertWebsiteRequestUrl(finalUrl, Error, options);
 
   if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeMarkup(body)) {
     const title = extractHtmlTitle(body) || new URL(finalUrl).hostname;
@@ -326,6 +341,40 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
     },
     links: [],
   };
+}
+
+async function fetchWebsiteResponse(
+  pageUrl: string,
+  redirectCount = 0,
+  options?: WebsiteValidationOptions,
+): Promise<Response> {
+  assertWebsiteRequestUrl(pageUrl, Error, options);
+  const response = await fetchWithRetry(
+    pageUrl,
+    {
+      headers: {
+        Accept: "text/html, text/markdown, text/plain;q=0.9, application/xhtml+xml;q=0.8",
+        "User-Agent": "akm-cli website provider",
+      },
+      redirect: "manual",
+    },
+    { timeout: 15_000, retries: 1 },
+  );
+
+  if (response.status >= 300 && response.status < 400) {
+    if (redirectCount >= WEBSITE_MAX_REDIRECTS) {
+      throw new Error(`Too many redirects while fetching ${pageUrl}`);
+    }
+    const location = response.headers.get("location");
+    if (!location) {
+      throw new Error(`Redirect response from ${pageUrl} did not include a Location header`);
+    }
+    const nextUrl = new URL(location, pageUrl).toString();
+    assertWebsiteRequestUrl(nextUrl, Error, options);
+    return fetchWebsiteResponse(nextUrl, redirectCount + 1, options);
+  }
+
+  return response;
 }
 
 function buildMarkdownSnapshot(page: WebsitePage, slug: string, tags?: string[]): string {
@@ -354,15 +403,19 @@ function buildMarkdownSnapshot(page: WebsitePage, slug: string, tags?: string[])
   ].join("\n");
 }
 
-export function validateWebsiteUrl(rawUrl: string): string {
-  return validateWebsiteUrlWithError(rawUrl, ConfigError);
+export function validateWebsiteUrl(rawUrl: string, options?: WebsiteValidationOptions): string {
+  return validateWebsiteUrlWithError(rawUrl, ConfigError, options);
 }
 
-export function validateWebsiteInputUrl(rawUrl: string): string {
-  return validateWebsiteUrlWithError(rawUrl, UsageError);
+export function validateWebsiteInputUrl(rawUrl: string, options?: WebsiteValidationOptions): string {
+  return validateWebsiteUrlWithError(rawUrl, UsageError, options);
 }
 
-function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigError | typeof UsageError): string {
+function validateWebsiteUrlWithError(
+  rawUrl: string,
+  ErrorType: typeof ConfigError | typeof UsageError,
+  options?: WebsiteValidationOptions,
+): string {
   if (!rawUrl) {
     throw new ErrorType("Website provider requires a URL");
   }
@@ -380,6 +433,7 @@ function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigErr
   if (parsed.username || parsed.password) {
     throw new ErrorType("Website URL must not contain embedded credentials");
   }
+  assertWebsiteRequestUrl(parsed.toString(), ErrorType, options);
 
   parsed.hash = "";
   return normalizeSiteUrl(parsed.toString());
@@ -582,6 +636,98 @@ function isAssetLikePath(pathname: string): boolean {
 
 function isSafeLinkUrl(url: URL): boolean {
   return url.protocol === "http:" || url.protocol === "https:";
+}
+
+type WebsiteUrlErrorCtor = new (message: string) => Error;
+
+function assertWebsiteRequestUrl(
+  rawUrl: string,
+  ErrorType: WebsiteUrlErrorCtor = Error,
+  options?: WebsiteValidationOptions,
+): void {
+  const parsedUrl = new URL(rawUrl);
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname.endsWith(".invalid")) {
+    throw new ErrorType(`Refusing to fetch reserved invalid hostname: ${parsedUrl.hostname}`);
+  }
+  if (isForbiddenWebsiteHostname(hostname, options)) {
+    throw new ErrorType(`Refusing to fetch non-public website host: ${parsedUrl.hostname}`);
+  }
+}
+
+// WHATWG URL.hostname wraps IPv6 literals in brackets (e.g. "[::1]"), but
+// node:net's isIP() only recognizes the bare address form and returns 0 for
+// anything bracketed — silently skipping all IPv6 forbidden-host checks
+// below for every hostname parsed off a URL. Strip the brackets before any
+// isIP()/isForbiddenIpv6() call so those checks actually run.
+function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
+function isForbiddenWebsiteHostname(hostname: string, options?: WebsiteValidationOptions): boolean {
+  if (options?.allowPrivateHosts === true) return false;
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "metadata.google.internal") {
+    return true;
+  }
+
+  const bareHostname = stripIpv6Brackets(hostname);
+  const ipVersion = isIP(bareHostname);
+  if (ipVersion === 4) return isForbiddenIpv4(bareHostname);
+  if (ipVersion === 6) return isForbiddenIpv6(bareHostname);
+  return false;
+}
+
+function isLoopbackWebsiteHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  const bareHostname = stripIpv6Brackets(hostname);
+  const ipVersion = isIP(bareHostname);
+  if (ipVersion === 4) return bareHostname.startsWith("127.");
+  if (ipVersion === 6) return bareHostname === "::1";
+  return false;
+}
+
+function isForbiddenIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+/**
+ * Extracts the embedded IPv4 address from an IPv4-mapped IPv6 literal
+ * (`::ffff:a.b.c.d` or its canonical hex form `::ffff:xxxx:yyyy`), or
+ * returns null if `hostname` isn't one.
+ */
+function extractIpv4MappedAddress(normalizedHostname: string): string | null {
+  const match = normalizedHostname.match(/^::ffff:(?:(\d{1,3}(?:\.\d{1,3}){3})|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
+  if (!match) return null;
+  if (match[1]) return match[1];
+  const high = Number.parseInt(match[2], 16);
+  const low = Number.parseInt(match[3], 16);
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
+function isForbiddenIpv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  const mappedIpv4 = extractIpv4MappedAddress(normalized);
+  if (mappedIpv4) return isForbiddenIpv4(mappedIpv4);
+  return (
+    normalized === "::" ||
+    normalized === "::1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  );
 }
 
 function stripDangerousBlockTag(value: string, tagName: string): string {

@@ -24,9 +24,10 @@ Canonical built-in type directories come from `TYPE_DIRS` in
   commands/
   agents/
   knowledge/
+  env/
+  secrets/
   workflows/
   memories/
-  vaults/
   wikis/
   lessons/
 ```
@@ -103,9 +104,10 @@ Built-in `type` values are:
 - `command`
 - `agent`
 - `knowledge`
+- `env`
+- `secret`
 - `workflow`
 - `memory`
-- `vault`
 - `wiki`
 - `lesson`
 

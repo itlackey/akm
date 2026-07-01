@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { EmbeddingConnectionConfig } from "../src/core/config/config";
-import { setQuiet } from "../src/core/warn";
-import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/llm/embedder";
-import { LocalEmbedder } from "../src/llm/embedders/local";
+import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
+import { setQuiet } from "../../src/core/warn";
+import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../../src/llm/embedder";
+import { LocalEmbedder } from "../../src/llm/embedders/local";
 
 let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
 

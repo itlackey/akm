@@ -339,15 +339,14 @@ union. The v1 contract is:
 - **Well-known types**, each with a renderer, a directory under the working
   stash, and frontmatter expectations:
   `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `workflow`,
-  `env`, `vault`, `secret`, `wiki`, `task`, `session`, `fact`, and (Planned for v1)
+  `env`, `secret`, `wiki`, `task`, `session`, `fact`, and (Planned for v1)
   `lesson`. See
   §13. The `task` type stores cron-style scheduled invocations of workflows or
   prompts; `akm tasks` registers them with the OS-native scheduler (cron /
   launchd / schtasks). The `env` type stores a group of related configuration
   in a whole `.env` file (sourced or injected wholesale); key names are surfaced
   but values (sensitive or not) never appear in structured output and are used
-  only via `akm env run` / `akm env export`. `vault` is the deprecated
-  predecessor of `env` (removed in 0.9.0). The `secret` type stores a single
+  only via `akm env run` / `akm env export`. The `secret` type stores a single
   sensitive value used on its own for authentication (one per file); like `env`,
   the values never appear in structured output and are used only via
   `akm secret run` / `akm secret path`. The `session` type (#561) is a

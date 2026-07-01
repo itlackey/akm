@@ -1,0 +1,38 @@
+#!/bin/sh
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+case "$0" in
+	*/*) SCRIPT_PATH=$0 ;;
+	*)
+		SCRIPT_PATH=$(command -v -- "$0" 2>/dev/null || true)
+		if [ -z "$SCRIPT_PATH" ]; then
+			echo "akm-migrate-storage launcher could not resolve its own path." >&2
+			exit 127
+		fi
+		;;
+esac
+
+if command -v readlink >/dev/null 2>&1; then
+	while [ -L "$SCRIPT_PATH" ]; do
+		LINK_TARGET=$(readlink "$SCRIPT_PATH")
+		case "$LINK_TARGET" in
+			/*) SCRIPT_PATH=$LINK_TARGET ;;
+			*) SCRIPT_PATH=${SCRIPT_PATH%/*}/$LINK_TARGET ;;
+		esac
+	done
+fi
+
+SCRIPT_DIR=$(CDPATH= cd -- "${SCRIPT_PATH%/*}" && pwd)
+
+if command -v bun >/dev/null 2>&1; then
+	exec bun "$SCRIPT_DIR/scripts/migrate-storage.js" "$@"
+fi
+
+if command -v node >/dev/null 2>&1; then
+	exec node "$SCRIPT_DIR/migrate-storage-node.mjs" "$@"
+fi
+
+echo "akm-migrate-storage requires Bun or Node.js >= 20.12.0 on PATH." >&2
+exit 127

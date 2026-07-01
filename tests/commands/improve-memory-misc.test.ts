@@ -481,7 +481,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
   });
 
-  test("runSchemaRepairPass falls back to direct write when stashDir is absent", async () => {
+  test("runSchemaRepairPass requires stashDir instead of bypassing the proposal queue", async () => {
     const { runSchemaRepairPass } = await import("../../src/commands/sources/schema-repair");
 
     const stashDir = makeTempDir("akm-m3-fallback-");
@@ -489,20 +489,19 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     fs.mkdirSync(path.dirname(memFile), { recursive: true });
     fs.writeFileSync(memFile, "---\n---\nAuth content.\n", "utf8");
 
-    const result = await runSchemaRepairPass([{ ref: "memory:auth2", reason: "missing description" }], {
-      startMs: Date.now(),
-      budgetMs: 30_000,
-      // No stashDir: triggers legacy direct-write path
-      llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
-      findFilePath: async () => memFile,
-      isLessonCandidateFn: () => false,
-      chatFn: async () => JSON.stringify({ description: "Auth content description." }),
-    });
+    await expect(
+      runSchemaRepairPass([{ ref: "memory:auth2", reason: "missing description" }], {
+        startMs: Date.now(),
+        budgetMs: 30_000,
+        llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
+        findFilePath: async () => memFile,
+        isLessonCandidateFn: () => false,
+        chatFn: async () => JSON.stringify({ description: "Auth content description." }),
+      }),
+    ).rejects.toThrow(/requires stashDir/);
 
-    // Fallback: direct write
-    expect(result.repairs[0]?.outcome).toBe("written");
     const fileContent = fs.readFileSync(memFile, "utf8");
-    expect(fileContent).toContain("Auth content description.");
+    expect(fileContent).not.toContain("Auth content description.");
   });
 });
 

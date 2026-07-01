@@ -77,15 +77,27 @@ function generate(): JsonSchema {
   };
 }
 
+/**
+ * Compare the generated schema against the committed schemas/akm-config.json.
+ * Pure function (no process.exit, no console output) so tests can call it
+ * directly instead of spawning a subprocess.
+ */
+export function checkSchemaDrift(): { upToDate: boolean; generated: string; existing: string } {
+  const repoRoot = path.resolve(import.meta.dir, "..");
+  const target = path.join(repoRoot, "schemas", "akm-config.json");
+  const generated = `${JSON.stringify(generate(), null, 2)}\n`;
+  const existing = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
+  return { upToDate: existing === generated, generated, existing };
+}
+
 function main(): void {
   const checkMode = process.argv.includes("--check");
   const repoRoot = path.resolve(import.meta.dir, "..");
   const target = path.join(repoRoot, "schemas", "akm-config.json");
 
-  const generated = `${JSON.stringify(generate(), null, 2)}\n`;
   if (checkMode) {
-    const existing = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
-    if (existing !== generated) {
+    const { upToDate } = checkSchemaDrift();
+    if (!upToDate) {
       console.error(
         `schemas/akm-config.json is stale. Run \`bun scripts/gen-config-schema.ts\` to regenerate.`,
       );
@@ -94,9 +106,12 @@ function main(): void {
     console.log("schemas/akm-config.json is up to date.");
     return;
   }
+  const generated = `${JSON.stringify(generate(), null, 2)}\n`;
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, generated);
   console.log(`Wrote ${target}`);
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

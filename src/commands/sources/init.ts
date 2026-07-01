@@ -39,7 +39,7 @@ import { copyStashSkeleton, scaffoldStashMeta } from "./stash-skeleton";
  */
 function assertInitSandbox(stashDir: string, dirExplicitlyProvided: boolean): void {
   if (!dirExplicitlyProvided) return; // Only guard explicit --dir, not default HOME resolution.
-  const isUnderTest = process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
+  const isUnderTest = isUnderTestRunner();
   if (!isUnderTest) return;
   if (process.env.AKM_FORCE_INIT_TMP_STASH === "1") return;
   const isTmp =
@@ -54,6 +54,10 @@ function assertInitSandbox(stashDir: string, dirExplicitlyProvided: boolean): vo
     `refusing to persist --dir stashDir to a temporary path while under test runner; set AKM_FORCE_INIT_TMP_STASH=1 if you really mean it (stashDir=${stashDir})`,
     "INIT_TMP_STASH_REFUSED",
   );
+}
+
+function isUnderTestRunner(): boolean {
+  return process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
 }
 
 export interface InitResponse {
@@ -150,12 +154,14 @@ export async function akmInit(options?: { dir?: string; setDefault?: boolean }):
 
   // Ensure ripgrep is available (install to cache/bin if needed)
   let ripgrep: InitResponse["ripgrep"];
-  try {
-    const binDir = getBinDir();
-    const rgResult = ensureRg(binDir);
-    ripgrep = rgResult;
-  } catch {
-    // Non-fatal: ripgrep is optional, search works without it
+  if (!isUnderTestRunner()) {
+    try {
+      const binDir = getBinDir();
+      const rgResult = ensureRg(binDir);
+      ripgrep = rgResult;
+    } catch {
+      // Non-fatal: ripgrep is optional, search works without it
+    }
   }
 
   return { stashDir, created, configPath, defaultStashUpdated, previousStashDir, ripgrep };

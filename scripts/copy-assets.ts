@@ -33,17 +33,23 @@ try {
   );
 }
 
-// 3. Copy the Node-runtime entry wrapper + text-import loader hook into dist/.
-//    These let `node dist/cli-node.mjs` run akm end-to-end on Node (the bun:*
-//    text-import that Bun loads natively needs a loader hook on Node). They are
-//    plain Node ESM (.mjs), copied verbatim — never imported under Bun.
-const nodeRuntimeFiles = ["scripts/node-runtime/cli-node.mjs", "scripts/node-runtime/text-import-hook.mjs"];
-for (const src of nodeRuntimeFiles) {
+// 3. Copy the published launchers plus the Node-runtime entry wrapper and
+//    text-import loader hook into dist/. The shell launchers keep the npm/bun
+//    global-install contract runtime-agnostic: prefer Bun when present, fall
+//    back to Node wrappers otherwise.
+const runtimeFiles = [
+  "scripts/node-runtime/akm",
+  "scripts/node-runtime/akm-migrate-storage",
+  "scripts/node-runtime/cli-node.mjs",
+  "scripts/node-runtime/migrate-storage-node.mjs",
+  "scripts/node-runtime/text-import-hook.mjs",
+];
+for (const src of runtimeFiles) {
   const dest = src.replace(/^scripts\/node-runtime\//, "dist/");
   await mkdir(dirname(dest), { recursive: true });
   await Bun.write(dest, Bun.file(src));
+  chmodSync(dest, 0o755);
 }
-chmodSync("dist/cli-node.mjs", 0o755);
 
 const migrationEntrypoints = [
   "scripts/migrate-storage.ts",
@@ -61,7 +67,7 @@ for (const entry of migrationEntrypoints) {
   await mkdir(dirname(outfile), { recursive: true });
   const result = await Bun.build({
     entrypoints: [entry],
-    target: "bun",
+    target: "node",
     outdir: dirname(outfile),
     naming: outfile.split("/").pop()!,
     minify: false,

@@ -23,7 +23,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import { fetchWebsiteMarkdownSnapshot } from "../../sources/website-ingest";
+import { fetchWebsiteMarkdownSnapshot, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 
@@ -118,10 +118,13 @@ export function readKnowledgeContent(source: string): { content: string; preferr
  */
 export async function readKnowledgeInput(
   source: string,
-  options?: { stashDir?: string },
+  options?: { stashDir?: string; allowPrivateHosts?: boolean },
 ): Promise<{ content: string; preferredName?: string }> {
   if (!isHttpUrl(source)) return readKnowledgeContent(source);
-  const snapshot = await fetchWebsiteMarkdownSnapshot(source, { stashDir: options?.stashDir });
+  const snapshot = await fetchWebsiteMarkdownSnapshot(source, {
+    stashDir: options?.stashDir,
+    allowPrivateHosts: options?.allowPrivateHosts ?? shouldAllowPrivateWebsiteUrlForTests(source),
+  });
   return { content: snapshot.content, preferredName: snapshot.preferredName };
 }
 

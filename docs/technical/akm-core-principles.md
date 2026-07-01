@@ -8,7 +8,7 @@ it with minimal context overhead.
 An agent has a task. Across configured sources (local filesystem paths and
 cache-backed git/website/npm mirrors) and registry catalogs, akm helps it
 discover assets such as scripts, skills, commands, agents, knowledge docs,
-workflows, vaults, and wiki pages.
+workflows, env files, secrets, and wiki pages.
 
 Core flow:
 
@@ -43,7 +43,8 @@ Show should return the payload that lets the consumer act:
 - agent prompts
 - knowledge/wiki content
 - workflow steps and parameters
-- vault key names without secret values
+- env key names without secret values
+- secret metadata without the secret value
 
 ### 4. Progressive disclosure
 

@@ -13,6 +13,61 @@ import { UsageError } from "../core/errors";
 
 // ── Subcommand detection ─────────────────────────────────────────────────────
 
+export interface CittyArgDefinitionForScan {
+  readonly type?: string;
+  readonly alias?: string | readonly string[];
+}
+
+export type CittyArgsDefinitionForScan = Record<string, CittyArgDefinitionForScan>;
+
+function cittyComparableName(name: string): string {
+  return name.replace(/[-_]+([a-zA-Z0-9])/g, (_match, char: string) => char.toUpperCase());
+}
+
+function toAliasArray(alias: CittyArgDefinitionForScan["alias"]): readonly string[] {
+  if (Array.isArray(alias)) return alias;
+  return typeof alias === "string" ? [alias] : [];
+}
+
+function isCittyValueFlag(flag: string, argsDef: CittyArgsDefinitionForScan): boolean {
+  const name = flag.replace(/^-{1,2}/, "");
+  const normalized = cittyComparableName(name);
+  for (const [key, def] of Object.entries(argsDef)) {
+    if (def.type !== "string" && def.type !== "enum") continue;
+    if (normalized === cittyComparableName(key)) return true;
+    if (toAliasArray(def.alias).includes(name)) return true;
+  }
+  return false;
+}
+
+/**
+ * Match citty's top-level subcommand scan (`findSubCommandIndex`).
+ *
+ * Citty does not assume `rawArgs[0]` is the command: global string flags may
+ * appear first and consume the following token. The CLI startup guard uses this
+ * to classify the requested command before any command handler can run.
+ */
+export function findCittyTopLevelCommandIndex(rawArgs: readonly string[], argsDef: CittyArgsDefinitionForScan): number {
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg === "--") return -1;
+    if (arg.startsWith("-")) {
+      if (!arg.includes("=") && isCittyValueFlag(arg, argsDef)) i += 1;
+      continue;
+    }
+    return i;
+  }
+  return -1;
+}
+
+export function findCittyTopLevelCommand(
+  rawArgs: readonly string[],
+  argsDef: CittyArgsDefinitionForScan,
+): string | undefined {
+  const index = findCittyTopLevelCommandIndex(rawArgs, argsDef);
+  return index >= 0 ? rawArgs[index] : undefined;
+}
+
 /**
  * Return true when `args._[0]` is a member of `validSet`.
  *

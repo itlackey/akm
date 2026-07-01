@@ -263,6 +263,45 @@ describe("env run", () => {
     expect(stdout.trim()).toBe("foo|");
   });
 
+  test("--clean does not inherit unrelated parent env vars", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=foo\n", "utf8");
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env:prod", "--clean", "--", "bash", "-lc", 'printf "%s|%s" "$FOO" "${PARENT_ONLY:-}"'],
+      { AKM_STASH_DIR: stashDir, PARENT_ONLY: "sentinel" },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("foo|");
+  });
+
+  test("--clean --inherit passes through selected parent env vars", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=foo\n", "utf8");
+
+    const { stdout, status } = spawnCli(
+      [
+        "env",
+        "run",
+        "env:prod",
+        "--clean",
+        "--inherit",
+        "PARENT_ONLY",
+        "--",
+        "bash",
+        "-lc",
+        'printf "%s|%s" "$FOO" "${PARENT_ONLY:-}"',
+      ],
+      { AKM_STASH_DIR: stashDir, PARENT_ONLY: "sentinel" },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("foo|sentinel");
+  });
+
   test("--only and --except together is rejected", async () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
@@ -292,5 +331,31 @@ describe("vault run (removed in 0.9.0)", () => {
     });
 
     expect(status).not.toBe(0);
+  });
+});
+
+describe("secret run", () => {
+  test("--clean does not inherit unrelated parent env vars", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "secrets", "token"), "sekret", "utf8");
+
+    const { stdout, status } = spawnCli(
+      [
+        "secret",
+        "run",
+        "secret:token",
+        "API_TOKEN",
+        "--clean",
+        "--",
+        "bash",
+        "-lc",
+        'printf "%s|%s" "$API_TOKEN" "${PARENT_ONLY:-}"',
+      ],
+      { AKM_STASH_DIR: stashDir, PARENT_ONLY: "sentinel" },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("sekret|");
   });
 });

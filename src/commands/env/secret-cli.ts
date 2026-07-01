@@ -31,6 +31,16 @@ import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg } from "../../output/context";
 import { readStdin } from "../../runtime";
+import { buildChildEnv } from "./child-env";
+
+function parseKeyListFlag(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const keys = raw
+    .split(/[,\s]+/)
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return keys.length > 0 ? keys : undefined;
+}
 
 /** Walk `secrets/` across all stashes, returning one entry per secret file. */
 function listSecretsRecursive(): Array<{ ref: string; path: string }> {
@@ -159,11 +169,22 @@ const secretRunCommand = defineCommand({
   meta: {
     name: "run",
     description:
-      "Run a command with a secret's value injected into an env var: `akm secret run <ref> <VAR> -- <command>`. The value is set as $VAR in the child process only.",
+      "Run a command with a secret's value injected into an env var: `akm secret run <ref> <VAR> -- <command>`. The value is set as $VAR in the child process only. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
     var: { type: "positional", description: "Environment variable name to inject the value into", required: true },
+    clean: {
+      type: "boolean",
+      description:
+        "Start the child with a minimal inherited environment (PATH/HOME/locale/terminal basics) instead of the full parent environment.",
+      default: false,
+    },
+    inherit: {
+      type: "string",
+      description:
+        "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
@@ -194,7 +215,10 @@ const secretRunCommand = defineCommand({
       }
       const { readValue } = await import("./secret.js");
 
-      const mergedEnv = { ...process.env };
+      const mergedEnv = buildChildEnv(process.env, {
+        clean: getHyphenatedArg<boolean>(args, "clean") === true,
+        inherit: parseKeyListFlag(getHyphenatedArg<string>(args, "inherit")) ?? [],
+      });
       mergedEnv[varName] = readValue(absPath).toString("utf8");
 
       // Audit trail: record access by ref + var name only — never the value.

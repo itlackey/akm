@@ -20,11 +20,31 @@ empty and the caller explicitly asked for interactive ingest.
    ```
    Focus on `uncited-raw` findings: those raw files exist under `raw/` but are
    not yet cited by any authored page. Treat each `uncited-raw` finding as a
-   pending ingest item. If there are no `uncited-raw` findings, exit cleanly
-   after a final `akm index` + `akm wiki lint {{WIKI_NAME}}` verification.
+   pending ingest item, and sort the queue **oldest raw file first** (by
+   filename/mtime). Processing oldest-first keeps backlog age bounded even
+   when the queue is larger than one run can finish. If there are no
+   `uncited-raw` findings, exit cleanly after a final `akm index` +
+   `akm wiki lint {{WIKI_NAME}}` verification.
 
-3. **For each pending raw file, read the source and find related pages.**
-   Open the raw file directly from `{{WIKI_DIR}}/raw/`, then search:
+   Do not read or classify the whole backlog upfront. Work the queue as a
+   bounded loop, one raw file at a time: fully finish a raw (read → decide →
+   edit → log entry, steps 3-7 below) before looking at the next one. If you
+   run low on time partway through a large backlog, stop after finishing your
+   current raw — do not start a new one you can't complete. This is expected
+   and fine: whatever you already merged is committed to the pages and
+   `log.md`, so the next scheduled run picks up where you left off instead of
+   redoing this run's work.
+
+3. **For the current raw file, read the source and find related pages.**
+   Open the raw file directly from `{{WIKI_DIR}}/raw/`.
+
+   If the file does not read as text (binary content, garbled bytes, e.g. a
+   raw PDF byte-dump that was never text-extracted), do not attempt deep
+   forensic recovery (no web searches, no `strings`-style dumps). Append a
+   one-line `log.md` entry noting it as skipped/unprocessable with a short
+   reason, then move on to the next raw in the queue.
+
+   Otherwise, search for related pages:
    ```sh
    akm wiki search {{WIKI_NAME}} "<key terms from the raw source>"
    ```
@@ -46,8 +66,9 @@ empty and the caller explicitly asked for interactive ingest.
 6. **Update xrefs both ways.** If page A now xrefs page B, page B must xref
    page A. `akm wiki lint {{WIKI_NAME}}` will flag violations.
 
-7. **Append to `log.md`.** One entry per ingested raw source: date, raw slug,
-   one-line summary, refs to created/edited pages. Newest at the top.
+7. **Append to `log.md`.** One entry per processed raw source (ingested or
+   skipped-as-unprocessable): date, raw slug, one-line summary, refs to
+   created/edited pages. Newest at the top.
 
 8. **Regenerate the index + verify.**
    ```sh

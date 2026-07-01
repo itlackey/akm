@@ -3,13 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { registerSourceProvider } from "../provider-factory";
-import { ensureWebsiteMirror, getWebsiteCachePaths, validateWebsiteUrl } from "../website-ingest";
+import {
+  ensureWebsiteMirror,
+  getWebsiteCachePaths,
+  shouldAllowPrivateWebsiteUrlForTests,
+  validateWebsiteUrl,
+} from "../website-ingest";
 
 /**
  * Website source provider — thin adapter over the shared website ingest module.
  */
 registerSourceProvider("website", (config) => {
-  const url = validateWebsiteUrl(config.url ?? "");
+  const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(config.url ?? "");
+  const url = validateWebsiteUrl(config.url ?? "", { allowPrivateHosts });
   const name = config.name ?? "website";
   return {
     kind: "website" as const,
@@ -18,7 +24,11 @@ registerSourceProvider("website", (config) => {
       return getWebsiteCachePaths(url).stashDir;
     },
     async sync(options?: { force?: boolean }) {
-      await ensureWebsiteMirror(config, { requireStashDir: true, force: options?.force });
+      await ensureWebsiteMirror(config, {
+        requireStashDir: true,
+        force: options?.force,
+        ...(allowPrivateHosts ? { allowPrivateHosts: true } : {}),
+      });
     },
   };
 });

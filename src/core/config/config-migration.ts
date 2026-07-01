@@ -178,10 +178,14 @@ function migrateProcessEntryToImprove(result: Record<string, unknown>, processNa
  * (canonical string sentinel for this release) or when `configVersion` is a
  * number ≥ 2 AND the config carries no recognized legacy keys.
  */
-export function migrateConfigShape(raw: Record<string, unknown>): {
+export function migrateConfigShape(
+  raw: Record<string, unknown>,
+  opts?: { warn?: (...args: unknown[]) => void },
+): {
   changed: boolean;
   result: Record<string, unknown>;
 } {
+  const emitWarn = opts?.warn ?? warn;
   const hasLegacyKeys =
     Object.hasOwn(raw, "features") ||
     (isObj(raw.llm) && (Object.hasOwn(raw.llm, "endpoint") || Object.hasOwn(raw.llm, "features"))) ||
@@ -217,12 +221,12 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
   if (Array.isArray(result.stashes)) {
     if (!Array.isArray(result.sources)) {
       result.sources = result.stashes;
-      console.warn(
+      emitWarn(
         "[akm config-migrate] Legacy `stashes[]` config key renamed to `sources[]`. " +
           "Re-save your config to remove the deprecation notice.",
       );
     } else {
-      console.warn(
+      emitWarn(
         "[akm config-migrate] Both `stashes[]` and `sources[]` present; `stashes[]` dropped (sources takes precedence).",
       );
     }
@@ -240,7 +244,7 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
     for (const entry of sources) {
       if (isObj(entry) && entry.type === "openviking") {
         const name = typeof entry.name === "string" && entry.name ? entry.name : "unnamed";
-        console.warn(
+        emitWarn(
           `[akm config-migrate] Source "${name}" (type: openviking) is no longer supported. ` +
             "Remove it from your config, or replace with a `website`/`git` source. " +
             "Entry dropped from sources[].",
@@ -371,12 +375,12 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
         const camelKey = toCamelCase(legacyKey);
         if (typeof legacyVal === "boolean" || isObj(legacyVal)) {
           migrateProcessEntryToImprove(result, camelKey, legacyVal);
-          warn(
+          emitWarn(
             `[akm config-migrate] Unknown features.improve.${legacyKey} migrated to ` +
               `profiles.improve.default.processes.${camelKey}. Please verify the new location.`,
           );
         } else {
-          warn(
+          emitWarn(
             `[akm config-migrate] features.improve.${legacyKey} has an unrecognized value type ` +
               `(${typeof legacyVal}); dropping. Please re-add it under profiles.improve.* manually.`,
           );
@@ -425,12 +429,12 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
         const camelKey = toCamelCase(legacyKey);
         const ok = migrateGenericGateToSection(result, "index", camelKey, legacyVal);
         if (ok) {
-          warn(
+          emitWarn(
             `[akm config-migrate] Unknown features.index.${legacyKey} migrated to ` +
               `index.${camelKey}. Please verify the new location is correct.`,
           );
         } else {
-          warn(
+          emitWarn(
             `[akm config-migrate] features.index.${legacyKey} has an unrecognized value shape; ` +
               `dropping. Please re-add it under index.${camelKey} manually if needed.`,
           );
@@ -456,12 +460,12 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
         const camelKey = toCamelCase(legacyKey);
         const ok = migrateGenericGateToSection(result, "search", camelKey, legacyVal);
         if (ok) {
-          warn(
+          emitWarn(
             `[akm config-migrate] Unknown features.search.${legacyKey} migrated to ` +
               `search.${camelKey}. Please verify the new location is correct.`,
           );
         } else {
-          warn(
+          emitWarn(
             `[akm config-migrate] features.search.${legacyKey} has an unrecognized value shape; ` +
               `dropping. Please re-add it under search.${camelKey} manually if needed.`,
           );
@@ -574,7 +578,7 @@ export function migrateConfigShape(raw: Record<string, unknown>): {
         changed = true;
       }
       if (improveObj.preset !== undefined) {
-        console.warn(
+        emitWarn(
           "[akm config-migrate] defaults.improve.preset is no longer supported. " +
             "Use `--profile <name>` (built-ins: default, quick, thorough, memory-focus) instead.",
         );

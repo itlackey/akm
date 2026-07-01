@@ -14,7 +14,8 @@ Built-in types today are:
 - `knowledge`
 - `workflow`
 - `memory`
-- `vault`
+- `env`
+- `secret`
 - `wiki`
 
 ## Asset Quality Values
@@ -66,7 +67,8 @@ The directory-based matchers recognize:
 - `knowledge/` → `knowledge`
 - `workflows/` → `workflow`
 - `memories/` → `memory`
-- `vaults/` → `vault`
+- `env/` → `env`
+- `secrets/` → `secret`
 
 `wiki` is not classified by these generic directory matchers. It is handled by
 `wikiMatcher`, which requires a path below `wikis/<name>/...`.
@@ -99,6 +101,7 @@ as `wiki`.
 | `commands/release.md` with `agent: coder` | smartMd (18) | `command` |
 | `agents/reviewer.md` with `tools:` | smartMd (20) | `agent` |
 | `workflows/release.md` with workflow structure | smartMd (19) | `workflow` |
-| `vaults/prod.env` | parentDirHint (15) | `vault` |
+| `env/prod.env` | parentDirHint (15) | `env` |
+| `secrets/deploy-token` | parentDirHint (15) | `secret` |
 | `wikis/research/auth.md` | wikiMatcher (20) | `wiki` |
 | `docs/guide.md` | smartMd (5) | `knowledge` |

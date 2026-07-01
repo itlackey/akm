@@ -16,12 +16,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AkmConfig, LlmConnectionConfig } from "../src/core/config/config";
-import { closeDatabase, openIndexDatabase, upsertEntry } from "../src/indexer/db/db";
-import { loadStoredGraphSnapshot } from "../src/indexer/db/graph-db";
-import type { GraphExtractionResult } from "../src/indexer/graph/graph-extraction";
-import { buildSearchText } from "../src/indexer/search/search-fields";
-import type { GraphExtraction } from "../src/llm/graph-extract";
+import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
+import { closeDatabase, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
+import { loadStoredGraphSnapshot } from "../../src/indexer/db/graph-db";
+import type { GraphExtractionResult } from "../../src/indexer/graph/graph-extraction";
+import { buildSearchText } from "../../src/indexer/search/search-fields";
+import type { GraphExtraction } from "../../src/llm/graph-extract";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ const llmServer = Bun.serve({
   },
 });
 
-const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph/graph-extraction");
+const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../../src/indexer/graph/graph-extraction");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
