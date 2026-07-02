@@ -2,10 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
-import { openStateDatabase } from "../../core/state-db";
-import type { Database } from "../../storage/database";
+import { getStateDbPath } from "../../core/state-db";
+import { type Database, openDatabase } from "../../storage/database";
 import { type DbSearchResult, getUtilityScoresByIds } from "../db/db";
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { StashEntry } from "../passes/metadata";
@@ -69,17 +70,30 @@ export interface RankEntriesOptions {
  * ranked items. Fail-open: any error (state.db locked by a concurrent improve
  * run, missing table, unreadable path) returns an empty map, which makes the
  * salience contributor a no-op — byte-identical to pre-R2 ranking.
+ *
+ * Deliberately NOT `openStateDatabase()`: that helper runs migrations and sets
+ * a 30 s busy timeout — too heavy for a search hot path. This opens read-only,
+ * never creates or migrates state.db (missing file / missing table = empty
+ * map), and caps lock waits at 250 ms so a concurrent improve run can only
+ * ever cost the search a quarter second, not a stall.
  */
 export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, number> {
   const result = new Map<number, number>();
   if (items.length === 0) return result;
   try {
+    const dbPath = getStateDbPath();
+    if (!fs.existsSync(dbPath)) return result; // improve loop has never run here
     const idByRef = new Map<string, number>();
     for (const item of items) {
       idByRef.set(makeAssetRef(item.entry.type as AkmAssetType, item.entry.name), item.id);
     }
-    const stateDb = openStateDatabase();
+    const stateDb = openDatabase(dbPath, { readonly: true });
     try {
+      try {
+        stateDb.exec("PRAGMA busy_timeout = 250");
+      } catch {
+        // pragma failure on a readonly handle is fine — default timeout applies
+      }
       const refs = [...idByRef.keys()];
       const CHUNK = 500;
       for (let i = 0; i < refs.length; i += CHUNK) {

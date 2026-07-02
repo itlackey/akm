@@ -9,8 +9,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import { upsertAssetSalience } from "../src/commands/improve/salience";
-import { openStateDatabase } from "../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../src/core/state-db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { loadSalienceRankScores, type RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyUtilityContributors, type UtilityRankingContext } from "../src/indexer/search/ranking-contributors";
@@ -86,5 +87,15 @@ describe("R2 — loadSalienceRankScores (state.db read path)", () => {
     const scores = loadSalienceRankScores(items);
     expect(scores.get(11)).toBeCloseTo(0.77, 9);
     expect(scores.has(12)).toBe(false);
+  });
+
+  test("missing state.db → empty map, and the search path never CREATES the file", () => {
+    // No openStateDatabase() call in this test: state.db does not exist yet.
+    const dbPath = getStateDbPath();
+    expect(fs.existsSync(dbPath)).toBe(false);
+    const scores = loadSalienceRankScores([makeRanked(1, "anything")]);
+    expect(scores.size).toBe(0);
+    // The read-only search path must not have created or migrated state.db.
+    expect(fs.existsSync(dbPath)).toBe(false);
   });
 });

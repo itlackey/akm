@@ -853,7 +853,15 @@ function writeQualityRejection(
  * encoding score instead of sitting on the type-weight stub forever. Best-effort:
  * never blocks or fails the proposal flow.
  */
-function persistOutputEncodingSalience(ref: string, body: string, existingRefVocabulary: Set<string>): void {
+function persistOutputEncodingSalience(
+  ref: string,
+  body: string,
+  existingRefVocabulary: Set<string>,
+  // Operator opt-out (improve.salience.outcomeWeightEnabled: false) must apply
+  // here too, or distill-written rank_score rows would use WS-2 weights while
+  // preparation uses parity weights — inconsistent salience semantics.
+  outcomeWeightEnabled: boolean,
+): void {
   try {
     const parsedRef = parseAssetRef(ref);
     const salienceResult = scoreEncodingSalience({
@@ -868,6 +876,7 @@ function persistOutputEncodingSalience(ref: string, body: string, existingRefVoc
         type: parsedRef.type,
         retrievalFreq: 0,
         encodingSalience: salienceResult.score,
+        outcomeWeightEnabled,
       });
       upsertAssetSalience(stateDb, ref, vector);
     });
@@ -938,6 +947,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const chat = options.chat ?? chatCompletion;
   const lookup = options.lookupFn ?? defaultLookup;
   const readEventsImpl = options.readEventsFn ?? readEvents;
+  // R1 opt-out must flow into every computeSalience call this command makes so
+  // distill-written rank_score rows use the same weights as preparation's.
+  const outcomeWeightEnabled = config.improve?.salience?.outcomeWeightEnabled !== false;
   // D-4 / #390: similar-lessons retrieval seam (test-injectable).
   const fetchSimilarLessonsFn =
     options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
@@ -1014,6 +1026,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
             type: parsedRef.type,
             retrievalFreq: 0,
             encodingSalience: salienceResult.score,
+            outcomeWeightEnabled,
           });
           upsertAssetSalience(stateDb, inputRef, vector);
         });
@@ -1247,7 +1260,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     const proposal: Proposal = proposalResult;
     // G4: content-score the distilled OUTPUT so it carries a real encoding
     // salience (encoding_source='content') from creation.
-    persistOutputEncodingSalience(promotion.knowledgeRef, resolvedPromotionContent, existingRefVocabulary);
+    persistOutputEncodingSalience(
+      promotion.knowledgeRef,
+      resolvedPromotionContent,
+      existingRefVocabulary,
+      outcomeWeightEnabled,
+    );
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
@@ -1804,7 +1822,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // G4: content-score the distilled OUTPUT so it carries a real encoding
   // salience (encoding_source='content') from creation — lessons never get
   // another chance (they are refused as distill inputs).
-  persistOutputEncodingSalience(effectiveLessonRef, content, existingRefVocabulary);
+  persistOutputEncodingSalience(effectiveLessonRef, content, existingRefVocabulary, outcomeWeightEnabled);
   appendEvent({
     eventType: "distill_invoked",
     ref: inputRef,
