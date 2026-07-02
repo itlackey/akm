@@ -31,6 +31,21 @@ export interface AgentPlatform {
   path: string;
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+
+interface DetectOverridesForTests {
+  detectOllama?: typeof detectOllama;
+  detectAgentPlatforms?: typeof detectAgentPlatforms;
+}
+
+let detectOverrides: DetectOverridesForTests | undefined;
+
+/** TEST-ONLY. Swap the network/host probes; pass undefined to restore. */
+export function _setDetectForTests(fakes?: DetectOverridesForTests): void {
+  detectOverrides = fakes;
+}
+
 // ── Ollama Detection ────────────────────────────────────────────────────────
 
 const OLLAMA_BASE = "http://localhost:11434";
@@ -42,6 +57,7 @@ const OLLAMA_BASE = "http://localhost:11434";
  * via subprocess. Returns available models sorted alphabetically.
  */
 export async function detectOllama(): Promise<OllamaDetectionResult> {
+  if (detectOverrides?.detectOllama) return detectOverrides.detectOllama();
   const result: OllamaDetectionResult = { available: false, models: [], endpoint: OLLAMA_BASE };
 
   // Try HTTP API first
@@ -155,6 +171,7 @@ const AGENT_PLATFORMS: Array<{ name: string; relPath: string }> = SESSION_LOG_HA
  * Supports both HOME (Unix) and USERPROFILE (Windows).
  */
 export function detectAgentPlatforms(): AgentPlatform[] {
+  if (detectOverrides?.detectAgentPlatforms) return detectOverrides.detectAgentPlatforms();
   const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
   if (!home) return [];
 
