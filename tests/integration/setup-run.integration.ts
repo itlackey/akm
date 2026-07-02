@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
+import { _setDefaultTasksForTests } from "../../src/commands/tasks/default-tasks";
 import type { IndexResponse } from "../../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
@@ -135,19 +136,19 @@ function installIndexerNeverRunsSeam(): void {
   });
 }
 
-function installDefaultTasksMock(): void {
-  mock.module("../../src/commands/tasks/default-tasks", () => ({
+function installDefaultTasksSeam(): void {
+  overrideSeam(_setDefaultTasksForTests, {
     detectServerDefault: () => false,
     isCiEnvironment: () => false,
     registerDefaultTasks: async () => ({ skipped: false, created: [], existing: [], toggled: [] }),
-  }));
+  });
 }
 
 beforeEach(() => {
   resetPromptState();
   resetSetupState();
   mock.restore();
-  installDefaultTasksMock();
+  installDefaultTasksSeam();
 });
 
 afterEach(() => {

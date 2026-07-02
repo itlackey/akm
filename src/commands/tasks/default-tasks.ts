@@ -130,12 +130,29 @@ export interface RegisterDefaultTasksResult {
   toggled: string[];
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+
+interface DefaultTasksOverridesForTests {
+  detectServerDefault?: typeof detectServerDefault;
+  isCiEnvironment?: typeof isCiEnvironment;
+  registerDefaultTasks?: typeof registerDefaultTasks;
+}
+
+let defaultTasksOverrides: DefaultTasksOverridesForTests | undefined;
+
+/** TEST-ONLY. Swap the CI/server/register functions; pass undefined to restore. */
+export function _setDefaultTasksForTests(fakes?: DefaultTasksOverridesForTests): void {
+  defaultTasksOverrides = fakes;
+}
+
 /**
  * Decide whether `akm setup` is running in a CI environment, where it must
  * register NO scheduled tasks. Mirrors the common `CI=true` convention used by
  * GitHub Actions, GitLab CI, CircleCI, etc.
  */
 export function isCiEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (defaultTasksOverrides?.isCiEnvironment) return defaultTasksOverrides.isCiEnvironment(env);
   const ci = env.CI;
   if (ci === undefined || ci === null) return false;
   const v = String(ci).trim().toLowerCase();
@@ -149,6 +166,7 @@ export function isCiEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
  * Used as the default when setup is non-interactive (no TTY / --yes / CI).
  */
 export function detectServerDefault(): boolean {
+  if (defaultTasksOverrides?.detectServerDefault) return defaultTasksOverrides.detectServerDefault();
   if (os.platform() !== "linux") return false;
   // A laptop exposes a battery under /sys/class/power_supply/BAT*. Absence of
   // any battery is our heuristic for "server / desktop".
@@ -176,6 +194,9 @@ export function detectServerDefault(): boolean {
 export async function registerDefaultTasks(
   options: RegisterDefaultTasksOptions = {},
 ): Promise<RegisterDefaultTasksResult> {
+  if (defaultTasksOverrides?.registerDefaultTasks) {
+    return defaultTasksOverrides.registerDefaultTasks(options);
+  }
   if (isCiEnvironment()) {
     return { skipped: true, reason: "ci", created: [], existing: [], toggled: [] };
   }
