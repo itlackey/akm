@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as actualAgentIntegration from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
+import { _setDetectForTests } from "../../src/setup/detect";
 import { overrideSeam } from "../_helpers/seams";
 
 const DEFAULT_STASH_DIR = "/tmp/akm-default-stash";
@@ -182,10 +183,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
@@ -294,10 +295,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
@@ -411,10 +412,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
@@ -510,14 +511,14 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({
         available: true,
         endpoint: "http://localhost:11434",
         models: ["nomic-embed-text", "llama3.2"],
       }),
       detectAgentPlatforms: () => [],
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
@@ -605,10 +606,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       // Return true so the wizard skips the `bun add` auto-install attempt
       // (the install path is environment-dependent and makes the test flaky).
@@ -701,10 +702,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
@@ -788,10 +789,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
@@ -868,10 +869,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
@@ -944,10 +945,10 @@ describe("runSetupWizard", () => {
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../../src/setup/detect", () => ({
+    overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-    }));
+    });
     overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
