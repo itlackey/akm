@@ -325,15 +325,11 @@ export interface ShowResponse {
   /** Actionable guidance when editable is false (omitted when editable) */
   editHint?: string;
   /**
-   * Env-only: list of KEY names defined in the env file (no values).
+   * Env-only: list of KEY names defined in the env file (no values, no
+   * comment text — comments can contain commented-out credentials).
    * Populated by the `env-file` renderer; never set for any other type.
    */
   keys?: string[];
-  /**
-   * Env-only: start-of-line `#` comment lines from the env file (with the
-   * leading `#` stripped). Inline/trailing comments are deliberately omitted.
-   */
-  comments?: string[];
   related?: {
     total: number;
     hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;

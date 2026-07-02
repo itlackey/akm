@@ -41,7 +41,7 @@ Useful for streaming consumption by scripts or agents.
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
-- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`, `comments`
+- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`
 
 ### `--shape summary`
 
@@ -50,7 +50,7 @@ with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rathe
 than a silent fallback. It returns a compact view suitable for capability
 discovery:
 
-- **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
+- **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`
 
 ## Exit Codes and Error Envelope
 
@@ -468,8 +468,7 @@ The default `show` JSON includes the asset body when applicable. Use
 `content`/`template`/`prompt`; `--detail full` adds verbose metadata such as
 `schemaVersion`, `path`, `editable`, and `editHint`; `--shape summary`
 returns a compact view with only `type`, `name`, `description`, `tags`,
-`parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, and
-`comments`.
+`parameters`, `workflowTitle`, `action`, `run`, `origin`, and `keys`.
 
 Returns type-specific payloads:
 
@@ -482,7 +481,7 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
-| env | `keys`, `comments` (key names + comments only — values never returned) |
+| env | `keys` (key names only — values and comment text never returned) |
 | lesson | `content` plus `when_to_use` surfaced from frontmatter |
 
 Assets from non-writable sources (git clones, npm packages, websites) return
@@ -1337,11 +1336,12 @@ Manage `.env`-backed **environment files** — a group of related **configuratio
 for an app or service (URLs, feature flags, and any credentials it needs),
 loaded together. Each `env` asset is an entire `.env` file stored under `env/`
 in your stash (mode 0600). Values may or may not be sensitive; **akm protects
-them all the same** — key *names* and comments are discoverable, values never
-appear in structured output. akm does **not** manage individual entries — you
-edit the `.env` with your own editor (or ingest one with `--from-file`) and akm
-loads it wholesale. `list` and `show` surface key names + comments only; `run`
-and `export` are the supported value-use paths.
+them all the same** — key *names* are discoverable; values and comment text
+never appear in structured output (comments routinely contain commented-out
+credentials, so they are treated like values). akm does **not** manage
+individual entries — you edit the `.env` with your own editor (or ingest one
+with `--from-file`) and akm loads it wholesale. `list` and `show` surface key
+names only; `run` and `export` are the supported value-use paths.
 
 ```sh
 akm env list

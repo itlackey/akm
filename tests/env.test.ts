@@ -55,7 +55,7 @@ async function runCli(
 // ── listKeys ────────────────────────────────────────────────────────────────
 
 describe("listKeys", () => {
-  test("returns keys + comments only, no values", () => {
+  test("returns key names only — no values, no comment text", () => {
     const dir = tmpDir();
     const fp = path.join(dir, "v.env");
     fs.writeFileSync(
@@ -66,26 +66,31 @@ describe("listKeys", () => {
     );
     const result = listKeys(fp);
     expect(result.keys).toEqual(["DB_URL", "API_TOKEN"]);
-    expect(result.comments).toEqual(["top comment", "bottom comment"]);
-    expect(Object.keys(result).sort()).toEqual(["comments", "keys"]);
+    expect(Object.keys(result)).toEqual(["keys"]);
+    const json = JSON.stringify(result);
+    expect(json).not.toContain("secret-value-do-not-leak");
+    expect(json).not.toContain("top comment");
+    expect(json).not.toContain("bottom comment");
   });
 
-  test("captures only start-of-line comments, never trailing/inline", () => {
+  test("comment text is never extracted — commented-out credentials stay private", () => {
     const dir = tmpDir();
     const fp = path.join(dir, "v.env");
     fs.writeFileSync(
       fp,
       [
-        "# header comment",
-        "  # indented comment",
+        "# OLD_GITEA_TOKEN=zqxcommentedoutcredential",
+        "  # webhook: https://hooks.example.com/services/zqxfreetexttoken",
         "FOO=bar # trailing-comment-not-extracted",
         "BAZ=qux",
-        "# footer comment",
       ].join("\n"),
     );
     const result = listKeys(fp);
-    expect(result.comments).toEqual(["header comment", "indented comment", "footer comment"]);
-    expect(result.comments.join(" ")).not.toContain("trailing-comment-not-extracted");
+    expect(result.keys).toEqual(["FOO", "BAZ"]);
+    const json = JSON.stringify(result);
+    expect(json).not.toContain("zqxcommentedoutcredential");
+    expect(json).not.toContain("zqxfreetexttoken");
+    expect(json).not.toContain("trailing-comment-not-extracted");
   });
 
   test("preserves key order and de-duplicates", () => {
@@ -104,7 +109,7 @@ describe("listKeys", () => {
 
   test("returns empty result for missing file", () => {
     const result = listKeys(path.join(tmpDir(), "missing.env"));
-    expect(result).toEqual({ keys: [], comments: [] });
+    expect(result).toEqual({ keys: [] });
   });
 });
 
@@ -267,8 +272,10 @@ describe("env indexer safety", () => {
       envPath,
       [
         "# Production secrets",
+        "# OLD_TOKEN=zqxoldcredleak",
         `SECRET_TOKEN=${SECRET_VALUE}`,
         "DB_PASSWORD=another-secret-pa55w0rd",
+        "# hook: https://hooks.example.com/services/zqxcommentleak",
         "# Last rotated 2026-04-01",
       ].join("\n"),
     );
@@ -290,27 +297,39 @@ describe("env indexer safety", () => {
       expect(envEntry.entry.searchHints).toContain("SECRET_TOKEN");
       expect(envEntry.entry.searchHints).toContain("DB_PASSWORD");
 
-      // 3. Comments are surfaced in the description
-      expect(envEntry.entry.description).toContain("Production secrets");
+      // 3. CRITICAL: comment text is never surfaced — comments carry
+      // commented-out credentials and free-text secrets
+      expect(envEntry.entry.description ?? "").not.toContain("Production secrets");
 
-      // 4. CRITICAL: the secret value is nowhere in the persisted record
+      // 4. CRITICAL: neither values NOR comment text are anywhere in the
+      // persisted record
       const json = JSON.stringify(envEntry);
       expect(json).not.toContain(SECRET_VALUE);
       expect(json).not.toContain("another-secret-pa55w0rd");
+      expect(json).not.toContain("zqxoldcredleak");
+      expect(json).not.toContain("zqxcommentleak");
+      expect(json).not.toContain("Production secrets");
 
-      // 5. CRITICAL: the secret value is not in entries.search_text
+      // 5. CRITICAL: neither values nor comment text are in entries.search_text
       type Row = { search_text: string | null; entry_json: string };
       const rows = db.prepare("SELECT search_text, entry_json FROM entries WHERE entry_type = ?").all("env") as Row[];
       expect(rows.length).toBe(1);
-      expect(rows[0].search_text ?? "").not.toContain(SECRET_VALUE);
+      const searchText = rows[0].search_text ?? "";
+      expect(searchText).not.toContain(SECRET_VALUE);
+      expect(searchText).not.toContain("zqxoldcredleak");
+      expect(searchText).not.toContain("zqxcommentleak");
       expect(rows[0].entry_json).not.toContain(SECRET_VALUE);
+      expect(rows[0].entry_json).not.toContain("zqxoldcredleak");
+      expect(rows[0].entry_json).not.toContain("zqxcommentleak");
 
-      // 6. CRITICAL: the secret value cannot be retrieved via FTS5 search
+      // 6. CRITICAL: neither values nor comment text can be retrieved via FTS5
       type FtsRow = { c: number };
-      const ftsHit = db
-        .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
-        .get("correct") as FtsRow;
-      expect(ftsHit.c).toBe(0);
+      for (const term of ["correct", "zqxoldcredleak", "zqxcommentleak"]) {
+        const ftsHit = db
+          .prepare("SELECT count(*) AS c FROM entries_fts WHERE entries_fts MATCH ?")
+          .get(term) as FtsRow;
+        expect(ftsHit.c).toBe(0);
+      }
     } finally {
       closeDatabase(db);
     }

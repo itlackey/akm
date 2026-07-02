@@ -5,14 +5,10 @@
  * #7  — `akm show` JSON shape always includes path + editable.
  * #20 — `akm remember --description` persisted in frontmatter.
  * #28 — `registry search --detail brief` projects name + installRef + score.
- * #35 — Vault list returns entries:[{key,comment}] instead of parallel arrays.
+ * #35 — (deleted) vault listEntries was removed with the env comment-leak fix.
  */
 
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { listEntries } from "../../../src/commands/env/env";
 import { buildMemoryFrontmatter } from "../../../src/commands/remember";
 import { shapeSearchHit, shapeShowOutput } from "../../../src/output/shapes";
 
@@ -144,56 +140,9 @@ describe("buildMemoryFrontmatter — description field (#20)", () => {
   });
 });
 
-// ── #35: vault metadata entries shape ────────────────────────────────────────
-
-describe("vault listEntries — entries shape (#35)", () => {
-  function makeTmpVault(content: string): string {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-vault-test-"));
-    const vaultPath = path.join(tmpDir, "test.env");
-    fs.writeFileSync(vaultPath, content);
-    return vaultPath;
-  }
-
-  test("returns empty array for nonexistent vault", () => {
-    const result = listEntries("/tmp/nonexistent-vault-file-xyz.env");
-    expect(result).toEqual([]);
-  });
-
-  test("returns keys without comments for uncommented vault", () => {
-    const vaultPath = makeTmpVault("DB_URL=postgres://localhost\nAPI_KEY=secret\n");
-    const entries = listEntries(vaultPath);
-    expect(entries.map((e) => e.key)).toEqual(["DB_URL", "API_KEY"]);
-    expect(entries.every((e) => e.comment === undefined)).toBe(true);
-  });
-
-  test("associates comment with the following key", () => {
-    const vaultPath = makeTmpVault("# Database connection URL\nDB_URL=postgres://localhost\n");
-    const entries = listEntries(vaultPath);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].key).toBe("DB_URL");
-    expect(entries[0].comment).toBe("Database connection URL");
-  });
-
-  test("returns {key, comment} shape", () => {
-    const vaultPath = makeTmpVault("# API key\nAPI_KEY=secret\n# DB\nDB_URL=pg://localhost\n");
-    const entries = listEntries(vaultPath);
-    expect(entries).toHaveLength(2);
-    expect(entries[0]).toMatchObject({ key: "API_KEY", comment: "API key" });
-    expect(entries[1]).toMatchObject({ key: "DB_URL", comment: "DB" });
-  });
-
-  test("duplicate keys: only first occurrence kept", () => {
-    const vaultPath = makeTmpVault("DB_URL=first\nDB_URL=second\n");
-    const entries = listEntries(vaultPath);
-    expect(entries.map((e) => e.key)).toEqual(["DB_URL"]);
-  });
-
-  test("entry has no comment field when there's no preceding comment", () => {
-    const vaultPath = makeTmpVault("API_KEY=abc\n");
-    const entries = listEntries(vaultPath);
-    expect(entries[0].comment).toBeUndefined();
-  });
-});
+// #35's listEntries ({key, comment} pairs) was DELETED with the env
+// comment-leak fix: comment text can contain commented-out credentials and no
+// production code consumed it. Key-name listing is covered by tests/env.test.ts.
 
 // ── #2: info sourceProviders from stashDir ────────────────────────────────────
 
