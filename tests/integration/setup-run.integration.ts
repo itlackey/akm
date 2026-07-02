@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
@@ -11,14 +10,16 @@ import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { _setDetectForTests } from "../../src/setup/detect";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
-const DEFAULT_STASH_DIR = "/tmp/akm-default-stash";
-// Per-test sandbox (fresh mkdtemp in beforeEach). The real config module reads
-// and writes DEFAULT_CONFIG_PATH via the mocked src/core/paths module below.
-let sandboxRoot = "";
+// Per-test sandbox (withIsolatedAkmStorage in beforeEach). The REAL
+// src/core/paths module resolves every path from the sandboxed env vars
+// (AKM_STASH_DIR, XDG_CONFIG_HOME, XDG_CACHE_HOME, ...), so the wizard reads
+// and writes the real config file at DEFAULT_CONFIG_PATH inside the sandbox.
+let storage: IsolatedAkmStorage;
+let DEFAULT_STASH_DIR = "";
 let DEFAULT_CONFIG_PATH = "";
-let DEFAULT_CACHE_DIR = "";
 const DEFAULT_REGISTRY_URLS = [
   "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
   "https://skills.sh",
@@ -139,17 +140,17 @@ function installDefaultTasksSeam(): void {
 
 beforeEach(() => {
   resetPromptState();
+  storage = withIsolatedAkmStorage();
+  DEFAULT_STASH_DIR = storage.stashDir;
+  DEFAULT_CONFIG_PATH = path.join(storage.configDir, "akm", "config.json");
   resetSetupState();
-  sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-run-"));
-  DEFAULT_CONFIG_PATH = path.join(sandboxRoot, "config", "config.json");
-  DEFAULT_CACHE_DIR = path.join(sandboxRoot, "cache");
   mock.restore();
   installDefaultTasksSeam();
 });
 
 afterEach(() => {
   mock.restore();
-  fs.rmSync(sandboxRoot, { recursive: true, force: true });
+  storage.cleanup();
 });
 
 describe("runSetupWizard", () => {
@@ -194,13 +195,6 @@ describe("runSetupWizard", () => {
       note: (message: string, title?: string) => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
-    }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => setupState.detectOllamaResult,
@@ -279,13 +273,6 @@ describe("runSetupWizard", () => {
       note: (message: string, title?: string) => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
-    }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => setupState.detectOllamaResult,
@@ -369,13 +356,6 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
-    }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
@@ -441,13 +421,6 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
-    }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({
         available: true,
@@ -511,13 +484,6 @@ describe("runSetupWizard", () => {
       intro: () => {},
       outro: () => {},
       note: () => {},
-    }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
@@ -584,13 +550,6 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
-    }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
@@ -646,13 +605,6 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
-    }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
@@ -704,13 +656,6 @@ describe("runSetupWizard", () => {
       saveCalls += 1;
       throw new Error("EACCES config.json");
     });
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
-    }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
@@ -756,13 +701,6 @@ describe("runSetupWizard", () => {
       intro: () => {},
       outro: () => {},
       note: () => {},
-    }));
-    mock.module("../../src/core/paths", () => ({
-      getDefaultStashDir: () => DEFAULT_STASH_DIR,
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
-      getCacheDir: () => DEFAULT_CACHE_DIR,
-      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     overrideSeam(_setDetectForTests, {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
