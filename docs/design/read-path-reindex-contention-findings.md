@@ -91,9 +91,12 @@ lints 0/0, tsc clean, unit 4964/0, integration 1935/0):
 
 ## 5. Remaining work
 
-None on this branch. Follow-ups (separate issues if wanted): a "index last
-built N days ago" hint on search for cron-less installs; the `akm health`
-embedding-endpoint advisory (§6.2).
+None. Both follow-ups also shipped on this branch:
+- search emits a "last built N day(s) ago — run 'akm index'" warning when the
+  index is older than 7 days (`db-search.ts`, `STALE_INDEX_HINT_MS`).
+- the `akm health` semantic-search-runtime advisory names the configured
+  embedding endpoint when blocked with a remote-* reason and lists the fixes
+  (§6.2 resolved).
 
 ## 6. Open questions for the owner
 
