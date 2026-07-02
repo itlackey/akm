@@ -378,17 +378,17 @@ export interface ImproveConfig {
    * Controls whether the WS-2 outcome-weight term (`w_o = 0.15`) is active in
    * the salience projection.
    *
-   * **DEFAULT OFF** (`outcomeWeightEnabled` absent or `false`): the projection
-   * uses WS-1 weights (`w_e=0.30, w_r=0.70`, `w_o=0`) so ranking is unchanged
-   * from the WS-1 baseline. Set to `true` only after running the Part-V
-   * measurement protocol (`scripts/akm-eval` + health report) and confirming
-   * that throughput quality has not regressed.
+   * **DEFAULT ON** (`outcomeWeightEnabled` absent or `true`): the projection
+   * uses WS-2 weights (`w_e=0.25, w_o=0.15, w_r=0.60`) so the prediction-error
+   * outcome signal shapes ranking (R1 loop closure; safe since `outcome_score`
+   * saturates at `OUTCOME_SCORE_MAX`). Set to `false` to restore the WS-1
+   * parity weights (`w_e=0.30, w_r=0.70`, `w_o=0`).
    */
   salience?: {
     /**
      * Enable the WS-2 outcome-weight term in the salience projection.
-     * When `true`, weights shift to `w_e=0.25, w_o=0.15, w_r=0.60`.
-     * Default: `false` (parity — WS-1 weights `w_e=0.30, w_r=0.70`).
+     * Default `true` (weights `w_e=0.25, w_o=0.15, w_r=0.60`). Explicit
+     * `false` restores parity — WS-1 weights `w_e=0.30, w_r=0.70`, `w_o=0`.
      */
     outcomeWeightEnabled?: boolean;
     /**

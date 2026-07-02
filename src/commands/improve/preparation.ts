@@ -1621,11 +1621,11 @@ export async function runImprovePreparationStage(args: {
   // so feedback refs get their genuine retrieval frequency, not a 0-floor fallback.
   // outcomeSalienceByRef is populated by WS-2 above (or empty on first run).
   //
-  // Part-V gate: read the operator opt-in flag from config. Default false
-  // (WS-1 parity weights) until the maintainer runs scripts/akm-eval and sets
-  // improve.salience.outcomeWeightEnabled: true in the config.
+  // R1 loop closure: the outcome weight is ON by default (the G2 saturation
+  // cap makes it safe). Operators opt out with
+  // improve.salience.outcomeWeightEnabled: false in the config.
   const salienceConfig = (options.config ?? loadConfig()).improve?.salience;
-  const outcomeWeightEnabled = salienceConfig?.outcomeWeightEnabled === true;
+  const outcomeWeightEnabled = salienceConfig?.outcomeWeightEnabled !== false;
   const salienceMap = new Map<string, ReturnType<typeof computeSalience>>();
   const nowForSalience = Date.now();
 
