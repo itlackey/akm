@@ -26,6 +26,15 @@ const UTILITY_WEIGHT = 0.5;
 const UTILITY_MAX_BOOST = 1.5;
 
 /**
+ * R2 (docs/design/improve-self-learning-analysis.md) — weight of the improve
+ * loop's `asset_salience.rank_score` in user-facing ranking. Bounded well
+ * below the utility boost so the composed signal refines, never dominates,
+ * lexical/semantic relevance. rank_score ∈ [0,1] → boost ∈ [1, 1.2].
+ */
+const SALIENCE_WEIGHT = 0.2;
+const SALIENCE_MAX_BOOST = 1.2;
+
+/**
  * Phase 2A / Rec 5: default recency half-life (days) used when no
  * `utilityDecayConfig` is supplied to the ranking pipeline. Matches the
  * pre-2A hardcoded `RECENCY_DECAY_DAYS = 30` constant — the formula is
@@ -80,6 +89,13 @@ export interface UtilityRankingContext extends RankingContext {
    * `halfLifeDays * 4`. Empty/absent means no boost (default behaviour).
    */
   positiveFeedbackCounts?: Map<number, number>;
+  /**
+   * R2 — improve-loop salience scores (`asset_salience.rank_score`, [0,1])
+   * keyed by entry id, loaded best-effort from state.db by the ranking
+   * pipeline. Absent/empty map = no salience contribution (fail-open parity
+   * with a fresh install where the improve loop has never run).
+   */
+  salienceRankScores?: Map<number, number>;
 }
 
 export interface UtilityRankingContributor {
@@ -405,7 +421,32 @@ export const defaultRankingContributors: RankingContributor[] = [
   projectContextRankingContributor,
 ];
 
-export const defaultUtilityRankingContributors: UtilityRankingContributor[] = [utilityRankingContributor];
+/**
+ * R2 — compose the improve loop's salience core into user-facing ranking.
+ *
+ * `asset_salience.rank_score` (encoding + outcome + retrieval projection,
+ * maintained every improve run) previously drove only improve's INTERNAL
+ * maintenance selection — the "better assets surface more" loop ran solely
+ * through the utility EMA. This bounded multiplicative boost closes the outer
+ * loop: usage/outcome-reinforced assets rank higher in `search`/`curate`.
+ */
+const salienceRankingContributor: UtilityRankingContributor = {
+  name: "salience-ranking",
+  appliesTo(item, ctx) {
+    const rank = ctx.salienceRankScores?.get(item.id);
+    return rank !== undefined && rank > 0;
+  },
+  apply(item, ctx) {
+    const rank = ctx.salienceRankScores?.get(item.id) ?? 0;
+    const rawBoost = 1 + Math.min(1, Math.max(0, rank)) * SALIENCE_WEIGHT;
+    item.score *= Math.min(rawBoost, SALIENCE_MAX_BOOST);
+  },
+};
+
+export const defaultUtilityRankingContributors: UtilityRankingContributor[] = [
+  utilityRankingContributor,
+  salienceRankingContributor,
+];
 
 export function applyScoreContributors(
   item: RankedEntryInput,
