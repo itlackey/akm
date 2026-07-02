@@ -40,7 +40,7 @@ import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 // ── Re-exports (public API) ─────────────────────────────────────────────────
 
 export { clearEmbeddingCache } from "./embedders/cache";
-export { DEFAULT_LOCAL_MODEL } from "./embedders/local";
+export { _setTransformersLoaderForTests, DEFAULT_LOCAL_MODEL } from "./embedders/local";
 export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 // ── Test seam ────────────────────────────────────────────────────────────────

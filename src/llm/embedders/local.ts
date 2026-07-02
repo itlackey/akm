@@ -63,6 +63,23 @@ function isBatchTensor(v: unknown): v is TransformerBatchTensor {
   );
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override for the dynamic @huggingface/transformers import.
+// Inert in production; only tests install fakes, via tests/_helpers/seams.ts
+// (which restores them automatically). See docs/design/di-seams-plan.md.
+
+export type TransformersLoader = () => Promise<{ pipeline: unknown }>;
+
+const realTransformersLoader: TransformersLoader = () =>
+  import("@huggingface/transformers") as Promise<{ pipeline: unknown }>;
+
+let transformersLoader: TransformersLoader = realTransformersLoader;
+
+/** TEST-ONLY. Swap the transformers module loader; pass undefined to restore. */
+export function _setTransformersLoaderForTests(fake?: TransformersLoader): void {
+  transformersLoader = fake ?? realTransformersLoader;
+}
+
 const LOCAL_EMBEDDER_DTYPE = "fp32";
 const LOCAL_EMBEDDER_FALLBACK_DTYPE = "auto";
 
@@ -217,8 +234,8 @@ export class LocalEmbedder implements Embedder {
 
         let pipeline: unknown;
         try {
-          const mod = await import("@huggingface/transformers");
-          pipeline = mod.pipeline as unknown;
+          const mod = await transformersLoader();
+          pipeline = mod.pipeline;
         } catch (importError) {
           const msg = importError instanceof Error ? importError.message : String(importError);
           if (/Cannot find module|MODULE_NOT_FOUND|Cannot resolve/i.test(msg)) {
