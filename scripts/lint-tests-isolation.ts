@@ -250,29 +250,7 @@ const ALLOWED_FILES = new Set<string>([
  * SHRINK-ONLY: entries are removed as files migrate; never add to this list —
  * new unit tests must use tests/_helpers/cli.ts or mock node:child_process.
  */
-const SPAWN_ALLOWED = new Set<string>([
-  // CLI-under-test subprocess helpers (spawnSync("bun", [CLI, ...])) —
-  // candidates for the in-process harness or a move to tests/integration/:
-  "tests/remember-frontmatter.test.ts",
-  "tests/env-path-run.test.ts",
-  "tests/secret.test.ts",
-  "tests/secret-path-run.test.ts",
-  "tests/wiki.test.ts",
-  "tests/commands/events.test.ts",
-  "tests/commands/improve-result-to-file.test.ts",
-  "tests/commands/show-argv.test.ts",
-  "tests/commands/improve-cli-flags.test.ts",
-  "tests/commands/distill/distill-cli-flag.test.ts",
-  // Local-tool spawns with a bounded, non-network child:
-  // env.test.ts sources a generated env script under real bash (shell-quoting
-  // semantics are the thing under test).
-  "tests/env.test.ts",
-  // save-command.test.ts drives real git for fixture repos (17 call sites).
-  "tests/save-command.test.ts",
-  // index-writer-lock.test.ts spawns `sleep 5` to hold a live PID for
-  // stale-lock reclaim tests.
-  "tests/index-writer-lock.test.ts",
-]);
+const SPAWN_ALLOWED = new Set<string>([]);
 
 // ── Shrink-only ratchet ──────────────────────────────────────────────────────
 
@@ -287,12 +265,13 @@ const SPAWN_ALLOWED = new Set<string>([
  *
  * KPI (WS4): drive this from ~73 toward ~5.
  *
- * 2026-07-02: baseline 64 → 77. NOT a loosening — Rule 5 (no real process
- * spawns in unit scope) is a new rule class, and its 13 pre-existing spawner
- * files enter the ratchet grandfathered in SPAWN_ALLOWED. The same one-time
- * step-up happened when Rule 2 brought its blind spot under the ratchet.
+ * 2026-07-02: baseline 64 → 77 when Rule 5 (no real process spawns in unit
+ * scope) landed with its 13 pre-existing spawner files grandfathered in
+ * SPAWN_ALLOWED — then back down to 64 the same day, when those 13 files were
+ * drained (migrated onto the in-process harness or moved to
+ * tests/integration/). SPAWN_ALLOWED is now empty and must stay empty.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 77;
+export const ALLOWLIST_RATCHET_BASELINE = 64;
 
 /** Live size of the combined grandfather allowlist (all rule sets). */
 export function combinedAllowlistSize(): number {

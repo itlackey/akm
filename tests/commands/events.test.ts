@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,14 +17,9 @@ import { type Cleanup, sandboxStashDir } from "../_helpers/sandbox";
 // sandboxed getDbPath() and the harness captures the streamed stdout/stderr
 // trailer.
 //
-// KEPT AS A SUBPROCESS: "events list --since @offset resumes across a real
-// process boundary". Its entire contract is a real exec boundary — a producer
-// persists a cursor, appends MORE events, then a SEPARATE process reads from the
-// cursor. In-process there is no second process, so it stays spawning via the
-// local spawnCli helper (which passes env to spawnSync rather than mutating
-// process.env, so it does not affect the in-process tests).
-
-const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
+// The one test whose contract is a real exec boundary ("log list --since
+// @offset:N resumes across a real process boundary") lives in
+// tests/integration/events-offset-crossproc.test.ts.
 
 const tempDirs: string[] = [];
 let stashCleanup: Cleanup = () => {};
@@ -50,23 +44,6 @@ function writeFile(filePath: string, content: string): void {
 async function runCli(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const { code, stdout, stderr } = await runCliCapture(args);
   return { status: code, stdout, stderr };
-}
-
-/**
- * Subprocess runner, retained only for the cross-process @offset durability
- * test. It passes env to spawnSync rather than mutating process.env, so it does
- * not affect the in-process tests.
- */
-function spawnCli(
-  args: string[],
-  env: Record<string, string | undefined>,
-): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env, ...env },
-  });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
 afterEach(() => {
@@ -129,65 +106,6 @@ describe("appendEvent / readEvents", () => {
     const empty = readEvents({ sinceOffset: next.nextOffset }, ctx);
     expect(empty.events).toEqual([]);
     expect(empty.nextOffset).toBe(next.nextOffset);
-  });
-
-  test("`akm log list --since @offset:N` resumes across a real process boundary", () => {
-    // This is the cross-process durability contract: a producer writes N
-    // events, persists nextOffset to a temp file, appends MORE events, and
-    // then a SECOND `bun src/cli.ts log list` invocation reads the cursor
-    // from the file and must emit only the post-cursor events with no
-    // duplicates and no losses.
-    const dataDir = makeTempDir("akm-events-xproc-data-");
-    const cacheDir = makeTempDir("akm-events-xproc-cache-");
-    const configDir = makeTempDir("akm-events-xproc-config-");
-    const stateDir = makeTempDir("akm-events-xproc-statedir-");
-    const cursorFile = path.join(makeTempDir("akm-events-xproc-state-"), "cursor.txt");
-    // Drive both processes through the same XDG_DATA_HOME so they share
-    // the same state.db path (events now live in state.db, not events.jsonl).
-    const childEnv = {
-      XDG_DATA_HOME: dataDir,
-      XDG_CACHE_HOME: cacheDir,
-      XDG_CONFIG_HOME: configDir,
-      XDG_STATE_HOME: stateDir,
-    };
-    // The dbPath for the writer must match what the CLI child process resolves.
-    // The CLI resolves state.db as <XDG_DATA_HOME>/akm/state.db.
-    const dbPath = path.join(dataDir, "akm", "state.db");
-    const ctx = { dbPath };
-
-    // 1. Producer writes events 0..2 (the "first batch").
-    appendEvent({ eventType: "remember", ref: "memory:e0" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e1" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e2" }, ctx);
-
-    // 2. Producer persists nextOffset to a temp file.
-    const cursor = readEvents({}, ctx).nextOffset;
-    fs.writeFileSync(cursorFile, String(cursor));
-
-    // 3. Producer appends MORE events (3..5) BEFORE the second process reads.
-    appendEvent({ eventType: "remember", ref: "memory:e3" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e4" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e5" }, ctx);
-
-    // 4. Spawn a SECOND bun process; it reads the cursor from the temp file
-    //    and asks the CLI for events with `--since @offset:<cursor>`. This
-    //    exercises a real exec boundary, not just in-process arithmetic.
-    const persisted = fs.readFileSync(cursorFile, "utf8").trim();
-    const child = spawnCli(["log", "list", "--since", `@offset:${persisted}`, "--format=json"], childEnv);
-    expect(child.status).toBe(0);
-    const parsed = JSON.parse(child.stdout) as {
-      events: Array<{ ref: string }>;
-      totalCount: number;
-      nextOffset: number;
-      sinceOffset?: number;
-    };
-
-    // 5. Assert: exactly the post-cursor events, in order, no duplicates,
-    //    no losses. The pre-cursor events MUST NOT appear.
-    expect(parsed.events.map((e) => e.ref)).toEqual(["memory:e3", "memory:e4", "memory:e5"]);
-    expect(parsed.totalCount).toBe(3);
-    expect(parsed.sinceOffset).toBe(Number(persisted));
-    expect(parsed.nextOffset).toBeGreaterThan(Number(persisted));
   });
 
   test("`akm events list --since @offset:` rejects malformed byte cursors", () => {

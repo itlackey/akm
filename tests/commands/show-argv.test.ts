@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeShowArgv } from "../../src/commands/read/show";
 import { runCliCapture } from "../_helpers/cli";
 import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
-
-const CLI = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
 
 let cleanup: Cleanup = () => {};
 
@@ -31,22 +28,10 @@ async function runEntrypoint(args: string[]): Promise<{ status: number; stdout: 
   return { status: code, stdout, stderr };
 }
 
-// HARNESS GAP — KEPT AS A SUBPROCESS: `--shape summary` is rejected for every
-// non-`show` command by an early, pre-execution gate in the guarded startup
-// block of src/cli.ts (before any command runs). Per that block's own
-// comment, the in-process harness (tests/_helpers/cli.ts `runCliCapture`)
-// intentionally skips this startup block, so it only enforces the later,
-// post-execution `shapeForCommand()` gate — by which point a write command
-// like `remember` has already run. This test asserts the write did NOT
-// happen, which only holds for the real subprocess entry point, so it stays
-// on `spawnSync` rather than being converted.
-function runEntrypointSpawn(args: string[]) {
-  return spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    env: { ...process.env },
-    timeout: 30_000,
-  });
-}
+// NOTE: the pre-execution `--shape` gate test (rejecting global
+// --shape=summary before non-show commands) lives in
+// tests/integration/show-argv-entrypoint.test.ts — it needs the real
+// subprocess entry point, which the in-process harness intentionally skips.
 
 // Regression: normalizeShowArgv splits global flags from positional view-mode
 // args and rebuilds argv. The global-flag allowlist must preserve the 0.8
@@ -124,16 +109,5 @@ describe("entrypoint global --shape=summary ordering", () => {
     expect(json.name).toBe("release.md");
     expect(json.description).toBe("Release");
     expect(json).not.toHaveProperty("template");
-  });
-
-  test("rejects global --shape=summary before non-show commands before they run", () => {
-    const storage = useStorage();
-
-    const result = runEntrypointSpawn(["--format=json", "--shape=summary", "remember", "do not write"]);
-
-    expect(result.status).toBe(2);
-    const error = JSON.parse(result.stderr) as Record<string, unknown>;
-    expect(error.code).toBe("INVALID_SHAPE_VALUE");
-    expect(fs.readdirSync(path.join(storage.stashDir, "memories"))).toEqual([]);
   });
 });

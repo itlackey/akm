@@ -3,16 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Secret `path` and `run`.
+ * Secret `path` and `run` (in-process cases only).
  *
  *   - `secret path` / error / traversal cases run in-process.
- *   - `secret run` spawns the target command with stdout inherited to the real
- *     fd, so the injected-env output is the CHILD's — only a real process
- *     boundary can observe it. Those cases use spawnCli.
+ *   - `secret run` validation failures (LD_PRELOAD rejection, invalid var
+ *     name, missing command) also run in-process — they fail before any child
+ *     spawn.
+ *   - The happy-path `secret run` injection test lives in
+ *     tests/integration/secret-run.test.ts: it needs a real process boundary
+ *     to observe the CHILD's env.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { setSecret } from "../src/commands/env/secret";
@@ -20,9 +22,6 @@ import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
-
-const repoRoot = path.resolve(import.meta.dir, "..");
-const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 const disposers: SandboxedDir[] = [];
 function makeStash(): string {
@@ -60,19 +59,6 @@ async function runCli(
   });
 }
 
-function spawnCli(
-  args: string[],
-  extraEnv: Record<string, string | undefined> = {},
-): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    cwd: repoRoot,
-    env: { ...process.env, AKM_STASH_DIR: undefined, ...extraEnv },
-  });
-  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
-}
-
 describe("secret path", () => {
   test("prints the absolute path on stdout when the secret exists", async () => {
     const stashDir = makeStash();
@@ -106,19 +92,9 @@ describe("secret path", () => {
 });
 
 describe("secret run", () => {
-  // KEPT AS A SUBPROCESS: the value is injected into the CHILD process env.
-  test("injects the secret value into the named env var of the child", () => {
-    const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("super-secret-token"));
-
-    const { stdout, status } = spawnCli(
-      ["secret", "run", "secret:demo", "TOKEN", "--", "bash", "-lc", 'printf "%s" "$TOKEN"'],
-      { AKM_STASH_DIR: stashDir },
-    );
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe("super-secret-token");
-  });
-
+  // The happy-path injection test (secret value visible in the CHILD's env)
+  // lives in tests/integration/secret-run.test.ts — it requires a real
+  // subprocess. The cases below fail validation before any child spawn.
   test("rejects a dangerous target variable name (process hijacking)", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));

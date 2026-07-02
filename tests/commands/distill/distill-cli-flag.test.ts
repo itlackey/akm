@@ -4,10 +4,11 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runCliCapture } from "../../_helpers/cli";
+import { withEnv } from "../../_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -23,56 +24,51 @@ afterAll(() => {
   }
 });
 
-const repoRoot = path.resolve(import.meta.dir, "../../..");
-const cliPath = path.join(repoRoot, "src", "cli.ts");
-
-function runCli(
+/**
+ * Drive the CLI in-process with fresh sandboxed HOME/XDG dirs (and
+ * AKM_STASH_DIR cleared), mirroring the env the old subprocess runner set.
+ *
+ * Exit-code note: the real entry point exits 1 on citty's "Unknown command",
+ * but in the in-process harness the escaped error is classified via
+ * classifyExitCode → 70 (internal). The tests therefore assert only that the
+ * exit code is non-zero; the "Unknown command" message lands on captured
+ * stderr either way.
+ */
+async function runCli(
   args: string[],
   options?: { env?: Record<string, string | undefined> },
-): { stdout: string; stderr: string; status: number } {
-  const xdgCache = makeTempDir("akm-distill-cli-cache-");
-  const xdgConfig = makeTempDir("akm-distill-cli-config-");
-  const xdgData = makeTempDir("akm-distill-cli-data-");
-  const xdgState = makeTempDir("akm-distill-cli-state-");
-  const home = makeTempDir("akm-distill-cli-home-");
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    cwd: repoRoot,
-    env: {
-      ...process.env,
+): Promise<{ stdout: string; stderr: string; status: number }> {
+  const result = await withEnv(
+    {
       AKM_STASH_DIR: undefined,
-      HOME: home,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
+      HOME: makeTempDir("akm-distill-cli-home-"),
+      XDG_CACHE_HOME: makeTempDir("akm-distill-cli-cache-"),
+      XDG_CONFIG_HOME: makeTempDir("akm-distill-cli-config-"),
+      XDG_DATA_HOME: makeTempDir("akm-distill-cli-data-"),
+      XDG_STATE_HOME: makeTempDir("akm-distill-cli-state-"),
       ...options?.env,
     },
-  });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status ?? -1,
-  };
+    () => runCliCapture(args),
+  );
+  return { stdout: result.stdout, stderr: result.stderr, status: result.code };
 }
 
 describe("akm distill CLI removal (0.8.0 hard break)", () => {
-  test("legacy distill command is rejected as unknown", () => {
-    const result = runCli(["distill", "skill:foo"]);
-    expect(result.status).toBe(1);
+  test("legacy distill command is rejected as unknown", async () => {
+    const result = await runCli(["distill", "skill:foo"]);
+    expect(result.status).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("Unknown command");
     expect(`${result.stdout}\n${result.stderr}`).toContain("distill");
   });
 
-  test("legacy distill flags do not restore the removed command", () => {
-    const result = runCli(
+  test("legacy distill flags do not restore the removed command", async () => {
+    const result = await runCli(
       ["distill", "skill:foo", "--exclude-feedback-from", "skill:bar", "--source-run", "run-abc-123"],
       {
         env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "memory:baz" },
       },
     );
-    expect(result.status).toBe(1);
+    expect(result.status).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("Unknown command");
     expect(`${result.stdout}\n${result.stderr}`).toContain("distill");
   });
