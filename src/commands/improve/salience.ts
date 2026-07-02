@@ -22,12 +22,12 @@
  *
  * `rankScore = (w_e·encoding + w_o·outcome + w_r·retrieval) × sizePenalty`, normalized [0,1].
  *
- * **WS-2 default-off (Part-V gate):**
- * `w_o = 0.15` is the target but is applied only when `outcomeWeightEnabled=true`
- * (set via `improve.salience.outcomeWeightEnabled: true` in config after running
- * Part-V T0 baseline). Default: WS-1 parity weights `w_e=0.30, w_r=0.70, w_o=0`.
- * `outcomeSalience` is populated from `asset_outcome.outcome_score` (WS-2) for
- * observability regardless of the flag.
+ * **WS-2 default-ON (R1 loop closure):**
+ * `w_o = 0.15` is applied by default now that `outcome_score` saturates at
+ * `OUTCOME_SCORE_MAX` (G2). Operators can opt out via
+ * `improve.salience.outcomeWeightEnabled: false`, which restores the WS-1
+ * parity weights `w_e=0.30, w_r=0.70, w_o=0`. `outcomeSalience` is populated
+ * from `asset_outcome.outcome_score` regardless of the flag.
  *
  * ## Plasticity
  *
@@ -60,17 +60,33 @@ const DAY_MS = 86_400_000;
 // ── Recency decay half-life (mirrors the proactive-maintenance prototype) ─────
 const RECENCY_HALFLIFE_DAYS = 21;
 
+// ── Recency-floor half-life (R4 — SHY-style continuous downscaling) ──────────
+//
+// The recency floor itself decays on this (much longer) half-life so an
+// unreviewed-forever asset keeps drifting down instead of parking at the 0.1
+// floor. This replaces the deleted homeostatic demotion pass (which was
+// default-off and self-undoing — every salience recompute clobbered it);
+// folding the decay into the always-applied recency term makes it persist by
+// construction. At 180 days the floor halves; a 1-year-stale asset sits at
+// ~0.025 instead of 0.1.
+const RECENCY_FLOOR_HALFLIFE_DAYS = 180;
+
+// Absolute epsilon under the decaying floor. Keeps the frequency term ordinal
+// for assets whose last-use timestamp is unknown (utility_scores has no
+// last_used_at) — without it their retrieval salience collapses to exactly 0
+// and frequency ordering is lost for maintenance selection.
+const RECENCY_EPSILON = 0.01;
+
 // ── Size proxy floor (avoids log10(0)) ────────────────────────────────────────
 const SIZE_FLOOR_BYTES = 200;
 
 // ── Projection weights ────────────────────────────────────────────────────────
 //
-// These constants reflect the WS-2 TARGET values (used when outcomeWeightEnabled=true).
-// Default ranking uses WS-1 parity weights (w_e=0.30, w_r=0.70, w_o=0) until the
-// maintainer opts in via `improve.salience.outcomeWeightEnabled: true` after running
-// the Part-V T0 baseline (scripts/akm-eval + health report).
+// These constants are the DEFAULT ranking weights (R1 loop closure). Operators
+// can opt back out to the WS-1 parity weights (w_e=0.30, w_r=0.70, w_o=0) via
+// `improve.salience.outcomeWeightEnabled: false`.
 //
-// WS-2 opt-in split (w_e=0.25, w_o=0.15, w_r=0.60, sum = 1.0):
+// WS-2 split (w_e=0.25, w_o=0.15, w_r=0.60, sum = 1.0):
 // [exp] Expert recommendation: encoding should be moderate so a type-importance
 // stub does not completely dominate; retrieval should be strong since it directly
 // measures use; outcome provides a quality signal proportional to usefulness.
@@ -91,10 +107,10 @@ if (Math.abs(W_ENCODING + W_OUTCOME + W_RETRIEVAL - 1.0) > 1e-9) {
 
 // ── WS-1 parity weights ───────────────────────────────────────────────────────
 //
-// These constants reflect the default WS-1 parity weights used when
-// `outcomeWeightEnabled` is false/absent (the default). They preserve the
+// These constants reflect the WS-1 parity weights used when the operator
+// explicitly opts out (`outcomeWeightEnabled: false`). They preserve the
 // WS-1 two-way split (w_e=0.30, w_r=0.70) with w_o=0 so outcome does not
-// affect rankScore until the operator opts in after the Part-V baseline run.
+// affect rankScore in the opt-out mode.
 //
 // Named here (rather than inline literals in the else branch) so a future
 // re-tune has a single source of truth and the sum-to-1 guard below catches
@@ -180,13 +196,12 @@ export interface SalienceInputs {
   /** Injectable clock (ms). Defaults to Date.now(). */
   now?: number;
   /**
-   * WS-2 Part-V gate: when `true` the outcome-weight term (`w_o=0.15`) is
-   * active and weights shift to `w_e=0.25, w_o=0.15, w_r=0.60`.
+   * R1 loop-closure gate: when `true` or absent (the DEFAULT) the
+   * outcome-weight term is active — weights `w_e=0.25, w_o=0.15, w_r=0.60`.
    *
-   * Default `false` (absent) — WS-1 parity weights `w_e=0.30, w_r=0.70`
-   * until the maintainer runs the Part-V measurement protocol
-   * (`scripts/akm-eval` + health report) and opts in via
-   * `improve.salience.outcomeWeightEnabled: true` in the config.
+   * Explicit `false` (operator opt-out via
+   * `improve.salience.outcomeWeightEnabled: false`) restores the WS-1 parity
+   * weights `w_e=0.30, w_r=0.70, w_o=0`.
    */
   outcomeWeightEnabled?: boolean;
 }
@@ -285,15 +300,22 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   //
   // Formula: log(1 + freq) × recencyDecay
   //   log(1+freq): sub-linear frequency term (same as proactive-maintenance prototype).
-  //   recencyDecay: 0.1 + 0.5^(useAgeDays/halflife) — decays to 0.1 floor when stale.
-  //     lastUseMs=0/undefined → useAgeDays=9999 → recencyDecay≈0.1 (floor).
+  //   recencyDecay: max(ε, 0.1·0.5^(useAgeDays/180) + 0.5^(useAgeDays/21)) —
+  //     the fast term halves every 21 days; the 0.1 floor itself halves every
+  //     180 days (R4: SHY-style continuous downscaling — an unreviewed-forever
+  //     asset keeps drifting down instead of parking at the floor). The ε=0.01
+  //     epsilon keeps the frequency term ordinal for unknown-last-use assets.
+  //     lastUseMs=0/undefined → useAgeDays=9999 → recencyDecay=ε.
   //
   // The recency term is MANDATORY (plan requirement §WS-1 step 2). Without it
-  // retrievalSalience degenerates to a non-decaying frequency count and the WS-3
-  // homeostatic step-0 demotion has nothing to act on.
+  // retrievalSalience degenerates to a non-decaying frequency count. This
+  // always-applied decay replaces the deleted homeostatic demotion pass.
   const lastUseMs = inputs.lastUseMs ?? 0;
   const useAgeDays = lastUseMs > 0 ? (now - lastUseMs) / DAY_MS : 9999;
-  const recencyDecay = 0.1 + 0.5 ** (useAgeDays / RECENCY_HALFLIFE_DAYS);
+  const recencyDecay = Math.max(
+    RECENCY_EPSILON,
+    0.1 * 0.5 ** (useAgeDays / RECENCY_FLOOR_HALFLIFE_DAYS) + 0.5 ** (useAgeDays / RECENCY_HALFLIFE_DAYS),
+  );
   const rawRetrieval = Math.log(1 + inputs.retrievalFreq) * recencyDecay;
 
   // ── Size penalty ─────────────────────────────────────────────────────────────
@@ -317,28 +339,27 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   // formula used for MemRL utility updates.
   const retrieval = rawRetrieval / (rawRetrieval + 1);
 
-  // ── Weight selection (Part-V gate) ────────────────────────────────────────
+  // ── Weight selection (R1 — outcome loop closed by default) ───────────────
   //
-  // When `outcomeWeightEnabled` is false/absent (default): use WS-1 parity
-  // weights (w_e=0.30, w_r=0.70, w_o=0) so ranking is unchanged from the WS-1
-  // baseline. The `outcome` sub-score is still computed and stored in the
-  // salience vector for observability, but it does not affect rankScore.
+  // When `outcomeWeightEnabled` is true/absent (DEFAULT ON since the G2
+  // saturation cap landed): use WS-2 weights (w_e=0.25, w_o=0.15, w_r=0.60)
+  // so the prediction-error outcome signal actually shapes rankScore — this
+  // is the R1 loop-closure from docs/design/improve-self-learning-analysis.md.
   //
-  // When `outcomeWeightEnabled` is true (operator opt-in after Part-V run):
-  // use WS-2 weights (w_e=0.25, w_o=0.15, w_r=0.60).
-  //
-  // The constants W_ENCODING, W_OUTCOME, W_RETRIEVAL always reflect the
-  // WS-2 target values for documentation and re-tune reference.
+  // When `outcomeWeightEnabled` is explicitly false (operator opt-out via
+  // `improve.salience.outcomeWeightEnabled: false`): fall back to the WS-1
+  // parity weights (w_e=0.30, w_r=0.70, w_o=0). The `outcome` sub-score is
+  // still computed and stored for observability in that mode.
   let we: number;
   let wo: number;
   let wr: number;
-  if (inputs.outcomeWeightEnabled === true) {
-    // WS-2 active: three-way split from Part-V operator opt-in.
+  if (inputs.outcomeWeightEnabled !== false) {
+    // WS-2 active (default): three-way split.
     we = W_ENCODING; // 0.25
     wo = W_OUTCOME; // 0.15
     wr = W_RETRIEVAL; // 0.60
   } else {
-    // WS-1 parity (default): w_o=0, redistribute to WS-1 proportions.
+    // WS-1 parity (opt-out): w_o=0, redistribute to WS-1 proportions.
     // Original WS-1 split was w_e=0.30, w_r=0.70.
     we = W_ENCODING_PARITY;
     wo = W_OUTCOME_PARITY;

@@ -21,9 +21,11 @@ import {
   isValidWhenToUse,
 } from "../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/improve/distill-promotion-policy";
+import { getAssetSalience } from "../src/commands/improve/salience";
 import { listProposals } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
 import { readEvents } from "../src/core/events";
+import { openStateDatabase } from "../src/core/state-db";
 import { LlmFeatureTimeoutError } from "../src/llm/feature-gate";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -653,7 +655,9 @@ describe("akmDistill — queued proposal", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        receivedPrompt = messages.map((m) => m.content).join("\n");
+        // Capture only the FIRST (distill) prompt — the default-on quality
+        // judge makes a second chat call whose prompt would clobber it.
+        if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
       lookupFn: async () => skillFile,
@@ -721,7 +725,9 @@ describe("akmDistill — queued proposal", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        receivedPrompt = messages.map((m) => m.content).join("\n");
+        // Capture only the FIRST (distill) prompt — the default-on quality
+        // judge makes a second chat call whose prompt would clobber it.
+        if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_KNOWLEDGE;
       },
       lookupFn: noopLookup,
@@ -1027,7 +1033,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        receivedPrompt = messages.map((m) => m.content).join("\n");
+        // Capture only the FIRST (distill) prompt — the default-on quality
+        // judge makes a second chat call whose prompt would clobber it.
+        if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
       lookupFn: noopLookup,
@@ -1051,7 +1059,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        receivedPrompt = messages.map((m) => m.content).join("\n");
+        // Capture only the FIRST (distill) prompt — the default-on quality
+        // judge makes a second chat call whose prompt would clobber it.
+        if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
       lookupFn: noopLookup,
@@ -1590,5 +1600,47 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.outcome).toBe("queued");
     expect(result.lessonRef).toBe("lesson:memory-deploy-tips-lesson");
     expect(listProposals(stash).length).toBe(1);
+  });
+});
+
+// ── R3/G4: judge-verdict routing + output encoding salience ──────────────────
+
+describe("akmDistill — R3 judge verdict routing + G4 output encoding salience", () => {
+  test("queued lesson stamps judgeConfidence on the event and content-scores the OUTPUT ref", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        // The second call is the (default-on) quality judge — return a
+        // parseable passing verdict so confidence is defined.
+        if (joined.includes("Score this lesson")) return JSON.stringify({ score: 4.5, reason: "adds new info" });
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+
+    // R3: the judge verdict is longitudinally queryable on the queued event
+    // (normalized score/5), not just a one-shot proposal.confidence write.
+    const { events } = readEvents({ type: "distill_invoked" });
+    const queued = events.find((e) => e.metadata?.outcome === "queued");
+    expect(queued?.metadata?.judgeConfidence).toBeCloseTo(4.5 / 5, 9);
+
+    // G4: the OUTPUT lesson ref carries a real content-derived encoding score
+    // from creation (lessons are refused as distill inputs, so this is their
+    // only chance to escape the type-weight stub).
+    const db = openStateDatabase();
+    try {
+      const row = getAssetSalience(db, result.lessonRef as string);
+      expect(row).toBeDefined();
+      expect(row?.encoding_source).toBe("content");
+      expect(row?.encoding_salience).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
   });
 });

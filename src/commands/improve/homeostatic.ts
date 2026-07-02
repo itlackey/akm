@@ -5,15 +5,14 @@
 /**
  * WS-3b Step 0 — Intake + homeostatic tier.
  *
- * Three sub-features (all default-OFF, behavior-changing):
+ * Sub-features (0b is default-ON for extract since R3; the rest default-OFF):
  *
- * **0a Homeostatic demotion**
- *   Before any LLM merge, demote `retrievalSalience` (state.db update only —
- *   file content untouched) for stale/low-value assets so the merge pool is
- *   bounded and high-SNR. Neuroscience rationale (SHY): consolidating a
- *   growing corpus without downscaling first means the LLM merges on an
- *   ever-noisier substrate. Re-promotable on re-retrieval (encoding/outcome
- *   salience are preserved; only retrievalSalience is adjusted).
+ * (The former **0a homeostatic demotion** pass was removed (R4,
+ * docs/design/improve-self-learning-analysis.md G3): it was default-off and
+ * self-undoing — the next `upsertAssetSalience` recompute unconditionally
+ * overwrote the demoted values. SHY-style continuous downscaling now lives in
+ * `computeSalience`'s always-applied recency decay, whose 0.1 floor itself
+ * decays on a long half-life so unreviewed-forever assets keep drifting down.)
  *
  * **0b Schema-similarity gate**
  *   At intake, if a new candidate's body embedding is within ε of an existing
@@ -46,17 +45,10 @@
  * @module homeostatic
  */
 
-import type { Database } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-/** Default days-since-last-retrieval threshold to consider an asset stale. */
-export const DEFAULT_STALE_DAYS = 30;
-
-/** Default retrievalSalience demotion factor for stale assets. */
-export const DEFAULT_DEMOTION_FACTOR = 0.5;
 
 /** Default epsilon for schema-similarity gate (looser than dedup's 0.97). */
 export const DEFAULT_SCHEMA_SIMILARITY_EPSILON = 0.85;
@@ -72,119 +64,6 @@ export const DEFAULT_RANDOM_CLUSTER_FRACTION = 0.05;
 
 /** Default number of adjacent lessons/knowledge for CLS interleaving. */
 export const DEFAULT_CLS_ADJACENT_COUNT = 3;
-
-// ── Homeostatic demotion (step 0a) ────────────────────────────────────────────
-
-export interface HomeostaticDemotionConfig {
-  enabled?: boolean;
-  staleDays?: number;
-  demotionFactor?: number;
-}
-
-export interface HomeostaticDemotionResult {
-  /** Number of assets whose retrievalSalience was demoted this run. */
-  demoted: number;
-  /** Warnings from the demotion pass. */
-  warnings: string[];
-}
-
-/**
- * Demote `retrievalSalience` in state.db for stale/low-value assets.
- *
- * "Stale" = the asset has a salience row with `updated_at` older than
- * `staleDays` AND `retrieval_salience > 0`. Demotion multiplies the current
- * `retrieval_salience` by `demotionFactor` (default 0.5) and records
- * `homeostatic_demoted_at` so the pass can be observed.
- *
- * Pure state.db operation — no file I/O, no LLM calls. Idempotent: running
- * twice in the same run only demotes the already-demoted value a second time,
- * which is bounded (0.5 × 0.5 = 0.25) and corrected on re-retrieval.
- *
- * Called BEFORE the dedup/LLM-merge pool is assembled so the merge pool
- * already reflects the updated scores.
- */
-export function runHomeostaticDemotion(
-  db: Database,
-  config: HomeostaticDemotionConfig,
-  now?: number,
-): HomeostaticDemotionResult {
-  const warnings: string[] = [];
-  if (!config.enabled) return { demoted: 0, warnings };
-
-  const staleDays = config.staleDays ?? DEFAULT_STALE_DAYS;
-  const demotionFactor = config.demotionFactor ?? DEFAULT_DEMOTION_FACTOR;
-  const nowMs = now ?? Date.now();
-  const staleThresholdMs = nowMs - staleDays * 86_400_000;
-
-  try {
-    // Find assets whose salience row is stale AND has non-zero retrievalSalience.
-    // updated_at reflects the last time salience was computed (i.e. the last run
-    // that touched this asset). If the asset hasn't been seen recently, its
-    // retrieval_salience is stale.
-    const staleRows = db
-      .prepare(
-        `SELECT asset_ref, retrieval_salience, rank_score, encoding_salience, outcome_salience
-         FROM asset_salience
-         WHERE updated_at < ? AND retrieval_salience > 0`,
-      )
-      .all(staleThresholdMs) as Array<{
-      asset_ref: string;
-      retrieval_salience: number;
-      rank_score: number;
-      encoding_salience: number;
-      outcome_salience: number;
-    }>;
-
-    if (staleRows.length === 0) return { demoted: 0, warnings };
-
-    // Batch update in a transaction for atomicity and performance.
-    const updateStmt = db.prepare(
-      `UPDATE asset_salience
-       SET retrieval_salience = ?,
-           rank_score = ?,
-           homeostatic_demoted_at = ?,
-           updated_at = ?
-       WHERE asset_ref = ?`,
-    );
-
-    let demoted = 0;
-    db.exec("BEGIN");
-    try {
-      for (const row of staleRows) {
-        const newRetrieval = row.retrieval_salience * demotionFactor;
-        // Recompute rank_score with the demoted retrieval value.
-        // We use simplified WS-1 parity weights here (no outcome weight by
-        // default) so the demotion is consistent with what salience.ts computes.
-        // The next full computeSalience call will overwrite with the exact value.
-        const newRank = Math.min(
-          1,
-          Math.max(
-            0,
-            (0.3 * row.encoding_salience + 0.0 * row.outcome_salience + 0.7 * newRetrieval) *
-              // Apply a mild size penalty assumption (200 bytes floor gives 1/log10(200)≈0.43)
-              0.43,
-          ),
-        );
-        updateStmt.run(newRetrieval, newRank, nowMs, nowMs, row.asset_ref);
-        demoted++;
-      }
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-
-    warn(
-      `[homeostatic] demoted retrievalSalience for ${demoted} stale asset(s) (staleDays=${staleDays}, factor=${demotionFactor})`,
-    );
-    return { demoted, warnings };
-  } catch (err) {
-    const msg = `[homeostatic] demotion failed: ${err instanceof Error ? err.message : String(err)}`;
-    warn(msg);
-    warnings.push(msg);
-    return { demoted: 0, warnings };
-  }
-}
 
 // ── Schema-similarity gate (step 0b) ─────────────────────────────────────────
 

@@ -2,7 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Database } from "../../storage/database";
+import fs from "node:fs";
+import { makeAssetRef } from "../../core/asset/asset-ref";
+import type { AkmAssetType } from "../../core/common";
+import { getStateDbPath } from "../../core/state-db";
+import { type Database, openDatabase } from "../../storage/database";
 import { type DbSearchResult, getUtilityScoresByIds } from "../db/db";
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { StashEntry } from "../passes/metadata";
@@ -52,6 +56,64 @@ export interface RankEntriesOptions {
    * scoped signal when it exists (blend 0.7 scoped + 0.3 global).
    */
   scopeKey?: string;
+  /**
+   * R2 — improve-loop salience scores (`asset_salience.rank_score`) keyed by
+   * entry id. `undefined` (default) = load best-effort from state.db;
+   * `null` = explicitly disabled; a Map = injected (tests / callers that
+   * already hold the data).
+   */
+  salienceRankScores?: Map<number, number> | null;
+}
+
+/**
+ * R2 — best-effort load of `asset_salience.rank_score` from state.db for the
+ * ranked items. Fail-open: any error (state.db locked by a concurrent improve
+ * run, missing table, unreadable path) returns an empty map, which makes the
+ * salience contributor a no-op — byte-identical to pre-R2 ranking.
+ *
+ * Deliberately NOT `openStateDatabase()`: that helper runs migrations and sets
+ * a 30 s busy timeout — too heavy for a search hot path. This opens read-only,
+ * never creates or migrates state.db (missing file / missing table = empty
+ * map), and caps lock waits at 250 ms so a concurrent improve run can only
+ * ever cost the search a quarter second, not a stall.
+ */
+export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, number> {
+  const result = new Map<number, number>();
+  if (items.length === 0) return result;
+  try {
+    const dbPath = getStateDbPath();
+    if (!fs.existsSync(dbPath)) return result; // improve loop has never run here
+    const idByRef = new Map<string, number>();
+    for (const item of items) {
+      idByRef.set(makeAssetRef(item.entry.type as AkmAssetType, item.entry.name), item.id);
+    }
+    const stateDb = openDatabase(dbPath, { readonly: true });
+    try {
+      try {
+        stateDb.exec("PRAGMA busy_timeout = 250");
+      } catch {
+        // pragma failure on a readonly handle is fine — default timeout applies
+      }
+      const refs = [...idByRef.keys()];
+      const CHUNK = 500;
+      for (let i = 0; i < refs.length; i += CHUNK) {
+        const chunk = refs.slice(i, i + CHUNK);
+        const placeholders = chunk.map(() => "?").join(",");
+        const rows = stateDb
+          .prepare(`SELECT asset_ref, rank_score FROM asset_salience WHERE asset_ref IN (${placeholders})`)
+          .all(...chunk) as Array<{ asset_ref: string; rank_score: number }>;
+        for (const row of rows) {
+          const id = idByRef.get(row.asset_ref);
+          if (id !== undefined) result.set(id, row.rank_score);
+        }
+      }
+    } finally {
+      stateDb.close();
+    }
+  } catch {
+    // Fail open — search must never break because state.db is unavailable.
+  }
+  return result;
 }
 
 export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
@@ -146,12 +208,19 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
     options.items.map((item) => item.id),
     options.scopeKey,
   );
+  // R2 — compose the improve loop's salience into user-facing ranking.
+  // undefined = load from state.db (default); null = explicitly disabled.
+  const salienceRankScores =
+    options.salienceRankScores === null
+      ? new Map<number, number>()
+      : (options.salienceRankScores ?? loadSalienceRankScores(options.items));
   const utilityContext = {
     ...rankingContext,
     utilityScores: utilScoresMap,
     scopedUtilityScores: scopedUtilScoresMap,
     utilityDecayConfig: options.utilityDecayConfig,
     positiveFeedbackCounts: options.positiveFeedbackCounts,
+    salienceRankScores,
   };
   for (const item of options.items) {
     applyUtilityContributors(item, utilityContext);

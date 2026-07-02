@@ -73,16 +73,17 @@ describe("WS-1/WS-2 weight contract", () => {
     expect(W_RETRIEVAL_PARITY).toBe(0.7);
   });
 
-  test("default-off ranking uses parity constants (no bare literals in else branch)", () => {
-    // With outcomeWeightEnabled absent (default), rankScore must match the
-    // formula using parity constants. Verify by computing with high outcomeSalience:
-    // the outcome term must be zeroed (W_OUTCOME_PARITY=0).
+  test("opt-out ranking uses parity constants (no bare literals in else branch)", () => {
+    // With outcomeWeightEnabled=false (explicit opt-out), rankScore must match
+    // the formula using parity constants. Verify by computing with high
+    // outcomeSalience: the outcome term must be zeroed (W_OUTCOME_PARITY=0).
     const vHigh = computeSalience({
       ref: "skill:foo",
       type: "skill",
       retrievalFreq: 5,
       lastUseMs: NOW,
       outcomeSalience: 1.0,
+      outcomeWeightEnabled: false,
       now: NOW,
     });
     const vZero = computeSalience({
@@ -91,6 +92,7 @@ describe("WS-1/WS-2 weight contract", () => {
       retrievalFreq: 5,
       lastUseMs: NOW,
       outcomeSalience: 0,
+      outcomeWeightEnabled: false,
       now: NOW,
     });
     // rankScore must be identical since W_OUTCOME_PARITY=0 zeros the outcome term.
@@ -178,9 +180,9 @@ describe("computeSalience — outcome sub-score", () => {
     expect(v.outcome).toBe(1.0);
   });
 
-  test("outcome does NOT affect rankScore by default (Part-V gate, default-off)", () => {
-    // Default: outcomeWeightEnabled absent/false → WS-1 parity weights (w_o=0).
-    // outcomeSalience is stored in the vector but does not change rankScore.
+  test("outcome affects rankScore by DEFAULT (R1 loop closure) and not on explicit opt-out", () => {
+    // Default: outcomeWeightEnabled absent → WS-2 weights (w_o=0.15) — the
+    // outcome signal shapes ranking out of the box.
     const vHigh = computeSalience({
       ref: "skill:foo",
       type: "skill",
@@ -195,15 +197,34 @@ describe("computeSalience — outcome sub-score", () => {
       outcomeSalience: 0,
       now: NOW,
     });
-    // rankScore must be identical — outcome term is zeroed in default mode.
-    expect(vHigh.rankScore).toBe(vZero.rankScore);
+    expect(vHigh.rankScore).toBeGreaterThan(vZero.rankScore);
+
+    // Explicit opt-out: outcomeWeightEnabled=false → WS-1 parity (w_o=0);
+    // outcomeSalience is stored in the vector but does not change rankScore.
+    const vHighOff = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 1.0,
+      outcomeWeightEnabled: false,
+      now: NOW,
+    });
+    const vZeroOff = computeSalience({
+      ref: "skill:foo",
+      type: "skill",
+      retrievalFreq: 0,
+      outcomeSalience: 0,
+      outcomeWeightEnabled: false,
+      now: NOW,
+    });
+    expect(vHighOff.rankScore).toBe(vZeroOff.rankScore);
     // outcome sub-score is still stored in the vector for observability.
-    expect(vHigh.outcome).toBe(1.0);
-    expect(vZero.outcome).toBe(0);
+    expect(vHighOff.outcome).toBe(1.0);
+    expect(vZeroOff.outcome).toBe(0);
   });
 
-  test("default-off rankScore matches WS-1 parity formula exactly (ranking-invariance assertion)", () => {
-    // Integration invariant: omitting outcomeWeightEnabled must produce rankScore
+  test("opt-out rankScore matches WS-1 parity formula exactly (ranking-invariance assertion)", () => {
+    // Integration invariant: outcomeWeightEnabled=false must produce rankScore
     // equal to (W_ENCODING_PARITY * encoding + W_RETRIEVAL_PARITY * retrieval) *
     // sizePenalty, clamped to [0,1].  This test uses deterministic inputs and
     // replicates the sizePenalty computation inline so any future accidental drift
@@ -215,7 +236,8 @@ describe("computeSalience — outcome sub-score", () => {
       retrievalFreq: 8,
       lastUseMs: NOW - 3 * DAY_MS,
       sizeBytes: SIZE_BYTES,
-      outcomeSalience: 0.85, // non-zero; must NOT appear in the default-off rankScore
+      outcomeSalience: 0.85, // non-zero; must NOT appear in the opt-out rankScore
+      outcomeWeightEnabled: false,
       now: NOW,
     });
 
@@ -318,6 +340,28 @@ describe("computeSalience — retrieval sub-score", () => {
     });
     // Never-used asset should score significantly lower than recently-used one.
     expect(noUse.retrieval).toBeLessThan(recent.retrieval);
+  });
+
+  test("recency floor keeps decaying on the long half-life (R4 — no parking at 0.1)", () => {
+    // Under the old formula both very-stale assets parked at the 0.1 floor and
+    // became indistinguishable. The floor now halves every 180 days, so an
+    // unreviewed-forever asset keeps drifting down monotonically.
+    const at = (days: number) =>
+      computeSalience({
+        ref: "lesson:foo",
+        type: "lesson",
+        retrievalFreq: 5,
+        lastUseMs: NOW - days * DAY_MS,
+        now: NOW,
+      }).retrieval;
+    const d100 = at(100);
+    const d400 = at(400);
+    const d800 = at(800);
+    expect(d400).toBeLessThan(d100);
+    expect(d800).toBeLessThan(d400);
+    // And an 800-day-stale asset sits well below the old 0.1-floor equivalent:
+    // old formula gave log(1+5)×~0.1 → normalised ≈ 0.152.
+    expect(d800).toBeLessThan(0.05);
   });
 });
 

@@ -31,9 +31,7 @@ import {
   checkGenerationGuard,
   checkLexicalDiversity,
   computeMergedGeneration,
-  type HomeostaticDemotionConfig,
   readAssetGeneration,
-  runHomeostaticDemotion,
   shouldSkipHotProbationInLlm,
 } from "./homeostatic";
 import { writeContradictEdge } from "./memory/memory-belief";
@@ -877,17 +875,25 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 
 /**
  * Stable content hash for a memory file used by the judged-state cache (#581)
- * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts:
- * sha256 of the case-preserving stripped body. Two memories that differ only
- * in frontmatter (`updated:`, `inferenceProcessed:`) hash identically, so a
- * cosmetic frontmatter touch never forces a needless re-judge — only a body
- * change does. Returns `undefined` on any read/parse error so callers fail
- * open (treat the memory as un-cached → it stays in the LLM pool).
+ * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts
+ * (sha256 of the case-preserving stripped body) plus the sorted `tags` list,
+ * so semantic-metadata drift re-enters the judge while cosmetic frontmatter
+ * touches (`updated:`, `inferenceProcessed:`) still hash identically and never
+ * force a needless re-judge. Returns `undefined` on any read/parse error so
+ * callers fail open (treat the memory as un-cached → it stays in the LLM pool).
  */
 function computeMemoryContentHash(filePath: string): string | undefined {
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    return cacheHash(raw);
+    let tagSuffix = "";
+    try {
+      const { data } = parseFrontmatter(raw);
+      const tags = Array.isArray(data?.tags) ? data.tags.map(String).sort() : [];
+      if (tags.length > 0) tagSuffix = `\n\u0000tags:${tags.join(",")}`;
+    } catch {
+      // Unparseable frontmatter → body-only hash (prior behaviour).
+    }
+    return cacheHash(raw + tagSuffix);
   } catch {
     return undefined;
   }
@@ -969,24 +975,10 @@ async function akmConsolidateInner(
   }
   memories = memories.filter((m) => fs.existsSync(m.filePath));
 
-  // ── WS-3b Step 0a: Homeostatic demotion ────────────────────────────────────
-  // DEFAULT OFF. Before any LLM merge, demote retrievalSalience in state.db
-  // for stale/low-value assets so the merge pool is bounded and high-SNR.
-  // Demotion is state.db-only (file content untouched); re-promotable on
-  // re-retrieval. Only fires when `homeostaticDemotion.enabled === true`.
-  const homeostaticConfig: HomeostaticDemotionConfig =
-    (config.profiles?.improve?.default?.processes?.consolidate?.homeostaticDemotion as
-      | HomeostaticDemotionConfig
-      | undefined) ?? {};
-  if (homeostaticConfig.enabled && sharedStateDb) {
-    const demotionResult = runHomeostaticDemotion(sharedStateDb, homeostaticConfig);
-    if (demotionResult.demoted > 0) {
-      warnings.push(
-        `Homeostatic demotion: demoted retrievalSalience for ${demotionResult.demoted} stale asset(s) before merge pool assembly.`,
-      );
-    }
-    warnings.push(...demotionResult.warnings);
-  }
+  // (The former WS-3b Step 0a homeostatic demotion pass was removed — R4:
+  // it was default-off and self-undoing (the next salience recompute
+  // unconditionally overwrote the demoted values). Continuous decay now lives
+  // in computeSalience's recency term, whose floor decays on a long half-life.)
 
   // ── WS-3b Step 0c: Filter hot-probation assets from LLM merge pool ─────────
   // Hot-probation assets (system-generated, not yet graduated from intake pass)

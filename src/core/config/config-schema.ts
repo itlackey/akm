@@ -190,6 +190,9 @@ export const ImproveProcessConfigSchema = z
     // byte-identically to today (the incrementalSince path is unaffected). Only
     // meaningful on the `consolidate` process.
     judgedCache: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
+    // Distill process: LLM-as-judge lesson quality gate. Default ON (R3);
+    // fail-open — judge failure/timeout/parse errors pass through. Set
+    // `enabled: false` on the distill process to opt out.
     qualityGate: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     // Extract process config (only meaningful for extract process)
@@ -269,24 +272,13 @@ export const ImproveProcessConfigSchema = z
     // once sufficient history accumulates; this value is only used on the very
     // first run. Default 30 s. Only meaningful on the `consolidate` process.
     p90ChunkSecondsDefault: z.number().finite().positive().optional(),
-    // WS-3b: Homeostatic demotion (step 0a). Before any LLM merge, demote
-    // retrievalSalience for stale/low-value assets so the merge pool is bounded
-    // and high-SNR. Demotion is state.db-only (file content untouched);
-    // re-promotable on re-retrieval. Default OFF. Only meaningful on the
-    // `consolidate` process.
-    homeostaticDemotion: z
-      .object({
-        enabled: z.boolean().optional(),
-        // Minimum days since last retrieval to consider an asset stale (default 30).
-        staleDays: z.number().int().min(0).optional(),
-        // Demotion factor: multiply retrievalSalience by this when stale (default 0.5).
-        demotionFactor: z.number().min(0).max(1).optional(),
-      })
-      .passthrough()
-      .optional(),
+    // (WS-3b step 0a `homeostaticDemotion` was removed — R4. The key is
+    // tolerated via passthrough if an old config still carries it; continuous
+    // decay is now part of the always-applied salience recency term.)
     // WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
     // body embedding is within epsilon of an existing derived-layer lesson/knowledge
-    // node, mark it schema-consistent and lower its priority. Default OFF.
+    // node, mark it schema-consistent and lower its priority. Default ON for
+    // the `extract` process since R3 (fail-open; set `enabled: false` to opt out).
     // Only meaningful on the `consolidate` and `extract` processes.
     schemaSimilarity: z
       .object({

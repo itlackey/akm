@@ -23,6 +23,7 @@ import {
   getAllAssetOutcomes,
   getAssetOutcome,
   getOutcomeScoresByRef,
+  OUTCOME_SCORE_MAX,
   outcomeScoreToSalience,
   REVIEW_PRESSURE_DECAY,
   REVIEW_PRESSURE_INCREMENT,
@@ -267,6 +268,36 @@ describe("updateAssetOutcome — differential update (second call)", () => {
 
       // Should be clamped to -1.0 (OUTCOME_SCORE_MIN).
       expect(result.outcomeScore).toBeGreaterThanOrEqual(-1.0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("outcome_score is clamped to OUTCOME_SCORE_MAX (RPE saturation, G2)", () => {
+    const { db } = openTestDb();
+    try {
+      // Seed a legacy unbounded row above the ceiling (live max was 3.13).
+      db.prepare(
+        `INSERT INTO asset_outcome
+           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
+            negative_feedback_count, accepted_change_count, review_pressure,
+            outcome_score, updated_at)
+         VALUES ('lesson:theta', 0, 100, 0.0, 0, 100, 0, 3.13, ?)`,
+      ).run(NOW);
+
+      // Strongly positive cycle: big surprise delta, full acceptance, +1 valence.
+      const result = updateAssetOutcome(db, {
+        ref: "lesson:theta",
+        currentRetrievalCount: 200,
+        lastRetrievedAt: NOW,
+        acceptedChangeCount: 200,
+        negativeFeedbackCount: 0,
+        valence: 1.0,
+        now: NOW + 1000,
+      });
+
+      // Even from a legacy 3.13 seed, the update converges under the ceiling.
+      expect(result.outcomeScore).toBeLessThanOrEqual(OUTCOME_SCORE_MAX);
     } finally {
       db.close();
     }

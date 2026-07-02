@@ -64,8 +64,12 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
   metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
   // Legacy default: false
   curate_rerank: (cfg) => cfg.search?.curateRerank?.enabled ?? false,
-  // Legacy default: false
-  lesson_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.qualityGate?.enabled ?? false,
+  // Default ON since R3 (docs/design/improve-self-learning-analysis.md G5):
+  // distill is a primary acquisition path and the judge fails open (no LLM /
+  // timeout / parse failure all pass through), so the gate only ever filters
+  // when a judge verdict actually exists. Opt out via
+  // profiles.improve.default.processes.distill.qualityGate.enabled: false.
+  lesson_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.qualityGate?.enabled ?? true,
   // Legacy default: false
   proposal_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.reflect?.qualityGate?.enabled ?? false,
   // Legacy default: false

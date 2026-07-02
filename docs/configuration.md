@@ -278,7 +278,7 @@ and the published [JSON schema](https://itlackey.github.io/akm/schemas/akm-confi
 | --- | --- | --- |
 | `reflect` | enabled, all markdown types | Reflection pass — generates per-asset proposals. `qualityGate.enabled` runs an LLM-as-judge check; `lowValueFilter.enabled` defers low-value proposals. |
 | `distill` | enabled, `memory` only | Turns feedback into lesson proposals. `qualityGate.enabled`, `requirePlannedRefs`, `cls`, `fidelityCheck`. |
-| `consolidate` | enabled, `memory` only | Memory dedup / promotion. `minPoolSize`, `incrementalSince`, `dedup`, `judgedCache`, `homeostaticDemotion`, `schemaSimilarity`, `antiCollapse`, `contradictionDetection`. |
+| `consolidate` | enabled, `memory` only | Memory dedup / promotion. `minPoolSize`, `incrementalSince`, `dedup`, `judgedCache`, `schemaSimilarity`, `antiCollapse`, `contradictionDetection`. (The standalone `homeostaticDemotion` pass and config key were removed 2026-07-02 — decay now lives in the salience recency term; old configs setting it are tolerated but have no effect.) |
 | `memoryInference` | enabled | Derives structured memories from pending memory files. `minPendingCount`, `cls`. |
 | `graphExtraction` | enabled | Extracts entities/relations for graph-boosted search. `fullScan`, `topN`. |
 | `extract` | enabled | Reads native session files and extracts insight proposals via LLM. `defaultSince`, `maxTotalChars`, `minContentChars`, `minNewSessions`, `maxSessionsPerRun`, `indexSessions`, `minSessionDuration`, `triage` (`{enabled, minScore}`), `hotProbation`. |
@@ -360,7 +360,7 @@ measuring with `scripts/akm-eval` + the health report.
       "budgetFraction": 0.05      // fraction per run [0,1] (default 0.05 = 5%)
     },
     "salience": {
-      "outcomeWeightEnabled": false, // enable the WS-2 outcome-weight term in salience (default false)
+      "outcomeWeightEnabled": true,  // enable the WS-2 outcome-weight term in salience (default true; set false to opt out and restore parity weights we=0.30/wr=0.70/wo=0)
       "salienceThreshold": 0.75,     // min encoding salience for the high-salience lane; 1.0 disables it
       "replayBudget": 0              // additive per-run top-salience refs to revisit (default 0 = no replay)
     }

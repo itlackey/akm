@@ -105,6 +105,16 @@ export const WARM_START_CAP = 0.3;
 export const OUTCOME_SCORE_MIN = -1.0;
 
 /**
+ * Saturation ceiling: the maximum outcome_score. Biological RPE saturates —
+ * a fully predicted reward produces zero response, not an ever-growing one —
+ * so a long-lived popular asset must not accrue unbounded outcome mass that
+ * would dominate ranking once the outcome weight is enabled (analysis G2).
+ * 1.5 comfortably exceeds the max plausible single-cycle raw update while
+ * keeping the normalised outcomeSalience spread meaningful.
+ */
+export const OUTCOME_SCORE_MAX = 1.5;
+
+/**
  * Diversity floor: `outcomeSalience` for any asset is at least this fraction
  * of the maximum observed `outcome_score` in the table, so rare-but-correct
  * assets cannot be permanently outcompeted. 0 = disabled (pure competition).
@@ -249,9 +259,12 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     const rawUpdate = predictionError - penalty + valence;
     const newScore = OUTCOME_EMA_ALPHA * rawUpdate + (1 - OUTCOME_EMA_ALPHA) * existing.outcome_score;
 
-    // Clip to [OUTCOME_SCORE_MIN, +Infinity) — no upper cap so that very-active
-    // useful assets can accumulate a high positive score.
-    outcomeScore = Math.max(OUTCOME_SCORE_MIN, newScore);
+    // Clip to [OUTCOME_SCORE_MIN, OUTCOME_SCORE_MAX] — the ceiling is the RPE
+    // saturation analog (G2): without it, long-lived popular assets accumulate
+    // unbounded positive mass (live max was 3.13) and would dominate rank_score
+    // the moment the outcome weight is enabled. Stored legacy scores above the
+    // ceiling converge back under it on their next differential update.
+    outcomeScore = Math.min(OUTCOME_SCORE_MAX, Math.max(OUTCOME_SCORE_MIN, newScore));
 
     // ── review_pressure (#613) ─────────────────────────────────────────────
     // New negatives this cycle.
