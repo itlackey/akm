@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
+import type { IndexResponse } from "../../src/indexer/indexer";
+import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import * as actualAgentIntegration from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { _setDetectForTests } from "../../src/setup/detect";
@@ -25,6 +27,29 @@ const promptState = {
   outros: [] as string[],
 };
 
+function makeIndexResult(): IndexResponse {
+  return {
+    stashDir: DEFAULT_STASH_DIR,
+    totalEntries: 3,
+    generatedMetadata: 0,
+    indexPath: path.join(DEFAULT_STASH_DIR, "index.db"),
+    mode: "full",
+    directoriesScanned: 1,
+    directoriesSkipped: 0,
+    verification: {
+      ok: true,
+      message: "semantic search verified",
+      semanticSearchEnabled: true,
+      semanticSearchMode: "auto",
+      semanticStatus: "ready-js",
+      embeddingProvider: "local",
+      entryCount: 3,
+      embeddingCount: 3,
+      vecAvailable: false,
+    },
+  };
+}
+
 const setupState = {
   currentConfig: {
     semanticSearchMode: "auto",
@@ -39,10 +64,7 @@ const setupState = {
     | { available: true }
     | { available: false; reason: "missing-package" | "model-download-failed" | "remote-unreachable"; message: string },
   transformersAvailable: true,
-  indexResult: {
-    totalEntries: 3,
-    verification: { ok: true, message: "semantic search verified" },
-  } as Record<string, unknown>,
+  indexResult: makeIndexResult(),
   indexError: undefined as Error | undefined,
   vecAvailable: false,
 };
@@ -82,10 +104,7 @@ function resetSetupState(): void {
   setupState.detectAgentPlatformsResult = [];
   setupState.checkEmbeddingResult = { available: true };
   setupState.transformersAvailable = true;
-  setupState.indexResult = {
-    totalEntries: 3,
-    verification: { ok: true, message: "semantic search verified" },
-  };
+  setupState.indexResult = makeIndexResult();
   setupState.indexError = undefined;
   setupState.vecAvailable = false;
 }
@@ -96,6 +115,25 @@ function installAgentIntegrationMock(): void {
     detectAgentCliProfiles: () => [],
     pickDefaultAgentProfile: () => undefined,
   }));
+}
+
+function installIndexerSeam(): void {
+  overrideSeam(_setAkmIndexForTests, async (options) => {
+    setupState.indexCalls.push({
+      stashDir: options?.stashDir ?? "",
+      enrich: (options as { enrich?: boolean } | undefined)?.enrich,
+    });
+    if (setupState.indexError) {
+      throw setupState.indexError;
+    }
+    return setupState.indexResult;
+  });
+}
+
+function installIndexerNeverRunsSeam(): void {
+  overrideSeam(_setAkmIndexForTests, async () => {
+    throw new Error("index should not run");
+  });
 }
 
 function installDefaultTasksMock(): void {
@@ -197,15 +235,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        if (setupState.indexError) {
-          throw setupState.indexError;
-        }
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -307,15 +337,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        if (setupState.indexError) {
-          throw setupState.indexError;
-        }
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -422,15 +444,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        if (setupState.indexError) {
-          throw setupState.indexError;
-        }
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -527,12 +541,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -620,12 +629,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -706,12 +710,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => {
         throw new Error("db locked");
@@ -791,12 +790,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
-        setupState.indexCalls.push({ stashDir, enrich });
-        return setupState.indexResult;
-      },
-    }));
+    installIndexerSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -869,11 +863,7 @@ describe("runSetupWizard", () => {
       setupState.initCalls.push({ dir });
       return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async () => {
-        throw new Error("index should not run");
-      },
-    }));
+    installIndexerNeverRunsSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
@@ -941,11 +931,7 @@ describe("runSetupWizard", () => {
     overrideSeam(_setAkmInitForTests, async () => {
       throw new Error("EACCES stash init");
     });
-    mock.module("../../src/indexer/indexer", () => ({
-      akmIndex: async () => {
-        throw new Error("index should not run");
-      },
-    }));
+    installIndexerNeverRunsSeam();
     mock.module("../../src/indexer/db/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},

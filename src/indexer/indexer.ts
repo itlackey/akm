@@ -424,7 +424,21 @@ function runCleanPass(db: Database, dryRun: boolean): IndexCleanResult {
 
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+let akmIndexOverride: typeof akmIndexReal | undefined;
+
+/** TEST-ONLY. Swap the implementation of `akmIndex`; pass undefined to restore. */
+export function _setAkmIndexForTests(fake?: typeof akmIndexReal): void {
+  akmIndexOverride = fake;
+}
+
 export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
+  if (akmIndexOverride) return akmIndexOverride(options);
+  return akmIndexReal(options);
+}
+
+async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
   return withIndexWriterLease({ purpose: "akm-index", signal: options?.signal }, async () => {
     const stashDir = options?.stashDir || resolveStashDir();
     const onProgress = options?.onProgress ?? (() => {});
