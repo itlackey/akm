@@ -23,6 +23,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { fetchWebsiteMarkdownSnapshot, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
@@ -186,6 +187,9 @@ export async function writeMarkdownAsset(options: {
   // 0.9.0 (issue #507): single batch commit at the write boundary for git
   // targets. No-op for filesystem/primary-stash targets.
   commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
+  // Write-path indexing: the asset is searchable immediately. Fail-open; reads
+  // no longer trigger reindexes, so keeping the index current is the writer's job.
+  await indexWrittenAssets(source.path, [result.path]);
   return {
     ref: result.ref,
     path: result.path,

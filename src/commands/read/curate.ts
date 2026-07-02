@@ -21,13 +21,13 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { closeDatabase, computeBodyHash, openExistingDatabase } from "../../indexer/db/db";
+import { computeBodyHash } from "../../indexer/db/db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent } from "../../indexer/usage/usage-events";
 import { truncateDescription } from "../../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
-import { withIndexDb } from "../../storage/repositories/index-db";
+import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -150,29 +150,29 @@ function logCurateEvent(query: string, result: CurateResponse): void {
   });
 
   try {
-    const db = openExistingDatabase();
-    try {
-      insertUsageEvent(db, {
-        event_type: "curate",
-        query,
-        metadata: JSON.stringify({
-          itemCount: result.items.length,
-          itemRefs,
-        }),
-        source: "user",
-      });
-      for (const item of result.items) {
-        if (!("ref" in item) || typeof item.ref !== "string") continue;
+    withIndexDb(
+      (db) => {
         insertUsageEvent(db, {
           event_type: "curate",
           query,
-          entry_ref: item.ref,
+          metadata: JSON.stringify({
+            itemCount: result.items.length,
+            itemRefs,
+          }),
           source: "user",
         });
-      }
-    } finally {
-      closeDatabase(db);
-    }
+        for (const item of result.items) {
+          if (!("ref" in item) || typeof item.ref !== "string") continue;
+          insertUsageEvent(db, {
+            event_type: "curate",
+            query,
+            entry_ref: item.ref,
+            source: "user",
+          });
+        }
+      },
+      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
+    );
   } catch (err) {
     rethrowIfTestIsolationError(err);
   }
@@ -309,11 +309,14 @@ function maybeEnqueueLazyGraph(assetPath: string): void {
     if (!body) return;
     const bodyHash = computeBodyHash(body);
 
-    withIndexDb((db) => {
-      if (!hasGraphData(db, stashRoot, assetPath)) {
-        enqueueGraphExtraction(db, stashRoot, assetPath, bodyHash, 0);
-      }
-    });
+    withIndexDb(
+      (db) => {
+        if (!hasGraphData(db, stashRoot, assetPath)) {
+          enqueueGraphExtraction(db, stashRoot, assetPath, bodyHash, 0);
+        }
+      },
+      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
+    );
   } catch (err) {
     rethrowIfTestIsolationError(err);
   }

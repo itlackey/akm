@@ -3,24 +3,30 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Auto-index: silently run an incremental `akm index` when the local index
- * is stale or absent, so that `search`, `show`, and `feedback` always operate
- * against current on-disk state without requiring the user to manually run
- * `akm index` first.
+ * Auto-index bootstrap: silently build the local index inline when it cannot
+ * serve the caller's stash at all (missing DB, no `entries` table, zero rows,
+ * or built for a different stash), so `search`, `show`, and `feedback` work
+ * on first use without a manual `akm index`.
  *
- * This replaces the old filesystem fallbacks that were scattered across
- * `searchLocal()` and `show.ts`, centralizing the "indexed yet?" gap handling
- * behind a single entry point.
+ * Content FRESHNESS is intentionally not this module's job on the read path.
+ * Writers maintain the index (`indexWrittenAssets` for `remember`/extract
+ * session assets; the mutation commands run `akmIndex()` themselves), and the
+ * improve cron / explicit `akm index` do full refreshes. Reads serve whatever
+ * populated index exists. The previous design — a staleness walk plus a
+ * detached background reindex per read — made every read on an actively
+ * written stash spawn a writer that the read's own telemetry then queued
+ * behind (see docs/design/read-path-reindex-contention-findings.md).
+ *
+ * `mode: "blocking"` (improve) still checks staleness and rebuilds inline,
+ * because its planning logic needs a current `entries` table in-process.
  */
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
-import { getDataDir, getDbPath } from "../core/paths";
+import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistingDatabase } from "./db/db";
-import { acquireIndexWriterLease, handoffIndexWriterLeaseToPid } from "./index-writer-lock";
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
@@ -137,12 +143,9 @@ export function isIndexStale(stashDir: string): boolean {
  * i.e. the DB file exists, the `entries` table holds rows, and those rows were
  * built for this stash (it is the stored primary stash or appears in the
  * stored `stashDirs` set). When this is true the index is at worst
- * content-stale, so the `#607` background-reindex optimization is safe: the
- * caller gets slightly-stale-but-relevant results immediately. When it is
- * false the existing index has nothing relevant to return (no DB, no `entries`
- * table, zero rows, or built for a different stash), so a background reindex
- * would leave the caller empty until the next read — those cases must rebuild
- * inline.
+ * content-stale, so read paths serve it as-is. When it is false the existing
+ * index has nothing relevant to return (no DB, no `entries` table, zero rows,
+ * or built for a different stash), so those cases must rebuild inline.
  */
 function indexCanServeStash(stashDir: string): boolean {
   const dbPath = getDbPath();
@@ -169,46 +172,6 @@ function indexCanServeStash(stashDir: string): boolean {
   }
 }
 
-/**
- * Spawn a background `akm index` process. Non-blocking — returns immediately.
- * Background callers share the same global index-writer lease as foreground
- * writers, so stale-read-triggered auto-index attempts coalesce safely.
- */
-async function spawnBackgroundReindex(_stashDir: string): Promise<void> {
-  const dataDir = getDataDir();
-  const logFile = path.join(dataDir, "logs", "index-background.log");
-
-  fs.mkdirSync(path.dirname(logFile), { recursive: true });
-
-  const lease = await acquireIndexWriterLease({ mode: "try", purpose: "background-reindex-spawn" });
-  if (!lease) return;
-
-  const akmBin = process.argv[0];
-  const akmScript = process.argv[1];
-  try {
-    const child = spawn(akmBin, [akmScript, "index", "--background"], {
-      detached: true,
-      stdio: ["ignore", fs.openSync(logFile, "a"), fs.openSync(logFile, "a")],
-      env: { ...process.env },
-    });
-
-    if (!child.pid) {
-      lease.release();
-      return;
-    }
-
-    handoffIndexWriterLeaseToPid(lease, child.pid, "background-reindex");
-    try {
-      child.unref();
-    } catch {
-      // ignore
-    }
-  } catch (error) {
-    lease.release();
-    throw error;
-  }
-}
-
 async function runInlineReindex(stashDir: string): Promise<boolean> {
   try {
     const { akmIndex } = await import("./indexer.js");
@@ -221,53 +184,24 @@ async function runInlineReindex(stashDir: string): Promise<boolean> {
 }
 
 /**
- * Ensure the local index exists and is fresh enough for the caller's needs.
+ * Ensure the local index exists and can serve the caller.
  *
- * Default mode is `background`, which preserves the low-latency behavior used
- * by read paths (`search`, `show`, `feedback`): when a populated index is
- * merely stale, spawn a detached reindex and proceed against the existing
- * index. When the index is entirely absent (no DB / no `entries` table / zero
- * rows) the rebuild runs inline regardless of mode, since there is nothing to
- * proceed against.
+ * Default mode is `background` — the read-path contract (`search`, `show`,
+ * `feedback`): a populated index built for this stash is served as-is (its
+ * freshness is the writers' job, see module doc); an unusable index rebuilds
+ * inline, since there is nothing to proceed against.
  *
- * `mode: "blocking"` waits for the rebuild to finish before returning. Use
- * this for callers like `improve` whose planning logic depends on a populated
- * `entries` table in the same process.
+ * `mode: "blocking"` additionally treats content-staleness as a rebuild
+ * trigger and waits for it. Use this for callers like `improve` whose
+ * planning logic depends on a current `entries` table in the same process.
  *
  * Returns `true` if an index run was attempted.
  */
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
-  if (!isIndexStale(stashDir)) return false;
-
-  // Blocking when explicitly requested, or whenever the existing index cannot
-  // serve this stash (absent DB, no `entries` table, zero rows, or built for a
-  // different stash): a background reindex returns immediately and would leave
-  // a first-time caller (search, curate, wiki, show, feedback) with empty
-  // results. Building inline is a one-off cost; a populated index for this
-  // stash that is merely content-stale still refreshes in the background.
-  if (options.mode === "blocking" || !indexCanServeStash(stashDir)) {
+  if (options.mode === "blocking") {
+    if (!isIndexStale(stashDir)) return false;
     return runInlineReindex(stashDir);
   }
-
-  // The background path re-invokes the akm CLI as a detached child via
-  // `process.argv[1]`. That is only the akm entrypoint when THIS process is the
-  // akm CLI itself — which the CLI startup block signals with AKM_CLI_ENTRY=1.
-  // In any other host (the in-process test runner, a library embedding akm),
-  // argv[1] points at the host (e.g. the test runner), so spawning it would
-  // launch the wrong program and orphan it. Build inline there instead — same
-  // resulting index, no detached process.
-  if (process.env.AKM_CLI_ENTRY !== "1") {
-    return runInlineReindex(stashDir);
-  }
-
-  try {
-    await spawnBackgroundReindex(stashDir);
-    return true;
-  } catch (error) {
-    warn(
-      "Background reindex spawn failed, proceeding with existing index:",
-      error instanceof Error ? error.message : String(error),
-    );
-    return true;
-  }
+  if (indexCanServeStash(stashDir)) return false;
+  return runInlineReindex(stashDir);
 }

@@ -35,7 +35,7 @@ import type {
   SearchSource,
   SourceSearchHit,
 } from "../../sources/types";
-import { withIndexDb } from "../../storage/repositories/index-db";
+import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
@@ -321,48 +321,54 @@ function logSearchEvent(
   });
 
   try {
-    withIndexDb((db) => {
-      const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
-      for (const { entryId, ref } of resolved) {
+    // Short busy timeout: telemetry must never stall the search result behind
+    // a background reindex holding the index.db write lock (30s default wait).
+    // Under contention these usage hints are skipped, not waited for.
+    withIndexDb(
+      (db) => {
+        const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
+        for (const { entryId, ref } of resolved) {
+          insertUsageEvent(db, {
+            event_type: "search",
+            query,
+            entry_id: entryId,
+            entry_ref: ref,
+            source: eventSource,
+          });
+        }
+        // Bump utility scores for all resolved entries (MemRL retrieval signal).
+        // The indexer overwrites these at next reindex; bumps are temporary hints.
+        const resolvedIds = resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined);
+        if (resolvedIds.length > 0) {
+          let scopeKey: string | undefined;
+          try {
+            const stashPath = response.stashDir;
+            const disabled = disableScopedUtility || (stashPath && isTransientStashPath(stashPath));
+            scopeKey = disabled ? undefined : getCurrentWorkflowScopeKey();
+          } catch {
+            // Non-fatal — fall back to global-only bumps on any error.
+          }
+          bumpUtilityScoresBatch(db, resolvedIds, 1.0, 0.1, scopeKey);
+        }
+        // Count registry hits separately so registry-only searches record a
+        // non-zero resultCount. response.hits is always [] when source="registry".
+        const stashHitCount = response.hits.length;
+        const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
         insertUsageEvent(db, {
           event_type: "search",
           query,
-          entry_id: entryId,
-          entry_ref: ref,
+          metadata: JSON.stringify({
+            resultCount: stashHitCount + registryHitCount,
+            stashHitCount,
+            registryHitCount,
+            resolvedCount: resolved.length,
+            mode,
+          }),
           source: eventSource,
         });
-      }
-      // Bump utility scores for all resolved entries (MemRL retrieval signal).
-      // The indexer overwrites these at next reindex; bumps are temporary hints.
-      const resolvedIds = resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined);
-      if (resolvedIds.length > 0) {
-        let scopeKey: string | undefined;
-        try {
-          const stashPath = response.stashDir;
-          const disabled = disableScopedUtility || (stashPath && isTransientStashPath(stashPath));
-          scopeKey = disabled ? undefined : getCurrentWorkflowScopeKey();
-        } catch {
-          // Non-fatal — fall back to global-only bumps on any error.
-        }
-        bumpUtilityScoresBatch(db, resolvedIds, 1.0, 0.1, scopeKey);
-      }
-      // Count registry hits separately so registry-only searches record a
-      // non-zero resultCount. response.hits is always [] when source="registry".
-      const stashHitCount = response.hits.length;
-      const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
-      insertUsageEvent(db, {
-        event_type: "search",
-        query,
-        metadata: JSON.stringify({
-          resultCount: stashHitCount + registryHitCount,
-          stashHitCount,
-          registryHitCount,
-          resolvedCount: resolved.length,
-          mode,
-        }),
-        source: eventSource,
-      });
-    });
+      },
+      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
+    );
   } catch (err) {
     rethrowIfTestIsolationError(err);
     /* fire-and-forget */

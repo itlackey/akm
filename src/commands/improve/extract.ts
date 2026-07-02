@@ -47,6 +47,7 @@ import {
 } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
@@ -587,6 +588,9 @@ async function processSession(
     try {
       const result = await writeSessionAsset(data, stashDir, sessionIndexing.generate);
       if (result.written) {
+        // Write-path indexing (itself fail-open): standalone `akm extract`
+        // (session-end hook) has no post-loop reindex to pick this file up.
+        if (result.filePath) await indexWrittenAssets(stashDir, [result.filePath]);
         return {
           ...(result.ref ? { sessionAssetRef: result.ref } : {}),
           ...(result.logPath ? { sessionLogPath: result.logPath } : {}),

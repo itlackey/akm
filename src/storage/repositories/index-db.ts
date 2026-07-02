@@ -7,6 +7,24 @@ import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 
 /**
+ * Busy-timeout (ms) for read-path telemetry writers. Small on purpose: a
+ * usage-event insert contending with a background reindex should be dropped,
+ * not waited on for the default 30s.
+ */
+export const TELEMETRY_BUSY_TIMEOUT_MS = 250;
+
+export interface WithIndexDbOptions {
+  /**
+   * Override the connection's `busy_timeout` (the standard pragmas set 30s).
+   * Read-path TELEMETRY writers pass a small value (e.g. 250) so a usage-event
+   * insert can never stall a `search`/`show`/`curate` command behind a
+   * background reindex holding the write lock — under contention the write is
+   * skipped (fire-and-forget) instead of waited for.
+   */
+  busyTimeoutMs?: number;
+}
+
+/**
  * Scoped-resource (loan pattern) helper for the index database (`index.db`).
  *
  * This is the `index.db` twin of {@link ../../workflows/db withWorkflowDb} /
@@ -35,9 +53,12 @@ import { resolveStorageLocations } from "../locations";
  * @param fn Receives the open index database; must finish all DB work before returning.
  * @returns Whatever `fn` returns.
  */
-export function withIndexDb<T>(fn: (db: Database) => T): T {
+export function withIndexDb<T>(fn: (db: Database) => T, opts?: WithIndexDbOptions): T {
   const db = openExistingDatabase(resolveStorageLocations().indexDb);
   try {
+    if (opts?.busyTimeoutMs !== undefined) {
+      db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(opts.busyTimeoutMs))}`);
+    }
     return fn(db);
   } finally {
     closeDatabase(db);
