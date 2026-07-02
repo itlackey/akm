@@ -308,13 +308,19 @@ export const ImproveProcessConfigSchema = z
     //   - maxGeneration: refuse to merge two assets both above this generation (default 2).
     //   - lexicalDiversityCheck: low n-gram diversity ⇒ raise merge threshold.
     //   - randomClusterFraction: occasional random (non-similar) cluster in pool (default 0.05).
-    // Default OFF. Only meaningful on the `consolidate` process.
+    //   - mergeInformationFloor: measure that merges keep provenance + specificity
+    //     (R5 §4.2; ADVISORY in v1 — counted, never refused).
+    //   - minSpecificityRetention: distinct-token retention floor for merges (default 0.6).
+    // Default ON since R5 (opt out via enabled: false). Only meaningful on the
+    // `consolidate` process.
     antiCollapse: z
       .object({
         enabled: z.boolean().optional(),
         maxGeneration: z.number().int().min(1).optional(),
         lexicalDiversityCheck: z.boolean().optional(),
         randomClusterFraction: z.number().min(0).max(1).optional(),
+        mergeInformationFloor: z.boolean().optional(),
+        minSpecificityRetention: z.number().min(0).max(1).optional(),
       })
       .passthrough()
       .optional(),
@@ -670,6 +676,30 @@ const ImproveSalienceSchema = z
   })
   .passthrough();
 
+// R5 — longitudinal collapse/churn detector (observe-only in v1; deterministic,
+// fail-open, runs only on cycles where consolidate/recombine did work).
+// Default ON; opt out via `improve.collapseDetector.enabled: false`.
+// See docs/design/improve-collapse-churn-detector-design.md.
+const ImproveCollapseDetectorSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    // Canary set size minted on first run (owner-approved 30–50 range; default 40).
+    canaryCount: z.number().int().min(3).max(200).optional(),
+    // Top-K cutoff for canary recall/nDCG (default 10).
+    k: z.number().int().min(1).max(100).optional(),
+    // Trend window in qualifying cycles (default 5).
+    windowCycles: z.number().int().min(2).max(50).optional(),
+    // Absolute mean-recall drop vs window median that fires collapse (default 0.15).
+    recallDropThreshold: z.number().min(0).max(1).optional(),
+    // distinct-content-ratio decline over the window that fires collapse (default 0.05).
+    entropyDropThreshold: z.number().min(0).max(1).optional(),
+    // Accepted-action volume over the window below which churn never fires (default 25).
+    churnMinAcceptedActions: z.number().int().min(1).optional(),
+    // improve_cycle_metrics retention (default 365 days, owner-approved).
+    retentionDays: z.number().int().min(1).optional(),
+  })
+  .passthrough();
+
 export const ImproveConfigSchema = z
   .object({
     utilityDecay: ImproveUtilityDecaySchema.optional(),
@@ -677,6 +707,7 @@ export const ImproveConfigSchema = z
     calibration: ImproveCalibrationSchema.optional(),
     exploration: ImproveExplorationSchema.optional(),
     salience: ImproveSalienceSchema.optional(),
+    collapseDetector: ImproveCollapseDetectorSchema.optional(),
   })
   .passthrough();
 

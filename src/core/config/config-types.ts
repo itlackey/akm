@@ -406,6 +406,33 @@ export interface ImproveConfig {
      */
     replayBudget?: number;
   };
+  /**
+   * R5 — longitudinal collapse/churn detector
+   * (docs/design/improve-collapse-churn-detector-design.md). Observe-only in
+   * v1: on every improve cycle where consolidate/recombine did work, snapshots
+   * canary retrieval + store-shape metrics to `improve_cycle_metrics` and
+   * evaluates collapse/churn alert rules over the trend window. Deterministic
+   * (FTS-only, no LLM/model), fail-open, < 250 ms per qualifying cycle.
+   *
+   * **DEFAULT ON** (`enabled` absent or `true`). Opt out with `enabled: false`.
+   */
+  collapseDetector?: {
+    enabled?: boolean;
+    /** Canary set size minted on first run (owner-approved 30–50 range; default 40). */
+    canaryCount?: number;
+    /** Top-K cutoff for canary recall/nDCG (default 10). */
+    k?: number;
+    /** Trend window in qualifying cycles (default 5). */
+    windowCycles?: number;
+    /** Absolute mean-recall drop vs the window median that fires collapse (default 0.15). */
+    recallDropThreshold?: number;
+    /** distinct-content-ratio decline over the window that fires collapse (default 0.05). */
+    entropyDropThreshold?: number;
+    /** Accepted-action volume over the window below which churn never fires (default 25). */
+    churnMinAcceptedActions?: number;
+    /** improve_cycle_metrics retention in days (default 365, owner-approved). */
+    retentionDays?: number;
+  };
 }
 
 export interface AkmConfig {

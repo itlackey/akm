@@ -81,6 +81,7 @@ describe("SQLite migration runner characterization", () => {
         "013-extract-sessions-content-hash",
         "014-recombine-hypotheses",
         "015-asset-salience-encoding-source",
+        "016-collapse-churn-detector",
       ]);
 
       // The set of durable objects the migrations create.

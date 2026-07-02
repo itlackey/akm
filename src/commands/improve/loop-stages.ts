@@ -16,7 +16,13 @@ import type {
 } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
-import { purgeOldEvents, purgeOldImproveRuns, withStateDb } from "../../core/state-db";
+import {
+  type CycleMetricsRow,
+  purgeOldCycleMetrics,
+  purgeOldEvents,
+  purgeOldImproveRuns,
+  withStateDb,
+} from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
@@ -40,6 +46,7 @@ import {
   purgeOrphanProposals,
 } from "../proposal/validators/proposals";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
+import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
 import { type AkmDistillResult, deriveLessonRef } from "./distill";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 // Eligibility / candidate-selection predicates live in ./eligibility.
@@ -710,6 +717,10 @@ export async function runImprovePostLoopStage(args: {
    * mutated the memory pool.
    */
   consolidationRan: boolean;
+  /** R5: this run's advisory merge-information-floor violation count (consolidate pass). */
+  consolidationMergeFloorViolations?: number;
+  /** R5: auto-accepted proposal count so far this run (prep + loop gates) — the churn-volume signal. */
+  acceptedActions?: number;
 }): Promise<ImprovePostLoopResult> {
   const {
     scope,
@@ -831,9 +842,32 @@ export async function runImprovePostLoopStage(args: {
     }
   }
 
+  // ── R5: collapse/churn detector ────────────────────────────────────────────
+  // One snapshot per QUALIFYING cycle: consolidate processed work and/or
+  // recombine formed clusters. Runs AFTER the maintenance reindex so FTS sees
+  // the post-merge index; one call site covers both passes. Deterministic,
+  // observe-only, fail-open (the orchestrator catches everything) — and inert
+  // on the ~9-in-10 default-profile runs that touch no merges.
+  let cycleMetrics: CycleMetricsRow | undefined;
+  const recombineWorked = (recombination?.clustersFormed ?? 0) > 0;
+  if (!options.dryRun && (consolidationRan || recombineWorked)) {
+    cycleMetrics = runCollapseDetector({
+      runId: options.runId ?? "improve-adhoc",
+      pass: consolidationRan && recombineWorked ? "both" : consolidationRan ? "consolidate" : "recombine",
+      // prep+loop gate accepts, PLUS recombine's confirmed-lesson promotions —
+      // recombine churn is the historically observed failure mode and its
+      // promotions never flow through the prep/loop gates.
+      acceptedActions: (args.acceptedActions ?? 0) + (recombination?.lessonsPromoted ?? 0),
+      mergeFloorViolations: args.consolidationMergeFloorViolations ?? 0,
+      config: options.config ?? loadConfig(),
+      ...(eventsCtx ? { eventsCtx } : {}),
+    });
+  }
+
   return {
     allWarnings,
     deadUrls,
+    ...(cycleMetrics ? { cycleMetrics } : {}),
     ...(recombination ? { recombination } : {}),
     ...(proceduralCompilation ? { proceduralCompilation } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
@@ -1225,6 +1259,27 @@ export async function runImproveMaintenancePasses(args: {
                   },
                   eventsCtx,
                 );
+
+                // R5: improve_cycle_metrics has its OWN retention window
+                // (default 365d — a slow collapse needs a longer trend than
+                // the 90d events window). canary_queries rows are never purged.
+                const cycleRetention = config.improve?.collapseDetector?.retentionDays ?? CYCLE_METRICS_RETENTION_DAYS;
+                const cycleMetricsPurged = purgeOldCycleMetrics(stateDb, cycleRetention);
+                if (cycleMetricsPurged > 0) {
+                  info(
+                    `[improve] cycle-metrics purge: ${cycleMetricsPurged} row(s) older than ${cycleRetention}d removed from state.db`,
+                  );
+                  appendEvent(
+                    {
+                      // Dedicated type (mirrors improve_runs_purged) so consumers
+                      // never have to disambiguate purge targets via the ref string.
+                      eventType: "improve_cycle_metrics_purged",
+                      ref: "improve_cycle_metrics:_purge",
+                      metadata: { purgedCount: cycleMetricsPurged, retentionDays: cycleRetention },
+                    },
+                    eventsCtx,
+                  );
+                }
               },
               { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
             );

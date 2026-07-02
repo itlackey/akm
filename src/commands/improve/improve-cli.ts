@@ -9,9 +9,12 @@ import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getCacheDir } from "../../core/paths";
+import { getActiveCanaries, queryRecentCycleMetrics, withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
+import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, getHyphenatedBoolean, parseFlagValue } from "../../output/context";
+import { refreshCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
 import {
   buildImproveRunId,
@@ -22,11 +25,63 @@ import {
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
 
+// R5 — collapse-detector canary set inspection / explicit refresh. The
+// detector NEVER auto-refreshes the canary set (silent re-baselining is how a
+// slow collapse hides); this verb is the only refresh path.
+//
+// Dispatched from the parent improve run() on `scope === "canary"` — NOT a
+// citty subCommand: registering subCommands makes citty treat EVERY first
+// positional as a subcommand name, breaking `akm improve <type|ref>` outright
+// (citty throws "Unknown command memory"), and citty also re-runs the parent
+// run() after a matched subcommand.
+async function runCanaryInspection(refresh: boolean): Promise<void> {
+  const config = loadConfig();
+  const cfg = config.improve?.collapseDetector ?? {};
+
+  const result = withStateDb((stateDb) => {
+    let refreshOutcome: "refreshed" | "kept-old-set" | undefined;
+    if (refresh) {
+      const indexDb = openExistingDatabase();
+      try {
+        // Mint-first, deactivate-after (refreshCanarySet): an empty/unreadable
+        // index keeps the old baseline instead of destroying it.
+        refreshOutcome = refreshCanarySet(stateDb, indexDb, cfg) === null ? "kept-old-set" : "refreshed";
+      } finally {
+        closeDatabase(indexDb);
+      }
+    }
+    const canaries = getActiveCanaries(stateDb);
+    const canarySetId = canaries[0]?.canary_set_id;
+    const recentCycles = canarySetId ? queryRecentCycleMetrics(stateDb, canarySetId, cfg.windowCycles ?? 5) : [];
+    return {
+      schemaVersion: 1 as const,
+      ok: true,
+      refreshed: refreshOutcome === "refreshed",
+      ...(refreshOutcome === "kept-old-set"
+        ? { warning: "refresh skipped: no mintable learning entries in the index — existing canary set kept" }
+        : {}),
+      canarySetId: canarySetId ?? null,
+      canaries: canaries.map((c) => ({ id: c.id, anchorRef: c.anchor_ref, query: c.query })),
+      recentCycles: recentCycles.map((r) => ({
+        ts: r.ts,
+        pass: r.pass,
+        meanRecall: r.mean_recall,
+        meanNdcg: r.mean_ndcg,
+        distinctContentRatio: r.distinct_content_ratio,
+        acceptedActions: r.accepted_actions,
+        mergeFloorViolations: r.merge_floor_violations,
+        alerts: JSON.parse(r.alerts_json) as string[],
+      })),
+    };
+  });
+  output("improve-canary", result);
+}
+
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true",
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true. `akm improve canary [--refresh]` inspects the collapse-detector canary set.",
   },
   args: {
     scope: {
@@ -35,6 +90,12 @@ export const improveCommand = defineCommand({
       required: false,
     },
     task: { type: "string", description: "Add extra guidance for this improvement pass" },
+    refresh: {
+      type: "boolean",
+      description:
+        "(canary scope only) Mint a new collapse-detector canary set and deactivate the old one; old rows and their cycle history are retained",
+      default: false,
+    },
     "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
     target: { type: "string", description: "Override the write target for accepted proposals" },
     "auto-accept": {
@@ -91,6 +152,13 @@ export const improveCommand = defineCommand({
     },
   },
   async run({ args }) {
+    // "canary" is a reserved scope word (never a valid asset type, and refs
+    // contain ":"): dispatch to the detector inspection verb instead of an
+    // improve run.
+    if (args.scope === "canary") {
+      await runWithJsonErrors(() => runCanaryInspection(getHyphenatedBoolean(args, "refresh") === true));
+      return;
+    }
     await runWithJsonErrors(async () => {
       const formatFlagValue = parseFlagValue(process.argv, "--format");
       if (formatFlagValue !== undefined) {

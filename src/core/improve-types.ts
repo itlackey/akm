@@ -382,6 +382,12 @@ export interface AkmImproveResult {
    */
   proceduralCompilation?: ProceduralCompilationResult;
   /**
+   * R5 — the collapse/churn detector's cycle snapshot (mirrors one
+   * improve_cycle_metrics row), present when this run qualified (consolidate
+   * processed work or recombine formed clusters) and the detector is enabled.
+   */
+  cycleMetrics?: import("./state-db").CycleMetricsRow;
+  /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and
    * the `{runId}` sync-commit token can read it. Absent for programmatic

@@ -718,6 +718,62 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE asset_salience ADD COLUMN encoding_source TEXT DEFAULT NULL;
     `,
   },
+  // ── Migration 016 — collapse/churn detector (R5) ─────────────────────────────
+  //
+  // Longitudinal store-health history for the improve pipeline
+  // (docs/design/improve-collapse-churn-detector-design.md).
+  //
+  //   canary_queries — the fixed canary set, minted deterministically from the
+  //     live stash on first detector run and NEVER auto-refreshed (silent
+  //     re-baselining is how a slow collapse hides). `canary_set_id` groups one
+  //     mint; deactivated sets keep their rows (active = 0) so historical cycle
+  //     rows stay interpretable. Tens of rows; never purged.
+  //
+  //   improve_cycle_metrics — one row per qualifying improve cycle (a run where
+  //     consolidate processed ≥1 op or recombine evaluated ≥1 cluster). Every
+  //     column is a scalar or a size-capped JSON blob (< 2 KB/row by
+  //     construction — the result_json lesson applied). Retention: 365 days via
+  //     purgeOldCycleMetrics. Trend queries drive the collapse/churn alert
+  //     evaluation and the health advisory; `canary_set_id` scoping prevents
+  //     comparing across canary re-mints.
+  {
+    id: "016-collapse-churn-detector",
+    up: `
+      CREATE TABLE IF NOT EXISTS canary_queries (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        canary_set_id TEXT    NOT NULL,
+        anchor_ref    TEXT    NOT NULL,
+        query         TEXT    NOT NULL,
+        source        TEXT    NOT NULL DEFAULT 'auto',
+        active        INTEGER NOT NULL DEFAULT 1,
+        created_at    TEXT    NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_canary_queries_active
+        ON canary_queries(active, canary_set_id);
+
+      CREATE TABLE IF NOT EXISTS improve_cycle_metrics (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id                  TEXT    NOT NULL,
+        ts                      TEXT    NOT NULL,
+        pass                    TEXT    NOT NULL,
+        canary_set_id           TEXT    NOT NULL,
+        mean_recall             REAL    NOT NULL,
+        mean_ndcg               REAL    NOT NULL,
+        mean_mrr                REAL    NOT NULL,
+        canary_ranks_json       TEXT    NOT NULL,
+        store_total             INTEGER NOT NULL,
+        store_by_type_json      TEXT    NOT NULL,
+        distinct_content_ratio  REAL    NOT NULL,
+        mean_bigram_diversity   REAL    NOT NULL,
+        over_generation_count   INTEGER NOT NULL,
+        accepted_actions        INTEGER NOT NULL,
+        merge_floor_violations  INTEGER NOT NULL DEFAULT 0,
+        alerts_json             TEXT    NOT NULL DEFAULT '[]'
+      );
+      CREATE INDEX IF NOT EXISTS idx_improve_cycle_metrics_ts
+        ON improve_cycle_metrics(ts);
+    `,
+  },
 ];
 
 /**

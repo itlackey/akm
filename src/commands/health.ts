@@ -8,6 +8,7 @@ import { appendEvent, readEvents } from "../core/events";
 import { buildTaskRunId, getLoggedRunIds, openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
 import {
+  getLatestCycleMetrics,
   type ImproveRunSummaryRow,
   listExistingTableNames,
   listProposalGateDecisions,
@@ -2239,6 +2240,61 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
           "the retrieval-based proxy is inverted. " +
           "The 0.10+ rich in-session outcome signal is no longer deferrable. See plan §WS-2.",
       });
+    }
+
+    // R5 collapse/churn detector: surface any collapse_detector_alert events
+    // in the health window, plus the latest cycle row's headline numbers so
+    // the operator can act without opening the DB. `unknown` when the detector
+    // has never produced a cycle row (no consolidate/recombine work yet).
+    try {
+      // Reuse the already-open state.db handle (readEvents supports a
+      // borrowed connection) — no extra open/migrate/close per health call.
+      const collapseAlertEvents = readEvents(
+        { since, type: "collapse_detector_alert" },
+        { dbPath: stateDbPath, db },
+      ).events;
+      const latestCycle = getLatestCycleMetrics(db);
+      const cycleSummary = latestCycle
+        ? `Latest cycle (${latestCycle.ts}, ${latestCycle.pass}): mean canary recall ${latestCycle.mean_recall.toFixed(3)}, ` +
+          `distinct-content ratio ${latestCycle.distinct_content_ratio.toFixed(3)}, ` +
+          `${latestCycle.accepted_actions} accepted action(s).`
+        : "";
+      if (collapseAlertEvents.length > 0) {
+        const kinds = [...new Set(collapseAlertEvents.map((e) => String(e.metadata?.kind ?? "unknown")))];
+        const collapseKinds = kinds.filter((k) => k.startsWith("collapse"));
+        advisories.push({
+          name: "collapse-churn-detector",
+          status: "warn",
+          kind: "deterministic",
+          // Collapse kinds are measured, not inferred; churn/merge-floor
+          // volume thresholds are still being tuned (design doc §7).
+          confidence: collapseKinds.length > 0 ? "high" : "medium",
+          message:
+            `R5 detector fired ${collapseAlertEvents.length} alert(s) in window (kinds: ${kinds.join(", ")}). ` +
+            `${cycleSummary} See docs/design/improve-collapse-churn-detector-design.md §6.3 runbook queries.`,
+        });
+      } else if (latestCycle) {
+        advisories.push({
+          name: "collapse-churn-detector",
+          status: "pass",
+          kind: "deterministic",
+          confidence: "high",
+          message: `No collapse/churn alerts in window. ${cycleSummary}`,
+        });
+      } else {
+        advisories.push({
+          name: "collapse-churn-detector",
+          status: "unknown",
+          kind: "deterministic",
+          confidence: "high",
+          message:
+            "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles " +
+            "where consolidate/recombine did work (synthesis lanes may be idle).",
+        });
+      }
+    } catch {
+      // Table may predate migration 016 in odd mixed-version setups — advisory
+      // is best-effort and must never fail the health command.
     }
 
     let sessionLogEntries: SessionLogAdvisory[] = [];

@@ -322,6 +322,8 @@ export interface ImprovePostLoopResult {
   recombination?: RecombineResult;
   /** #615: result of the opt-in procedural-compilation pass, when it ran. */
   proceduralCompilation?: ProceduralCompilationResult;
+  /** R5: the collapse/churn detector's cycle snapshot, when this run qualified. */
+  cycleMetrics?: import("../../core/state-db").CycleMetricsRow;
 }
 
 export interface ImproveMaintenanceResult {
@@ -843,6 +845,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     let stalenessDetection: ImprovePostLoopResult["stalenessDetection"];
     let recombination: ImprovePostLoopResult["recombination"];
     let proceduralCompilation: ImprovePostLoopResult["proceduralCompilation"];
+    let cycleMetrics: ImprovePostLoopResult["cycleMetrics"];
     // Summed counters/durations.
     let prepGateCount = 0;
     let prepGateFailedCount = 0;
@@ -1037,6 +1040,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             budgetSignal: budgetAbortController.signal,
             improveProfile,
             consolidationRan: preparation.consolidationRan,
+            // R5: floor violations from this run's consolidate pass + the
+            // auto-accepted volume so far (prep + loop gates) for churn detection.
+            consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
+            acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
           }),
       );
       const postLoopGateCountThisCycle = postLoopResult.gateAutoAcceptedCount;
@@ -1046,6 +1053,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       stalenessDetection = postLoopResult.stalenessDetection;
       recombination = postLoopResult.recombination;
       proceduralCompilation = postLoopResult.proceduralCompilation;
+      // Keep the last QUALIFYING cycle's snapshot — a later non-qualifying
+      // cycle in a maxCycles>1 run must not clobber it with undefined.
+      if (postLoopResult.cycleMetrics) cycleMetrics = postLoopResult.cycleMetrics;
       // Summed counters/durations.
       postLoopGateCount += postLoopResult.gateAutoAcceptedCount;
       postLoopGateFailedCount += postLoopResult.gateAutoAcceptFailedCount;
@@ -1139,6 +1149,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(stalenessDetection ? { stalenessDetection } : {}),
       ...(recombination ? { recombination } : {}),
       ...(proceduralCompilation ? { proceduralCompilation } : {}),
+      ...(cycleMetrics ? { cycleMetrics } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),
       reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,

@@ -116,6 +116,17 @@ export interface StashEntry {
   beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
   supersededBy?: string[];
   contradictedBy?: string[];
+  /**
+   * R5 — merge depth counter (frontmatter `generation`), maintained by
+   * consolidate's injectGenerationFrontmatter. Absent = original asset.
+   */
+  generation?: number;
+  /**
+   * R5 — provenance pointers (frontmatter `source_refs`): the refs this asset
+   * was merged/distilled from. Lets the collapse detector's canary scoring
+   * follow a legitimately-merged anchor instead of reading it as collapse.
+   */
+  sourceRefs?: string[];
   currentBeliefRefs?: string[];
   /**
    * How the memory was captured. `hot` indicates a user-driven write
@@ -335,6 +346,15 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (supersededBy) result.supersededBy = supersededBy;
   const contradictedBy = normalizeNonEmptyStringList(e.contradictedBy);
   if (contradictedBy) result.contradictedBy = contradictedBy;
+
+  // R5 — consolidation provenance fields must survive the whitelist too, or
+  // stash.json-overridden merge products lose merge-following + generation
+  // counting in the collapse detector.
+  if (typeof e.generation === "number" && Number.isFinite(e.generation) && e.generation > 0) {
+    result.generation = Math.floor(e.generation);
+  }
+  const sourceRefs = normalizeNonEmptyStringList(e.sourceRefs);
+  if (sourceRefs) result.sourceRefs = sourceRefs;
   const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
   if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
   if (e.captureMode === "hot" || e.captureMode === "background") {
@@ -473,6 +493,17 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
 
   const contradictedBy = normalizeStringListOrUndefined(fmData.contradictedBy);
   if (contradictedBy) entry.contradictedBy = contradictedBy;
+
+  // R5 — consolidation provenance. `generation` (merge depth counter) and
+  // `source_refs` (merge/distill provenance pointers) are written by the
+  // improve pipeline; captured into the index so the collapse detector can
+  // count over-generation assets and follow merges without filesystem reads.
+  const generation = fmData.generation;
+  if (typeof generation === "number" && Number.isFinite(generation) && generation > 0) {
+    entry.generation = Math.floor(generation);
+  }
+  const sourceRefs = normalizeStringListOrUndefined(fmData.source_refs);
+  if (sourceRefs) entry.sourceRefs = sourceRefs;
 
   const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
   if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
