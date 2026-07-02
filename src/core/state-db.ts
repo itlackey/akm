@@ -1827,6 +1827,21 @@ export function getActiveCanaries(db: Database): CanaryQueryRow[] {
     .all() as CanaryQueryRow[];
 }
 
+/** Load one canary set's rows by its exact set id (any active state), insertion order. */
+export function getCanariesBySetId(db: Database, canarySetId: string): CanaryQueryRow[] {
+  return db
+    .prepare(`SELECT * FROM canary_queries WHERE canary_set_id = ? ORDER BY id`)
+    .all(canarySetId) as CanaryQueryRow[];
+}
+
+/** List every distinct canary_set_id that still has active rows. */
+export function listActiveCanarySetIds(db: Database): string[] {
+  const rows = db.prepare(`SELECT DISTINCT canary_set_id FROM canary_queries WHERE active = 1`).all() as Array<{
+    canary_set_id: string;
+  }>;
+  return rows.map((r) => r.canary_set_id);
+}
+
 /**
  * Deactivate every canary row in a set. Rows are RETAINED (active = 0) so
  * historical improve_cycle_metrics rows keyed on the old canary_set_id stay
@@ -1886,6 +1901,20 @@ export function queryRecentCycleMetrics(db: Database, canarySetId: string, limit
     )
     .all(canarySetId, Math.max(0, limit)) as CycleMetricsRow[];
   return rows.reverse();
+}
+
+/** Load the single most recent cycle row across all canary sets (health surface). */
+export function getLatestCycleMetrics(db: Database): CycleMetricsRow | undefined {
+  const row = db
+    .prepare(
+      `SELECT run_id, ts, pass, canary_set_id, mean_recall, mean_ndcg, mean_mrr,
+              canary_ranks_json, store_total, store_by_type_json, distinct_content_ratio,
+              mean_bigram_diversity, over_generation_count, accepted_actions,
+              merge_floor_violations, alerts_json
+       FROM improve_cycle_metrics ORDER BY ts DESC, id DESC LIMIT 1`,
+    )
+    .get();
+  return row == null ? undefined : (row as CycleMetricsRow);
 }
 
 /**

@@ -8,6 +8,7 @@ import { appendEvent, readEvents } from "../core/events";
 import { buildTaskRunId, getLoggedRunIds, openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
 import {
+  getLatestCycleMetrics,
   type ImproveRunSummaryRow,
   listExistingTableNames,
   listProposalGateDecisions,
@@ -2246,26 +2247,18 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     // the operator can act without opening the DB. `unknown` when the detector
     // has never produced a cycle row (no consolidate/recombine work yet).
     try {
+      // Reuse the already-open state.db handle (readEvents supports a
+      // borrowed connection) — no extra open/migrate/close per health call.
       const collapseAlertEvents = readEvents(
         { since, type: "collapse_detector_alert" },
-        { dbPath: stateDbPath },
+        { dbPath: stateDbPath, db },
       ).events;
-      const latestCycle = db
-        .prepare(
-          `SELECT ts, pass, mean_recall, distinct_content_ratio, accepted_actions, alerts_json
-           FROM improve_cycle_metrics ORDER BY ts DESC, id DESC LIMIT 1`,
-        )
-        .get() as
-        | {
-            ts: string;
-            pass: string;
-            mean_recall: number;
-            distinct_content_ratio: number;
-            accepted_actions: number;
-            alerts_json: string;
-          }
-        | undefined
-        | null;
+      const latestCycle = getLatestCycleMetrics(db);
+      const cycleSummary = latestCycle
+        ? `Latest cycle (${latestCycle.ts}, ${latestCycle.pass}): mean canary recall ${latestCycle.mean_recall.toFixed(3)}, ` +
+          `distinct-content ratio ${latestCycle.distinct_content_ratio.toFixed(3)}, ` +
+          `${latestCycle.accepted_actions} accepted action(s).`
+        : "";
       if (collapseAlertEvents.length > 0) {
         const kinds = [...new Set(collapseAlertEvents.map((e) => String(e.metadata?.kind ?? "unknown")))];
         const collapseKinds = kinds.filter((k) => k.startsWith("collapse"));
@@ -2278,12 +2271,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
           confidence: collapseKinds.length > 0 ? "high" : "medium",
           message:
             `R5 detector fired ${collapseAlertEvents.length} alert(s) in window (kinds: ${kinds.join(", ")}). ` +
-            (latestCycle
-              ? `Latest cycle (${latestCycle.ts}, ${latestCycle.pass}): mean canary recall ${latestCycle.mean_recall.toFixed(3)}, ` +
-                `distinct-content ratio ${latestCycle.distinct_content_ratio.toFixed(3)}, ` +
-                `${latestCycle.accepted_actions} accepted action(s). `
-              : "") +
-            "See docs/design/improve-collapse-churn-detector-design.md §6.3 runbook queries.",
+            `${cycleSummary} See docs/design/improve-collapse-churn-detector-design.md §6.3 runbook queries.`,
         });
       } else if (latestCycle) {
         advisories.push({
@@ -2291,10 +2279,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
           status: "pass",
           kind: "deterministic",
           confidence: "high",
-          message:
-            `No collapse/churn alerts in window. Latest cycle (${latestCycle.ts}, ${latestCycle.pass}): ` +
-            `mean canary recall ${latestCycle.mean_recall.toFixed(3)}, ` +
-            `distinct-content ratio ${latestCycle.distinct_content_ratio.toFixed(3)}.`,
+          message: `No collapse/churn alerts in window. ${cycleSummary}`,
         });
       } else {
         advisories.push({

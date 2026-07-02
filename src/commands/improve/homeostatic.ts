@@ -379,7 +379,9 @@ export function checkMergeInformationFloor(
     for (const t of distinctTokens(p.body)) sourceTokens.add(t);
   }
   const mergedTokens = distinctTokens(mergedBody);
-  const specificityRetention = sourceTokens.size === 0 ? 1 : mergedTokens.size / sourceTokens.size;
+  // Clamped at computation so the pass/fail decision, the reason string, and
+  // the reported field all describe the same value.
+  const specificityRetention = Math.min(1, sourceTokens.size === 0 ? 1 : mergedTokens.size / sourceTokens.size);
 
   const minRetention = config.minSpecificityRetention ?? DEFAULT_MIN_SPECIFICITY_RETENTION;
   const provenanceOk = missing.length === 0;
@@ -399,7 +401,7 @@ export function checkMergeInformationFloor(
     passed: provenanceOk && specificityOk,
     provenanceBefore: required.size,
     provenanceAfter: after.size,
-    specificityRetention: Math.min(1, specificityRetention),
+    specificityRetention,
     ...(reasons.length > 0 ? { reason: reasons.join("; ") } : {}),
   };
 }

@@ -26,15 +26,20 @@
  * @module collapse-detector
  */
 
+import { randomBytes } from "node:crypto";
+import { makeAssetRef } from "../../core/asset/asset-ref";
+import type { AkmAssetType } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { ndcgAtK } from "../../core/eval/rank-metrics";
 import { appendEvent, type EventsContext } from "../../core/events";
 import {
   type CanaryQueryRow,
   type CycleMetricsRow,
+  deactivateCanarySet,
   getActiveCanaries,
+  getCanariesBySetId,
   insertCanaries,
   insertCycleMetrics,
+  listActiveCanarySetIds,
   queryRecentCycleMetrics,
   type Database as StateDatabase,
   withStateDb,
@@ -48,7 +53,7 @@ import {
   searchFts,
 } from "../../indexer/db/db";
 import type { Database as IndexDatabase } from "../../storage/database";
-import { computeBigramDiversity } from "./homeostatic";
+import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./homeostatic";
 import { getAllRankScores } from "./salience";
 
 // ── Defaults (mirrored in config-schema.ts ImproveCollapseDetectorSchema) ────
@@ -62,8 +67,13 @@ export const DEFAULT_CHURN_MIN_ACCEPTED = 25;
 export const DEFAULT_RETENTION_DAYS = 365;
 /** Deterministic bigram-diversity sample cap (cost bound at 10k assets). */
 const DIVERSITY_SAMPLE_CAP = 2000;
-/** Generation above which an asset counts as over-generation (mirrors guard default). */
-const OVER_GENERATION_THRESHOLD = 2;
+/**
+ * Minimum merge-floor violations in one cycle before the advisory alert fires.
+ * The specificity floor is deliberately strict (Phase-1 tuning pending), so a
+ * couple of borderline merges per cycle must not flip `akm health` to warn —
+ * that alert fatigue would drown the real collapse signals.
+ */
+const MERGE_FLOOR_ALERT_MIN = 3;
 /** The learning-store types the detector measures. */
 const LEARNING_TYPES = new Set(["memory", "lesson", "knowledge"]);
 
@@ -97,34 +107,20 @@ function buildCanaryQuery(entry: DbIndexedEntry): string {
   return [...new Set(parts)].join(" ");
 }
 
-/**
- * Mint (or return) the active canary set. Deterministic given the index +
- * salience tables: rank the three learning types by `asset_salience.rank_score`
- * (fallback 0, tie-broken by entryKey), take a type-stratified top slice
- * (⅓ per type, backfilled from the global ranking when a type is short).
- *
- * NEVER auto-refreshes: once minted the set is frozen until an explicit
- * `akm improve canary --refresh` — silent re-baselining is how a slow collapse
- * hides.
- */
-export function ensureCanarySet(
+/** Build the mint candidate list (deterministic given index + salience tables). */
+function buildMintList(
   stateDb: StateDatabase,
-  indexDb: IndexDatabase,
+  entries: DbIndexedEntry[],
   cfg: CollapseDetectorConfig,
-): { canarySetId: string; canaries: CanaryQueryRow[] } {
-  const existing = getActiveCanaries(stateDb);
-  if (existing.length > 0) {
-    return { canarySetId: existing[0].canary_set_id, canaries: existing };
-  }
-
+): Array<{ anchorRef: string; query: string }> {
   const canaryCount = cfg.canaryCount ?? DEFAULT_CANARY_COUNT;
   const rankScores = getAllRankScores(stateDb);
   // NOTE: entryKey is stash-prefixed ("<stashDir>:type:name"); asset_salience
   // and the canary scoring both key on the bare "type:name" ref.
-  const candidates = getAllEntries(indexDb)
+  const candidates = entries
     .filter((e) => LEARNING_TYPES.has(e.entry.type))
     .map((e) => {
-      const ref = `${e.entry.type}:${e.entry.name}`;
+      const ref = makeAssetRef(e.entry.type as AkmAssetType, e.entry.name);
       return { e, ref, score: rankScores.get(ref) ?? 0 };
     })
     .sort((a, b) => b.score - a.score || (a.ref < b.ref ? -1 : 1));
@@ -147,13 +143,71 @@ export function ensureCanarySet(
     if (!picked.has(c.ref)) picked.set(c.ref, c);
   }
 
-  const minted = [...picked.values()]
+  return [...picked.values()]
     .map((c) => ({ anchorRef: c.ref, query: buildCanaryQuery(c.e) }))
     .filter((c) => c.query.length > 0);
+}
 
-  const canarySetId = `canary-${Date.now().toString(36)}`;
+/** Collision-safe mint token (same-millisecond mints happen in tests + concurrent runs). */
+function newCanarySetId(): string {
+  return `canary-${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
+}
+
+/**
+ * Mint (or return) the active canary set. Deterministic given the index +
+ * salience tables: rank the three learning types by `asset_salience.rank_score`
+ * (fallback 0, tie-broken by ref), take a type-stratified top slice
+ * (⅓ per type, backfilled from the global ranking when a type is short).
+ *
+ * Returns `null` when the index has no mintable learning entries — a cycle
+ * with no canary set is NOT recorded (a fresh unused set id every cycle would
+ * mean the trend window never fills and recall reads as a fake 0).
+ *
+ * NEVER auto-refreshes: once minted the set is frozen until an explicit
+ * `akm improve canary --refresh` — silent re-baselining is how a slow collapse
+ * hides. Rows are read back BY OUR OWN set id (never "newest active") so a
+ * concurrent mint in another process cannot relabel this run's metrics.
+ */
+export function ensureCanarySet(
+  stateDb: StateDatabase,
+  indexDb: IndexDatabase,
+  cfg: CollapseDetectorConfig,
+  preloadedEntries?: DbIndexedEntry[],
+): { canarySetId: string; canaries: CanaryQueryRow[] } | null {
+  const existing = getActiveCanaries(stateDb);
+  if (existing.length > 0) {
+    return { canarySetId: existing[0].canary_set_id, canaries: existing };
+  }
+
+  const minted = buildMintList(stateDb, preloadedEntries ?? getAllEntries(indexDb), cfg);
+  if (minted.length === 0) return null;
+
+  const canarySetId = newCanarySetId();
   insertCanaries(stateDb, canarySetId, minted);
-  return { canarySetId, canaries: getActiveCanaries(stateDb) };
+  return { canarySetId, canaries: getCanariesBySetId(stateDb, canarySetId) };
+}
+
+/**
+ * Explicit canary re-mint (the ONLY refresh path — `akm improve canary
+ * --refresh`). Mint-first, deactivate-after: when the index is empty or
+ * unreadable the current baseline is left untouched instead of destroyed.
+ * Deactivates ALL other active sets (not just the newest) so stragglers from
+ * an interrupted refresh can never resurrect.
+ */
+export function refreshCanarySet(
+  stateDb: StateDatabase,
+  indexDb: IndexDatabase,
+  cfg: CollapseDetectorConfig,
+): { canarySetId: string; canaries: CanaryQueryRow[] } | null {
+  const minted = buildMintList(stateDb, getAllEntries(indexDb), cfg);
+  if (minted.length === 0) return null; // nothing mintable — keep the old baseline
+
+  const canarySetId = newCanarySetId();
+  insertCanaries(stateDb, canarySetId, minted);
+  for (const oldSetId of listActiveCanarySetIds(stateDb)) {
+    if (oldSetId !== canarySetId) deactivateCanarySet(stateDb, oldSetId);
+  }
+  return { canarySetId, canaries: getCanariesBySetId(stateDb, canarySetId) };
 }
 
 // ── Cycle metrics ─────────────────────────────────────────────────────────────
@@ -167,7 +221,7 @@ export function ensureCanarySet(
  * so v1 entropy is measured over the searchable surface, which is also what
  * generic merged assets converge on.)
  */
-export function contentFingerprint(entry: DbIndexedEntry["entry"]): string {
+function contentFingerprint(entry: DbIndexedEntry["entry"]): string {
   const parts = [entry.description ?? "", (entry.tags ?? []).join(" "), (entry.toc ?? []).map((h) => h.text).join(" ")];
   return parts.filter((t) => t.length > 0).join(" ");
 }
@@ -191,11 +245,11 @@ export function normHash(text: string): string {
  * second-generation merge is a miss by design; that IS the information loss).
  * Returns the 0-based rank of the first hit, or -1.
  */
-export function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
+function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
   const results = searchFts(indexDb, canary.query, k);
   for (let i = 0; i < Math.min(results.length, k); i++) {
     const r = results[i];
-    const ref = `${r.entry.type}:${r.entry.name}`;
+    const ref = makeAssetRef(r.entry.type as AkmAssetType, r.entry.name);
     if (ref === canary.anchor_ref) return i;
     if (r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
   }
@@ -205,6 +259,8 @@ export function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string
 /**
  * Compute one qualifying cycle's store-health snapshot. One `entries` scan +
  * `canaryCount` FTS queries; no LLM, no embedding model, no filesystem reads.
+ * Returns `null` when no canary set exists AND none is mintable (empty index)
+ * — such a cycle is not measurable and must not be recorded.
  */
 export function computeCycleMetrics(
   stateDb: StateDatabase,
@@ -215,11 +271,20 @@ export function computeCycleMetrics(
     acceptedActions: number;
     mergeFloorViolations: number;
     cfg: CollapseDetectorConfig;
+    /** Over-generation threshold; callers pass the antiCollapse.maxGeneration in effect. */
+    maxGeneration?: number;
     now?: Date;
   },
-): CycleMetricsRow {
+): CycleMetricsRow | null {
   const k = args.cfg.k ?? DEFAULT_CANARY_K;
-  const { canarySetId, canaries } = ensureCanarySet(stateDb, indexDb, args.cfg);
+  const maxGeneration = args.maxGeneration ?? DEFAULT_MAX_GENERATION;
+
+  // Single entries scan — shared by the canary mint (if one is needed) and
+  // the store-shape metrics below.
+  const all = getAllEntries(indexDb);
+  const canarySet = ensureCanarySet(stateDb, indexDb, args.cfg, all);
+  if (canarySet === null) return null;
+  const { canarySetId, canaries } = canarySet;
 
   // ── Canary retrieval metrics ───────────────────────────────────────────────
   const ranks: Array<[number, number]> = [];
@@ -232,15 +297,14 @@ export function computeCycleMetrics(
     if (rank >= 0) {
       recallSum += 1;
       mrrSum += 1 / (rank + 1);
-      // Single-relevant nDCG: model the returned list as a hit at `rank`.
-      const returned = Array.from({ length: rank + 1 }, (_, i) => (i === rank ? canary.anchor_ref : `_miss${i}`));
-      ndcgSum += ndcgAtK(returned, new Set([canary.anchor_ref]), k);
+      // Single-relevant nDCG@k closed form: ideal DCG is 1, so the score is
+      // just the discount at the hit rank.
+      ndcgSum += 1 / Math.log2(rank + 2);
     }
   }
   const n = Math.max(1, canaries.length);
 
-  // ── Store-shape metrics (one entries scan) ────────────────────────────────
-  const all = getAllEntries(indexDb);
+  // ── Store-shape metrics (same single entries scan) ────────────────────────
   const byType = new Map<string, number>();
   const contentHashes = new Set<string>();
   let learningTotal = 0;
@@ -252,7 +316,7 @@ export function computeCycleMetrics(
     learningTotal++;
     const fingerprint = contentFingerprint(e.entry);
     contentHashes.add(normHash(fingerprint));
-    if ((e.entry.generation ?? 0) > OVER_GENERATION_THRESHOLD) overGeneration++;
+    if ((e.entry.generation ?? 0) > maxGeneration) overGeneration++;
     learningTexts.push({ key: e.entryKey, text: fingerprint });
   }
 
@@ -307,8 +371,10 @@ export function evaluateCollapseAlerts(
 ): CollapseAlert[] {
   const alerts: CollapseAlert[] = [];
 
-  // MERGE-FLOOR advisory: per-cycle, window-independent.
-  if (current.merge_floor_violations > 0) {
+  // MERGE-FLOOR advisory: per-cycle, window-independent. Gated on a minimum
+  // count — the specificity floor is deliberately strict pre-tuning, and one
+  // or two borderline merges per cycle must not generate alert fatigue.
+  if (current.merge_floor_violations >= MERGE_FLOOR_ALERT_MIN) {
     alerts.push({
       kind: "merge-floor",
       detail: `${current.merge_floor_violations} merge(s) failed the information floor this cycle (provenance shrank or specificity below threshold)`,
@@ -366,9 +432,13 @@ export function evaluateCollapseAlerts(
   }
 
   // CHURN — real write volume, zero retrieval- or shape-visible movement.
+  // Flatness is measured against the window MEDIAN (consistent with the
+  // recall rule): endpoint-only comparison would call a window that swung
+  // wildly but happened to land near its start "flat".
   const acceptedSum = hist.reduce((a, h) => a + h.accepted_actions, 0);
-  const scoreFlat = Math.abs(current.mean_ndcg - hist[0].mean_ndcg) < 0.02;
-  const entropyFlat = Math.abs(current.distinct_content_ratio - hist[0].distinct_content_ratio) < 0.02;
+  const scoreFlat = Math.abs(current.mean_ndcg - median(hist.map((h) => h.mean_ndcg))) < 0.02;
+  const entropyFlat =
+    Math.abs(current.distinct_content_ratio - median(hist.map((h) => h.distinct_content_ratio))) < 0.02;
   if (acceptedSum >= churnMin && scoreFlat && entropyFlat) {
     alerts.push({
       kind: "churn",
@@ -406,6 +476,12 @@ export function runCollapseDetector(args: {
     try {
       indexDb = openExistingDatabase(args.indexDbPath);
       const db = indexDb;
+      // Over-generation threshold mirrors the guard actually in effect —
+      // reading the same config key keeps the two aligned when tuned.
+      const antiCollapse = args.config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as
+        | { maxGeneration?: number }
+        | undefined;
+      const maxGeneration = antiCollapse?.maxGeneration ?? DEFAULT_MAX_GENERATION;
       return withStateDb(
         (stateDb) => {
           const row = computeCycleMetrics(stateDb, db, {
@@ -414,7 +490,9 @@ export function runCollapseDetector(args: {
             acceptedActions: args.acceptedActions,
             mergeFloorViolations: args.mergeFloorViolations,
             cfg,
+            maxGeneration,
           });
+          if (row === null) return undefined; // empty index — nothing to measure
           const windowCycles = cfg.windowCycles ?? DEFAULT_WINDOW_CYCLES;
           const history = queryRecentCycleMetrics(stateDb, row.canary_set_id, windowCycles);
           const alerts = evaluateCollapseAlerts(history, row, cfg);

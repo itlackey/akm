@@ -1053,7 +1053,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       stalenessDetection = postLoopResult.stalenessDetection;
       recombination = postLoopResult.recombination;
       proceduralCompilation = postLoopResult.proceduralCompilation;
-      cycleMetrics = postLoopResult.cycleMetrics;
+      // Keep the last QUALIFYING cycle's snapshot — a later non-qualifying
+      // cycle in a maxCycles>1 run must not clobber it with undefined.
+      if (postLoopResult.cycleMetrics) cycleMetrics = postLoopResult.cycleMetrics;
       // Summed counters/durations.
       postLoopGateCount += postLoopResult.gateAutoAcceptedCount;
       postLoopGateFailedCount += postLoopResult.gateAutoAcceptFailedCount;

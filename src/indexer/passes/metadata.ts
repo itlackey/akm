@@ -346,6 +346,15 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (supersededBy) result.supersededBy = supersededBy;
   const contradictedBy = normalizeNonEmptyStringList(e.contradictedBy);
   if (contradictedBy) result.contradictedBy = contradictedBy;
+
+  // R5 — consolidation provenance fields must survive the whitelist too, or
+  // stash.json-overridden merge products lose merge-following + generation
+  // counting in the collapse detector.
+  if (typeof e.generation === "number" && Number.isFinite(e.generation) && e.generation > 0) {
+    result.generation = Math.floor(e.generation);
+  }
+  const sourceRefs = normalizeNonEmptyStringList(e.sourceRefs);
+  if (sourceRefs) result.sourceRefs = sourceRefs;
   const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
   if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
   if (e.captureMode === "hot" || e.captureMode === "background") {

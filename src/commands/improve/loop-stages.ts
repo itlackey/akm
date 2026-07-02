@@ -854,7 +854,10 @@ export async function runImprovePostLoopStage(args: {
     cycleMetrics = runCollapseDetector({
       runId: options.runId ?? "improve-adhoc",
       pass: consolidationRan && recombineWorked ? "both" : consolidationRan ? "consolidate" : "recombine",
-      acceptedActions: args.acceptedActions ?? 0,
+      // prep+loop gate accepts, PLUS recombine's confirmed-lesson promotions —
+      // recombine churn is the historically observed failure mode and its
+      // promotions never flow through the prep/loop gates.
+      acceptedActions: (args.acceptedActions ?? 0) + (recombination?.lessonsPromoted ?? 0),
       mergeFloorViolations: args.consolidationMergeFloorViolations ?? 0,
       config: options.config ?? loadConfig(),
       ...(eventsCtx ? { eventsCtx } : {}),

@@ -22,6 +22,7 @@ import {
   ensureCanarySet,
   evaluateCollapseAlerts,
   normHash,
+  refreshCanarySet,
   runCollapseDetector,
 } from "../../../src/commands/improve/collapse-detector";
 import { saveConfig } from "../../../src/core/config/config";
@@ -99,7 +100,7 @@ function withIndexDb<T>(fn: (db: IndexDatabase) => T): T {
 const CFG: CollapseDetectorConfig = { windowCycles: 2 };
 
 function snapshot(runId: string, acceptedActions = 0, mergeFloorViolations = 0): CycleMetricsRow {
-  return withIndexDb((indexDb) =>
+  const row = withIndexDb((indexDb) =>
     computeCycleMetrics(stateDb, indexDb, {
       runId,
       pass: "consolidate",
@@ -108,6 +109,8 @@ function snapshot(runId: string, acceptedActions = 0, mergeFloorViolations = 0):
       cfg: CFG,
     }),
   );
+  if (row === null) throw new Error("expected a measurable cycle (non-empty corpus)");
+  return row;
 }
 
 function record(row: CycleMetricsRow, cfg: CollapseDetectorConfig = CFG) {
@@ -125,11 +128,25 @@ describe("ensureCanarySet", () => {
     seedCorpus();
     await reindex();
     const first = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    expect(first).not.toBeNull();
+    if (!first) throw new Error("unreachable");
     expect(first.canaries.length).toBeGreaterThan(0);
     expect(first.canaries.length).toBeLessThanOrEqual(40);
     const second = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    if (!second) throw new Error("unreachable");
     expect(second.canarySetId).toBe(first.canarySetId);
     expect(second.canaries.map((c) => c.anchor_ref)).toEqual(first.canaries.map((c) => c.anchor_ref));
+  });
+
+  test("empty index → null (no set minted, no phantom set ids)", async () => {
+    // Indexed but EMPTY stash: ensureCanarySet must refuse to mint rather
+    // than creating a fresh unused set id every cycle (which would keep the
+    // trend window permanently empty while recording fake recall-0 rows).
+    await reindex();
+    const result = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    expect(result).toBeNull();
+    const count = stateDb.prepare("SELECT COUNT(*) AS n FROM canary_queries").get() as { n: number };
+    expect(count.n).toBe(0);
   });
 
   test("cycle-0 mean recall on a healthy corpus is high (canary mechanism sanity)", async () => {
@@ -142,6 +159,42 @@ describe("ensureCanarySet", () => {
     expect(row.distinct_content_ratio).toBeGreaterThanOrEqual(0.99);
     // Pin the canonical metrics path (shared with curate-golden via re-export).
     expect(ndcgAtK(["a"], new Set(["a"]), 10)).toBe(1);
+  });
+});
+
+describe("refreshCanarySet", () => {
+  test("mint-first: an empty index keeps the old baseline instead of destroying it", async () => {
+    seedCorpus();
+    await reindex();
+    const first = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    if (!first) throw new Error("unreachable");
+
+    // Wipe the stash and reindex → nothing mintable.
+    for (const t of TOPICS) removeMemory(t.name);
+    await reindex();
+    const refreshed = withIndexDb((db) => refreshCanarySet(stateDb, db, CFG));
+    expect(refreshed).toBeNull();
+    // The old set is still the active baseline — refresh did NOT deactivate it.
+    const active = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    expect(active?.canarySetId).toBe(first.canarySetId);
+  });
+
+  test("successful refresh mints a new set and deactivates ALL older active sets", async () => {
+    seedCorpus();
+    await reindex();
+    const first = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    if (!first) throw new Error("unreachable");
+    const refreshed = withIndexDb((db) => refreshCanarySet(stateDb, db, CFG));
+    if (!refreshed) throw new Error("unreachable");
+    expect(refreshed.canarySetId).not.toBe(first.canarySetId);
+    const activeSetIds = new Set(
+      (
+        stateDb.prepare("SELECT DISTINCT canary_set_id FROM canary_queries WHERE active = 1").all() as Array<{
+          canary_set_id: string;
+        }>
+      ).map((r) => r.canary_set_id),
+    );
+    expect([...activeSetIds]).toEqual([refreshed.canarySetId]);
   });
 });
 
@@ -266,8 +319,11 @@ describe("evaluateCollapseAlerts (pure)", () => {
 
   test("window shorter than windowCycles never alerts (except merge-floor)", () => {
     expect(evaluateCollapseAlerts([row({})], row({ mean_recall: 0 }), cfg)).toHaveLength(0);
-    const floorOnly = evaluateCollapseAlerts([row({})], row({ mean_recall: 0, merge_floor_violations: 2 }), cfg);
+    const floorOnly = evaluateCollapseAlerts([row({})], row({ mean_recall: 0, merge_floor_violations: 3 }), cfg);
     expect(floorOnly.map((a) => a.kind)).toEqual(["merge-floor"]);
+    // Below the alert minimum (3): counted in the row, but no alert — one or
+    // two borderline merges per cycle must not generate alert fatigue.
+    expect(evaluateCollapseAlerts([row({})], row({ merge_floor_violations: 2 }), cfg)).toHaveLength(0);
   });
 
   test("recall drop vs window MEDIAN: just-below threshold quiet, at threshold fires", () => {
