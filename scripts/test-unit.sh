@@ -50,7 +50,7 @@ declare -a pids tmps
 for k in $(seq 1 "$N"); do
   t="$(mktemp)"
   tmps+=("$t")
-  ( bun test --isolate --timeout=30000 "${paths[@]}" --shard="$k/$N" >"$t" 2>&1 ) &
+  ( bun test --isolate "${paths[@]}" --shard="$k/$N" >"$t" 2>&1 ) &
   pids+=($!)
 done
 

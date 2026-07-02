@@ -27,6 +27,10 @@
  * instead. `toBeGreaterThanOrEqual(0)` and exact `toBe(<n>)` against an injected
  * timestamp are deterministic and NOT flagged.
  *
+ * Rule 4 (raw AKM-named temp root): flag `mkdtempSync("…akm-test…")` outside
+ * tests/_helpers/ — minting AKM temp roots anywhere else bypasses the
+ * single-temp-root/single-cleanup discipline of withIsolatedAkmStorage.
+ *
  * Rule 5 (real process spawn in unit scope): flag `spawnSync(` / `spawn(` /
  * `execSync(` / `execFileSync(` / `Bun.spawn(` calls in test files OUTSIDE
  * tests/integration/. A synchronous spawn blocks the entire JS runtime, so a
@@ -274,7 +278,7 @@ const SPAWN_ALLOWED = new Set<string>([
 
 /**
  * The combined grandfather allowlist (Rule-1 `ALLOWED_FILES` + Rule-2
- * `ENV_ASSIGN_ALLOWED`) is a SHRINK-ONLY ratchet: as files migrate onto the
+ * `ENV_ASSIGN_ALLOWED` + Rule-5 `SPAWN_ALLOWED`) is a SHRINK-ONLY ratchet: as files migrate onto the
  * `withIsolatedAkmStorage` composite they are removed from these sets and this
  * baseline is lowered to match. The meta-test in
  * `tests/lint-isolation-ratchet.test.ts` asserts the live combined size never
@@ -302,7 +306,8 @@ export { ALLOWED_FILES, ENV_ASSIGN_ALLOWED, SPAWN_ALLOWED };
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 
-function collectTestFiles(dir: string): string[] {
+/** Recursively collect *.test.ts / *.test.js files under a directory (shared with test-timing-report). */
+export function collectTestFiles(dir: string): string[] {
   const results: string[] = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -490,7 +495,7 @@ export function lintAllTestFiles(): Violation[] {
   return out;
 }
 
-export { lintFile, collectTestFiles };
+export { lintFile };
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 

@@ -24,6 +24,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { collectTestFiles } from "./lint-tests-isolation";
 
 const args = process.argv.slice(2);
 const TOP_N = Number(args.find((a) => a.startsWith("--top="))?.split("=")[1] ?? 20);
@@ -31,25 +32,11 @@ const targets = args.filter((a) => !a.startsWith("--"));
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 
-/** Recursively collect *.test.ts files under a directory. */
-function collectTests(dir: string): string[] {
-  const results: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === "dist") continue;
-      results.push(...collectTests(full));
-    } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
-      results.push(full);
-    }
-  }
-  return results;
-}
 
 /** Resolve CLI targets (files or dirs) to a flat list of test files. */
 function resolveTargets(rawTargets: string[]): string[] {
   if (rawTargets.length === 0) {
-    return collectTests(path.join(repoRoot, "tests"));
+    return collectTestFiles(path.join(repoRoot, "tests"));
   }
   const files: string[] = [];
   for (const t of rawTargets) {
@@ -60,7 +47,7 @@ function resolveTargets(rawTargets: string[]): string[] {
     }
     const stat = fs.statSync(abs);
     if (stat.isDirectory()) {
-      files.push(...collectTests(abs));
+      files.push(...collectTestFiles(abs));
     } else if (abs.endsWith(".test.ts")) {
       files.push(abs);
     }
