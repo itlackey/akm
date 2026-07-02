@@ -63,13 +63,6 @@ function retainHeldLock(lockPath: string): IndexWriterLease {
   return { lockPath, release: () => releaseHeldLock(lockPath) };
 }
 
-function detachHeldLock(lockPath: string): void {
-  const held = heldLocks.get(lockPath);
-  if (!held) return;
-  heldLocks.delete(lockPath);
-  process.off("exit", held.exitHandler);
-}
-
 export async function acquireIndexWriterLease(
   options: AcquireIndexWriterLeaseOptions,
 ): Promise<IndexWriterLease | undefined> {
@@ -114,11 +107,6 @@ export async function withIndexWriterLease<T>(
   } finally {
     lease.release();
   }
-}
-
-export function handoffIndexWriterLeaseToPid(lease: IndexWriterLease, pid: number, purpose: string): void {
-  fs.writeFileSync(lease.lockPath, buildPayload(purpose, pid), "utf8");
-  detachHeldLock(lease.lockPath);
 }
 
 export function probeIndexWriterLease() {

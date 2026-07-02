@@ -82,6 +82,17 @@ describe("withIndexDb loan helper (WS5)", () => {
     }
   });
 
+  test("busyTimeoutMs option overrides the connection's busy_timeout pragma", () => {
+    // Default connections get the standard 30s pragma.
+    const standard = withIndexDb((db) => (db.prepare("PRAGMA busy_timeout").get() as { timeout: number }).timeout);
+    expect(standard).toBe(30000);
+    // Telemetry callers pass a small value so contended writes drop fast.
+    const short = withIndexDb((db) => (db.prepare("PRAGMA busy_timeout").get() as { timeout: number }).timeout, {
+      busyTimeoutMs: 250,
+    });
+    expect(short).toBe(250);
+  });
+
   test("propagates throws from fn (the connection still closes exactly once)", () => {
     const sentinel = new Error("boom");
     expect(() =>

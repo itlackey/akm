@@ -38,6 +38,10 @@ export interface HealthCheckContext {
   /** Active runs older than the stale threshold. */
   stuckActiveRuns: number;
   semanticStatus: SemanticSearchStatus | undefined;
+  /** Effective `semanticSearchMode` from config (for the embedding advisory). */
+  semanticSearchMode: string | undefined;
+  /** Configured remote embedding endpoint, when one is set. */
+  embeddingEndpoint: string | undefined;
   sessionLogEntries: SessionLogAdvisory[];
   sessionExtraction: ImproveHealthMetrics["sessionExtraction"];
   autoAccept: ImproveHealthMetrics["autoAccept"];
@@ -252,22 +256,36 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
   {
     name: "semantic-search-runtime",
     channel: "advisory",
-    run: (ctx) => ({
-      name: "semantic-search-runtime",
-      kind: "deterministic",
-      status:
-        !ctx.semanticStatus ||
-        ctx.semanticStatus.status === "pending" ||
-        ctx.semanticStatus.status === "ready-js" ||
-        ctx.semanticStatus.status === "ready-vec"
-          ? "pass"
-          : "warn",
-      confidence: "medium",
-      message: ctx.semanticStatus
-        ? `Semantic search status: ${ctx.semanticStatus.status}`
-        : "No semantic-search runtime status recorded yet.",
-      evidence: ctx.semanticStatus ? { ...ctx.semanticStatus } : undefined,
-    }),
+    run: (ctx) => {
+      const blocked = ctx.semanticStatus?.status === "blocked";
+      // The generic "status: blocked" line is not actionable when the real
+      // problem is a configured remote embedding endpoint that is down while
+      // semanticSearchMode leaves semantic search enabled — every index run
+      // burns time failing against it and searches silently degrade to
+      // keyword-only. Name the endpoint and the two ways out.
+      const remoteReason = ctx.semanticStatus?.reason?.startsWith("remote-") === true;
+      const endpointAdvisory =
+        blocked && remoteReason && ctx.embeddingEndpoint
+          ? `Configured embedding endpoint ${ctx.embeddingEndpoint} is failing ` +
+            `(${ctx.semanticStatus?.reason}${ctx.semanticStatus?.message ? `: ${ctx.semanticStatus.message}` : ""}) ` +
+            `while semanticSearchMode is "${ctx.semanticSearchMode ?? "auto"}". Searches fall back to keyword-only. ` +
+            `Restore the endpoint, or set semanticSearchMode to "off" (or remove embedding.endpoint to use the local model).`
+          : undefined;
+      return {
+        name: "semantic-search-runtime",
+        kind: "deterministic",
+        status: !ctx.semanticStatus || !blocked ? "pass" : "warn",
+        confidence: "medium",
+        message:
+          endpointAdvisory ??
+          (ctx.semanticStatus
+            ? `Semantic search status: ${ctx.semanticStatus.status}`
+            : "No semantic-search runtime status recorded yet."),
+        evidence: ctx.semanticStatus
+          ? { ...ctx.semanticStatus, ...(ctx.embeddingEndpoint ? { embeddingEndpoint: ctx.embeddingEndpoint } : {}) }
+          : undefined,
+      };
+    },
   },
   {
     // session-log-failures: demoted to informational — the ERROR_PATTERNS regex

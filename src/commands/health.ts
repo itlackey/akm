@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import { loadConfig } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { buildTaskRunId, getLoggedRunIds, openLogsDatabase } from "../core/logs-db";
@@ -2188,6 +2189,17 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const agentFailureRate = promptRows.length === 0 ? 0 : promptFailures.length / promptRows.length;
 
     const semanticStatus = readSemanticStatus();
+    // For the embedding-endpoint advisory. Best-effort: an unloadable config
+    // leaves both undefined and the check falls back to its generic message.
+    let semanticSearchMode: string | undefined;
+    let embeddingEndpoint: string | undefined;
+    try {
+      const config = loadConfig();
+      semanticSearchMode = config.semanticSearchMode;
+      embeddingEndpoint = config.embedding?.endpoint;
+    } catch {
+      // fall through with undefined
+    }
 
     const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
     const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
@@ -2326,6 +2338,8 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       logBackingRate,
       stuckActiveRuns,
       semanticStatus,
+      semanticSearchMode,
+      embeddingEndpoint,
       sessionLogEntries,
       sessionExtraction: improveSummary.sessionExtraction,
       autoAccept: improveSummary.autoAccept,

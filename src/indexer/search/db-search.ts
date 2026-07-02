@@ -57,6 +57,28 @@ import {
   readSemanticStatus,
 } from "./semantic-status";
 
+/**
+ * Age past which search surfaces a "run akm index" hint. Reads serve the
+ * existing index as-is (freshness is the writers' job — `indexWrittenAssets`
+ * plus full runs), so on installs with no improve cron a hand-edited or
+ * git-pulled file stays invisible until someone reindexes. The hint makes that
+ * actionable without re-introducing read-triggered reindexing.
+ */
+const STALE_INDEX_HINT_MS = 7 * 24 * 60 * 60 * 1000;
+
+function buildStaleIndexHint(db: Database): string | undefined {
+  try {
+    const builtAt = getMeta(db, "builtAt");
+    if (!builtAt) return undefined;
+    const ageMs = Date.now() - new Date(builtAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < STALE_INDEX_HINT_MS) return undefined;
+    const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+    return `Search index was last built ${days} day(s) ago. Files added or edited outside akm since then are not searchable — run 'akm index' to refresh.`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function buildLocalAction(
   type: string,
   ref: string,
@@ -188,7 +210,9 @@ export async function searchLocal(input: {
     );
   }
 
-  // Auto-index when stale so the DB is always current before querying.
+  // Bootstrap-only: builds the index inline when it cannot serve this stash.
+  // Content freshness is the writers' job (indexWrittenAssets + full runs);
+  // reads serve the existing index as-is.
   await ensureIndex(stashDir);
 
   const dbPath = getDbPath();
@@ -212,6 +236,9 @@ export async function searchLocal(input: {
         mode: "keyword",
       };
     }
+
+    const staleHint = buildStaleIndexHint(db);
+    if (staleHint) warnings.push(staleHint);
 
     const { hits, embedMs, rankMs } = await searchDatabase(
       db,

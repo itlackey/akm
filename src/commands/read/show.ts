@@ -42,7 +42,7 @@ import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveStorageLocations } from "../../storage/locations";
-import { withIndexDb } from "../../storage/repositories/index-db";
+import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../../sources/types";
@@ -335,14 +335,17 @@ function logShowEvent(ref: string, eventSource: "user" | "improve" = "user"): vo
   }
 
   try {
-    withIndexDb((db) => {
-      insertUsageEvent(db, {
-        event_type: "show",
-        entry_ref: ref,
-        entry_id: findEntryIdByRef(db, ref),
-        source: eventSource,
-      });
-    });
+    withIndexDb(
+      (db) => {
+        insertUsageEvent(db, {
+          event_type: "show",
+          entry_ref: ref,
+          entry_id: findEntryIdByRef(db, ref),
+          source: eventSource,
+        });
+      },
+      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
+    );
   } catch (err) {
     rethrowIfTestIsolationError(err);
     /* fire-and-forget */
@@ -504,9 +507,12 @@ async function maybeExtractGraphInline(
       return; // file gone/unreadable ⇒ nothing to extract
     }
 
-    withIndexDb((db) => {
-      alreadyGraphed = hasGraphData(db, sourceStashDir, assetPath);
-    });
+    withIndexDb(
+      (db) => {
+        alreadyGraphed = hasGraphData(db, sourceStashDir, assetPath);
+      },
+      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
+    );
     if (alreadyGraphed) return;
 
     // Open the db for the async extraction ourselves: `withIndexDb` is
