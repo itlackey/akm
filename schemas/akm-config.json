@@ -359,6 +359,14 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": true
@@ -713,6 +721,14 @@
                             "type": "boolean"
                           },
                           "randomClusterFraction": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -1073,6 +1089,14 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": true
@@ -1427,6 +1451,14 @@
                             "type": "boolean"
                           },
                           "randomClusterFraction": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -1787,6 +1819,14 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": true
@@ -2141,6 +2181,14 @@
                             "type": "boolean"
                           },
                           "randomClusterFraction": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -2501,6 +2549,14 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": true
@@ -2855,6 +2911,14 @@
                             "type": "boolean"
                           },
                           "randomClusterFraction": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -3215,6 +3279,14 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": true
@@ -3572,6 +3644,14 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           }
                         },
                         "additionalProperties": true
@@ -3926,6 +4006,14 @@
                             "type": "boolean"
                           },
                           "randomClusterFraction": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "mergeInformationFloor": {
+                            "type": "boolean"
+                          },
+                          "minSpecificityRetention": {
                             "type": "number",
                             "minimum": 0,
                             "maximum": 1
@@ -4996,6 +5084,14 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": true
@@ -5350,6 +5446,14 @@
                                 "type": "boolean"
                               },
                               "randomClusterFraction": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -5710,6 +5814,14 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": true
@@ -6064,6 +6176,14 @@
                                 "type": "boolean"
                               },
                               "randomClusterFraction": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -6424,6 +6544,14 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": true
@@ -6778,6 +6906,14 @@
                                 "type": "boolean"
                               },
                               "randomClusterFraction": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -7138,6 +7274,14 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": true
@@ -7492,6 +7636,14 @@
                                 "type": "boolean"
                               },
                               "randomClusterFraction": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -7852,6 +8004,14 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": true
@@ -8209,6 +8369,14 @@
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
                               }
                             },
                             "additionalProperties": true
@@ -8563,6 +8731,14 @@
                                 "type": "boolean"
                               },
                               "randomClusterFraction": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "mergeInformationFloor": {
+                                "type": "boolean"
+                              },
+                              "minSpecificityRetention": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1
@@ -9604,6 +9780,14 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "mergeInformationFloor": {
+              "type": "boolean"
+            },
+            "minSpecificityRetention": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             }
           },
           "additionalProperties": true
@@ -9971,6 +10155,14 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": true
@@ -10325,6 +10517,14 @@
                       "type": "boolean"
                     },
                     "randomClusterFraction": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -10685,6 +10885,14 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": true
@@ -11039,6 +11247,14 @@
                       "type": "boolean"
                     },
                     "randomClusterFraction": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -11399,6 +11615,14 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": true
@@ -11753,6 +11977,14 @@
                       "type": "boolean"
                     },
                     "randomClusterFraction": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -12113,6 +12345,14 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": true
@@ -12467,6 +12707,14 @@
                       "type": "boolean"
                     },
                     "randomClusterFraction": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
@@ -12827,6 +13075,14 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": true
@@ -13184,6 +13440,14 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     }
                   },
                   "additionalProperties": true
@@ -13538,6 +13802,14 @@
                       "type": "boolean"
                     },
                     "randomClusterFraction": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "mergeInformationFloor": {
+                      "type": "boolean"
+                    },
+                    "minSpecificityRetention": {
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1

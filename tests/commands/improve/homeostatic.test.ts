@@ -25,6 +25,7 @@ import {
   checkDistillFidelity,
   checkGenerationGuard,
   checkLexicalDiversity,
+  checkMergeInformationFloor,
   computeBigramDiversity,
   computeMergedGeneration,
   DEFAULT_MAX_GENERATION,
@@ -344,5 +345,73 @@ describe("buildHotProbationFrontmatter", () => {
     const fm = buildHotProbationFrontmatter();
     expect(fm).toEqual({ captureMode: "hot-probation" });
     expect(fm.captureMode).toBe(CAPTURE_MODE_HOT_PROBATION);
+  });
+});
+
+// ── checkMergeInformationFloor (R5 §4.2) ──────────────────────────────────────
+
+describe("checkMergeInformationFloor", () => {
+  const participants = [
+    { ref: "memory:a", body: "alpha beta gamma delta epsilon zeta", sourceRefs: ["memory:root"] },
+    { ref: "memory:b", body: "eta theta iota kappa lambda mu", sourceRefs: [] },
+  ];
+  const fullProvenance = ["memory:a", "memory:b", "memory:root"];
+
+  test("genuinely-additive merge passes (full provenance, full token retention)", () => {
+    const merged = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu synthesis";
+    const result = checkMergeInformationFloor(merged, fullProvenance, participants, {});
+    expect(result.passed).toBe(true);
+    expect(result.specificityRetention).toBe(1);
+  });
+
+  test("provenance shrink fails (merged source_refs missing a participant's cited source)", () => {
+    const merged = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+    const result = checkMergeInformationFloor(merged, ["memory:a", "memory:b"], participants, {});
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("provenance shrank");
+    expect(result.provenanceBefore).toBe(3);
+    expect(result.provenanceAfter).toBe(2);
+  });
+
+  test("shortening/genericizing merge fails the 0.6 retention floor", () => {
+    // 12 distinct source tokens; merged keeps only 4 (< 0.6 × 12 = 7.2).
+    const merged = "alpha beta gamma delta";
+    const result = checkMergeInformationFloor(merged, fullProvenance, participants, {});
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("specificity retention");
+    expect(result.specificityRetention).toBeCloseTo(4 / 12, 6);
+  });
+
+  test("retention boundary: exactly at the configured floor passes", () => {
+    // 12 source tokens, keep 6, floor 0.5 → 0.5 >= 0.5 passes.
+    const merged = "alpha beta gamma delta epsilon zeta";
+    const result = checkMergeInformationFloor(merged, fullProvenance, participants, {
+      minSpecificityRetention: 0.5,
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  test("opt-outs: enabled:false or mergeInformationFloor:false pass trivially", () => {
+    const merged = "x";
+    expect(checkMergeInformationFloor(merged, [], participants, { enabled: false }).passed).toBe(true);
+    expect(checkMergeInformationFloor(merged, [], participants, { mergeInformationFloor: false }).passed).toBe(true);
+  });
+});
+
+// ── R5: anti-collapse guards default ON ───────────────────────────────────────
+
+describe("anti-collapse guards default ON (R5 §4.1)", () => {
+  test("checkGenerationGuard is active with an empty config (default on)", () => {
+    // Both participants above maxGeneration (default 2) → refused by default.
+    expect(checkGenerationGuard([3, 3], {}).refused).toBe(true);
+    // Explicit opt-out restores the old inert behavior.
+    expect(checkGenerationGuard([3, 3], { enabled: false }).refused).toBe(false);
+  });
+
+  test("checkLexicalDiversity is active with an empty config (default on)", () => {
+    // Single repeated token → 1 unique bigram / 5 total = 0.2 < the 0.30 floor.
+    const repetitive = ["same same same same same same", "same same same same same same"];
+    expect(checkLexicalDiversity(repetitive, {}).lowDiversity).toBe(true);
+    expect(checkLexicalDiversity(repetitive, { enabled: false }).lowDiversity).toBe(false);
   });
 });

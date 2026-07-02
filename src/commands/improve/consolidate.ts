@@ -30,6 +30,7 @@ import {
   type AntiCollapseConfig,
   checkGenerationGuard,
   checkLexicalDiversity,
+  checkMergeInformationFloor,
   computeMergedGeneration,
   readAssetGeneration,
   shouldSkipHotProbationInLlm,
@@ -133,6 +134,13 @@ export interface ConsolidateResult {
   promoted: string[];
   /** Number of contradiction edges written (C-3 / #382). */
   contradicted: number;
+  /**
+   * R5 §4.2 — merges that failed the ADVISORY merge-information floor this run
+   * (provenance shrank or specificity retention below the configured floor).
+   * The merges still proceeded in v1; the count feeds the collapse detector's
+   * cycle metrics and the health advisory.
+   */
+  mergeFloorViolations?: number;
   /**
    * Number of LLM chunks that failed (HTTP error, empty/invalid plan, etc.)
    * during this run. Counterpart to {@link processed}, which counts INPUT
@@ -761,24 +769,28 @@ function backupFile(filePath: string, backupDir: string, name: string): void {
 // ── WS-3b: Generation frontmatter injection ───────────────────────────────────
 
 /**
- * Inject `generation` (and optionally `source_refs`) into merged content.
+ * Inject `generation` and `source_refs` into merged content.
  * generation = max(sourceGenerations) + 1.
+ * source_refs = UNION of the provided provenance refs (participants + their
+ * cited sources) with anything already present in the merged frontmatter —
+ * R5 §4.2: the old set-if-absent behavior dropped second-generation
+ * provenance whenever the LLM emitted its own (partial) source_refs.
  * Fails open — returns original content if frontmatter can't be parsed.
  */
 function injectGenerationFrontmatter(
   mergedContent: string,
   sourceGenerations: number[],
-  allParticipants: string[],
+  provenanceRefs: string[],
 ): string {
   try {
     const parsed = parseFrontmatter(mergedContent);
+    const existingFm = parsed.data as Record<string, unknown>;
+    const existingRefs = Array.isArray(existingFm.source_refs) ? existingFm.source_refs.map(String) : [];
     const updatedFm: Record<string, unknown> = {
-      ...(parsed.data as Record<string, unknown>),
+      ...existingFm,
       generation: computeMergedGeneration(sourceGenerations),
+      source_refs: [...new Set([...existingRefs, ...provenanceRefs])],
     };
-    if (!updatedFm.source_refs) {
-      updatedFm.source_refs = allParticipants;
-    }
     return assembleAssetFromString(serializeFrontmatter(updatedFm), parsed.content);
   } catch {
     return mergedContent; // fail open
@@ -1263,12 +1275,12 @@ async function akmConsolidateInner(
   // A small fraction (default 5%) of the pool is shuffled into random positions
   // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
   // entrenchment where only the most-retrieved assets ever get consolidated.
-  // DEFAULT OFF — gated on antiCollapse.enabled.
+  // DEFAULT ON since R5 — opt out via antiCollapse.enabled: false.
   let finalClusteredMemories = clusteredMemories;
   {
     const antiCollapseForCluster: AntiCollapseConfig =
       (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
-    if (antiCollapseForCluster.enabled && clusteredMemories.length > 2) {
+    if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
       const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
       const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
       // Pick `randomCount` positions to inject random (un-clustered) members.
@@ -1766,6 +1778,7 @@ async function akmConsolidateInner(
   let deleted = 0;
   const promoted: string[] = [];
   let contradicted = 0; // C-3 / #382: count of contradiction edges written
+  let mergeFloorViolations = 0; // R5 §4.2: advisory merge-information-floor failures
 
   // Within-run dedup: track source refs for which a promote proposal was
   // already created this run. The LLM can return multiple promote ops for
@@ -1939,26 +1952,31 @@ async function akmConsolidateInner(
       }
 
       // WS-3b: Anti-collapse generation guard (step 8a).
-      // DEFAULT OFF. When antiCollapse.enabled, refuse to merge two assets both
-      // above generation N (default 2). This prevents the pipeline from
-      // building ever-deeper LLM-merged trees that lose the source fidelity
-      // of the original episodes.
+      // DEFAULT ON since R5 (opt out via antiCollapse.enabled: false). Refuses
+      // to merge two assets both above generation N (default 2) — prevents the
+      // pipeline from building ever-deeper LLM-merged trees that lose the
+      // source fidelity of the original episodes.
       const antiCollapseConfig: AntiCollapseConfig =
         (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ??
         {};
-      if (antiCollapseConfig.enabled) {
+      if (antiCollapseConfig.enabled !== false) {
         const allParticipants = [op.primary, ...op.secondaries];
-        const sourceGenerations = allParticipants.map((ref) => {
+        // One read per participant: generation counter, stripped body (for the
+        // information floor), and existing source_refs (for the provenance union).
+        const participantInfo = allParticipants.map((ref) => {
           const e = memoryByRef.get(ref);
-          if (!e) return 0;
+          if (!e) return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
           try {
             const raw = fs.readFileSync(e.filePath, "utf8");
             const parsed = parseFrontmatter(raw);
-            return readAssetGeneration(parsed.data as Record<string, unknown>);
+            const fm = parsed.data as Record<string, unknown>;
+            const sourceRefs = Array.isArray(fm.source_refs) ? fm.source_refs.map(String) : [];
+            return { ref, generation: readAssetGeneration(fm), body: stripFrontmatterBody(raw), sourceRefs };
           } catch {
-            return 0;
+            return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
           }
         });
+        const sourceGenerations = participantInfo.map((p) => p.generation);
 
         const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
         if (generationCheck.refused) {
@@ -1970,18 +1988,7 @@ async function akmConsolidateInner(
         // WS-3b: Lexical diversity check (step 8b).
         // Low n-gram diversity ⇒ likely correlated-extraction artifact; raise merge threshold.
         if (antiCollapseConfig.lexicalDiversityCheck !== false) {
-          const bodies = allParticipants
-            .map((ref) => {
-              const e = memoryByRef.get(ref);
-              if (!e) return "";
-              try {
-                const raw = fs.readFileSync(e.filePath, "utf8");
-                return stripFrontmatterBody(raw);
-              } catch {
-                return "";
-              }
-            })
-            .filter((b) => b.length > 0);
+          const bodies = participantInfo.map((p) => p.body).filter((b) => b.length > 0);
 
           const diversityCheck = checkLexicalDiversity(bodies, antiCollapseConfig);
           if (diversityCheck.lowDiversity) {
@@ -1994,8 +2001,34 @@ async function akmConsolidateInner(
         }
 
         // Inject generation counter into merged content frontmatter (step 8a).
-        // merged.generation = max(sourceGenerations) + 1.
-        mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, allParticipants);
+        // merged.generation = max(sourceGenerations) + 1. source_refs is the
+        // UNION of participants + everything they already cited (R5 §4.2 —
+        // the old set-if-absent behavior dropped second-generation provenance).
+        const provenanceUnion = [...new Set([...allParticipants, ...participantInfo.flatMap((p) => p.sourceRefs)])];
+        mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, provenanceUnion);
+
+        // R5 §4.2: merge-information floor — ADVISORY in v1. A merge that
+        // shrinks provenance or genericizes below the retention floor is
+        // counted + warned, never refused (promotion path: design doc §7).
+        try {
+          const mergedParsed = parseFrontmatter(mergedContent);
+          const mergedFm = mergedParsed.data as Record<string, unknown>;
+          const mergedSourceRefs = Array.isArray(mergedFm.source_refs) ? mergedFm.source_refs.map(String) : [];
+          const floorCheck = checkMergeInformationFloor(
+            mergedParsed.content,
+            mergedSourceRefs,
+            participantInfo,
+            antiCollapseConfig,
+          );
+          if (!floorCheck.passed) {
+            mergeFloorViolations++;
+            warnings.push(
+              `Merge: information floor advisory for ${op.primary}: ${floorCheck.reason ?? "unspecified"} — merge proceeds (v1 observe-only).`,
+            );
+          }
+        } catch {
+          // Floor measurement is best-effort; never blocks the merge path.
+        }
       }
 
       // Backup secondaries before deleting
@@ -2400,6 +2433,7 @@ async function akmConsolidateInner(
     deleted: deleted + dedupCollapsed,
     promoted,
     contradicted,
+    mergeFloorViolations,
     failedChunks: totalChunksFailed,
     totalChunks: chunks.length,
     judgedNoAction,

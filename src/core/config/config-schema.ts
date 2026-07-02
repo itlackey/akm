@@ -308,13 +308,19 @@ export const ImproveProcessConfigSchema = z
     //   - maxGeneration: refuse to merge two assets both above this generation (default 2).
     //   - lexicalDiversityCheck: low n-gram diversity ⇒ raise merge threshold.
     //   - randomClusterFraction: occasional random (non-similar) cluster in pool (default 0.05).
-    // Default OFF. Only meaningful on the `consolidate` process.
+    //   - mergeInformationFloor: measure that merges keep provenance + specificity
+    //     (R5 §4.2; ADVISORY in v1 — counted, never refused).
+    //   - minSpecificityRetention: distinct-token retention floor for merges (default 0.6).
+    // Default ON since R5 (opt out via enabled: false). Only meaningful on the
+    // `consolidate` process.
     antiCollapse: z
       .object({
         enabled: z.boolean().optional(),
         maxGeneration: z.number().int().min(1).optional(),
         lexicalDiversityCheck: z.boolean().optional(),
         randomClusterFraction: z.number().min(0).max(1).optional(),
+        mergeInformationFloor: z.boolean().optional(),
+        minSpecificityRetention: z.number().min(0).max(1).optional(),
       })
       .passthrough()
       .optional(),
