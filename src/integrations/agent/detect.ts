@@ -70,6 +70,19 @@ export interface AgentDetectionResult {
   available: boolean;
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+interface AgentDetectOverridesForTests {
+  detectAgentCliProfiles?: typeof detectAgentCliProfiles;
+  pickDefaultAgentProfile?: typeof pickDefaultAgentProfile;
+}
+let detectOverrides: AgentDetectOverridesForTests | undefined;
+
+/** TEST-ONLY. Swap the detection implementations; pass undefined to restore. */
+export function _setAgentDetectForTests(fakes?: AgentDetectOverridesForTests): void {
+  detectOverrides = fakes;
+}
+
 /**
  * Probe every resolvable agent profile (built-ins plus user overrides)
  * for an installed CLI.
@@ -79,6 +92,7 @@ export interface AgentDetectionResult {
  * @param whichFn  Binary lookup. Tests should inject a stub.
  */
 export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = defaultWhich): AgentDetectionResult[] {
+  if (detectOverrides?.detectAgentCliProfiles) return detectOverrides.detectAgentCliProfiles(agent, whichFn);
   const profiles = listResolvedAgentProfiles(agent);
   return profiles.map((profile) => probeProfile(profile, whichFn));
 }
@@ -104,6 +118,8 @@ function probeProfile(profile: AgentProfile, whichFn: WhichFn): AgentDetectionRe
  *      writing `agent.default`.
  */
 export function pickDefaultAgentProfile(results: AgentDetectionResult[], existingDefault?: string): string | undefined {
+  if (detectOverrides?.pickDefaultAgentProfile)
+    return detectOverrides.pickDefaultAgentProfile(results, existingDefault);
   if (existingDefault) {
     const match = results.find((r) => r.name === existingDefault && r.available);
     if (match) return match.name;

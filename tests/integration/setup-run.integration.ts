@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import type { IndexResponse } from "../../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../../src/indexer/indexer";
-import * as actualAgentIntegration from "../../src/integrations/agent";
+import { _setAgentDetectForTests } from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { _setDetectForTests } from "../../src/setup/detect";
 import { overrideSeam } from "../_helpers/seams";
@@ -110,11 +110,10 @@ function resetSetupState(): void {
 }
 
 function installAgentIntegrationMock(): void {
-  mock.module("../../src/integrations/agent", () => ({
-    ...actualAgentIntegration,
+  overrideSeam(_setAgentDetectForTests, {
     detectAgentCliProfiles: () => [],
     pickDefaultAgentProfile: () => undefined,
-  }));
+  });
 }
 
 function installIndexerSeam(): void {
