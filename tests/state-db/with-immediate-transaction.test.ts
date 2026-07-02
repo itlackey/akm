@@ -5,13 +5,15 @@
 /**
  * Tests for `withImmediateTransaction` concurrency hardening.
  *
- * Under heavy concurrent-writer load (e.g. the proposal-queue worker race in
- * tests/proposal-storage-sqlite.test.ts) a contended `BEGIN IMMEDIATE` could
- * leave the bun:sqlite connection reporting an open transaction, so the next
- * `BEGIN` threw `SQLiteError: cannot start a transaction within a transaction`
- * — a CI-only flake. The helper now treats that (and `database is locked`) as a
- * transient start-of-transaction failure: it rolls back the phantom state and
- * retries. Errors thrown by the transaction BODY are real and never retried.
+ * Issue #686: a nested/re-entrant withImmediateTransaction call used to hit
+ * "cannot start a transaction within a transaction" at BEGIN, which the retry
+ * path classified as retryable and answered with an unconditional ROLLBACK —
+ * destroying the OUTER transaction, so the outer COMMIT threw
+ * "cannot commit - no transaction is active" (the CI-only proposal-queue
+ * flake). The helper is now re-entrant: if a transaction is already open on
+ * the connection at entry, fn joins it (no BEGIN/COMMIT/ROLLBACK of its own).
+ * "database is locked" at BEGIN remains a transient, retried failure. Errors
+ * thrown by the transaction BODY are real and never retried.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -33,20 +35,53 @@ describe("withImmediateTransaction", () => {
     storage.cleanup();
   });
 
-  test("recovers from a phantom open transaction instead of throwing 'within a transaction'", () => {
-    // Simulate the contended-BEGIN phantom: the connection already reports an
-    // open transaction when withImmediateTransaction runs.
+  test("re-entrancy at entry: joins an already-open transaction instead of BEGIN/COMMIT of its own", () => {
+    // A transaction is already open on the connection when the helper runs.
     db.exec("BEGIN");
+    db.exec("CREATE TABLE IF NOT EXISTS t (x INTEGER)");
+    db.prepare("INSERT INTO t (x) VALUES (1)").run();
 
-    expect(() =>
-      withImmediateTransaction(db, () => {
-        db.exec("CREATE TABLE IF NOT EXISTS t (x INTEGER)");
-        db.prepare("INSERT INTO t (x) VALUES (1)").run();
-      }),
-    ).not.toThrow();
+    const result = withImmediateTransaction(db, () => {
+      db.prepare("INSERT INTO t (x) VALUES (2)").run();
+      return "joined";
+    });
+    expect(result).toBe("joined");
 
-    const count = (db.prepare("SELECT count(*) AS c FROM t").get() as { c: number }).c;
-    expect(count).toBe(1);
+    // The helper neither rolled back nor committed the caller's transaction:
+    // it is still open, with BOTH writes intact.
+    expect(db.inTransaction).toBe(true);
+    expect((db.prepare("SELECT count(*) AS c FROM t").get() as { c: number }).c).toBe(2);
+
+    // The caller's own COMMIT still works and persists both writes.
+    db.exec("COMMIT");
+    expect(db.inTransaction).toBe(false);
+    expect((db.prepare("SELECT count(*) AS c FROM t").get() as { c: number }).c).toBe(2);
+  });
+
+  test("nested call inside fn joins the outer transaction; the outer COMMIT still succeeds (#686)", () => {
+    // The exact issue #686 shape: an outer withImmediateTransaction whose body
+    // calls withImmediateTransaction again on the same connection. The nested
+    // frame must NOT roll back the outer transaction, and the outer frame's
+    // COMMIT must not throw "cannot commit - no transaction is active".
+    const outcome = withImmediateTransaction(db, () => {
+      db.exec("CREATE TABLE IF NOT EXISTS t (x INTEGER)");
+      db.prepare("INSERT INTO t (x) VALUES (1)").run();
+
+      const nested = withImmediateTransaction(db, () => {
+        db.prepare("INSERT INTO t (x) VALUES (2)").run();
+        return "nested-ok";
+      });
+
+      // The outer transaction survived the nested call with its write intact.
+      expect(db.inTransaction).toBe(true);
+      db.prepare("INSERT INTO t (x) VALUES (3)").run();
+      return nested;
+    });
+
+    expect(outcome).toBe("nested-ok");
+    expect(db.inTransaction).toBe(false);
+    // All three writes (outer-before, nested, outer-after) committed atomically.
+    expect((db.prepare("SELECT count(*) AS c FROM t").get() as { c: number }).c).toBe(3);
   });
 
   test("retries when BEGIN IMMEDIATE returns WITHOUT opening a transaction (phantom)", () => {
