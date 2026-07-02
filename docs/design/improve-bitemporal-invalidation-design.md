@@ -574,17 +574,22 @@ one indexed SELECT per `createProposal` and one frontmatter read per merge op.
 
 ---
 
-## 14. Open questions for the owner
+## 14. Owner decisions (resolved 2026-07-02)
 
-1. **CLI placement:** `akm improve resolve|reinstate|invalidations` (this spec) vs. a new
-   `akm memory` command group. The spec picks the smaller surface; say the word if a
-   memory group is the preferred long-term home.
-2. **`asserted` semantics:** the spec never auto-invalidates an `asserted` (user-authored)
-   record — every asserted-losing conflict defers to human. Confirm, or allow a newer
-   `asserted` to auto-invalidate an older `asserted` (currently: defer).
-3. **Ranking penalty −0.55:** placed between `contradicted` and `archived` by argument in
-   §9; cheap to change, but it is user-visible ranking — confirm the value.
-4. **Detection scope (post-Phase-2):** the automated detect pass only sees derived-memory
-   families sharing a `parentRef`; cross-family contradictions surface only via
-   consolidate's LLM plan. Extending detection is deliberately out of scope here — is it
-   wanted as a follow-up?
+All four open questions were put to the owner and decided:
+
+1. **CLI placement: `akm improve resolve|reinstate|invalidations` (as specced).** No new
+   `akm memory` command group for three verbs — speculative surface; if a memory group
+   materializes later for other reasons, these verbs move behind an alias under the
+   established break-then-alias pattern.
+2. **`asserted`-vs-`asserted` conflicts: DEFER in v1** (the machine never auto-invalidates
+   a user-authored record, even for a newer one). Revisit after the observe-first phase:
+   if asserted-vs-asserted pairs show up frequently in the health advisory and human
+   resolutions are consistently "newer wins", promote newer-asserted-wins then.
+3. **Ranking penalty −0.55 confirmed** (worse than unresolved `contradicted` −0.45,
+   slightly above `archived` −0.6). Belt-and-suspenders behind the `historical` filter;
+   a single constant, tunable later.
+4. **Cross-family detection: desired follow-up, NOT committed here.** Preferred shape
+   when Phase 2 proves out: run contradiction detection over consolidate's *existing*
+   similarity clusters (already computed for dedup) rather than whole-pool pairwise
+   comparison — piggyback, don't add a new scan.
