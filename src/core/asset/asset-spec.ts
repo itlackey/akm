@@ -95,8 +95,9 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
   // Environment assets — whole `.env` files sourced/injected wholesale. Replaced
-  // the deprecated `vault` type (removed in 0.9.0). Key NAMES + start-of-line
-  // comments are surfaced as metadata; values are never read for indexing.
+  // the deprecated `vault` type (removed in 0.9.0). Only key NAMES are surfaced
+  // as metadata; values and comment text are never read for indexing (comments
+  // routinely contain commented-out credentials).
   env: {
     stashDir: "env",
     isRelevantFile: (fileName) => fileName === ".env" || fileName.endsWith(".env"),

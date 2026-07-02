@@ -49,7 +49,7 @@ akm show wiki:research                        # Wiki summary (same as akm wiki s
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
-| env | `keys`, `comments` (values are never returned) |
+| env | `keys` (values and comment text are never returned) |
 | secret | metadata only (the single value is never returned) |
 | wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
 | lesson | `content` plus `when_to_use` from frontmatter — read both before applying the lesson |
