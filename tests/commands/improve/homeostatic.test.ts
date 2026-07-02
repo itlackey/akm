@@ -6,8 +6,6 @@
  * WS-3b homeostatic tier — unit tests.
  *
  * Covers:
- *   - runHomeostaticDemotion: demotes stale retrieval_salience in state.db,
- *     respects staleDays threshold, records homeostatic_demoted_at, default-OFF.
  *   - isSchemaConsistent: cosine-similarity gate with epsilon threshold.
  *   - readAssetGeneration / computeMergedGeneration: frontmatter read + math.
  *   - checkGenerationGuard: refuses merge when ≥2 participants above maxGeneration.
@@ -20,9 +18,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import {
   buildClsContext,
   buildHotProbationFrontmatter,
@@ -32,147 +27,15 @@ import {
   checkLexicalDiversity,
   computeBigramDiversity,
   computeMergedGeneration,
-  DEFAULT_DEMOTION_FACTOR,
   DEFAULT_MAX_GENERATION,
-  DEFAULT_STALE_DAYS,
   isHotProbation,
   isSchemaConsistent,
   readAssetGeneration,
-  runHomeostaticDemotion,
   shouldSkipHotProbationInLlm,
 } from "../../../src/commands/improve/homeostatic";
-import { upsertAssetSalience } from "../../../src/commands/improve/salience";
-import { openStateDatabase } from "../../../src/core/state-db";
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-/** Open a fresh in-memory/tmp state.db for tests. */
-function openTestStateDb() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-homeostatic-test-"));
-  const db = openStateDatabase(path.join(tmpDir, "state.db"));
-  return { db, tmpDir };
-}
-
-const DAY_MS = 86_400_000;
-const NOW = Date.parse("2026-06-14T12:00:00.000Z");
-const STALE_THRESHOLD_DEFAULT = NOW - DEFAULT_STALE_DAYS * DAY_MS;
-
-// ── runHomeostaticDemotion ─────────────────────────────────────────────────────
-
-describe("runHomeostaticDemotion", () => {
-  test("returns 0 demoted when disabled", () => {
-    const { db } = openTestStateDb();
-    const result = runHomeostaticDemotion(db, { enabled: false }, NOW);
-    expect(result.demoted).toBe(0);
-    expect(result.warnings).toHaveLength(0);
-  });
-
-  test("returns 0 when no salience rows exist", () => {
-    const { db } = openTestStateDb();
-    const result = runHomeostaticDemotion(db, { enabled: true }, NOW);
-    expect(result.demoted).toBe(0);
-  });
-
-  test("does NOT demote fresh assets (updated_at recent)", () => {
-    const { db } = openTestStateDb();
-    // Insert a salience row that was updated NOW (not stale).
-    upsertAssetSalience(db, "memory:fresh", { encoding: 0.5, outcome: 0.0, retrieval: 0.8, rankScore: 0.4 }, NOW);
-
-    const result = runHomeostaticDemotion(db, { enabled: true }, NOW);
-    expect(result.demoted).toBe(0);
-
-    // retrieval_salience should be unchanged
-    const row = db.prepare("SELECT retrieval_salience FROM asset_salience WHERE asset_ref = ?").get("memory:fresh") as
-      | { retrieval_salience: number }
-      | undefined;
-    expect(row?.retrieval_salience).toBeCloseTo(0.8);
-  });
-
-  test("demotes stale assets (updated_at older than staleDays)", () => {
-    const { db } = openTestStateDb();
-    const staleTime = STALE_THRESHOLD_DEFAULT - DAY_MS; // 1 day past threshold
-    upsertAssetSalience(db, "memory:stale", { encoding: 0.5, outcome: 0.0, retrieval: 0.8, rankScore: 0.4 }, staleTime);
-
-    const result = runHomeostaticDemotion(db, { enabled: true }, NOW);
-    expect(result.demoted).toBe(1);
-
-    // retrieval_salience should be reduced by default factor (0.5)
-    const row = db
-      .prepare("SELECT retrieval_salience, homeostatic_demoted_at FROM asset_salience WHERE asset_ref = ?")
-      .get("memory:stale") as { retrieval_salience: number; homeostatic_demoted_at: number | null } | undefined;
-    expect(row?.retrieval_salience).toBeCloseTo(0.8 * DEFAULT_DEMOTION_FACTOR);
-    expect(row?.homeostatic_demoted_at).toBe(NOW);
-  });
-
-  test("respects custom staleDays", () => {
-    const { db } = openTestStateDb();
-    // Updated 10 days ago
-    const tenDaysAgo = NOW - 10 * DAY_MS;
-    upsertAssetSalience(
-      db,
-      "memory:recent",
-      { encoding: 0.5, outcome: 0.0, retrieval: 0.6, rankScore: 0.3 },
-      tenDaysAgo,
-    );
-
-    // With staleDays=30 (default) this is NOT stale
-    const r1 = runHomeostaticDemotion(db, { enabled: true, staleDays: 30 }, NOW);
-    expect(r1.demoted).toBe(0);
-
-    // With staleDays=5, 10 days ago IS stale
-    const r2 = runHomeostaticDemotion(db, { enabled: true, staleDays: 5 }, NOW);
-    expect(r2.demoted).toBe(1);
-  });
-
-  test("respects custom demotionFactor", () => {
-    const { db } = openTestStateDb();
-    const staleTime = NOW - (DEFAULT_STALE_DAYS + 1) * DAY_MS;
-    upsertAssetSalience(
-      db,
-      "memory:custom-factor",
-      { encoding: 0.5, outcome: 0.0, retrieval: 1.0, rankScore: 0.5 },
-      staleTime,
-    );
-
-    runHomeostaticDemotion(db, { enabled: true, demotionFactor: 0.25 }, NOW);
-
-    const row = db
-      .prepare("SELECT retrieval_salience FROM asset_salience WHERE asset_ref = ?")
-      .get("memory:custom-factor") as { retrieval_salience: number } | undefined;
-    expect(row?.retrieval_salience).toBeCloseTo(0.25);
-  });
-
-  test("does NOT demote assets with retrieval_salience=0 (already at floor)", () => {
-    const { db } = openTestStateDb();
-    const staleTime = NOW - (DEFAULT_STALE_DAYS + 1) * DAY_MS;
-    upsertAssetSalience(
-      db,
-      "memory:zero-retrieval",
-      { encoding: 0.5, outcome: 0.0, retrieval: 0.0, rankScore: 0.15 },
-      staleTime,
-    );
-
-    const result = runHomeostaticDemotion(db, { enabled: true }, NOW);
-    expect(result.demoted).toBe(0);
-  });
-
-  test("demotes multiple stale assets in one run", () => {
-    const { db } = openTestStateDb();
-    const staleTime = NOW - (DEFAULT_STALE_DAYS + 5) * DAY_MS;
-
-    for (let i = 0; i < 3; i++) {
-      upsertAssetSalience(
-        db,
-        `memory:stale-${i}`,
-        { encoding: 0.5, outcome: 0.0, retrieval: 0.5 + i * 0.1, rankScore: 0.3 },
-        staleTime,
-      );
-    }
-
-    const result = runHomeostaticDemotion(db, { enabled: true }, NOW);
-    expect(result.demoted).toBe(3);
-  });
-});
+// (The runHomeostaticDemotion suite was removed with the pass itself — R4.
+// Continuous decay is covered by the recency-floor tests in salience.test.ts.)
 
 // ── isSchemaConsistent ────────────────────────────────────────────────────────
 

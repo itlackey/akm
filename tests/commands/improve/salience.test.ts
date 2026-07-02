@@ -341,6 +341,28 @@ describe("computeSalience — retrieval sub-score", () => {
     // Never-used asset should score significantly lower than recently-used one.
     expect(noUse.retrieval).toBeLessThan(recent.retrieval);
   });
+
+  test("recency floor keeps decaying on the long half-life (R4 — no parking at 0.1)", () => {
+    // Under the old formula both very-stale assets parked at the 0.1 floor and
+    // became indistinguishable. The floor now halves every 180 days, so an
+    // unreviewed-forever asset keeps drifting down monotonically.
+    const at = (days: number) =>
+      computeSalience({
+        ref: "lesson:foo",
+        type: "lesson",
+        retrievalFreq: 5,
+        lastUseMs: NOW - days * DAY_MS,
+        now: NOW,
+      }).retrieval;
+    const d100 = at(100);
+    const d400 = at(400);
+    const d800 = at(800);
+    expect(d400).toBeLessThan(d100);
+    expect(d800).toBeLessThan(d400);
+    // And an 800-day-stale asset sits well below the old 0.1-floor equivalent:
+    // old formula gave log(1+5)×~0.1 → normalised ≈ 0.152.
+    expect(d800).toBeLessThan(0.05);
+  });
 });
 
 // ── computeSalience — rankScore ───────────────────────────────────────────────

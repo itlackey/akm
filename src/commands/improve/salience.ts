@@ -60,6 +60,23 @@ const DAY_MS = 86_400_000;
 // ── Recency decay half-life (mirrors the proactive-maintenance prototype) ─────
 const RECENCY_HALFLIFE_DAYS = 21;
 
+// ── Recency-floor half-life (R4 — SHY-style continuous downscaling) ──────────
+//
+// The recency floor itself decays on this (much longer) half-life so an
+// unreviewed-forever asset keeps drifting down instead of parking at the 0.1
+// floor. This replaces the deleted homeostatic demotion pass (which was
+// default-off and self-undoing — every salience recompute clobbered it);
+// folding the decay into the always-applied recency term makes it persist by
+// construction. At 180 days the floor halves; a 1-year-stale asset sits at
+// ~0.025 instead of 0.1.
+const RECENCY_FLOOR_HALFLIFE_DAYS = 180;
+
+// Absolute epsilon under the decaying floor. Keeps the frequency term ordinal
+// for assets whose last-use timestamp is unknown (utility_scores has no
+// last_used_at) — without it their retrieval salience collapses to exactly 0
+// and frequency ordering is lost for maintenance selection.
+const RECENCY_EPSILON = 0.01;
+
 // ── Size proxy floor (avoids log10(0)) ────────────────────────────────────────
 const SIZE_FLOOR_BYTES = 200;
 
@@ -283,15 +300,22 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   //
   // Formula: log(1 + freq) × recencyDecay
   //   log(1+freq): sub-linear frequency term (same as proactive-maintenance prototype).
-  //   recencyDecay: 0.1 + 0.5^(useAgeDays/halflife) — decays to 0.1 floor when stale.
-  //     lastUseMs=0/undefined → useAgeDays=9999 → recencyDecay≈0.1 (floor).
+  //   recencyDecay: max(ε, 0.1·0.5^(useAgeDays/180) + 0.5^(useAgeDays/21)) —
+  //     the fast term halves every 21 days; the 0.1 floor itself halves every
+  //     180 days (R4: SHY-style continuous downscaling — an unreviewed-forever
+  //     asset keeps drifting down instead of parking at the floor). The ε=0.01
+  //     epsilon keeps the frequency term ordinal for unknown-last-use assets.
+  //     lastUseMs=0/undefined → useAgeDays=9999 → recencyDecay=ε.
   //
   // The recency term is MANDATORY (plan requirement §WS-1 step 2). Without it
-  // retrievalSalience degenerates to a non-decaying frequency count and the WS-3
-  // homeostatic step-0 demotion has nothing to act on.
+  // retrievalSalience degenerates to a non-decaying frequency count. This
+  // always-applied decay replaces the deleted homeostatic demotion pass.
   const lastUseMs = inputs.lastUseMs ?? 0;
   const useAgeDays = lastUseMs > 0 ? (now - lastUseMs) / DAY_MS : 9999;
-  const recencyDecay = 0.1 + 0.5 ** (useAgeDays / RECENCY_HALFLIFE_DAYS);
+  const recencyDecay = Math.max(
+    RECENCY_EPSILON,
+    0.1 * 0.5 ** (useAgeDays / RECENCY_FLOOR_HALFLIFE_DAYS) + 0.5 ** (useAgeDays / RECENCY_HALFLIFE_DAYS),
+  );
   const rawRetrieval = Math.log(1 + inputs.retrievalFreq) * recencyDecay;
 
   // ── Size penalty ─────────────────────────────────────────────────────────────

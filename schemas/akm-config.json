@@ -314,24 +314,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "schemaSimilarity": {
                         "type": "object",
                         "properties": {
@@ -688,24 +670,6 @@
                       "p90ChunkSecondsDefault": {
                         "type": "number",
                         "exclusiveMinimum": 0
-                      },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -1064,24 +1028,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "schemaSimilarity": {
                         "type": "object",
                         "properties": {
@@ -1438,24 +1384,6 @@
                       "p90ChunkSecondsDefault": {
                         "type": "number",
                         "exclusiveMinimum": 0
-                      },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -1814,24 +1742,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "schemaSimilarity": {
                         "type": "object",
                         "properties": {
@@ -2188,24 +2098,6 @@
                       "p90ChunkSecondsDefault": {
                         "type": "number",
                         "exclusiveMinimum": 0
-                      },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -2564,24 +2456,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "schemaSimilarity": {
                         "type": "object",
                         "properties": {
@@ -2938,24 +2812,6 @@
                       "p90ChunkSecondsDefault": {
                         "type": "number",
                         "exclusiveMinimum": 0
-                      },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -3314,24 +3170,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "schemaSimilarity": {
                         "type": "object",
                         "properties": {
@@ -3689,24 +3527,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "schemaSimilarity": {
                         "type": "object",
                         "properties": {
@@ -4063,24 +3883,6 @@
                       "p90ChunkSecondsDefault": {
                         "type": "number",
                         "exclusiveMinimum": 0
-                      },
-                      "homeostaticDemotion": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "staleDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "demotionFactor": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       },
                       "schemaSimilarity": {
                         "type": "object",
@@ -5149,24 +4951,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "schemaSimilarity": {
                             "type": "object",
                             "properties": {
@@ -5523,24 +5307,6 @@
                           "p90ChunkSecondsDefault": {
                             "type": "number",
                             "exclusiveMinimum": 0
-                          },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -5899,24 +5665,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "schemaSimilarity": {
                             "type": "object",
                             "properties": {
@@ -6273,24 +6021,6 @@
                           "p90ChunkSecondsDefault": {
                             "type": "number",
                             "exclusiveMinimum": 0
-                          },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -6649,24 +6379,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "schemaSimilarity": {
                             "type": "object",
                             "properties": {
@@ -7023,24 +6735,6 @@
                           "p90ChunkSecondsDefault": {
                             "type": "number",
                             "exclusiveMinimum": 0
-                          },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -7399,24 +7093,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "schemaSimilarity": {
                             "type": "object",
                             "properties": {
@@ -7773,24 +7449,6 @@
                           "p90ChunkSecondsDefault": {
                             "type": "number",
                             "exclusiveMinimum": 0
-                          },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -8149,24 +7807,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "schemaSimilarity": {
                             "type": "object",
                             "properties": {
@@ -8524,24 +8164,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "schemaSimilarity": {
                             "type": "object",
                             "properties": {
@@ -8898,24 +8520,6 @@
                           "p90ChunkSecondsDefault": {
                             "type": "number",
                             "exclusiveMinimum": 0
-                          },
-                          "homeostaticDemotion": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "staleDays": {
-                                "type": "integer",
-                                "minimum": 0
-                              },
-                              "demotionFactor": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           },
                           "schemaSimilarity": {
                             "type": "object",
@@ -9955,24 +9559,6 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
-        "homeostaticDemotion": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "staleDays": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "demotionFactor": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
-          "additionalProperties": true
-        },
         "schemaSimilarity": {
           "type": "object",
           "properties": {
@@ -10340,24 +9926,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "schemaSimilarity": {
                   "type": "object",
                   "properties": {
@@ -10714,24 +10282,6 @@
                 "p90ChunkSecondsDefault": {
                   "type": "number",
                   "exclusiveMinimum": 0
-                },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -11090,24 +10640,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "schemaSimilarity": {
                   "type": "object",
                   "properties": {
@@ -11464,24 +10996,6 @@
                 "p90ChunkSecondsDefault": {
                   "type": "number",
                   "exclusiveMinimum": 0
-                },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -11840,24 +11354,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "schemaSimilarity": {
                   "type": "object",
                   "properties": {
@@ -12214,24 +11710,6 @@
                 "p90ChunkSecondsDefault": {
                   "type": "number",
                   "exclusiveMinimum": 0
-                },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -12590,24 +12068,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "schemaSimilarity": {
                   "type": "object",
                   "properties": {
@@ -12964,24 +12424,6 @@
                 "p90ChunkSecondsDefault": {
                   "type": "number",
                   "exclusiveMinimum": 0
-                },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
@@ -13340,24 +12782,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "schemaSimilarity": {
                   "type": "object",
                   "properties": {
@@ -13715,24 +13139,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "schemaSimilarity": {
                   "type": "object",
                   "properties": {
@@ -14089,24 +13495,6 @@
                 "p90ChunkSecondsDefault": {
                   "type": "number",
                   "exclusiveMinimum": 0
-                },
-                "homeostaticDemotion": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "staleDays": {
-                      "type": "integer",
-                      "minimum": 0
-                    },
-                    "demotionFactor": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 },
                 "schemaSimilarity": {
                   "type": "object",
