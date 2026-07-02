@@ -844,6 +844,38 @@ function writeQualityRejection(
   };
 }
 
+/**
+ * G4 — content-score a distilled OUTPUT (lesson/knowledge proposal body) and
+ * persist it to state.db :: asset_salience with `encoding_source: "content"`.
+ *
+ * Lessons are refused as distill INPUTS (`DISTILL_REFUSED_INPUT_TYPES`), so
+ * this creation-time write is their only chance to earn a real content-derived
+ * encoding score instead of sitting on the type-weight stub forever. Best-effort:
+ * never blocks or fails the proposal flow.
+ */
+function persistOutputEncodingSalience(ref: string, body: string, existingRefVocabulary: Set<string>): void {
+  try {
+    const parsedRef = parseAssetRef(ref);
+    const salienceResult = scoreEncodingSalience({
+      body,
+      type: parsedRef.type,
+      existingRefVocabulary,
+      revisionCount: 0, // a freshly distilled output IS a first encounter
+    });
+    withStateDb((stateDb) => {
+      const vector = computeSalience({
+        ref,
+        type: parsedRef.type,
+        retrievalFreq: 0,
+        encodingSalience: salienceResult.score,
+      });
+      upsertAssetSalience(stateDb, ref, vector);
+    });
+  } catch {
+    // Best-effort — scoring must never block proposal creation.
+  }
+}
+
 // ── Main entry point ────────────────────────────────────────────────────────
 
 /**
@@ -930,32 +962,41 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   //   1. The asset's frontmatter (human-readable mirror; idempotent delta gate).
   //   2. state.db :: asset_salience (canonical; feeds improve's high-salience gate).
   // Both writes are best-effort — a DB error never blocks distillation.
+  //
+  // The bigram ref vocabulary is built ONCE per invocation — the novelty signal
+  // reuses it when scoring the distilled OUTPUT at proposal creation (G4).
+  let existingRefVocabulary = new Set<string>();
+  try {
+    const embCfg = config?.embedding;
+    const indexDb = openIndexDatabase(getDbPath(), embCfg?.dimension ? { embeddingDim: embCfg.dimension } : undefined);
+    try {
+      const allRefs = getAllEntries(indexDb).map((e) => e.entryKey);
+      existingRefVocabulary = buildRefVocabulary(allRefs);
+    } finally {
+      closeDatabase(indexDb);
+    }
+  } catch {
+    // Index not available — novelty defaults to type-floor.
+  }
+
   if (assetContent && assetFilePath) {
     try {
       const parsedRef = parseAssetRef(inputRef);
-      // Build bigram vocabulary from currently-indexed refs for novelty signal.
-      let existingRefVocabulary = new Set<string>();
+      // G4: predictionError decays with revision count — the prior hardcoded
+      // `revisionCount: 0` made it a dead constant 1.0. Use the number of
+      // proposals ever raised against this ref as the revision proxy.
+      let revisionCount = 0;
       try {
-        const embCfg = config?.embedding;
-        const indexDb = openIndexDatabase(
-          getDbPath(),
-          embCfg?.dimension ? { embeddingDim: embCfg.dimension } : undefined,
-        );
-        try {
-          const allRefs = getAllEntries(indexDb).map((e) => e.entryKey);
-          existingRefVocabulary = buildRefVocabulary(allRefs);
-        } finally {
-          closeDatabase(indexDb);
-        }
+        revisionCount = listProposals(stash, { ref: inputRef, includeArchive: true }).length;
       } catch {
-        // Index not available — novelty defaults to type-floor.
+        // best-effort: unknown history scores as a first encounter
       }
 
       const salienceResult = scoreEncodingSalience({
         body: assetContent,
         type: parsedRef.type,
         existingRefVocabulary,
-        revisionCount: 0,
+        revisionCount,
       });
 
       // 1. Write salience to the source asset frontmatter (idempotent).
@@ -1204,6 +1245,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     }
 
     const proposal: Proposal = proposalResult;
+    // G4: content-score the distilled OUTPUT so it carries a real encoding
+    // salience (encoding_source='content') from creation.
+    persistOutputEncodingSalience(promotion.knowledgeRef, resolvedPromotionContent, existingRefVocabulary);
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
@@ -1213,6 +1257,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         proposalRef: promotion.knowledgeRef,
         proposalKind: "knowledge" as const,
         proposalId: proposal.id,
+        // R3: judge verdicts are longitudinally queryable, not just a one-shot
+        // proposal.confidence write (normalized 1–5 score / 5).
+        ...(knowledgeJudgeConfidence !== undefined ? { judgeConfidence: knowledgeJudgeConfidence } : {}),
         ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
         ...eligMeta,
@@ -1754,6 +1801,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   const proposal2: Proposal = proposalResult2;
+  // G4: content-score the distilled OUTPUT so it carries a real encoding
+  // salience (encoding_source='content') from creation — lessons never get
+  // another chance (they are refused as distill inputs).
+  persistOutputEncodingSalience(effectiveLessonRef, content, existingRefVocabulary);
   appendEvent({
     eventType: "distill_invoked",
     ref: inputRef,
@@ -1763,6 +1814,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       proposalRef: effectiveLessonRef,
       proposalKind: effectiveProposalKind,
       proposalId: proposal2.id,
+      // R3: judge verdicts are longitudinally queryable, not just a one-shot
+      // proposal.confidence write (normalized 1–5 score / 5).
+      ...(lessonJudgeConfidence !== undefined ? { judgeConfidence: lessonJudgeConfidence } : {}),
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
       ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),

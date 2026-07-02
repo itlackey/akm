@@ -1027,10 +1027,12 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   }
 
   // WS-3b Step-0b: schema-similarity intake gate.
-  // Load derived-layer (lesson/knowledge) embeddings once per run, but ONLY
-  // when the gate is enabled in config. When disabled (the default) this block
-  // is fully skipped and schemaSimilarityCtx stays null → byte-identical to
-  // prior behaviour.
+  // DEFAULT ON since R3 (docs/design/improve-self-learning-analysis.md G5):
+  // extract is the highest-volume acquisition path with no LLM judge, so the
+  // cheap embedding-dedup check (one embed per lesson/knowledge candidate,
+  // fail-open) is the intake quality gate. Opt out via
+  // processes.extract.schemaSimilarity.enabled: false. The gate is inert in
+  // practice when no derived-layer embeddings exist (empty ctx → no penalty).
   const schemaSimilarityCfg = extractProcess?.schemaSimilarity as SchemaSimilarityConfig | undefined;
   let schemaSimilarityCtx: {
     config: SchemaSimilarityConfig;
@@ -1038,10 +1040,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     embeddingConfig: AkmConfig["embedding"];
     embedFn?: (text: string) => Promise<number[]>;
   } | null = null;
-  if (schemaSimilarityCfg?.enabled === true) {
+  if (schemaSimilarityCfg?.enabled !== false) {
     const derivedEmbeddings = options.schemaSimilarityEmbeddings ?? loadDerivedLayerEmbeddings();
     schemaSimilarityCtx = {
-      config: schemaSimilarityCfg,
+      config: { ...schemaSimilarityCfg, enabled: true },
       derivedEmbeddings,
       embeddingConfig: config.embedding,
       embedFn: options.schemaSimilarityEmbedFn,

@@ -5,7 +5,7 @@
 /**
  * WS-3b Step 0 — Intake + homeostatic tier.
  *
- * Sub-features (all default-OFF, behavior-changing):
+ * Sub-features (0b is default-ON for extract since R3; the rest default-OFF):
  *
  * (The former **0a homeostatic demotion** pass was removed (R4,
  * docs/design/improve-self-learning-analysis.md G3): it was default-off and

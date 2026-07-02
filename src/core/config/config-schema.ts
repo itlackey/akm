@@ -190,6 +190,9 @@ export const ImproveProcessConfigSchema = z
     // byte-identically to today (the incrementalSince path is unaffected). Only
     // meaningful on the `consolidate` process.
     judgedCache: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
+    // Distill process: LLM-as-judge lesson quality gate. Default ON (R3);
+    // fail-open — judge failure/timeout/parse errors pass through. Set
+    // `enabled: false` on the distill process to opt out.
     qualityGate: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     contradictionDetection: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     // Extract process config (only meaningful for extract process)
@@ -274,7 +277,8 @@ export const ImproveProcessConfigSchema = z
     // decay is now part of the always-applied salience recency term.)
     // WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
     // body embedding is within epsilon of an existing derived-layer lesson/knowledge
-    // node, mark it schema-consistent and lower its priority. Default OFF.
+    // node, mark it schema-consistent and lower its priority. Default ON for
+    // the `extract` process since R3 (fail-open; set `enabled: false` to opt out).
     // Only meaningful on the `consolidate` and `extract` processes.
     schemaSimilarity: z
       .object({
