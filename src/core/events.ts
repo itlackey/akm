@@ -142,6 +142,8 @@ export type EventType =
    * (365-day retention), not the events log.
    */
   | "collapse_detector_alert"
+  /** R5 — emitted by the maintenance purge when improve_cycle_metrics rows past retention are deleted. Metadata: `{purgedCount, retentionDays}`. */
+  | "improve_cycle_metrics_purged"
   | string;
 
 export interface AppendEventInput {

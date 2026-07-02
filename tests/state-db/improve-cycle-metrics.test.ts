@@ -102,6 +102,16 @@ describe("canary set CRUD", () => {
     expect(active.every((c) => c.canary_set_id === "set-a")).toBe(true);
   });
 
+  test("two active sets (interrupted refresh): only the NEWEST set is returned", () => {
+    // Simulate a bug/interruption that leaves two sets active — mixing them
+    // would corrupt trend baselines, so getActiveCanaries scopes to the newest.
+    insertCanaries(db, "set-old", [{ anchorRef: "memory:old", query: "old" }], "2026-01-01T00:00:00.000Z");
+    insertCanaries(db, "set-new", [{ anchorRef: "memory:new", query: "new" }], "2026-06-01T00:00:00.000Z");
+    const active = getActiveCanaries(db);
+    expect(active).toHaveLength(1);
+    expect(active[0].canary_set_id).toBe("set-new");
+  });
+
   test("re-mint deactivates the old set but retains its rows", () => {
     insertCanaries(db, "set-a", [{ anchorRef: "memory:alpha", query: "alpha" }]);
     const deactivated = deactivateCanarySet(db, "set-a");

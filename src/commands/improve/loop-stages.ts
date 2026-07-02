@@ -1268,7 +1268,9 @@ export async function runImproveMaintenancePasses(args: {
                   );
                   appendEvent(
                     {
-                      eventType: "events_purged",
+                      // Dedicated type (mirrors improve_runs_purged) so consumers
+                      // never have to disambiguate purge targets via the ref string.
+                      eventType: "improve_cycle_metrics_purged",
                       ref: "improve_cycle_metrics:_purge",
                       metadata: { purgedCount: cycleMetricsPurged, retentionDays: cycleRetention },
                     },

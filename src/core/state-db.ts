@@ -1811,7 +1811,20 @@ export function insertCanaries(
 
 /** Load the active canary set (empty array = never minted). */
 export function getActiveCanaries(db: Database): CanaryQueryRow[] {
-  return db.prepare(`SELECT * FROM canary_queries WHERE active = 1 ORDER BY id`).all() as CanaryQueryRow[];
+  // Scope to the NEWEST active set: if an interrupted refresh (or a bug) ever
+  // leaves two sets active, mixing their rows would silently corrupt the
+  // recall/entropy trend baselines. The newest set wins; stale-active rows are
+  // simply never returned.
+  return db
+    .prepare(
+      `SELECT * FROM canary_queries
+       WHERE active = 1 AND canary_set_id = (
+         SELECT canary_set_id FROM canary_queries WHERE active = 1
+         ORDER BY created_at DESC, id DESC LIMIT 1
+       )
+       ORDER BY id`,
+    )
+    .all() as CanaryQueryRow[];
 }
 
 /**
