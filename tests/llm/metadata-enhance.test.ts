@@ -9,8 +9,8 @@
  * onto a shared LLM-feature seam. The chat seam is injected via the
  * `_setChatCompletionForTests` swap-and-restore seam on `../../src/llm/client`
  * so `LlmCallError`, `parseJsonResponse`, `isContextSizeError`,
- * etc. stay real. `warn`/`warnVerbose` are mocked (real module spread, calls
- * captured) so we can prove the EXACT (empty) warn behavior.
+ * etc. stay real. `warn`/`warnVerbose` output is captured via the
+ * `_setWarnSinkForTests` seam so we can prove the EXACT (empty) warn behavior.
  *
  * IMPORTANT behavioral fact this test pins (and that distinguishes
  * `enhanceMetadata` from its siblings like `compressMemoryToDerivedMemory`):
@@ -36,7 +36,7 @@
  * Every branch is covered below.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 
@@ -52,20 +52,10 @@ let chatCalls = 0;
 // and warnVerbose so the "never warns" assertion is robust against a migration
 // that introduces a warn through any path.
 let warnCalls: string[] = [];
-const realWarn = await import("../../src/core/warn");
-mock.module("../../src/core/warn", () => ({
-  ...realWarn,
-  warn: (...args: unknown[]) => {
-    warnCalls.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
-  },
-  warnVerbose: (...args: unknown[]) => {
-    warnCalls.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
-  },
-}));
 
-// Import AFTER the mocks so the module under test binds the stubbed deps.
 const { enhanceMetadata } = await import("../../src/llm/metadata-enhance");
 const { _setChatCompletionForTests, isContextSizeError, LlmCallError } = await import("../../src/llm/client");
+const { _setWarnSinkForTests } = await import("../../src/core/warn");
 const { overrideSeam } = await import("../_helpers/seams");
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -98,6 +88,10 @@ beforeEach(() => {
     chatCalls += 1;
     const user = messages.find((m) => m.role === "user");
     return chatResponder(user?.content ?? "");
+  });
+  overrideSeam(_setWarnSinkForTests, (level, args) => {
+    if (level !== "warn" && level !== "warnVerbose") return;
+    warnCalls.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
   chatResponder = () => "";
   chatCalls = 0;

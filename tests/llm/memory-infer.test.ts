@@ -10,8 +10,8 @@
  * onto a shared LLM-feature seam. The chat seam is injected via the
  * `_setChatCompletionForTests` swap-and-restore seam on `../../src/llm/client`
  * so `LlmCallError`, `parseEmbeddedJsonResponse`,
- * `isContextSizeError`, etc. stay real. `warn` is mocked (real module spread,
- * `warn` captured) so we can assert the exact log lines.
+ * `isContextSizeError`, etc. stay real. `warn` output is captured via the
+ * `_setWarnSinkForTests` seam so we can assert the exact log lines.
  *
  * Every branch of the function is covered:
  *   - valid payload         -> exact DerivedMemoryDraft return, no warn
@@ -29,7 +29,7 @@
  * be caught.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
 
 // ── Injected chat seam ───────────────────────────────────────────────────────
@@ -40,19 +40,15 @@ let chatResponder: (userContent: string) => string | Promise<string> = () => "";
 let chatCalls = 0;
 
 // ── Captured warn sink ───────────────────────────────────────────────────────
+// Installed via the `_setWarnSinkForTests` seam in beforeEach; captures `warn`
+// calls so the exact log lines can be asserted.
 let warnCalls: string[] = [];
-const realWarn = await import("../../src/core/warn");
-mock.module("../../src/core/warn", () => ({
-  ...realWarn,
-  warn: (...args: unknown[]) => {
-    warnCalls.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
-  },
-}));
 
 // Import the implementation file directly so this characterization test keeps
 // exercising the real logic even when sibling files stub `../src/llm/memory-infer`.
 const { compressMemoryToDerivedMemory } = await import("../../src/llm/memory-infer-impl");
 const { _setChatCompletionForTests, isContextSizeError, LlmCallError } = await import("../../src/llm/client");
+const { _setWarnSinkForTests } = await import("../../src/core/warn");
 const { overrideSeam } = await import("../_helpers/seams");
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -81,6 +77,10 @@ beforeEach(() => {
     chatCalls += 1;
     const user = messages.find((m) => m.role === "user");
     return chatResponder(user?.content ?? "");
+  });
+  overrideSeam(_setWarnSinkForTests, (level, args) => {
+    if (level !== "warn") return;
+    warnCalls.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
   chatResponder = () => "";
   chatCalls = 0;
