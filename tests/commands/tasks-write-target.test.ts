@@ -2,11 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import * as tasksModule from "../../src/commands/tasks/tasks";
 import { saveConfig } from "../../src/core/config/config";
+import { _setBackendsForTests, type TaskBackend } from "../../src/tasks/backends";
 import { makeSandboxDir, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 const backendState = {
   installCalls: [] as string[],
@@ -20,25 +23,28 @@ function resetBackendState(): void {
   backendState.failInstallFor.clear();
 }
 
-mock.module("../../src/tasks/backends", () => ({
-  backendNameForPlatform: () => "fake",
-  selectBackend: () => ({
-    name: "fake",
-    install: async (task: { id: string }) => {
-      backendState.installCalls.push(task.id);
-      if (backendState.failInstallFor.has(task.id)) throw new Error(`install failed for ${task.id}`);
-    },
-    uninstall: async (id: string) => {
-      backendState.uninstallCalls.push(id);
-    },
-  }),
-}));
+const fakeBackend: TaskBackend = {
+  name: "cron",
+  install: async (task) => {
+    backendState.installCalls.push(task.id);
+    if (backendState.failInstallFor.has(task.id)) throw new Error(`install failed for ${task.id}`);
+  },
+  uninstall: async (id) => {
+    backendState.uninstallCalls.push(id);
+  },
+  setEnabled: async () => {},
+  list: async () => [],
+};
 
-const tasksModule = await import("../../src/commands/tasks/tasks");
+beforeEach(() => {
+  overrideSeam(_setBackendsForTests, {
+    selectBackend: () => fakeBackend,
+    backendNameForPlatform: () => "cron",
+  });
+});
 
 afterEach(() => {
   resetBackendState();
-  mock.restore();
 });
 
 describe("task asset mutations honor write-target resolution", () => {

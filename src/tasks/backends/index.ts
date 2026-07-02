@@ -56,7 +56,22 @@ export interface SelectBackendOptions {
   schtasks?: SchtasksBackendOptions;
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore overrides. Inert in production; only tests call the setter
+// (via tests/_helpers/seams.ts). See docs/design/di-seams-plan.md.
+interface BackendsOverridesForTests {
+  selectBackend?: typeof selectBackend;
+  backendNameForPlatform?: typeof backendNameForPlatform;
+}
+let backendsOverrides: BackendsOverridesForTests | undefined;
+
+/** TEST-ONLY. Swap backend selection; pass undefined to restore the real implementations. */
+export function _setBackendsForTests(fakes?: BackendsOverridesForTests): void {
+  backendsOverrides = fakes;
+}
+
 export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
+  if (backendsOverrides?.selectBackend) return backendsOverrides.selectBackend(options);
   const platform = options.platform ?? process.platform;
   switch (platform) {
     case "win32":
@@ -69,6 +84,7 @@ export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
 }
 
 export function backendNameForPlatform(platform: NodeJS.Platform = process.platform): ScheduleBackend {
+  if (backendsOverrides?.backendNameForPlatform) return backendsOverrides.backendNameForPlatform(platform);
   if (platform === "win32") return "schtasks";
   if (platform === "darwin") return "launchd";
   return "cron";
