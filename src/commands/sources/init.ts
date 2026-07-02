@@ -84,7 +84,21 @@ export interface InitResponse {
   };
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+let akmInitOverride: typeof akmInitReal | undefined;
+
+/** TEST-ONLY. Swap the implementation of `akmInit`; pass undefined to restore. */
+export function _setAkmInitForTests(fake?: typeof akmInitReal): void {
+  akmInitOverride = fake;
+}
+
 export async function akmInit(options?: { dir?: string; setDefault?: boolean }): Promise<InitResponse> {
+  if (akmInitOverride) return akmInitOverride(options);
+  return akmInitReal(options);
+}
+
+async function akmInitReal(options?: { dir?: string; setDefault?: boolean }): Promise<InitResponse> {
   const dirExplicitlyProvided = options?.dir != null;
   const setDefault = options?.setDefault === true;
   const stashDir = options?.dir ? path.resolve(options.dir) : getDefaultStashDir();

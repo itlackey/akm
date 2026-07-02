@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import * as actualAgentIntegration from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { _setDetectForTests } from "../../src/setup/detect";
@@ -191,13 +192,11 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -303,13 +302,11 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -420,13 +417,11 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -527,13 +522,11 @@ describe("runSetupWizard", () => {
         message: "connection refused",
       }),
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -622,13 +615,11 @@ describe("runSetupWizard", () => {
         message: "@huggingface/transformers is not installed.",
       }),
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -710,13 +701,11 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -797,13 +786,11 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
         setupState.indexCalls.push({ stashDir, enrich });
@@ -877,13 +864,11 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async (options?: { dir?: string }) => {
-        const dir = options?.dir ?? DEFAULT_STASH_DIR;
-        setupState.initCalls.push({ dir });
-        return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async () => {
         throw new Error("index should not run");
@@ -953,11 +938,9 @@ describe("runSetupWizard", () => {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     });
-    mock.module("../../src/commands/sources/init", () => ({
-      akmInit: async () => {
-        throw new Error("EACCES stash init");
-      },
-    }));
+    overrideSeam(_setAkmInitForTests, async () => {
+      throw new Error("EACCES stash init");
+    });
     mock.module("../../src/indexer/indexer", () => ({
       akmIndex: async () => {
         throw new Error("index should not run");
