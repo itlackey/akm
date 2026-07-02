@@ -68,6 +68,15 @@ const FALLBACK_STASHES: SetupStashEntry[] = [
   },
 ];
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+let loadSetupStashesOverride: typeof loadSetupStashesReal | undefined;
+
+/** TEST-ONLY. Swap the implementation of `loadSetupStashes`; pass undefined to restore. */
+export function _setLoadSetupStashesForTests(fake?: typeof loadSetupStashesReal): void {
+  loadSetupStashesOverride = fake;
+}
+
 // ── Loader ──────────────────────────────────────────────────────────────────
 
 /**
@@ -80,6 +89,11 @@ const FALLBACK_STASHES: SetupStashEntry[] = [
  * @param timeoutMs    Fetch timeout in ms (default: 4000).
  */
 export async function loadSetupStashes(registryUrl: string, timeoutMs = 4000): Promise<SetupStashEntry[]> {
+  if (loadSetupStashesOverride) return loadSetupStashesOverride(registryUrl, timeoutMs);
+  return loadSetupStashesReal(registryUrl, timeoutMs);
+}
+
+async function loadSetupStashesReal(registryUrl: string, timeoutMs = 4000): Promise<SetupStashEntry[]> {
   try {
     const response = await fetch(registryUrl, {
       signal: AbortSignal.timeout(timeoutMs),
