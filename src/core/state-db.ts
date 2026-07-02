@@ -629,19 +629,20 @@ export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDi
 /**
  * Errors `BEGIN IMMEDIATE` can throw under concurrent-writer contention that are
  * transient (the statement did NOT start a usable transaction) and safe to
- * retry after clearing any phantom transaction state:
+ * retry:
  *   - "database is locked" / SQLITE_BUSY — another writer holds the lock.
- *   - "cannot start a transaction within a transaction" — bun:sqlite can leave
- *     the connection reporting an open transaction after a contended busy-wait
- *     on BEGIN IMMEDIATE (observed only under heavy parallel load, e.g. the
- *     proposal-queue worker race). A ROLLBACK clears that phantom state.
  * These are start-of-transaction failures only; an error thrown by `fn` is a
  * real failure and is NEVER retried.
+ *
+ * "cannot start a transaction within a transaction" is deliberately NOT
+ * retryable: it means a transaction is already open on this connection (a
+ * re-entrant call — handled by the entry guard in withImmediateTransaction),
+ * and "retrying" it with a ROLLBACK would destroy the caller's transaction
+ * (issue #686).
  */
 function isRetryableBeginError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
-    msg.includes("within a transaction") ||
     msg.includes("database is locked") ||
     msg.includes("database table is locked") ||
     // Phantom BEGIN (see below) — synthesized when BEGIN IMMEDIATE returns
@@ -659,6 +660,16 @@ function sleepSyncMs(ms: number): void {
 }
 
 export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
+  // Re-entrancy guard (issue #686): if a transaction is already open on this
+  // connection (e.g. a nested withImmediateTransaction call inside an outer
+  // frame's fn), join it — run fn directly with no BEGIN/COMMIT/ROLLBACK of
+  // our own. Without this, the nested BEGIN throws "cannot start a transaction
+  // within a transaction", which the old retry path answered with an
+  // unconditional ROLLBACK — destroying the OUTER transaction and leaving its
+  // COMMIT to fail with "cannot commit - no transaction is active".
+  if (db.inTransaction) {
+    return fn();
+  }
   let lastBeginErr: unknown;
   for (let attempt = 1; attempt <= WITH_IMMEDIATE_TX_MAX_ATTEMPTS; attempt++) {
     try {
@@ -675,12 +686,14 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
     } catch (err) {
       lastBeginErr = err;
       if (isRetryableBeginError(err) && attempt < WITH_IMMEDIATE_TX_MAX_ATTEMPTS) {
-        // Clear any phantom/stale transaction left by the contended BEGIN, then
-        // retry with a small backoff so concurrent writers serialize cleanly.
-        try {
-          db.exec("ROLLBACK");
-        } catch {
-          // No active transaction to roll back — fine.
+        // Only roll back a transaction we can see — never blind-ROLLBACK, since
+        // that could destroy a transaction this frame does not own.
+        if (db.inTransaction) {
+          try {
+            db.exec("ROLLBACK");
+          } catch {
+            // Transaction already gone — fine.
+          }
         }
         sleepSyncMs(2 ** (attempt - 1));
         continue;
@@ -689,13 +702,25 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
     }
     try {
       const result = fn();
+      if (!db.inTransaction) {
+        // The transaction we opened vanished while fn() ran (e.g. an
+        // auto-rollback or a stray ROLLBACK inside fn). fn's writes may have
+        // escaped serialization, so retrying is unsafe — fail loudly instead of
+        // letting COMMIT throw the opaque "cannot commit - no transaction is
+        // active" SQLiteError.
+        throw new Error(
+          "withImmediateTransaction invariant violated: transaction opened by BEGIN IMMEDIATE was no longer active after the transaction body ran; refusing to COMMIT (writes may have escaped serialization)",
+        );
+      }
       db.exec("COMMIT");
       return result;
     } catch (err) {
-      try {
-        db.exec("ROLLBACK");
-      } catch {
-        // Ignore rollback failures so the original error is preserved.
+      if (db.inTransaction) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Ignore rollback failures so the original error is preserved.
+        }
       }
       throw err; // a real error inside the transaction body — never retried.
     }
