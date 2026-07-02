@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as actualAgentIntegration from "../../src/integrations/agent";
+import { _setEmbedderForTests } from "../../src/llm/embedder";
+import { overrideSeam } from "../_helpers/seams";
 
 const DEFAULT_STASH_DIR = "/tmp/akm-default-stash";
 const DEFAULT_CONFIG_PATH = "/tmp/akm-config/config.json";
@@ -184,11 +186,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -297,11 +298,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -415,11 +415,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -519,15 +518,14 @@ describe("runSetupWizard", () => {
       }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
         available: false,
         reason: "remote-unreachable",
         message: "connection refused",
       }),
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -611,11 +609,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       // Return true so the wizard skips the `bun add` auto-install attempt
       // (the install path is environment-dependent and makes the test flaky).
-      // The mocked checkEmbeddingAvailability still reports missing-package,
+      // The faked checkEmbeddingAvailability still reports missing-package,
       // which exercises the "warn and report" code path we want to test.
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
@@ -623,7 +620,7 @@ describe("runSetupWizard", () => {
         reason: "missing-package",
         message: "@huggingface/transformers is not installed.",
       }),
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -708,11 +705,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -796,11 +792,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -877,11 +872,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
@@ -954,11 +948,10 @@ describe("runSetupWizard", () => {
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../../src/llm/embedder", () => ({
-      DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
+    overrideSeam(_setEmbedderForTests, {
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
-    }));
+    });
     mock.module("../../src/commands/sources/init", () => ({
       akmInit: async () => {
         throw new Error("EACCES stash init");

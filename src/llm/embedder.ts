@@ -29,15 +29,49 @@ import {
   deterministicEmbed,
   isDeterministicEmbedEnabled,
 } from "./embedders/deterministic";
-import { DEFAULT_LOCAL_MODEL, isTransformersAvailable, LocalEmbedder } from "./embedders/local";
+import {
+  DEFAULT_LOCAL_MODEL,
+  isTransformersAvailable as isTransformersAvailableReal,
+  LocalEmbedder,
+} from "./embedders/local";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
 // ── Re-exports (public API) ─────────────────────────────────────────────────
 
 export { clearEmbeddingCache } from "./embedders/cache";
-export { DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedders/local";
+export { DEFAULT_LOCAL_MODEL } from "./embedders/local";
 export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
+
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore overrides. Inert in production; only tests install fakes,
+// via tests/_helpers/seams.ts (which restores them automatically after each
+// test). See docs/design/di-seams-plan.md.
+
+interface EmbedderOverridesForTests {
+  embed?: typeof embed;
+  embedBatch?: typeof embedBatch;
+  resolveEmbeddingModelId?: typeof resolveEmbeddingModelId;
+  checkEmbeddingAvailability?: typeof checkEmbeddingAvailability;
+  isTransformersAvailable?: () => boolean;
+}
+
+let embedderOverrides: EmbedderOverridesForTests | undefined;
+
+/** TEST-ONLY. Swap embedder implementations; pass undefined to restore. */
+export function _setEmbedderForTests(fakes?: EmbedderOverridesForTests): void {
+  embedderOverrides = fakes;
+}
+
+/**
+ * Check whether the @huggingface/transformers package is importable.
+ * Delegating wrapper around `./embedders/local`'s probe so tests can swap it
+ * via {@link _setEmbedderForTests}.
+ */
+export function isTransformersAvailable(): boolean {
+  if (embedderOverrides?.isTransformersAvailable) return embedderOverrides.isTransformersAvailable();
+  return isTransformersAvailableReal();
+}
 
 // ── Singleton local embedder ────────────────────────────────────────────────
 // `_localEmbedder` is an intentional module-level singleton but constructed
@@ -80,6 +114,8 @@ export async function embed(
   embeddingConfig?: EmbeddingConnectionConfig,
   signal?: AbortSignal,
 ): Promise<EmbeddingVector> {
+  if (embedderOverrides?.embed) return embedderOverrides.embed(text, embeddingConfig, signal);
+
   // Deterministic mode (env-gated, test/bench only): model-free, stable.
   if (isDeterministicEmbedEnabled()) {
     return deterministicEmbed(text);
@@ -110,6 +146,8 @@ export async function embedBatch(
   embeddingConfig?: EmbeddingConnectionConfig,
   signal?: AbortSignal,
 ): Promise<EmbeddingVector[]> {
+  if (embedderOverrides?.embedBatch) return embedderOverrides.embedBatch(texts, embeddingConfig, signal);
+
   if (texts.length === 0) return [];
 
   // Deterministic mode (env-gated, test/bench only): model-free, stable.
@@ -159,6 +197,7 @@ export { cosineSimilarity } from "./embedders/types";
  *   - No config: use `DEFAULT_LOCAL_MODEL` (the shared singleton model).
  */
 export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionConfig): string {
+  if (embedderOverrides?.resolveEmbeddingModelId) return embedderOverrides.resolveEmbeddingModelId(embeddingConfig);
   if (isDeterministicEmbedEnabled()) return DETERMINISTIC_EMBED_MODEL_ID;
   if (!embeddingConfig) return DEFAULT_LOCAL_MODEL;
   if (hasRemoteEndpoint(embeddingConfig)) return embeddingConfig.model ?? "remote";
@@ -173,6 +212,9 @@ export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionCon
 export async function checkEmbeddingAvailability(
   embeddingConfig?: EmbeddingConnectionConfig,
 ): Promise<EmbeddingCheckResult> {
+  if (embedderOverrides?.checkEmbeddingAvailability) {
+    return embedderOverrides.checkEmbeddingAvailability(embeddingConfig);
+  }
   // Deterministic mode (env-gated): always available — no model, no network.
   if (isDeterministicEmbedEnabled()) {
     return { available: true };
