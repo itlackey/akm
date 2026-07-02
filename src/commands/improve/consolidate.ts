@@ -877,17 +877,25 @@ function resolveConsolidateLlmConfig(config: AkmConfig) {
 
 /**
  * Stable content hash for a memory file used by the judged-state cache (#581)
- * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts:
- * sha256 of the case-preserving stripped body. Two memories that differ only
- * in frontmatter (`updated:`, `inferenceProcessed:`) hash identically, so a
- * cosmetic frontmatter touch never forces a needless re-judge — only a body
- * change does. Returns `undefined` on any read/parse error so callers fail
- * open (treat the memory as un-cached → it stays in the LLM pool).
+ * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts
+ * (sha256 of the case-preserving stripped body) plus the sorted `tags` list,
+ * so semantic-metadata drift re-enters the judge while cosmetic frontmatter
+ * touches (`updated:`, `inferenceProcessed:`) still hash identically and never
+ * force a needless re-judge. Returns `undefined` on any read/parse error so
+ * callers fail open (treat the memory as un-cached → it stays in the LLM pool).
  */
 function computeMemoryContentHash(filePath: string): string | undefined {
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    return cacheHash(raw);
+    let tagSuffix = "";
+    try {
+      const { data } = parseFrontmatter(raw);
+      const tags = Array.isArray(data?.tags) ? data.tags.map(String).sort() : [];
+      if (tags.length > 0) tagSuffix = `\n\u0000tags:${tags.join(",")}`;
+    } catch {
+      // Unparseable frontmatter → body-only hash (prior behaviour).
+    }
+    return cacheHash(raw + tagSuffix);
   } catch {
     return undefined;
   }

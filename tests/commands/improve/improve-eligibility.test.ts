@@ -770,6 +770,38 @@ describe("high-salience admission gate (#608)", () => {
     expect(reflected).not.toContain("memory:salient");
   });
 
+  // The lane cap must take the TOP-N candidates BY SCORE, not the first N found
+  // in scan order — previously a higher-salience candidate found later in the
+  // scan lost its slot to an earlier lower-scoring one.
+  test("cap selects the highest-scoring qualifier, not the first in scan order", async () => {
+    const stash = makeTempDir("akm-hs-order-");
+    // "aaa" sorts before "zzz" in scan order but carries the LOWER score.
+    writeMemory(stash, "aaa", "Scan-order-first, lower salience.");
+    writeMemory(stash, "zzz", "Scan-order-last, higher salience.");
+    await buildIndex(stash);
+    seedSalience("memory:aaa", 0.8, "content");
+    seedSalience("memory:zzz", 0.95, "content");
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      config: configWithoutPoolGuard(), // isolate the high-salience gate from the now-default-on proactive lane
+      minRetrievalCount: 5,
+      limit: 10, // cap = floor(10 × 0.1) = 1 → exactly one high-salience slot
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).toContain("memory:zzz");
+    expect(reflected).not.toContain("memory:aaa");
+  });
+
   // #644 follow-up — the lore-writer case. A type-stub row (encoding_salience set
   // to the per-type WEIGHT STUB, e.g. agent 0.9) must NOT be admitted: before this
   // fix "high-salience" degenerated into "is a skill/agent/command/lesson", and a

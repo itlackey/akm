@@ -51,8 +51,8 @@ import { assertNever } from "./assert";
  *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `high-salience` >
- * `proactive` > `forgetting-safety` > `replay`. Replay is weakest so it never
+ * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
+ * `high-salience` > `forgetting-safety` > `replay`. Replay is weakest so it never
  * relabels a ref another lane already chose.
  * A ref with real feedback is attributed to feedback even if it was also due
  * for proactive maintenance.

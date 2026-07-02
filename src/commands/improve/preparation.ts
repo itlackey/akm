@@ -1348,7 +1348,10 @@ export async function runImprovePreparationStage(args: {
   try {
     withStateDb(
       (dbForHighSalience) => {
-        const effectiveLimit = options.limit ?? 10;
+        // Derive the cap from the resolved reflect limit (mirrors improve.ts's
+        // options.limit resolution) so an unbounded whole-stash run does not
+        // collapse the lane to exactly 1 ref via the bare `?? 10` fallback.
+        const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit ?? 10;
         const highSalienceCap = Math.max(1, Math.floor(effectiveLimit * 0.1));
         // #632/#4 — session-capture telemetry (checkpoints) must never consume
         // the scarce high-salience budget. Even with a content-scored row, these
@@ -1356,8 +1359,11 @@ export async function runImprovePreparationStage(args: {
         const candidates = noFeedbackCandidates.filter(
           (r) => !proactiveAndRetrievalSet.has(r.ref) && !isSessionCaptureMemoryName(parseAssetRef(r.ref).name),
         );
+        // Collect ALL qualifying candidates, then take the top-N BY SCORE — the
+        // previous first-N-in-scan-order break meant a higher-salience candidate
+        // found later in the scan lost its slot to an earlier lower-scoring one.
+        const qualifying: Array<{ ref: ImproveEligibleRef; score: number }> = [];
         for (const r of candidates) {
-          if (highSalienceRefs.length >= highSalienceCap) break;
           const row = getAssetSalience(dbForHighSalience, r.ref);
           if (
             row &&
@@ -1365,8 +1371,12 @@ export async function runImprovePreparationStage(args: {
             row.encoding_salience >= salienceThreshold &&
             !lastReflectProposalTs.has(r.ref)
           ) {
-            highSalienceRefs.push(r);
+            qualifying.push({ ref: r, score: row.encoding_salience });
           }
+        }
+        qualifying.sort((a, b) => b.score - a.score);
+        for (const q of qualifying.slice(0, highSalienceCap)) {
+          highSalienceRefs.push(q.ref);
         }
       },
       { path: eventsCtx?.dbPath },

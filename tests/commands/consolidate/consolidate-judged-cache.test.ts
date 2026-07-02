@@ -121,6 +121,31 @@ describe("#581 consolidate judged-state cache", () => {
     expect(chatCalls).toBe(1);
   });
 
+  test("cache ON: a memory whose TAGS changed (body identical) is re-judged", async () => {
+    writeMemory("alpha", "Alpha body content.");
+    writeMemory("beta", "Beta body content.");
+
+    // First run primes the cache for both.
+    await akmConsolidate({ stashDir, target: stashDir, config: CONFIG, judgedCache: { enabled: true } });
+    expect(chatCalls).toBe(1);
+
+    // Change ONLY beta's tags — the body is byte-identical. Semantic-metadata
+    // drift must re-enter the judge (the hash covers body + sorted tags).
+    chatCalls = 0;
+    const betaPath = path.join(stashDir, "memories", "beta.md");
+    fs.writeFileSync(
+      betaPath,
+      `---\ndescription: beta memory\ntags: [retagged, drift]\n---\n\nBeta body content.\n`,
+      "utf8",
+    );
+
+    const second = await akmConsolidate({ stashDir, target: stashDir, config: CONFIG, judgedCache: { enabled: true } });
+    expect(second.ok).toBe(true);
+    // Only the tag-drifted memory re-enters the LLM pool.
+    expect(second.processed).toBe(1);
+    expect(chatCalls).toBe(1);
+  });
+
   test("cache OFF (explicit): every run judges the full pool (no skipping)", async () => {
     writeMemory("alpha", "Alpha body content.");
     writeMemory("beta", "Beta body content.");
