@@ -123,7 +123,8 @@ akm wiki lint ml-research
 `akm env` manages `.env`-backed groups of configuration (a `.env` file loaded
 wholesale), and `akm secret` manages a single standalone sensitive value. The
 core security guarantee: **values never appear in akm's structured output**.
-Only key names (and `.env` comments) are shown. Values reach processes through
+Only key names are shown — comment text is never surfaced either, since
+comments can contain commented-out credentials. Values reach processes through
 `akm env run` / `akm secret run`, never through akm's JSON output. (The old
 `akm vault` verb was removed in 0.9.0.)
 
@@ -135,7 +136,7 @@ akm env create prod --from-file ./.env    # or ingest an existing .env
 $EDITOR "$(akm env path env:prod --quiet)"
 
 akm env list
-akm show env:prod                         # key names + comments only
+akm show env:prod                         # key names only
 
 # Inject the whole .env into a subprocess (never onto stdout):
 akm env run env:prod -- ./deploy.sh

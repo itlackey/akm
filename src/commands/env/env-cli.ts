@@ -11,8 +11,9 @@
  * copy.
  *
  * `akm env` manages whole `.env` files under each stash's env/ directory.
- * Values are NEVER written to stdout or structured output — only key NAMES and
- * start-of-line comments are surfaced. akm does not manage individual entries;
+ * Values and comment text are NEVER written to stdout or structured output —
+ * only key NAMES are surfaced (comments routinely contain commented-out
+ * credentials). akm does not manage individual entries;
  * you edit the `.env` file yourself and akm loads it. Replaced the deprecated
  * `vault` type (removed in 0.9.0).
  */

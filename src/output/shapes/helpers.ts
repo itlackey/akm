@@ -430,7 +430,6 @@ export function shapeShowOutput(
       "workflowParameters",
       "steps",
       "keys",
-      "comments",
       "related",
     ]);
   }
@@ -446,7 +445,6 @@ export function shapeShowOutput(
       "run",
       "origin",
       "keys",
-      "comments",
       "related",
     ]);
   }
@@ -473,7 +471,6 @@ export function shapeShowOutput(
     "cwd",
     "activeRun",
     "keys",
-    "comments",
     "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).

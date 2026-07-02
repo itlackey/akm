@@ -58,7 +58,7 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
-| env | `keys`, `comments` (key names + comments only — values never returned) |
+| env | `keys` (key names only — values and comment text never returned) |
 | secret | `name` only (the whole file is the value — never returned) |
 | wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. To ingest sources, `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
 
@@ -122,15 +122,16 @@ search results. No `--llm` anywhere — akm never reasons about page content.
 ## Env files
 
 A group of related CONFIGURATION for an app/service in one `.env` file at
-`<stashDir>/env/<name>.env`, sourced/injected wholesale. Key names + comments
-are discoverable; values stay on disk and never reach stdout or the index. akm
-does not edit entries — you edit the file with your own editor and akm loads it.
+`<stashDir>/env/<name>.env`, sourced/injected wholesale. Key names are
+discoverable; values and comment text stay on disk and never reach stdout or
+the index (comments can contain commented-out credentials). akm does not edit
+entries — you edit the file with your own editor and akm loads it.
 
 ```sh
 akm env create prod                           # Create an empty env file
 akm env create prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across stashes with key names
-akm show env:prod                             # Inspect key names + comments (never values)
+akm show env:prod                             # Inspect key names (never values or comments)
 akm env run env:prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
 akm env run env:prod -- $SHELL                # Open an interactive shell with values injected
 akm env export env:prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)

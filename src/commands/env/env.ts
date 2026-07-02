@@ -19,10 +19,13 @@
  * round-trip through `dotenv`; the shell-load safety guarantee still lives on
  * the READ path (see `buildShellExportScript` + `akm env export`).
  *
- * Invariant: env values must never be written to stdout, returned through the
- * indexer, the `akm show` renderer, or any structured output channel. Key
- * NAMES and start-of-line comments ARE surfaced by design (discoverability) —
- * only values are secret. The supported value-load paths are:
+ * Invariant: nothing from an env file except key NAMES may be written to
+ * stdout, returned through the indexer, the `akm show` renderer, or any
+ * structured output channel. Key NAMES are surfaced for discoverability;
+ * comment text is NOT — real .env files routinely carry commented-out
+ * `KEY=value` lines and free-text notes containing live credentials, so
+ * comments are treated exactly like values. The supported value-load paths
+ * are:
  *
  *   - `akm env run <ref> -- <command>` — values injected into the child
  *     process env (never via a shell), see `injectIntoEnv` / `loadEnv`. This is
@@ -74,74 +77,18 @@ function scanKeys(text: string): string[] {
 }
 
 /**
- * Scan lines and return start-of-line `#` comments (with the leading `#` and
- * any leading whitespace stripped). Inline/trailing `#` after an assignment is
- * never extracted.
- */
-function scanComments(text: string): string[] {
-  const comments: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("#")) {
-      comments.push(trimmed.slice(1).trimStart());
-    }
-  }
-  return comments;
-}
-
-/**
- * Read and return ONLY non-secret metadata (keys + start-of-line comments).
+ * Read and return ONLY non-secret metadata: key names.
  *
  * The function reads the whole file into memory (same as any dotenv parser)
- * but deliberately does not parse values — the LHS-only regex scanners above
- * ensure no value content is retained or returned. The guarantee is that
- * values never leave this function.
+ * but deliberately does not parse values — the LHS-only regex scanner above
+ * ensures no value content is retained or returned. Comment text is never
+ * returned either: comments routinely contain commented-out `KEY=value`
+ * credentials and free-text secrets, so they never leave this function.
  */
-export function listKeys(envPath: string): { keys: string[]; comments: string[] } {
-  if (!fs.existsSync(envPath)) return { keys: [], comments: [] };
+export function listKeys(envPath: string): { keys: string[] } {
+  if (!fs.existsSync(envPath)) return { keys: [] };
   const text = fs.readFileSync(envPath, "utf8");
-  return { keys: scanKeys(text), comments: scanComments(text) };
-}
-
-/**
- * Return structured `entries` pairing each key with the nearest preceding
- * comment line (if any). This is an easier-to-consume shape than the parallel
- * `keys[]` + `comments[]` of `listKeys` (QA #35).
- *
- * Values are never included — the same privacy guarantee as `listKeys`.
- */
-export function listEntries(envPath: string): Array<{ key: string; comment?: string }> {
-  if (!fs.existsSync(envPath)) return [];
-  const text = fs.readFileSync(envPath, "utf8");
-  const lines = text.split(/\r?\n/);
-  const seen = new Set<string>();
-  const entries: Array<{ key: string; comment?: string }> = [];
-  let pendingComment: string | undefined;
-
-  for (const line of lines) {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("#")) {
-      // Capture the most recent comment before a key
-      pendingComment = trimmed.slice(1).trimStart() || undefined;
-      continue;
-    }
-    const m = line.match(ASSIGN_RE);
-    if (m) {
-      const key = m[1];
-      if (!seen.has(key)) {
-        seen.add(key);
-        const entry: { key: string; comment?: string } = { key };
-        if (pendingComment) entry.comment = pendingComment;
-        entries.push(entry);
-      }
-      pendingComment = undefined;
-    } else {
-      // Any non-comment, non-assignment line (including blank lines)
-      // breaks "nearest preceding comment line" association.
-      pendingComment = undefined;
-    }
-  }
-  return entries;
+  return { keys: scanKeys(text) };
 }
 
 /**

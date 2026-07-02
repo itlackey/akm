@@ -439,25 +439,23 @@ const scriptSourceRenderer: AssetRenderer = {
 // ── 8. env-file ───────────────────────────────────────────────────────────────
 
 /**
- * Env renderer. Returns ONLY key names and start-of-line comments — never
- * values. Deliberately omits content/template/prompt so env values cannot leak
- * through `akm show`.
+ * Env renderer. Returns ONLY key names — never values, and never comment
+ * text (comments routinely contain commented-out credentials). Deliberately
+ * omits content/template/prompt so env values cannot leak through `akm show`.
  */
 const envFileRenderer: AssetRenderer = {
   name: "env-file",
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
-    const { keys, comments } = listVaultKeys(ctx.absPath);
+    const { keys } = listVaultKeys(ctx.absPath);
     return {
       type: "env",
       name,
       path: ctx.absPath,
       action:
-        "Environment — keys + comments only. Use `akm env run <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
-      description: comments.length > 0 ? comments.join("\n") : undefined,
+        "Environment — key names only. Use `akm env run <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
       keys,
-      comments,
     };
   },
 
@@ -731,12 +729,9 @@ function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
 }
 
 function applyEnvMetadata(entry: StashEntry, ctx: RenderContext): void {
-  const { keys, comments } = listVaultKeys(ctx.absPath);
-  if (comments.length > 0 && !entry.description) {
-    entry.description = comments.join(" ").slice(0, 500);
-    entry.source = "comments";
-    entry.confidence = 0.7;
-  }
+  // Key names only — comment text must never reach description/search_text
+  // (comments routinely contain commented-out credentials).
+  const { keys } = listVaultKeys(ctx.absPath);
   if (keys.length > 0) {
     entry.searchHints = keys;
   }
