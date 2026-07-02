@@ -49,6 +49,7 @@ import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
+import { resetAllSeams } from "./_helpers/seams";
 
 /**
  * Env vars the harness owns. Anything in this list is restored from the
@@ -292,6 +293,7 @@ function healSandboxEnv(): void {
 
 /** Reset every known module-level singleton in production code. */
 function resetSingletons(): void {
+  resetAllSeams();
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();
@@ -372,6 +374,10 @@ afterEach(() => {
   // that mock.module() but forget to mock.restore() were a major source of
   // cross-file pollution; this makes the cleanup mandatory.
   mock.restore();
+
+  // Restore every src-module seam a test installed via overrideSeam/withSeam
+  // (tests/_helpers/seams.ts), so a fake never survives past its test.
+  resetAllSeams();
 
   snapshot = undefined;
 
