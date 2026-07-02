@@ -255,7 +255,7 @@ math — the real ones satisfy every test).
     spreading → seam `{embedBatch, resolveEmbeddingModelId}`; real
     `cosineSimilarity` is used as-is. Deletes the "mock.module must run before
     import" dance; `dedup` can be statically imported.
-  - `tests/integration/setup-run.integration.ts` — replaces with only
+  - `tests/integration/setup-run.test.ts` — replaces with only
     `{DEFAULT_LOCAL_MODEL, isTransformersAvailable, checkEmbeddingAvailability}`
     → seam `{isTransformersAvailable, checkEmbeddingAvailability}`; real
     `DEFAULT_LOCAL_MODEL`.
@@ -337,7 +337,7 @@ change (forbidden). Module seam instead:
 - **Test migration**: `tests/commands/tasks-write-target.test.ts:23` →
   `overrideSeam(_setBackendsForTests, { selectBackend: () => fakeBackend, backendNameForPlatform: () => "cron" })`.
 
-### 7-14. The `tests/integration/setup-run.integration.ts` cluster (one file, 74 `mock.module` calls across 9 near-identical blocks)
+### 7-14. The `tests/integration/setup-run.test.ts` cluster (one file, 74 `mock.module` calls across 9 near-identical blocks)
 
 This file repeats the same ~10 mocks in every test block. Migrate it LAST, in
 one pass, after all seams below exist. Each block's mock stanza collapses to a
@@ -463,7 +463,7 @@ violate the guardrails (no new wrappers/adapters, zero call-site changes), and
 we cannot add a `_set…ForTests` export to a third-party package.
 
 Decision: `tests/setup-scheduled-tasks.test.ts`, `tests/setup-wizard.test.ts`,
-and `tests/integration/setup-run.integration.ts` KEEP their `@clack/prompts`
+and `tests/integration/setup-run.test.ts` KEEP their `@clack/prompts`
 `mock.module` blocks and therefore keep needing file isolation.
 Mitigations inside the test files (no src impact):
 - setup-run: hoist the 9 duplicated clack mocks into ONE file-local

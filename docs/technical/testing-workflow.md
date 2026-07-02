@@ -41,7 +41,7 @@ Relevant coverage:
 - `tests/stash-registry.test.ts` - `list`, `remove`, `update`, cache cleanup
 - `tests/registry-install.test.ts` - install resolution, tar safety, local/git/npm paths
 - `tests/e2e.test.ts` - real CLI workflows and subprocess behavior
-- `tests/setup-run.integration.ts` - full setup wizard orchestration and failure handling
+- `tests/integration/setup-run.test.ts` - full setup wizard orchestration and failure handling
 - `tests/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
 
 ### Writing deterministic, isolated tests
@@ -138,7 +138,7 @@ can be:
 - `ready-vec` when embeddings work and `sqlite-vec` is available
 - `blocked` when semantic search cannot run with the current provider/setup
 
-These cases are covered by `tests/setup-run.integration.ts` and the focused
+These cases are covered by `tests/integration/setup-run.test.ts` and the focused
 semantic/config suites.
 
 ### What to test explicitly
@@ -226,7 +226,7 @@ source management, or Docker assets:
 
 ```sh
 bun test
-bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts ./tests/setup-run.integration.ts tests/install-script.test.ts
+bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts tests/integration/setup-run.test.ts tests/install-script.test.ts
 ./tests/docker/run-docker-tests.sh
 bunx biome check --write src/ tests/
 bunx tsc --noEmit
