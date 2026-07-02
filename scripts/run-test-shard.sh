@@ -51,9 +51,16 @@ case "$suite" in
     ;;
 esac
 
-# Per-attempt wall-clock cap. A clean shard finishes in ~20-45s; anything past a
-# few minutes is a genuine hang, not slow tests.
-PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-300s}"
+# Per-attempt wall-clock cap. A clean unit shard finishes in ~20-45s (CI
+# history: never above ~60s), so 120s is already generous — anything past it
+# is a genuine hang, not slow tests, and waiting 300s just delays the kill
+# (the 2026-07-02 release run burned 2×300s on one hung shard). Integration
+# shards legitimately reach ~100s, so they keep a higher cap.
+if [ "$suite" = "unit" ]; then
+  PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-120s}"
+else
+  PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-300s}"
+fi
 MAX_ATTEMPTS="${SHARD_MAX_ATTEMPTS:-2}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
@@ -74,7 +81,11 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   # timeout is retried — any other non-zero exit is a real test failure and
   # fails fast immediately, never retried.
   if [ "$ec" -eq 124 ] || [ "$ec" -eq 137 ]; then
-    echo "shard $SHARD $suite timed out (exit $ec) — retrying once on a fresh process"
+    if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+      echo "shard $SHARD $suite timed out (exit $ec) — retrying on a fresh process (attempt $((attempt + 1))/$MAX_ATTEMPTS)"
+    else
+      echo "shard $SHARD $suite timed out (exit $ec) on the final attempt"
+    fi
     # Reap any orphan from the killed attempt before retrying. Guarded to CI
     # so a local run never kills a developer's other `bun test` processes.
     [ -n "${CI:-}" ] && pkill -9 -f 'bun test ' 2>/dev/null || true
