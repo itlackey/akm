@@ -349,7 +349,22 @@ export function loadConfig(): AkmConfig {
   return loadUserConfig();
 }
 
+let saveConfigOverride: ((config: AkmConfig) => void) | undefined;
+
+/** TEST-ONLY. Swap the implementation of `saveConfig`; pass undefined to restore. */
+export function _setSaveConfigForTests(fake?: (config: AkmConfig) => void): void {
+  saveConfigOverride = fake;
+}
+
 export function saveConfig(config: AkmConfig): void {
+  if (saveConfigOverride) {
+    saveConfigOverride(config);
+    return;
+  }
+  saveConfigReal(config);
+}
+
+function saveConfigReal(config: AkmConfig): void {
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);

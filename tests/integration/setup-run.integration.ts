@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import { _setDefaultTasksForTests } from "../../src/commands/tasks/default-tasks";
+import { _setSaveConfigForTests } from "../../src/core/config/config";
 import type { IndexResponse } from "../../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
@@ -11,8 +14,11 @@ import { _setDetectForTests } from "../../src/setup/detect";
 import { overrideSeam } from "../_helpers/seams";
 
 const DEFAULT_STASH_DIR = "/tmp/akm-default-stash";
-const DEFAULT_CONFIG_PATH = "/tmp/akm-config/config.json";
-const DEFAULT_CACHE_DIR = "/tmp/akm-cache";
+// Per-test sandbox (fresh mkdtemp in beforeEach). The real config module reads
+// and writes DEFAULT_CONFIG_PATH via the mocked src/core/paths module below.
+let sandboxRoot = "";
+let DEFAULT_CONFIG_PATH = "";
+let DEFAULT_CACHE_DIR = "";
 const DEFAULT_REGISTRY_URLS = [
   "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
   "https://skills.sh",
@@ -52,11 +58,6 @@ function makeIndexResult(): IndexResponse {
 }
 
 const setupState = {
-  currentConfig: {
-    semanticSearchMode: "auto",
-    output: { format: "json", detail: "brief" },
-  } as Record<string, unknown>,
-  savedConfigs: [] as Array<Record<string, unknown>>,
   initCalls: [] as Array<{ dir: string }>,
   indexCalls: [] as Array<{ stashDir: string; enrich?: boolean }>,
   detectOllamaResult: { available: false, endpoint: "http://localhost:11434", models: [] as string[] },
@@ -75,12 +76,9 @@ function loadSetupModule() {
   return import(`${setupUrl}?t=${Date.now()}-${Math.random()}`);
 }
 
-function loadUserConfigMock(): Record<string, unknown> {
-  return setupState.currentConfig;
-}
-
-function getSourcesMock(config: Record<string, unknown>): Array<Record<string, unknown>> {
-  return Array.isArray(config.sources) ? (config.sources as Array<Record<string, unknown>>) : [];
+/** Read the config the wizard actually wrote to the sandboxed config path. */
+function readSavedConfig(): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf8")) as Record<string, unknown>;
 }
 
 function resetPromptState(): void {
@@ -94,11 +92,6 @@ function resetPromptState(): void {
 }
 
 function resetSetupState(): void {
-  setupState.currentConfig = {
-    semanticSearchMode: "auto",
-    output: { format: "json", detail: "brief" },
-  };
-  setupState.savedConfigs.length = 0;
   setupState.initCalls.length = 0;
   setupState.indexCalls.length = 0;
   setupState.detectOllamaResult = { available: false, endpoint: "http://localhost:11434", models: [] };
@@ -147,12 +140,16 @@ function installDefaultTasksSeam(): void {
 beforeEach(() => {
   resetPromptState();
   resetSetupState();
+  sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-run-"));
+  DEFAULT_CONFIG_PATH = path.join(sandboxRoot, "config", "config.json");
+  DEFAULT_CACHE_DIR = path.join(sandboxRoot, "cache");
   mock.restore();
   installDefaultTasksSeam();
 });
 
 afterEach(() => {
   mock.restore();
+  fs.rmSync(sandboxRoot, { recursive: true, force: true });
 });
 
 describe("runSetupWizard", () => {
@@ -198,23 +195,6 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
-    }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
@@ -250,9 +230,9 @@ describe("runSetupWizard", () => {
     const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
-    expect(setupState.savedConfigs).toHaveLength(1);
-    expect(setupState.savedConfigs[0]?.stashDir).toBe(DEFAULT_STASH_DIR);
-    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("off");
+    const saved = readSavedConfig();
+    expect(saved.stashDir).toBe(DEFAULT_STASH_DIR);
+    expect(saved.semanticSearchMode).toBe("off");
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
     expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);
     expect(promptState.outros[0]).toContain(DEFAULT_CONFIG_PATH);
@@ -300,23 +280,6 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
-    }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
@@ -357,8 +320,7 @@ describe("runSetupWizard", () => {
     const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
-    expect(setupState.savedConfigs).toHaveLength(1);
-    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("auto");
+    expect(readSavedConfig().semanticSearchMode).toBe("auto");
     expect(promptState.logs.some((entry) => entry.includes("remains set to auto, but is currently blocked"))).toBe(
       true,
     );
@@ -407,23 +369,6 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
-    }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
@@ -460,7 +405,7 @@ describe("runSetupWizard", () => {
     const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
-    expect(setupState.savedConfigs).toHaveLength(1);
+    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(true);
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
     expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);
     expect(promptState.logs.some((entry) => entry.includes("index exploded"))).toBe(true);
@@ -495,23 +440,6 @@ describe("runSetupWizard", () => {
       intro: () => {},
       outro: () => {},
       note: () => {},
-    }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
     }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
@@ -558,7 +486,7 @@ describe("runSetupWizard", () => {
     await runSetupWizard();
 
     expect(promptState.logs.some((entry) => entry.includes("remote embedding endpoint is not reachable"))).toBe(true);
-    expect(setupState.savedConfigs.at(-1)?.semanticSearchMode).toBe("auto");
+    expect(readSavedConfig().semanticSearchMode).toBe("auto");
   });
 
   test("warns specifically when transformers package is missing during setup prep", async () => {
@@ -583,23 +511,6 @@ describe("runSetupWizard", () => {
       intro: () => {},
       outro: () => {},
       note: () => {},
-    }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
     }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
@@ -647,7 +558,7 @@ describe("runSetupWizard", () => {
     expect(promptState.logs.some((entry) => entry.includes("Install it with: bun add @huggingface/transformers"))).toBe(
       true,
     );
-    expect(setupState.savedConfigs.at(-1)?.semanticSearchMode).toBe("auto");
+    expect(readSavedConfig().semanticSearchMode).toBe("auto");
   });
 
   test("keeps semantic search enabled and warns when sqlite-vec/db check fails", async () => {
@@ -672,23 +583,6 @@ describe("runSetupWizard", () => {
       intro: () => {},
       outro: () => {},
       note: () => {},
-    }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
     }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
@@ -727,8 +621,7 @@ describe("runSetupWizard", () => {
     const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
-    expect(setupState.savedConfigs).toHaveLength(1);
-    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("auto");
+    expect(readSavedConfig().semanticSearchMode).toBe("auto");
     expect(promptState.logs.some((entry) => entry.includes("Semantic search will use the JS fallback"))).toBe(true);
   });
 
@@ -752,23 +645,6 @@ describe("runSetupWizard", () => {
       intro: () => {},
       outro: () => {},
       note: () => {},
-    }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
     }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
@@ -805,8 +681,7 @@ describe("runSetupWizard", () => {
     const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
-    expect(setupState.savedConfigs).toHaveLength(1);
-    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("auto");
+    expect(readSavedConfig().semanticSearchMode).toBe("auto");
     expect(promptState.logs.some((entry) => entry.includes("asset preparation was skipped"))).toBe(true);
   });
 
@@ -825,24 +700,10 @@ describe("runSetupWizard", () => {
       note: () => {},
     }));
     let saveCalls = 0;
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: () => {
-        saveCalls += 1;
-        throw new Error("EACCES config.json");
-      },
-    }));
+    overrideSeam(_setSaveConfigForTests, () => {
+      saveCalls += 1;
+      throw new Error("EACCES config.json");
+    });
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
@@ -896,23 +757,6 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../../src/core/config/config", () => ({
-      DEFAULT_CONFIG: {
-        semanticSearchMode: "auto",
-        registries: [
-          { url: DEFAULT_REGISTRY_URLS[0], name: "akm-registry" },
-          { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh", enabled: false },
-        ],
-        output: { format: "json", detail: "brief" },
-      },
-      getConfigPath: () => DEFAULT_CONFIG_PATH,
-      getSources: getSourcesMock,
-      loadUserConfig: loadUserConfigMock,
-      loadConfig: () => setupState.currentConfig,
-      saveConfig: (config: Record<string, unknown>) => {
-        setupState.savedConfigs.push(config);
-      },
-    }));
     mock.module("../../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
@@ -945,7 +789,7 @@ describe("runSetupWizard", () => {
 
     const { runSetupWizard } = await loadSetupModule();
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
-    expect(setupState.savedConfigs).toHaveLength(0);
+    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
     expect(setupState.indexCalls).toHaveLength(0);
   });
 });
