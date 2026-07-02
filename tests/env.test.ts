@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -199,27 +198,9 @@ describe("buildShellExportScript", () => {
     expect(script).toContain("export APOS='it'\\''s fine'");
   });
 
-  test("eval-ing the emitted script populates env without executing payloads", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    // A raw .env value crafted to run `touch evidence` if it ever reaches a
-    // shell unescaped. The export script must keep it a literal string.
-    const evidence = path.join(dir, "evidence");
-    fs.writeFileSync(fp, `EVIL=$(touch ${evidence})\nOK=ok-value\n`);
-    const script = buildShellExportScript(fp);
-    const scriptPath = path.join(dir, "eval-me.sh");
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync("bash", ["-c", `set -eu; . '${scriptPath}'; printf '%s\\n' "$EVIL" "$OK"`], {
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
-    const [evilOut, okOut] = (result.stdout ?? "").split("\n");
-    expect(evilOut).toBe(`$(touch ${evidence})`);
-    expect(okOut).toBe("ok-value");
-    // The command substitution must NOT have run.
-    expect(fs.existsSync(evidence)).toBe(false);
-  });
+  // NOTE: the real-bash sourcing test ("eval-ing the emitted script populates
+  // env without executing payloads") lives in
+  // tests/integration/env-export-bash.test.ts — it requires a real subprocess.
 
   test("round-trips shell-metachar values through dotenv.parse", () => {
     const dir = tmpDir();

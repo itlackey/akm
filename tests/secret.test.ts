@@ -5,14 +5,12 @@
 /**
  * Secret asset type — core module + CLI surface.
  *
- * Mirrors the vault test split: cases that pipe a value through process.stdin
- * (`secret set` default) spawn a real Bun process (the in-process harness has
- * no way to feed stdin); the `--from-file` / `--from-env` / `list` / `remove`
- * cases run in-process via the shared harness.
+ * Everything here runs in-process via the shared harness. The stdin path
+ * (default `secret set` pipes the value through process.stdin, which the
+ * harness cannot feed) lives in tests/integration/secret-stdin.test.ts.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,9 +19,6 @@ import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
-
-const repoRoot = path.resolve(import.meta.dir, "..");
-const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 // ── Core-module fixtures (tracked tmp dirs) ──────────────────────────────────
 
@@ -72,21 +67,6 @@ async function runCli(
     const { stdout, stderr, code } = await runCliCapture(args);
     return { stdout, stderr, status: code };
   });
-}
-
-function spawnCli(
-  args: string[],
-  extraEnv: Record<string, string | undefined> = {},
-  stdinInput?: string,
-): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    cwd: repoRoot,
-    input: stdinInput,
-    env: { ...process.env, AKM_STASH_DIR: undefined, ...extraEnv },
-  });
-  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }
 
 // ── Core module ──────────────────────────────────────────────────────────────
@@ -156,27 +136,6 @@ describe("secret core module", () => {
 // ── CLI: set / list / remove ─────────────────────────────────────────────────
 
 describe("secret set", () => {
-  // KEPT AS A SUBPROCESS: default `set` reads process.stdin.
-  test("reads the value from stdin and stores it", () => {
-    const stashDir = makeStash();
-    const { stderr, status } = spawnCli(
-      ["secret", "set", "secret:demo"],
-      { AKM_STASH_DIR: stashDir },
-      "tok-from-stdin",
-    );
-    expect(status).toBe(0);
-    expect(stderr.trim()).toBe("");
-    const fp = path.join(stashDir, "secrets", "demo");
-    expect(fs.readFileSync(fp, "utf8")).toBe("tok-from-stdin");
-  });
-
-  // KEPT AS A SUBPROCESS: stdin path; verifies the single-trailing-newline strip.
-  test("strips a single trailing newline from the stdin value", () => {
-    const stashDir = makeStash();
-    spawnCli(["secret", "set", "secret:demo"], { AKM_STASH_DIR: stashDir }, "tok\n");
-    expect(fs.readFileSync(path.join(stashDir, "secrets", "demo"), "utf8")).toBe("tok");
-  });
-
   test("--from-file stores the file byte-exact (multi-line preserved)", async () => {
     const stashDir = makeStash();
     const src = path.join(tmpDir(), "id_ed25519");

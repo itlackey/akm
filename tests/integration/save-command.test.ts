@@ -4,19 +4,19 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseGitRepoUrl } from "../src/sources/providers/git";
-import { type CliResult, runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { parseGitRepoUrl } from "../../src/sources/providers/git";
+import { type CliResult, runCliCapture } from "../_helpers/cli";
+import { withEnv } from "../_helpers/sandbox";
 
-// Migrated the `akm save` invocations from spawnSync("bun", [CLI, …]) to the
-// shared in-process harness (tests/_helpers/cli.ts). `akm save` resolves its
-// target stash from AKM_STASH_DIR / named-source config (XDG), not
-// process.cwd(), so it runs faithfully in-process — the git operations it
-// performs are spawned by the command's own logic regardless. The raw `git`
-// helpers below (initGitRepo, gitHeadSubject, gitRevCount, plus the assertion
-// `git status` calls) keep spawning git directly: they exercise real git state,
-// not the akm CLI. Env mutation goes through the allowlisted withEnv wrapper;
-// temp dirs are created via makeTempDir (kept local) and tracked for cleanup.
+// INTEGRATION TEST — lives in tests/integration/ because real subprocesses are
+// inherent to every test here. The `akm` invocations use the in-process
+// harness (tests/_helpers/cli.ts), but every test builds and asserts against
+// real git fixture repos: the raw `git` helpers below (initGitRepo,
+// gitHeadSubject, gitRevCount, plus the assertion `git status` calls) spawn
+// real git, and `akm sync` itself shells out to git even when driven
+// in-process. There is nothing left to harness away.
+// Env mutation goes through the allowlisted withEnv wrapper; temp dirs are
+// created via makeTempDir (kept local) and tracked for cleanup.
 
 const tempDirs: string[] = [];
 

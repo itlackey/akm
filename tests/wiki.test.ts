@@ -8,7 +8,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -39,10 +38,10 @@ import {
   validateWikiName,
   WIKIS_SUBDIR,
 } from "../src/wiki/wiki";
-import { type Cleanup, sandboxStashDir, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { runCliCapture } from "./_helpers/cli";
+import { type Cleanup, sandboxStashDir, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
-const CLI = path.join(__dirname, "..", "src", "cli.ts");
 
 function makeStash(prefix = "akm-wiki-test-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -63,39 +62,21 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
   fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(body, null, 2), "utf8");
 }
 
-async function runCliAsync(args: string[], options: { stashDir: string; configDir: string }) {
-  const child = spawn("bun", [CLI, ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
+/**
+ * Run the CLI in-process with the same env the old subprocess version passed
+ * via child env: AKM_STASH_DIR/AKM_CONFIG_DIR pin the stash + config lookup
+ * (AKM_CONFIG_DIR wins over the sandboxed XDG_CONFIG_HOME exactly as it did
+ * for the child), and XDG_CACHE_HOME isolates cache writes.
+ */
+async function runCli(args: string[], options: { stashDir: string; configDir: string }) {
+  return withEnv(
+    {
       AKM_STASH_DIR: options.stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: makeStash("akm-wiki-cache-"),
     },
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => {
-    stdout += String(chunk);
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  const status = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("CLI timed out after 30000ms"));
-    }, 30_000);
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve(code ?? 1);
-    });
-  });
-  return { status, stdout, stderr };
+    () => runCliCapture(args),
+  );
 }
 
 let envCleanup: Cleanup = () => {};
@@ -455,8 +436,8 @@ describe("stashRaw", () => {
 
     try {
       const url = `http://127.0.0.1:${address.port}/papers/attention`;
-      const result = await runCliAsync(["wiki", "stash", "research", url], { stashDir: stash, configDir });
-      expect(result.status).toBe(0);
+      const result = await runCli(["wiki", "stash", "research", url], { stashDir: stash, configDir });
+      expect(result.code).toBe(0);
 
       const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string; slug: string };
       expect(json.ok).toBe(true);

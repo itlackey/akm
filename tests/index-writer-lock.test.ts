@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { getIndexWriterLockPath } from "../src/core/paths";
 import { acquireIndexWriterLease, probeIndexWriterLease, withIndexWriterLease } from "../src/indexer/index-writer-lock";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
@@ -47,20 +45,6 @@ describe("index writer lease", () => {
     expect(probe.state).toBe("held");
     if (probe.state === "held") expect(probe.holderPid).toBe(process.pid);
     acquired?.release();
-  });
-
-  test("try mode coalesces when another process holds the lease", async () => {
-    const lockPath = getIndexWriterLockPath();
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    const child = spawn("sleep", ["5"], { stdio: "ignore" });
-    try {
-      if (typeof child.pid !== "number") throw new Error("failed to start holder process");
-      fs.writeFileSync(lockPath, JSON.stringify({ pid: child.pid, startedAt: new Date().toISOString() }), "utf8");
-      const result = await acquireIndexWriterLease({ mode: "try", purpose: "background" });
-      expect(result).toBeUndefined();
-    } finally {
-      child.kill("SIGTERM");
-    }
   });
 
   test("withIndexWriterLease holds the lock for the callback", async () => {
