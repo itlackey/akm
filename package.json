@@ -58,7 +58,7 @@
     "sweep:tmp": "bun scripts/sweep-test-tmp.ts",
     "test": "bash scripts/test-unit.sh",
     "test:unit": "bash scripts/test-unit.sh",
-    "test:integration": "bun run sweep:tmp && bun test --isolate ./tests/integration",
+    "test:integration": "bun run sweep:tmp && bun test --isolate --timeout=30000 ./tests/integration",
     "test:node-smoke": "bun scripts/node-smoke.ts",
     "test:node-compat": "AKM_NODE_COMPAT_TESTS=1 bun test --timeout=120000 tests/integration/node-compat.test.ts",
     "test:time": "bun scripts/test-timing-report.ts",

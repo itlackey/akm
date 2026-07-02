@@ -25,8 +25,7 @@
 #
 # Usage:  SHARD=k/N scripts/run-test-shard.sh <unit|integration>
 #
-# This is the single definition of the shard invocation (CI and local); the
-# per-test timeout comes from bunfig.toml.
+# This is the single definition of the shard invocation (CI and local).
 set -uo pipefail
 
 suite="${1:?usage: $0 <unit|integration>}"
@@ -68,8 +67,11 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   out_file="$(mktemp)"
   # Tee so the output can be checked for the race signature while still
   # streaming to the CI log live. PIPESTATUS[0] is bun's real exit code.
+  # --timeout=30000 must stay on the command line: bun 1.3.14 does NOT honor
+  # bunfig.toml's [test] timeout (verified: a 7s test dies at the 5s default
+  # without this flag — which failed 5 CI shards on 2026-07-02).
   timeout --kill-after=15s "$PER_ATTEMPT_TIMEOUT" \
-    bun test --isolate "${paths[@]}" --shard="$SHARD" 2>&1 | tee "$out_file"
+    bun test --isolate --timeout=30000 "${paths[@]}" --shard="$SHARD" 2>&1 | tee "$out_file"
   ec="${PIPESTATUS[0]}"
   echo "::endgroup::"
 
