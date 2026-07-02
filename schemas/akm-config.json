@@ -4700,6 +4700,48 @@
             }
           },
           "additionalProperties": true
+        },
+        "collapseDetector": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "canaryCount": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 200
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "windowCycles": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 50
+            },
+            "recallDropThreshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "entropyDropThreshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "churnMinAcceptedActions": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "retentionDays": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
@@ -9422,6 +9464,48 @@
                 "replayBudget": {
                   "type": "integer",
                   "minimum": 0
+                }
+              },
+              "additionalProperties": true
+            },
+            "collapseDetector": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "canaryCount": {
+                  "type": "integer",
+                  "minimum": 3,
+                  "maximum": 200
+                },
+                "k": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "windowCycles": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 50
+                },
+                "recallDropThreshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "entropyDropThreshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "churnMinAcceptedActions": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "retentionDays": {
+                  "type": "integer",
+                  "minimum": 1
                 }
               },
               "additionalProperties": true

@@ -116,6 +116,17 @@ export interface StashEntry {
   beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
   supersededBy?: string[];
   contradictedBy?: string[];
+  /**
+   * R5 — merge depth counter (frontmatter `generation`), maintained by
+   * consolidate's injectGenerationFrontmatter. Absent = original asset.
+   */
+  generation?: number;
+  /**
+   * R5 — provenance pointers (frontmatter `source_refs`): the refs this asset
+   * was merged/distilled from. Lets the collapse detector's canary scoring
+   * follow a legitimately-merged anchor instead of reading it as collapse.
+   */
+  sourceRefs?: string[];
   currentBeliefRefs?: string[];
   /**
    * How the memory was captured. `hot` indicates a user-driven write
@@ -473,6 +484,17 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
 
   const contradictedBy = normalizeStringListOrUndefined(fmData.contradictedBy);
   if (contradictedBy) entry.contradictedBy = contradictedBy;
+
+  // R5 — consolidation provenance. `generation` (merge depth counter) and
+  // `source_refs` (merge/distill provenance pointers) are written by the
+  // improve pipeline; captured into the index so the collapse detector can
+  // count over-generation assets and follow merges without filesystem reads.
+  const generation = fmData.generation;
+  if (typeof generation === "number" && Number.isFinite(generation) && generation > 0) {
+    entry.generation = Math.floor(generation);
+  }
+  const sourceRefs = normalizeStringListOrUndefined(fmData.source_refs);
+  if (sourceRefs) entry.sourceRefs = sourceRefs;
 
   const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
   if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
