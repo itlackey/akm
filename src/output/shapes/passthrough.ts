@@ -46,6 +46,7 @@ const PASSTHROUGH_COMMANDS = [
   "extract",
   "health",
   "improve",
+  "improve-canary",
   "lessons-coverage",
   "import",
   "index",

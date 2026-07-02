@@ -22,6 +22,7 @@ import {
   ensureCanarySet,
   evaluateCollapseAlerts,
   normHash,
+  runCollapseDetector,
 } from "../../../src/commands/improve/collapse-detector";
 import { saveConfig } from "../../../src/core/config/config";
 import { ndcgAtK } from "../../../src/core/eval/rank-metrics";
@@ -333,5 +334,75 @@ describe("normHash", () => {
   test("whitespace/case-insensitive, content-sensitive", () => {
     expect(normHash("Alpha  Beta\nGamma")).toBe(normHash("alpha beta gamma"));
     expect(normHash("alpha beta gamma")).not.toBe(normHash("alpha beta delta"));
+  });
+});
+
+// ── Orchestrator (runCollapseDetector) ────────────────────────────────────────
+
+describe("runCollapseDetector orchestrator", () => {
+  test("qualifying invocation persists exactly one cycle row and returns it", async () => {
+    seedCorpus();
+    await reindex();
+    const result = runCollapseDetector({
+      runId: "run-orchestrated",
+      pass: "consolidate",
+      acceptedActions: 2,
+      mergeFloorViolations: 0,
+      config: { semanticSearchMode: "off" } as never,
+    });
+    expect(result).toBeDefined();
+    expect(result?.run_id).toBe("run-orchestrated");
+    const rows = queryRecentCycleMetrics(stateDb, result?.canary_set_id ?? "", 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].accepted_actions).toBe(2);
+  });
+
+  test("enabled:false is a complete no-op (no canaries minted, no rows)", async () => {
+    seedCorpus();
+    await reindex();
+    const result = runCollapseDetector({
+      runId: "run-disabled",
+      pass: "consolidate",
+      acceptedActions: 0,
+      mergeFloorViolations: 0,
+      config: { semanticSearchMode: "off", improve: { collapseDetector: { enabled: false } } } as never,
+    });
+    expect(result).toBeUndefined();
+    const count = stateDb.prepare("SELECT COUNT(*) AS n FROM canary_queries").get() as { n: number };
+    expect(count.n).toBe(0);
+  });
+
+  test("fail-open: unreadable index path warns and returns undefined (never throws)", async () => {
+    const result = runCollapseDetector({
+      runId: "run-broken",
+      pass: "consolidate",
+      acceptedActions: 0,
+      mergeFloorViolations: 0,
+      config: { semanticSearchMode: "off" } as never,
+      indexDbPath: "/nonexistent/dir/index.db",
+    });
+    expect(result).toBeUndefined();
+  });
+});
+
+// ── Improve-run wiring (hook gating, negative path) ──────────────────────────
+
+describe("post-loop hook gating", () => {
+  test("a run with no consolidate/recombine work writes no cycle rows", async () => {
+    seedCorpus();
+    await reindex();
+    const { akmImprove } = await import("../../../src/commands/improve/improve");
+    await akmImprove({
+      scope: "memory",
+      stashDir: storage.stashDir,
+      config: { semanticSearchMode: "off" } as never,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async () => ({ schemaVersion: 1, ok: true, outcome: "skipped", ref: "", message: "stub" }) as never,
+      distillFn: async () =>
+        ({ schemaVersion: 1, ok: true, outcome: "skipped", inputRef: "", lessonRef: "", message: "stub" }) as never,
+    });
+    const count = stateDb.prepare("SELECT COUNT(*) AS n FROM improve_cycle_metrics").get() as { n: number };
+    expect(count.n).toBe(0);
   });
 });

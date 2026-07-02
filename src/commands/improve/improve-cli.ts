@@ -12,6 +12,7 @@ import { getCacheDir } from "../../core/paths";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getHyphenatedArg, getHyphenatedBoolean, parseFlagValue } from "../../output/context";
+import { ensureCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
 import {
   buildImproveRunId,
@@ -22,11 +23,77 @@ import {
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
 
+// R5 — collapse-detector canary set inspection / explicit refresh. The
+// detector NEVER auto-refreshes the canary set (silent re-baselining is how a
+// slow collapse hides); this subcommand is the only refresh path.
+const improveCanaryCommand = defineCommand({
+  meta: {
+    name: "canary",
+    description:
+      "Inspect the collapse-detector canary set and recent cycle metrics; --refresh deactivates the current set and mints a new one from the live stash",
+  },
+  args: {
+    refresh: {
+      type: "boolean",
+      description:
+        "Deactivate the current canary set and mint a new one (old rows and their cycle history are retained, keyed by the old set id)",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { withStateDb, deactivateCanarySet, getActiveCanaries, queryRecentCycleMetrics } = await import(
+        "../../core/state-db"
+      );
+      const { openExistingDatabase, closeDatabase } = await import("../../indexer/db/db");
+      const config = loadConfig();
+      const cfg = config.improve?.collapseDetector ?? {};
+
+      const result = withStateDb((stateDb) => {
+        if (args.refresh) {
+          const active = getActiveCanaries(stateDb);
+          if (active.length > 0) deactivateCanarySet(stateDb, active[0].canary_set_id);
+          const indexDb = openExistingDatabase();
+          try {
+            ensureCanarySet(stateDb, indexDb, cfg);
+          } finally {
+            closeDatabase(indexDb);
+          }
+        }
+        const canaries = getActiveCanaries(stateDb);
+        const canarySetId = canaries[0]?.canary_set_id;
+        const recentCycles = canarySetId ? queryRecentCycleMetrics(stateDb, canarySetId, cfg.windowCycles ?? 5) : [];
+        return {
+          schemaVersion: 1 as const,
+          ok: true,
+          refreshed: args.refresh === true,
+          canarySetId: canarySetId ?? null,
+          canaries: canaries.map((c) => ({ id: c.id, anchorRef: c.anchor_ref, query: c.query })),
+          recentCycles: recentCycles.map((r) => ({
+            ts: r.ts,
+            pass: r.pass,
+            meanRecall: r.mean_recall,
+            meanNdcg: r.mean_ndcg,
+            distinctContentRatio: r.distinct_content_ratio,
+            acceptedActions: r.accepted_actions,
+            mergeFloorViolations: r.merge_floor_violations,
+            alerts: JSON.parse(r.alerts_json) as string[],
+          })),
+        };
+      });
+      output("improve-canary", result);
+    });
+  },
+});
+
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
       "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true",
+  },
+  subCommands: {
+    canary: improveCanaryCommand,
   },
   args: {
     scope: {
@@ -91,6 +158,12 @@ export const improveCommand = defineCommand({
     },
   },
   async run({ args }) {
+    // citty invokes the PARENT command's run() as a setup hook even when a
+    // subcommand matched — when `akm improve canary` dispatched to the
+    // subcommand, the parent must not also launch a full improve run.
+    // "canary" is a reserved word here, never a valid scope (asset types are a
+    // known list and refs contain ":").
+    if (args.scope === "canary") return;
     await runWithJsonErrors(async () => {
       const formatFlagValue = parseFlagValue(process.argv, "--format");
       if (formatFlagValue !== undefined) {

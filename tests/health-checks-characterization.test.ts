@@ -108,6 +108,14 @@ describe("health checks characterization (WS9)", () => {
 
     expect(result.advisories.map(project)).toEqual([
       {
+        name: "collapse-churn-detector",
+        kind: "deterministic",
+        status: "unknown",
+        confidence: "high",
+        message:
+          "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles where consolidate/recombine did work (synthesis lanes may be idle).",
+      },
+      {
         name: "semantic-search-runtime",
         kind: "deterministic",
         status: "pass",
@@ -206,6 +214,7 @@ describe("health checks characterization (WS9)", () => {
       "agent-profile",
     ]);
     expect(result.advisories.map((c) => c.name)).toEqual([
+      "collapse-churn-detector",
       "semantic-search-runtime",
       "session-log-failures",
       "session-extraction",

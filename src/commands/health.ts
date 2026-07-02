@@ -2241,6 +2241,77 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       });
     }
 
+    // R5 collapse/churn detector: surface any collapse_detector_alert events
+    // in the health window, plus the latest cycle row's headline numbers so
+    // the operator can act without opening the DB. `unknown` when the detector
+    // has never produced a cycle row (no consolidate/recombine work yet).
+    try {
+      const collapseAlertEvents = readEvents(
+        { since, type: "collapse_detector_alert" },
+        { dbPath: stateDbPath },
+      ).events;
+      const latestCycle = db
+        .prepare(
+          `SELECT ts, pass, mean_recall, distinct_content_ratio, accepted_actions, alerts_json
+           FROM improve_cycle_metrics ORDER BY ts DESC, id DESC LIMIT 1`,
+        )
+        .get() as
+        | {
+            ts: string;
+            pass: string;
+            mean_recall: number;
+            distinct_content_ratio: number;
+            accepted_actions: number;
+            alerts_json: string;
+          }
+        | undefined
+        | null;
+      if (collapseAlertEvents.length > 0) {
+        const kinds = [...new Set(collapseAlertEvents.map((e) => String(e.metadata?.kind ?? "unknown")))];
+        const collapseKinds = kinds.filter((k) => k.startsWith("collapse"));
+        advisories.push({
+          name: "collapse-churn-detector",
+          status: "warn",
+          kind: "deterministic",
+          // Collapse kinds are measured, not inferred; churn/merge-floor
+          // volume thresholds are still being tuned (design doc §7).
+          confidence: collapseKinds.length > 0 ? "high" : "medium",
+          message:
+            `R5 detector fired ${collapseAlertEvents.length} alert(s) in window (kinds: ${kinds.join(", ")}). ` +
+            (latestCycle
+              ? `Latest cycle (${latestCycle.ts}, ${latestCycle.pass}): mean canary recall ${latestCycle.mean_recall.toFixed(3)}, ` +
+                `distinct-content ratio ${latestCycle.distinct_content_ratio.toFixed(3)}, ` +
+                `${latestCycle.accepted_actions} accepted action(s). `
+              : "") +
+            "See docs/design/improve-collapse-churn-detector-design.md §6.3 runbook queries.",
+        });
+      } else if (latestCycle) {
+        advisories.push({
+          name: "collapse-churn-detector",
+          status: "pass",
+          kind: "deterministic",
+          confidence: "high",
+          message:
+            `No collapse/churn alerts in window. Latest cycle (${latestCycle.ts}, ${latestCycle.pass}): ` +
+            `mean canary recall ${latestCycle.mean_recall.toFixed(3)}, ` +
+            `distinct-content ratio ${latestCycle.distinct_content_ratio.toFixed(3)}.`,
+        });
+      } else {
+        advisories.push({
+          name: "collapse-churn-detector",
+          status: "unknown",
+          kind: "deterministic",
+          confidence: "high",
+          message:
+            "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles " +
+            "where consolidate/recombine did work (synthesis lanes may be idle).",
+        });
+      }
+    } catch {
+      // Table may predate migration 016 in odd mixed-version setups — advisory
+      // is best-effort and must never fail the health command.
+    }
+
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
       const sinceDays = Math.max(0, Math.ceil((now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
