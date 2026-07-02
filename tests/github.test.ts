@@ -36,6 +36,12 @@ describe("GITHUB_API_BASE", () => {
 describe("githubHeaders", () => {
   test("includes Accept and User-Agent headers", () => {
     delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    // Without this mock, githubHeaders() falls through to a REAL
+    // `spawnSync("gh", ["auth", "token"])`. A synchronous spawn blocks the
+    // whole runtime, so a stalled `gh` freezes the shard past every JS-level
+    // timeout (2026-07-02 release run: 2×300s hard-kills started at this test).
+    spyOn(childProcess, "spawnSync").mockReturnValue({ status: 1, stdout: "" } as never);
     const headers = githubHeaders() as Record<string, string>;
     expect(headers.Accept).toBe("application/vnd.github+json");
     expect(headers["User-Agent"]).toBe("akm-registry");

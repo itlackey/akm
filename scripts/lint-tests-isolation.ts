@@ -27,6 +27,23 @@
  * instead. `toBeGreaterThanOrEqual(0)` and exact `toBe(<n>)` against an injected
  * timestamp are deterministic and NOT flagged.
  *
+ * Rule 4 (raw AKM-named temp root): flag `mkdtempSync("…akm-test…")` outside
+ * tests/_helpers/ — minting AKM temp roots anywhere else bypasses the
+ * single-temp-root/single-cleanup discipline of withIsolatedAkmStorage.
+ *
+ * Rule 5 (real process spawn in unit scope): flag `spawnSync(` / `spawn(` /
+ * `execSync(` / `execFileSync(` / `Bun.spawn(` calls in test files OUTSIDE
+ * tests/integration/. A synchronous spawn blocks the entire JS runtime, so a
+ * stalled child freezes the shard past every JS-level timeout — bun's
+ * per-test `--timeout` cannot fire while the runtime is stuck in a native
+ * syscall. This is exactly how the 2026-07-02 release run lost unit shard 1
+ * to two consecutive 300s hard-kills (an unmocked `gh auth token` spawn, then
+ * a full-CLI subprocess). Unit tests must use the in-process harness
+ * (tests/_helpers/cli.ts) or mock `node:child_process`; tests that genuinely
+ * need a real subprocess belong in tests/integration/. `spyOn(...)` mock
+ * setup lines are not flagged. Existing spawners are grandfathered in
+ * SPAWN_ALLOWED (shrink-only).
+ *
  * Exit codes:
  *   0 — no violations
  *   1 — violations found (or internal error)
@@ -225,11 +242,43 @@ const ALLOWED_FILES = new Set<string>([
   "tests/integration/indexer.test.ts",
 ]);
 
+/**
+ * Rule 5 grandfather list: unit-scope test files that still spawn real
+ * processes. Each is a single shared helper (`runCli`-style spawnSync of the
+ * CLI, or a local tool) used by many tests in the file, so migration to the
+ * in-process harness — or a move to tests/integration/ — is per-file work.
+ * SHRINK-ONLY: entries are removed as files migrate; never add to this list —
+ * new unit tests must use tests/_helpers/cli.ts or mock node:child_process.
+ */
+const SPAWN_ALLOWED = new Set<string>([
+  // CLI-under-test subprocess helpers (spawnSync("bun", [CLI, ...])) —
+  // candidates for the in-process harness or a move to tests/integration/:
+  "tests/remember-frontmatter.test.ts",
+  "tests/env-path-run.test.ts",
+  "tests/secret.test.ts",
+  "tests/secret-path-run.test.ts",
+  "tests/wiki.test.ts",
+  "tests/commands/events.test.ts",
+  "tests/commands/improve-result-to-file.test.ts",
+  "tests/commands/show-argv.test.ts",
+  "tests/commands/improve-cli-flags.test.ts",
+  "tests/commands/distill/distill-cli-flag.test.ts",
+  // Local-tool spawns with a bounded, non-network child:
+  // env.test.ts sources a generated env script under real bash (shell-quoting
+  // semantics are the thing under test).
+  "tests/env.test.ts",
+  // save-command.test.ts drives real git for fixture repos (17 call sites).
+  "tests/save-command.test.ts",
+  // index-writer-lock.test.ts spawns `sleep 5` to hold a live PID for
+  // stale-lock reclaim tests.
+  "tests/index-writer-lock.test.ts",
+]);
+
 // ── Shrink-only ratchet ──────────────────────────────────────────────────────
 
 /**
  * The combined grandfather allowlist (Rule-1 `ALLOWED_FILES` + Rule-2
- * `ENV_ASSIGN_ALLOWED`) is a SHRINK-ONLY ratchet: as files migrate onto the
+ * `ENV_ASSIGN_ALLOWED` + Rule-5 `SPAWN_ALLOWED`) is a SHRINK-ONLY ratchet: as files migrate onto the
  * `withIsolatedAkmStorage` composite they are removed from these sets and this
  * baseline is lowered to match. The meta-test in
  * `tests/lint-isolation-ratchet.test.ts` asserts the live combined size never
@@ -237,22 +286,28 @@ const ALLOWED_FILES = new Set<string>([
  * remove entries, LOWER this number in the same change; never raise it.
  *
  * KPI (WS4): drive this from ~73 toward ~5.
+ *
+ * 2026-07-02: baseline 64 → 77. NOT a loosening — Rule 5 (no real process
+ * spawns in unit scope) is a new rule class, and its 13 pre-existing spawner
+ * files enter the ratchet grandfathered in SPAWN_ALLOWED. The same one-time
+ * step-up happened when Rule 2 brought its blind spot under the ratchet.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 64;
+export const ALLOWLIST_RATCHET_BASELINE = 77;
 
-/** Live size of the combined grandfather allowlist (both rule sets). */
+/** Live size of the combined grandfather allowlist (all rule sets). */
 export function combinedAllowlistSize(): number {
-  return ALLOWED_FILES.size + ENV_ASSIGN_ALLOWED.size;
+  return ALLOWED_FILES.size + ENV_ASSIGN_ALLOWED.size + SPAWN_ALLOWED.size;
 }
 
 // Expose the sets so the ratchet meta-test can assert against them directly.
-export { ALLOWED_FILES, ENV_ASSIGN_ALLOWED };
+export { ALLOWED_FILES, ENV_ASSIGN_ALLOWED, SPAWN_ALLOWED };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 
-function collectTestFiles(dir: string): string[] {
+/** Recursively collect *.test.ts / *.test.js files under a directory (shared with test-timing-report). */
+export function collectTestFiles(dir: string): string[] {
   const results: string[] = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -268,7 +323,7 @@ function collectTestFiles(dir: string): string[] {
   return results;
 }
 
-type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion" | "raw-akm-mkdtemp";
+type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion" | "raw-akm-mkdtemp" | "unit-real-spawn";
 
 interface Violation {
   file: string;
@@ -367,6 +422,32 @@ function lintFile(filePath: string): Violation[] {
     }
   }
 
+  // ── Rule 5: real process spawn in unit scope ────────────────────────────────
+  // Unit shards run `./tests --path-ignore-patterns=tests/integration`, so
+  // everything outside tests/integration/ is unit scope (tests/commands and
+  // tests/workflows run in BOTH suites and must satisfy the unit invariant).
+  // A stalled synchronous spawn freezes the whole shard past every JS-level
+  // timeout; only the 300s(+) hard kill saves the job. `spyOn(...)` mock-setup
+  // lines don't match (the API name appears as a string, not a call).
+  if (!rel.startsWith("tests/integration/") && !SPAWN_ALLOWED.has(rel)) {
+    const spawnCall = /(\b(?:spawnSync|execSync|execFileSync)\s*\(|(?:^|[^.\w])spawn\s*\(|Bun\.spawn(?:Sync)?\s*\()/;
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\s*(\/\/|\*)/.test(l)) continue;
+      if (/\bspyOn\s*\(/.test(l)) continue;
+      if (spawnCall.test(l)) {
+        violations.push({
+          file: rel,
+          rule: "unit-real-spawn",
+          detail:
+            "real process spawn in a unit-scope test — use the in-process harness (tests/_helpers/cli.ts), mock node:child_process, or move the test to tests/integration/",
+          line: i + 1,
+        });
+      }
+    }
+  }
+
   // ── Rule 3: wall-clock elapsed-time assertion ──────────────────────────────
   // Targets the precise flaky shape: a LOCAL variable assigned a measured
   // wall-clock delta (`const elapsed = Date.now() - start`) then bounded with
@@ -414,7 +495,7 @@ export function lintAllTestFiles(): Violation[] {
   return out;
 }
 
-export { lintFile, collectTestFiles };
+export { lintFile };
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -434,6 +515,7 @@ if (import.meta.main) {
     "unguarded-env": "unguarded AKM/XDG/HOME env assignment",
     "elapsed-assertion": "wall-clock elapsed-time assertion",
     "raw-akm-mkdtemp": "raw mkdtempSync(…akm-test…) outside tests/_helpers/",
+    "unit-real-spawn": "real process spawn in unit-scope test",
   };
 
   console.error(`lint-tests-isolation: ${violations.length} violation(s) found\n`);

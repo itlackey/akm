@@ -7,7 +7,8 @@
  * `scripts/lint-tests-isolation.ts`.
  *
  * The grandfather allowlist (Rule-1 `ALLOWED_FILES` + Rule-2
- * `ENV_ASSIGN_ALLOWED`) may only ever get SMALLER as files migrate onto the
+ * `ENV_ASSIGN_ALLOWED` + Rule-5 `SPAWN_ALLOWED`) may only ever get SMALLER as
+ * files migrate onto the
  * `withIsolatedAkmStorage` composite. This test fails if the live combined size
  * grows past the recorded baseline — forcing the baseline to be lowered (never
  * raised) in any change that touches the lists. It also asserts the linter
@@ -19,14 +20,10 @@ import { describe, expect, test } from "bun:test";
 import { ALLOWLIST_RATCHET_BASELINE, combinedAllowlistSize, lintAllTestFiles } from "../scripts/lint-tests-isolation";
 
 describe("lint-tests-isolation allowlist ratchet", () => {
-  test("combined allowlist never grows past the recorded baseline", () => {
-    expect(combinedAllowlistSize()).toBeLessThanOrEqual(ALLOWLIST_RATCHET_BASELINE);
-  });
-
-  test("the recorded baseline tracks the live size (no stale slack)", () => {
-    // The baseline must equal the live size: when entries are removed the
-    // baseline is lowered in the same change. This prevents the ceiling from
-    // silently drifting above the real count and re-opening room to grow.
+  test("the recorded baseline tracks the live size exactly (shrink-only, no stale slack)", () => {
+    // Equality subsumes the old "never grows past" check: when entries are
+    // removed the baseline is lowered in the same change, and any growth
+    // fails immediately.
     expect(ALLOWLIST_RATCHET_BASELINE).toBe(combinedAllowlistSize());
   });
 
