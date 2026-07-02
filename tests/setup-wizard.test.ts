@@ -3,13 +3,22 @@
  * - onCancel: Escape on confirmation should stay, not exit
  * - stepAddSources: recommended GitHub repos multiselect, cancel returns to menu
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { _setLoadSetupStashesForTests } from "../src/setup/registry-stash-loader";
 import { overrideSeam } from "./_helpers/seams";
 
+// @clack/prompts stays a mock.module by design (see docs/design/di-seams-plan.md,
+// "Deferred"): no src wrapper module fronts it, so there is no seam to use.
+// Capture the real module BEFORE installing the mock and restore it in
+// afterAll (same pattern as setup-scheduled-tasks and setup-run).
+const REAL_CLACK = await import("@clack/prompts");
 installPromptMock();
+afterAll(() => {
+  mock.module("@clack/prompts", () => REAL_CLACK);
+  mock.restore();
+});
 let setupModule: typeof import("../src/setup/setup");
 let stepsModule: typeof import("../src/setup/steps");
 

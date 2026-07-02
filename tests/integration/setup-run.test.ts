@@ -161,8 +161,6 @@ const setupState = {
   transformersAvailable: true,
   indexResult: makeIndexResult(),
   indexError: undefined as Error | undefined,
-  vecAvailable: false,
-  dbOpenError: undefined as Error | undefined,
 };
 
 function loadSetupModule() {
@@ -195,8 +193,6 @@ function resetSetupState(): void {
   setupState.transformersAvailable = true;
   setupState.indexResult = makeIndexResult();
   setupState.indexError = undefined;
-  setupState.vecAvailable = false;
-  setupState.dbOpenError = undefined;
 }
 
 function installIndexerNeverRunsSeam(): void {
@@ -243,16 +239,12 @@ function installSetupSeams(): void {
     }
     return setupState.indexResult;
   });
-  // The wizard's vec probe imports openIndexDatabase/isVecAvailable/
-  // closeDatabase from the db module (setup.ts:41); steer it via setupState.
-  mock.module("../../src/indexer/db/db", () => ({
-    openIndexDatabase: () => {
-      if (setupState.dbOpenError) throw setupState.dbOpenError;
-      return {};
-    },
-    closeDatabase: () => {},
-    isVecAvailable: () => setupState.vecAvailable,
-  }));
+  // The wizard's vec probe (setup.ts) uses the REAL src/indexer/db/db module:
+  // it mkdtempSync's a probe dir under os.tmpdir() and opens a real index DB
+  // there (sqlite-vec loads fine in the sandbox). Tests that need the probe
+  // to FAIL point TMPDIR at a nonexistent directory instead — os.tmpdir()
+  // re-reads TMPDIR per call, so mkdtempSync throws ENOENT and the real
+  // catch path runs.
   overrideSeam(_setAgentDetectForTests, {
     detectAgentCliProfiles: () => [],
     pickDefaultAgentProfile: () => undefined,
@@ -429,14 +421,23 @@ describe("runSetupWizard", () => {
 
   test("keeps semantic search enabled and warns when sqlite-vec/db check fails", async () => {
     installSetupSeams();
-    setupState.dbOpenError = new Error("db locked");
+    // Break the REAL vec probe: point TMPDIR at a nonexistent directory so
+    // its mkdtempSync(os.tmpdir(), ...) throws ENOENT and the catch path
+    // (warn + JS fallback) runs — no db-module mock needed.
+    const priorTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = path.join(storage.stashDir, "no-such-tmpdir");
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
     promptState.confirms.push(false, true, true, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    const { runSetupWizard } = await loadSetupModule();
-    await runSetupWizard();
+    try {
+      const { runSetupWizard } = await loadSetupModule();
+      await runSetupWizard();
+    } finally {
+      if (priorTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = priorTmpdir;
+    }
 
     expect(readSavedConfig().semanticSearchMode).toBe("auto");
     expect(promptState.logs.some((entry) => entry.includes("Semantic search will use the JS fallback"))).toBe(true);
