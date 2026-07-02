@@ -6,6 +6,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { _setLoadSetupStashesForTests } from "../src/setup/registry-stash-loader";
+import { overrideSeam } from "./_helpers/seams";
 
 installPromptMock();
 let setupModule: typeof import("../src/setup/setup");
@@ -39,7 +41,7 @@ function reset() {
   q.logged.length = 0;
 }
 
-// Stable two-stash list returned by the mock — mirrors FALLBACK_STASHES so
+// Stable two-stash list returned by the seam fake — mirrors FALLBACK_STASHES so
 // stepAddSources tests remain deterministic and decoupled from the live registry.
 const MOCK_SETUP_STASHES = [
   {
@@ -61,10 +63,6 @@ const MOCK_SETUP_STASHES = [
 ];
 
 function installPromptMock() {
-  mock.module("../src/setup/registry-stash-loader", () => ({
-    loadSetupStashes: async () => MOCK_SETUP_STASHES,
-    DEFAULT_SELECTED_STASH_IDS: ["itlackey/akm-stash"],
-  }));
   mock.module("@clack/prompts", () => ({
     isCancel: (v: unknown) => v === CANCEL,
     cancel: (msg: string) => {
@@ -117,6 +115,7 @@ async function resetHarness() {
   mock.restore();
   reset();
   installPromptMock();
+  overrideSeam(_setLoadSetupStashesForTests, async () => MOCK_SETUP_STASHES);
   await reloadSetupModules();
 }
 
