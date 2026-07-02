@@ -1,28 +1,28 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../../src/core/config/config";
 import { setQuiet } from "../../src/core/warn";
+import { _setTransformersLoaderForTests, clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { type Cleanup, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
-mock.module("@huggingface/transformers", () => ({
-  pipeline: async () => {
-    return async () => ({
-      data: (() => {
-        const vector = new Float32Array(384);
-        vector[0] = 0.1;
-        vector[1] = 0.2;
-        vector[2] = 0.3;
-        return vector;
-      })(),
-    });
-  },
-}));
-
-beforeEach(async () => {
-  const { clearEmbeddingCache, resetLocalEmbedder } = await import("../../src/llm/embedder");
+beforeEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
+  overrideSeam(_setTransformersLoaderForTests, async () => ({
+    pipeline: async () => {
+      return async () => ({
+        data: (() => {
+          const vector = new Float32Array(384);
+          vector[0] = 0.1;
+          vector[1] = 0.2;
+          vector[2] = 0.3;
+          return vector;
+        })(),
+      });
+    },
+  }));
 });
 
 // ── Test 1: DEFAULT_LOCAL_MODEL constant is exported and correct ──────────

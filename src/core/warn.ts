@@ -21,6 +21,20 @@ let quiet = false;
 let verbose = false;
 let logFilePath: string | undefined;
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore output-sink override. Inert in production; only tests call
+// the setter (via tests/_helpers/seams.ts). When installed, the sink captures
+// every info/warn/error/warnVerbose call BEFORE the quiet/verbose gates —
+// matching the full-replacement semantics the old mock.module fakes had.
+export type WarnSinkForTests = (level: "info" | "warn" | "error" | "warnVerbose", args: unknown[]) => void;
+
+let sinkOverride: WarnSinkForTests | undefined;
+
+/** TEST-ONLY. Swap the output sink; pass undefined to restore real output. */
+export function _setWarnSinkForTests(fake?: WarnSinkForTests): void {
+  sinkOverride = fake;
+}
+
 export function setQuiet(value: boolean): void {
   quiet = value;
 }
@@ -106,6 +120,10 @@ function appendToLogFile(level: "INFO" | "WARN" | "ERROR", args: unknown[]): voi
  * Use for progress counters and status lines (replaces console.error used for progress).
  */
 export function info(...args: unknown[]): void {
+  if (sinkOverride) {
+    sinkOverride("info", args);
+    return;
+  }
   appendToLogFile("INFO", args);
   if (!quiet) {
     console.warn(...args);
@@ -118,6 +136,10 @@ export function info(...args: unknown[]): void {
  * Drop-in replacement for console.warn() across the codebase.
  */
 export function warn(...args: unknown[]): void {
+  if (sinkOverride) {
+    sinkOverride("warn", args);
+    return;
+  }
   appendToLogFile("WARN", args);
   if (!quiet) {
     console.warn(...args);
@@ -130,6 +152,10 @@ export function warn(...args: unknown[]): void {
  * Drop-in replacement for console.error() used for diagnostic failures.
  */
 export function error(...args: unknown[]): void {
+  if (sinkOverride) {
+    sinkOverride("error", args);
+    return;
+  }
   appendToLogFile("ERROR", args);
   if (!quiet) {
     console.error(...args);
@@ -142,6 +168,10 @@ export function error(...args: unknown[]): void {
  * default verbosity (e.g. registry-content workflow validation errors).
  */
 export function warnVerbose(...args: unknown[]): void {
+  if (sinkOverride) {
+    sinkOverride("warnVerbose", args);
+    return;
+  }
   if (isVerbose()) {
     warn(...args);
   }

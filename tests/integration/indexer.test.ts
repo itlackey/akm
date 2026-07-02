@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,16 +17,13 @@ import {
 } from "../../src/indexer/db/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
-import * as embedderModule from "../../src/llm/embedder";
+import { _setEmbedderForTests, type embedBatch } from "../../src/llm/embedder";
+import { overrideSeam } from "../_helpers/seams";
 
 let testConfigDir = "";
 let testCacheDir = "";
 let testDataDir = "";
 let testStateDir = "";
-let embedBatchImpl:
-  | ((texts: string[], embeddingConfig?: EmbeddingConnectionConfig) => Promise<Float32Array[]>)
-  | undefined;
-const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
@@ -35,11 +32,16 @@ const originalAkmStashDir = process.env.AKM_STASH_DIR;
 const originalAkmVerbose = process.env.AKM_VERBOSE;
 const originalFetch = globalThis.fetch;
 
-mock.module("../../src/llm/embedder.js", () => ({
-  ...embedderModule,
-  embedBatch: (texts: string[], embeddingConfig?: EmbeddingConnectionConfig) =>
-    embedBatchImpl ? embedBatchImpl(texts, embeddingConfig) : actualEmbedBatch(texts, embeddingConfig),
-}));
+/**
+ * Install a fake embedBatch for the current test (restored automatically by
+ * the preload's resetAllSeams afterEach). Tests that never call this use the
+ * real embedder.
+ */
+function fakeEmbedBatch(
+  impl: (texts: string[], embeddingConfig?: EmbeddingConnectionConfig) => Promise<Float32Array[]>,
+): void {
+  overrideSeam(_setEmbedderForTests, { embedBatch: impl as unknown as typeof embedBatch });
+}
 
 // Each test gets a fresh database and isolated config/cache
 beforeEach(() => {
@@ -62,7 +64,6 @@ beforeEach(() => {
     process.env.AKM_VERBOSE = originalAkmVerbose;
   }
   globalThis.fetch = originalFetch;
-  embedBatchImpl = undefined;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -75,7 +76,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  embedBatchImpl = undefined;
   if (originalXdgConfigHome === undefined) {
     delete process.env.XDG_CONFIG_HOME;
   } else {
@@ -958,14 +958,14 @@ test("akmIndex does not re-embed unchanged wiki-root source entries across conse
     });
 
     const embedCalls: number[] = [];
-    embedBatchImpl = async (texts) => {
+    fakeEmbedBatch(async (texts) => {
       embedCalls.push(texts.length);
       return texts.map((_text, index) => {
         const embedding = new Float32Array(4);
         embedding[index % 4] = 1;
         return embedding;
       });
-    };
+    });
 
     const first = await akmIndex({ stashDir: primaryStash, full: true });
     const callsAfterFirst = embedCalls.length;
@@ -1025,14 +1025,14 @@ test("akmIndex does not re-embed generated entries when filename-less .stash.jso
   });
 
   const embedCalls: number[] = [];
-  embedBatchImpl = async (texts) => {
+  fakeEmbedBatch(async (texts) => {
     embedCalls.push(texts.length);
     return texts.map((_text, index) => {
       const embedding = new Float32Array(4);
       embedding[index % 4] = 1;
       return embedding;
     });
-  };
+  });
 
   const first = await akmIndex({ stashDir, full: true });
   const callsAfterFirst = embedCalls.length;
@@ -1492,12 +1492,13 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fp-"));
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({ semanticSearchMode: "auto" });
-  embedBatchImpl = async (texts) =>
+  fakeEmbedBatch(async (texts) =>
     texts.map((_text, index) => {
       const embedding = new Float32Array(384);
       embedding[0] = index + 1;
       return embedding;
-    });
+    }),
+  );
 
   const scriptDir = path.join(stashDir, "scripts", "test");
   fs.mkdirSync(scriptDir, { recursive: true });
