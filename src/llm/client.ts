@@ -260,7 +260,25 @@ interface ChatCompletionInternalOptions extends ChatCompletionOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+// ── Test seam ────────────────────────────────────────────────────────────────
+// Swap-and-restore override. Inert in production; only tests call the setter.
+let chatCompletionOverride: typeof chatCompletionReal | undefined;
+
+/** TEST-ONLY. Swap the implementation of `chatCompletion`; pass undefined to restore. */
+export function _setChatCompletionForTests(fake?: typeof chatCompletionReal): void {
+  chatCompletionOverride = fake;
+}
+
 export async function chatCompletion(
+  config: LlmProfileConfig,
+  messages: ChatMessage[],
+  options?: ChatCompletionInternalOptions,
+): Promise<string> {
+  if (chatCompletionOverride) return chatCompletionOverride(config, messages, options);
+  return chatCompletionReal(config, messages, options);
+}
+
+async function chatCompletionReal(
   config: LlmProfileConfig,
   messages: ChatMessage[],
   options?: ChatCompletionInternalOptions,

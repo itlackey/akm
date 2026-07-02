@@ -17,20 +17,21 @@
  *      accepted by `parseAgentProposalPayload` (the parser of record).
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { LlmConnectionConfig, LlmProfileConfig } from "../../src/core/config/config";
+import { akmReflect, REFLECT_JSON_SCHEMA, runReflectViaLlm } from "../../src/commands/improve/reflect";
+import type { LlmProfileConfig } from "../../src/core/config/config";
 import { parseAgentProposalPayload } from "../../src/integrations/agent/prompts";
+import { _setChatCompletionForTests } from "../../src/llm/client";
+import { overrideSeam } from "../_helpers/seams";
 
-// ── Module-level chatCompletion spy ─────────────────────────────────────────
+// ── chatCompletion spy (swap-and-restore seam) ──────────────────────────────
 //
-// `mock.module` must run before the modules under test are imported. We spread
-// the real `client` module exports so unrelated callers keep working, and
-// override only `chatCompletion` with a deterministic stub that records the
-// `responseSchema` option passed by the production path.
+// The seam installs a deterministic stub that records the `responseSchema`
+// option passed by the production path; all other client exports stay real.
 
 interface CapturedCall {
   responseSchema: Record<string, unknown> | undefined;
@@ -39,26 +40,6 @@ interface CapturedCall {
 
 const capturedCalls: CapturedCall[] = [];
 let stubReturn = "";
-
-const realClient = await import("../../src/llm/client");
-mock.module("../../src/llm/client", () => ({
-  ...realClient,
-  chatCompletion: async (
-    _conn: LlmConnectionConfig,
-    messages: Array<{ role: string; content: string }>,
-    options?: { responseSchema?: Record<string, unknown> },
-  ): Promise<string> => {
-    capturedCalls.push({
-      responseSchema: options?.responseSchema,
-      messageCount: messages.length,
-    });
-    return stubReturn;
-  },
-}));
-
-// Import AFTER mock.module so reflect / runReflectViaLlm pick up the stub.
-const reflectModule = await import("../../src/commands/improve/reflect");
-const { akmReflect, runReflectViaLlm, REFLECT_JSON_SCHEMA } = reflectModule;
 
 // ── Scaffolding ─────────────────────────────────────────────────────────────
 
@@ -93,6 +74,13 @@ function fakeLlmConnection(): LlmProfileConfig {
 }
 
 beforeEach(() => {
+  overrideSeam(_setChatCompletionForTests, async (_config, messages, options) => {
+    capturedCalls.push({
+      responseSchema: options?.responseSchema,
+      messageCount: messages.length,
+    });
+    return stubReturn;
+  });
   process.env.XDG_CACHE_HOME = makeTempDir("akm-reflect-rs-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-reflect-rs-config-");
   process.env.XDG_DATA_HOME = makeTempDir("akm-reflect-rs-data-");

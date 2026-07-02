@@ -6,9 +6,9 @@
  * Characterization test for `enhanceMetadata` (src/llm/metadata-enhance.ts).
  *
  * Pins the CURRENT observable behavior of the function BEFORE any migration
- * onto a shared LLM-feature seam. The chat seam is injected by mocking the
- * `chatCompletion` export of `../../src/llm/client` while spreading the rest of
- * the real module so `LlmCallError`, `parseJsonResponse`, `isContextSizeError`,
+ * onto a shared LLM-feature seam. The chat seam is injected via the
+ * `_setChatCompletionForTests` swap-and-restore seam on `../../src/llm/client`
+ * so `LlmCallError`, `parseJsonResponse`, `isContextSizeError`,
  * etc. stay real. `warn`/`warnVerbose` are mocked (real module spread, calls
  * captured) so we can prove the EXACT (empty) warn behavior.
  *
@@ -47,16 +47,6 @@ import type { StashEntry } from "../../src/indexer/passes/metadata";
 let chatResponder: (userContent: string) => string | Promise<string> = () => "";
 let chatCalls = 0;
 
-const realClient = await import("../../src/llm/client");
-mock.module("../../src/llm/client", () => ({
-  ...realClient,
-  chatCompletion: async (_conn: unknown, messages: Array<{ role: string; content: string }>): Promise<string> => {
-    chatCalls += 1;
-    const user = messages.find((m) => m.role === "user");
-    return chatResponder(user?.content ?? "");
-  },
-}));
-
 // ── Captured warn sinks ──────────────────────────────────────────────────────
 // enhanceMetadata does not import warn at all today, but we capture both warn
 // and warnVerbose so the "never warns" assertion is robust against a migration
@@ -75,7 +65,8 @@ mock.module("../../src/core/warn", () => ({
 
 // Import AFTER the mocks so the module under test binds the stubbed deps.
 const { enhanceMetadata } = await import("../../src/llm/metadata-enhance");
-const { LlmCallError } = realClient;
+const { _setChatCompletionForTests, isContextSizeError, LlmCallError } = await import("../../src/llm/client");
+const { overrideSeam } = await import("../_helpers/seams");
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -103,6 +94,11 @@ function validPayload(): string {
 }
 
 beforeEach(() => {
+  overrideSeam(_setChatCompletionForTests, async (_config, messages) => {
+    chatCalls += 1;
+    const user = messages.find((m) => m.role === "user");
+    return chatResponder(user?.content ?? "");
+  });
   chatResponder = () => "";
   chatCalls = 0;
   warnCalls = [];
@@ -198,7 +194,7 @@ describe("enhanceMetadata — characterization", () => {
   test("thrown context-size error (ungated) -> PROPAGATES, no warn", async () => {
     const ctxMsg = "This model's maximum context length is 8192 tokens; your prompt exceeded that limit.";
     // Sanity: the real classifier recognizes this as a context-size error.
-    expect(realClient.isContextSizeError(ctxMsg)).toBe(true);
+    expect(isContextSizeError(ctxMsg)).toBe(true);
 
     chatResponder = () => {
       throw new LlmCallError(ctxMsg, "provider_error");

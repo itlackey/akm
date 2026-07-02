@@ -14,44 +14,40 @@
  * `{ enabled: false }` to opt out. With the cache OFF, behaviour is
  * byte-identical to a full-pool run.
  *
- * The LLM transport is stubbed via `mock.module` so no network is touched and
- * we can count judge calls. A module-level `stubMode` switches the stub between
- * a valid empty plan (the LLM saw the chunk and proposed nothing) and a thrown
- * transport failure, without re-registering the mock mid-test.
+ * The LLM transport is stubbed via the `_setChatCompletionForTests` seam so no
+ * network is touched and we can count judge calls. A module-level `stubMode`
+ * switches the stub between a valid empty plan (the LLM saw the chunk and
+ * proposed nothing) and a thrown transport failure, without re-installing the
+ * stub mid-test.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-// ── Module-level LLM stub ───────────────────────────────────────────────────
-//
-// `mock.module` must run before the module under test is imported. `chatCalls`
-// counts judge calls (one per judged chunk); `stubMode` controls success vs
-// failure so a single registered mock covers both paths.
-let chatCalls = 0;
-let stubMode: "ok" | "throw" = "ok";
-mock.module("../../../src/llm/client", () => {
-  const actual = require("../../../src/llm/client");
-  return {
-    ...actual,
-    chatCompletion: async () => {
-      chatCalls += 1;
-      if (stubMode === "throw") throw new Error("simulated transport failure");
-      // Valid empty plan: the model saw the chunk and proposed no operations.
-      return JSON.stringify({ operations: [] });
-    },
-  };
-});
-
 import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { _setChatCompletionForTests } from "../../../src/llm/client";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { overrideSeam } from "../../_helpers/seams";
+
+// ── LLM stub (swap-and-restore seam) ────────────────────────────────────────
+//
+// `chatCalls` counts judge calls (one per judged chunk); `stubMode` controls
+// success vs failure so a single installed stub covers both paths.
+let chatCalls = 0;
+let stubMode: "ok" | "throw" = "ok";
 
 let cleanup: Cleanup;
 let stashDir: string;
 
 beforeEach(() => {
+  overrideSeam(_setChatCompletionForTests, async () => {
+    chatCalls += 1;
+    if (stubMode === "throw") throw new Error("simulated transport failure");
+    // Valid empty plan: the model saw the chunk and proposed no operations.
+    return JSON.stringify({ operations: [] });
+  });
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
