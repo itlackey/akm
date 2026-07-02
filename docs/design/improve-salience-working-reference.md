@@ -38,9 +38,10 @@ list the **footguns that have already bitten us** so we don't reintroduce them.
    dedup matters. (§3-Guards)
 
 5. **Several wired-but-dead fields**: `review_pressure`, `feedbackLane`, the proactive
-   `recencyDecay` term, and `outcome_salience`'s weight (`outcomeWeightEnabled` default
-   OFF). They compute and persist but don't influence selection yet. Don't assume they're
-   live. (§5, §7)
+   `recencyDecay` term. They compute and persist but don't influence selection yet. Don't
+   assume they're live. (§5, §7) [Updated 2026-07-02: `outcome_salience`'s weight
+   (`outcomeWeightEnabled`) is now default **ON** — see §2 below; it is no longer in the
+   dead-field list.]
 
 ---
 
@@ -115,19 +116,25 @@ Upsert: `upsertAssetSalience` (salience.ts:355) overwrites all four score column
   ⚠️ See §5-F1.
 
 **retrieval** (salience.ts:276): `rawRetrieval = log(1+freq)·recencyDecay`, soft-capped
-to `[0,1)`. `recencyDecay = 0.1 + 0.5^(ageDays/21)` — **21-day half-life, floor 0.1**
-(never zero). This is the *only* component with genuine time decay.
+to `[0,1)`. **Updated 2026-07-02 (R4):** `recencyDecay = max(0.01, 0.1·0.5^(days/180) +
+0.5^(days/21))` — 21-day half-life on the fast term, but the floor itself now halves every
+180 days instead of staying pinned at 0.1, so stale/unreviewed assets keep drifting down
+instead of parking. This folds in the decay previously done by the separate
+`runHomeostaticDemotion()` pass (`homeostatic.ts`), which was deleted. This is the *only*
+component with genuine time decay.
 
 **outcome** (salience.ts:255): WS-2 row → pass-through; else warm-start from
 `min(utilityScore, 0.3)`. EMA update α=0.3 (outcome-loop.ts:250).
 
 **rankScore** (salience.ts:313):
-- Default (`outcomeWeightEnabled=false`): `(0.30·enc + 0.00·out + 0.70·ret) / log10(size)`
-- WS-2 opt-in: `(0.25·enc + 0.15·out + 0.60·ret) / log10(size)`
+- **Default as of 2026-07-02 (R1):** `(0.25·enc + 0.15·out + 0.60·ret) / log10(size)`
+  (`outcomeWeightEnabled` now defaults to `true`).
+- Opt-out (`outcomeWeightEnabled:false`): `(0.30·enc + 0.00·out + 0.70·ret) / log10(size)`
+  (old parity weights).
 
-Size penalty `1/log10(max(200,bytes))`. **`outcome` has zero weight by default** — it is
-observed but doesn't steer ranking until an operator runs the Part-V baseline and sets
-`outcomeWeightEnabled:true`.
+Size penalty `1/log10(max(200,bytes))`. `outcome_score` is now capped at
+`OUTCOME_SCORE_MAX = 1.5` (outcome-loop.ts, G2) before it enters this blend, so the
+now-default `wo=0.15` term can't be dominated by an unbounded score.
 
 ### Type weights (`DEFAULT_TYPE_ENCODING_WEIGHTS`, salience.ts:119)
 

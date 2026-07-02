@@ -57,8 +57,8 @@ The pipeline is healthy in throughput but is being measured and tuned against th
 ### MEDIUM priority (condensed)
 
 - **distill:** add a dedicated *proactive distill lane* (do NOT remove `requirePlannedRefs` — it suppresses skip-spam); deterministic embedding-cosine dedup as an independent pre-LLM step; instrument `distill_invoked` outcomes.
-- **consolidate:** enable the deterministic dedup pre-pass at the **existing 0.97** threshold in the full-sweep profile; YAML repair-or-skip step (sanitize.ts) for the 240/504 frontmatter rejects; report destructive merge/delete counts separately; enable `antiCollapse` (pure refusal guard) and scoped `homeostaticDemotion` on full-sweep only.
-- **extract:** gate `indexSessions` on the no-candidates branch (fallback if triage too aggressive — note it narrows session-search coverage); enable `proceduralAwareFloor` after validating #6; write-time dedup (`schemaSimilarity`/`hotProbation`).
+- **consolidate:** enable the deterministic dedup pre-pass at the **existing 0.97** threshold in the full-sweep profile; YAML repair-or-skip step (sanitize.ts) for the 240/504 frontmatter rejects; report destructive merge/delete counts separately; enable `antiCollapse` (pure refusal guard) and scoped `homeostaticDemotion` on full-sweep only. _[superseded 2026-07-02: the homeostatic demotion pass was removed (R4); decay now lives in the salience recency term — see `improve-self-learning-analysis.md`.]_
+- **extract:** gate `indexSessions` on the no-candidates branch (fallback if triage too aggressive — note it narrows session-search coverage); enable `proceduralAwareFloor` after validating #6; write-time dedup (`schemaSimilarity`/`hotProbation`). _[partially superseded 2026-07-02: `schemaSimilarity` intake gate now defaults ON — see `improve-self-learning-analysis.md` R3.]_
 - **recombine:** redefine `confirmThreshold` as distinct-**day** confirmations (twice-daily cron re-observes the same corpus); set a default `maxClusterSize ~20` (the cheap mixed-theme fix — prefer over an embedding coherence gate).
 - **proactive-maintenance:** use stored `consecutive_no_ops` in the **due-gate interval** (net-additive, flag-gated; the column is NOT dead — it already dampens selection order). _(The proactive-verdict runner is a local pre-release eval tool, intentionally NOT shipped — see Executive Summary #8; no release cron wiring is wanted.)_
 - **salience-gates:** extend content-provenance scoring beyond distill (knowledge/lesson/skill/agent at extract time) — **precondition** for any relative-gate change.
@@ -165,8 +165,8 @@ Encoding-salience wiring — CONFIRMED inert:
 - buildRefVocabulary tokenizes REF NAMES (entryKeys), not asset bodies (encoding-salience.ts), so body bigrams rarely match → novelty saturates above its type floor (memory floor 0.4).
 - Magnitude is a 13-keyword English match (5 severity + 8 constraint), mostly 0 and single-bucket-capped at 0.5. CONFIRMED. Net: only a brittle keyword count varies.
 
-Quality gate — CONFIRMED off in production:
-- src/llm/feature-gate.ts:68 defaults lesson_quality_gate to `distill.qualityGate.enabled ?? false`; no prod-config distill block sets qualityGate. So the LLM-judge + top-3 dedup never runs in prod.
+Quality gate — CONFIRMED off in production at time of writing:
+- src/llm/feature-gate.ts:68 defaults lesson_quality_gate to `distill.qualityGate.enabled ?? false`; no prod-config distill block sets qualityGate. So the LLM-judge + top-3 dedup never runs in prod. _[superseded 2026-07-02: the default flipped to `?? true` (fail-open) — see `improve-self-learning-analysis.md` R3. Still opt-out-able per-profile.]_
 - The judge fails OPEN on timeout/parse-fail/no-LLM (distill.ts catch → pass:true), JUDGE_TIMEOUT_MS=8000. A same-model 9b judge with an 8s budget would frequently time out and pass everything — the analysis's warning is correct. A judgeModel override field DOES exist (distill.ts:754), so the cross-family-judge recommendation is implementable.
 
 Two corrections to the original framing:
