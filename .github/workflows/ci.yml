@@ -35,30 +35,17 @@ on:
       - "LICENSE"
 
 jobs:
-  # Speed strategy: Bun's in-process test parallelism (`bun test --parallel=N`,
-  # any N including 1) implies `--isolate` and spawns worker PROCESSES over
-  # IPC. On Bun 1.3.x that isolate/worker-IPC path has an intermittent
-  # epoll_ctl EEXIST race — an fd is registered with epoll while a freed fd
-  # number is recycled, so a worker hits `EEXIST: epoll_ctl` and the run fails
-  # or busy-spins to a hang (reproduced at parallel=12, parallel=4, AND
-  # parallel=1 under CPU contention). We never use `--parallel`; instead we
-  # SHARD across separate runner jobs (separate process => separate fd table
-  # => no cross-shard collisions).
-  #
-  # CORRECTED (2026-07-01): `--parallel=1` was previously ALSO passed within
-  # each shard on the theory that N=1 meant "no parallelism, so no race." It
-  # doesn't — `--parallel` adds a redundant worker-IPC layer on top of
-  # `--isolate` for zero benefit at N=1. `--isolate` itself is still passed
-  # (dropping it entirely reintroduces real cross-file test-pollution
-  # failures — see test-unit.sh) but WITHOUT the `--parallel` wrapper. That
-  # cut the hang rate under simulated contention (8 shards pinned to 2 cores)
-  # from 4/8 (with `--parallel=1`) to 1/8 (with `--isolate` alone) in
-  # back-to-back runs — a large reduction, not a full elimination; the
-  # remaining risk is `--isolate` itself under heavy contention, which looks
-  # like a genuine Bun 1.3.x runtime issue below the application.
-  # `run-test-shard.sh`'s single retry-on-timeout is the backstop for that
-  # residual risk. See release.yml for the full rationale and the release
-  # gate (which also shards the integration suite).
+  # Speed strategy: shard across separate runner jobs; each shard runs a plain
+  # `bun test` (no `--isolate`, no `--parallel`). `--parallel` at ANY N
+  # (including 1) implies `--isolate` and spawns worker processes over IPC —
+  # the Bun 1.3.x path with the intermittent `EEXIST epoll_ctl` race /
+  # busy-spin hang (#664); never re-add it. `--isolate` was removed 2026-07-02
+  # after the DI-seams refactor: it was only needed while test files leaked
+  # `mock.module()` state into siblings, and the three remaining
+  # @clack/prompts mock.module suites restore the real module in their own
+  # `afterAll` (verified by a two-file leak probe + repeated green full-suite
+  # runs without --isolate, including under CPU contention). See
+  # scripts/run-test-shard.sh and scripts/test-unit.sh for details.
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -79,8 +66,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 8-way (not 4): fewer tests per shard process = less fd churn = lower
-        # Bun --isolate epoll busy-spin probability. See release.yml.
+        # 8-way keeps per-shard wall time low; also historical: fewer tests
+        # per process meant less fd churn back when --isolate was in play.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v5
