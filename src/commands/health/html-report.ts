@@ -422,6 +422,7 @@ export function buildHealthHtmlReplacements(
   };
   const coverage = improve.coverage;
   const degradation: ImproveDegradationMetrics | undefined = improve.degradation;
+  const minting = improve.enrichmentMinting;
   // #576: real per-stage LLM token/time accounting (replaces the GPU-time
   // proxy). Optional-guarded so reports built from older health JSON without
   // the aggregate still render.
@@ -778,6 +779,16 @@ export function buildHealthHtmlReplacements(
         "Accepted proposals / distinct refs touched. >1.5 = the loop is repeatedly rewriting the same assets (churn, not coverage).",
       ],
     );
+  }
+
+  // Enrichment-vs-minting policy rollup (reporting-only).
+  if (minting && Number.isFinite(minting.share)) {
+    summaryRows.push([
+      "Enrichment-lane minted share",
+      pct(minting.share, 1),
+      minting.share > 0.05 ? "down" : "flat",
+      `New assets minted by enrichment lanes / their accepted total (${minting.minted} minted vs ${minting.updated} updated). Enrichment lanes are ratified to edit existing assets only; WARN >5%, FAIL >15%.`,
+    ]);
   }
 
   // WS-5: perf telemetry rows (only when at least one run reported telemetry).

@@ -491,6 +491,44 @@ export interface ImproveHealthMetrics {
     /** Total stash assets at the time of the most recent run (whole-stash snapshot). */
     totalAssets: number;
   };
+  /**
+   * Enrichment-vs-minting policy rollup (reporting-only). Enrichment-classed
+   * lanes are ratified to EDIT existing assets, not mint new ones; this
+   * surfaces the split so drift is visible without a manual DB query.
+   * Absent when no lane-attributed accepted proposals exist in the window.
+   */
+  enrichmentMinting?: EnrichmentMintingRollup;
+}
+
+/**
+ * Lanes ratified as ENRICHMENT-ONLY: they may propose edits to existing
+ * assets (metadata, relations, content refresh) but must not mint new ones.
+ * New-asset generation belongs to the signal-gated minting lanes
+ * (extract/distill/memory-inference/recombine).
+ */
+export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "high-retrieval", "signal-delta"];
+
+/** Minted share of enrichment-lane accepts that triggers a WARN advisory. */
+export const ENRICHMENT_MINTED_WARN_SHARE = 0.05;
+
+/** Minted share of enrichment-lane accepts that triggers a FAIL advisory. */
+export const ENRICHMENT_MINTED_FAIL_SHARE = 0.15;
+
+/**
+ * The enrichment-vs-minting split over the health window's accepted,
+ * lane-attributed proposals. Create-vs-update is discriminated by
+ * `metadata_json.backupContent`: apply captures the prior content for
+ * updates, so its absence means a genuinely new asset was minted.
+ */
+export interface EnrichmentMintingRollup {
+  /** Accepted enrichment-lane proposals that MINTED a new asset (no backupContent). */
+  minted: number;
+  /** Accepted enrichment-lane proposals that UPDATED an existing asset. */
+  updated: number;
+  /** minted / (minted + updated) across enrichment lanes. NaN when they decided nothing. */
+  share: number;
+  /** Per-lane minted/updated split for every lane-attributed accepted proposal. */
+  byLane: Record<string, { minted: number; updated: number }>;
 }
 
 /**
@@ -1928,6 +1966,67 @@ function computeDenominatorFixedCoverage(
 }
 
 /**
+ * Compute the enrichment-vs-minting rollup over the window's accepted,
+ * lane-attributed proposals (reporting-only; see {@link EnrichmentMintingRollup}).
+ *
+ * SQL-side `json_extract` keeps the (potentially large) `backupContent` blobs
+ * out of process memory. Pre-Phase-6C rows without an `eligibilitySource`
+ * cannot be lane-classified and are excluded. Fails open (undefined) when the
+ * proposals table is absent.
+ */
+export function computeEnrichmentMintingRollup(
+  db: Database,
+  since: string,
+  until?: string,
+): EnrichmentMintingRollup | undefined {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT
+           json_extract(metadata_json, '$.eligibilitySource') AS lane,
+           CASE WHEN json_extract(metadata_json, '$.backupContent') IS NULL THEN 1 ELSE 0 END AS is_minted,
+           COUNT(*) AS cnt
+         FROM proposals
+         WHERE status = 'accepted'
+           AND updated_at >= ?
+           AND (? IS NULL OR updated_at < ?)
+           AND json_extract(metadata_json, '$.eligibilitySource') IS NOT NULL
+           AND json_extract(metadata_json, '$.eligibilitySource') != ''
+         GROUP BY lane, is_minted`,
+      )
+      .all(since, until ?? null, until ?? null) as Array<{ lane: string; is_minted: number; cnt: number }>;
+    if (rows.length === 0) return undefined;
+
+    const byLane: Record<string, { minted: number; updated: number }> = {};
+    for (const row of rows) {
+      byLane[row.lane] ??= { minted: 0, updated: 0 };
+      const entry = byLane[row.lane];
+      if (row.is_minted === 1) entry.minted += row.cnt;
+      else entry.updated += row.cnt;
+    }
+
+    let minted = 0;
+    let updated = 0;
+    for (const lane of ENRICHMENT_LANES) {
+      const entry = byLane[lane];
+      if (!entry) continue;
+      minted += entry.minted;
+      updated += entry.updated;
+    }
+    const decided = minted + updated;
+    return {
+      minted,
+      updated,
+      share: decided > 0 ? roundRate(minted / decided) : Number.NaN,
+      byLane,
+    };
+  } catch {
+    // Fail open: proposals table may not exist on older installs.
+    return undefined;
+  }
+}
+
+/**
  * Compute WS-5 per-run degradation metrics (Part V §4).
  *
  * Health VIEWS only — reads from state.db tables populated by prior improve
@@ -2253,6 +2352,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     if (degradationMain) {
       improveSummary.degradation = degradationMain;
     }
+    improveSummary.enrichmentMinting = computeEnrichmentMintingRollup(db, since, until);
 
     // WS-2 proxy-adequacy tripwire: surface any outcome_proxy_inverted events
     // in the health window as an advisory so operators know when the 0.10+
@@ -2308,6 +2408,23 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
           `Salience distribution collapsed toward uniform: top-100 retrieval_salience Gini = ` +
           `${improveSummary.degradation.corpusCentroidDistance} < 0.08 (uniform baseline ≈ 0.1). ` +
           "Ranking currently carries little to no discrimination between assets.",
+      });
+    }
+
+    // Enrichment-vs-minting policy: enrichment lanes edit existing assets;
+    // a rising minted share means a lane is generating new content instead.
+    const minting = improveSummary.enrichmentMinting;
+    if (minting && Number.isFinite(minting.share) && minting.share > ENRICHMENT_MINTED_WARN_SHARE) {
+      advisories.push({
+        name: "enrichment-lane-minting",
+        status: minting.share > ENRICHMENT_MINTED_FAIL_SHARE ? "fail" : "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `Enrichment lanes minted ${minting.minted} NEW asset(s) vs ${minting.updated} update(s) ` +
+          `(${Math.round(minting.share * 100)}% minted, threshold ${Math.round(ENRICHMENT_MINTED_WARN_SHARE * 100)}%). ` +
+          "Enrichment-classed lanes (proactive/high-salience/high-retrieval/signal-delta) are ratified to edit " +
+          "existing assets only — new-asset generation belongs to the signal-gated minting lanes.",
       });
     }
 
