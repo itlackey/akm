@@ -11,13 +11,13 @@
  * @module proposals-repository
  */
 
-import type { Proposal } from "../../commands/proposal/validators/proposals";
+import type { Proposal } from "../../commands/proposal/repository";
 import type { Database, SqlValue } from "../database";
 
 /**
  * Raw SQLite row shape for the `proposals` table.
  *
- * Maps to the public {@link Proposal} interface from src/commands/proposal/validators/proposals.ts.
+ * Maps to the public {@link Proposal} interface from src/commands/proposal/repository.ts.
  * The `sourceRun`, `review`, `confidence`, `gateDecision`, and `backupContent`
  * fields are stored in `metadata_json`; callers that need them should
  * `JSON.parse(row.metadata_json)` (or use {@link proposalRowToProposal}).

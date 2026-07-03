@@ -4,13 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { defineCommand } from "citty";
 import * as p from "../../cli/clack";
-import { output, runWithJsonErrors } from "../../cli/shared";
+import { defineJsonCommand, output } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
-import { getHyphenatedBoolean } from "../../output/context";
 import { akmRemove } from "./installed-stashes";
 import { akmAdd } from "./source-add";
 import { addStash } from "./source-manage";
@@ -218,7 +216,7 @@ export async function auditInstalledStashForDangerousKeys(opts: {
 
 // ── Command definition ────────────────────────────────────────────────────────
 
-export const addCommand = defineCommand({
+export const addCommand = defineJsonCommand({
   meta: {
     name: "add",
     description: "Add a source (local directory, website, npm package, GitHub repo, git URL, or remote provider)",
@@ -251,54 +249,12 @@ export const addCommand = defineCommand({
     },
   },
   async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const ref = args.ref.trim();
-      const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
-      const allowDangerousKeys = allowInsecure;
+    const ref = args.ref.trim();
+    const allowInsecure = args["allow-insecure"];
+    const allowDangerousKeys = allowInsecure;
 
-      // URL with --provider → stash source (remote or git provider)
-      if (args.provider) {
-        if (shouldWarnOnPlainHttp(ref)) {
-          if (!allowInsecure) {
-            throw new UsageError(
-              "Source URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious payload. " +
-                "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
-              "INVALID_FLAG_VALUE",
-              "Re-run with `--allow-insecure` only after confirming the URL is trusted.",
-            );
-          }
-          warn(
-            "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
-          );
-        }
-        let parsedOptions: Record<string, unknown> | undefined;
-        if (args.options) {
-          try {
-            const parsed = JSON.parse(args.options);
-            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-              throw new UsageError("--options must be a JSON object");
-            }
-            parsedOptions = parsed;
-          } catch (err) {
-            if (err instanceof UsageError) throw err;
-            throw new UsageError("--options must be valid JSON");
-          }
-        }
-        const result = addStash({
-          target: ref,
-          name: args.name,
-          providerType: args.provider,
-          options: parsedOptions,
-          writable: args.writable,
-        });
-        appendEvent({
-          eventType: "add",
-          metadata: { target: ref, provider: args.provider, name: args.name ?? null, writable: args.writable === true },
-        });
-        output("add", result);
-        return;
-      }
-
+    // URL with --provider → stash source (remote or git provider)
+    if (args.provider) {
       if (shouldWarnOnPlainHttp(ref)) {
         if (!allowInsecure) {
           throw new UsageError(
@@ -312,69 +268,109 @@ export const addCommand = defineCommand({
           "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
         );
       }
-      const websiteOptions = buildWebsiteOptions(args);
-
-      if (args.type === "wiki") {
-        const { registerWikiSource } = await import("./source-add");
-        const result = await registerWikiSource({
-          ref,
-          name: args.name,
-          options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
-          writable: args.writable,
-        });
-        appendEvent({
-          eventType: "add",
-          metadata: { target: ref, type: "wiki", name: args.name ?? null, writable: args.writable === true },
-        });
-        output("add", result);
-        return;
+      let parsedOptions: Record<string, unknown> | undefined;
+      if (args.options) {
+        try {
+          const parsed = JSON.parse(args.options);
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            throw new UsageError("--options must be a JSON object");
+          }
+          parsedOptions = parsed;
+        } catch (err) {
+          if (err instanceof UsageError) throw err;
+          throw new UsageError("--options must be valid JSON");
+        }
       }
+      const result = addStash({
+        target: ref,
+        name: args.name,
+        providerType: args.provider,
+        options: parsedOptions,
+        writable: args.writable,
+      });
+      appendEvent({
+        eventType: "add",
+        metadata: { target: ref, provider: args.provider, name: args.name ?? null, writable: args.writable === true },
+      });
+      output("add", result);
+      return;
+    }
 
-      const result = await akmAdd({
+    if (shouldWarnOnPlainHttp(ref)) {
+      if (!allowInsecure) {
+        throw new UsageError(
+          "Source URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious payload. " +
+            "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+          "INVALID_FLAG_VALUE",
+          "Re-run with `--allow-insecure` only after confirming the URL is trusted.",
+        );
+      }
+      warn(
+        "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
+      );
+    }
+    const websiteOptions = buildWebsiteOptions(args);
+
+    if (args.type === "wiki") {
+      const { registerWikiSource } = await import("./source-add");
+      const result = await registerWikiSource({
         ref,
         name: args.name,
-        overrideType: args.type,
         options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
         writable: args.writable,
       });
       appendEvent({
         eventType: "add",
-        metadata: {
-          target: ref,
-          name: args.name ?? null,
-          overrideType: args.type ?? null,
-          writable: args.writable === true,
-        },
+        metadata: { target: ref, type: "wiki", name: args.name ?? null, writable: args.writable === true },
       });
-
-      // ── Post-install env key audit ──────────────────────────────────────────
-      // Resolve the stash root from the install result and scan any env files
-      // for dangerous env var keys.  When findings are present the install is
-      // gated: TTY → interactive confirmation prompt; non-TTY without
-      // --allow-insecure → hard failure (exit 1).  Pass
-      // --allow-insecure to skip the prompt non-interactively.
-      const installedStashRoot =
-        result.installed?.stashRoot ??
-        (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
-      if (installedStashRoot) {
-        // Use the canonical installed id (most reliably resolved by akmRemove) rather
-        // than the raw user-supplied ref which may not match after URL normalisation.
-        const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
-        // The audit RETURNS its decision; we decide `process.exit` here, OUTSIDE
-        // any catch, so the abort cannot be lost to a swallowed exception (C3).
-        const decision = await auditInstalledStashForDangerousKeys({
-          installedStashRoot,
-          ref,
-          allowDangerousKeys,
-          rollbackTarget,
-          isTTY: process.stdin.isTTY === true,
-        });
-        if (decision.blocked) {
-          process.exit(decision.exitCode);
-        }
-      }
-
       output("add", result);
+      return;
+    }
+
+    const result = await akmAdd({
+      ref,
+      name: args.name,
+      overrideType: args.type,
+      options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
+      writable: args.writable,
     });
+    appendEvent({
+      eventType: "add",
+      metadata: {
+        target: ref,
+        name: args.name ?? null,
+        overrideType: args.type ?? null,
+        writable: args.writable === true,
+      },
+    });
+
+    // ── Post-install env key audit ──────────────────────────────────────────
+    // Resolve the stash root from the install result and scan any env files
+    // for dangerous env var keys.  When findings are present the install is
+    // gated: TTY → interactive confirmation prompt; non-TTY without
+    // --allow-insecure → hard failure (exit 1).  Pass
+    // --allow-insecure to skip the prompt non-interactively.
+    const installedStashRoot =
+      result.installed?.stashRoot ??
+      (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
+    if (installedStashRoot) {
+      // Use the canonical installed id (most reliably resolved by akmRemove) rather
+      // than the raw user-supplied ref which may not match after URL normalisation.
+      const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
+      // The audit RETURNS its decision; we decide `process.exit` here, OUTSIDE
+      // any catch, so the abort cannot be lost to a swallowed exception (C3).
+      const decision = await auditInstalledStashForDangerousKeys({
+        installedStashRoot,
+        ref,
+        allowDangerousKeys,
+        rollbackTarget,
+        isTTY: process.stdin.isTTY === true,
+      });
+      if (decision.blocked) {
+        process.exit(decision.exitCode);
+      }
+    }
+
+    output("add", result);
   },
 });

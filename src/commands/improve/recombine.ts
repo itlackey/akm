@@ -51,14 +51,7 @@ import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, RecombineResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
-import {
-  decayUnseenRecombineHypotheses,
-  findMatchingRecombineHypothesis,
-  getRecombineHypothesis,
-  markRecombineHypothesisPromoted,
-  recordRecombineInduction,
-  withStateDbAsync,
-} from "../../core/state-db";
+import { withStateDbAsync } from "../../core/state-db";
 import {
   closeDatabase,
   type DbIndexedEntry,
@@ -67,11 +60,18 @@ import {
   openExistingDatabase,
 } from "../../indexer/db/db";
 import {
+  decayUnseenRecombineHypotheses,
+  findMatchingRecombineHypothesis,
+  getRecombineHypothesis,
+  markRecombineHypothesisPromoted,
+  recordRecombineInduction,
+} from "../../storage/repositories/recombine-repository";
+import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
+import {
   isValidDescription,
   isValidWhenToUse,
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
-import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
 import { isConsolidationEligibleMemoryName, isSessionCaptureMemoryName } from "./consolidate";
 import { resolveImproveLlmFn } from "./shared";
 

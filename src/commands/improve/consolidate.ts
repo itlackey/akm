@@ -18,13 +18,13 @@ import { ConfigError } from "../../core/errors";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { detectTruncatedDescription } from "../../core/text-truncation";
+import { createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
 import {
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
   MERGE_SHRINK_RATIO_MIN,
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
-import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
 import {
   type AntiCollapseConfig,
   checkGenerationGuard,
@@ -40,16 +40,7 @@ import { writeContradictEdge } from "./memory/memory-belief";
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
 
-import {
-  type ConsolidationJudgedRow,
-  type Database,
-  getBodyEmbeddings,
-  getConsolidationJudgedMap,
-  openStateDatabase,
-  upsertBodyEmbeddings,
-  upsertConsolidationJudged,
-  withStateDb,
-} from "../../core/state-db";
+import { openStateDatabase, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -70,6 +61,13 @@ import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integ
 import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import type { Database } from "../../storage/database";
+import {
+  type ConsolidationJudgedRow,
+  getConsolidationJudgedMap,
+  upsertConsolidationJudged,
+} from "../../storage/repositories/consolidation-repository";
+import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

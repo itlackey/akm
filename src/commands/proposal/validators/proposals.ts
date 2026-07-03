@@ -8,17 +8,12 @@
  * The proposal repository, domain service, and legacy filesystem import moved
  * to `../repository.ts` and `../legacy-import.ts` (#578 storage consolidation).
  * This module keeps only the two proposal *validators* — {@link validateProposal}
- * and {@link repairProposalContent} — and re-exports the repository API so the
- * historical `proposal/validators/proposals` import path keeps resolving.
+ * and {@link repairProposalContent}.
  */
 
 import { repairTruncatedDescription } from "../../../core/text-truncation";
 import type { Proposal } from "../repository";
 import { runProposalValidators } from "./proposal-validators";
-
-// Re-export the proposal repository / domain API so existing importers of this
-// path keep working (barrel — the substrate now lives in `../repository.ts`).
-export * from "../repository";
 
 // ── Validation ──────────────────────────────────────────────────────────────
 

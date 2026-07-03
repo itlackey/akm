@@ -21,6 +21,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
+import { writeLesson } from "../_helpers/assets";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -37,23 +38,6 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
-}
-
-function writeLesson(stashDir: string, name: string, description: string, whenToUse: string): void {
-  const filePath = path.join(stashDir, "lessons", `${name}.md`);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const lines = [
-    "---",
-    `description: ${description}`,
-    `when_to_use: ${whenToUse}`,
-    "---",
-    "",
-    `# ${name}`,
-    "",
-    "Body text.",
-    "",
-  ];
-  fs.writeFileSync(filePath, lines.join("\n"), "utf8");
 }
 
 beforeEach(() => {

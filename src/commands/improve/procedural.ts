@@ -34,8 +34,8 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { closeDatabase, type DbIndexedEntry, getAllEntries, openExistingDatabase } from "../../indexer/db/db";
 import { parseWorkflow } from "../../workflows/parser";
+import { createProposal, isProposalSkipped } from "../proposal/repository";
 import { validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
-import { createProposal, isProposalSkipped } from "../proposal/validators/proposals";
 import { resolveImproveLlmFn } from "./shared";
 
 export type { ProceduralCompilationResult } from "../../core/improve-types";

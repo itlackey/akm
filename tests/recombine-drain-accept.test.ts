@@ -22,7 +22,7 @@ import path from "node:path";
 import { classifyProposal, type DrainOptions, drainProposals } from "../src/commands/proposal/drain";
 import { PERSONAL_STASH } from "../src/commands/proposal/drain-policies";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal/proposal";
-import { createProposal, isProposalSkipped, type Proposal } from "../src/commands/proposal/validators/proposals";
+import { createProposal, isProposalSkipped, type Proposal } from "../src/commands/proposal/repository";
 import type { EventsContext } from "../src/core/events";
 
 // ---------------------------------------------------------------------------

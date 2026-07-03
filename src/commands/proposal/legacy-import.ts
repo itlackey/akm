@@ -17,13 +17,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { warn } from "../../core/warn";
+import type { Database } from "../../storage/database";
 import {
-  type Database,
   hasImportedFsProposals,
   insertProposalIfAbsent,
   recordFsProposalsImport,
-} from "../../core/state-db";
-import { warn } from "../../core/warn";
+} from "../../storage/repositories/proposals-repository";
 import type { Proposal } from "./repository";
 
 /** Legacy (pre-0.9.0) proposal directory: `<stashDir>/.akm/proposals[/archive]`. */

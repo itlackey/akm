@@ -27,12 +27,13 @@ import path from "node:path";
 import { akmImprove, runImproveMaintenancePasses } from "../../../src/commands/improve/improve";
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
-import { insertEvent, openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { probeIndexWriterLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import type { StalenessDetectionResult } from "../../../src/indexer/passes/staleness-detect";
 import type { Database } from "../../../src/storage/database";
+import { insertEvent } from "../../../src/storage/repositories/events-repository";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

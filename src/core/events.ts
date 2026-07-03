@@ -28,9 +28,10 @@
 
 import path from "node:path";
 import type { Database } from "../storage/database";
+import { insertEvent, readStateEvents } from "../storage/repositories/events-repository";
 import { rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
-import { insertEvent, openStateDatabase, readStateEvents, withStateDb } from "./state-db";
+import { openStateDatabase, withStateDb } from "./state-db";
 import { error } from "./warn";
 
 /**

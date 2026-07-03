@@ -29,7 +29,8 @@
 
 import crypto from "node:crypto";
 import path from "node:path";
-import { recordImproveRun, withStateDb } from "../../core/state-db";
+import { withStateDb } from "../../core/state-db";
+import { recordImproveRun } from "../../storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "./improve";
 
 /**

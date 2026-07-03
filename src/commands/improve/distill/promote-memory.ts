@@ -26,12 +26,7 @@ import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { isLlmFeatureEnabled } from "../../../llm/feature-gate";
-import {
-  createProposal,
-  isProposalSkipped,
-  type Proposal,
-  type ProposalsContext,
-} from "../../proposal/validators/proposals";
+import { createProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
 import type { AkmDistillResult } from "../distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../distill-promotion-policy";
 import { persistOutputEncodingSalience, runLessonQualityJudge, writeQualityRejection } from "./quality-gate";

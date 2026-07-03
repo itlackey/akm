@@ -33,7 +33,7 @@ import {
   type ConsolidatePromoteOp,
   mergePlans,
 } from "../../../src/commands/improve/consolidate";
-import { createProposal, isProposalSkipped, listProposals } from "../../../src/commands/proposal/validators/proposals";
+import { createProposal, isProposalSkipped, listProposals } from "../../../src/commands/proposal/repository";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -4,8 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 // Import directly from the relocated module (the proposals repository split
-// out of `validators/proposals.ts`). A bare import here also proves the
-// repository <-> validators re-export barrel resolves without a broken cycle.
+// out of `validators/proposals.ts`).
 import {
   formatUnifiedDiff,
   isAutomatedProposalSource,

@@ -21,9 +21,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { defineCommand } from "citty";
 import { getStringArg } from "../../cli/parse-args";
-import { defineGroupCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isWithin, writeFileAtomic } from "../../core/common";
@@ -33,7 +32,7 @@ import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { getHyphenatedArg, parseFlagValue } from "../../output/context";
+import { parseFlagValue } from "../../output/context";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -73,17 +72,15 @@ function listEnvsRecursive(
   return result;
 }
 
-const envListCommand = defineCommand({
+const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all stashes with their key names (no values)" },
-  run() {
-    return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./env.js");
-      output("env-list", { envs: listEnvsRecursive(listKeys) });
-    });
+  async run() {
+    const { listKeys } = await import("./env.js");
+    output("env-list", { envs: listEnvsRecursive(listKeys) });
   },
 });
 
-const envCreateCommand = defineCommand({
+const envCreateCommand = defineJsonCommand({
   meta: {
     name: "create",
     description:
@@ -108,66 +105,64 @@ const envCreateCommand = defineCommand({
       default: false,
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { createEnv, writeEnv } = await import("./env.js");
-      // `create` always targets env/, never the frozen vaults/ copy.
-      const parsed = parseEnvRef(args.name);
-      // `name` is flat; subdirectory placement is `--path`'s job.
-      assertFlatAssetName(parsed.name);
-      parsed.name = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), parsed.name);
-      const source = findEnvSource(parsed.origin);
-      const envRoot = path.join(source.path, "env");
-      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-      if (!isWithin(absPath, envRoot)) {
-        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-      }
+  async run({ args }) {
+    const { createEnv, writeEnv } = await import("./env.js");
+    // `create` always targets env/, never the frozen vaults/ copy.
+    const parsed = parseEnvRef(args.name);
+    // `name` is flat; subdirectory placement is `--path`'s job.
+    assertFlatAssetName(parsed.name);
+    parsed.name = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), parsed.name);
+    const source = findEnvSource(parsed.origin);
+    const envRoot = path.join(source.path, "env");
+    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    if (!isWithin(absPath, envRoot)) {
+      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+    }
 
-      const fromFile = getHyphenatedArg<string>(args, "from-file");
-      const fromStdin = getHyphenatedArg<boolean>(args, "from-stdin") === true;
-      if (fromFile !== undefined && fromStdin) {
-        throw new UsageError("Pass only one of --from-file or --from-stdin.", "INVALID_FLAG_VALUE");
-      }
+    const fromFile = args["from-file"];
+    const fromStdin = args["from-stdin"] === true;
+    if (fromFile !== undefined && fromStdin) {
+      throw new UsageError("Pass only one of --from-file or --from-stdin.", "INVALID_FLAG_VALUE");
+    }
 
-      if (fromFile !== undefined || fromStdin) {
-        // Ingest path: never silently clobber an existing env file.
-        if (fs.existsSync(absPath)) {
-          throw new UsageError(
-            `Env "${makeEnvRef(parsed.name, source)}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
-            "RESOURCE_ALREADY_EXISTS",
-          );
+    if (fromFile !== undefined || fromStdin) {
+      // Ingest path: never silently clobber an existing env file.
+      if (fs.existsSync(absPath)) {
+        throw new UsageError(
+          `Env "${makeEnvRef(parsed.name, source)}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
+          "RESOURCE_ALREADY_EXISTS",
+        );
+      }
+      let content: string;
+      if (fromFile !== undefined) {
+        if (!fs.existsSync(fromFile)) {
+          throw new NotFoundError(`Source file not found: ${fromFile}`, "FILE_NOT_FOUND");
         }
-        let content: string;
-        if (fromFile !== undefined) {
-          if (!fs.existsSync(fromFile)) {
-            throw new NotFoundError(`Source file not found: ${fromFile}`, "FILE_NOT_FOUND");
-          }
-          content = fs.readFileSync(fromFile, "utf8");
-        } else {
-          const MAX_ENV_BYTES = 1024 * 1024; // 1 MB
-          const buf = await readStdin(
-            MAX_ENV_BYTES,
-            () => new UsageError("Env file exceeds 1 MB limit.", "INVALID_FLAG_VALUE"),
-          );
-          content = buf.toString("utf8");
-        }
-        writeEnv(absPath, content);
+        content = fs.readFileSync(fromFile, "utf8");
       } else {
-        createEnv(absPath);
+        const MAX_ENV_BYTES = 1024 * 1024; // 1 MB
+        const buf = await readStdin(
+          MAX_ENV_BYTES,
+          () => new UsageError("Env file exceeds 1 MB limit.", "INVALID_FLAG_VALUE"),
+        );
+        content = buf.toString("utf8");
       }
+      writeEnv(absPath, content);
+    } else {
+      createEnv(absPath);
+    }
 
-      if (args.sensitive) {
-        const markerPath = absPath.replace(/\.env$/, ".sensitive");
-        if (!fs.existsSync(markerPath)) {
-          fs.writeFileSync(markerPath, "", { mode: 0o600 });
-        }
+    if (args.sensitive) {
+      const markerPath = absPath.replace(/\.env$/, ".sensitive");
+      if (!fs.existsSync(markerPath)) {
+        fs.writeFileSync(markerPath, "", { mode: 0o600 });
       }
-      output("env-create", { ref: makeEnvRef(parsed.name, source) });
-    });
+    }
+    output("env-create", { ref: makeEnvRef(parsed.name, source) });
   },
 });
 
-const envPathCommand = defineCommand({
+const envPathCommand = defineJsonCommand({
   meta: {
     name: "path",
     description:
@@ -177,27 +172,25 @@ const envPathCommand = defineCommand({
     ref: { type: "positional", description: "Env ref", required: true },
     quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { name, absPath, source } = resolveEnvPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-      }
-      // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
-      // Warning goes to stderr (never contaminates the path on stdout) and is
-      // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
-      if (args.quiet !== true) {
-        process.stderr.write(
-          `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
-            `         To inject values run: akm env run ${args.ref} -- <command>\n`,
-        );
-      }
-      process.stdout.write(`${absPath}\n`);
-    });
+  async run({ args }) {
+    const { name, absPath, source } = resolveEnvPath(args.ref);
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+    }
+    // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
+    // Warning goes to stderr (never contaminates the path on stdout) and is
+    // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
+    if (args.quiet !== true) {
+      process.stderr.write(
+        `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
+          `         To inject values run: akm env run ${args.ref} -- <command>\n`,
+      );
+    }
+    process.stdout.write(`${absPath}\n`);
   },
 });
 
-const envExportCommand = defineCommand({
+const envExportCommand = defineJsonCommand({
   meta: {
     name: "export",
     description:
@@ -207,26 +200,24 @@ const envExportCommand = defineCommand({
     ref: { type: "positional", description: "Env ref", required: true },
     out: { type: "string", alias: "o", description: "Destination file (required). Written at mode 0600." },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const outPath = getHyphenatedArg<string>(args, "out");
-      if (!outPath) {
-        throw new UsageError(
-          "`akm env export` writes to a file — pass --out <path>.\n" +
-            "       To use values directly, run `akm env run <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
-            "       session). export never prints values to stdout, to avoid leaking them into a captured context.",
-          "MISSING_REQUIRED_ARGUMENT",
-        );
-      }
-      const { name, absPath, source } = resolveEnvPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-      }
-      const { buildShellExportScript } = await import("./env.js");
-      const resolvedOut = path.resolve(outPath);
-      writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
-      output("env-export", { ref: makeEnvRef(name, source), out: resolvedOut });
-    });
+  async run({ args }) {
+    const outPath = args.out;
+    if (!outPath) {
+      throw new UsageError(
+        "`akm env export` writes to a file — pass --out <path>.\n" +
+          "       To use values directly, run `akm env run <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
+          "       session). export never prints values to stdout, to avoid leaking them into a captured context.",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
+    const { name, absPath, source } = resolveEnvPath(args.ref);
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+    }
+    const { buildShellExportScript } = await import("./env.js");
+    const resolvedOut = path.resolve(outPath);
+    writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
+    output("env-export", { ref: makeEnvRef(name, source), out: resolvedOut });
   },
 });
 
@@ -391,7 +382,7 @@ function parseKeyListFlag(raw: string | undefined): string[] | undefined {
   return keys.length > 0 ? keys : undefined;
 }
 
-const envRunCommand = defineCommand({
+const envRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
@@ -417,52 +408,48 @@ const envRunCommand = defineCommand({
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(() =>
-      runEnvInjected(args.target, {
-        only: parseKeyListFlag(getHyphenatedArg<string>(args, "only")),
-        except: parseKeyListFlag(getHyphenatedArg<string>(args, "except")),
-        clean: getHyphenatedArg<boolean>(args, "clean") === true,
-        inherit: parseKeyListFlag(getHyphenatedArg<string>(args, "inherit")) ?? [],
-      }),
-    );
+  async run({ args }) {
+    await runEnvInjected(args.target, {
+      only: parseKeyListFlag(args.only),
+      except: parseKeyListFlag(args.except),
+      clean: args.clean === true,
+      inherit: parseKeyListFlag(args.inherit) ?? [],
+    });
   },
 });
 
-const envRemoveCommand = defineCommand({
+const envRemoveCommand = defineJsonCommand({
   meta: { name: "remove", description: "Remove an env file (and its .sensitive marker, if any)" },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const parsed = parseEnvRef(args.ref);
-      const source = findEnvSource(parsed.origin);
-      const envRoot = path.join(source.path, "env");
-      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-      if (!isWithin(absPath, envRoot)) {
-        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-      }
-      const { confirmDestructive } = await import("../../cli/confirm.js");
-      const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
-        yes: args.yes === true,
-      });
-      if (!confirmed) {
-        process.stderr.write("Aborted.\n");
-        return;
-      }
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
-      }
-      const { removeEnv } = await import("./env.js");
-      const removed = removeEnv(absPath);
-      output("env-remove", { ref: makeEnvRef(parsed.name, source), removed });
+  async run({ args }) {
+    const parsed = parseEnvRef(args.ref);
+    const source = findEnvSource(parsed.origin);
+    const envRoot = path.join(source.path, "env");
+    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    if (!isWithin(absPath, envRoot)) {
+      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+    }
+    const { confirmDestructive } = await import("../../cli/confirm.js");
+    const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
+      yes: args.yes === true,
     });
+    if (!confirmed) {
+      process.stderr.write("Aborted.\n");
+      return;
+    }
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
+    }
+    const { removeEnv } = await import("./env.js");
+    const removed = removeEnv(absPath);
+    output("env-remove", { ref: makeEnvRef(parsed.name, source), removed });
   },
 });
 
-const envSetCommand = defineCommand({
+const envSetCommand = defineJsonCommand({
   meta: {
     name: "set",
     description:
@@ -474,60 +461,58 @@ const envSetCommand = defineCommand({
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
     "from-file": { type: "string", description: "Read the value from this file" },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const parsed = parseEnvRef(args.ref);
-      const source = findEnvSource(parsed.origin);
-      const envRoot = path.join(source.path, "env");
-      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-      if (!isWithin(absPath, envRoot)) {
-        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-      }
-      const key = String(args.key);
-      const { ENV_KEY_RE, setEnvKey } = await import("./env.js");
-      if (!ENV_KEY_RE.test(key)) {
-        throw new UsageError(`Invalid env key "${key}". Keys match [A-Za-z_][A-Za-z0-9_]*.`, "INVALID_FLAG_VALUE");
-      }
+  async run({ args }) {
+    const parsed = parseEnvRef(args.ref);
+    const source = findEnvSource(parsed.origin);
+    const envRoot = path.join(source.path, "env");
+    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    if (!isWithin(absPath, envRoot)) {
+      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+    }
+    const key = String(args.key);
+    const { ENV_KEY_RE, setEnvKey } = await import("./env.js");
+    if (!ENV_KEY_RE.test(key)) {
+      throw new UsageError(`Invalid env key "${key}". Keys match [A-Za-z_][A-Za-z0-9_]*.`, "INVALID_FLAG_VALUE");
+    }
 
-      const fromEnv = getHyphenatedArg<string>(args, "from-env");
-      const fromFile = getHyphenatedArg<string>(args, "from-file");
-      if (fromEnv !== undefined && fromFile !== undefined) {
-        throw new UsageError("Pass only one of --from-file or --from-env (or use stdin).", "INVALID_FLAG_VALUE");
+    const fromEnv = args["from-env"];
+    const fromFile = args["from-file"];
+    if (fromEnv !== undefined && fromFile !== undefined) {
+      throw new UsageError("Pass only one of --from-file or --from-env (or use stdin).", "INVALID_FLAG_VALUE");
+    }
+    const MAX_ENV_VALUE_BYTES = 1024 * 1024; // 1 MB
+    let value: string;
+    if (fromFile !== undefined) {
+      if (!fs.existsSync(fromFile)) {
+        throw new NotFoundError(`File not found: ${fromFile}`, "FILE_NOT_FOUND");
       }
-      const MAX_ENV_VALUE_BYTES = 1024 * 1024; // 1 MB
-      let value: string;
-      if (fromFile !== undefined) {
-        if (!fs.existsSync(fromFile)) {
-          throw new NotFoundError(`File not found: ${fromFile}`, "FILE_NOT_FOUND");
-        }
-        const buf = fs.readFileSync(fromFile);
-        if (buf.byteLength > MAX_ENV_VALUE_BYTES) throw new UsageError("Value exceeds the 1 MB limit.");
-        value = buf.toString("utf8");
-      } else if (fromEnv !== undefined) {
-        const v = process.env[fromEnv];
-        if (v === undefined) {
-          throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
-        }
-        value = v;
-      } else {
-        const buf = await readStdin(MAX_ENV_VALUE_BYTES, () => new UsageError("Value exceeds the 1 MB limit."));
-        // Strip a single trailing newline so `echo "$VAL" | akm env set` is exact.
-        value = buf.toString("utf8").replace(/\n$/, "");
+      const buf = fs.readFileSync(fromFile);
+      if (buf.byteLength > MAX_ENV_VALUE_BYTES) throw new UsageError("Value exceeds the 1 MB limit.");
+      value = buf.toString("utf8");
+    } else if (fromEnv !== undefined) {
+      const v = process.env[fromEnv];
+      if (v === undefined) {
+        throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
       }
-      setEnvKey(absPath, key, value);
-      // Warn (never block) on process-hijacking key names, matching the env-run audit.
-      const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
-      if (isDangerousEnvKey(key) && !isQuiet()) {
-        process.stderr.write(
-          `warning: "${key}" can influence process execution when this env is loaded via 'akm env run'.\n`,
-        );
-      }
-      output("env-set", { ref: makeEnvRef(parsed.name, source), key });
-    });
+      value = v;
+    } else {
+      const buf = await readStdin(MAX_ENV_VALUE_BYTES, () => new UsageError("Value exceeds the 1 MB limit."));
+      // Strip a single trailing newline so `echo "$VAL" | akm env set` is exact.
+      value = buf.toString("utf8").replace(/\n$/, "");
+    }
+    setEnvKey(absPath, key, value);
+    // Warn (never block) on process-hijacking key names, matching the env-run audit.
+    const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
+    if (isDangerousEnvKey(key) && !isQuiet()) {
+      process.stderr.write(
+        `warning: "${key}" can influence process execution when this env is loaded via 'akm env run'.\n`,
+      );
+    }
+    output("env-set", { ref: makeEnvRef(parsed.name, source), key });
   },
 });
 
-const envUnsetCommand = defineCommand({
+const envUnsetCommand = defineJsonCommand({
   meta: {
     name: "unset",
     description:
@@ -539,41 +524,39 @@ const envUnsetCommand = defineCommand({
     // non-required so citty doesn't block before we emit a structured error.
     key: { type: "positional", description: "Key name(s) to remove (one or more)", required: false },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const parsed = parseEnvRef(args.ref);
-      const source = findEnvSource(parsed.origin);
-      const envRoot = path.join(source.path, "env");
-      const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-      if (!isWithin(absPath, envRoot)) {
-        throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-      }
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
-      }
-      // citty puts every positional in `args._` (incl. the ref at [0]); the keys
-      // are the remaining positionals. citty also mis-captures the space-separated
-      // value of a global flag (`--format json`) as a positional, so drop any
-      // token that is actually a global flag's value (cli.ts:1335 documents this).
-      const globalFlagValues = new Set(
-        ["--format", "--shape", "--detail", "--scope", "--filter", "--target"]
-          .map((flag) => parseFlagValue(process.argv, flag))
-          .filter((v): v is string => typeof v === "string"),
-      );
-      const keys = (Array.isArray(args._) ? (args._ as unknown[]).map(String) : [])
-        .slice(1)
-        .filter((k) => !globalFlagValues.has(k));
-      if (keys.length === 0) {
-        throw new UsageError("Usage: akm env unset <ref> <KEY...> (one or more keys).", "MISSING_REQUIRED_ARGUMENT");
-      }
-      const { ENV_KEY_RE, unsetEnvKeys } = await import("./env.js");
-      const invalid = keys.filter((k) => !ENV_KEY_RE.test(k));
-      if (invalid.length > 0) {
-        throw new UsageError(`Invalid env key(s): ${invalid.join(", ")}.`, "INVALID_FLAG_VALUE");
-      }
-      const { removed, missing } = unsetEnvKeys(absPath, keys);
-      output("env-unset", { ref: makeEnvRef(parsed.name, source), removed, missing });
-    });
+  async run({ args }) {
+    const parsed = parseEnvRef(args.ref);
+    const source = findEnvSource(parsed.origin);
+    const envRoot = path.join(source.path, "env");
+    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    if (!isWithin(absPath, envRoot)) {
+      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+    }
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
+    }
+    // citty puts every positional in `args._` (incl. the ref at [0]); the keys
+    // are the remaining positionals. citty also mis-captures the space-separated
+    // value of a global flag (`--format json`) as a positional, so drop any
+    // token that is actually a global flag's value (cli.ts:1335 documents this).
+    const globalFlagValues = new Set(
+      ["--format", "--shape", "--detail", "--scope", "--filter", "--target"]
+        .map((flag) => parseFlagValue(process.argv, flag))
+        .filter((v): v is string => typeof v === "string"),
+    );
+    const keys = (Array.isArray(args._) ? (args._ as unknown[]).map(String) : [])
+      .slice(1)
+      .filter((k) => !globalFlagValues.has(k));
+    if (keys.length === 0) {
+      throw new UsageError("Usage: akm env unset <ref> <KEY...> (one or more keys).", "MISSING_REQUIRED_ARGUMENT");
+    }
+    const { ENV_KEY_RE, unsetEnvKeys } = await import("./env.js");
+    const invalid = keys.filter((k) => !ENV_KEY_RE.test(k));
+    if (invalid.length > 0) {
+      throw new UsageError(`Invalid env key(s): ${invalid.join(", ")}.`, "INVALID_FLAG_VALUE");
+    }
+    const { removed, missing } = unsetEnvKeys(absPath, keys);
+    output("env-unset", { ref: makeEnvRef(parsed.name, source), removed, missing });
   },
 });
 

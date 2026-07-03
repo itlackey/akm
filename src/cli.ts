@@ -255,8 +255,8 @@ const setupCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = getHyphenatedBoolean(args, "no-init");
-      const detectOnly = getHyphenatedBoolean(args, "detect-only");
-      const resetRecommended = getHyphenatedBoolean(args, "reset-recommended");
+      const detectOnly = args["detect-only"];
+      const resetRecommended = args["reset-recommended"];
       if (detectOnly) {
         // Detection only: no prompts, no writes.
         const { runDetectOnly } = await import("./setup/setup");
@@ -357,8 +357,8 @@ const healthCommand = defineCommand({
       const rawWindows = parseAllFlagValues("--windows");
       const windows: WindowSpec[] | undefined =
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
-      const groupBy = (args as Record<string, unknown>)["group-by"] as string | undefined;
-      const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
+      const groupBy = args["group-by"];
+      const windowCompareRaw = args["window-compare"];
       const mode = getOutputMode();
 
       // `--format html` is health-specific: render the full HTML health

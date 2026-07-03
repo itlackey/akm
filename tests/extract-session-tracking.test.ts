@@ -22,21 +22,21 @@ import * as extractModule from "../src/commands/improve/extract";
 import { akmExtract } from "../src/commands/improve/extract";
 import type { AkmConfig } from "../src/core/config/config";
 import { tryAcquireLockSync } from "../src/core/file-lock";
-import {
-  type ExtractedSessionRow,
-  getExtractedSession,
-  getExtractedSessionsMap,
-  getLastExtractRunAt,
-  openStateDatabase,
-  shouldSkipAlreadyExtractedSession,
-  upsertExtractedSession,
-} from "../src/core/state-db";
+import { openStateDatabase } from "../src/core/state-db";
 import type {
   SessionData,
   SessionLogHarness,
   SessionRef,
   SessionSummary,
 } from "../src/integrations/session-logs/types";
+import {
+  type ExtractedSessionRow,
+  getExtractedSession,
+  getExtractedSessionsMap,
+  getLastExtractRunAt,
+  shouldSkipAlreadyExtractedSession,
+  upsertExtractedSession,
+} from "../src/storage/repositories/extract-sessions-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // hashSessionContent (#602) is reached via the namespace import for ESM-safety;

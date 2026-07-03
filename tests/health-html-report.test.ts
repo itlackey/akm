@@ -9,8 +9,9 @@ import { type AkmHealthResult, akmHealth } from "../src/commands/health";
 import { buildHealthHtmlReplacements, type HealthHtmlReportOptions } from "../src/commands/health/html-report";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { appendEvent } from "../src/core/events";
-import { openStateDatabase, recordImproveRun } from "../src/core/state-db";
+import { openStateDatabase } from "../src/core/state-db";
 import { renderHtml, resolveTemplatePath } from "../src/output/html-render";
+import { recordImproveRun } from "../src/storage/repositories/improve-runs-repository";
 import { type Cleanup, type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

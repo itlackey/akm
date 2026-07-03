@@ -89,7 +89,7 @@ import {
   test as testHappy,
 } from "bun:test";
 import { akmDistill } from "../../../src/commands/improve/distill";
-import { listProposals } from "../../../src/commands/proposal/validators/proposals";
+import { listProposals } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 
 const happyTempDirs: string[] = [];

@@ -30,8 +30,8 @@ import {
   outcomeScoreToSalience,
   updateAssetOutcome,
 } from "../../../src/commands/improve/outcome-loop";
-import type { Database } from "../../../src/core/state-db";
 import { openStateDatabase } from "../../../src/core/state-db";
+import type { Database } from "../../../src/storage/database";
 
 const NOW = Date.parse("2026-07-02T00:00:00.000Z");
 

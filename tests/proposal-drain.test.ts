@@ -11,12 +11,7 @@ import {
 } from "../src/commands/proposal/drain";
 import { CONSERVATIVE, MANUAL, PERSONAL_STASH, resolveDrainPolicy } from "../src/commands/proposal/drain-policies";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal/proposal";
-import {
-  createProposal,
-  isProposalSkipped,
-  listProposals,
-  type Proposal,
-} from "../src/commands/proposal/validators/proposals";
+import { createProposal, isProposalSkipped, listProposals, type Proposal } from "../src/commands/proposal/repository";
 import type { EventsContext } from "../src/core/events";
 import type { AgentRunResult } from "../src/integrations/agent";
 import type { RunnerSpec } from "../src/integrations/agent/runner";

@@ -5,8 +5,10 @@ import { akmHealth, parseHealthSince } from "../src/commands/health";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { appendEvent } from "../src/core/events";
 import { buildTaskRunId, insertTaskLogLines, openLogsDatabase } from "../src/core/logs-db";
-import { openStateDatabase, recordImproveRun, upsertTaskHistory } from "../src/core/state-db";
+import { openStateDatabase } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
+import { recordImproveRun } from "../src/storage/repositories/improve-runs-repository";
+import { upsertTaskHistory } from "../src/storage/repositories/task-history-repository";
 import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,

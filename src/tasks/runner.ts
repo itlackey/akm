@@ -42,7 +42,7 @@ import {
   type TaskLogStream,
 } from "../core/logs-db";
 import { getTaskLogDir } from "../core/paths";
-import { getTaskHistory, queryTaskHistory, upsertTaskHistory, withStateDb } from "../core/state-db";
+import { withStateDb } from "../core/state-db";
 import { error } from "../core/warn";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
@@ -50,6 +50,7 @@ import { resolveRunner } from "../integrations/agent/runner";
 import { spawn } from "../runtime";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunStatus } from "../sources/types";
+import { getTaskHistory, queryTaskHistory, upsertTaskHistory } from "../storage/repositories/task-history-repository";
 import type { WorkflowRunDetail } from "../workflows/runtime/runs";
 import { startWorkflowRun } from "../workflows/runtime/runs";
 import { parseTaskDocument } from "./parser";
@@ -638,7 +639,9 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
  * Convert a `TaskHistoryRow` from state.db back to a `TaskRunResult` shape
  * that callers of `readTaskHistory()` expect.
  */
-function taskHistoryRowToResult(row: import("../core/state-db").TaskHistoryRow): TaskRunResult {
+function taskHistoryRowToResult(
+  row: import("../storage/repositories/task-history-repository").TaskHistoryRow,
+): TaskRunResult {
   let meta: { durationMs?: number; detail?: TaskRunResult["detail"]; profile?: string } = {};
   try {
     meta = JSON.parse(row.metadata_json) as typeof meta;

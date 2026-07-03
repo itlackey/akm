@@ -24,9 +24,7 @@ import path from "node:path";
 
 import {
   closeDatabase,
-  DB_VERSION,
   deleteEntriesByIds,
-  GRAPH_SCHEMA_VERSION,
   getEntitiesByEntryIds,
   getEntryIdByFilePath,
   getMeta,
@@ -35,6 +33,7 @@ import {
 } from "../src/indexer/db/db";
 import * as graphDb from "../src/indexer/db/graph-db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/db/graph-db";
+import { DB_VERSION, GRAPH_SCHEMA_VERSION } from "../src/indexer/db/schema";
 
 // hasGraphData (P1 deliverable) is referenced via the namespace for ESM-safety;
 // the cast resolves to the real export from graph-db.ts.

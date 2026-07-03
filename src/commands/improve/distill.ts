@@ -81,7 +81,7 @@ import {
   listProposals,
   type Proposal,
   type ProposalsContext,
-} from "../proposal/validators/proposals";
+} from "../proposal/repository";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
 import {
   autoRepairLessonFrontmatter,

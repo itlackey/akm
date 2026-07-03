@@ -39,6 +39,7 @@ import {
   applyStandardPragmas,
   isNetworkFilesystem,
   type JournalMode,
+  resolveConfiguredJournalMode,
   resolveJournalMode,
 } from "../src/storage/sqlite-pragmas";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../src/workflows/db";
@@ -118,6 +119,16 @@ describe("#628 AC-c: resolveJournalMode() pure resolver", () => {
     // Repeated calls stay graceful (warn-once is an internal concern; no throw).
     expect(resolveJournalMode("also-bad")).toBe("WAL");
     expect(resolveJournalMode("xyz")).toBe("WAL");
+  });
+
+  test("resolveConfiguredJournalMode honors an injected env without mutating process.env", () => {
+    // Pin the real global to a value that MUST NOT influence the result.
+    process.env.AKM_SQLITE_JOURNAL_MODE = "WAL";
+    const before = JSON.stringify(process.env);
+    expect(resolveConfiguredJournalMode({ AKM_SQLITE_JOURNAL_MODE: "delete" })).toBe("DELETE");
+    // Read only the injected env; left the global untouched.
+    expect(JSON.stringify(process.env)).toBe(before);
+    delete process.env.AKM_SQLITE_JOURNAL_MODE;
   });
 });
 

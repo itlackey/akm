@@ -52,15 +52,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
-import {
-  type Database,
-  getStateProposal,
-  listStateProposalIdsByPrefix,
-  listStateProposals,
-  upsertProposal,
-  withImmediateTransaction,
-  withStateDb,
-} from "../../core/state-db";
+import { withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -69,6 +61,13 @@ import {
   type WriteTargetSource,
   writeAssetToSource,
 } from "../../core/write-source";
+import type { Database } from "../../storage/database";
+import {
+  getStateProposal,
+  listStateProposalIdsByPrefix,
+  listStateProposals,
+  upsertProposal,
+} from "../../storage/repositories/proposals-repository";
 import { importLegacyProposalFiles } from "./legacy-import";
 import { repairProposalContent, validateProposal } from "./validators/proposals";
 

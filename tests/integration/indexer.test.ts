@@ -8,13 +8,13 @@ import { getDbPath } from "../../src/core/paths";
 import { setQuiet } from "../../src/core/warn";
 import {
   closeDatabase,
-  DB_VERSION,
   getAllEntries,
   getEmbeddingCount,
   getIndexDirState,
   getMeta,
   openIndexDatabase,
 } from "../../src/indexer/db/db";
+import { DB_VERSION } from "../../src/indexer/db/schema";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../../src/indexer/indexer";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { _setEmbedderForTests, type embedBatch } from "../../src/llm/embedder";

@@ -22,10 +22,11 @@ import {
   isValidProposalSource,
   listProposals,
   PROPOSAL_SOURCES,
-  validateProposal,
-} from "../src/commands/proposal/validators/proposals";
+} from "../src/commands/proposal/repository";
+import { validateProposal } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
 import { readEvents } from "../src/core/events";
+import { makeConfig } from "./_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
@@ -46,14 +47,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
-}
-
-function makeConfig(stashDir: string): AkmConfig {
-  return {
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-    defaultWriteTarget: "stash",
-  } as AkmConfig;
 }
 
 beforeEach(() => {
@@ -508,7 +501,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
       payload: { content: VALID_LESSON },
     });
     expect(isProposalSkipped(result)).toBe(false);
-    const proposal = result as import("../src/commands/proposal/validators/proposals").Proposal;
+    const proposal = result as import("../src/commands/proposal/repository").Proposal;
     expect(proposal.source).toBe("reflect");
     expect(proposal.sourceRun).toBe("run-abc-123");
   });

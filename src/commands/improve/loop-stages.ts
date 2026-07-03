@@ -16,13 +16,7 @@ import type {
 } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
-import {
-  type CycleMetricsRow,
-  purgeOldCycleMetrics,
-  purgeOldEvents,
-  purgeOldImproveRuns,
-  withStateDb,
-} from "../../core/state-db";
+import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
@@ -38,13 +32,16 @@ import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import type { Database } from "../../storage/database";
+import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/repositories/canaries-repository";
+import { purgeOldEvents } from "../../storage/repositories/events-repository";
+import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import {
   createProposal,
   expireStaleProposals,
   isProposalSkipped,
   listProposals,
   purgeOrphanProposals,
-} from "../proposal/validators/proposals";
+} from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
 import { type AkmDistillResult, deriveLessonRef } from "./distill";

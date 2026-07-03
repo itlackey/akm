@@ -30,9 +30,9 @@ import {
   listProposals,
   type Proposal,
   resolveProposalId,
-} from "../src/commands/proposal/validators/proposals";
-import type { AkmConfig } from "../src/core/config/config";
+} from "../src/commands/proposal/repository";
 import { getStateDbPath, openStateDatabase } from "../src/core/state-db";
+import { makeConfig } from "./_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
@@ -50,14 +50,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
-}
-
-function makeConfig(stashDir: string): AkmConfig {
-  return {
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-    defaultWriteTarget: "stash",
-  } as AkmConfig;
 }
 
 beforeEach(() => {
@@ -187,7 +179,7 @@ function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<
 }
 
 function proposalsModuleHref(): string {
-  return pathToFileURL(path.join(import.meta.dir, "../src/commands/proposal/validators/proposals.ts")).href;
+  return pathToFileURL(path.join(import.meta.dir, "../src/commands/proposal/repository.ts")).href;
 }
 
 // ── canonical store ──────────────────────────────────────────────────────────

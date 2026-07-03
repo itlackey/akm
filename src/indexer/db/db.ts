@@ -25,11 +25,9 @@ import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./entry-mapper"
 import { ensureSchema } from "./schema";
 
 // ── Re-exports from extracted sibling modules ────────────────────────────────
-// The schema/migrations, the MemRL feedback policy, the pure FTS query helpers,
-// and the entry-row mapper were carried out of this god-file into focused
-// modules. Re-export the previously-public symbols here so the ~80 importers of
-// this module keep working unchanged (behaviour-preserving split).
-export { DB_VERSION, EMBEDDING_DIM, GRAPH_SCHEMA_VERSION } from "./schema";
+// The MemRL feedback policy and the pure FTS query helpers were carried out of
+// this god-file into focused modules. Re-export the previously-public symbols
+// here so importers of this module keep working unchanged.
 export type { FeedbackUtilityResult };
 export { HIGH_UTILITY_THRESHOLD, sanitizeFtsQuery, UTILITY_REVIEW_THRESHOLD };
 

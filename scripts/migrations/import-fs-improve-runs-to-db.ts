@@ -42,7 +42,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { computeImproveRunMetrics, openStateDatabase, recordImproveRun } from "../../src/core/state-db";
+import { openStateDatabase } from "../../src/core/state-db";
+import { computeImproveRunMetrics, recordImproveRun } from "../../src/storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "../../src/commands/improve/improve";
 
 type Args = {

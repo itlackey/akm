@@ -71,7 +71,6 @@ import {
   loadAgentConfigFromDisk,
   resolveAgentProfile,
 } from "../agent/agent-support";
-import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import {
   type CreateProposalInput,
   createProposal,
@@ -79,7 +78,8 @@ import {
   listProposals,
   type Proposal,
   type ProposalsContext,
-} from "../proposal/validators/proposals";
+} from "../proposal/repository";
+import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 import { classifyReflectChange } from "./reflect-noise";
 

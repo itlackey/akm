@@ -15,12 +15,12 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmImproveResult } from "../../src/commands/improve/improve";
+import { openStateDatabase } from "../../src/core/state-db";
 import {
   computeImproveRunMetrics,
-  openStateDatabase,
   purgeOldImproveRuns,
   recordImproveRun,
-} from "../../src/core/state-db";
+} from "../../src/storage/repositories/improve-runs-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

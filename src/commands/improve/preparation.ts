@@ -12,20 +12,16 @@ import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { EligibilitySource, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
-import {
-  listProposalGateDecisions,
-  listStateProposals,
-  openStateDatabase,
-  persistPhaseThreshold,
-  withStateDb,
-} from "../../core/state-db";
+import { openStateDatabase, withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, getRetrievalCounts, getZeroResultSearches, openExistingDatabase } from "../../indexer/db/db";
 import { countUsageEventsByType } from "../../indexer/usage/usage-events";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { withLlmStage } from "../../llm/usage-telemetry";
+import { persistPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
+import { listProposalGateDecisions, listStateProposals } from "../../storage/repositories/proposals-repository";
 import { akmLint } from "../lint/index";
-import { getProposal, listProposals } from "../proposal/validators/proposals";
+import { getProposal, listProposals } from "../proposal/repository";
 import { runSchemaRepairPass } from "../sources/schema-repair";
 import {
   type CalibrationTuneConfig,

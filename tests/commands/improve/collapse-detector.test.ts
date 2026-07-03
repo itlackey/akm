@@ -27,16 +27,15 @@ import {
 } from "../../../src/commands/improve/collapse-detector";
 import { saveConfig } from "../../../src/core/config/config";
 import { ndcgAtK } from "../../../src/core/eval/rank-metrics";
+import { openStateDatabase } from "../../../src/core/state-db";
+import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
+import { akmIndex } from "../../../src/indexer/indexer";
+import type { Database as IndexDatabase, Database as StateDatabase } from "../../../src/storage/database";
 import {
   type CycleMetricsRow,
   insertCycleMetrics,
-  openStateDatabase,
   queryRecentCycleMetrics,
-  type Database as StateDatabase,
-} from "../../../src/core/state-db";
-import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
-import { akmIndex } from "../../../src/indexer/indexer";
-import type { Database as IndexDatabase } from "../../../src/storage/database";
+} from "../../../src/storage/repositories/canaries-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

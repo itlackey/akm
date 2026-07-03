@@ -47,7 +47,7 @@ import {
   isSessionCaptureMemoryName,
   selectClustersForRun,
 } from "../src/commands/improve/recombine";
-import { listProposals } from "../src/commands/proposal/validators/proposals";
+import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
 import { openStateDatabase } from "../src/core/state-db";

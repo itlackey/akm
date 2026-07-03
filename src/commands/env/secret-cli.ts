@@ -20,16 +20,14 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { defineCommand } from "citty";
 import { getStringArg } from "../../cli/parse-args";
-import { defineGroupCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { deriveCanonicalAssetName } from "../../core/asset/asset-spec";
 import { loadConfig } from "../../core/config/config";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { getHyphenatedArg } from "../../output/context";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -69,19 +67,17 @@ function listSecretsRecursive(): Array<{ ref: string; path: string }> {
   return result;
 }
 
-const secretListCommand = defineCommand({
+const secretListCommand = defineJsonCommand({
   meta: {
     name: "list",
     description: "List all secrets across all stashes by name (the file contents are never shown)",
   },
-  run() {
-    return runWithJsonErrors(async () => {
-      output("secret-list", { secrets: listSecretsRecursive() });
-    });
+  async run() {
+    output("secret-list", { secrets: listSecretsRecursive() });
   },
 });
 
-const secretSetCommand = defineCommand({
+const secretSetCommand = defineJsonCommand({
   meta: {
     name: "set",
     description:
@@ -101,51 +97,49 @@ const secretSetCommand = defineCommand({
     "from-file": { type: "string", description: "Read the value from this file (stored byte-exact)" },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { setSecret } = await import("./secret.js");
-      const { name, absPath, source } = resolveSecretPath(args.ref, { subPath: getStringArg(args, "path") });
+  async run({ args }) {
+    const { setSecret } = await import("./secret.js");
+    const { name, absPath, source } = resolveSecretPath(args.ref, { subPath: getStringArg(args, "path") });
 
-      const fromEnv = getHyphenatedArg<string>(args, "from-env");
-      const fromFile = getHyphenatedArg<string>(args, "from-file");
-      if (fromEnv !== undefined && fromFile !== undefined) {
-        throw new UsageError("Pass only one of --from-file or --from-env (or use stdin).", "INVALID_FLAG_VALUE");
+    const fromEnv = args["from-env"];
+    const fromFile = args["from-file"];
+    if (fromEnv !== undefined && fromFile !== undefined) {
+      throw new UsageError("Pass only one of --from-file or --from-env (or use stdin).", "INVALID_FLAG_VALUE");
+    }
+
+    const MAX_SECRET_BYTES = 5 * 1024 * 1024; // 5 MB
+    let value: Buffer;
+    if (fromFile !== undefined) {
+      if (!fs.existsSync(fromFile)) {
+        throw new NotFoundError(`File not found: ${fromFile}`, "FILE_NOT_FOUND");
       }
-
-      const MAX_SECRET_BYTES = 5 * 1024 * 1024; // 5 MB
-      let value: Buffer;
-      if (fromFile !== undefined) {
-        if (!fs.existsSync(fromFile)) {
-          throw new NotFoundError(`File not found: ${fromFile}`, "FILE_NOT_FOUND");
-        }
-        value = fs.readFileSync(fromFile);
-        if (value.byteLength > MAX_SECRET_BYTES) {
-          throw new UsageError("Secret exceeds the 5 MB limit.");
-        }
-      } else if (fromEnv !== undefined) {
-        const envVal = process.env[fromEnv];
-        if (envVal === undefined) {
-          throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
-        }
-        value = Buffer.from(envVal, "utf8");
-      } else {
-        if (process.stdin.isTTY) {
-          process.stderr.write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
-        }
-        const stdinBuf = await readStdin(MAX_SECRET_BYTES, () => new UsageError("Secret exceeds the 5 MB limit."));
-        // Strip a single trailing newline so `echo "$TOKEN" | akm secret set`
-        // stores the token without the shell-added newline. Use --from-file for
-        // byte-exact storage of multi-line material (PEM keys, certs).
-        value = Buffer.from(stdinBuf.toString("utf8").replace(/\n$/, ""), "utf8");
+      value = fs.readFileSync(fromFile);
+      if (value.byteLength > MAX_SECRET_BYTES) {
+        throw new UsageError("Secret exceeds the 5 MB limit.");
       }
+    } else if (fromEnv !== undefined) {
+      const envVal = process.env[fromEnv];
+      if (envVal === undefined) {
+        throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
+      }
+      value = Buffer.from(envVal, "utf8");
+    } else {
+      if (process.stdin.isTTY) {
+        process.stderr.write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
+      }
+      const stdinBuf = await readStdin(MAX_SECRET_BYTES, () => new UsageError("Secret exceeds the 5 MB limit."));
+      // Strip a single trailing newline so `echo "$TOKEN" | akm secret set`
+      // stores the token without the shell-added newline. Use --from-file for
+      // byte-exact storage of multi-line material (PEM keys, certs).
+      value = Buffer.from(stdinBuf.toString("utf8").replace(/\n$/, ""), "utf8");
+    }
 
-      setSecret(absPath, value);
-      output("secret-set", { ref: makeSecretRef(name, source) });
-    });
+    setSecret(absPath, value);
+    output("secret-set", { ref: makeSecretRef(name, source) });
   },
 });
 
-const secretPathCommand = defineCommand({
+const secretPathCommand = defineJsonCommand({
   meta: {
     name: "path",
     description:
@@ -154,18 +148,16 @@ const secretPathCommand = defineCommand({
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { name, absPath, source } = resolveSecretPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
-      }
-      process.stdout.write(`${absPath}\n`);
-    });
+  async run({ args }) {
+    const { name, absPath, source } = resolveSecretPath(args.ref);
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
+    }
+    process.stdout.write(`${absPath}\n`);
   },
 });
 
-const secretRunCommand = defineCommand({
+const secretRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
@@ -186,99 +178,95 @@ const secretRunCommand = defineCommand({
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      // Validate the target env var name FIRST (before the command split) so a
-      // dangerous/invalid name is rejected regardless of how the command is
-      // supplied — and so the failure does not depend on argv parsing.
-      const varName = args.var;
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
-        throw new UsageError(`"${varName}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
-      }
-      const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
-      if (isDangerousEnvKey(varName)) {
-        throw new UsageError(
-          `Refusing to inject a secret into "${varName}": it is a known process-hijacking variable (e.g. LD_PRELOAD, PATH).`,
-          "INVALID_FLAG_VALUE",
+  async run({ args }) {
+    // Validate the target env var name FIRST (before the command split) so a
+    // dangerous/invalid name is rejected regardless of how the command is
+    // supplied — and so the failure does not depend on argv parsing.
+    const varName = args.var;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
+      throw new UsageError(`"${varName}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
+    }
+    const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
+    if (isDangerousEnvKey(varName)) {
+      throw new UsageError(
+        `Refusing to inject a secret into "${varName}": it is a known process-hijacking variable (e.g. LD_PRELOAD, PATH).`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+
+    const dashIndex = process.argv.indexOf("--");
+    if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
+      throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
+    }
+    const command = process.argv.slice(dashIndex + 1);
+
+    const { name, absPath, source } = resolveSecretPath(args.ref);
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
+    }
+    const { readValue } = await import("./secret.js");
+
+    const mergedEnv = buildChildEnv(process.env, {
+      clean: args.clean === true,
+      inherit: parseKeyListFlag(args.inherit) ?? [],
+    });
+    mergedEnv[varName] = readValue(absPath).toString("utf8");
+
+    // Audit trail: record access by ref + var name only — never the value.
+    appendEvent({
+      eventType: "secret_access",
+      ref: makeSecretRef(name, source),
+      metadata: { var: varName },
+    });
+
+    const result = spawnSync(command[0] as string, command.slice(1), {
+      stdio: "inherit",
+      env: mergedEnv,
+    });
+    if (result.error) {
+      const err = result.error as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        throw new NotFoundError(
+          `Command not found: ${command[0]}`,
+          "FILE_NOT_FOUND",
+          `Install '${command[0]}' or add its directory to PATH before invoking 'akm secret run'.`,
         );
       }
-
-      const dashIndex = process.argv.indexOf("--");
-      if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
-        throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
+      if (err.code === "EACCES") {
+        throw new ConfigError(
+          `Command not executable: ${command[0]}`,
+          "STASH_DIR_UNREADABLE",
+          `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
+        );
       }
-      const command = process.argv.slice(dashIndex + 1);
-
-      const { name, absPath, source } = resolveSecretPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
-      }
-      const { readValue } = await import("./secret.js");
-
-      const mergedEnv = buildChildEnv(process.env, {
-        clean: getHyphenatedArg<boolean>(args, "clean") === true,
-        inherit: parseKeyListFlag(getHyphenatedArg<string>(args, "inherit")) ?? [],
-      });
-      mergedEnv[varName] = readValue(absPath).toString("utf8");
-
-      // Audit trail: record access by ref + var name only — never the value.
-      appendEvent({
-        eventType: "secret_access",
-        ref: makeSecretRef(name, source),
-        metadata: { var: varName },
-      });
-
-      const result = spawnSync(command[0] as string, command.slice(1), {
-        stdio: "inherit",
-        env: mergedEnv,
-      });
-      if (result.error) {
-        const err = result.error as NodeJS.ErrnoException;
-        if (err.code === "ENOENT") {
-          throw new NotFoundError(
-            `Command not found: ${command[0]}`,
-            "FILE_NOT_FOUND",
-            `Install '${command[0]}' or add its directory to PATH before invoking 'akm secret run'.`,
-          );
-        }
-        if (err.code === "EACCES") {
-          throw new ConfigError(
-            `Command not executable: ${command[0]}`,
-            "STASH_DIR_UNREADABLE",
-            `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-          );
-        }
-        throw err;
-      }
-      process.exit(result.status ?? 0);
-    });
+      throw err;
+    }
+    process.exit(result.status ?? 0);
   },
 });
 
-const secretRemoveCommand = defineCommand({
+const secretRemoveCommand = defineJsonCommand({
   meta: { name: "remove", description: "Remove a secret (and its .sensitive marker, if any)" },
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { name, absPath, source } = resolveSecretPath(args.ref);
-      const { confirmDestructive } = await import("../../cli/confirm.js");
-      const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
-        yes: args.yes === true,
-      });
-      if (!confirmed) {
-        process.stderr.write("Aborted.\n");
-        return;
-      }
-      const { removeSecret } = await import("./secret.js");
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
-      }
-      const removed = removeSecret(absPath);
-      output("secret-remove", { ref: makeSecretRef(name, source), removed });
+  async run({ args }) {
+    const { name, absPath, source } = resolveSecretPath(args.ref);
+    const { confirmDestructive } = await import("../../cli/confirm.js");
+    const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
+      yes: args.yes === true,
     });
+    if (!confirmed) {
+      process.stderr.write("Aborted.\n");
+      return;
+    }
+    const { removeSecret } = await import("./secret.js");
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
+    }
+    const removed = removeSecret(absPath);
+    output("secret-remove", { ref: makeSecretRef(name, source), removed });
   },
 });
 

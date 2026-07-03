@@ -12,7 +12,7 @@ import {
   summarizeCalibration,
 } from "../src/commands/improve/calibration";
 import { maybeAutoTuneThreshold } from "../src/commands/improve/improve";
-import { createProposal, recordGateDecision } from "../src/commands/proposal/validators/proposals";
+import { createProposal, recordGateDecision } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { getStateDbPathInDataDir } from "../src/core/paths";
 import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";

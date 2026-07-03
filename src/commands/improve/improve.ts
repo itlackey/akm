@@ -324,7 +324,7 @@ export interface ImprovePostLoopResult {
   /** #615: result of the opt-in procedural-compilation pass, when it ran. */
   proceduralCompilation?: ProceduralCompilationResult;
   /** R5: the collapse/churn detector's cycle snapshot, when this run qualified. */
-  cycleMetrics?: import("../../core/state-db").CycleMetricsRow;
+  cycleMetrics?: import("../../storage/repositories/canaries-repository").CycleMetricsRow;
 }
 
 export interface ImproveMaintenanceResult {

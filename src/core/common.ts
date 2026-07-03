@@ -156,9 +156,9 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
  *
  * Throws if no valid stash directory is found.
  */
-export function resolveStashDir(_options?: { readOnly?: boolean }): string {
+export function resolveStashDir(_options?: { readOnly?: boolean }, env: NodeJS.ProcessEnv = process.env): string {
   // 1. Env var override (for CI, scripts, testing)
-  const envDir = process.env.AKM_STASH_DIR?.trim();
+  const envDir = env.AKM_STASH_DIR?.trim();
   if (envDir) {
     return validateStashDir(envDir);
   }
@@ -168,7 +168,7 @@ export function resolveStashDir(_options?: { readOnly?: boolean }): string {
   if (configStashDir) return validateStashDir(configStashDir);
 
   // 3. Platform default — use it if it exists
-  const defaultDir = getDefaultStashDir();
+  const defaultDir = getDefaultStashDir(env);
   if (isValidDirectory(defaultDir)) {
     return defaultDir;
   }

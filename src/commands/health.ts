@@ -8,24 +8,21 @@ import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { buildTaskRunId, getLoggedRunIds, openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
-import {
-  getLatestCycleMetrics,
-  type ImproveRunSummaryRow,
-  listExistingTableNames,
-  listProposalGateDecisions,
-  listStateProposals,
-  openStateDatabase,
-  queryCompletedTaskIntervals,
-  queryImproveRuns,
-  queryTaskHistory,
-  type TaskHistoryRow,
-} from "../core/state-db";
+import { listExistingTableNames, openStateDatabase } from "../core/state-db";
 import { parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/search/semantic-status";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { LLM_USAGE_EVENT } from "../llm/usage-persist";
 import type { Database } from "../storage/database";
+import { getLatestCycleMetrics } from "../storage/repositories/canaries-repository";
+import { type ImproveRunSummaryRow, queryImproveRuns } from "../storage/repositories/improve-runs-repository";
+import { listProposalGateDecisions, listStateProposals } from "../storage/repositories/proposals-repository";
+import {
+  queryCompletedTaskIntervals,
+  queryTaskHistory,
+  type TaskHistoryRow,
+} from "../storage/repositories/task-history-repository";
 import { HEALTH_CHECKS, type HealthCheckContext } from "./health/checks";
 import { type CalibrationSummary, gateDecisionsToSamples, summarizeCalibration } from "./improve/calibration";
 

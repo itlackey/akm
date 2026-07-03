@@ -20,9 +20,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { akmReflect } from "../../../src/commands/improve/reflect";
-import { listProposals } from "../../../src/commands/proposal/validators/proposals";
-import type { AgentProfile } from "../../../src/integrations/agent/profiles";
+import { listProposals } from "../../../src/commands/proposal/repository";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
+import { makeProfile } from "../../_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -47,18 +47,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
-}
-
-function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
-  return {
-    name: "fake-agent",
-    bin: "fake-agent",
-    args: [],
-    stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
-    ...overrides,
-  };
 }
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {

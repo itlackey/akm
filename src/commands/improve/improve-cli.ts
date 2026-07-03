@@ -9,11 +9,12 @@ import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getCacheDir } from "../../core/paths";
-import { getActiveCanaries, queryRecentCycleMetrics, withStateDb } from "../../core/state-db";
+import { withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { getHyphenatedArg, getHyphenatedBoolean, parseFlagValue } from "../../output/context";
+import { parseFlagValue } from "../../output/context";
+import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { refreshCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
 import {
@@ -156,7 +157,7 @@ export const improveCommand = defineCommand({
     // contain ":"): dispatch to the detector inspection verb instead of an
     // improve run.
     if (args.scope === "canary") {
-      await runWithJsonErrors(() => runCanaryInspection(getHyphenatedBoolean(args, "refresh") === true));
+      await runWithJsonErrors(() => runCanaryInspection(args.refresh));
       return;
     }
     await runWithJsonErrors(async () => {
@@ -168,15 +169,15 @@ export const improveCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      const jsonToStdout = getHyphenatedBoolean(args, "json-to-stdout");
-      const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
+      const jsonToStdout = args["json-to-stdout"];
+      const autoAcceptRaw = args["auto-accept"];
       const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
       const targetArg = getStringArg(args, "target");
       const taskArg = getStringArg(args, "task");
-      const dryRun = getHyphenatedBoolean(args, "dry-run");
+      const dryRun = args["dry-run"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
-      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
-      const consolidateRecoveryRaw = getHyphenatedArg<string>(args, "consolidate-recovery");
+      const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
+      const consolidateRecoveryRaw = args["consolidate-recovery"];
       const consolidateRecovery =
         consolidateRecoveryRaw === undefined
           ? undefined
@@ -187,16 +188,16 @@ export const improveCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
+      const minRetrievalCountRaw = args["min-retrieval-count"];
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
-      const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
-      const skipIfLocked = getHyphenatedBoolean(args, "skip-if-locked");
+      const requireFeedbackSignal = args["require-feedback-signal"];
+      const skipIfLocked = args["skip-if-locked"];
       const profileArg = getStringArg(args, "profile");
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
       // so the resolved profile `sync` block wins by default.
-      const syncFlag = getHyphenatedArg<boolean>(args, "sync");
-      const pushFlag = getHyphenatedArg<boolean>(args, "push");
+      const syncFlag = args.sync;
+      const pushFlag = args.push;
       const syncOverride: { enabled?: boolean; push?: boolean } = {};
       if (syncFlag !== undefined) syncOverride.enabled = syncFlag;
       if (pushFlag !== undefined) syncOverride.push = pushFlag;

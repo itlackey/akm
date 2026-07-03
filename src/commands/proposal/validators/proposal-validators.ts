@@ -6,8 +6,9 @@ import type { AssetRef } from "../../../core/asset/asset-ref";
 import { parseAssetRef } from "../../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { lintLessonContent } from "../../../core/lesson-lint";
+import type { Proposal } from "../repository";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
-import type { Proposal, ProposalValidationFinding, ProposalValidationReport } from "./proposals";
+import type { ProposalValidationFinding, ProposalValidationReport } from "./proposals";
 
 export interface ProposalValidationContext {
   parsedRef?: AssetRef;

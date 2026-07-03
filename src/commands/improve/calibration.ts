@@ -28,7 +28,7 @@
  * testable and deterministic (no clock / RNG in any sorted/rendered output).
  */
 
-import type { ProposalGateDecision } from "../proposal/validators/proposals";
+import type { ProposalGateDecision } from "../proposal/repository";
 
 // ---------------------------------------------------------------------------
 // Types

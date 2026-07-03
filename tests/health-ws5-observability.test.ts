@@ -16,8 +16,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmHealth } from "../src/commands/health";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { upsertAssetSalience } from "../src/commands/improve/salience";
-import type { Proposal } from "../src/commands/proposal/validators/proposals";
-import { openStateDatabase, recordImproveRun, upsertProposal } from "../src/core/state-db";
+import type { Proposal } from "../src/commands/proposal/repository";
+import { openStateDatabase } from "../src/core/state-db";
+import { recordImproveRun } from "../src/storage/repositories/improve-runs-repository";
+import { upsertProposal } from "../src/storage/repositories/proposals-repository";
 import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 function fixtureResult(partial: Record<string, unknown>): AkmImproveResult {

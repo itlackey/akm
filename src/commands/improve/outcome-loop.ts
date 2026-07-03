@@ -73,7 +73,7 @@
  * @module outcome-loop
  */
 
-import type { Database } from "../../core/state-db";
+import type { Database } from "../../storage/database";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

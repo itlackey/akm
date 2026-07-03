@@ -45,7 +45,7 @@ import {
   isProposalSkipped,
   type Proposal,
   type ProposalsContext,
-} from "./validators/proposals";
+} from "./repository";
 
 export interface AkmProposeOptions {
   type: string;

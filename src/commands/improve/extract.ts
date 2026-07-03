@@ -35,16 +35,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
-import {
-  type ExtractedSessionRow,
-  getExtractedSessionsMap,
-  getLastExtractRunAt,
-  getStateDbPath,
-  openStateDatabase,
-  shouldSkipAlreadyExtractedSession,
-  upsertExtractedSession,
-  withStateDb,
-} from "../../core/state-db";
+import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
@@ -58,7 +49,14 @@ import { embed } from "../../llm/embedder";
 import { tryLlmFeature } from "../../llm/feature-gate";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
-import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/validators/proposals";
+import {
+  type ExtractedSessionRow,
+  getExtractedSessionsMap,
+  getLastExtractRunAt,
+  shouldSkipAlreadyExtractedSession,
+  upsertExtractedSession,
+} from "../../storage/repositories/extract-sessions-repository";
+import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/repository";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import { buildHotProbationFrontmatter } from "./hot-probation";
 import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";

@@ -12,8 +12,7 @@
  * This module holds the wizard orchestration; the individual wizard steps,
  * config-shape adapters, prompt shims, provider table, and semantic-asset
  * preparation live in sibling modules (`steps/*`, `legacy-config`, `prompt`,
- * `providers`, `semantic-assets`) and are re-exported below where tests and
- * `akm init` depend on them.
+ * `providers`, `semantic-assets`).
  */
 
 import { promises as dnsPromises } from "node:dns";
@@ -64,20 +63,6 @@ import { stepSemanticSearch } from "./steps/semantic";
 import { stepAdditionalSources, stepAddSources, stepRegistries } from "./steps/sources";
 import { stepStashDir } from "./steps/stashdir";
 import { stepDefaultImproveTasks, stepScheduledTasks } from "./steps/tasks";
-
-// Re-export the extracted step functions + helpers so `../setup/setup` remains
-// the stable public surface for tests and `akm init`.
-export { onCancel } from "./prompt";
-export { describeSemanticSearchAssets } from "./semantic-assets";
-export type { SmallModelConnectionResult } from "./steps/connection";
-export { stepAgentConnection, stepLlm, stepSmallModelConnection } from "./steps/connection";
-export { stepOutputConfig } from "./steps/output";
-export type { AgentSetupResult } from "./steps/platforms";
-export { stepAgentCliDetection, stepAgentSelection } from "./steps/platforms";
-export { stepSemanticSearch } from "./steps/semantic";
-export { stepAddSources, stepRegistries } from "./steps/sources";
-export type { ScheduledTasksDeps } from "./steps/tasks";
-export { stepDefaultImproveTasks, stepScheduledTasks } from "./steps/tasks";
 
 // ── Setup sandbox guard ─────────────────────────────────────────────────────
 

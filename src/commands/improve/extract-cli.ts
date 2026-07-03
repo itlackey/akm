@@ -18,14 +18,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { defineCommand } from "citty";
-import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
+import { getStringArg } from "../../cli/parse-args";
+import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import { getAvailableHarnesses, getWatchTargets } from "../../integrations/session-logs";
 import { type AkmExtractResult, akmExtract } from "./extract";
 import { akmExtractWatch, type WatchEvent, type WatchEventSource } from "./extract-watch";
 
-export const extractCommand = defineCommand({
+export const extractCommand = defineJsonCommand({
   meta: {
     name: "extract",
     description:
@@ -80,101 +80,99 @@ export const extractCommand = defineCommand({
     },
   },
   async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const type = typeof args.type === "string" ? args.type.trim() : "";
-      const sessionId = typeof args["session-id"] === "string" ? args["session-id"].trim() : "";
-      const location = typeof args.location === "string" ? args.location.trim() : "";
-      const since = typeof args.since === "string" ? args.since.trim() : "";
-      const auto = args.auto === true;
-      const dryRun = args["dry-run"] === true;
-      const force = args.force === true;
-      const timeoutMs =
-        typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
-          ? Number.parseInt(args["timeout-ms"], 10)
-          : undefined;
-      if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
-        throw new UsageError(
-          `--timeout-ms must be a positive integer (got "${args["timeout-ms"]}").`,
-          "INVALID_FLAG_VALUE",
-        );
-      }
+    const type = getStringArg(args, "type") ?? "";
+    const sessionId = getStringArg(args, "session-id") ?? "";
+    const location = getStringArg(args, "location") ?? "";
+    const since = getStringArg(args, "since") ?? "";
+    const auto = args.auto === true;
+    const dryRun = args["dry-run"] === true;
+    const force = args.force === true;
+    const timeoutMs =
+      typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
+        ? Number.parseInt(args["timeout-ms"], 10)
+        : undefined;
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+      throw new UsageError(
+        `--timeout-ms must be a positive integer (got "${args["timeout-ms"]}").`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
 
-      const watch = args.watch === true;
-      const debounceMs =
-        typeof args["debounce-ms"] === "string" && args["debounce-ms"] !== ""
-          ? Number.parseInt(args["debounce-ms"], 10)
-          : 2000;
-      if (watch && (!Number.isFinite(debounceMs) || debounceMs <= 0)) {
-        throw new UsageError(
-          `--debounce-ms must be a positive integer (got "${args["debounce-ms"]}").`,
-          "INVALID_FLAG_VALUE",
-        );
-      }
+    const watch = args.watch === true;
+    const debounceMs =
+      typeof args["debounce-ms"] === "string" && args["debounce-ms"] !== ""
+        ? Number.parseInt(args["debounce-ms"], 10)
+        : 2000;
+    if (watch && (!Number.isFinite(debounceMs) || debounceMs <= 0)) {
+      throw new UsageError(
+        `--debounce-ms must be a positive integer (got "${args["debounce-ms"]}").`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
 
-      if (watch) {
-        await runWatchMode({ debounceMs, dryRun, force, ...(since ? { since } : {}) });
-        return;
-      }
+    if (watch) {
+      await runWatchMode({ debounceMs, dryRun, force, ...(since ? { since } : {}) });
+      return;
+    }
 
-      if (auto && type) {
-        throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
-      }
-      if (!auto && !type) {
-        throw new UsageError(
-          "--type is required (or pass --auto to try every available harness).",
-          "MISSING_REQUIRED_ARGUMENT",
-        );
-      }
+    if (auto && type) {
+      throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
+    }
+    if (!auto && !type) {
+      throw new UsageError(
+        "--type is required (or pass --auto to try every available harness).",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
 
-      const commonOptions = {
-        ...(sessionId ? { sessionId } : {}),
-        ...(location ? { location } : {}),
-        ...(since ? { since } : {}),
-        dryRun,
-        force,
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      };
+    const commonOptions = {
+      ...(sessionId ? { sessionId } : {}),
+      ...(location ? { location } : {}),
+      ...(since ? { since } : {}),
+      dryRun,
+      force,
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    };
 
-      if (auto) {
-        const harnesses = getAvailableHarnesses();
-        if (harnesses.length === 0) {
-          output("extract", {
-            schemaVersion: 1,
-            ok: false,
-            shape: "extract-auto-result" as const,
-            warnings: ["no available harnesses found on this machine"],
-            results: [] as AkmExtractResult[],
-          });
-          return;
-        }
-        const results: AkmExtractResult[] = [];
-        for (const h of harnesses) {
-          const result = await akmExtract({ type: h.name, ...commonOptions });
-          results.push(result);
-        }
-        const ok = results.every((r) => r.ok);
-        const totalProposals = results.reduce((sum, r) => sum + r.proposals.length, 0);
+    if (auto) {
+      const harnesses = getAvailableHarnesses();
+      if (harnesses.length === 0) {
         output("extract", {
           schemaVersion: 1,
-          ok,
+          ok: false,
           shape: "extract-auto-result" as const,
-          dryRun,
-          harnessesProcessed: results.length,
-          totalProposals,
-          results,
+          warnings: ["no available harnesses found on this machine"],
+          results: [] as AkmExtractResult[],
         });
-        // Signal failure to callers/cron when every harness failed. output()
-        // only renders; without this the */30 cron exits 0 on a total failure
-        // and the breakage is invisible to exit-code monitoring. process.exitCode
-        // (not process.exit) lets stdout flush and the watcher/timers settle.
-        if (!ok) process.exitCode = EXIT_CODES.GENERAL;
         return;
       }
+      const results: AkmExtractResult[] = [];
+      for (const h of harnesses) {
+        const result = await akmExtract({ type: h.name, ...commonOptions });
+        results.push(result);
+      }
+      const ok = results.every((r) => r.ok);
+      const totalProposals = results.reduce((sum, r) => sum + r.proposals.length, 0);
+      output("extract", {
+        schemaVersion: 1,
+        ok,
+        shape: "extract-auto-result" as const,
+        dryRun,
+        harnessesProcessed: results.length,
+        totalProposals,
+        results,
+      });
+      // Signal failure to callers/cron when every harness failed. output()
+      // only renders; without this the */30 cron exits 0 on a total failure
+      // and the breakage is invisible to exit-code monitoring. process.exitCode
+      // (not process.exit) lets stdout flush and the watcher/timers settle.
+      if (!ok) process.exitCode = EXIT_CODES.GENERAL;
+      return;
+    }
 
-      const result = await akmExtract({ type, ...commonOptions });
-      output("extract", result);
-      if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
-    });
+    const result = await akmExtract({ type, ...commonOptions });
+    output("extract", result);
+    if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
   },
 });
 

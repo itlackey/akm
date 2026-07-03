@@ -5,15 +5,13 @@
 /**
  * state.db — Durable SQLite database for non-regenerable akm state.
  *
- * This module is the OWNER of the state database's open/loan/transaction recipe
- * and the BARREL for its per-domain repositories. The table-specific query
- * helpers were split by domain into `src/storage/repositories/*-repository.ts`
- * (events, proposals, task-history, improve-runs, extract-sessions,
- * consolidation, recombine, embeddings, canaries) and are re-exported below so
- * the ~two-dozen importers keep resolving unchanged. What remains here is only
- * the shared infrastructure every repository sits on: path resolution, the
- * managed-db open/loan wrappers, the migration re-export, the
- * `BEGIN IMMEDIATE` transaction helper, and schema introspection.
+ * This module OWNS the state database's shared infrastructure: path resolution,
+ * the managed-db open/loan wrappers, the `BEGIN IMMEDIATE` transaction helper,
+ * and schema introspection. The table-specific query helpers live by domain in
+ * `src/storage/repositories/*-repository.ts` (events, proposals, task-history,
+ * improve-runs, extract-sessions, consolidation, recombine, embeddings,
+ * canaries); importers reference those modules directly. The migration engine
+ * lives in `./state/migrations`.
  *
  * The state DB replaces flat-file storage for data that is NON-REGENERABLE —
  * events (events.jsonl), proposals (per-uuid JSON directories), task history
@@ -63,25 +61,6 @@ import path from "node:path";
 import type { Database, SqlValue } from "../storage/database";
 import { openManagedDatabase, withManagedDb, withManagedDbAsync } from "../storage/managed-db";
 import { getDataDir } from "./paths";
-
-// ── Domain repositories (barrel re-export) ───────────────────────────────────
-//
-// The table-specific query helpers live in per-domain repository modules under
-// src/storage/repositories. Re-exported here (a pure move) so the existing
-// importers of core/state-db keep resolving every symbol unchanged.
-export * from "../storage/repositories/canaries-repository";
-export * from "../storage/repositories/consolidation-repository";
-export * from "../storage/repositories/embeddings-repository";
-export * from "../storage/repositories/events-repository";
-export * from "../storage/repositories/extract-sessions-repository";
-export * from "../storage/repositories/improve-runs-repository";
-export * from "../storage/repositories/proposals-repository";
-export * from "../storage/repositories/recombine-repository";
-export * from "../storage/repositories/task-history-repository";
-// Re-export the boundary Database type so command modules can type their repo
-// parameters against the owner module rather than reaching into the runtime
-// boundary directly.
-export type { Database };
 
 // ── Path helper ──────────────────────────────────────────────────────────────
 
@@ -154,10 +133,8 @@ export function withStateDbAsync<T>(
 //
 // The MIGRATIONS registry + runMigrations live in ./state/migrations (the single
 // append-only ordered source of truth). Imported for internal use by
-// openStateDatabase + re-exported so existing importers keep resolving.
+// openStateDatabase.
 import { runMigrations } from "./state/migrations";
-
-export { runMigrations } from "./state/migrations";
 
 // ── BEGIN IMMEDIATE transaction helper ───────────────────────────────────────
 

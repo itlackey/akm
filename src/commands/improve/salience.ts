@@ -49,9 +49,8 @@
 
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
-import type { Database } from "../../core/state-db";
 import { getAllEntries, getUtilityScoresByIds } from "../../indexer/db/db";
-import type { Database as IndexDatabase } from "../../storage/database";
+import type { Database, Database as IndexDatabase } from "../../storage/database";
 import { WARM_START_CAP } from "./outcome-loop";
 
 // ── One day in ms ─────────────────────────────────────────────────────────────

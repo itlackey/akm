@@ -19,7 +19,8 @@ import {
 } from "../../../src/commands/improve/dedup";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { getBodyEmbeddings, openStateDatabase, upsertBodyEmbeddings } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
+import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../../src/storage/repositories/embeddings-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

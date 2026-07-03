@@ -8,14 +8,9 @@
  * src/storage/repositories. These exercise the relocated functions from their
  * NEW module paths with ZERO database — the whole point of the split was making
  * these unit-testable without an open connection.
- *
- * A second block asserts the core/state-db barrel still re-exports the same
- * symbols, so the ~two-dozen importers that reach them through the owner module
- * keep resolving after the move.
  */
 
 import { describe, expect, test } from "bun:test";
-import * as stateDbBarrel from "../../src/core/state-db";
 import { blobToEmbedding, embeddingToBlob } from "../../src/storage/repositories/embeddings-repository";
 import { type EventRow, eventRowToEnvelope } from "../../src/storage/repositories/events-repository";
 import type { ExtractedSessionRow } from "../../src/storage/repositories/extract-sessions-repository";
@@ -88,25 +83,5 @@ describe("extract-sessions-repository.shouldSkipAlreadyExtractedSession (pure, n
   test("equal hash → skip (true); differing hash → reprocess (false)", () => {
     expect(shouldSkipAlreadyExtractedSession(base, "H")).toBe(true);
     expect(shouldSkipAlreadyExtractedSession(base, "H2")).toBe(false);
-  });
-});
-
-describe("core/state-db barrel re-exports repository symbols", () => {
-  test("representative symbols from each split module resolve through the owner", () => {
-    for (const name of [
-      "eventRowToEnvelope",
-      "insertEvent",
-      "proposalRowToProposal",
-      "upsertProposal",
-      "queryTaskHistory",
-      "computeImproveRunMetrics",
-      "shouldSkipAlreadyExtractedSession",
-      "upsertConsolidationJudged",
-      "recordRecombineInduction",
-      "embeddingToBlob",
-      "getActiveCanaries",
-    ]) {
-      expect(typeof (stateDbBarrel as Record<string, unknown>)[name]).toBe("function");
-    }
   });
 });

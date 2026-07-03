@@ -50,7 +50,7 @@ import { executeRunner } from "../../integrations/agent/runner-dispatch";
 import type { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject } from "./proposal";
-import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./validators/proposals";
+import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./repository";
 
 // ---------------------------------------------------------------------------
 // Types

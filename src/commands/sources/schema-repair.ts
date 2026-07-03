@@ -26,7 +26,7 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { info } from "../../core/warn";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
-import { createProposal, isProposalSkipped } from "../proposal/validators/proposals";
+import { createProposal, isProposalSkipped } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

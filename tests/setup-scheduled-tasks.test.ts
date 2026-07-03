@@ -17,7 +17,8 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _setClackForTests } from "../src/cli/clack";
-import * as setupModule from "../src/setup/setup";
+import { buildSetupSteps } from "../src/setup/setup";
+import { stepScheduledTasks } from "../src/setup/steps/tasks";
 import { overrideSeam } from "./_helpers/seams";
 
 const CANCEL = Symbol("clack:cancel");
@@ -91,7 +92,7 @@ describe("stepScheduledTasks", () => {
 
   test("lists all 7 embedded tasks with id, description, and schedule in the multiselect", async () => {
     const { deps } = makeDeps([]);
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     const opts = state.multiselectConfig?.options ?? [];
     expect(opts.length).toBe(7);
     const improve = opts.find((o) => o.value === "improve");
@@ -107,7 +108,7 @@ describe("stepScheduledTasks", () => {
       { id: "backup", enabled: false },
     ]);
     state.multiselectReturn = ["improve"]; // leave selection unchanged
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     expect(state.multiselectConfig?.initialValues).toEqual(["improve"]);
     const opts = state.multiselectConfig?.options ?? [];
     expect(opts.find((o) => o.value === "backup")?.hint).toContain("disabled");
@@ -118,7 +119,7 @@ describe("stepScheduledTasks", () => {
     const { deps, calls } = makeDeps([]);
     state.multiselectReturn = ["sync"];
     state.textReturns = ["*/15 * * * *"]; // accept default schedule
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     expect(calls.added).toEqual([{ id: "sync", schedule: "*/15 * * * *", command: "akm sync" }]);
     expect(calls.syncCalls).toBe(1);
     expect(calls.gitSyncCalls).toBe(1);
@@ -129,14 +130,14 @@ describe("stepScheduledTasks", () => {
     const { deps, calls } = makeDeps([]);
     state.multiselectReturn = ["extract"];
     state.textReturns = ["0 5 * * *"]; // user edits the schedule
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     expect(calls.added).toEqual([{ id: "extract", schedule: "0 5 * * *", command: "akm extract" }]);
   });
 
   test("unchecking a previously-enabled task disables it (no add, keeps file)", async () => {
     const { deps, calls } = makeDeps([{ id: "improve", enabled: true }]);
     state.multiselectReturn = []; // uncheck improve
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     expect(calls.enabled).toEqual([{ id: "improve", enabled: false }]);
     expect(calls.added).toEqual([]);
     expect(calls.syncCalls).toBe(0);
@@ -145,7 +146,7 @@ describe("stepScheduledTasks", () => {
   test("re-checking a present-but-disabled task re-enables it", async () => {
     const { deps, calls } = makeDeps([{ id: "backup", enabled: false }]);
     state.multiselectReturn = ["backup"];
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     expect(calls.enabled).toEqual([{ id: "backup", enabled: true }]);
     expect(calls.added).toEqual([]);
   });
@@ -153,7 +154,7 @@ describe("stepScheduledTasks", () => {
   test("no state change produces no add/enable/disable/sync calls", async () => {
     const { deps, calls } = makeDeps([{ id: "improve", enabled: true }]);
     state.multiselectReturn = ["improve"]; // unchanged
-    await setupModule.stepScheduledTasks(deps);
+    await stepScheduledTasks(deps);
     expect(calls.added).toEqual([]);
     expect(calls.enabled).toEqual([]);
     expect(calls.syncCalls).toBe(0);
@@ -163,7 +164,7 @@ describe("stepScheduledTasks", () => {
 
 describe("scheduled-tasks step registration", () => {
   test("is interactive-only (not nonInteractive) so --yes / init skip it", () => {
-    const { steps } = setupModule.buildSetupSteps({
+    const { steps } = buildSetupSteps({
       online: false,
       semanticSearchOutcome: { mode: "off", prepareAssets: false },
     });

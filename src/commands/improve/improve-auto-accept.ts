@@ -25,10 +25,11 @@
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
-import { getPhaseThreshold, withStateDb } from "../../core/state-db";
+import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
-import type { Proposal } from "../proposal/validators/proposals";
-import { getProposal, promoteProposal, recordGateDecision } from "../proposal/validators/proposals";
+import { getPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
+import type { Proposal } from "../proposal/repository";
+import { getProposal, promoteProposal, recordGateDecision } from "../proposal/repository";
 
 async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);

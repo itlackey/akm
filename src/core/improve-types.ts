@@ -386,7 +386,7 @@ export interface AkmImproveResult {
    * improve_cycle_metrics row), present when this run qualified (consolidate
    * processed work or recombine formed clusters) and the detector is enabled.
    */
-  cycleMetrics?: import("./state-db").CycleMetricsRow;
+  cycleMetrics?: import("../storage/repositories/canaries-repository").CycleMetricsRow;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and

@@ -24,7 +24,7 @@ import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { getHyphenatedBoolean, parseFlagValue } from "../../output/context";
+import { parseFlagValue } from "../../output/context";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import type { SourceKind } from "../../sources/types";
 import { pkgVersion } from "../../version";
@@ -133,8 +133,8 @@ export const upgradeCommand = defineJsonCommand({
       output("upgrade", check);
       return;
     }
-    const skipChecksum = getHyphenatedBoolean(args, "skip-checksum");
-    const skipPostUpgrade = getHyphenatedBoolean(args, "skip-post-upgrade");
+    const skipChecksum = args["skip-checksum"];
+    const skipPostUpgrade = args["skip-post-upgrade"];
     const result = await performUpgrade(check, { force: args.force, skipChecksum, skipPostUpgrade });
     output("upgrade", result);
   },
