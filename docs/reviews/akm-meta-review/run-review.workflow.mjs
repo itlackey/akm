@@ -18,7 +18,9 @@ export const meta = {
 // The script has no filesystem access, so agents Read the prompt file
 // themselves — the NN-slug.md file stays the single source of truth.
 // ─────────────────────────────────────────────────────────────────────────────
-
+const SMALL_MODEL = 'sonnet' // cheap, read-only, high-context
+const LARGE_MODEL = 'fable' // judgment, design, writing
+const MEDIUM_MODEL = 'opus' // challenge judgments and designs
 const DIR = 'docs/reviews/akm-meta-review'
 const promptPath = (slug) => `${DIR}/${slug}.md`
 const findingsPath = (slug) => `${DIR}/findings/${slug}.md`
@@ -90,7 +92,7 @@ function gather(slug, bucket) {
       `Your assigned bucket: "${bucket.label}".\n${bucket.focus}\n\n` +
       (refs ? `Start from these refs/paths (Read them, follow leads, run read-only inspection):\n${refs}\n\n` : '') +
       `Return a dense factual bundle: concrete file:line pointers, exact numbers from read-only DB/CLI queries, verbatim paths/quotes. Mark verified=false for anything you could not actually confirm. This feeds the analysis phase, which cannot see the files you saw — so be complete and specific.`,
-    { agentType: 'Explore', model: 'sonnet', phase: 'Gather', label: `gather:${slug}:${bucket.label}`, schema: EVIDENCE_SCHEMA },
+    { agentType: 'Explore', model: SMALL_MODEL, phase: 'Gather', label: `gather:${slug}:${bucket.label}`, schema: EVIDENCE_SCHEMA },
   )
 }
 
@@ -103,7 +105,7 @@ function analyze(slug, spec, evidence) {
       `${JSON.stringify(evidence)}\n\n` +
       `Apply the prompt's judgment. Verdict vocabulary for this review: ${spec.dims.join(' / ')}.\n${spec.analyzeFocus}\n\n` +
       `Argue each KEEP verdict as hard as each KILL. Rank findings by how much they cost, most-important first. Every finding must cite the gathered evidence (a location/number), not vibes. Prefer fixes that subtract.`,
-    { model: 'fable', phase: 'Analyze', label: `analyze:${slug}`, schema: ANALYSIS_SCHEMA },
+    { model: LARGE_MODEL, phase: 'Analyze', label: `analyze:${slug}`, schema: ANALYSIS_SCHEMA },
   )
 }
 
@@ -114,7 +116,7 @@ function verify(slug, spec, analysis) {
       `Here is the analysis produced so far:\n${JSON.stringify(analysis)}\n\n` +
       `${spec.adversarialFocus}\n\n` +
       `Be a hostile reviewer. For each finding: is the verdict actually supported by the cited evidence, or is it a strawman / over-claim? What did the analysis MISS entirely? Return a short critique: (a) findings to downgrade or cut and why, (b) missing findings the analysis should have made, (c) the single strongest counter-argument. Default to skepticism.`,
-    { model: 'fable', phase: 'Verify', label: `verify:${slug}` },
+    { model: MEDIUM_MODEL, phase: 'Verify', label: `verify:${slug}` },
   )
 }
 
@@ -128,7 +130,7 @@ function synthesize(slug, spec, analysis, critique) {
       `Write the findings document to ${findingsPath(slug)} using the Write tool, matching the output structure the prompt specifies exactly (tables, rankings, dispositions). Keep it evidence-dense and subtraction-biased.\n\n` +
       `IMPORTANT: ${findingsPath(slug)} is LOCAL-ONLY and may contain security-sensitive facts — it must never be committed (a .gitignore rule covers it). Do not stage or commit anything.\n\n` +
       `Return only a short summary for the owner: the headline finding, the top 3 dispositions, and any owner-decision needed. Do NOT return the whole document.`,
-    { model: 'fable', phase: 'Synthesize', label: `synth:${slug}` },
+    { model: LARGE_MODEL, phase: 'Synthesize', label: `synth:${slug}` },
   )
 }
 
