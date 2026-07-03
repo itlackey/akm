@@ -25,7 +25,6 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
-import { cacheHash, type DedupConfig, runDeterministicDedup, stripFrontmatterBody } from "./dedup";
 import {
   type AntiCollapseConfig,
   checkGenerationGuard,
@@ -33,8 +32,9 @@ import {
   checkMergeInformationFloor,
   computeMergedGeneration,
   readAssetGeneration,
-  shouldSkipHotProbationInLlm,
-} from "./homeostatic";
+} from "./anti-collapse";
+import { cacheHash, type DedupConfig, runDeterministicDedup, stripFrontmatterBody } from "./dedup";
+import { shouldSkipHotProbationInLlm } from "./hot-probation";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.

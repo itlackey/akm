@@ -53,7 +53,7 @@ import {
   searchFts,
 } from "../../indexer/db/db";
 import type { Database as IndexDatabase } from "../../storage/database";
-import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./homeostatic";
+import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./anti-collapse";
 import { getAllRankScores } from "./salience";
 
 // ── Defaults (mirrored in config-schema.ts ImproveCollapseDetectorSchema) ────

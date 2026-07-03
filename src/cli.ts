@@ -84,13 +84,8 @@ import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { graphCommand } from "./commands/graph/graph-cli";
-import {
-  akmHealth,
-  parseWindowSpec,
-  renderRunsDetailMd,
-  renderWindowCompareMd,
-  type WindowSpec,
-} from "./commands/health";
+import { akmHealth, parseWindowSpec, type WindowSpec } from "./commands/health";
+import { renderRunsDetailMd, renderWindowCompareMd } from "./commands/health/md-report";
 import { extractCommand } from "./commands/improve/extract-cli";
 import { improveCommand } from "./commands/improve/improve-cli";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";

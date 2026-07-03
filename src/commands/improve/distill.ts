@@ -85,9 +85,9 @@ import {
 } from "../proposal/validators/proposals";
 import { akmSearch } from "../read/search";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
+import { buildClsContext, checkDistillFidelity } from "./distill-guards";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
-import { buildClsContext, checkDistillFidelity } from "./homeostatic";
 import { computeSalience, upsertAssetSalience } from "./salience";
 
 // ── Types ───────────────────────────────────────────────────────────────────

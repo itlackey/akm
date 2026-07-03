@@ -27,7 +27,7 @@ import {
   DEFAULT_SCHEMA_SIMILARITY_EPSILON,
   isSchemaConsistent,
   loadDerivedLayerEmbeddings,
-} from "../../../src/commands/improve/homeostatic";
+} from "../../../src/commands/improve/schema-similarity-gate";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { SessionData, SessionLogHarness, SessionSummary } from "../../../src/integrations/session-logs/types";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
