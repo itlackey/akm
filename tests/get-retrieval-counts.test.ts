@@ -16,6 +16,9 @@ import type { Database as AkmDatabase } from "../src/storage/database";
  *      entry_ref spellings both match a bare input ref (and aggregate together).
  *   2. `curate` events count alongside `search` / `show`.
  *   3. NULL entry_ref rows (legacy curate summary rows) contribute nothing.
+ *   4. Machine-sourced events (source = 'improve' or 'task') are EXCLUDED —
+ *      this count feeds salience/ranking and pipeline probe traffic must not
+ *      register as demand (meta-review 05 DRIFT-6).
  */
 describe("getRetrievalCounts", () => {
   let db: AkmDatabase;
@@ -29,10 +32,11 @@ describe("getRetrievalCounts", () => {
     db.close();
   });
 
-  function seed(eventType: string, entryRef: string | null): void {
-    db.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, 'user')").run(
+  function seed(eventType: string, entryRef: string | null, source = "user"): void {
+    db.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, ?)").run(
       eventType,
       entryRef,
+      source,
     );
   }
 
@@ -79,5 +83,30 @@ describe("getRetrievalCounts", () => {
 
   test("empty input returns an empty map", () => {
     expect(getRetrievalCounts(db, []).size).toBe(0);
+  });
+
+  test("excludes machine-sourced events (improve, task) from counts", () => {
+    seed("search", "skill:probe", "user");
+    seed("search", "skill:probe", "improve"); // improve-loop probe — excluded
+    seed("curate", "skill:probe", "task"); // task-runner traffic — excluded
+
+    const counts = getRetrievalCounts(db, ["skill:probe"]);
+    expect(counts.get("skill:probe")).toBe(1);
+  });
+
+  test("a ref retrieved ONLY by the pipeline registers no demand at all", () => {
+    seed("search", "lesson:machine-only", "improve");
+    seed("show", "lesson:machine-only", "task");
+
+    const counts = getRetrievalCounts(db, ["lesson:machine-only"]);
+    expect(counts.has("lesson:machine-only")).toBe(false);
+  });
+
+  test("unknown future sources count as demand (exclusion list, not allowlist)", () => {
+    // e.g. a later 'hook' source for agent-session traffic must keep counting.
+    seed("show", "agent:reviewer", "hook");
+
+    const counts = getRetrievalCounts(db, ["agent:reviewer"]);
+    expect(counts.get("agent:reviewer")).toBe(1);
   });
 });

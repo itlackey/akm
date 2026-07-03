@@ -55,6 +55,7 @@ import {
   computeProxyAdequacy,
   getAllAssetOutcomes,
   getOutcomeScoresByRef,
+  OUTCOME_SCORE_MAX,
   outcomeScoreToSalience,
   updateAssetOutcome,
 } from "./outcome-loop";
@@ -1571,9 +1572,14 @@ export async function runImprovePreparationStage(args: {
           for (const row of allOutcomes) {
             if (row.outcome_score > maxOutcomeScore) maxOutcomeScore = row.outcome_score;
           }
+          // Read-clip: legacy rows written before the OUTCOME_SCORE_MAX write-clip
+          // existed can sit above the ceiling (live max was 3.13). Without this
+          // clip they inflate the normalisation denominator and floor everyone
+          // else's outcomeSalience (#691 follow-up).
+          maxOutcomeScore = Math.min(maxOutcomeScore, OUTCOME_SCORE_MAX);
 
-          // Proxy-adequacy tripwire: emit a health event if outcome_score is
-          // negatively correlated with accepted_change_rate (inverted proxy).
+          // Proxy-adequacy tripwire (two-tailed): inverted (corr < −0.3) and
+          // dead (|corr| < 0.1 at n ≥ 500) both emit health events.
           const adequacy = computeProxyAdequacy(allOutcomes);
           if (adequacy.isInverted) {
             appendEvent(
@@ -1584,6 +1590,20 @@ export async function runImprovePreparationStage(args: {
                   correlation: adequacy.correlation,
                   n: adequacy.n,
                   note: "corr(outcome_score, accepted_change_rate) < −0.3: high-outcome_score assets have LOW accepted-change rates — the proxy's 'doing well' signal is inverted, so the coarse retrieval-delta signal is no longer trustworthy and the 0.10+ rich in-session signal is no longer deferrable. See plan §WS-2 proxy-adequacy tripwire.",
+                },
+              },
+              eventsCtx,
+            );
+          }
+          if (adequacy.isDead) {
+            appendEvent(
+              {
+                eventType: "outcome_proxy_dead",
+                ref: undefined,
+                metadata: {
+                  correlation: adequacy.correlation,
+                  n: adequacy.n,
+                  note: "|corr(outcome_score, accepted_change_rate)| < 0.1 at n ≥ 500: outcome_score is statistically unrelated to improvement outcomes — the proxy is noise, not signal. Rank contributions derived from it are not currently informative.",
                 },
               },
               eventsCtx,

@@ -25,7 +25,7 @@ import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key"
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
 import "../../sources/providers/index";
-import { insertUsageEvent } from "../../indexer/usage/usage-events";
+import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type {
   AkmSearchType,
   BeliefFilterMode,
@@ -89,7 +89,7 @@ export async function akmSearch(input: {
    * `"improve"` when called from improve's reflect/distill agents
    * so events can be filtered out of user-facing history.
    */
-  eventSource?: "user" | "improve";
+  eventSource?: UsageEventSource;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -306,7 +306,7 @@ function logSearchEvent(
   query: string,
   response: SearchResponse,
   mode: "semantic" | "keyword" = "keyword",
-  eventSource: "user" | "improve" = "user",
+  eventSource: UsageEventSource = "user",
   disableScopedUtility = false,
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
@@ -338,7 +338,12 @@ function logSearchEvent(
         }
         // Bump utility scores for all resolved entries (MemRL retrieval signal).
         // The indexer overwrites these at next reindex; bumps are temporary hints.
-        const resolvedIds = resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined);
+        // Gated to user-sourced events: pipeline searches (improve probes, task
+        // runner) must not feed the utility signal (meta-review 05 DRIFT-6 —
+        // the bump previously fired unconditionally, so even correctly-tagged
+        // machine traffic inflated utility).
+        const resolvedIds =
+          eventSource === "user" ? resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined) : [];
         if (resolvedIds.length > 0) {
           let scopeKey: string | undefined;
           try {

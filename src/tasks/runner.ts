@@ -193,6 +193,11 @@ async function runCommandTask(input: {
       stdout: "pipe",
       stderr: "pipe",
       cwd: process.env.HOME ?? "/tmp",
+      // Stamp task-runner provenance so any akm invocation in the command tree
+      // records usage events as machine traffic, not user demand (DRIFT-6).
+      // A more specific stamp already in the environment (e.g. improve's
+      // AKM_EVENT_SOURCE=improve on its child spawns) still wins in children.
+      env: { ...process.env, AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? "task" },
     });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -442,6 +447,10 @@ async function runPromptTask(input: {
     timeoutMs: agentTimeoutMs,
     cwd: stashDir,
     ...agentOptions,
+    // Stamp task-runner provenance for any akm invocation the agent makes
+    // (DRIFT-6: agent-task traffic must not be recorded as user demand).
+    // Caller-supplied env still wins on conflicts.
+    env: { AKM_EVENT_SOURCE: "task", ...agentOptions?.env },
   });
 
   const finishedAt = now();

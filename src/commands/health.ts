@@ -466,18 +466,28 @@ export interface ImproveHealthMetrics {
   degradation?: ImproveDegradationMetrics;
   /**
    * WS-5 denominator-fixed coverage (Part V §3).
-   * `coverage = accepted_proposals / total_assets` (denominator is fixed at
-   * total stash size, not the moving eligible set). `eligibleFraction` is
-   * reported separately so narrowing eligibility doesn't spuriously inflate
-   * coverage. Both are NaN when total_assets=0 (empty stash).
+   * `coverage = distinct_accepted_refs / total_assets` (denominator is fixed
+   * at total stash size, not the moving eligible set). The numerator counts
+   * DISTINCT refs, not proposals — repeated accepted rewrites of one asset
+   * are churn, not coverage, and previously inflated this rate.
+   * `eligibleFraction` is reported separately so narrowing eligibility doesn't
+   * spuriously inflate coverage. Rates are NaN when total_assets=0 (empty stash).
    */
   coverage: {
-    /** accepted_proposals / total_assets (fixed denominator). NaN when total=0. */
+    /** distinct_accepted_refs / total_assets (fixed denominator). NaN when total=0. */
     rate: number;
     /** eligible_assets / total_assets. NaN when total=0. */
     eligibleFraction: number;
-    /** Total proposals accepted (window-scoped, from state.db). */
+    /** Total proposals accepted (window-scoped, from state.db). Raw volume — includes churn. */
     acceptedProposals: number;
+    /** Distinct asset refs among the window's accepted proposals. */
+    distinctRefs: number;
+    /**
+     * acceptedProposals / distinctRefs. 1.0 = every accepted proposal touched
+     * a different asset; values above ~1.5 mean the loop is repeatedly
+     * rewriting the same assets (churn). NaN when distinctRefs=0.
+     */
+    churnRatio: number;
     /** Total stash assets at the time of the most recent run (whole-stash snapshot). */
     totalAssets: number;
   };
@@ -528,18 +538,21 @@ export interface ImproveDegradationMetrics {
    */
   entrenchmentFlagged?: boolean;
   /**
+   * Low-tail Gini flag: `true` when the top-100 retrieval_salience Gini is
+   * below 0.08 — the salience distribution has collapsed toward uniform and
+   * no longer discriminates between assets (ranking carries no signal).
+   * The uniform baseline for this formula is ~0.1, so a healthy distribution
+   * sits above it; the old one-tailed check (>0.35 entrenchment only)
+   * rendered a fully collapsed distribution as healthy.
+   * `undefined` when the metric is NaN.
+   */
+  salienceUniformityFlagged?: boolean;
+  /**
    * Merge fidelity: fraction of accepted merge proposals in the window whose
    * result was later contradicted (a proxy for "the merge degraded content").
    * 0 = no contradictions detected; higher = potential fidelity loss.
    */
   mergeFidelityContradictionRate: number;
-  /**
-   * Generation distribution: fraction of stash assets (memories) that are
-   * generation ≥ 2 (have been through at least one LLM-merge round).
-   * A healthy corpus has a low high-generation fraction; a rising fraction
-   * signals over-consolidation eroding original content.
-   */
-  highGenerationFraction: number;
   /**
    * Oracle spot-check: up to 5 recently accepted proposals sampled from the
    * window, surfaced for human eyeballing in the health report.
@@ -825,6 +838,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       rate: Number.NaN,
       eligibleFraction: Number.NaN,
       acceptedProposals: 0,
+      distinctRefs: 0,
+      churnRatio: Number.NaN,
       totalAssets: 0,
     },
   };
@@ -1869,6 +1884,7 @@ function computeDenominatorFixedCoverage(
   stashDir?: string,
 ): ImproveHealthMetrics["coverage"] {
   let acceptedProposals = 0;
+  let distinctRefs = 0;
   try {
     const proposals = listStateProposals(db, {
       status: "accepted",
@@ -1880,23 +1896,33 @@ function computeDenominatorFixedCoverage(
       return true;
     });
     acceptedProposals = proposals.length;
+    // Coverage counts DISTINCT refs: N accepted rewrites of one asset are
+    // churn, not coverage. The raw proposal count is kept alongside so the
+    // churn ratio (proposals ÷ distinct refs) stays visible.
+    distinctRefs = new Set(proposals.map((p) => p.ref)).size;
   } catch {
     // Fail open: table may not exist on older installs.
   }
+
+  const churnRatio = distinctRefs > 0 ? roundRate(acceptedProposals / distinctRefs) : Number.NaN;
 
   if (totalAssets === 0) {
     return {
       rate: Number.NaN,
       eligibleFraction: Number.NaN,
       acceptedProposals,
+      distinctRefs,
+      churnRatio,
       totalAssets: 0,
     };
   }
 
   return {
-    rate: roundRate(acceptedProposals / totalAssets),
+    rate: roundRate(distinctRefs / totalAssets),
     eligibleFraction: roundRate(eligibleAssets / totalAssets),
     acceptedProposals,
+    distinctRefs,
+    churnRatio,
     totalAssets,
   };
 }
@@ -1911,7 +1937,11 @@ function computeDenominatorFixedCoverage(
  * @param since - Window start (ISO-8601).
  * @param until - Window end (ISO-8601).
  */
-function computeDegradationMetrics(db: Database, since: string, until: string): ImproveDegradationMetrics | undefined {
+export function computeDegradationMetrics(
+  db: Database,
+  since: string,
+  until: string,
+): ImproveDegradationMetrics | undefined {
   // (a) Corpus diversity — salience rank distribution of the top-100 assets.
   // We use the Gini coefficient of retrieval_salience scores as an intra-corpus
   // diversity proxy. A Gini close to 1 = highly concentrated (entrenched top
@@ -1919,6 +1949,7 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
   // consecutive-run centroid distance requires cross-run history not yet stored.
   let corpusCentroidDistance = Number.NaN;
   let entrenchmentFlagged: boolean | undefined;
+  let salienceUniformityFlagged: boolean | undefined;
   try {
     const rows = db
       .prepare(
@@ -1939,9 +1970,13 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
       // corpusCentroidDistance approximation: gini is "distance from uniform".
       // Note: retrieval_salience values are in [0,1], so the max achievable Gini
       // with this formula is ~0.5 (when one asset dominates and others are near 0).
-      // Threshold: >0.35 flags entrenchment (robustly above the ~0.1 uniform baseline).
+      // Two-tailed: >0.35 flags entrenchment (robustly above the ~0.1 uniform
+      // baseline); <0.08 flags uniformity collapse — the distribution no longer
+      // discriminates between assets (live 2026-07 value 0.040 sat unflagged
+      // in this tail under the old one-tailed check).
       corpusCentroidDistance = roundRate(gini);
       entrenchmentFlagged = gini > 0.35;
+      salienceUniformityFlagged = gini < 0.08;
     }
   } catch {
     // Table not present (pre-WS-1 install) — leave NaN.
@@ -1979,24 +2014,11 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
     // Fail open.
   }
 
-  // (c) Generation distribution — fraction of asset_salience rows with
-  // generation >= 2. Generation is NOT currently stored in asset_salience
-  // (it's in frontmatter). We approximate using consecutive_no_ops as a
-  // maturity proxy: assets that have never been no-op'd are "fresh".
-  // TODO(0.10+): store generation in asset_salience for proper tracking.
-  let highGenerationFraction = Number.NaN;
-  try {
-    const genRows = db.prepare("SELECT consecutive_no_ops FROM asset_salience").all() as Array<{
-      consecutive_no_ops: number;
-    }>;
-    if (genRows.length > 0) {
-      // Use consecutive_no_ops >= 2 as a proxy for "has been through merge cycles".
-      const highGen = genRows.filter((r) => r.consecutive_no_ops >= 2).length;
-      highGenerationFraction = roundRate(highGen / genRows.length);
-    }
-  } catch {
-    // Table not present.
-  }
+  // (c) highGenerationFraction was DELETED (meta-review 05 DRIFT-3): it
+  // approximated "LLM-merge generations" from consecutive_no_ops — which counts
+  // the opposite condition (cycles where nothing was changed) — and its own
+  // in-code TODO admitted the proxy. Display-only, never actionable; removed
+  // rather than instrumented.
 
   // (d) Oracle spot-check — up to 5 recently accepted proposals in the window.
   const oracleSpotCheck: OracleSpotCheckEntry[] = [];
@@ -2025,8 +2047,8 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
   return {
     corpusCentroidDistance,
     entrenchmentFlagged,
+    salienceUniformityFlagged,
     mergeFidelityContradictionRate,
-    highGenerationFraction,
     oracleSpotCheck,
   };
 }
@@ -2251,6 +2273,57 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
           "Popular assets are also the most-needing-improvement assets — " +
           "the retrieval-based proxy is inverted. " +
           "The 0.10+ rich in-session outcome signal is no longer deferrable. See plan §WS-2.",
+      });
+    }
+
+    // Two-tailed companion: a proxy that decays to noise (|corr| < 0.1 at scale)
+    // is as much a failure as an inverted one — it just fails silently.
+    const proxyDeadEvents = readEvents({ since, type: "outcome_proxy_dead" }, { dbPath: stateDbPath, db }).events;
+    if (proxyDeadEvents.length > 0) {
+      const lastEvent = proxyDeadEvents[proxyDeadEvents.length - 1];
+      const correlation =
+        typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
+      advisories.push({
+        name: "outcome-proxy-dead",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `WS-2 outcome proxy is DEAD (${proxyDeadEvents.length} event(s) in window). ` +
+          `|corr(outcome_score, accepted_change_rate)| = ${correlation} < 0.1 at n ≥ 500. ` +
+          "outcome_score is statistically unrelated to improvement outcomes — " +
+          "treat outcome-derived rank contributions as noise until a real usage/outcome signal lands.",
+      });
+    }
+
+    // Salience-distribution collapse: Gini below the uniform baseline means
+    // ranking no longer discriminates between assets.
+    if (improveSummary.degradation?.salienceUniformityFlagged) {
+      advisories.push({
+        name: "salience-uniformity-collapse",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `Salience distribution collapsed toward uniform: top-100 retrieval_salience Gini = ` +
+          `${improveSummary.degradation.corpusCentroidDistance} < 0.08 (uniform baseline ≈ 0.1). ` +
+          "Ranking currently carries little to no discrimination between assets.",
+      });
+    }
+
+    // Churn: accepted proposals far exceeding distinct touched refs means the
+    // loop is repeatedly rewriting the same assets, not covering the corpus.
+    if (Number.isFinite(improveSummary.coverage.churnRatio) && improveSummary.coverage.churnRatio > 1.5) {
+      advisories.push({
+        name: "improve-churn-ratio",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `Improve churn ratio ${improveSummary.coverage.churnRatio} > 1.5: ` +
+          `${improveSummary.coverage.acceptedProposals} accepted proposals touched only ` +
+          `${improveSummary.coverage.distinctRefs} distinct assets in the window — ` +
+          "repeated rewrites of the same refs count as churn, not coverage.",
       });
     }
 

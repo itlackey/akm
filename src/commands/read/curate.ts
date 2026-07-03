@@ -24,7 +24,7 @@ import { appendEvent } from "../../core/events";
 import { computeBodyHash } from "../../indexer/db/db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
-import { insertUsageEvent } from "../../indexer/usage/usage-events";
+import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { truncateDescription } from "../../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
@@ -84,6 +84,12 @@ export interface CurateOptions {
    * `akmCurate` skips its IO and curates this fixture directly.
    */
   searchResponse?: SearchResponse;
+  /**
+   * Usage-event provenance for telemetry. Defaults to `"user"`. The CLI passes
+   * the AKM_EVENT_SOURCE-derived value so pipeline/task-runner curates are not
+   * recorded as user demand (was previously hardcoded to "user").
+   */
+  eventSource?: UsageEventSource;
 }
 
 const CURATE_FALLBACK_FILTER_WORDS = new Set([
@@ -142,7 +148,7 @@ const CURATE_REFERENCE_QUERY_RE = /\b(?:reference|docs?|guide|how|explain|learn|
  * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
  * Never blocks the caller; errors are silently ignored.
  */
-function logCurateEvent(query: string, result: CurateResponse): void {
+function logCurateEvent(query: string, result: CurateResponse, eventSource: UsageEventSource = "user"): void {
   const itemRefs = result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`));
   appendEvent({
     eventType: "curate",
@@ -159,7 +165,7 @@ function logCurateEvent(query: string, result: CurateResponse): void {
             itemCount: result.items.length,
             itemRefs,
           }),
-          source: "user",
+          source: eventSource,
         });
         for (const item of result.items) {
           if (!("ref" in item) || typeof item.ref !== "string") continue;
@@ -167,7 +173,7 @@ function logCurateEvent(query: string, result: CurateResponse): void {
             event_type: "curate",
             query,
             entry_ref: item.ref,
-            source: "user",
+            source: eventSource,
           });
         }
       },
@@ -198,7 +204,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       source,
     }));
   const result = await curateSearchResults(options.query, searchResponse, limit, options.type);
-  logCurateEvent(options.query, result);
+  logCurateEvent(options.query, result, options.eventSource);
   return result;
 }
 

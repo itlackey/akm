@@ -36,7 +36,7 @@ import { lookup } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search/search-source";
-import { insertUsageEvent } from "../../indexer/usage/usage-events";
+import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../indexer/walk/file-context";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
@@ -139,7 +139,7 @@ export async function akmShowUnified(input: {
    * `"improve"` when called from improve's reflect/distill agents
    * so events can be filtered out of user-facing history.
    */
-  eventSource?: "user" | "improve";
+  eventSource?: UsageEventSource;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
@@ -298,7 +298,7 @@ function recentShowCount(ref: string): number {
   }
 }
 
-function logShowEvent(ref: string, eventSource: "user" | "improve" = "user"): void {
+function logShowEvent(ref: string, eventSource: UsageEventSource = "user"): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
   const parsed = parseAssetRef(ref);
