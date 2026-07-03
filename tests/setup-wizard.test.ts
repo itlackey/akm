@@ -3,26 +3,14 @@
  * - onCancel: Escape on confirmation should stay, not exit
  * - stepAddSources: recommended GitHub repos multiselect, cancel returns to menu
  */
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { _setClackForTests } from "../src/cli/clack";
 import { _setLoadSetupStashesForTests } from "../src/setup/registry-stash-loader";
+import * as setupModule from "../src/setup/setup";
+import * as stepsModule from "../src/setup/steps";
 import { overrideSeam } from "./_helpers/seams";
 
-// @clack/prompts stays a mock.module by design (see docs/design/di-seams-plan.md,
-// "Deferred"): no src wrapper module fronts it, so there is no seam to use.
-// Capture the real module BEFORE installing the mock and restore it in
-// afterAll (same pattern as setup-scheduled-tasks and setup-run).
-const REAL_CLACK = await import("@clack/prompts");
-installPromptMock();
-afterAll(() => {
-  mock.module("@clack/prompts", () => REAL_CLACK);
-  mock.restore();
-});
-let setupModule: typeof import("../src/setup/setup");
-let stepsModule: typeof import("../src/setup/steps");
-
-// ── Mock plumbing ────────────────────────────────────────────────────────────
+// ── Prompt-fake plumbing (src/cli/clack seam via overrideSeam) ───────────────
 
 /** Sentinel returned by mocked prompts when simulating Escape / Ctrl-C. */
 const CANCEL = Symbol("clack:cancel");
@@ -72,7 +60,7 @@ const MOCK_SETUP_STASHES = [
 ];
 
 function installPromptMock() {
-  mock.module("@clack/prompts", () => ({
+  overrideSeam(_setClackForTests, {
     isCancel: (v: unknown) => v === CANCEL,
     cancel: (msg: string) => {
       q.logged.push(`[cancel] ${msg}`);
@@ -110,22 +98,13 @@ function installPromptMock() {
     note: (msg: string, title?: string) => {
       q.logged.push(`[note] ${title ?? ""} ${msg}`.trim());
     },
-  }));
+  });
 }
 
-async function reloadSetupModules() {
-  const setupUrl = pathToFileURL(path.join(import.meta.dir, "../src/setup/setup.ts")).href;
-  const stepsUrl = pathToFileURL(path.join(import.meta.dir, "../src/setup/steps.ts")).href;
-  setupModule = await import(`${setupUrl}?t=${Date.now()}-${Math.random()}`);
-  stepsModule = await import(`${stepsUrl}?t=${Date.now()}-${Math.random()}`);
-}
-
-async function resetHarness() {
-  mock.restore();
+function resetHarness() {
   reset();
   installPromptMock();
   overrideSeam(_setLoadSetupStashesForTests, async () => MOCK_SETUP_STASHES);
-  await reloadSetupModules();
 }
 
 // ── onCancel tests ───────────────────────────────────────────────────────────

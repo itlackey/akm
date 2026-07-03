@@ -5,12 +5,12 @@
 # `--isolate` is deliberately NOT passed (removed 2026-07-02 on the di-seams
 # branch). It was only ever needed because test files leaked `mock.module()`
 # state into sibling files in the same process. After the DI-seams refactor,
-# `mock.module` survives only in the three @clack/prompts setup suites, each of
-# which restores the real module in its own `afterAll` — verified by a
-# two-file probe (a `mock.module` in file A IS visible in file B otherwise;
-# `mock.restore()` does not clear module mocks) plus 13 consecutive green
-# full-suite runs without `--isolate`, including 4 concurrent runs under CPU
-# contention. Dropping `--isolate` also drops the Bun 1.3.x isolate/worker
+# `mock.module` is at ZERO across the tree (the last three @clack/prompts
+# suites migrated onto the src/cli/clack seam). Zero is mandatory: a two-file
+# probe proved a `mock.module` in file A IS visible in file B and
+# `mock.restore()` does NOT clear module mocks — so de-isolation is only
+# sound with no `mock.module` at all. Verified by repeated green full-suite
+# runs without `--isolate`, including concurrent runs under CPU contention. Dropping `--isolate` also drops the Bun 1.3.x isolate/worker
 # epoll_ctl EEXIST race that used to require a signature-gated retry here.
 # `--parallel` must never be passed either: per `bun test --help` it "implies
 # --isolate" (re-adding the racy path) even at N=1.

@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { _setClackForTests } from "../../src/cli/clack";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import { _setDefaultTasksForTests } from "../../src/commands/tasks/default-tasks";
 import { _setSaveConfigForTests } from "../../src/core/config/config";
@@ -11,6 +11,7 @@ import { _setAgentDetectForTests } from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { _setDetectForTests } from "../../src/setup/detect";
 import { _setLoadSetupStashesForTests, type SetupStashEntry } from "../../src/setup/registry-stash-loader";
+import { runSetupWizard } from "../../src/setup/setup";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
@@ -26,7 +27,7 @@ const DEFAULT_REGISTRY_URLS = [
   "https://skills.sh",
 ];
 
-// ── @clack/prompts mock (single file-local helper; mock.module by design) ────
+// ── @clack/prompts fake (single file-local helper; src/cli/clack seam) ───────
 //
 // The wizard consumes answers strictly in prompt order. Every consumed prompt
 // is recorded in `promptState.trace` ("[type] message -> answer"), so a
@@ -37,12 +38,6 @@ const DEFAULT_REGISTRY_URLS = [
 // Capture mode answers drained queues with safe defaults and prints the full
 // trace instead of throwing, so one run reveals the whole sequence.
 const CAPTURE = process.env.SETUP_RUN_CAPTURE === "1";
-
-const REAL_CLACK = await import("@clack/prompts");
-afterAll(() => {
-  mock.module("@clack/prompts", () => REAL_CLACK);
-  mock.restore();
-});
 
 const promptState = {
   confirms: [] as unknown[],
@@ -84,7 +79,7 @@ function takeAnswer(type: "confirm" | "select" | "multiselect" | "text", args: u
 }
 
 function installClackMock(): void {
-  mock.module("@clack/prompts", () => ({
+  overrideSeam(_setClackForTests, {
     isCancel: () => false,
     cancel: (message: string) => {
       promptState.logs.push(`[cancel] ${message}`);
@@ -124,7 +119,7 @@ function installClackMock(): void {
     note: (message: string, title?: string) => {
       promptState.notes.push(`${title ?? ""}\n${message}`.trim());
     },
-  }));
+  });
 }
 
 function makeIndexResult(): IndexResponse {
@@ -162,11 +157,6 @@ const setupState = {
   indexResult: makeIndexResult(),
   indexError: undefined as Error | undefined,
 };
-
-function loadSetupModule() {
-  const setupUrl = pathToFileURL(path.join(import.meta.dir, "../../src/setup/setup.ts")).href;
-  return import(`${setupUrl}?t=${Date.now()}-${Math.random()}`);
-}
 
 /** Read the config the wizard actually wrote to the sandboxed config path. */
 function readSavedConfig(): Record<string, unknown> {
@@ -281,7 +271,6 @@ beforeEach(() => {
   DEFAULT_STASH_DIR = storage.stashDir;
   DEFAULT_CONFIG_PATH = path.join(storage.configDir, "akm", "config.json");
   resetSetupState();
-  mock.restore();
   installDefaultTasksSeam();
 });
 
@@ -290,7 +279,6 @@ afterEach(() => {
   if (CAPTURE) {
     console.error(`[SETUP_RUN_CAPTURE] prompt trace:\n${promptState.trace.join("\n")}`);
   }
-  mock.restore();
   storage.cleanup();
 });
 
@@ -306,7 +294,6 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, false, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
     const saved = readSavedConfig();
@@ -329,7 +316,6 @@ describe("runSetupWizard", () => {
       message: "download blocked",
     };
 
-    const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
     expect(readSavedConfig().semanticSearchMode).toBe("auto");
@@ -347,7 +333,6 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
     setupState.indexError = new Error("index exploded");
 
-    const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
     expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(true);
@@ -387,7 +372,6 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
     promptState.texts.push("384");
 
-    const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
     expect(promptState.logs.some((entry) => entry.includes("remote embedding endpoint is not reachable"))).toBe(true);
@@ -410,7 +394,6 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, true, true, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
     expect(promptState.logs.some((entry) => entry.includes("Install it with: bun add @huggingface/transformers"))).toBe(
@@ -432,7 +415,6 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     try {
-      const { runSetupWizard } = await loadSetupModule();
       await runSetupWizard();
     } finally {
       if (priorTmpdir === undefined) delete process.env.TMPDIR;
@@ -450,7 +432,6 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, true, false, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    const { runSetupWizard } = await loadSetupModule();
     await runSetupWizard();
 
     expect(readSavedConfig().semanticSearchMode).toBe("auto");
@@ -470,7 +451,6 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, false, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    const { runSetupWizard } = await loadSetupModule();
     await expect(runSetupWizard()).rejects.toThrow("EACCES config.json");
     expect(saveCalls).toBe(1);
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
@@ -487,7 +467,6 @@ describe("runSetupWizard", () => {
     // akmInit throws before the wizard asks anything — no prompt queue needed
     // (the strict clack mock will fail loudly if a prompt is ever reached).
 
-    const { runSetupWizard } = await loadSetupModule();
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
     expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
     expect(setupState.indexCalls).toHaveLength(0);

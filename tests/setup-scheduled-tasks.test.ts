@@ -10,12 +10,15 @@
  * the copy-on-enable + sync behaviour are verified without touching the OS
  * scheduler or git.
  *
- * Only `@clack/prompts` is `mock.module`-ed (the same module the existing
- * setup-wizard test mocks); the task primitives and git-sync helper are passed
- * in via `stepScheduledTasks(deps)` to avoid leaking module overrides into
- * other test files.
+ * The clack prompt surface is swapped through the `src/cli/clack` seam
+ * (`overrideSeam` + `_setClackForTests` — restored automatically by the
+ * preload after every test); the task primitives and git-sync helper are
+ * passed in via `stepScheduledTasks(deps)`.
  */
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { _setClackForTests } from "../src/cli/clack";
+import * as setupModule from "../src/setup/setup";
+import { overrideSeam } from "./_helpers/seams";
 
 const CANCEL = Symbol("clack:cancel");
 
@@ -31,37 +34,26 @@ function resetClack() {
   state.multiselectReturn = [];
   state.textReturns = [];
   state.multiselectConfig = undefined;
+  overrideSeam(_setClackForTests, {
+    isCancel: (v: unknown) => v === CANCEL,
+    cancel: () => {},
+    multiselect: async (config: {
+      initialValues?: string[];
+      options: Array<{ value: string; label: string; hint?: string }>;
+    }) => {
+      state.multiselectConfig = { initialValues: config.initialValues, options: config.options };
+      return state.multiselectReturn;
+    },
+    text: async () => state.textReturns.shift() ?? "",
+    select: async () => "",
+    confirm: async () => false,
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    log: { info: () => {}, success: () => {}, warn: () => {}, step: () => {} },
+    intro: () => {},
+    outro: () => {},
+    note: () => {},
+  });
 }
-
-mock.module("@clack/prompts", () => ({
-  isCancel: (v: unknown) => v === CANCEL,
-  cancel: () => {},
-  multiselect: async (config: {
-    initialValues?: string[];
-    options: Array<{ value: string; label: string; hint?: string }>;
-  }) => {
-    state.multiselectConfig = { initialValues: config.initialValues, options: config.options };
-    return state.multiselectReturn;
-  },
-  text: async () => state.textReturns.shift() ?? "",
-  select: async () => "",
-  confirm: async () => false,
-  spinner: () => ({ start: () => {}, stop: () => {} }),
-  log: { info: () => {}, success: () => {}, warn: () => {}, step: () => {} },
-  intro: () => {},
-  outro: () => {},
-  note: () => {},
-}));
-
-// Restore the genuine `@clack/prompts` after this file so other suites that
-// rely on the real prompts (or their own clack mock) are unaffected.
-const REAL_CLACK = await import("@clack/prompts");
-afterAll(() => {
-  mock.module("@clack/prompts", () => REAL_CLACK);
-  mock.restore();
-});
-
-const setupModule = await import("../src/setup/setup");
 
 // ── Fake task primitives injected into the step ──────────────────────────────
 function makeDeps(installed: Array<{ id: string; enabled: boolean }>) {

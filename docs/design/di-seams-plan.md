@@ -310,8 +310,9 @@ perfect internal binding:
   `overrideSeam(_setLoadSetupStashesForTests, async () => fakeStashEntries)`.
   (Alternative considered: `withMockedFetch` against the real fetch path —
   rejected: couples the test to the registry JSON wire shape for no gain.)
-  NOTE: setup-wizard.test.ts also mocks `@clack/prompts` (:68) — that mock
-  STAYS (see deferred section); this file gets smaller, not seam-free.
+  NOTE: setup-wizard.test.ts also fakes `@clack/prompts` — originally deferred
+  as a kept `mock.module`, now migrated onto the `src/cli/clack` seam (see the
+  resolved deferred section at the bottom).
 
 ### 6. `src/tasks/backends` — 1 test file
 
@@ -447,33 +448,41 @@ params would be a call-site change (forbidden). Module seam:
 
 ---
 
-## Deferred
+## Deferred — RESOLVED (deferral is over)
 
-### `@clack/prompts` — DEFER (keep `mock.module`)
+### `@clack/prompts` — src seam SHIPPED (`src/cli/clack.ts`); `mock.module` is at ZERO
 
-Checked usage: four src files import it directly (`import * as p from
-"@clack/prompts"` in src/setup/setup.ts:17, src/commands/sources/add-cli.ts:7,
-src/cli/confirm.ts:40, src/commands/sources/stash-cli.ts:30). There is **no
-existing src wrapper module fronting it** — the closest precedent,
-`stepScheduledTasks(deps = DEFAULT_SCHEDULED_TASKS_DEPS)` (setup.ts:1961),
-injects task primitives, not the prompt surface. Giving it a seam would
-require either (a) a new `src/cli/prompts.ts` wrapper module + rewriting four
-production import sites, or (b) parameter-threading a prompt object — both
-violate the guardrails (no new wrappers/adapters, zero call-site changes), and
-we cannot add a `_set…ForTests` export to a third-party package.
+Originally deferred because seaming a third-party package needs a src-side
+wrapper module and the guardrails forbid new wrappers. The deferral was
+overturned by an adversarial review that BLOCKED landing the branch on proof:
 
-Decision: `tests/setup-scheduled-tasks.test.ts`, `tests/setup-wizard.test.ts`,
-and `tests/integration/setup-run.test.ts` KEEP their `@clack/prompts`
-`mock.module` blocks and therefore keep needing file isolation.
-Mitigations inside the test files (no src impact):
-- setup-run: hoist the 9 duplicated clack mocks into ONE file-local
-  `mockClack(answers)` helper (pure dedup, ~200 lines removed).
-- setup-scheduled-tasks already restores the real module in `afterAll`
-  (`mock.module(REAL_CLACK)` + `mock.restore()`) — keep that pattern; add the
-  same restore to setup-wizard and setup-run if absent.
+- **The leak proof made zero-mock mandatory.** A two-file probe showed Bun
+  `mock.module` registrations ARE visible in later test files in the same
+  process, and the preload's `mock.restore()` does NOT clear them. `--isolate`
+  was deleted on this branch (63a58d4a), and that deletion is only sound at
+  ZERO `mock.module` — three clack mocks was three too many.
+- **A latent restore bug existed by construction:** setup-scheduled-tasks
+  captured `REAL_CLACK` via `await import("@clack/prompts")` AFTER its fake
+  was installed, so the `afterAll` "restore" re-registered the fake. The
+  mock/restore dance cannot be made safe; only a seam deletes the bug class.
 
-Revisit only if the owner approves a first-class `src/cli/prompts.ts` facade
-as its own (separate, explicitly-scoped) refactor.
+Resolution (same pattern as the `@huggingface/transformers` loader seam in
+`src/llm/embedders/local.ts` — a third-party module gets its seam in src):
+
+- `src/cli/clack.ts` re-exports the clack surface the codebase uses (`intro`,
+  `outro`, `cancel`, `confirm`, `select`, `multiselect`, `text`, `spinner`,
+  `note`, `isCancel`, `log`) through call-time delegators over ONE binding,
+  with the canonical single `_setClackForTests(fake | undefined)` hook.
+- The four src importers (setup.ts, cli/confirm.ts, sources/add-cli.ts,
+  sources/stash-cli.ts) switched their import specifier to the seam —
+  import-specifier changes only, zero signature/behavior changes.
+- The three test files migrated onto `overrideSeam(_setClackForTests, …)`;
+  the REAL_CLACK capture/restore blocks and cache-busting dynamic module
+  reloads were deleted (static imports are safe again).
+
+Standing rule: `mock.module(` must never reappear in `tests/` (grep-enforced
+at review; the preload comment documents why). New third-party dependencies
+that tests need to fake get a src-side seam module like this one.
 
 ---
 

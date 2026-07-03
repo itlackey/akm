@@ -11,10 +11,11 @@
 #     `EEXIST epoll_ctl` race (#664). Never re-add it.
 #   - `--isolate` was only needed while test files leaked `mock.module()`
 #     state into siblings in the same process. After the DI-seams refactor,
-#     `mock.module` remains only in the three @clack/prompts setup suites,
-#     each restoring the real module in its own `afterAll`. Verified by a
-#     two-file leak probe plus 13 consecutive green full-suite runs without
-#     `--isolate` (including 4 concurrent runs under CPU contention).
+#     `mock.module` is at ZERO across the tree (the last three @clack/prompts
+#     suites now go through the src/cli/clack seam) — enforced by grep and
+#     required, because a two-file probe proved `mock.restore()` does NOT
+#     clear module mocks (they leak across files without --isolate).
+#     Verified by repeated green full-suite runs without `--isolate`.
 #     Dropping it removes the racy isolate machinery entirely and saves the
 #     per-file fresh-global overhead.
 #
