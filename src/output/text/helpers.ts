@@ -1077,6 +1077,19 @@ export function formatIndexPlain(r: Record<string, unknown>): string {
   if (verification?.ok === false && verification.message) {
     out += `\nVerification: ${String(verification.message)}`;
   }
+  const timing = indexResult.timing;
+  if (timing) {
+    out +=
+      `\nTiming: total ${timing.totalMs}ms` +
+      `, preflight ${timing.preflightMs}ms` +
+      `, walk ${timing.walkMs}ms` +
+      `, llm ${timing.llmMs}ms` +
+      `, embeddings ${timing.embedMs}ms` +
+      `, fts ${timing.ftsMs}ms` +
+      `, finalize ${timing.finalizeMs}ms` +
+      `, clean ${timing.cleanMs}ms` +
+      `, end-to-end ${timing.endToEndMs}ms`;
+  }
   return out;
 }
 

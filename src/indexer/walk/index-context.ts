@@ -26,6 +26,8 @@ export interface IndexTiming {
   tLlmEnd: number;
   tFtsEnd: number;
   tEmbedEnd: number;
+  tFinalizeStart: number;
+  tFinalizeEnd: number;
 }
 
 /**
@@ -47,7 +49,7 @@ export interface IndexVerification {
 
 /** Progress event emitted during indexing. Mirrors IndexProgressEvent in indexer.ts. */
 export interface IndexPhaseEvent {
-  phase: "summary" | "scan" | "llm" | "fts" | "embeddings" | "verify";
+  phase: "summary" | "preflight" | "scan" | "llm" | "embeddings" | "fts" | "finalize" | "verify";
   message: string;
   processed?: number;
   total?: number;
