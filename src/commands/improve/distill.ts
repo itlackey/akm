@@ -53,7 +53,6 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
@@ -61,7 +60,7 @@ import { assembleAssetFromString } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { resolveStashDir, timestampForFilename } from "../../core/common";
+import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -83,12 +82,29 @@ import {
   type Proposal,
   type ProposalsContext,
 } from "../proposal/validators/proposals";
-import { akmSearch } from "../read/search";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
+import {
+  autoRepairLessonFrontmatter,
+  autoSwapDescriptionWhenToUse,
+  collectLessonQualityFindings,
+  type DistillValidationFinding,
+  repairLessonDescriptionTruncation,
+} from "./distill/content-repair";
+import { promoteMemoryToKnowledge } from "./distill/promote-memory";
+import {
+  fetchTopSimilarLessons,
+  persistOutputEncodingSalience,
+  runLessonQualityJudge,
+  writeQualityRejection,
+} from "./distill/quality-gate";
 import { buildClsContext, checkDistillFidelity } from "./distill-guards";
-import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
+import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { computeSalience, upsertAssetSalience } from "./salience";
+
+// Re-exported for `reflect.ts`, which applies the same LLM-as-judge gate to
+// reflect proposals (R-5 / #374).
+export { runLessonQualityJudge };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -297,13 +313,6 @@ export function deriveLessonRef(inputRef: string): string {
   return `lesson:${safe}-lesson`;
 }
 
-interface DistillValidationFinding {
-  kind: string;
-  field: string;
-  message: string;
-}
-
-import { repairTruncatedDescription } from "../../core/text-truncation";
 // ── Content quality validators ──────────────────────────────────────────────
 //
 // The actual implementations now live in `core/proposal-quality-validators.ts`
@@ -635,256 +644,6 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   return lines.join("\n");
 }
 
-// ── D-4 / #390: Top-3 similar lessons retrieval ──────────────────────────────
-
-/**
- * Default implementation: use akmSearch to find top-N similar lesson assets.
- * Returns empty array when search fails or returns no results.
- * Requires embedding configured for semantic similarity; degrades gracefully.
- */
-async function fetchTopSimilarLessons(
-  query: string,
-  n: number,
-  _stashDir?: string,
-): Promise<Array<{ ref: string; content: string }>> {
-  try {
-    const result = await akmSearch({
-      query,
-      type: "lesson",
-      limit: n,
-      skipLogging: true,
-      eventSource: "improve",
-    });
-    const hits = result?.hits ?? [];
-    return hits
-      .filter((h): h is import("../../sources/types").SourceSearchHit => "path" in h && typeof h.path === "string")
-      .slice(0, n)
-      .map((h) => {
-        let content = "";
-        try {
-          if (h.path && fs.existsSync(h.path)) {
-            content = fs.readFileSync(h.path, "utf8");
-          }
-        } catch {
-          /* best-effort */
-        }
-        return { ref: h.ref, content };
-      });
-  } catch {
-    return [];
-  }
-}
-
-// ── LLM-as-judge quality gate (P2-B) ────────────────────────────────────────
-
-/**
- * D-4 / #390: Build the LLM-as-judge prompt.
- *
- * When similarLessons are provided (top-3 by embedding similarity), they are
- * included in the context so the judge can lower the score for near-duplicates.
- * Voyager arXiv:2305.16291 — skill library admission requires similarity check
- * against the existing library. A-MEM arXiv:2502.12110 — new notes are checked
- * against existing notes before linking.
- */
-function buildJudgePrompt(
-  lessonContent: string,
-  sourceContent: string,
-  similarLessons?: Array<{ ref: string; content: string }>,
-): string {
-  const lines = [
-    "You are evaluating a proposed lesson asset for an akm knowledge base.",
-    "",
-    "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
-    "1. NOVELTY: Does the lesson add information not already present in the source asset?",
-    "2. ACTIONABILITY: Can an agent follow this lesson without additional context?",
-    "3. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
-    "",
-    "Source asset content:",
-    "```",
-    sourceContent.slice(0, 2000),
-    "```",
-  ];
-
-  if (similarLessons && similarLessons.length > 0) {
-    lines.push("");
-    lines.push(
-      "Existing similar lessons (top-3 by similarity). Rate lower if the proposed lesson is substantially similar to any of these:",
-    );
-    for (const sl of similarLessons) {
-      lines.push(`\nExisting lesson ref: ${sl.ref}`);
-      lines.push("```");
-      lines.push(sl.content.slice(0, 500));
-      lines.push("```");
-    }
-  }
-
-  lines.push("");
-  lines.push("Proposed lesson content:");
-  lines.push("```");
-  lines.push(lessonContent.slice(0, 1000));
-  lines.push("```");
-  lines.push("");
-  lines.push('Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}');
-  return lines.join("\n");
-}
-
-/**
- * Run the LLM-as-judge quality gate on a proposal's content.
- *
- * Exported so reflect.ts can apply the same gate to reflect proposals (R-5 / #374).
- * Gated by the flag name `lesson_quality_gate` (or its alias
- * `proposal_quality_gate`) via {@link isLlmFeatureEnabled} — which reads
- * `profiles.improve.default.processes.distill.qualityGate.enabled` (and the
- * corresponding `.reflect.qualityGate.enabled` for proposals).
- *
- * Fail-open: returns `pass: true` on timeout, parse failure, or missing LLM.
- */
-export async function runLessonQualityJudge(
-  config: AkmConfig,
-  lessonContent: string,
-  sourceContent: string,
-  chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
-  /** D-4 / #390: top-3 similar existing lessons for dedup check. */
-  similarLessons?: Array<{ ref: string; content: string }>,
-): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
-  const llmConfig = getDefaultLlmConfig(config);
-  if (!llmConfig) {
-    return { pass: true, score: -1, reason: "no LLM configured — passing through" };
-  }
-  const judgeLlmConfig = llmConfig.judgeModel ? { ...llmConfig, model: llmConfig.judgeModel } : llmConfig;
-  const JUDGE_TIMEOUT_MS = 8_000;
-  try {
-    const raw = await Promise.race([
-      chat(judgeLlmConfig, [
-        { role: "system", content: "Return only valid JSON. No prose." },
-        { role: "user", content: buildJudgePrompt(lessonContent, sourceContent, similarLessons) },
-      ]),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("judge timeout")), JUDGE_TIMEOUT_MS)),
-    ]);
-    const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
-    if (!parsed || typeof parsed.score !== "number") {
-      return { pass: true, score: -1, reason: "judge parse failed — passing through" };
-    }
-    // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
-    //   >= 3.5: auto-queue as pending (pass: true)
-    //   2.5–3.5: review-needed band — uncertain, escalate to human (reviewNeeded: true)
-    //   < 2.5: auto-reject (pass: false)
-    const score = parsed.score;
-    const reason = parsed.reason ?? "";
-    if (score >= 3.5) {
-      return { pass: true, score, reason };
-    }
-    if (score >= 2.5) {
-      // Uncertainty band: treat as failed for auto-queuing but flag for review.
-      return { pass: false, score, reason, reviewNeeded: true };
-    }
-    return { pass: false, score, reason };
-  } catch {
-    return { pass: true, score: -1, reason: "judge failed — passing through" };
-  }
-}
-
-// ── Quality-rejection helper ─────────────────────────────────────────────────
-
-/**
- * Write a rejected lesson to `.akm/distill-rejected/`, append a `distill_invoked`
- * quality-rejected event, and return the `quality_rejected` envelope.
- *
- * @param stash     - Root stash directory.
- * @param inputRef  - The original input ref (for the event).
- * @param lessonRef - The proposed lesson/knowledge ref.
- * @param content   - The raw content that failed the quality gate.
- * @param score     - Quality score from the judge.
- * @param reason    - Human-readable rejection reason.
- * @param extraMeta - Optional additional metadata for the event.
- */
-function writeQualityRejection(
-  stash: string,
-  inputRef: string,
-  lessonRef: string,
-  content: string,
-  score: number,
-  reason: string,
-  extraMeta: Record<string, unknown> = {},
-  eligibilitySource?: EligibilitySource,
-): AkmDistillResult {
-  // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
-  const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
-  const rejectDir = path.join(stash, ".akm", "distill-rejected");
-  fs.mkdirSync(rejectDir, { recursive: true });
-  const ts = timestampForFilename();
-  fs.writeFileSync(
-    path.join(rejectDir, `${ts}-${lessonRef}.md`),
-    `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n---\n\n${content}`,
-    "utf8",
-  );
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: inputRef,
-    metadata: {
-      outcome,
-      lessonRef,
-      score,
-      reason,
-      ...extraMeta,
-      // Attribution tagging: stamp the eligibility lane so distill_invoked can be
-      // sliced by lane downstream. See EligibilitySource.
-      ...(eligibilitySource ? { eligibilitySource } : {}),
-    },
-  });
-  return {
-    schemaVersion: 1,
-    ok: true,
-    outcome,
-    inputRef,
-    lessonRef,
-    score,
-    reason,
-    ...extraMeta,
-  };
-}
-
-/**
- * G4 — content-score a distilled OUTPUT (lesson/knowledge proposal body) and
- * persist it to state.db :: asset_salience with `encoding_source: "content"`.
- *
- * Lessons are refused as distill INPUTS (`DISTILL_REFUSED_INPUT_TYPES`), so
- * this creation-time write is their only chance to earn a real content-derived
- * encoding score instead of sitting on the type-weight stub forever. Best-effort:
- * never blocks or fails the proposal flow.
- */
-function persistOutputEncodingSalience(
-  ref: string,
-  body: string,
-  existingRefVocabulary: Set<string>,
-  // Operator opt-out (improve.salience.outcomeWeightEnabled: false) must apply
-  // here too, or distill-written rank_score rows would use WS-2 weights while
-  // preparation uses parity weights — inconsistent salience semantics.
-  outcomeWeightEnabled: boolean,
-): void {
-  try {
-    const parsedRef = parseAssetRef(ref);
-    const salienceResult = scoreEncodingSalience({
-      body,
-      type: parsedRef.type,
-      existingRefVocabulary,
-      revisionCount: 0, // a freshly distilled output IS a first encounter
-    });
-    withStateDb((stateDb) => {
-      const vector = computeSalience({
-        ref,
-        type: parsedRef.type,
-        retrievalFreq: 0,
-        encodingSalience: salienceResult.score,
-        outcomeWeightEnabled,
-      });
-      upsertAssetSalience(stateDb, ref, vector);
-    });
-  } catch {
-    // Best-effort — scoring must never block proposal creation.
-  }
-}
-
 // ── Main entry point ────────────────────────────────────────────────────────
 
 /**
@@ -1064,239 +823,33 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     ...(e.metadata !== undefined ? { metadata: e.metadata } : {}),
   }));
 
-  const promotion =
-    targetKind === "lesson"
-      ? null
-      : assessMemoryKnowledgePromotionCandidate({
-          inputRef,
-          assetContent,
-          feedbackEvents: filteredEvents.map((event) => ({
-            ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
-          })),
-        });
-
-  if (promotion?.promote && promotion.content && (targetKind === "knowledge" || targetKind === "auto")) {
-    // D-1 / #369: When the destination knowledge file already exists, route
-    // through the LLM for contradiction resolution instead of silently
-    // overwriting. Follows mem0 ADD/UPDATE/DELETE/NOOP pattern (arXiv:2504.19413 §3.2)
-    // and A-MEM dynamic linking (arXiv:2502.12110).
-    let resolvedPromotionContent = promotion.content;
-    const existingKnowledgePath = await lookup(promotion.knowledgeRef);
-    const existingKnowledgeContent =
-      existingKnowledgePath && fs.existsSync(existingKnowledgePath)
-        ? (() => {
-            try {
-              return fs.readFileSync(existingKnowledgePath, "utf8");
-            } catch {
-              return null;
-            }
-          })()
-        : null;
-
-    if (existingKnowledgeContent && config && getDefaultLlmConfig(config)) {
-      // Existing content found: call LLM for contradiction-resolution merge.
-      const mergePrompt = [
-        "You are merging two versions of a knowledge document.",
-        "Existing content is already committed; new content comes from a memory distillation run.",
-        "Choose one of: ADD (combine both), UPDATE (replace existing with new), NOOP (keep existing unchanged).",
-        'Return ONLY valid JSON: {"action": "ADD"|"UPDATE"|"NOOP", "content": "<merged markdown if ADD/UPDATE, empty string if NOOP>"}',
-        "",
-        "## Existing knowledge content",
-        "```",
-        existingKnowledgeContent.slice(0, 3000),
-        "```",
-        "",
-        "## New content from distillation",
-        "```",
-        promotion.content.slice(0, 3000),
-        "```",
-      ].join("\n");
-
-      try {
-        const mergeLlm = getDefaultLlmConfig(config);
-        if (!mergeLlm) {
-          throw new ConfigError("LLM is not configured for distillation merge.", "LLM_NOT_CONFIGURED");
-        }
-        const mergeResponse = await chat(mergeLlm, [
-          { role: "system", content: "Return only valid JSON. No prose." },
-          { role: "user", content: mergePrompt },
-        ]);
-        const mergeResult = parseEmbeddedJsonResponse<{
-          action: "ADD" | "UPDATE" | "NOOP";
-          content?: string;
-        }>(mergeResponse);
-
-        if (mergeResult?.action === "NOOP") {
-          // Existing content is authoritative — no update needed.
-          appendEvent({
-            eventType: "distill_invoked",
-            ref: inputRef,
-            metadata: {
-              outcome: "skipped" as const,
-              lessonRef: promotion.knowledgeRef,
-              message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
-              ...eligMeta,
-            },
-          });
-          return {
-            schemaVersion: 1,
-            ok: true,
-            outcome: "skipped",
-            inputRef,
-            lessonRef: promotion.knowledgeRef,
-            message: "Existing knowledge content unchanged (contradiction resolution: NOOP)",
-          };
-        }
-
-        if (mergeResult?.action && (mergeResult.action === "ADD" || mergeResult.action === "UPDATE")) {
-          if (mergeResult.content?.trim()) {
-            resolvedPromotionContent = mergeResult.content;
-          }
-        }
-      } catch {
-        // LLM merge failed — fall through with the original promotion content.
-        // The reviewer will see both versions in the proposal diff.
-      }
-    } else if (existingKnowledgeContent && config && !getDefaultLlmConfig(config)) {
-      // No LLM configured: include existing content as context in the proposal
-      // so the reviewer can do the contradiction resolution manually.
-      resolvedPromotionContent = [
-        promotion.content,
-        "",
-        "---",
-        "<!-- D-1 / #369: Existing knowledge content is shown below for reviewer reference. -->",
-        "<!-- Review: decide whether to ADD (merge), UPDATE (replace), or NOOP (keep existing). -->",
-        "",
-        "## Existing content (for reviewer reference)",
-        "",
-        existingKnowledgeContent,
-      ].join("\n");
-    }
-
-    // Apply quality gate to fast-path knowledge promotion (Risk 4 fix).
-    // D-5 / #388: Three-band system — review_needed band queues to proposal
-    // queue with review_needed outcome rather than auto-rejecting.
-    let knowledgeJudgeConfidence: number | undefined;
-    if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
-      // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
-      const similarLessons = await fetchSimilarLessonsFn(resolvedPromotionContent.slice(0, 500), 3);
-      const judgeResult = await runLessonQualityJudge(
-        config,
-        resolvedPromotionContent,
-        assetContent ?? "",
-        chat,
-        similarLessons.length > 0 ? similarLessons : undefined,
-      );
-      if (!judgeResult.pass) {
-        if (judgeResult.reviewNeeded) {
-          // Uncertainty band (2.5–3.5): queue as review_needed instead of rejecting.
-          return writeQualityRejection(
-            stash,
-            inputRef,
-            promotion.knowledgeRef,
-            resolvedPromotionContent,
-            judgeResult.score,
-            judgeResult.reason,
-            { reviewNeeded: true },
-            options.eligibilitySource,
-          );
-        }
-        return writeQualityRejection(
-          stash,
-          inputRef,
-          promotion.knowledgeRef,
-          resolvedPromotionContent,
-          judgeResult.score,
-          judgeResult.reason,
-          {},
-          options.eligibilitySource,
-        );
-      }
-      // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
-      // (no LLM / timeout / parse failure) — leave confidence undefined so
-      // the auto-accept gate treats the proposal as unscored and skips it.
-      if (judgeResult.score > 0) knowledgeJudgeConfidence = judgeResult.score / 5;
-    }
-    const knowledgeParsed = parseFrontmatter(resolvedPromotionContent);
-    const proposalResult = createProposal(
-      stash,
-      {
-        ref: promotion.knowledgeRef,
-        source: "distill",
-        ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-        payload: {
-          content: resolvedPromotionContent,
-          ...(Object.keys(knowledgeParsed.data).length > 0 ? { frontmatter: knowledgeParsed.data } : {}),
-        },
-        ...(knowledgeJudgeConfidence !== undefined ? { confidence: knowledgeJudgeConfidence } : {}),
-        // Attribution tagging: persist the eligibility lane on the proposal.
-        ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-      },
-      options.ctx,
-    );
-
-    if (isProposalSkipped(proposalResult)) {
-      appendEvent({
-        eventType: "distill_invoked",
-        ref: inputRef,
-        metadata: {
-          outcome: "skipped" as const,
-          lessonRef: promotion.knowledgeRef,
-          message: proposalResult.message,
-          skipReason: proposalResult.reason,
-          ...eligMeta,
-        },
-      });
-      return {
-        schemaVersion: 1,
-        ok: true,
-        outcome: "skipped",
-        inputRef,
-        lessonRef: promotion.knowledgeRef,
-        message: proposalResult.message,
-      };
-    }
-
-    const proposal: Proposal = proposalResult;
-    // G4: content-score the distilled OUTPUT so it carries a real encoding
-    // salience (encoding_source='content') from creation.
-    persistOutputEncodingSalience(
-      promotion.knowledgeRef,
-      resolvedPromotionContent,
-      existingRefVocabulary,
-      outcomeWeightEnabled,
-    );
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: inputRef,
-      metadata: {
-        outcome: "queued" as const,
-        lessonRef: promotion.knowledgeRef,
-        proposalRef: promotion.knowledgeRef,
-        proposalKind: "knowledge" as const,
-        proposalId: proposal.id,
-        // R3: judge verdicts are longitudinally queryable, not just a one-shot
-        // proposal.confidence write (normalized 1–5 score / 5).
-        ...(knowledgeJudgeConfidence !== undefined ? { judgeConfidence: knowledgeJudgeConfidence } : {}),
-        ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-        ...eligMeta,
-      },
-    });
-
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "queued",
-      inputRef,
-      lessonRef: promotion.knowledgeRef,
-      proposalRef: promotion.knowledgeRef,
-      proposalKind: "knowledge",
-      proposalId: proposal.id,
-      proposal,
-      ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
-    };
-  }
+  // Memory→knowledge promotion branch (D-1/#369). When the target ref is a
+  // reinforced memory, distill graduates it into a knowledge proposal instead
+  // of a lesson — the whole branch (LLM contradiction-merge, quality gate,
+  // proposal creation, event emit) lives in `promoteMemoryToKnowledge` and is
+  // terminal when it fires. A `null` return means "not a promotion candidate";
+  // fall through to the ordinary lesson/knowledge distillation path.
+  const promotionResult = await promoteMemoryToKnowledge({
+    targetKind,
+    inputRef,
+    assetContent,
+    filteredEvents,
+    config,
+    chat,
+    stash,
+    lookup,
+    fetchSimilarLessonsFn,
+    existingRefVocabulary,
+    outcomeWeightEnabled,
+    eligMeta,
+    eligibilitySource: options.eligibilitySource,
+    sourceRun: options.sourceRun,
+    proposalsCtx: options.ctx,
+    exclusionSetSize: exclusionSet.size,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+  });
+  if (promotionResult) return promotionResult;
 
   const effectiveProposalKind = targetKind === "knowledge" ? "knowledge" : "lesson";
   const effectiveLessonRef =
@@ -1471,135 +1024,22 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     content = stripMarkdownFences(raw);
   }
 
-  // Auto-repair missing frontmatter fields before hard-failing. Small models
-  // frequently produce a good lesson body but omit the YAML header entirely.
-  // Rather than discarding valid content, we extract description/when_to_use
-  // from the body and prepend the required frontmatter block.
-  //
-  // IMPORTANT: We do NOT synthesise placeholder strings here. If the body
-  // does not contain text that passes the post-LLM validators
-  // (`isValidDescription` / `isValidWhenToUse`), we leave the field missing
-  // and let the lesson lint reject the proposal as `validation_failed`.
-  // Emitting placeholders like `"Lesson distilled from <ref>"` or
-  // `"When working with <slug>"` is what produced the systematic broken
-  // proposals observed across 323 archived rejections.
+  // Lesson-path content normalization (see distill/content-repair): auto-repair
+  // missing frontmatter, description↔when_to_use auto-swap, and truncation
+  // repair. Knowledge output skips all three (no lesson frontmatter contract).
   if (effectiveProposalKind !== "knowledge") {
-    const parsed = parseFrontmatter(content);
-    const fm = (parsed.data ?? {}) as Record<string, unknown>;
-    const missingDesc = typeof fm.description !== "string" || !(fm.description as string).trim();
-    const missingWtu = typeof fm.when_to_use !== "string" || !(fm.when_to_use as string).trim();
-    if (missingDesc || missingWtu) {
-      const body = parsed.content.trim();
-      // Strip markdown formatting tokens from a line so extracted text is clean.
-      const stripMd = (l: string) =>
-        l
-          .replace(/\*\*([^*]+)\*\*/g, "$1")
-          .replace(/\*([^*]+)\*/g, "$1")
-          .replace(/`([^`]+)`/g, "$1")
-          .replace(/^[#*\->_]+\s*/, "")
-          .replace(/:\s*$/, "")
-          .trim();
-      // Skip lines that look like YAML field assignments (key: value) or frontmatter delimiters.
-      // These appear when the LLM leaks frontmatter content into the body, causing
-      // auto-repair to produce description: "description: Key Takeaways".
-      const isYamlLike = (l: string) => /^---/.test(l) || /^[a-z_]+:\s/i.test(l);
-      const bodyLines = body.split("\n").map(stripMd);
-      // Extract description: first body line that BOTH looks like prose AND
-      // passes isValidDescription. If nothing qualifies, leave the field
-      // missing — the lint pass will reject the proposal cleanly.
-      let descLine: string | undefined;
-      for (const l of bodyLines) {
-        if (isYamlLike(l)) continue;
-        if (l.length <= 10 || l.length >= 400) continue;
-        if (isValidDescription(l, inputRef).ok) {
-          descLine = l;
-          break;
-        }
-      }
-      // Extract when_to_use: a line starting with "When" / "Use when" / "Apply when"
-      // that ALSO passes isValidWhenToUse (rejects circular fallbacks).
-      let wtuLine: string | undefined;
-      for (const l of bodyLines) {
-        if (!/^(when |use when|apply when)/i.test(l)) continue;
-        if (l.length >= 400) continue;
-        if (isValidWhenToUse(l, inputRef).ok) {
-          wtuLine = l;
-          break;
-        }
-      }
-      const repairedFm = {
-        ...fm,
-        ...(missingDesc && descLine ? { description: descLine } : {}),
-        ...(missingWtu && wtuLine ? { when_to_use: wtuLine } : {}),
-      };
-      const fmLines = Object.entries(repairedFm)
-        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-        .join("\n");
-      // Only rewrite content if we actually have at least one field to write.
-      // Otherwise leave the original content for the lint pass to reject.
-      if (Object.keys(repairedFm).length > 0) {
-        content = assembleAssetFromString(fmLines, body);
-      }
-    }
+    content = autoRepairLessonFrontmatter(content, inputRef);
   }
 
-  // Description ↔ when_to_use auto-swap normalization (recover ~93% of
-  // qwen-9b's `^when\b/i` rejections at zero LLM cost). When the LLM emits
-  // a conditional-framed description ("When X happens, do Y") and the
-  // when_to_use field looks like a declarative description (or is empty),
-  // the two fields are mis-fielded — exactly what `isValidDescription`'s
-  // error message says ("that pattern belongs in when_to_use"). We swap
-  // them and revalidate; the swap is committed only if BOTH fields pass
-  // their respective validators afterwards. If revalidation still fails,
-  // we fall through to the existing reject path.
   let descriptionSwapped = 0;
   if (effectiveProposalKind !== "knowledge") {
-    const parsedSwap = parseFrontmatter(content);
-    const fmSwap = (parsedSwap.data ?? {}) as Record<string, unknown>;
-    const descRaw = typeof fmSwap.description === "string" ? fmSwap.description.trim() : "";
-    const wtuRaw = typeof fmSwap.when_to_use === "string" ? fmSwap.when_to_use.trim() : "";
-    const descStartsConditional = /^(when|if)\b/i.test(descRaw);
-    const wtuStartsConditional = /^(when|if)\b/i.test(wtuRaw);
-    if (descStartsConditional && !wtuStartsConditional && wtuRaw.length > 0) {
-      // Try the swap and revalidate. The when_to_use validator requires the
-      // value not match `/^when working with\b/i` (the circular fallback) —
-      // a real description rarely does, so this usually passes.
-      const swappedDescCheck = isValidDescription(wtuRaw, inputRef);
-      const swappedWtuCheck = isValidWhenToUse(descRaw, inputRef);
-      if (swappedDescCheck.ok && swappedWtuCheck.ok) {
-        const swappedFm = {
-          ...fmSwap,
-          description: wtuRaw,
-          when_to_use: descRaw,
-        };
-        const swappedFmLines = Object.entries(swappedFm)
-          .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-          .join("\n");
-        content = assembleAssetFromString(swappedFmLines, parsedSwap.content);
-        descriptionSwapped = 1;
-      }
-    }
+    const swapResult = autoSwapDescriptionWhenToUse(content, inputRef);
+    content = swapResult.content;
+    descriptionSwapped = swapResult.swapped;
   }
 
-  // Post-generation truncation repair (#556): if the LLM sliced the
-  // description mid-sentence, deterministically complete it from its own text
-  // / the lesson body BEFORE the lint + quality validators run. No-op
-  // (byte-identical) for already-complete descriptions, so this never alters
-  // a valid proposal. Runs on the lesson path only (knowledge has no
-  // description field gate here).
   if (effectiveProposalKind !== "knowledge") {
-    const parsedRepair = parseFrontmatter(content);
-    const fmRepair = (parsedRepair.data ?? {}) as Record<string, unknown>;
-    const descRepairRaw = typeof fmRepair.description === "string" ? fmRepair.description : "";
-    if (descRepairRaw) {
-      const repaired = repairTruncatedDescription(descRepairRaw, parsedRepair.content);
-      if (repaired !== descRepairRaw) {
-        const repairedFmLines = Object.entries({ ...fmRepair, description: repaired })
-          .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-          .join("\n");
-        content = assembleAssetFromString(repairedFmLines, parsedRepair.content);
-      }
-    }
+    content = repairLessonDescriptionTruncation(content);
   }
 
   // Parse + lint the lesson before creating the proposal. The lint is the
@@ -1611,55 +1051,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ? validateKnowledgeContent(content, inputRef)
       : lintLessonContent(content, `distill:${inputRef}`).findings;
 
-  // Additional quality validators run only on lessons. lesson-lint checks
-  // "field is present and non-empty"; these reject the systematic failure
-  // modes observed across 323 archived rejected proposals:
-  //   - description is a body fragment, section heading, or placeholder
-  //   - when_to_use is the circular "When working with <ref>" fallback
-  //   - description == when_to_use (LLM duplicated a single sentence)
-  //   - body contains a second pseudo-frontmatter block
+  // Additional lesson-only quality validators — reject the systematic failure
+  // modes seen across 323 archived rejected proposals (see distill/content-repair).
   if (effectiveProposalKind !== "knowledge" && findings.length === 0) {
-    const parsedQC = parseFrontmatter(content);
-    const fmQC = (parsedQC.data ?? {}) as Record<string, unknown>;
-
-    const descCheck = isValidDescription(fmQC.description, inputRef);
-    if (!descCheck.ok) {
-      findings.push({
-        kind: "invalid-description",
-        field: "description",
-        message: `Distilled lesson for ${inputRef} has an invalid description: ${descCheck.reason}.`,
-      });
-    }
-
-    const wtuCheck = isValidWhenToUse(fmQC.when_to_use, inputRef);
-    if (!wtuCheck.ok) {
-      findings.push({
-        kind: "invalid-when_to_use",
-        field: "when_to_use",
-        message: `Distilled lesson for ${inputRef} has an invalid when_to_use: ${wtuCheck.reason}.`,
-      });
-    }
-
-    // description and when_to_use must say different things.
-    if (
-      descCheck.ok &&
-      wtuCheck.ok &&
-      typeof fmQC.description === "string" &&
-      typeof fmQC.when_to_use === "string" &&
-      fmQC.description.trim().toLowerCase() === fmQC.when_to_use.trim().toLowerCase()
-    ) {
-      findings.push({
-        kind: "description-equals-when_to_use",
-        field: "description",
-        message: `Distilled lesson for ${inputRef} has identical description and when_to_use.`,
-      });
-    }
-
-    // Double-frontmatter / pseudo-frontmatter pollution in the body.
-    const dfm = detectDoubleFrontmatter(content);
-    if (dfm) {
-      findings.push({ kind: dfm.kind, field: "body", message: `Distilled lesson for ${inputRef}: ${dfm.message}` });
-    }
+    findings.push(...collectLessonQualityFindings(content, inputRef));
   }
 
   if (findings.length > 0) {
