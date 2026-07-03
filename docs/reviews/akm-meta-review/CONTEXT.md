@@ -20,6 +20,7 @@ here — that must never reach an agent.)
 - **Metrics caveat:** improve accept/reject rows before `0.9.0-beta.50` are polluted (gated skips
   counted as rejected); discriminate with `skippedCount IS NOT NULL`.
 - **Findings are local-only / gitignored** and may contain sensitive facts — never commit them.
+- **Follow the constitution** - When designing, implementing, or reviewing code changes, ensure the changes comply with the coding constitution /home/founder3/akm/facts/conventions/coding-constitution.md
 
 ## Carry forward (binding decisions from completed reviews)
 
