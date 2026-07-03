@@ -44,6 +44,15 @@
  * setup lines are not flagged. Existing spawners are grandfathered in
  * SPAWN_ALLOWED (shrink-only).
  *
+ * Rule 6 (mock.module ban): flag ANY `mock.module(` call in tests/. Bun's
+ * mock.module is process-global and its registrations are NOT cleared by
+ * mock.restore(), so a mocked module leaks into every later test file in the
+ * same process — proven by a two-file probe during the DI-seam workstream.
+ * The suite runs WITHOUT --isolate precisely because mock.module reached
+ * zero (PR #689); one reintroduced call silently re-opens cross-file
+ * poisoning. Use the swap-and-restore seams instead (tests/_helpers/seams.ts;
+ * pattern: docs/design/di-seams-plan.md). No allowlist — zero is the invariant.
+ *
  * Exit codes:
  *   0 — no violations
  *   1 — violations found (or internal error)
@@ -302,7 +311,7 @@ export function collectTestFiles(dir: string): string[] {
   return results;
 }
 
-type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion" | "raw-akm-mkdtemp" | "unit-real-spawn";
+type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion" | "raw-akm-mkdtemp" | "unit-real-spawn" | "mock-module";
 
 interface Violation {
   file: string;
@@ -427,6 +436,26 @@ function lintFile(filePath: string): Violation[] {
     }
   }
 
+  // ── Rule 6: mock.module ban ─────────────────────────────────────────────────
+  // Process-global, not cleared by mock.restore(), leaks across files without
+  // --isolate (which the suite no longer uses). Zero-tolerance, no allowlist.
+  {
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\s*(\/\/|\*)/.test(l)) continue;
+      if (/\bmock\.module\s*\(/.test(l)) {
+        violations.push({
+          file: rel,
+          rule: "mock-module",
+          detail:
+            "mock.module is banned — it leaks across test files now that the suite runs without --isolate; use the swap-and-restore seams (tests/_helpers/seams.ts)",
+          line: i + 1,
+        });
+      }
+    }
+  }
+
   // ── Rule 3: wall-clock elapsed-time assertion ──────────────────────────────
   // Targets the precise flaky shape: a LOCAL variable assigned a measured
   // wall-clock delta (`const elapsed = Date.now() - start`) then bounded with
@@ -495,6 +524,7 @@ if (import.meta.main) {
     "elapsed-assertion": "wall-clock elapsed-time assertion",
     "raw-akm-mkdtemp": "raw mkdtempSync(…akm-test…) outside tests/_helpers/",
     "unit-real-spawn": "real process spawn in unit-scope test",
+    "mock-module": "mock.module call (banned — suite runs without --isolate)",
   };
 
   console.error(`lint-tests-isolation: ${violations.length} violation(s) found\n`);

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../../src/commands/read/registry-search";
 import { searchRegistry } from "../../src/commands/read/registry-search";
-import { type Cleanup, sandboxXdgCacheHome } from "../_helpers/sandbox";
+import { type Cleanup, sandboxEnvDir, sandboxXdgCacheHome } from "../_helpers/sandbox";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -109,7 +109,11 @@ let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
   const cacheResult = sandboxXdgCacheHome();
-  envCleanup = cacheResult.cleanup;
+  // Registry indexes are disk-cached in index.db KEYED BY URL. The local test
+  // servers get OS-assigned ports, and a recycled port would resurrect a
+  // previous test's cached index (observed: a v2 query returning a stale v1
+  // index — duplicate hits). A per-test AKM_DATA_DIR keeps the cache empty.
+  envCleanup = sandboxEnvDir("akm-registry-v2-data", "AKM_DATA_DIR", cacheResult.cleanup).cleanup;
   delete process.env.AKM_REGISTRY_URL;
 });
 
