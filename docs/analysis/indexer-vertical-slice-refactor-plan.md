@@ -96,6 +96,12 @@ src/wiki/processes/
 This keeps the index domain focused while moving side effects to their owning
 domains.
 
+Note: read-side source resolution and read bootstrap already live in
+`src/indexer/read-preflight.ts` (`resolveReadSources`, `ensurePrimaryIndexForRead`,
+`ensurePrimaryIndexFromConfig`), added alongside this plan. The proposed
+`ensure-read-index.ts` process is a consolidation/rename of that existing code,
+not a greenfield module — see Process B below.
+
 ## Vertical slices
 
 ### 1. Source Sync Slice
@@ -117,8 +123,13 @@ Primary callers:
 - `run-index-maintenance`
 
 Initial extraction targets:
-- source cache setup currently in `src/indexer/indexer.ts`
-- shared source resolution currently duplicated around read/index/improve entry points
+- source cache hydration: `ensureSourceCaches(...)` (implemented in
+  `src/indexer/search/search-source.ts`) is called from `akmIndex` in
+  `src/indexer/indexer.ts`; removed-source purging lives in `runSourceCachePhase`
+  there
+- the shared `resolveSourceEntries(...)` resolver (also in `search-source.ts`),
+  currently called from scattered read/index entry points (`akmIndex`, `lookup`,
+  and `resolveReadSources` in `read-preflight.ts`)
 
 ### 2. Walk Slice
 
@@ -364,9 +375,16 @@ Migration note:
 Current responsibility:
 - bootstrap the index only when it cannot serve the stash
 
+Already partially implemented today in `src/indexer/read-preflight.ts`
+(`ensurePrimaryIndexForRead` → `ensureIndex(...)` in default `background` mode)
+and `src/indexer/ensure-index.ts` (`ensureIndex`, whose default path calls
+`indexCanServeStash(...)` and only rebuilds inline when the index cannot serve
+the stash; `mode: "blocking"` instead gates on `isIndexStale(...)`). This process
+should absorb that existing code rather than reimplement it.
+
 Composed slices:
-1. Readability/serveability check
-2. optional `run-index` invocation in bootstrap case
+1. Readability/serveability check (`indexCanServeStash` / `isIndexStale`)
+2. optional `run-index` invocation in bootstrap case (`runInlineReindex` → `akmIndex`)
 
 Important rule:
 - this remains an orchestration/policy process, not a place where indexing logic
@@ -552,8 +570,10 @@ Success criteria:
 
 Start here:
 1. Extract `run-index` orchestration from `src/indexer/indexer.ts`
-2. Extract `ensure-read-index` around `ensureIndex(...)`
+2. Consolidate `ensure-read-index` from the existing `src/indexer/read-preflight.ts`
+   + `src/indexer/ensure-index.ts` (`ensureIndex`) rather than building it new
 3. Extract `upsert-written-assets` process wrapper around `indexWrittenAssets(...)`
+   (already implemented in `src/indexer/index-written-assets.ts`)
 4. Extract Walk + Index State + Entries slices
 
 This gives the best architecture gain with the least behavioral risk.
