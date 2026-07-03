@@ -306,6 +306,17 @@ const REVIEWS = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function resolveReviewId(a) {
+  // The harness may deliver `args` JSON-encoded as a string; parse it back to an object.
+  if (typeof a === 'string') {
+    const t = a.trim()
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try {
+        a = JSON.parse(t)
+      } catch {
+        /* leave as string; scalar handling below still applies */
+      }
+    }
+  }
   const raw = a && typeof a === 'object' ? a.review : a
   if (raw === undefined || raw === null) return null
   const s = String(raw).trim()
