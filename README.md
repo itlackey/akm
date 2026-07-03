@@ -1,4 +1,4 @@
-# akm — Agent Knowledge Management
+# akm — Agent Knowledge Manager
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
 [![CI](https://github.com/itlackey/akm/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/akm/actions/workflows/ci.yml)
