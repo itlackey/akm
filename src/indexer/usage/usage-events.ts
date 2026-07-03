@@ -13,6 +13,17 @@ import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+/**
+ * Provenance of a usage event. `"user"` = interactive/direct invocation
+ * (including agent sessions acting for the user); `"improve"` = the improve
+ * pipeline's own retrievals (reflect/distill agents); `"task"` = the task
+ * runner (scheduled/cron work). Non-`"user"` sources are machine demand and
+ * are excluded from retrieval-derived ranking signals (`getRetrievalCounts`,
+ * utility bumps) so pipeline traffic cannot inflate them (meta-review 05
+ * DRIFT-6). Propagated across process boundaries via `AKM_EVENT_SOURCE`.
+ */
+export type UsageEventSource = "user" | "improve" | "task";
+
 export interface UsageEvent {
   event_type: string;
   query?: string;
@@ -20,12 +31,8 @@ export interface UsageEvent {
   entry_ref?: string;
   signal?: string;
   metadata?: string;
-  /**
-   * Event source: `"user"` for direct CLI invocations, `"improve"` for
-   * operations triggered by `akm improve` (reflect/distill agents).
-   * Defaults to `"user"` when omitted.
-   */
-  source?: "user" | "improve";
+  /** Event source (see {@link UsageEventSource}). Defaults to `"user"` when omitted. */
+  source?: UsageEventSource;
 }
 
 export interface UsageEventRow {
@@ -43,7 +50,7 @@ export interface UsageEventRow {
 export interface UsageEventFilters {
   event_type?: string;
   entry_ref?: string;
-  source?: "user" | "improve";
+  source?: UsageEventSource;
   /**
    * Inclusive lower bound on `created_at` (SQLite `YYYY-MM-DD HH:MM:SS`
    * timestamp). When set, only events with `created_at >= since` are returned.

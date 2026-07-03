@@ -422,6 +422,7 @@ export function buildHealthHtmlReplacements(
   };
   const coverage = improve.coverage;
   const degradation: ImproveDegradationMetrics | undefined = improve.degradation;
+  const minting = improve.enrichmentMinting;
   // #576: real per-stage LLM token/time accounting (replaces the GPU-time
   // proxy). Optional-guarded so reports built from older health JSON without
   // the aggregate still render.
@@ -757,7 +758,7 @@ export function buildHealthHtmlReplacements(
         "Coverage rate",
         pct(coverage.rate, 1),
         "flat",
-        "Accepted proposals / total stash assets (denominator-fixed). Shows what fraction of the corpus has been touched.",
+        "Distinct accepted refs / total stash assets (denominator-fixed). Shows what fraction of the corpus has been touched.",
       ],
       [
         "Eligible fraction",
@@ -768,10 +769,26 @@ export function buildHealthHtmlReplacements(
       [
         "Coverage accepted",
         num(coverage.acceptedProposals),
-        "up",
-        "Total accepted proposals used for the denominator-fixed coverage rate.",
+        "flat",
+        "Total accepted proposals in the window (raw volume — includes repeated rewrites of the same asset).",
+      ],
+      [
+        "Churn ratio",
+        Number.isFinite(coverage.churnRatio) ? num(coverage.churnRatio) : "—",
+        Number.isFinite(coverage.churnRatio) && coverage.churnRatio > 1.5 ? "down" : "flat",
+        "Accepted proposals / distinct refs touched. >1.5 = the loop is repeatedly rewriting the same assets (churn, not coverage).",
       ],
     );
+  }
+
+  // Enrichment-vs-minting policy rollup (reporting-only).
+  if (minting && Number.isFinite(minting.share)) {
+    summaryRows.push([
+      "Enrichment-lane minted share",
+      pct(minting.share, 1),
+      minting.share > 0.05 ? "down" : "flat",
+      `New assets minted by enrichment lanes / their accepted total (${minting.minted} minted vs ${minting.updated} updated). Enrichment lanes are ratified to edit existing assets only; WARN >5%, FAIL >15%.`,
+    ]);
   }
 
   // WS-5: perf telemetry rows (only when at least one run reported telemetry).
@@ -818,20 +835,14 @@ export function buildHealthHtmlReplacements(
       [
         "Corpus diversity (Gini)",
         num(degradation.corpusCentroidDistance),
-        degradation.entrenchmentFlagged ? "down" : "flat",
-        "Gini coefficient of retrieval_salience for top-100 ranked assets. High Gini (>0.35) = entrenchment risk.",
+        degradation.entrenchmentFlagged || degradation.salienceUniformityFlagged ? "down" : "flat",
+        "Gini coefficient of retrieval_salience for top-100 ranked assets. Two-tailed: >0.35 = entrenchment risk; <0.08 = collapsed toward uniform (ranking no longer discriminates).",
       ],
       [
         "Merge fidelity contradiction rate",
         pct(degradation.mergeFidelityContradictionRate, 1),
         "flat",
         "Fraction of consolidated proposals that involved a contradiction, from consolidation result envelopes.",
-      ],
-      [
-        "High-generation fraction",
-        pct(degradation.highGenerationFraction, 1),
-        "flat",
-        "Fraction of assets with consecutive_no_ops >= 2 (proxy for high-generation assets in the salience table).",
       ],
     );
   }
@@ -947,6 +958,21 @@ export function buildHealthHtmlReplacements(
       descHtml:
         "A small set of assets dominates retrieval — retrieval diversity is low. " +
         "Review top-ranked assets for stale or over-represented content. " +
+        `Corpus diversity proxy: ${esc(String(degradation.corpusCentroidDistance))}.`,
+      remedy: "akm health --format json | jq '.improve.degradation'",
+    });
+  }
+
+  // Low-tail companion: salience distribution collapsed toward uniform.
+  if (degradation?.salienceUniformityFlagged) {
+    pushItem({
+      key: "salience-uniformity-collapse",
+      prio: "P2",
+      cls: "warn",
+      title: "Salience distribution collapsed: retrieval_salience Gini < 0.08",
+      descHtml:
+        "The top-100 salience scores are near-uniform (uniform baseline ≈ 0.1) — " +
+        "ranking currently carries little to no discrimination between assets. " +
         `Corpus diversity proxy: ${esc(String(degradation.corpusCentroidDistance))}.`,
       remedy: "akm health --format json | jq '.improve.degradation'",
     });

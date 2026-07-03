@@ -466,21 +466,69 @@ export interface ImproveHealthMetrics {
   degradation?: ImproveDegradationMetrics;
   /**
    * WS-5 denominator-fixed coverage (Part V §3).
-   * `coverage = accepted_proposals / total_assets` (denominator is fixed at
-   * total stash size, not the moving eligible set). `eligibleFraction` is
-   * reported separately so narrowing eligibility doesn't spuriously inflate
-   * coverage. Both are NaN when total_assets=0 (empty stash).
+   * `coverage = distinct_accepted_refs / total_assets` (denominator is fixed
+   * at total stash size, not the moving eligible set). The numerator counts
+   * DISTINCT refs, not proposals — repeated accepted rewrites of one asset
+   * are churn, not coverage, and previously inflated this rate.
+   * `eligibleFraction` is reported separately so narrowing eligibility doesn't
+   * spuriously inflate coverage. Rates are NaN when total_assets=0 (empty stash).
    */
   coverage: {
-    /** accepted_proposals / total_assets (fixed denominator). NaN when total=0. */
+    /** distinct_accepted_refs / total_assets (fixed denominator). NaN when total=0. */
     rate: number;
     /** eligible_assets / total_assets. NaN when total=0. */
     eligibleFraction: number;
-    /** Total proposals accepted (window-scoped, from state.db). */
+    /** Total proposals accepted (window-scoped, from state.db). Raw volume — includes churn. */
     acceptedProposals: number;
+    /** Distinct asset refs among the window's accepted proposals. */
+    distinctRefs: number;
+    /**
+     * acceptedProposals / distinctRefs. 1.0 = every accepted proposal touched
+     * a different asset; values above ~1.5 mean the loop is repeatedly
+     * rewriting the same assets (churn). NaN when distinctRefs=0.
+     */
+    churnRatio: number;
     /** Total stash assets at the time of the most recent run (whole-stash snapshot). */
     totalAssets: number;
   };
+  /**
+   * Enrichment-vs-minting policy rollup (reporting-only). Enrichment-classed
+   * lanes are ratified to EDIT existing assets, not mint new ones; this
+   * surfaces the split so drift is visible without a manual DB query.
+   * Absent when no lane-attributed accepted proposals exist in the window.
+   */
+  enrichmentMinting?: EnrichmentMintingRollup;
+}
+
+/**
+ * Lanes ratified as ENRICHMENT-ONLY: they may propose edits to existing
+ * assets (metadata, relations, content refresh) but must not mint new ones.
+ * New-asset generation belongs to the signal-gated minting lanes
+ * (extract/distill/memory-inference/recombine).
+ */
+export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "high-retrieval", "signal-delta"];
+
+/** Minted share of enrichment-lane accepts that triggers a WARN advisory. */
+export const ENRICHMENT_MINTED_WARN_SHARE = 0.05;
+
+/** Minted share of enrichment-lane accepts that triggers a FAIL advisory. */
+export const ENRICHMENT_MINTED_FAIL_SHARE = 0.15;
+
+/**
+ * The enrichment-vs-minting split over the health window's accepted,
+ * lane-attributed proposals. Create-vs-update is discriminated by
+ * `metadata_json.backupContent`: apply captures the prior content for
+ * updates, so its absence means a genuinely new asset was minted.
+ */
+export interface EnrichmentMintingRollup {
+  /** Accepted enrichment-lane proposals that MINTED a new asset (no backupContent). */
+  minted: number;
+  /** Accepted enrichment-lane proposals that UPDATED an existing asset. */
+  updated: number;
+  /** minted / (minted + updated) across enrichment lanes. NaN when they decided nothing. */
+  share: number;
+  /** Per-lane minted/updated split for every lane-attributed accepted proposal. */
+  byLane: Record<string, { minted: number; updated: number }>;
 }
 
 /**
@@ -528,18 +576,21 @@ export interface ImproveDegradationMetrics {
    */
   entrenchmentFlagged?: boolean;
   /**
+   * Low-tail Gini flag: `true` when the top-100 retrieval_salience Gini is
+   * below 0.08 — the salience distribution has collapsed toward uniform and
+   * no longer discriminates between assets (ranking carries no signal).
+   * The uniform baseline for this formula is ~0.1, so a healthy distribution
+   * sits above it; the old one-tailed check (>0.35 entrenchment only)
+   * rendered a fully collapsed distribution as healthy.
+   * `undefined` when the metric is NaN.
+   */
+  salienceUniformityFlagged?: boolean;
+  /**
    * Merge fidelity: fraction of accepted merge proposals in the window whose
    * result was later contradicted (a proxy for "the merge degraded content").
    * 0 = no contradictions detected; higher = potential fidelity loss.
    */
   mergeFidelityContradictionRate: number;
-  /**
-   * Generation distribution: fraction of stash assets (memories) that are
-   * generation ≥ 2 (have been through at least one LLM-merge round).
-   * A healthy corpus has a low high-generation fraction; a rising fraction
-   * signals over-consolidation eroding original content.
-   */
-  highGenerationFraction: number;
   /**
    * Oracle spot-check: up to 5 recently accepted proposals sampled from the
    * window, surfaced for human eyeballing in the health report.
@@ -825,6 +876,8 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       rate: Number.NaN,
       eligibleFraction: Number.NaN,
       acceptedProposals: 0,
+      distinctRefs: 0,
+      churnRatio: Number.NaN,
       totalAssets: 0,
     },
   };
@@ -1869,6 +1922,7 @@ function computeDenominatorFixedCoverage(
   stashDir?: string,
 ): ImproveHealthMetrics["coverage"] {
   let acceptedProposals = 0;
+  let distinctRefs = 0;
   try {
     const proposals = listStateProposals(db, {
       status: "accepted",
@@ -1880,25 +1934,96 @@ function computeDenominatorFixedCoverage(
       return true;
     });
     acceptedProposals = proposals.length;
+    // Coverage counts DISTINCT refs: N accepted rewrites of one asset are
+    // churn, not coverage. The raw proposal count is kept alongside so the
+    // churn ratio (proposals ÷ distinct refs) stays visible.
+    distinctRefs = new Set(proposals.map((p) => p.ref)).size;
   } catch {
     // Fail open: table may not exist on older installs.
   }
+
+  const churnRatio = distinctRefs > 0 ? roundRate(acceptedProposals / distinctRefs) : Number.NaN;
 
   if (totalAssets === 0) {
     return {
       rate: Number.NaN,
       eligibleFraction: Number.NaN,
       acceptedProposals,
+      distinctRefs,
+      churnRatio,
       totalAssets: 0,
     };
   }
 
   return {
-    rate: roundRate(acceptedProposals / totalAssets),
+    rate: roundRate(distinctRefs / totalAssets),
     eligibleFraction: roundRate(eligibleAssets / totalAssets),
     acceptedProposals,
+    distinctRefs,
+    churnRatio,
     totalAssets,
   };
+}
+
+/**
+ * Compute the enrichment-vs-minting rollup over the window's accepted,
+ * lane-attributed proposals (reporting-only; see {@link EnrichmentMintingRollup}).
+ *
+ * SQL-side `json_extract` keeps the (potentially large) `backupContent` blobs
+ * out of process memory. Pre-Phase-6C rows without an `eligibilitySource`
+ * cannot be lane-classified and are excluded. Fails open (undefined) when the
+ * proposals table is absent.
+ */
+export function computeEnrichmentMintingRollup(
+  db: Database,
+  since: string,
+  until?: string,
+): EnrichmentMintingRollup | undefined {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT
+           json_extract(metadata_json, '$.eligibilitySource') AS lane,
+           CASE WHEN json_extract(metadata_json, '$.backupContent') IS NULL THEN 1 ELSE 0 END AS is_minted,
+           COUNT(*) AS cnt
+         FROM proposals
+         WHERE status = 'accepted'
+           AND updated_at >= ?
+           AND (? IS NULL OR updated_at < ?)
+           AND json_extract(metadata_json, '$.eligibilitySource') IS NOT NULL
+           AND json_extract(metadata_json, '$.eligibilitySource') != ''
+         GROUP BY lane, is_minted`,
+      )
+      .all(since, until ?? null, until ?? null) as Array<{ lane: string; is_minted: number; cnt: number }>;
+    if (rows.length === 0) return undefined;
+
+    const byLane: Record<string, { minted: number; updated: number }> = {};
+    for (const row of rows) {
+      byLane[row.lane] ??= { minted: 0, updated: 0 };
+      const entry = byLane[row.lane];
+      if (row.is_minted === 1) entry.minted += row.cnt;
+      else entry.updated += row.cnt;
+    }
+
+    let minted = 0;
+    let updated = 0;
+    for (const lane of ENRICHMENT_LANES) {
+      const entry = byLane[lane];
+      if (!entry) continue;
+      minted += entry.minted;
+      updated += entry.updated;
+    }
+    const decided = minted + updated;
+    return {
+      minted,
+      updated,
+      share: decided > 0 ? roundRate(minted / decided) : Number.NaN,
+      byLane,
+    };
+  } catch {
+    // Fail open: proposals table may not exist on older installs.
+    return undefined;
+  }
 }
 
 /**
@@ -1911,7 +2036,11 @@ function computeDenominatorFixedCoverage(
  * @param since - Window start (ISO-8601).
  * @param until - Window end (ISO-8601).
  */
-function computeDegradationMetrics(db: Database, since: string, until: string): ImproveDegradationMetrics | undefined {
+export function computeDegradationMetrics(
+  db: Database,
+  since: string,
+  until: string,
+): ImproveDegradationMetrics | undefined {
   // (a) Corpus diversity — salience rank distribution of the top-100 assets.
   // We use the Gini coefficient of retrieval_salience scores as an intra-corpus
   // diversity proxy. A Gini close to 1 = highly concentrated (entrenched top
@@ -1919,6 +2048,7 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
   // consecutive-run centroid distance requires cross-run history not yet stored.
   let corpusCentroidDistance = Number.NaN;
   let entrenchmentFlagged: boolean | undefined;
+  let salienceUniformityFlagged: boolean | undefined;
   try {
     const rows = db
       .prepare(
@@ -1939,9 +2069,13 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
       // corpusCentroidDistance approximation: gini is "distance from uniform".
       // Note: retrieval_salience values are in [0,1], so the max achievable Gini
       // with this formula is ~0.5 (when one asset dominates and others are near 0).
-      // Threshold: >0.35 flags entrenchment (robustly above the ~0.1 uniform baseline).
+      // Two-tailed: >0.35 flags entrenchment (robustly above the ~0.1 uniform
+      // baseline); <0.08 flags uniformity collapse — the distribution no longer
+      // discriminates between assets (live 2026-07 value 0.040 sat unflagged
+      // in this tail under the old one-tailed check).
       corpusCentroidDistance = roundRate(gini);
       entrenchmentFlagged = gini > 0.35;
+      salienceUniformityFlagged = gini < 0.08;
     }
   } catch {
     // Table not present (pre-WS-1 install) — leave NaN.
@@ -1979,24 +2113,11 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
     // Fail open.
   }
 
-  // (c) Generation distribution — fraction of asset_salience rows with
-  // generation >= 2. Generation is NOT currently stored in asset_salience
-  // (it's in frontmatter). We approximate using consecutive_no_ops as a
-  // maturity proxy: assets that have never been no-op'd are "fresh".
-  // TODO(0.10+): store generation in asset_salience for proper tracking.
-  let highGenerationFraction = Number.NaN;
-  try {
-    const genRows = db.prepare("SELECT consecutive_no_ops FROM asset_salience").all() as Array<{
-      consecutive_no_ops: number;
-    }>;
-    if (genRows.length > 0) {
-      // Use consecutive_no_ops >= 2 as a proxy for "has been through merge cycles".
-      const highGen = genRows.filter((r) => r.consecutive_no_ops >= 2).length;
-      highGenerationFraction = roundRate(highGen / genRows.length);
-    }
-  } catch {
-    // Table not present.
-  }
+  // (c) highGenerationFraction was DELETED (meta-review 05 DRIFT-3): it
+  // approximated "LLM-merge generations" from consecutive_no_ops — which counts
+  // the opposite condition (cycles where nothing was changed) — and its own
+  // in-code TODO admitted the proxy. Display-only, never actionable; removed
+  // rather than instrumented.
 
   // (d) Oracle spot-check — up to 5 recently accepted proposals in the window.
   const oracleSpotCheck: OracleSpotCheckEntry[] = [];
@@ -2025,8 +2146,8 @@ function computeDegradationMetrics(db: Database, since: string, until: string): 
   return {
     corpusCentroidDistance,
     entrenchmentFlagged,
+    salienceUniformityFlagged,
     mergeFidelityContradictionRate,
-    highGenerationFraction,
     oracleSpotCheck,
   };
 }
@@ -2231,6 +2352,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     if (degradationMain) {
       improveSummary.degradation = degradationMain;
     }
+    improveSummary.enrichmentMinting = computeEnrichmentMintingRollup(db, since, until);
 
     // WS-2 proxy-adequacy tripwire: surface any outcome_proxy_inverted events
     // in the health window as an advisory so operators know when the 0.10+
@@ -2251,6 +2373,74 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
           "Popular assets are also the most-needing-improvement assets — " +
           "the retrieval-based proxy is inverted. " +
           "The 0.10+ rich in-session outcome signal is no longer deferrable. See plan §WS-2.",
+      });
+    }
+
+    // Two-tailed companion: a proxy that decays to noise (|corr| < 0.1 at scale)
+    // is as much a failure as an inverted one — it just fails silently.
+    const proxyDeadEvents = readEvents({ since, type: "outcome_proxy_dead" }, { dbPath: stateDbPath, db }).events;
+    if (proxyDeadEvents.length > 0) {
+      const lastEvent = proxyDeadEvents[proxyDeadEvents.length - 1];
+      const correlation =
+        typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
+      advisories.push({
+        name: "outcome-proxy-dead",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `WS-2 outcome proxy is DEAD (${proxyDeadEvents.length} event(s) in window). ` +
+          `|corr(outcome_score, accepted_change_rate)| = ${correlation} < 0.1 at n ≥ 500. ` +
+          "outcome_score is statistically unrelated to improvement outcomes — " +
+          "treat outcome-derived rank contributions as noise until a real usage/outcome signal lands.",
+      });
+    }
+
+    // Salience-distribution collapse: Gini below the uniform baseline means
+    // ranking no longer discriminates between assets.
+    if (improveSummary.degradation?.salienceUniformityFlagged) {
+      advisories.push({
+        name: "salience-uniformity-collapse",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `Salience distribution collapsed toward uniform: top-100 retrieval_salience Gini = ` +
+          `${improveSummary.degradation.corpusCentroidDistance} < 0.08 (uniform baseline ≈ 0.1). ` +
+          "Ranking currently carries little to no discrimination between assets.",
+      });
+    }
+
+    // Enrichment-vs-minting policy: enrichment lanes edit existing assets;
+    // a rising minted share means a lane is generating new content instead.
+    const minting = improveSummary.enrichmentMinting;
+    if (minting && Number.isFinite(minting.share) && minting.share > ENRICHMENT_MINTED_WARN_SHARE) {
+      advisories.push({
+        name: "enrichment-lane-minting",
+        status: minting.share > ENRICHMENT_MINTED_FAIL_SHARE ? "fail" : "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `Enrichment lanes minted ${minting.minted} NEW asset(s) vs ${minting.updated} update(s) ` +
+          `(${Math.round(minting.share * 100)}% minted, threshold ${Math.round(ENRICHMENT_MINTED_WARN_SHARE * 100)}%). ` +
+          "Enrichment-classed lanes (proactive/high-salience/high-retrieval/signal-delta) are ratified to edit " +
+          "existing assets only — new-asset generation belongs to the signal-gated minting lanes.",
+      });
+    }
+
+    // Churn: accepted proposals far exceeding distinct touched refs means the
+    // loop is repeatedly rewriting the same assets, not covering the corpus.
+    if (Number.isFinite(improveSummary.coverage.churnRatio) && improveSummary.coverage.churnRatio > 1.5) {
+      advisories.push({
+        name: "improve-churn-ratio",
+        status: "warn",
+        kind: "deterministic",
+        confidence: "high",
+        message:
+          `Improve churn ratio ${improveSummary.coverage.churnRatio} > 1.5: ` +
+          `${improveSummary.coverage.acceptedProposals} accepted proposals touched only ` +
+          `${improveSummary.coverage.distinctRefs} distinct assets in the window — ` +
+          "repeated rewrites of the same refs count as churn, not coverage.",
       });
     }
 

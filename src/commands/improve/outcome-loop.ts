@@ -8,20 +8,26 @@
  * One per-asset "was this retrieval useful" signal, differential
  * (prediction-error-shaped), persisted in `state.db :: asset_outcome`.
  *
- * ## Signal formula (v1)
+ * ## Signal formula (v2)
  *
  * ```
  * outcome_score =
  *   (retrieval_delta − expected_retrieval_delta)
- *   − PENALTY × retrieval_delta × (1 − accepted_change_rate)
  *   + valence
  * ```
  *
  * - `retrieval_delta`: retrievals gained since the last window.
  * - `expected_retrieval_delta`: rolling mean of per-cycle retrieval DELTA.
- * - `PENALTY`: weight on the "retrieved-but-never-improved" penalty.
- * - `accepted_change_rate`: accepted_change_count / max(1, retrieval_count).
  * - `valence`: normalised net feedback valence in [−1, +1].
+ *
+ * The v1 "retrieved-but-never-improved" penalty term
+ * (`PENALTY × retrieval_delta × (1 − accepted_change_rate)`) was DELETED (#691):
+ * measured corr(outcome_score, accepted_change_rate) was 0.0069 across 5,601 live
+ * rows (noise), and because the unclamped rate exceeds 1 whenever accepted
+ * changes outnumber retrievals, the term paid a live *bonus* for churn —
+ * an asset's score could rise by being rewritten under auto-accept.
+ * `accepted_change_count` remains persisted as raw telemetry only; it must
+ * never re-enter the score (pinned by tests/commands/improve/outcome-invariance.test.ts).
  *
  * ## Eligibility-trace decay
  *
@@ -41,11 +47,14 @@
  * at DIVERSITY_FLOOR_FRACTION of the maximum observed score, so rare-but-correct
  * assets cannot be permanently outcompeted by high-retrieval ones.
  *
- * ## Proxy-adequacy tripwire (health)
+ * ## Proxy-adequacy tripwire (health) — two-tailed
  *
- * We monitor `corr(outcome_score, accepted_change_rate)` across all rows. If
- * it goes negative, "popular assets" and "assets that need improvement" are
- * the same set — the proxy is inverted and surfaced in the health report.
+ * We monitor `corr(outcome_score, accepted_change_rate)` across all rows.
+ * If it goes below −0.3, "popular assets" and "assets that need improvement"
+ * are the same set — the proxy is inverted and surfaced in the health report.
+ * If |corr| < 0.1 at n ≥ 500, the proxy is DEAD — outcome_score carries no
+ * information about improvement need at all (the live 2026-07 state: +0.0104
+ * at n=5,706 rendered as healthy under the old one-tailed check).
  *
  * ## #613 review_pressure
  *
@@ -67,13 +76,6 @@
 import type { Database } from "../../core/state-db";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-/**
- * Weight on the "retrieved-but-never-improved" penalty term. Setting this to
- * 0 degrades to a pure prediction-error score (no quality filter); setting it
- * to 1 heavily penalises assets whose retrievals never led to accepted changes.
- */
-export const OUTCOME_PENALTY_WEIGHT = 0.3;
 
 /**
  * EMA decay factor for the expected-retrieval rolling mean (α).
@@ -162,7 +164,8 @@ export interface OutcomeUpdateInputs {
   lastRetrievedAt: number;
   /**
    * Number of ACCEPTED proposals for this ref since inception.
-   * Used to compute `accepted_change_rate`.
+   * Persisted as raw telemetry ONLY — it does not participate in the
+   * outcome_score formula (#691: the derived rate rewarded churn).
    */
   acceptedChangeCount: number;
   /**
@@ -234,13 +237,8 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     // retrieval_delta = current − stored (non-negative — we never go backwards)
     const retrievalDelta = Math.max(0, inputs.currentRetrievalCount - existing.retrieval_count);
 
-    // accepted_change_rate = accepted_count / max(1, retrieval_count)
-    const acceptedChangeRate = inputs.acceptedChangeCount / Math.max(1, inputs.currentRetrievalCount);
-
     // Differential prediction-error term:
-    // outcome = (retrieval_delta − expected_delta)
-    //           − PENALTY × retrieval_delta × (1 − accepted_change_rate)
-    //           + valence
+    // outcome = (retrieval_delta − expected_delta) + valence
     //
     // Prediction error is computed against the PRIOR stored EMA (before folding
     // in this cycle's observation), so the current delta cannot leak into its own
@@ -252,11 +250,10 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     // expected' = α × delta + (1−α) × prior_expected
     expectedRetrievalRate =
       OUTCOME_EMA_ALPHA * retrievalDelta + (1 - OUTCOME_EMA_ALPHA) * existing.expected_retrieval_rate;
-    const penalty = OUTCOME_PENALTY_WEIGHT * retrievalDelta * (1 - acceptedChangeRate);
 
     // Running sum (EMA approach): new score = α × update + (1−α) × old
     // so the score tracks the moving signal, not the cumulative sum.
-    const rawUpdate = predictionError - penalty + valence;
+    const rawUpdate = predictionError + valence;
     const newScore = OUTCOME_EMA_ALPHA * rawUpdate + (1 - OUTCOME_EMA_ALPHA) * existing.outcome_score;
 
     // Clip to [OUTCOME_SCORE_MIN, OUTCOME_SCORE_MAX] — the ceiling is the RPE
@@ -392,6 +389,18 @@ export function outcomeScoreToSalience(outcomeScore: number, maxScore: number): 
 
 // ── Proxy-adequacy tripwire ───────────────────────────────────────────────────
 
+/**
+ * Dead-proxy threshold: |corr| below this means outcome_score carries no
+ * information about improvement need (pure noise).
+ */
+export const PROXY_DEAD_CORR_THRESHOLD = 0.1;
+
+/**
+ * Minimum sample size before the dead-proxy check fires. Below this, a
+ * near-zero correlation is indistinguishable from small-sample noise.
+ */
+export const PROXY_DEAD_MIN_N = 500;
+
 export interface ProxyAdequacyResult {
   /**
    * Pearson correlation between outcome_score and accepted_change_rate.
@@ -405,6 +414,14 @@ export interface ProxyAdequacyResult {
    * signal is no longer deferrable, and the health report should warn.
    */
   isInverted: boolean;
+  /**
+   * When `true`, the proxy is DEAD: |correlation| < PROXY_DEAD_CORR_THRESHOLD
+   * at n ≥ PROXY_DEAD_MIN_N — outcome_score is statistically unrelated to
+   * improvement outcomes and must not be treated as a health signal. The old
+   * one-tailed check (inverted only) let the proxy decay from informative to
+   * random without ever alarming.
+   */
+  isDead: boolean;
 }
 
 /**
@@ -421,7 +438,7 @@ export interface ProxyAdequacyResult {
  */
 export function computeProxyAdequacy(rows: AssetOutcomeRow[]): ProxyAdequacyResult {
   const n = rows.length;
-  if (n < 3) return { correlation: Number.NaN, n, isInverted: false };
+  if (n < 3) return { correlation: Number.NaN, n, isInverted: false, isDead: false };
 
   // accepted_change_rate per row.
   const xs = rows.map((r) => r.outcome_score);
@@ -445,11 +462,13 @@ export function computeProxyAdequacy(rows: AssetOutcomeRow[]): ProxyAdequacyResu
   varY /= n;
 
   const denom = Math.sqrt(varX) * Math.sqrt(varY);
-  if (denom < 1e-12) return { correlation: Number.NaN, n, isInverted: false };
+  if (denom < 1e-12) return { correlation: Number.NaN, n, isInverted: false, isDead: false };
 
   const correlation = covXY / denom;
   // Inverted proxy: negative correlation between outcome and accepted_change_rate
   // means high-outcome assets are also high-need — the opposite of "useful".
   const isInverted = correlation < -0.3;
-  return { correlation, n, isInverted };
+  // Dead proxy: near-zero correlation at scale — the score is noise.
+  const isDead = n >= PROXY_DEAD_MIN_N && Math.abs(correlation) < PROXY_DEAD_CORR_THRESHOLD;
+  return { correlation, n, isInverted, isDead };
 }

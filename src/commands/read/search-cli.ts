@@ -19,18 +19,20 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared"
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
+import type { UsageEventSource } from "../../indexer/usage/usage-events";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
 import type { KnowledgeView, ShowDetailLevel } from "../../sources/types";
 import { akmCurate } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
-// AKM_EVENT_SOURCE attributes a query to a `user` invocation or the internal
-// `improve` loop so the event log can distinguish them; any other value is
-// treated as unset.
-function resolveEventSource(): "user" | "improve" | undefined {
+// AKM_EVENT_SOURCE attributes a query to a `user` invocation, the internal
+// `improve` loop, or the `task` runner so the event log can distinguish
+// genuine demand from machine traffic; any other value is treated as unset.
+function resolveEventSource(): UsageEventSource | undefined {
   const raw = process.env.AKM_EVENT_SOURCE;
   if (raw === "improve") return "improve";
+  if (raw === "task") return "task";
   if (raw === "user") return "user";
   return undefined;
 }
@@ -147,7 +149,7 @@ export const curateCommand = defineJsonCommand({
     const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
     const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
     const source = parseSearchSource(args.source ?? "stash");
-    const curated = await akmCurate({ query: args.query, type, limit, source });
+    const curated = await akmCurate({ query: args.query, type, limit, source, eventSource: resolveEventSource() });
     output("curate", curated);
   },
 });
