@@ -15,7 +15,8 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { computeEnrichmentMintingRollup, ENRICHMENT_LANES } from "../../src/commands/health";
+import { computeEnrichmentMintingRollup } from "../../src/commands/health/metrics";
+import { ENRICHMENT_LANES } from "../../src/commands/health/types";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 
 const SINCE = "2026-01-01T00:00:00.000Z";

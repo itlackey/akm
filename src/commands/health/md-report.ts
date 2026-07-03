@@ -5,19 +5,14 @@
 /**
  * `akm health` Markdown renderers — the `--group-by run` detail table and the
  * `--window-compare` side-by-side table. Mirrors the HTML extraction in
- * `health/html-report.ts`; the shared metric/type surface lives in `../health`.
+ * `health/html-report.ts`; the shared metric/type surface lives in `./types`.
  *
  * Pure functions: no I/O, no clock, no globals — output is a function of the
  * input rows alone, so the tables are byte-identical for identical inputs.
  */
 
-import {
-  type DeltaEntry,
-  type ImproveRunSummary,
-  INTERESTING_DELTA_PATHS,
-  readNumericPath,
-  type WindowResult,
-} from "../health";
+import type { DeltaEntry, ImproveRunSummary, WindowResult } from "./types";
+import { INTERESTING_DELTA_PATHS, readNumericPath } from "./windows";
 
 function padRight(s: string, width: number): string {
   return s.length >= width ? s : s + " ".repeat(width - s.length);

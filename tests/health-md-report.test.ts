@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import type { DeltaEntry, ImproveHealthMetrics, ImproveRunSummary, WindowResult } from "../src/commands/health";
 import { renderRunsDetailMd, renderWindowCompareMd } from "../src/commands/health/md-report";
+import type { DeltaEntry, ImproveHealthMetrics, ImproveRunSummary, WindowResult } from "../src/commands/health/types";
 import { summarizeCalibration } from "../src/commands/improve/calibration";
 
 /** A fully-zeroed ImproveHealthMetrics sufficient for the MD renderers. */

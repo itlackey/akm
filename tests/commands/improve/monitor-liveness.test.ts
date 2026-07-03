@@ -14,7 +14,7 @@
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { computeDegradationMetrics } from "../../../src/commands/health";
+import { computeDegradationMetrics } from "../../../src/commands/health/metrics";
 import {
   type AssetOutcomeRow,
   computeProxyAdequacy,

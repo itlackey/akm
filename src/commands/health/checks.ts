@@ -7,7 +7,7 @@ import { loadConfig } from "../../core/config/config";
 import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
 import type { AgentProfile } from "../../integrations/agent";
 import { detectAgentCliProfiles, requireAgentProfile } from "../../integrations/agent";
-import type { HealthCheckResult, ImproveHealthMetrics, SessionLogAdvisory } from "../health";
+import type { HealthCheckResult, ImproveHealthMetrics, SessionLogAdvisory } from "./types";
 
 const ACTIVE_RUN_WARN_MS = 15 * 60 * 1000;
 
