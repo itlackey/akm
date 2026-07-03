@@ -9,6 +9,7 @@ import { getDbPath, getIndexWriterLockPath } from "../core/paths";
 
 const INDEX_WRITER_LOCK_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 const INDEX_WRITER_WAIT_MS = 100;
+const DEFAULT_INDEX_WRITER_MAX_WAIT_MS = 10 * 60 * 1000;
 
 const heldLocks = new Map<string, { depth: number; exitHandler: () => void }>();
 
@@ -21,6 +22,7 @@ interface AcquireIndexWriterLeaseOptions {
   mode?: "wait" | "try";
   purpose: string;
   signal?: AbortSignal;
+  maxWaitMs?: number;
 }
 
 function buildPayload(purpose: string, pid = process.pid): string {
@@ -68,6 +70,8 @@ export async function acquireIndexWriterLease(
 ): Promise<IndexWriterLease | undefined> {
   const mode = options.mode ?? "wait";
   const lockPath = getIndexWriterLockPath();
+  const startedAt = Date.now();
+  const maxWaitMs = options.maxWaitMs ?? DEFAULT_INDEX_WRITER_MAX_WAIT_MS;
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
   if (heldLocks.has(lockPath)) {
@@ -90,6 +94,13 @@ export async function acquireIndexWriterLease(
       continue;
     }
     if (mode === "try") return undefined;
+
+    // Held by another live process. Time out only *after* a real acquisition
+    // attempt, so a caller with maxWaitMs:0 still gets one chance at a free lock
+    // instead of throwing before it ever tries.
+    if (maxWaitMs >= 0 && Date.now() - startedAt >= maxWaitMs) {
+      throw new Error(`timed out waiting for index writer lease for ${options.purpose}`);
+    }
     await delay(INDEX_WRITER_WAIT_MS);
   }
 }

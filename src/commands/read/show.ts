@@ -30,11 +30,11 @@ import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../co
 import { appendEvent, readEvents } from "../../core/events";
 import { closeDatabase, computeBodyHash, findEntryIdByRef, openExistingDatabase } from "../../indexer/db/db";
 import { hasGraphData } from "../../indexer/db/graph-db";
-import { ensureIndex } from "../../indexer/ensure-index";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
 import { lookup } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
+import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent } from "../../indexer/usage/usage-events";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../indexer/walk/file-context";
@@ -179,10 +179,8 @@ export async function akmShowUnified(input: {
   }
 
   // Auto-index when stale so the index is current before lookup.
-  const allSources = resolveSourceEntries();
-  if (allSources.length > 0) {
-    await ensureIndex(allSources[0].path);
-  }
+  const { primarySource } = resolveReadSources();
+  await ensurePrimaryIndexForRead(primarySource);
 
   // Try local filesystem (FTS5 index lookup)
   const result = await showLocal(input);

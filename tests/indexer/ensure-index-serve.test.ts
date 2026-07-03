@@ -16,13 +16,13 @@
  * Blocking mode (improve) still treats content-staleness as a rebuild trigger.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, getIndexedFilePaths, openExistingDatabase } from "../../src/indexer/db/db";
 import { ensureIndex } from "../../src/indexer/ensure-index";
-import { akmIndex } from "../../src/indexer/indexer";
+import * as indexerModule from "../../src/indexer/indexer";
 import {
   type Cleanup,
   sandboxEnvDir,
@@ -59,7 +59,7 @@ beforeEach(async () => {
   chain = sandboxEnvDir("akm-ensure-serve-state", "AKM_STATE_DIR", chain).cleanup;
   cleanup = chain;
   writeMemory("first");
-  await akmIndex({ stashDir });
+  await indexerModule.akmIndex({ stashDir });
 });
 
 afterEach(() => {
@@ -81,6 +81,13 @@ describe("ensureIndex read-path (background mode)", () => {
     fs.rmSync(getDbPath());
     expect(await ensureIndex(stashDir)).toBe(true);
     expect(indexedPaths().size).toBeGreaterThan(0);
+  });
+
+  test("failed inline rebuild reports failure", async () => {
+    fs.rmSync(getDbPath());
+    const spy = spyOn(indexerModule, "akmIndex").mockRejectedValueOnce(new Error("boom"));
+    expect(await ensureIndex(stashDir)).toBe(false);
+    spy.mockRestore();
   });
 });
 

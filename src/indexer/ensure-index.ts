@@ -179,7 +179,7 @@ async function runInlineReindex(stashDir: string): Promise<boolean> {
     return true;
   } catch (error) {
     warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
-    return true;
+    return false;
   }
 }
 
@@ -195,7 +195,8 @@ async function runInlineReindex(stashDir: string): Promise<boolean> {
  * trigger and waits for it. Use this for callers like `improve` whose
  * planning logic depends on a current `entries` table in the same process.
  *
- * Returns `true` if an index run was attempted.
+ * Returns `true` only when an inline index run succeeds.
+ * A rebuild attempt that fails (throws) resolves to `false`.
  */
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
   if (options.mode === "blocking") {

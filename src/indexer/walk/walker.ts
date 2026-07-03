@@ -158,18 +158,26 @@ function isInsideGitRepo(dir: string): boolean {
  * read (e.g. permission errors).
  */
 export function* walkMarkdownFiles(root: string): Generator<string> {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const full = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkMarkdownFiles(full);
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      yield full;
+  const stack = [root];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        yield full;
+      }
     }
   }
 }
