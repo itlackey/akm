@@ -10,8 +10,9 @@
 # probe proved a `mock.module` in file A IS visible in file B and
 # `mock.restore()` does NOT clear module mocks — so de-isolation is only
 # sound with no `mock.module` at all. Verified by repeated green full-suite
-# runs without `--isolate`, including concurrent runs under CPU contention. Dropping `--isolate` also drops the Bun 1.3.x isolate/worker
-# epoll_ctl EEXIST race that used to require a signature-gated retry here.
+# runs without `--isolate`, including concurrent runs under CPU contention.
+# Dropping `--isolate` also drops the Bun 1.3.x isolate/worker epoll_ctl
+# EEXIST race that used to require a signature-gated retry here.
 # `--parallel` must never be passed either: per `bun test --help` it "implies
 # --isolate" (re-adding the racy path) even at N=1.
 #
