@@ -660,9 +660,13 @@ test("akmIndex reports progress events and semantic-search verification details"
       },
     });
 
-    expect(messages[0]).toContain("Starting full index");
-    expect(messages[0]).toContain("1 stash source");
-    expect(messages[0]).toContain("semantic search: remote embeddings");
+    // The "Starting full index" summary is no longer messages[0]: a "preflight"
+    // progress event ("Hydrating source caches.") now legitimately fires first.
+    // Find the summary by content rather than assuming it leads the stream.
+    const summary = messages.find((message) => message.includes("Starting full index"));
+    expect(summary).toBeDefined();
+    expect(summary).toContain("1 stash source");
+    expect(summary).toContain("semantic search: remote embeddings");
     expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
     expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
       true,
