@@ -42,10 +42,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import recombineSystemPrompt from "../../assets/prompts/recombine-system.md" with { type: "text" };
+import { assembleAssetFromString } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, RecombineResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
@@ -58,7 +59,6 @@ import {
   recordRecombineInduction,
   withStateDbAsync,
 } from "../../core/state-db";
-import { warn } from "../../core/warn";
 import {
   closeDatabase,
   type DbIndexedEntry,
@@ -66,8 +66,6 @@ import {
   getEntitiesByEntryIds,
   openExistingDatabase,
 } from "../../indexer/db/db";
-import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
-import { type ChatMessage, chatCompletion } from "../../llm/client";
 import {
   isValidDescription,
   isValidWhenToUse,
@@ -75,6 +73,7 @@ import {
 } from "../proposal/validators/proposal-quality-validators";
 import { archiveProposal, createProposal, isProposalSkipped, listProposals } from "../proposal/validators/proposals";
 import { isConsolidationEligibleMemoryName, isSessionCaptureMemoryName } from "./consolidate";
+import { resolveImproveLlmFn } from "./shared";
 
 export type { RecombineResult } from "../../core/improve-types";
 
@@ -592,30 +591,6 @@ function parseGeneralization(raw: string | null): Generalization | null {
   return { description, body, ...(when_to_use ? { when_to_use } : {}) };
 }
 
-/**
- * Resolve the production LLM seam from the active improve profile. Returns a
- * `RecombineLlmFn` that issues one bounded chatCompletion per call, or
- * `undefined` when no LLM is configured (the pass then makes no calls).
- */
-function resolveProductionLlmFn(config: AkmConfig, signal?: AbortSignal): RecombineLlmFn | undefined {
-  const recombineProcess = config.profiles?.improve?.default?.processes?.recombine;
-  const runnerSpec = resolveImproveProcessRunnerFromProfile(recombineProcess, config);
-  const llmConfig = runnerSpec && runnerIsLlm(runnerSpec) ? runnerSpec.connection : getDefaultLlmConfig(config);
-  if (!llmConfig) return undefined;
-  return async (clusterPrompt: string) => {
-    const messages: ChatMessage[] = [
-      { role: "system", content: RECOMBINE_SYSTEM_PROMPT },
-      { role: "user", content: clusterPrompt },
-    ];
-    try {
-      return await chatCompletion(llmConfig, messages, { signal, enableThinking: false });
-    } catch (e) {
-      warn(`[recombine] LLM call failed: ${String(e)}`);
-      return null;
-    }
-  };
-}
-
 // ── Main entry point ───────────────────────────────────────────────────────────
 
 export async function akmRecombine(opts: AkmRecombineOptions): Promise<RecombineResult> {
@@ -691,7 +666,14 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
   let lessonsPromoted = 0;
   let nullsReturned = 0;
 
-  const llmFn = opts.recombineLlmFn ?? resolveProductionLlmFn(config, opts.signal);
+  const llmFn =
+    opts.recombineLlmFn ??
+    resolveImproveLlmFn(config, {
+      processKey: "recombine",
+      systemPrompt: RECOMBINE_SYSTEM_PROMPT,
+      tag: "[recombine]",
+      signal: opts.signal,
+    });
   if (!llmFn) {
     warnings.push("recombine: no LLM configured — skipping");
     return finish({ clustersFormed: 0 });
@@ -1000,14 +982,12 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
 
 /** Serialize frontmatter + body into a markdown asset string. */
 function assembleContent(frontmatter: Record<string, unknown>, body: string): string {
-  const lines: string[] = ["---"];
-  for (const [key, value] of Object.entries(frontmatter)) {
-    if (Array.isArray(value)) {
-      lines.push(`${key}: [${value.map((v) => JSON.stringify(v)).join(", ")}]`);
-    } else {
-      lines.push(`${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
-    }
-  }
-  lines.push("---", "", body, "");
-  return lines.join("\n");
+  const fmLines = Object.entries(frontmatter)
+    .map(([key, value]) =>
+      Array.isArray(value)
+        ? `${key}: [${value.map((v) => JSON.stringify(v)).join(", ")}]`
+        : `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+    )
+    .join("\n");
+  return assembleAssetFromString(fmLines, body);
 }

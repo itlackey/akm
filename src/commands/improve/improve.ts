@@ -72,6 +72,7 @@ import { DEFAULT_DUE_DAYS, filterProactiveDue } from "./proactive-maintenance";
 import type { akmProcedural } from "./procedural";
 import type { akmRecombine } from "./recombine";
 import { type AkmReflectResult, akmReflect } from "./reflect";
+import { errMessage } from "./shared";
 
 export { resetHeldProcessLocks } from "./locks";
 // Re-exported from ./loop-stages for test importers (improve-db-locking).
@@ -524,7 +525,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       try {
         await ensureIndexFn(primaryStashDir, { mode: "blocking" });
       } catch (err) {
-        preEnsureCleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
+        preEnsureCleanupWarnings.push(`ensureIndex failed: ${errMessage(err)}`);
       }
 
       // #339 loud-fail: if the index was empty pre-ensureIndex but is now
@@ -567,9 +568,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         await withLlmStage("memory-contradiction", () => detectAndWriteContradictions(primaryStashDir, _earlyConfig));
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
-        warn(
-          `[improve] contradiction detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-        );
+        warn(`[improve] contradiction detection failed (non-fatal): ${errMessage(err)}`);
       }
     }
 
@@ -636,7 +635,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 judgment,
               });
             } catch (err) {
-              warn(`[improve] triage pre-pass failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+              warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
             } finally {
               releaseProcessLock(triageLPath);
             }
@@ -763,7 +762,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         ...(syncResult.reason !== undefined ? { reason: syncResult.reason } : {}),
       };
     } catch (syncErr) {
-      const reason = syncErr instanceof Error ? syncErr.message : String(syncErr);
+      const reason = errMessage(syncErr);
       warn(`improve: stash sync failed (non-fatal): ${reason}`);
       appendEvent(
         {
@@ -1213,7 +1212,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         eventType: "improve_failed",
         ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
         metadata: {
-          error: err instanceof Error ? err.message : String(err),
+          error: errMessage(err),
           durationMs: Date.now() - startMs,
         },
       },

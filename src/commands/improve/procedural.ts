@@ -27,18 +27,16 @@ import proceduralSystemPrompt from "../../assets/prompts/procedural-system.md" w
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, ProceduralCompilationResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
-import { warn } from "../../core/warn";
 import { closeDatabase, type DbIndexedEntry, getAllEntries, openExistingDatabase } from "../../indexer/db/db";
-import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
-import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { parseWorkflow } from "../../workflows/parser";
 import { validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
 import { createProposal, isProposalSkipped } from "../proposal/validators/proposals";
+import { resolveImproveLlmFn } from "./shared";
 
 export type { ProceduralCompilationResult } from "../../core/improve-types";
 
@@ -301,30 +299,6 @@ export function assembleWorkflowMarkdown(doc: ProceduralWorkflow): string {
 
 // ── Production LLM seam ───────────────────────────────────────────────────────
 
-/**
- * Resolve the production LLM seam from the active improve profile. Returns a
- * `ProceduralLlmFn` that issues one bounded chatCompletion per call, or
- * `undefined` when no LLM is configured (the pass then makes no calls).
- */
-function resolveProductionLlmFn(config: AkmConfig, signal?: AbortSignal): ProceduralLlmFn | undefined {
-  const proceduralProcess = config.profiles?.improve?.default?.processes?.procedural;
-  const runnerSpec = resolveImproveProcessRunnerFromProfile(proceduralProcess, config);
-  const llmConfig = runnerSpec && runnerIsLlm(runnerSpec) ? runnerSpec.connection : getDefaultLlmConfig(config);
-  if (!llmConfig) return undefined;
-  return async (prompt: string) => {
-    const messages: ChatMessage[] = [
-      { role: "system", content: PROCEDURAL_SYSTEM_PROMPT },
-      { role: "user", content: prompt },
-    ];
-    try {
-      return await chatCompletion(llmConfig, messages, { signal, enableThinking: false });
-    } catch (e) {
-      warn(`[procedural] LLM call failed: ${String(e)}`);
-      return null;
-    }
-  };
-}
-
 // ── Main entry point ───────────────────────────────────────────────────────────
 
 export async function akmProcedural(opts: AkmProceduralOptions): Promise<ProceduralCompilationResult> {
@@ -378,7 +352,14 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
     return finish({ sequencesScanned, clustersFormed: 0 });
   }
 
-  const llmFn = opts.proceduralLlmFn ?? resolveProductionLlmFn(config, opts.signal);
+  const llmFn =
+    opts.proceduralLlmFn ??
+    resolveImproveLlmFn(config, {
+      processKey: "procedural",
+      systemPrompt: PROCEDURAL_SYSTEM_PROMPT,
+      tag: "[procedural]",
+      signal: opts.signal,
+    });
   if (!llmFn) {
     warnings.push("procedural: no LLM configured — skipping");
     return finish({ sequencesScanned, clustersFormed: 0 });

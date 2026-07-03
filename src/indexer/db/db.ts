@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
@@ -11,8 +10,8 @@ import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
-import { type Database, openDatabase, type SqlValue } from "../../storage/database";
-import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
+import type { Database, SqlValue } from "../../storage/database";
+import { openManagedDatabase } from "../../storage/managed-db";
 import type { StashEntry } from "../passes/metadata";
 import { buildSearchFields } from "../search/search-fields";
 import { ensureUsageEventsSchema } from "../usage/usage-events";
@@ -67,30 +66,24 @@ export const GRAPH_SCHEMA_VERSION = 4;
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
 export function openIndexDatabase(dbPath?: string, options?: { embeddingDim?: number }): Database {
-  const resolvedPath = dbPath ?? getDbPath();
-  const dir = path.dirname(resolvedPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  return openManagedDatabase({
+    path: dbPath ?? getDbPath(),
+    init: (db) => {
+      // Try to load sqlite-vec extension
+      loadVecExtension(db);
 
-  const db = openDatabase(resolvedPath);
-  applyStandardPragmas(db, { dataDir: dir });
+      // Dim resolution: explicit option wins; otherwise consult the on-disk
+      // config so unparameterised opens (registry providers, graph helpers,
+      // ad-hoc CLI subcommands) honour the operator-declared dimension. Only if
+      // both are absent do we fall through to the no-clobber path, which keeps
+      // ensureSchema from touching `index_meta.embeddingDim` at all.
+      const resolvedDim = options?.embeddingDim ?? resolveConfiguredEmbeddingDim();
+      ensureSchema(db, resolvedDim);
 
-  // Try to load sqlite-vec extension
-  loadVecExtension(db);
-
-  // Dim resolution: explicit option wins; otherwise consult the on-disk
-  // config so unparameterised opens (registry providers, graph helpers,
-  // ad-hoc CLI subcommands) honour the operator-declared dimension. Only if
-  // both are absent do we fall through to the no-clobber path, which keeps
-  // ensureSchema from touching `index_meta.embeddingDim` at all.
-  const resolvedDim = options?.embeddingDim ?? resolveConfiguredEmbeddingDim();
-  ensureSchema(db, resolvedDim);
-
-  // Warn once at init if using JS fallback with many entries
-  warnIfVecMissing(db, { once: true });
-
-  return db;
+      // Warn once at init if using JS fallback with many entries
+      warnIfVecMissing(db, { once: true });
+    },
+  });
 }
 
 /**
@@ -116,16 +109,10 @@ function resolveConfiguredEmbeddingDim(): number | undefined {
 }
 
 export function openExistingDatabase(dbPath?: string): Database {
-  const resolvedPath = dbPath ?? getDbPath();
-  const dir = path.dirname(resolvedPath);
-  const db = openDatabase(resolvedPath);
-  applyStandardPragmas(db, { dataDir: dir });
-
   // Existing-DB callers must not mutate schema or embedding metadata on open,
-  // but some paths still need write access to usage_events and other tables.
-  loadVecExtension(db);
-
-  return db;
+  // but some paths still need write access to usage_events and other tables —
+  // so init only loads the vec extension, it does not run ensureSchema.
+  return openManagedDatabase({ path: dbPath ?? getDbPath(), init: loadVecExtension });
 }
 
 export function closeDatabase(db: Database): void {

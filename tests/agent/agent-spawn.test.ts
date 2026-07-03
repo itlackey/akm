@@ -169,6 +169,18 @@ describe("runAgent — JSON parse mode", () => {
     expect(result.parsed).toEqual({ role: "agent" });
   });
 
+  test("recovers a top-level JSON array embedded in prose", async () => {
+    // The old inline `{…}`-only scanner could not salvage a top-level array.
+    // parseEmbeddedJsonResponse handles both objects and arrays.
+    const { spawn } = fakeSpawnFn({
+      exitCode: 0,
+      stdout: 'Here are the results:\n[{"id":1},{"id":2}]\nDone.',
+    });
+    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
+    expect(result.ok).toBe(true);
+    expect(result.parsed).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
   test("malformed JSON yields `parse_error`", async () => {
     const { spawn } = fakeSpawnFn({ exitCode: 0, stdout: "not json {" });
     const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
