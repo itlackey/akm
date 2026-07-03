@@ -203,7 +203,14 @@ jobs:
       - run: bun install --omit optional
 
       - name: Compile binary
-        run: bun build ./src/cli.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }} --define "AKM_VERSION='${{ inputs.version }}'"
+        # @huggingface/transformers is an OPTIONAL dependency, omitted from the
+        # install above, and loaded lazily at runtime via a dynamic import
+        # (src/llm/embedders/local.ts) after `akm setup` installs it. Mark it
+        # --external so `bun build --compile` leaves that import as a runtime
+        # require instead of trying to resolve/bundle the (absent) package —
+        # without this the compile fails "Could not resolve @huggingface/transformers"
+        # (regression surfaced when #693 moved the import to a module-level loader).
+        run: bun build ./src/cli.ts --compile --target=${{ matrix.target }} --external @huggingface/transformers --outfile ${{ matrix.artifact }} --define "AKM_VERSION='${{ inputs.version }}'"
 
       - uses: actions/upload-artifact@v5
         with:
