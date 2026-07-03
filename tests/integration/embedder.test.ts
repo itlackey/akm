@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
 import { setQuiet } from "../../src/core/warn";
-import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../../src/llm/embedder";
+import {
+  _setTransformersLoaderForTests,
+  cosineSimilarity,
+  embed,
+  embedBatch,
+  isEmbeddingAvailable,
+  resetLocalEmbedder,
+} from "../../src/llm/embedder";
 import { LocalEmbedder } from "../../src/llm/embedders/local";
+import { overrideSeam } from "../_helpers/seams";
 
 let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
 
@@ -14,18 +22,17 @@ function createLocalVector(values: number[] = [0.1, 0.2, 0.3], dimension = 384):
   return vector;
 }
 
-mock.module("@huggingface/transformers", () => ({
-  pipeline: async (task: string, model: string, options?: { dtype?: string }) => {
-    if (!pipelineImpl) {
-      throw new Error("pipelineImpl not configured");
-    }
-    return pipelineImpl(task, model, options);
-  },
-}));
-
 beforeEach(() => {
   resetLocalEmbedder();
   pipelineImpl = undefined;
+  overrideSeam(_setTransformersLoaderForTests, async () => ({
+    pipeline: async (task: string, model: string, options?: { dtype?: string }) => {
+      if (!pipelineImpl) {
+        throw new Error("pipelineImpl not configured");
+      }
+      return pipelineImpl(task, model, options);
+    },
+  }));
 });
 
 function createMockEmbeddingServer(

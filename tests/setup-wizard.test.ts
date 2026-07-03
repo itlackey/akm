@@ -3,15 +3,14 @@
  * - onCancel: Escape on confirmation should stay, not exit
  * - stepAddSources: recommended GitHub repos multiselect, cancel returns to menu
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { _setClackForTests } from "../src/cli/clack";
+import { _setLoadSetupStashesForTests } from "../src/setup/registry-stash-loader";
+import * as setupModule from "../src/setup/setup";
+import * as stepsModule from "../src/setup/steps";
+import { overrideSeam } from "./_helpers/seams";
 
-installPromptMock();
-let setupModule: typeof import("../src/setup/setup");
-let stepsModule: typeof import("../src/setup/steps");
-
-// ── Mock plumbing ────────────────────────────────────────────────────────────
+// ── Prompt-fake plumbing (src/cli/clack seam via overrideSeam) ───────────────
 
 /** Sentinel returned by mocked prompts when simulating Escape / Ctrl-C. */
 const CANCEL = Symbol("clack:cancel");
@@ -39,7 +38,7 @@ function reset() {
   q.logged.length = 0;
 }
 
-// Stable two-stash list returned by the mock — mirrors FALLBACK_STASHES so
+// Stable two-stash list returned by the seam fake — mirrors FALLBACK_STASHES so
 // stepAddSources tests remain deterministic and decoupled from the live registry.
 const MOCK_SETUP_STASHES = [
   {
@@ -61,11 +60,7 @@ const MOCK_SETUP_STASHES = [
 ];
 
 function installPromptMock() {
-  mock.module("../src/setup/registry-stash-loader", () => ({
-    loadSetupStashes: async () => MOCK_SETUP_STASHES,
-    DEFAULT_SELECTED_STASH_IDS: ["itlackey/akm-stash"],
-  }));
-  mock.module("@clack/prompts", () => ({
+  overrideSeam(_setClackForTests, {
     isCancel: (v: unknown) => v === CANCEL,
     cancel: (msg: string) => {
       q.logged.push(`[cancel] ${msg}`);
@@ -103,21 +98,13 @@ function installPromptMock() {
     note: (msg: string, title?: string) => {
       q.logged.push(`[note] ${title ?? ""} ${msg}`.trim());
     },
-  }));
+  });
 }
 
-async function reloadSetupModules() {
-  const setupUrl = pathToFileURL(path.join(import.meta.dir, "../src/setup/setup.ts")).href;
-  const stepsUrl = pathToFileURL(path.join(import.meta.dir, "../src/setup/steps.ts")).href;
-  setupModule = await import(`${setupUrl}?t=${Date.now()}-${Math.random()}`);
-  stepsModule = await import(`${stepsUrl}?t=${Date.now()}-${Math.random()}`);
-}
-
-async function resetHarness() {
-  mock.restore();
+function resetHarness() {
   reset();
   installPromptMock();
-  await reloadSetupModules();
+  overrideSeam(_setLoadSetupStashesForTests, async () => MOCK_SETUP_STASHES);
 }
 
 // ── onCancel tests ───────────────────────────────────────────────────────────

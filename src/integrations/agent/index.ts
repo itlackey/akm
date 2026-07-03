@@ -30,7 +30,7 @@ export type {
   AgentDetectionResult,
   WhichFn,
 } from "./detect";
-export { defaultWhich, detectAgentCliProfiles, pickDefaultAgentProfile } from "./detect";
+export { _setAgentDetectForTests, defaultWhich, detectAgentCliProfiles, pickDefaultAgentProfile } from "./detect";
 export type { PlatformModelMap } from "./model-aliases";
 export { listBuiltinModelAliases, resolveModel } from "./model-aliases";
 export type {

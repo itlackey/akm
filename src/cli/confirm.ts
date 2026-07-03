@@ -37,8 +37,8 @@
  * output. The auto-migration banner is similarly exempt from `--quiet`.
  */
 
-import * as p from "@clack/prompts";
 import { UsageError } from "../core/errors";
+import * as p from "./clack";
 
 export interface ConfirmDestructiveOptions {
   /**

@@ -27,8 +27,8 @@
  */
 
 import path from "node:path";
-import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
+import * as p from "../../cli/clack";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { isHttpUrl } from "../../core/common";

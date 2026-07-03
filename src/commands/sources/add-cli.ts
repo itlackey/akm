@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import * as p from "@clack/prompts";
 import { defineCommand } from "citty";
+import * as p from "../../cli/clack";
 import { output, runWithJsonErrors } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";

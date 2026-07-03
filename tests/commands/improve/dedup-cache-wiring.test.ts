@@ -6,48 +6,30 @@
  * Behavioral tests for the body_embeddings cache wiring in runDeterministicDedup
  * (WS-3a blocker fix).
  *
- * These tests require mock.module to stub out embedBatch BEFORE importing dedup,
- * so they live in a separate file from dedup.test.ts (which already has a static
- * import of dedup.ts at the top — static imports cannot pick up mock.module after
- * the fact in Bun).
+ * embedBatch is stubbed via the embedder module seam (_setEmbedderForTests),
+ * installed per-test through overrideSeam (the preload restores it after each
+ * test). We control behaviour via the mutable `embedBatchImpl` variable — each
+ * test can point it at a fresh mock function to observe call counts. The real
+ * `cosineSimilarity` is used.
  *
  * Two behavioral assertions:
  *   (a) Cache MISS → embedBatch is called + vectors are upserted into stateDb.
  *   (b) Cache HIT  → embedBatch is NOT called; the pre-seeded vector is reused.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { cacheHash, runDeterministicDedup } from "../../../src/commands/improve/dedup";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { getBodyEmbeddings, openStateDatabase, upsertBodyEmbeddings } from "../../../src/core/state-db";
+import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
-
-// ── Embedding stub ──────────────────────────────────────────────────────────
-//
-// mock.module must run before the module under test is imported. We control
-// behaviour via the mutable `embedBatchImpl` variable — each test can point
-// it at a fresh mock function to observe call counts.
+import { overrideSeam } from "../../_helpers/seams";
 
 type EmbedBatchFn = (texts: string[], config?: unknown, signal?: AbortSignal) => Promise<number[][]>;
 
 let embedBatchImpl: EmbedBatchFn = async (texts) => texts.map(() => [0.1, 0.2, 0.3]);
-
-mock.module("../../../src/llm/embedder", () => ({
-  embedBatch: async (texts: string[], config?: unknown, signal?: AbortSignal) => embedBatchImpl(texts, config, signal),
-  resolveEmbeddingModelId: (_cfg: unknown) => "stub-model",
-  cosineSimilarity: (a: number[], b: number[]) => {
-    // dot product / (|a| * |b|) — simplified for unit vectors
-    let dot = 0;
-    for (let i = 0; i < a.length; i++) dot += (a[i] as number) * (b[i] as number);
-    const magA = Math.sqrt(a.reduce((s, v) => s + v * v, 0));
-    const magB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
-    return magA === 0 || magB === 0 ? 0 : dot / (magA * magB);
-  },
-}));
-
-// Import AFTER mock.module so runDeterministicDedup picks up the stub.
-const { runDeterministicDedup, cacheHash } = await import("../../../src/commands/improve/dedup");
-const { openStateDatabase, getBodyEmbeddings, upsertBodyEmbeddings } = await import("../../../src/core/state-db");
 
 // ── Storage helpers ─────────────────────────────────────────────────────────
 
@@ -57,6 +39,10 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   // Reset the stub to the default implementation.
   embedBatchImpl = async (texts) => texts.map(() => [0.1, 0.2, 0.3]);
+  overrideSeam(_setEmbedderForTests, {
+    embedBatch: (texts, config, signal) => embedBatchImpl(texts, config, signal),
+    resolveEmbeddingModelId: () => "stub-model",
+  });
 });
 afterEach(() => storage.cleanup());
 

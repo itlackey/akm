@@ -2,45 +2,37 @@
  * Tests for the staleness-detection pass (Phase 4A,
  * `.plans/0.8.0/self-improvement-enhancements-plan.md` lines 132-145).
  *
- * The LLM client is mocked via `mock.module` so no network call is ever
- * issued. The mock honours a mutable `validator` callback so each test can
- * deterministically shape the response.
+ * The LLM client is stubbed via the `_setChatCompletionForTests` seam so no
+ * network call is ever issued. The stub honours a mutable `validator` callback
+ * so each test can deterministically shape the response.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
+import { parseStalenessResponse, runStalenessDetectionPass } from "../../src/indexer/passes/staleness-detect";
 import type { SearchSource } from "../../src/indexer/search/search-source";
+import { _setChatCompletionForTests } from "../../src/llm/client";
+import { overrideSeam } from "../_helpers/seams";
 
-// ── Module-level LLM stub ───────────────────────────────────────────────────
-//
-// `mock.module` must run before the module under test is imported. We spread
-// the real `client` module exports so unrelated callers (e.g. memory-inference
-// importing `parseEmbeddedJsonResponse`) keep working, and override only the
-// `chatCompletion` function with our deterministic validator.
+// ── LLM stub (swap-and-restore seam) ────────────────────────────────────────
 
 let validator: (userContent: string) => string = () => "NO";
 let validatorCalls = 0;
-const realClient = await import("../../src/llm/client");
-mock.module("../../src/llm/client", () => ({
-  ...realClient,
-  chatCompletion: async (_conn: unknown, messages: Array<{ role: string; content: string }>): Promise<string> => {
-    validatorCalls += 1;
-    const user = messages.find((m) => m.role === "user");
-    return validator(user?.content ?? "");
-  },
-}));
-
-const { runStalenessDetectionPass, parseStalenessResponse } = await import("../../src/indexer/passes/staleness-detect");
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
 let tmpStash = "";
 
 beforeEach(() => {
+  overrideSeam(_setChatCompletionForTests, async (_config, messages) => {
+    validatorCalls += 1;
+    const user = messages.find((m) => m.role === "user");
+    return validator(user?.content ?? "");
+  });
   tmpStash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-staleness-"));
   fs.mkdirSync(path.join(tmpStash, "memories"), { recursive: true });
   validator = () => "NO";

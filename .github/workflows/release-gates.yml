@@ -16,12 +16,11 @@ on:
 
 jobs:
   # NOTE: `bun test --parallel=N` at ANY N (including 1) is unsafe on this Bun
-  # version — it adds a redundant worker-IPC layer on top of `--isolate` for
-  # zero parallelism benefit at N=1, and the isolate/worker path it engages has
-  # an intermittent epoll_ctl EEXIST race / busy-spin hang (reproduced at
-  # parallel=12, parallel=4, AND parallel=1 under CPU contention). Test runs
-  # here pass `--isolate` alone (still required for correctness — see
-  # test-unit.sh) but never `--parallel`; the integration suite is sharded
+  # version — it implies `--isolate` and spawns a worker process over IPC, the
+  # path with the intermittent epoll_ctl EEXIST race / busy-spin hang. Test
+  # runs here pass neither `--parallel` nor `--isolate` (isolate removed
+  # 2026-07-02 after the DI-seams refactor eliminated cross-file mock.module
+  # pollution — see scripts/test-unit.sh); the integration suite is sharded
   # across separate runner jobs for speed. See release.yml for the full
   # rationale.
   integration:
@@ -44,11 +43,10 @@ jobs:
 
   # Order-dependence / flake detector: run the FULL unit suite twice in fresh
   # processes to surface leaked env / singletons / stateful DB rows. `bun run
-  # test:unit` (scripts/test-unit.sh) still shards across separate OS
-  # processes for speed and passes `--isolate` (required for correctness) but
-  # never `--parallel` — see ci.yml/release.yml for why that flag is unsafe at
-  # any N. Informational (continue-on-error) — a consistently-red run signals
-  # new order-dependence.
+  # test:unit` (scripts/test-unit.sh) shards across separate OS processes for
+  # speed but passes neither `--isolate` nor `--parallel` — see
+  # ci.yml/release.yml. Informational (continue-on-error) — a
+  # consistently-red run signals new order-dependence.
   flake-detect:
     runs-on: ubuntu-latest
     timeout-minutes: 15

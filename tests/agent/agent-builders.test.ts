@@ -6,73 +6,15 @@
  *
  * Coverage follows v1 spec §12.2 and §12.3.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { AgentCommandBuilder, AgentDispatchRequest } from "../../src/integrations/agent/builders";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 
-// ── warn mock ────────────────────────────────────────────────────────────────
-// Must stay a faithful drop-in for the real module (see agent-config.test.ts
-// comments for details on why all exports must be represented).
-
-const warnings: string[] = [];
-
-let mockedQuiet = false;
-let mockedVerbose = false;
-let mockedLogFile: string | undefined;
-
-mock.module("../../src/core/warn", () => ({
-  info: (...args: unknown[]) => {
-    if (!mockedQuiet) console.warn(...args);
-  },
-  warn: (...args: unknown[]) => {
-    warnings.push(args.join(" "));
-    if (!mockedQuiet) console.warn(...args);
-  },
-  error: (...args: unknown[]) => {
-    warnings.push(args.join(" "));
-    if (!mockedQuiet) console.error(...args);
-  },
-  warnVerbose: (...args: unknown[]) => {
-    if (!mockedVerbose) return;
-    warnings.push(args.join(" "));
-    if (!mockedQuiet) console.warn(...args);
-  },
-  setQuiet: (value: boolean) => {
-    mockedQuiet = value;
-  },
-  resetQuiet: () => {
-    mockedQuiet = false;
-  },
-  isQuiet: () => mockedQuiet,
-  setVerbose: (value: boolean) => {
-    mockedVerbose = value;
-  },
-  resetVerbose: () => {
-    mockedVerbose = false;
-  },
-  isVerbose: () => {
-    const env = process.env.AKM_VERBOSE?.trim().toLowerCase();
-    if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
-    if (env === "0" || env === "false" || env === "no" || env === "off") return false;
-    return mockedVerbose;
-  },
-  setLogFile: (value: string) => {
-    mockedLogFile = value;
-  },
-  clearLogFile: () => {
-    mockedLogFile = undefined;
-  },
-  getLogFile: () => mockedLogFile,
-}));
-
-beforeEach(() => {
-  warnings.length = 0;
-  mockedQuiet = false;
-});
-
-afterEach(() => {
-  warnings.length = 0;
-});
+// NOTE: this file previously carried a full 13-export mock.module fake of
+// src/core/warn. Nothing under test here (builders, model-aliases, profiles)
+// imports warn, and the captured `warnings` array was never asserted — the
+// fake was dead weight and is gone. If a warn assertion is ever needed, use
+// the `_setWarnSinkForTests` seam via tests/_helpers/seams.ts.
 
 // ── Profile helpers ───────────────────────────────────────────────────────────
 

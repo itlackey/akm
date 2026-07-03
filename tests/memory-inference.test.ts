@@ -2,8 +2,8 @@
  * Tests for the memory-inference pass (#201).
  *
  * The LLM client is never called for real — `compressMemoryToDerivedMemory` is
- * mocked via `mock.module` to return deterministic derived-memory drafts. These
- * tests cover:
+ * injected through the pass's `options` parameter to return deterministic
+ * derived-memory drafts (no `mock.module`). These tests cover:
  *   - pending detection (parent vs already-inferred vs already-processed)
  *   - the disabled-by-default path (no `akm.llm` configured)
  *   - the `index.memory.llm = false` opt-out
