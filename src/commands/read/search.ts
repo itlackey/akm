@@ -19,8 +19,8 @@ import { appendEvent } from "../../core/events";
 import { isTransientStashPath } from "../../core/paths";
 import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db/db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
+import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
@@ -124,7 +124,7 @@ export async function akmSearch(input: {
     source = parsedSource as SearchSource;
   }
 
-  let allSources = resolveSourceEntries(undefined, config);
+  let allSources = resolveReadSources(undefined, config).sources;
 
   // When a named source was requested, narrow the sources list to just that entry.
   // `resolveSourceEntries` sets `registryId` to `entry.name` for each config source.

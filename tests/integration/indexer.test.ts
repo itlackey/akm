@@ -1413,28 +1413,28 @@ test("akmIndex does not collapse unrelated same-basename assets across sources",
 
 test("matchEntryToFile returns null when files array is empty", () => {
   const fileMap = buildFileBasenameMap([]);
-  const result = matchEntryToFile("nonexistent-entry", fileMap, []);
+  const result = matchEntryToFile("nonexistent-entry", fileMap);
   expect(result).toBeNull();
 });
 
 test("matchEntryToFile returns null when no name match exists", () => {
   const files = ["/stash/scripts/deploy/deploy.sh"];
   const fileMap = buildFileBasenameMap(files);
-  const result = matchEntryToFile("no-match", fileMap, files);
+  const result = matchEntryToFile("no-match", fileMap);
   expect(result).toBeNull();
 });
 
 test("matchEntryToFile returns exact match when entry name matches basename", () => {
   const files = ["/stash/scripts/deploy/deploy.sh", "/stash/scripts/deploy/util.sh"];
   const fileMap = buildFileBasenameMap(files);
-  const result = matchEntryToFile("deploy", fileMap, files);
+  const result = matchEntryToFile("deploy", fileMap);
   expect(result).toBe("/stash/scripts/deploy/deploy.sh");
 });
 
 test("matchEntryToFile matches last path segment for hierarchical names", () => {
   const files = ["/stash/scripts/deploy/deploy.sh"];
   const fileMap = buildFileBasenameMap(files);
-  const result = matchEntryToFile("corpus/deploy", fileMap, files);
+  const result = matchEntryToFile("corpus/deploy", fileMap);
   expect(result).toBe("/stash/scripts/deploy/deploy.sh");
 });
 

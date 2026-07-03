@@ -288,7 +288,7 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
   throwIfAborted(signal);
 
   // LLM enrichment for directories that need it
-  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, onProgress, signal, true, reEnrich);
+  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, onProgress, signal, reEnrich);
   onProgress({
     phase: "llm",
     message: resolveIndexPassLLM("enrichment", config)
@@ -951,7 +951,6 @@ async function enhanceDirsWithLlm(
   }>,
   onProgress?: (event: IndexProgressEvent) => void,
   signal?: AbortSignal,
-  _enrich = false,
   reEnrich = false,
 ): Promise<void> {
   // Resolve per-pass LLM config via the unified shim. Returns undefined when
@@ -1378,7 +1377,7 @@ function resolveIndexedFiles(dirPath: string, files: string[], stash: StashFile)
   for (const entry of stash.entries) {
     const entryPath = entry.filename
       ? path.join(dirPath, entry.filename)
-      : matchEntryToFile(entry.name, fileBasenameMap, files);
+      : matchEntryToFile(entry.name, fileBasenameMap);
     if (entryPath) resolved.add(entryPath);
   }
   return resolved.size > 0 ? [...resolved] : files;
@@ -1525,7 +1524,7 @@ export function buildFileBasenameMap(files: string[]): Map<string, string> {
  *      try matching the last segment
  *   3. No implicit file fallback: ambiguous legacy entries are skipped
  */
-export function matchEntryToFile(entryName: string, fileMap: Map<string, string>, _files: string[]): string | null {
+export function matchEntryToFile(entryName: string, fileMap: Map<string, string>): string | null {
   // Exact match on entry name
   const exact = fileMap.get(entryName);
   if (exact) return exact;
