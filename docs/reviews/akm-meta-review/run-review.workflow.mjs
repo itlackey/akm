@@ -25,13 +25,21 @@ const DIR = 'docs/reviews/akm-meta-review'
 const promptPath = (slug) => `${DIR}/${slug}.md`
 const findingsPath = (slug) => `${DIR}/findings/${slug}.md`
 
-const GROUND_RULES =
-  'GROUND RULES (non-negotiable): READ-ONLY on live data — never run akm improve/recombine/extract/consolidate, ' +
-  'open sqlite mode=ro only, never accept/reject proposals or edit/delete stash assets. ' +
-  'Verify EFFECTIVE config (what the cron actually loads), not code defaults. ' +
-  'Prefer subtraction: a fix that deletes machinery beats one that adds a guard/flag/wrapper. ' +
-  'Never print secret VALUES — reference env/secret assets by name only. ' +
-  'Improve accept/reject rows before 0.9.0-beta.50 are polluted (gated skips counted as rejected); discriminate with `skippedCount IS NOT NULL`.'
+const CONTEXT_PATH = `${DIR}/CONTEXT.md`
+
+// Hard, static safety — embedded in every agent prompt so it holds even if a file
+// read is ever skipped.
+const SAFETY =
+  'HARD RULES (non-negotiable): READ-ONLY on live data — never run akm improve/recombine/extract/consolidate; ' +
+  'open sqlite mode=ro only; never accept/reject proposals or edit/delete stash assets. ' +
+  'Findings are local-only / gitignored — never commit or push them. Never print secret VALUES.'
+
+// The EVOLVING cross-review context (full ground rules + binding decisions from completed
+// reviews) lives in CONTEXT.md; every agent Reads it. That is the "token injection" —
+// Workflow scripts have no filesystem access, so the AGENTS do the read, not the script,
+// and CONTEXT.md stays the one running document the owner maintains.
+const readFirst = (slug) =>
+  `First, Read ${CONTEXT_PATH} (shared ground rules + binding cross-review decisions) and the review prompt at ${promptPath(slug)} (authoritative instructions + full ref list).`
 
 const EVIDENCE_SCHEMA = {
   type: 'object',
@@ -87,8 +95,8 @@ function gather(slug, bucket) {
   const refs = (bucket.refs || []).map((r) => `  - ${r}`).join('\n')
   return agent(
     `You are the GATHER phase of akm meta-review "${slug}". Your job is pure evidence collection — NO analysis, NO verdicts, NO recommendations.\n\n` +
-      `${GROUND_RULES}\n\n` +
-      `First, Read the full review prompt at ${promptPath(slug)} for authoritative instructions and its complete ref list.\n\n` +
+      `${SAFETY}\n\n` +
+      `${readFirst(slug)}\n\n` +
       `Your assigned bucket: "${bucket.label}".\n${bucket.focus}\n\n` +
       (refs ? `Start from these refs/paths (Read them, follow leads, run read-only inspection):\n${refs}\n\n` : '') +
       `Return a dense factual bundle: concrete file:line pointers, exact numbers from read-only DB/CLI queries, verbatim paths/quotes. Mark verified=false for anything you could not actually confirm. This feeds the analysis phase, which cannot see the files you saw — so be complete and specific.`,
@@ -99,8 +107,9 @@ function gather(slug, bucket) {
 // ── ANALYZE: the judgment.  fable.
 function analyze(slug, spec, evidence) {
   return agent(
-    `You are the ANALYSIS phase of akm meta-review "${slug}". Read the full prompt at ${promptPath(slug)} first — it defines the exact judgment steps.\n\n` +
-      `${GROUND_RULES}\n\n` +
+    `You are the ANALYSIS phase of akm meta-review "${slug}".\n\n` +
+      `${SAFETY}\n\n` +
+      `${readFirst(slug)} The prompt defines the exact judgment steps.\n\n` +
       `Read-only evidence gathered for you (you may Read the cited files to go deeper, but do not re-do the whole gather):\n` +
       `${JSON.stringify(evidence)}\n\n` +
       `Apply the prompt's judgment. Verdict vocabulary for this review: ${spec.dims.join(' / ')}.\n${spec.analyzeFocus}\n\n` +
@@ -112,7 +121,9 @@ function analyze(slug, spec, evidence) {
 // ── VERIFY: optional adversarial pass for the high-stakes reviews.  fable.
 function verify(slug, spec, analysis) {
   return agent(
-    `You are the ADVERSARIAL VERIFY phase of akm meta-review "${slug}". Read ${promptPath(slug)} for context.\n\n` +
+    `You are the ADVERSARIAL VERIFY phase of akm meta-review "${slug}".\n\n` +
+      `${SAFETY}\n\n` +
+      `${readFirst(slug)}\n\n` +
       `Here is the analysis produced so far:\n${JSON.stringify(analysis)}\n\n` +
       `${spec.adversarialFocus}\n\n` +
       `Be a hostile reviewer. For each finding: is the verdict actually supported by the cited evidence, or is it a strawman / over-claim? What did the analysis MISS entirely? Return a short critique: (a) findings to downgrade or cut and why, (b) missing findings the analysis should have made, (c) the single strongest counter-argument. Default to skepticism.`,
@@ -123,8 +134,9 @@ function verify(slug, spec, analysis) {
 // ── SYNTHESIZE: write the deliverable.  fable (it is the argued artifact).
 function synthesize(slug, spec, analysis, critique) {
   return agent(
-    `You are the SYNTHESIS phase of akm meta-review "${slug}". Read ${promptPath(slug)} for the EXACT required output structure (its final "Output: findings/${slug}.md ..." step).\n\n` +
-      `${GROUND_RULES}\n\n` +
+    `You are the SYNTHESIS phase of akm meta-review "${slug}".\n\n` +
+      `${SAFETY}\n\n` +
+      `${readFirst(slug)} Follow the review prompt's final "Output: findings/${slug}.md ..." step for the EXACT required structure.\n\n` +
       `Analysis to write up:\n${JSON.stringify(analysis)}\n\n` +
       (critique ? `Adversarial critique to incorporate (fold in the valid points; drop findings it refutes):\n${critique}\n\n` : '') +
       `Write the findings document to ${findingsPath(slug)} using the Write tool, matching the output structure the prompt specifies exactly (tables, rankings, dispositions). Keep it evidence-dense and subtraction-biased.\n\n` +
