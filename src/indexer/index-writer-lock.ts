@@ -80,9 +80,6 @@ export async function acquireIndexWriterLease(
 
   while (true) {
     throwIfAborted(options.signal);
-    if (mode === "wait" && maxWaitMs >= 0 && Date.now() - startedAt >= maxWaitMs) {
-      throw new Error(`timed out waiting for index writer lease for ${options.purpose}`);
-    }
 
     if (tryAcquireLockSync(lockPath, buildPayload(options.purpose))) {
       return retainHeldLock(lockPath);
@@ -97,6 +94,13 @@ export async function acquireIndexWriterLease(
       continue;
     }
     if (mode === "try") return undefined;
+
+    // Held by another live process. Time out only *after* a real acquisition
+    // attempt, so a caller with maxWaitMs:0 still gets one chance at a free lock
+    // instead of throwing before it ever tries.
+    if (maxWaitMs >= 0 && Date.now() - startedAt >= maxWaitMs) {
+      throw new Error(`timed out waiting for index writer lease for ${options.purpose}`);
+    }
     await delay(INDEX_WRITER_WAIT_MS);
   }
 }
