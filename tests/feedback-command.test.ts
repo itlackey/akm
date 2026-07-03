@@ -8,7 +8,7 @@ import { closeDatabase, openIndexDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { runCliCapture } from "./_helpers/cli";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // Migrated from spawnSync("bun", [CLI, ...]) to the shared in-process harness
 // (tests/_helpers/cli.ts). beforeEach already sandboxes AKM_STASH_DIR and the
@@ -36,20 +36,21 @@ function isLocalHit(hit: { type: string }): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 
+// Full composite isolation (incl. XDG_DATA_HOME): this file asserts EXACT
+// usage_events row counts against getDbPath(), so it must own its index.db.
+// The previous 3-helper chain left the data dir on the process-shared suite
+// sandbox, where any shard-mate's feedback events leaked into the assertions
+// (the leak surfaced whenever adding a test file reshuffled bun's shards).
+let storage: IsolatedAkmStorage;
 let stashDir = "";
-let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
-  const cacheResult = sandboxXdgCacheHome();
-  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-  const stashResult = sandboxStashDir(cfgResult.cleanup);
-  stashDir = stashResult.dir;
-  envCleanup = stashResult.cleanup;
+  storage = withIsolatedAkmStorage();
+  stashDir = storage.stashDir;
 });
 
 afterEach(() => {
-  envCleanup();
-  envCleanup = () => {};
+  storage.cleanup();
   stashDir = "";
 });
 
