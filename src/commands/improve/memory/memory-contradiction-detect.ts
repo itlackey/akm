@@ -176,6 +176,33 @@ function writeContradictedByEdge(filePath: string, contradictedByRef: string): b
   });
 }
 
+/**
+ * Deterministically pick, for a confirmed-contradiction pair, the LOSER memory
+ * that receives the single directed `contradictedBy` edge (SCC-resolved to
+ * `contradicted`) and the WINNER ref that survives as the current belief.
+ *
+ * A SINGLE directed edge is essential. Writing mutual A↔B edges forms a 2-cycle
+ * that {@link resolveFamilyContradictions} collapses into one strongly-connected
+ * SINK component and refreshes BOTH members back to active — erasing the
+ * contradiction on every run (the self-erasing bug this fix removes).
+ *
+ * Direction = lexicographic ref order: the ref that sorts LATER is the loser.
+ * This is a **total order** over the family's (distinct) refs, so the induced
+ * edges are always acyclic — a family of any size resolves to a DAG with a
+ * single sink, never a cycle that the resolver would refresh back to active.
+ * It is also immutable across runs (unlike file mtime, which the resolver
+ * bumps when it rewrites loser files), so detection is idempotent. Ref order
+ * carries no recency meaning — no derived-memory writer sets a `createdAt`/
+ * timestamp today — but the mechanism only needs a stable, acyclic direction;
+ * eliminating worst-case self-erasure, not ranking by recency, is the goal.
+ */
+function pickContradictionLoser(
+  a: DerivedMemoryEntry,
+  b: DerivedMemoryEntry,
+): { loser: DerivedMemoryEntry; winnerRef: string } {
+  return a.ref < b.ref ? { loser: b, winnerRef: a.ref } : { loser: a, winnerRef: b.ref };
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /**
@@ -254,18 +281,22 @@ export async function detectAndWriteContradictions(
         const b = family[j];
         if (!a || !b) continue;
 
-        // Skip pairs where edges already exist in BOTH directions (no new information).
-        const aRaw = fs.readFileSync(a.filePath, "utf8");
-        const aParsed = parseFrontmatter(aRaw);
-        const aCB: string[] = Array.isArray(aParsed.data.contradictedBy)
-          ? (aParsed.data.contradictedBy as string[])
-          : [];
-        const bRaw = fs.readFileSync(b.filePath, "utf8");
-        const bParsed = parseFrontmatter(bRaw);
-        const bCB: string[] = Array.isArray(bParsed.data.contradictedBy)
-          ? (bParsed.data.contradictedBy as string[])
-          : [];
-        if (aCB.includes(b.ref) && bCB.includes(a.ref)) continue;
+        // Resolve the directed edge up front (independent of the judge — it is
+        // decided by lexicographic ref order). Skip when that single loser→winner
+        // edge already exists (no new information; avoids re-judging resolved
+        // pairs across runs).
+        //
+        // Legacy mutual A↔B edges written by the pre-fix pass self-heal: the
+        // skip fires this run, but the SCC resolver treats the 2-cycle as a sink
+        // and refreshes both to active — DELETING both `contradictedBy` arrays
+        // (memory-improve.ts persistBeliefStateTransition). The next detection
+        // run then sees no edge, re-judges, and writes the single canonical edge.
+        const aParsed = parseFrontmatter(fs.readFileSync(a.filePath, "utf8"));
+        const bParsed = parseFrontmatter(fs.readFileSync(b.filePath, "utf8"));
+        const { loser, winnerRef } = pickContradictionLoser(a, b);
+        const loserData = loser === a ? aParsed.data : bParsed.data;
+        const loserCB: string[] = Array.isArray(loserData.contradictedBy) ? (loserData.contradictedBy as string[]) : [];
+        if (loserCB.includes(winnerRef)) continue;
 
         const prompt = buildContradictionJudgePrompt(a, b);
         const judgeResult = await tryLlmFeature(
@@ -308,14 +339,16 @@ export async function detectAndWriteContradictions(
           continue;
         }
 
-        // Write contradiction edges: both members get contradictedBy pointing to each other.
+        // Write a SINGLE directed contradiction edge: the losing (older) memory
+        // gets `contradictedBy` pointing to the winner. A mutual A↔B pair forms
+        // a 2-cycle that the SCC resolver refreshes back to active, erasing the
+        // contradiction every run (see pickContradictionLoser).
         try {
-          const wroteA = writeContradictedByEdge(a.filePath, b.ref);
-          const wroteB = writeContradictedByEdge(b.filePath, a.ref);
-          result.edgesWritten += (wroteA ? 1 : 0) + (wroteB ? 1 : 0);
+          const wrote = writeContradictedByEdge(loser.filePath, winnerRef);
+          result.edgesWritten += wrote ? 1 : 0;
         } catch (err) {
           result.warnings.push(
-            `Failed to write contradiction edge ${a.ref} <-> ${b.ref}: ${err instanceof Error ? err.message : String(err)}`,
+            `Failed to write contradiction edge ${loser.ref} -> ${winnerRef}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
