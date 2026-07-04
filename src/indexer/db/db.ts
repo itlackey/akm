@@ -948,10 +948,7 @@ export function getEntryCount(db: Database): number {
 }
 
 export function getEmbeddableEntryCount(db: Database): number {
-  const row = db.prepare("SELECT COUNT(*) AS cnt FROM entries").get() as {
-    cnt: number;
-  };
-  return row.cnt;
+  return getEntryCount(db);
 }
 
 export function getEmbeddingCount(db: Database): number {
