@@ -15,6 +15,7 @@ import {
   getEntryIdByFilePath,
   getEntryRefRowsForStashRoot,
   getMeta,
+  getRegistryIndexCache,
   isVecAvailable,
   openExistingDatabase,
   openIndexDatabase,
@@ -24,6 +25,7 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
+  upsertRegistryIndexCache,
 } from "../src/indexer/db/db";
 import { DB_VERSION } from "../src/indexer/db/schema";
 import type { StashEntry } from "../src/indexer/passes/metadata";
@@ -960,5 +962,88 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / g
     closeDatabase(db);
     // Iterating after close must not throw / truncate — proves no live cursor.
     expect(rows.map((r) => r.file_path).sort()).toEqual(["/root/a.md", "/root/b.md"]);
+  });
+});
+
+// ── registry_index_cache helpers ────────────────────────────────────────────
+// Characterization tests pinning the raw upsert/get behaviour that moved from
+// db.ts into storage/repositories/registry-index-cache-repository.ts. Exercised
+// here via the db.ts re-export surface (the public compatibility seam).
+
+describe("registry_index_cache helpers", () => {
+  const URL = "https://registry.example.com/index";
+
+  test("getRegistryIndexCache returns undefined for a missing row", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      expect(getRegistryIndexCache(db, URL)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsert then get round-trips index_json and validators", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      upsertRegistryIndexCache(db, URL, '{"ok":true}', { etag: 'W/"abc"', lastModified: "Mon, 01 Jan 2024" });
+      const row = getRegistryIndexCache(db, URL);
+      expect(row).toEqual({ indexJson: '{"ok":true}', etag: 'W/"abc"', lastModified: "Mon, 01 Jan 2024" });
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsert with no opts stores null validators", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      upsertRegistryIndexCache(db, URL, "[]");
+      const row = getRegistryIndexCache(db, URL);
+      expect(row).toEqual({ indexJson: "[]", etag: null, lastModified: null });
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsert on conflict overwrites the existing row (single row per registry_url)", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      upsertRegistryIndexCache(db, URL, '{"v":1}', { etag: "one" });
+      upsertRegistryIndexCache(db, URL, '{"v":2}', { etag: "two" });
+      const row = getRegistryIndexCache(db, URL);
+      expect(row?.indexJson).toBe('{"v":2}');
+      expect(row?.etag).toBe("two");
+      const count = (db.prepare("SELECT COUNT(*) AS n FROM registry_index_cache").get() as { n: number }).n;
+      expect(count).toBe(1);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getRegistryIndexCache treats an entry older than maxAgeMs as a miss (TTL)", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      upsertRegistryIndexCache(db, URL, '{"ok":true}');
+      // Backdate fetched_at well beyond any positive TTL.
+      db.prepare("UPDATE registry_index_cache SET fetched_at = ? WHERE registry_url = ?").run(
+        new Date(Date.now() - 10_000).toISOString(),
+        URL,
+      );
+      expect(getRegistryIndexCache(db, URL, 1_000)).toBeUndefined();
+      // A generous TTL still returns the row.
+      expect(getRegistryIndexCache(db, URL, 60_000)).toBeDefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("getRegistryIndexCache treats an unparseable fetched_at as a miss", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      upsertRegistryIndexCache(db, URL, '{"ok":true}');
+      db.prepare("UPDATE registry_index_cache SET fetched_at = ? WHERE registry_url = ?").run("not-a-date", URL);
+      expect(getRegistryIndexCache(db, URL)).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

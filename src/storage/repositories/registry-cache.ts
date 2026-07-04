@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { rethrowIfTestIsolationError } from "../../core/errors";
-import { closeDatabase, getRegistryIndexCache, openIndexDatabase, upsertRegistryIndexCache } from "../../indexer/db/db";
+import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import type { Database } from "../database";
+import { getRegistryIndexCache, upsertRegistryIndexCache } from "./registry-index-cache-repository";
 
 /**
  * Storage seam for the `registry_index_cache` table in `index.db`.
