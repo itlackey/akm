@@ -1643,9 +1643,8 @@ export function applyFeedbackToUtilityScore(
 /**
  * Re-link detached usage_events to their current entry_ids via entry_ref.
  *
- * After a full rebuild, entry IDs change. This query matches events to their
- * new entry rows using the stable `entry_ref` ("type:name") column so usage
- * history survives a full reindex.
+ * After a full rebuild, entry IDs change. This restores each event's link
+ * using the stable `entry_ref` column so usage history survives a reindex.
  */
 export function relinkUsageEvents(db: Database): void {
   bestEffort(() => {
@@ -1663,17 +1662,32 @@ export function relinkUsageEvents(db: Database): void {
         AND entry_id NOT IN (SELECT id FROM entries)
     `);
 
-    // Step 2: re-resolve any null entry_id from entry_ref against the
-    // current entries table. Picks up entries that were re-created with
-    // the same ref (e.g. an asset moved between sources).
-    db.exec(`
-      UPDATE usage_events SET entry_id = (
-        SELECT e.id FROM entries e
-        WHERE substr(e.entry_key, length(e.entry_key) - length(usage_events.entry_ref)) = ':' || usage_events.entry_ref
-        LIMIT 1
-      )
-      WHERE entry_id IS NULL AND entry_ref IS NOT NULL
-    `);
+    // Step 2: re-resolve any null entry_id from entry_ref against the current
+    // entries table, reusing the SAME canonical resolver the read path uses at
+    // insert time (`findEntryIdByRef` → `parseAssetRef`). Resolving per DISTINCT
+    // ref keeps this O(distinct-refs) indexed lookups instead of the previous
+    // O(events × entries) non-indexable `substr(entry_key, …)` scan. It also
+    // fixes a silent correctness bug: the old suffix match compared the RAW
+    // `entry_ref`, so origin-qualified refs ("source//type:name") never matched
+    // an `entry_key` and lost their usage history on every full rebuild.
+    const refs = db
+      .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_id IS NULL AND entry_ref IS NOT NULL")
+      .all() as { ref: string }[];
+
+    const update = db.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
+    const relinkTx = db.transaction(() => {
+      for (const { ref } of refs) {
+        let id: number | undefined;
+        try {
+          id = findEntryIdByRef(db, ref);
+        } catch (err) {
+          if (err instanceof Error && err.name === "UsageError") continue;
+          throw err;
+        }
+        if (id !== undefined) update.run(id, ref);
+      }
+    });
+    relinkTx();
   }, "usage_events table may not exist yet during entry_id re-resolution");
 }
 
