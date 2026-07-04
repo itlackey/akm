@@ -20,7 +20,7 @@ import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
-import { makeProfile } from "../_helpers/factories";
+import { makeProfile, quietQualityGateConfig } from "../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -209,6 +209,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
       ...coerced,
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
           capturedCmd = cmd;
@@ -228,6 +229,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
       ...coerced,
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("not json", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -243,6 +245,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
       ...coerced,
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: hangingSpawn(),
         setTimeoutFn: ((cb: () => void) => {

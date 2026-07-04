@@ -21,7 +21,7 @@ import { akmPropose } from "../../../src/commands/proposal/propose";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
-import { makeProfile } from "../../_helpers/factories";
+import { makeProfile, quietQualityGateConfig } from "../../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
@@ -143,6 +143,7 @@ describe("akm reflect", () => {
       ref: "lesson:rg-over-grep",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -166,6 +167,7 @@ describe("akm reflect", () => {
       ref: "lesson:rg-over-grep",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
       eligibilitySource: "proactive",
     });
@@ -189,6 +191,7 @@ describe("akm reflect", () => {
       ref: "lesson:rg-over-grep",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -210,6 +213,7 @@ describe("akm reflect", () => {
       ref: "lesson:bad",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
     });
     expect(result.ok).toBe(false);
@@ -228,6 +232,7 @@ describe("akm reflect", () => {
       ref: "lesson:any",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
     });
     expect(result.ok).toBe(false);
@@ -242,6 +247,7 @@ describe("akm reflect", () => {
       ref: "lesson:any",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("not a json object", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -256,6 +262,7 @@ describe("akm reflect", () => {
       ref: "lesson:any",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("# Title\n\nUse rg for recursive search.\n", "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -290,6 +297,7 @@ describe("akm reflect", () => {
       ref: "lesson:any",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       timeoutMs: 5,
       runAgentOptions: { spawn: hangingSpawn(), setTimeoutFn, clearTimeoutFn },
     });
@@ -312,6 +320,7 @@ describe("akm reflect", () => {
       stashDir: stash,
       task: "Focus on the highest-value recent signal",
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
           prompt = cmd.at(-1) ?? "";
@@ -343,6 +352,7 @@ describe("akm reflect", () => {
       stashDir: stash,
       task: "Tighten the guidance",
       agentProfile: makeProfile({ stdio: "interactive" }),
+      config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: (cmd, opts) => {
           capturedCmd = cmd;

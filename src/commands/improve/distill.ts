@@ -288,7 +288,9 @@ export interface AkmDistillResult {
   feedbackFullyFiltered?: boolean;
   /**
    * Judge score (1–5 float) when `outcome === "quality_rejected"`.
-   * Also present as -1 when the judge failed/timed out and fell back to pass-through.
+   * Present as -1 when the judge could not run (no LLM / timeout / parse
+   * failure) and the gate failed CLOSED (07 P0-2) — the proposal is rejected,
+   * not minted.
    */
   score?: number;
   /**
@@ -1097,7 +1099,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   // LLM-as-judge quality gate (P2-B). Only active when the feature flag is
-  // explicitly enabled. Fail-open: judge failures always pass through.
+  // explicitly enabled. Fail-CLOSED (07 P0-2): an unjudgeable proposal (no LLM
+  // / timeout / parse failure) is rejected, not passed through.
   // D-5 / #388: Three-band system — review_needed band queues a proposal
   // with review_needed outcome rather than auto-rejecting.
   let lessonJudgeConfidence: number | undefined;
@@ -1138,9 +1141,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         options.eligibilitySource,
       );
     }
-    // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
-    // (no LLM / timeout / parse failure) — leave confidence undefined so
-    // the auto-accept gate treats the proposal as unscored and skips it.
+    // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict
+    // reaches here (07 P0-2: the judge now fails CLOSED on no-LLM / timeout /
+    // parse failure, so those return pass:false and never fall through to
+    // this line). A defensive score>0 guard keeps confidence undefined for any
+    // non-positive score the auto-accept gate should treat as unscored.
     if (judgeResult.score > 0) lessonJudgeConfidence = judgeResult.score / 5;
   }
 

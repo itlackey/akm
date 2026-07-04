@@ -1444,7 +1444,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // `profiles.improve.default.processes.reflect.qualityGate.enabled` or
   // `profiles.improve.default.processes.distill.qualityGate.enabled` (the
   // `lesson_quality_gate` flag name is the legacy alias still accepted by
-  // `isLlmFeatureEnabled`). Fail-open: any judge error passes through.
+  // `isLlmFeatureEnabled`). Fail-CLOSED (07 P0-2): a judge error / no-LLM /
+  // parse failure rejects the proposal rather than passing it through.
   // G-Eval (arXiv:2303.16634) — quality judgment before admission.
   const runtimeConfig =
     options.config ??

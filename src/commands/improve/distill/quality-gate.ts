@@ -126,7 +126,10 @@ export function buildJudgePrompt(
  * `profiles.improve.default.processes.distill.qualityGate.enabled` (and the
  * corresponding `.reflect.qualityGate.enabled` for proposals).
  *
- * Fail-open: returns `pass: true` on timeout, parse failure, or missing LLM.
+ * Fail-CLOSED (07 P0-2): returns `pass: false` (score -1) on timeout, parse
+ * failure, or missing LLM. Minted content that cannot be judged is rejected,
+ * not passed through — an unverifiable judge must never wave content into the
+ * stash. The rejection is `quality_rejected`, not `review_needed`.
  */
 export async function runLessonQualityJudge(
   config: AkmConfig,
@@ -138,7 +141,7 @@ export async function runLessonQualityJudge(
 ): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
   const llmConfig = getDefaultLlmConfig(config);
   if (!llmConfig) {
-    return { pass: true, score: -1, reason: "no LLM configured — passing through" };
+    return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }
   const judgeLlmConfig = llmConfig.judgeModel ? { ...llmConfig, model: llmConfig.judgeModel } : llmConfig;
   const JUDGE_TIMEOUT_MS = 8_000;
@@ -152,7 +155,7 @@ export async function runLessonQualityJudge(
     ]);
     const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
     if (!parsed || typeof parsed.score !== "number") {
-      return { pass: true, score: -1, reason: "judge parse failed — passing through" };
+      return { pass: false, score: -1, reason: "judge parse failed — cannot judge, failing closed" };
     }
     // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
     //   >= 3.5: auto-queue as pending (pass: true)
@@ -169,7 +172,7 @@ export async function runLessonQualityJudge(
     }
     return { pass: false, score, reason };
   } catch {
-    return { pass: true, score: -1, reason: "judge failed — passing through" };
+    return { pass: false, score: -1, reason: "judge timeout/error — cannot judge, failing closed" };
   }
 }
 

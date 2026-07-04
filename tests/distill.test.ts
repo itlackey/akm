@@ -53,7 +53,11 @@ function makeStashDir(): string {
 }
 
 function configAbsentFeature(stashDir: string): AkmConfig {
-  // No process binding → distill defaults to true per 0.8.0.
+  // No distill process binding → distill defaults to true per 0.8.0. The
+  // quality gate is explicitly OFF: these callers exercise the benchmark-scored
+  // / merge-resolution mechanics with non-judge chat stubs, and after 07 P0-2
+  // the fail-CLOSED gate would otherwise reject them (and its chat call would
+  // trip the "chat must not be called" guards).
   return {
     semanticSearchMode: "auto",
     stashDir,
@@ -61,12 +65,20 @@ function configAbsentFeature(stashDir: string): AkmConfig {
     defaultWriteTarget: "stash",
     profiles: {
       llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+      improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;
 }
 
 function configEnabled(stashDir: string): AkmConfig {
+  // Distill mechanics tests exercise the distill path, NOT the LLM-as-judge
+  // quality gate. The gate defaults ON in production (`lesson_quality_gate`
+  // → distill.qualityGate.enabled ?? true), and after 07 P0-2 it fails CLOSED
+  // when the judge can't render a verdict — so a non-judge-aware chat stub
+  // would now reject every proposal. Turn the gate OFF here so these tests
+  // stay focused on distill mechanics; the dedicated judge tests below use
+  // `configJudgeEnabled` and supply real judge verdicts.
   return {
     semanticSearchMode: "auto",
     stashDir,
@@ -74,7 +86,25 @@ function configEnabled(stashDir: string): AkmConfig {
     defaultWriteTarget: "stash",
     profiles: {
       llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { distill: { enabled: true } } } },
+      improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
+    },
+    defaults: { llm: "default" },
+  } as AkmConfig;
+}
+
+function configJudgeEnabled(stashDir: string): AkmConfig {
+  // Distill enabled AND the LLM-as-judge quality gate ON — for tests that
+  // exercise judge-verdict routing. Callers MUST supply a judge-aware chat
+  // stub (returns JSON `{score,reason}` when the prompt asks to "Score this
+  // lesson"), or the fail-CLOSED gate (07 P0-2) rejects the proposal.
+  return {
+    semanticSearchMode: "auto",
+    stashDir,
+    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    defaultWriteTarget: "stash",
+    profiles: {
+      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+      improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: true } } } } },
     },
     defaults: { llm: "default" },
   } as AkmConfig;
@@ -655,8 +685,9 @@ describe("akmDistill — queued proposal", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        // Capture only the FIRST (distill) prompt — the default-on quality
-        // judge makes a second chat call whose prompt would clobber it.
+        // Capture only the FIRST (distill) prompt. (The quality gate is off in
+        // configEnabled, so no judge second-call clobbers this — the guard is
+        // kept defensively.)
         if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
@@ -725,8 +756,9 @@ describe("akmDistill — queued proposal", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        // Capture only the FIRST (distill) prompt — the default-on quality
-        // judge makes a second chat call whose prompt would clobber it.
+        // Capture only the FIRST (distill) prompt. (The quality gate is off in
+        // configEnabled, so no judge second-call clobbers this — the guard is
+        // kept defensively.)
         if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_KNOWLEDGE;
       },
@@ -1033,8 +1065,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        // Capture only the FIRST (distill) prompt — the default-on quality
-        // judge makes a second chat call whose prompt would clobber it.
+        // Capture only the FIRST (distill) prompt. (The quality gate is off in
+        // configEnabled, so no judge second-call clobbers this — the guard is
+        // kept defensively.)
         if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
@@ -1059,8 +1092,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
-        // Capture only the FIRST (distill) prompt — the default-on quality
-        // judge makes a second chat call whose prompt would clobber it.
+        // Capture only the FIRST (distill) prompt. (The quality gate is off in
+        // configEnabled, so no judge second-call clobbers this — the guard is
+        // kept defensively.)
         if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
@@ -1249,7 +1283,11 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
         stashDir: stash,
         sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
         defaultWriteTarget: "stash",
-        profiles: { llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } } },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+          // Quality gate OFF — D-1 merge mechanics test, non-judge chat stub (07 P0-2).
+          improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+        },
         defaults: { llm: "default" },
       } as unknown as import("../src/core/config/config").AkmConfig,
       lookupFn: async (ref: string) => {
@@ -1303,7 +1341,11 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
         stashDir: stash,
         sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
         defaultWriteTarget: "stash",
-        profiles: { llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } } },
+        profiles: {
+          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+          // Quality gate OFF — D-1 merge mechanics test, non-judge chat stub (07 P0-2).
+          improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+        },
         defaults: { llm: "default" },
       } as unknown as import("../src/core/config/config").AkmConfig,
       lookupFn: async (ref: string) => {
@@ -1635,12 +1677,12 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skill:deploy",
-      config: configEnabled(stash),
+      config: configJudgeEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
-        // The second call is the (default-on) quality judge — return a
-        // parseable passing verdict so confidence is defined.
+        // The second call is the quality judge — return a parseable passing
+        // verdict so confidence is defined.
         if (joined.includes("Score this lesson")) return JSON.stringify({ score: 4.5, reason: "adds new info" });
         return VALID_LESSON;
       },
@@ -1667,5 +1709,24 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     } finally {
       db.close();
     }
+  });
+
+  test("07 P0-2 end-to-end: gate ON + unjudgeable verdict → proposal REJECTED, not queued", async () => {
+    const stash = makeStashDir();
+    // Distill returns a valid lesson, but the judge's second call receives the
+    // same non-JSON text → parse failure → the gate fails CLOSED. This drives
+    // the whole akmDistill path (not just runLessonQualityJudge in isolation)
+    // to prove unjudgeable minted content is rejected, never queued.
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.score).toBe(-1);
+    expect(listProposals(stash).length).toBe(0);
   });
 });
