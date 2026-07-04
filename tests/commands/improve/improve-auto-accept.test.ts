@@ -1,11 +1,16 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { AutoAcceptGateConfig, ProposalCandidate } from "../../../src/commands/improve/improve-auto-accept";
 import {
   makeGateConfig,
   resolveExtractConfidence,
   runAutoAcceptGate,
 } from "../../../src/commands/improve/improve-auto-accept";
+import { createProposal, getProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { UsageError } from "../../../src/core/errors";
 import type { EventsContext } from "../../../src/core/events";
 
 // ---------------------------------------------------------------------------
@@ -217,6 +222,99 @@ describe("runAutoAcceptGate — error handling", () => {
     // Validation findings are bucketed by kind; non-validation throws → promote-error.
     expect(result.failedByReason["validation:description-quality"]).toBe(1);
     expect(result.failedByReason["promote-error"]).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M4: validation failures are permanent → archive (not left pending forever)
+// ---------------------------------------------------------------------------
+
+describe("runAutoAcceptGate — archives validation-failed proposals (M4)", () => {
+  // FS-bound: seeds real proposals via createProposal into a per-test temp stash
+  // and reads status back via getProposal. No process.env mutation — stashDir is
+  // passed explicitly — so the isolation lint stays satisfied.
+  const tempDirs: string[] = [];
+
+  function makeStashDir(): string {
+    const stash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-autoaccept-stash-"));
+    tempDirs.push(stash);
+    for (const dir of ["lessons", "memories"]) fs.mkdirSync(path.join(stash, dir), { recursive: true });
+    return stash;
+  }
+
+  function seedPending(stash: string, ref: string): string {
+    const result = createProposal(stash, {
+      ref,
+      source: "extract",
+      force: true,
+      sourceRun: "run-x",
+      payload: { content: `---\ndescription: ${ref} fixture\n---\n\nBody line.\n`, frontmatter: { description: ref } },
+    });
+    if (isProposalSkipped(result)) throw new Error(`unexpected skip: ${result.message}`);
+    return result.id;
+  }
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("permanent validation failure archives the proposal as rejected (stops the pending-zombie retry loop)", async () => {
+    const stash = makeStashDir();
+    const id = seedPending(stash, "lesson:validation-zombie");
+    // promoteProposal throws exactly this on the validateProposal failure branch.
+    const promoteFn = mock(async () => {
+      throw new UsageError(
+        "Proposal failed validation:\n[description-quality] description is truncated",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    });
+
+    const result = await runAutoAcceptGate(
+      [candidate(id, 0.99)],
+      baseConfig({ stashDir: stash, globalThreshold: 90 }),
+      promoteFn as never,
+    );
+
+    expect(result.failed).toEqual([id]);
+    // The proposal is no longer pending — it has been archived as rejected.
+    expect(getProposal(stash, id)?.status).toBe("rejected");
+  });
+
+  test("transient git-push rejection with a bracketed word does NOT archive (message-sniffing false positive guard)", async () => {
+    const stash = makeStashDir();
+    const id = seedPending(stash, "lesson:git-push-rejected");
+    // A git-backed write target's non-fast-forward push failure is a plain Error
+    // whose message contains "[rejected]". The archive must key on the structured
+    // UsageError code, NOT the message, so this retryable failure stays pending.
+    const promoteFn = mock(async () => {
+      throw new Error("git push failed: ! [rejected]        main -> main (non-fast-forward)");
+    });
+
+    await runAutoAcceptGate(
+      [candidate(id, 0.99)],
+      baseConfig({ stashDir: stash, globalThreshold: 90 }),
+      promoteFn as never,
+    );
+
+    // Transient, content-independent failure — the proposal must remain pending.
+    expect(getProposal(stash, id)?.status).toBe("pending");
+  });
+
+  test("non-validation failure leaves the proposal pending (only permanent failures are archived)", async () => {
+    const stash = makeStashDir();
+    const id = seedPending(stash, "lesson:transient-failure");
+    const promoteFn = mock(async () => {
+      throw new Error("disk on fire");
+    });
+
+    await runAutoAcceptGate(
+      [candidate(id, 0.99)],
+      baseConfig({ stashDir: stash, globalThreshold: 90 }),
+      promoteFn as never,
+    );
+
+    // A transient/unknown error must NOT archive — the proposal stays pending.
+    expect(getProposal(stash, id)?.status).toBe("pending");
   });
 });
 
