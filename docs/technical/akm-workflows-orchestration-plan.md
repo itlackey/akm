@@ -10,15 +10,21 @@ offers — parallel fan-out, structured per-unit output, phases/progress,
 budgeted execution, resumable runs — for any agent harness**, while keeping
 akm's unique value (a durable, gated, cross-session SQLite run record).
 
-Two execution backends, one definition:
+One definition, **pluggable execution backends** — a unit's runner/profile
+picks which one (see *Multi-harness execution* for the full survey):
 
-- **Delegate to Claude Code.** akm compiles the workflow definition into a
-  Claude Code `Workflow` script, hands execution to Claude Code, and Claude
-  Code reports every unit back to akm so `workflow.db` stays the source of
-  truth.
-- **Native.** For the OpenCode SDK and other CLI harnesses, akm executes the
-  same definition itself, providing the Claude-Code-equivalent features on top
-  of akm's **existing** agent-execution substrate.
+- **Delegate to Claude Code** (in-harness orchestration). akm compiles the
+  workflow into a Claude Code `Workflow` script, hands execution to Claude Code,
+  and Claude Code reports every unit back to akm so `workflow.db` stays the
+  source of truth.
+- **Native** (local runner). For the OpenCode SDK, Codex, Copilot CLI, Pi,
+  Aider, Gemini, Amazon Q, OpenHands, and any headless coding-agent CLI, akm
+  executes the same definition itself — providing the Claude-Code-equivalent
+  fan-out, schema output, phases, budget, and resume on top of akm's
+  **existing** agent-execution substrate.
+- **Cloud delegate** (assign + ingest). For cloud-only agents that can't be
+  spawned locally — the GitHub Copilot coding agent today — akm assigns the
+  unit through the provider API and ingests the result from the produced PR.
 
 The organizing principle: **steps remain the durable, gated, sequential spine;
 execution *within* a step fans out.** Human/criteria gates stay between steps
@@ -128,21 +134,44 @@ A JSON, versioned, serialized-alongside-`WorkflowDocument` structure. Node
 kinds mirror the Claude Code primitives so the CC emitter is a near-direct
 mapping and the native executor has a small, closed vocabulary:
 
-| Node kind | Semantics | CC analogue |
-|---|---|---|
-| `agent` | Run one unit: prompt/instructions + runner + model + optional schema | `agent()` |
-| `parallel` | Run children concurrently with a **barrier** | `parallel()` |
-| `pipeline` | Run items through child stages, **no barrier** between stages | `pipeline()` |
-| `map` / fan-out | Run one child template over a runtime item list | `parallel(items.map(...))` |
-| `gate` | Human-review / completion-criteria gate (akm-unique) | *(none — akm's differentiator)* |
-| `subworkflow` | Inline another workflow (one level) | `workflow()` |
+| Node kind | Semantics | CC analogue | Research basis |
+|---|---|---|---|
+| `agent` | Run one unit: prompt/instructions + runner + model + optional schema | `agent()` | ReAct; the atom of every pattern |
+| `pipeline` | Run items through child stages, **no barrier** between stages | `pipeline()` | Prompt chaining |
+| `parallel` | Run children concurrently with a **barrier** (sectioning) | `parallel()` | Parallelization / sectioning |
+| `map` / fan-out | Run one child template over an item list — **static or LLM-generated** — with an optional **reducer** (`collect \| vote \| best-of-n`) | `parallel(items.map(...))` | Orchestrator-workers; Self-Consistency (voting) |
+| `router` *(new)* | Classify an input and dispatch to one of N branches | *(agent + conditional)* | Routing |
+| `gate` | Human-review / completion-criteria approval — **one-shot or loop-until-pass** with evaluator feedback | *(none — akm-unique)* | Evaluator-optimizer; Reflexion; Chain-of-Verification |
+| `subworkflow` | Inline another workflow (one level); may delegate to a peer agent/harness | `workflow()` | Orchestrator-workers; A2A delegation |
+
+The last three columns are the point: the node vocabulary is not "whatever
+Claude Code happens to expose" — it is the closed set of orchestration patterns
+the literature has converged on (§ *Grounding in published research*). Three
+additions came directly from that review:
+
+- **`router`** makes the *routing* pattern first-class instead of an `agent`
+  whose free-text output is parsed to pick a branch.
+- **`map` reducers** (`vote`, `best-of-n`) make *Self-Consistency* /
+  *parallelization-voting* a declared property, not something each workflow
+  re-implements; `map` also accepts a **dynamically LLM-generated** item list so
+  it expresses true *orchestrator-workers*, not just static sectioning.
+- **Looping `gate`s** make *evaluator-optimizer* expressible: a gate can feed
+  its `missing[]`/`feedback` back to the generating node and re-run up to a
+  bound, rather than only passing or blocking once.
 
 Per-node fields: `id`, `kind`, `instructions` (template with `params`
-interpolation), `runner` (`llm|agent|sdk|inherit`), `model`, `effort`,
+interpolation), `runner` (`llm|agent|sdk|delegate|inherit`), `model`, `effort`,
 `schema` (JSON Schema for structured output), `phase`, `isolation`
-(`none|worktree`), `dependsOn[]`, and `source` (`SourceRef`, retained from the
-Markdown so editors/errors still point at lines). Run-level: `params`,
-`budget` (`{maxTokens?, maxUnits?}`).
+(`none|worktree`), `dependsOn[]`, `reducer` (map only), `maxLoops` (gate only),
+`idempotencyKey` (defaulted to `run_id + node_id + attempt`), and `source`
+(`SourceRef`, retained from the Markdown so editors/errors still point at
+lines). Run-level: `params`, `budget` (`{maxTokens?, maxUnits?}`),
+`resume` (`durable|replay`).
+
+The **`idempotencyKey`** is a durability primitive borrowed from Temporal/DBOS
+(§ research): every unit records one, so a crash-and-resume never re-issues a
+side-effecting tool call for a unit that already completed — the piece that
+makes durable-row resume *safe* rather than merely convenient.
 
 Backward compatibility: an existing linear workflow compiles to a chain of
 `agent` nodes, one per step, each preceded by its `gate` — identical behavior
@@ -256,6 +285,123 @@ assume.
 Both modes preserve the gated spine: a `gate` unit that was `blocked` stays
 blocked across resume regardless of mode (human approval is never cached).
 
+## Multi-harness execution
+
+The "same features regardless of harness" promise means the *same IR* must run
+on any coding-agent CLI or cloud agent. Surveying the current landscape (Claude
+Code, OpenCode, OpenAI Codex, GitHub Copilot, Pi, Aider, Gemini CLI, Amazon Q,
+OpenHands) shows they fall into **three integration patterns**, and akm needs
+all three behind one interface.
+
+### The three integration patterns
+
+1. **In-harness orchestration (delegate + compile).** The harness has its *own*
+   parallel-orchestration runtime. akm compiles the IR to that harness's native
+   program and delegates, with report-back. Today this is **Claude Code**
+   (Backend A → a `Workflow` script). This is the highest-fidelity path because
+   the harness runs the fan-out itself.
+
+2. **Local runner (native, spawn-per-unit).** The harness is a headless CLI akm
+   spawns once per `agent` unit via the existing `runAgent` + a per-harness
+   `AgentCommandBuilder`. akm's own scheduler (Backend B) provides the fan-out,
+   phases, budgeting, and resume the CLI lacks. This is the **default for every
+   other local CLI** — Codex, Copilot CLI, Pi, OpenCode, Aider, Gemini, Q,
+   OpenHands.
+
+3. **Cloud delegate (assign + ingest artifact).** The agent is cloud-hosted and
+   *cannot* be spawned as a local subprocess. akm delegates a unit by creating a
+   task through the provider's API and ingests the result from the produced
+   artifact (a PR/branch). Today this is the **GitHub Copilot coding agent**
+   (assign issue → `copilot-swe-agent[bot]` opens a PR → akm ingests). A new
+   `runner: delegate` unit kind + a `report`-style poller cover it; the same
+   pattern generalizes to other cloud agents (Codex Cloud, Jules, Devin).
+
+All three are backends over the **one IR**; a unit's `runner`/profile picks the
+pattern. The conformance suite (below) asserts identical unit graphs across
+patterns.
+
+### The adapter contract — what adding a harness costs
+
+akm already has the seam (`src/integrations/harnesses/types.ts`,
+`agent/builders.ts`). Adding a harness to the workflow engine is:
+
+1. **`AkmHarness` descriptor** — register in `HARNESS_REGISTRY` with capability
+   flags; add `agentDispatch: true` and a `runtimeId`.
+2. **`AgentCommandBuilder`** — translate the platform-agnostic
+   `AgentDispatchRequest` (system prompt, model, prompt, tool policy) into the
+   CLI's headless argv. This is the only genuinely new code per harness, and
+   it's ~20 lines (see the matrix for the exact invocation).
+3. **Result extractor** — normalize the harness's output into a unit result +
+   validate against the node `schema` (see *Structured-output normalization*).
+4. **Identity markers** — the env var(s) that reveal "a unit is running under
+   this harness," added to `agent-identity.ts`.
+
+Nothing in the IR, scheduler, persistence, or gate logic changes per harness —
+that is the whole point of routing everything through `RunnerSpec` /
+`executeRunner`.
+
+### Capability matrix (as researched, July 2026)
+
+| Harness | Headless invocation | Structured output | Native schema | Resume | MCP | Identity env | Pattern |
+|---|---|---|---|---|---|---|---|
+| **Claude Code** | (`Workflow` tool / `claude -p`) | tool calls | via tool schema | `runId` cache | client+server | `CLAUDE_SESSION_ID` | in-harness |
+| **OpenCode** | SDK `session.prompt` / CLI | SDK events | via prompt+validate | session id | client | `OPENCODE_SESSION_ID` | local (sdk/cli) |
+| **OpenAI Codex** | `codex exec "<p>"` | `--json` (JSONL events) | **`--output-schema <file>`** | `codex exec resume <id>` | client+server | `CODEX_SANDBOX`, `CODEX_HOME` | local |
+| **Copilot CLI** | `copilot -p "<p>" --allow-all-tools` | `--output-format json` | via prompt+validate | `--continue`/`--resume <id>` | `~/.copilot/mcp-config.json` | `COPILOT_*`/`GH_TOKEN` | local |
+| **Copilot coding agent** | assign issue / `gh agent-task` / API | task status API + PR | n/a | server-side (PR branch) | GitHub MCP (tools) | `copilot-swe-agent[bot]` | **cloud delegate** |
+| **Pi** | `pi -p "<p>"` | `--mode json` (JSONL) | via prompt+validate | `-c`/`-r`/`--session` | extensions only | `PI_*` | local |
+| **Gemini CLI** | `gemini -p "<p>"` | `--output-format json` | via prompt+validate | `--resume <id>` | client (`settings.json`) | `GEMINI_CLI=1` | local |
+| **Amazon Q** | `q chat --no-interactive --trust-all-tools` | *(none documented)* | via prompt+validate | `--resume` | client (`mcp.json`) | *(uncertain)* | local |
+| **OpenHands** | `openhands --headless -t "<p>" --json` | `--json` (JSONL) | via prompt+validate | workspace state | native | *(uncertain)* | local |
+| **Aider** | `aider -m "<p>" --yes-always` | *(none — parse output)* | via prompt+validate | chat-history files | *(none native)* | *(uncertain)* | local |
+
+*(Details are as of the research date; the adapter contract localizes every one
+of these to a single builder + extractor so version churn is contained.)*
+
+### Structured-output normalization — akm provides the deterministic feature
+
+The parity goal is that **every** harness yields schema-validated unit results,
+even the ones with no native schema support. Three tiers:
+
+- **Native schema** (Codex `--output-schema`): pass the node `schema` straight
+  through; trust the constrained output, still validate defensively.
+- **Native JSON stream** (Copilot, Pi, Gemini, OpenHands): parse the
+  documented JSONL/JSON, extract the final message, then validate against the
+  node `schema`.
+- **No structured output** (Aider, Q): akm injects the schema into the prompt
+  ("return only JSON matching …"), extracts embedded JSON from stdout (the
+  existing `parseEmbeddedJsonResponse` in `spawn.ts` already does this), and
+  validates.
+
+All three funnel through one **retry-until-valid** loop reusing
+`callStructured`'s discipline (`src/llm/structured-call.ts`): on a validation
+miss, re-dispatch with corrective feedback up to a bound, then record a
+`parse_error` unit. So akm *supplies* CC's forced-`StructuredOutput` guarantee
+uniformly — that is the "deterministic features regardless of harness" promise
+made concrete.
+
+### Session, MCP, and identity across harnesses
+
+- **Session/resume.** akm's `workflow_run_units` is the source of truth; a
+  harness's native session id is stored opportunistically on the unit row and
+  reused (e.g. `codex exec resume <id>`) to preserve the harness's own context
+  cache, but akm never *depends* on it — resume works even against a harness
+  with no session model (Aider).
+- **MCP for tools.** akm should expose stash search / `show` / memory as an
+  **MCP server**, so any MCP-client harness (Codex, Copilot, Gemini, Q,
+  OpenHands, Claude, OpenCode) can pull exactly the knowledge a unit needs
+  in-band — the same "pull what you need" model akm already champions, now
+  available inside a workflow unit regardless of harness.
+- **A2A for delegation.** For `subworkflow`/`delegate` units that hand work to a
+  *separate* agent/service (including the cloud pattern), Agent2Agent is the
+  cross-vendor wire protocol; MCP is for reaching tools, A2A for reaching peer
+  agents (§ research).
+- **Identity.** `agent-identity.ts` extends its detection table:
+  `CLAUDE_SESSION_ID`→claude-code, `OPENCODE_SESSION_ID`→opencode,
+  `CODEX_SANDBOX`/`CODEX_HOME`→codex, `GEMINI_CLI`→gemini,
+  `COPILOT_*`→copilot, `PI_*`→pi. This is what lets a workflow that akm drives
+  *also* record which harness actually executed each unit.
+
 ## Persistence changes
 
 New table (migration `004`, additive per `db.ts` contract):
@@ -307,10 +453,97 @@ safety net for a CC session that stops reporting.
 
 ## Anti-drift: the conformance suite
 
-A set of golden workflows runs through **both** backends with mocked runners;
+A set of golden workflows runs through **all backends** with mocked runners;
 the suite asserts an identical unit graph and identical per-unit results. This
 is the structural guarantee that "same features regardless of harness" stays
-true as both backends evolve (pitfall #2).
+true as the backends (CC-delegate, native-local, cloud-delegate) evolve
+(pitfall #2).
+
+## Grounding in published research
+
+The node vocabulary and durability model are deliberately aligned with the
+patterns the agent-orchestration literature has converged on, so akm unifies
+the field's best ideas rather than inventing a parallel one. Summary of the
+cross-reference (sources listed at the end):
+
+### Orchestration patterns → IR node kinds
+
+Anthropic's **Building Effective Agents** (Dec 2024) taxonomy is the spine, and
+its five workflow patterns map onto the IR almost 1:1 — which is the evidence
+that the node set is *complete* rather than arbitrary:
+
+| Pattern (source) | akm IR expression |
+|---|---|
+| Prompt chaining | `pipeline` |
+| Routing | **`router`** (added after this review) |
+| Parallelization — sectioning | `parallel` |
+| Parallelization — voting | `map` + `reducer: vote` (Self-Consistency, Wang 2022) |
+| Orchestrator–workers | `subworkflow` + `map` over a **runtime, LLM-generated** list |
+| Evaluator–optimizer | **looping `gate`** (Reflexion, Shinn 2023; Chain-of-Verification, Dhuliawala 2023) |
+
+The review drove four concrete IR changes already folded in above: the
+`router` node, `map` reducers (`vote`/`best-of-n`), looping gates with feedback,
+and dynamic fan-out lists. Tree-of-Thoughts-style search is intentionally left
+as an agent-internal strategy, not an IR construct (out of scope).
+
+### Framework execution models → what akm borrows
+
+- **LangGraph** — checkpoint-per-node + thread-scoped resume + `interrupt()`
+  for human-in-the-loop. Validates akm's durable per-unit rows and `gate`
+  pause/resume. *Caveat from the field (Diagrid, 2025):* checkpoints are not
+  durable execution if non-deterministic replay re-fires side effects — which is
+  exactly why akm journals each unit's **result** and defaults to durable-row
+  resume rather than replay.
+- **CrewAI** (sequential vs hierarchical) and **AutoGen** (group-chat manager)
+  — validate `subworkflow` + an orchestrator `agent`; their role/task shape maps
+  to `agent`-node config.
+- **OpenAI Agents SDK / Swarm** — *handoffs* and *guardrails*. Guardrails
+  motivate a lightweight concurrent-validation `gate` variant; handoffs map to
+  `delegate`/A2A edges in the cloud pattern.
+- **MetaGPT / ChatDev** — SOP "assembly line" with **typed intermediate
+  artifacts**. Reinforces schema'd edge payloads between `pipeline` stages
+  rather than free-text hand-offs.
+
+### Durable execution → the resume model
+
+- **Temporal** (deterministic replay over event-sourced history; non-determinism
+  must be wrapped as "activities") and **DBOS** (workflow IDs as idempotency
+  keys) are the reference points. Because LLM/tool steps are non-deterministic,
+  full Temporal-style replay is risky for agents — so akm's **default is
+  durable-row resume**, with deterministic replay as the *opt-in* mode for the
+  imperative frontend only (matching the decision recorded above).
+- **12-Factor Agents** — *own your control flow*, *stateless reducer*
+  (`(state, event) → state`), *launch/pause/resume*, *unify execution + business
+  state*. akm's event log (`appendEvent`) + `workflow_run_units` is precisely a
+  stateless-reducer fold; the manifesto validates modeling a run as an
+  append-only event stream and giving every unit an **idempotency key** so a
+  crash-resume never double-issues a side-effecting tool call (now an IR field).
+
+### Interop protocols
+
+- **MCP** (Model Context Protocol, Anthropic 2024; now Linux Foundation) — the
+  de-facto agent→tool standard; akm exposes the stash as an MCP server so every
+  MCP-client harness reaches akm knowledge in-band.
+- **A2A** (Agent2Agent, Google 2025; Linux Foundation) — agent→agent delegation;
+  the wire protocol for cross-harness `delegate`/`subworkflow` units. Rule of
+  thumb: **MCP down to tools, A2A across to peers.**
+
+### Sources
+
+- Anthropic, *Building Effective Agents* (2024-12-19) — <https://www.anthropic.com/engineering/building-effective-agents>
+- Wang et al., *Self-Consistency* (arXiv:2203.11171, 2022)
+- Yao et al., *ReAct* (arXiv:2210.03629, 2022)
+- Shinn et al., *Reflexion* (arXiv:2303.11366, 2023)
+- Yao et al., *Tree of Thoughts* (arXiv:2305.10601, 2023)
+- Dhuliawala et al., *Chain-of-Verification* (arXiv:2309.11495, 2023)
+- Hong et al., *MetaGPT* (arXiv:2308.00352, ICLR 2024)
+- LangGraph — durable execution / interrupts — <https://docs.langchain.com/oss/python/langgraph/interrupts>
+- Diagrid, *Checkpoints are not durable execution* (2025-11) — <https://www.diagrid.io/blog/checkpoints-are-not-durable-execution-why-langgraph-crewai-google-adk-and-others-fall-short-for-production-agent-workflows>
+- OpenAI Agents SDK / Swarm (handoffs, guardrails)
+- Anthropic, *Introducing MCP* (2024-11-25) — <https://www.anthropic.com/news/model-context-protocol>
+- Google, *Announcing A2A* (2025-04) — <https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/>
+- HumanLayer, *12-Factor Agents* — <https://github.com/humanlayer/12-factor-agents>
+- Temporal / DBOS durable-execution docs; Vanlightly, *Demystifying Determinism in Durable Execution* (2025-11)
 
 ## Trust & limits
 
@@ -329,34 +562,49 @@ authorizing N parallel agents, not one.
   step loop. No behavior change; pure refactor + new tests.
 - **P1 — native fan-out + schema (v1 parity core).** `scheduler.ts`,
   `native-executor.ts`, `workflow_run_units` (migration 004), extended
-  Markdown grammar for `Runner`/`Fan-out`/`Schema`. New `akm workflow run`
-  drives a step's IR subgraph natively. Resume: durable-row mode only.
-- **P2 — CC delegation.** `cc-emitter.ts`, `akm workflow report`, launch/handoff
-  glue. Delegation path reaches parity with native for the shared IR.
-- **P3 — phases, progress stream, budget, worktree.** `akm workflow watch`,
-  budget ceilings, `isolation: worktree`.
-- **P4 — hardening + imperative frontend.** Conformance suite across backends;
-  optional imperative frontend and, with it, the opt-in deterministic **replay**
-  resume mode (`exec/replay-cache.ts`, `input_hash` lookup). Durable-row remains
-  the default throughout.
+  Markdown grammar for `Runner`/`Fan-out`/`Schema`, plus `router` node and
+  `map` reducers. New `akm workflow run` drives a step's IR subgraph natively
+  on the **default local harness** (OpenCode SDK). Resume: durable-row mode
+  only. Structured-output normalization + retry-until-valid loop.
+- **P2 — harness adapters.** A builder + result-extractor + identity marker per
+  harness: Codex, Copilot CLI, Pi, then Gemini / Aider / Amazon Q / OpenHands.
+  Each is contained to `harnesses/<name>/{agent-builder,result-extractor}.ts`;
+  the conformance suite runs the golden workflows across all of them.
+- **P3 — CC delegation.** `cc-emitter.ts`, `akm workflow report`,
+  launch/handoff glue. In-harness path reaches parity with native for the
+  shared IR.
+- **P4 — cloud delegate + progress + budget.** `runner: delegate` + the GitHub
+  Copilot-coding-agent adapter (assign issue → poll → ingest PR); `akm workflow
+  watch` NDJSON stream; budget ceilings; `isolation: worktree`; looping-gate
+  feedback.
+- **P5 — hardening + imperative frontend.** Cross-backend conformance
+  hardening; MCP server exposing the stash to units; optional imperative
+  frontend and, with it, the opt-in deterministic **replay** resume mode
+  (`exec/replay-cache.ts`, `input_hash` lookup). Durable-row remains the
+  default throughout.
 
 ## File-by-file touch list
 
 New:
 - `src/workflows/ir/schema.ts`, `src/workflows/ir/compile.ts`
 - `src/workflows/exec/scheduler.ts`, `native-executor.ts`, `cc-emitter.ts`, `report.ts`
-- `src/workflows/exec/replay-cache.ts` (P4 — deterministic replay resume mode)
-- `tests/workflows/conformance/**` (golden IR + both-backend assertions)
+- `src/workflows/exec/normalize.ts` (per-harness result-extractor + schema-validate loop)
+- `src/workflows/exec/cloud-delegate.ts` (P4 — assign/poll/ingest for cloud agents)
+- `src/workflows/exec/replay-cache.ts` (P5 — deterministic replay resume mode)
+- `src/integrations/harnesses/{codex,copilot,pi,gemini,aider,amazonq,openhands}/agent-builder.ts` (+ `result-extractor.ts`) — one small builder + extractor per harness
+- `tests/workflows/conformance/**` (golden IR + all-backend assertions)
 
 Extend:
-- `src/workflows/schema.ts` (orchestration fields), `parser.ts` (new subsections)
+- `src/workflows/schema.ts` (orchestration fields), `parser.ts` (new subsections: `Runner`/`Fan-out`/`Schema`/`Route`/`Depends On`)
 - `src/workflows/db.ts` (migration 004 + units table), `workflow-runs-repository.ts`
 - `src/workflows/runtime/runs.ts` (route a step to the executor; ingest reports)
+- `src/workflows/runtime/agent-identity.ts` (detect codex/copilot/pi/gemini + markers)
+- `src/integrations/agent/runner.ts` (`RunnerSpec` gains `delegate`), `builders.ts` (register new builders), `harnesses/index.ts` (`HARNESS_REGISTRY` entries)
 - `src/workflows/cli.ts` + `src/commands/workflow-cli.ts` (`run`, `watch`, `report`)
 - `src/workflows/runtime/checkin.ts` (unit-level stall)
 - `src/workflows/renderer.ts` (surface orchestration in `show`)
 
 Reuse unchanged:
-- `src/integrations/agent/runner-dispatch.ts`, `spawn.ts`, `runner.ts`, `builders.ts`
-- `src/integrations/harnesses/opencode-sdk/**`
+- `src/integrations/agent/runner-dispatch.ts`, `spawn.ts`, `runner.ts` (core), `builders.ts` (mechanism)
+- `src/integrations/harnesses/opencode-sdk/**`, `harnesses/{claude,opencode}/agent-builder.ts`
 - `src/llm/structured-call.ts`, `usage-telemetry.ts`
