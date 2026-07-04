@@ -296,12 +296,16 @@ function classifyProposals(
     let cohort: "proactive" | "reactive" | null = null;
     if (elig === "proactive") cohort = "proactive";
     else if (elig && REACTIVE_SOURCES.has(elig)) cohort = "reactive";
-    else {
-      // Fallback: match the proposal ref against the pilot treatment file.
+    else if (p.source === "reflect") {
+      // A reflect proposal missing its eligibilitySource sub-label is the genuine
+      // gap the pilot-file fallback exists for. Only these should trip usedFallback.
+      // Non-reflect proposals (consolidate/extract/…) are not part of the
+      // proactive-vs-reactive split at all — they must NOT flag the fallback, or the
+      // verdict spuriously reports "pilot-file-fallback" even when every reflect
+      // proposal is cleanly classified by its eligibilitySource.
       usedFallback = true;
       const norm = normalizeRef(p.ref);
-      if (norm && treatmentRefs.has(norm)) cohort = "proactive";
-      else if (p.source === "reflect") cohort = "reactive";
+      cohort = norm && treatmentRefs.has(norm) ? "proactive" : "reactive";
     }
     if (cohort === "proactive") bump(proactive, p.status);
     else if (cohort === "reactive") bump(reactive, p.status);

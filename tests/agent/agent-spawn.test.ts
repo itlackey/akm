@@ -17,6 +17,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
 import { runAgent } from "../../src/integrations/agent/spawn";
 
@@ -275,5 +276,35 @@ describe("runAgent — argument and env construction", () => {
       envSource: { KEEP_ME: "yes", DROP_ME: "no" } as NodeJS.ProcessEnv,
     });
     expect(capturedEnv).toEqual({ KEEP_ME: "yes", PROFILE_VAR: "1", CALL_VAR: "2" });
+  });
+
+  // Regression: usage-event provenance (AKM_EVENT_SOURCE) must survive the
+  // agent boundary. When a parent akm command already stamped it (e.g. the task
+  // runner sets AKM_EVENT_SOURCE=task), a nested agent — such as the one
+  // `akm wiki ingest` spawns — must inherit it so the agent's own akm reads log
+  // as machine traffic, not user demand. Missing it from the built-in
+  // envPassthrough whitelist silently inflated every lane's read-back (GRR).
+  test("built-in profiles pass AKM_EVENT_SOURCE through to the spawned agent", async () => {
+    const opencode = getBuiltinAgentProfile("opencode");
+    if (!opencode) throw new Error("opencode built-in profile missing");
+    expect(opencode.envPassthrough).toContain("AKM_EVENT_SOURCE");
+
+    let capturedEnv: Record<string, string> | undefined;
+    const spawn: SpawnFn = (_cmd, opts) => {
+      capturedEnv = opts.env;
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream(""),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    await runAgent(opencode, undefined, {
+      spawn,
+      envSource: { PATH: "/usr/bin", AKM_EVENT_SOURCE: "task" } as NodeJS.ProcessEnv,
+    });
+    expect(capturedEnv?.AKM_EVENT_SOURCE).toBe("task");
   });
 });
