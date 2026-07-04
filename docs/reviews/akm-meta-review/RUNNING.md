@@ -61,9 +61,10 @@ decisions in an **Adjudication** section. Then append the binding decisions to `
 
 Done: **01** goal-orientation, **05** metrics-and-evals (adjudicated + shipped); **02** bitter-lesson,
 **03** memory-compounding, **04** self-model, **06** autonomy-ladder, **07** prompt-injection,
-**08** attack-surface (adjudicated — dispositions only, see CONTEXT.md carry-forward).
+**08** attack-surface, **09** steelman-the-bets (adjudicated — dispositions only + E0 authorized to
+execute; see CONTEXT.md carry-forward).
 
 - **Core system audits:** ~~02 → 03 → 04 → 06 autonomy~~ — DONE.
 - **Security pair:** ~~07 injection → 08 attack-surface~~ — DONE.
-- **Direction:** 09 steelman → 10 what-10×s → 12 constraint (09 before 10).
+- **Direction:** ~~09 steelman~~ → 10 what-10×s → 12 constraint.
 - **Housekeeping:** 11 policy, 13 bus-factor, 14 docs, 15 loop.

@@ -236,3 +236,75 @@ From **08 attack-surface** (adjudicated 2026-07-04; nothing executed — disposi
   surface) but Q2 diverged (predicted shared `config.json` least-protected; actual weakest link is the **same
   env/secret store** from the git-boundary angle, which the owner didn't model — config-sharing is real but only
   HIGH/MED at F3/F5). Hurts-most and least-protected turned out to be the same files, two sides.
+
+From **09 steelman-the-bets** (adjudicated 2026-07-04; E0 authorized for immediate execution, rest dispositions/gated):
+
+- **Bet ranking (binding framing):** rank-1 = **improve pipeline is net-positive** — verdict **DECIDABLE AND
+  UNDECIDED**, not confirmed-failing. The two clubs the gather phase reached for (lifetime GRR 0.6% AND the
+  2026-07-01 verdict's corpus delta −0.216) **both come from ONE weak 13-ref instrument** whose own `downstreamLift`
+  shows treatment refs read back **~19× control** — the same instrument cannot prove "read-back is dead" AND "corpus
+  regressed." Do NOT cite either number as settled in later reviews. Noticeability = **BLIND at value level** (health
+  measures process only; `plannedCount`/`acceptedCount`/`skippedCount` grep-zero in `src/commands/health/`).
+- **E0 — PREMISE CORRECTED by a read-only census this session (receipt: `findings/09-grr-receipt.sql.md`).** The review
+  said lane-GRR was uncomputable (`eligibilitySource` on only 4,864/15,071 proposals). **Disproved:** the ~10,016 without
+  it are **entirely `consolidate`+`extract`, both already lane-attributed by `proposals.source`**; `eligibilitySource`
+  only sub-divides the reflect lane (96% populated there). **Universal lane key = `COALESCE(eligibilitySource, source)`
+  — NO write-site plumbing needed; threading the field through consolidate/extract is redundant machinery (do not build
+  it).** The two REAL blockers the review mislabeled: (1) the naive `usage_events.entry_ref LIKE '%//'||proposals.ref`
+  join is un-indexable and hangs — own-stash proposals are bare `type:name`, `entry_ref` is origin-qualified
+  `source//type:name`; fix = normalize `entry_ref` to bare ref FIRST then equi-join (the relink perf pattern), runs in
+  seconds; (2) the actual enabling fix is **review 05's G5 provenance tagging** (`usage_events.source` 30d is
+  `user|14806, task|10` ≈ 99.9% `'user'`, conflating real reads with plugin/hook/cron self-reads) — so all GRR below is
+  an **UPPER BOUND**. The canonical query is committed as the receipt. **E1 was runnable today** (contra the review) —
+  numbers below.
+- **G5 RESIDUAL ROOT-CAUSED + FIXED 2026-07-04** (branch `fix/grr-provenance-passthrough-and-verdict-fallback`, commit
+  `8119a456`; gate green: unit 5332/0, agent+env integration 9/0, lint/tsc clean). The `:00`/`:30` `'user'` read spikes =
+  the `discord-wiki-articles-ingest` cron (`*/30`) → `akm wiki ingest articles` spawns an opencode agent whose own
+  `akm curate/show/search` tool-calls logged `source='user'`. Root cause: `buildChildEnv` (`spawn.ts`) filters
+  `process.env` through the `profile.envPassthrough` WHITELIST, and `AKM_EVENT_SOURCE` was NOT in `COMMON_PASSTHROUGH`
+  (`profiles.ts`) → the task-runner's `AKM_EVENT_SOURCE=task` stamp was dropped at every NESTED agent boundary (runner.ts:454
+  `options.env` only covers agents the runner spawns DIRECTLY). Fix = add `AKM_EVENT_SOURCE` to `COMMON_PASSTHROUGH` (one
+  entry) — NOT a new enum, NOT excluding the SessionStart plugin curate (genuine demand, spread, correctly stays `'user'`).
+  Also fixed `proactive-verdict.ts` `usedFallback` (scoped to reflect-source rows so consolidate/extract stop spuriously
+  forcing pilot-file-fallback). **Once shipped + cron re-runs, the minting-lane GRR will drop even lower** (self-reads
+  removed) — re-run the receipt query to confirm. Still on-branch, not merged/released.
+- **LIVE per-lane GRR (2026-07-04, mode=ro, UPPER BOUND — G5 not yet applied; can only go DOWN):**
+  extract **0/2,778 = 0.0%** → **DEAD, triggers the pre-approved E2** (cron 48×/day → 1× nightly + drain routing);
+  proactive **102/4,331 = 2.4%** → **FAILS the 5% minting floor at n=4,331** (corroborates the proactive-weekly FAIL
+  verdict with a far stronger instrument than its 13-ref cohort, independent of the weak −0.216 delta); consolidate
+  0.0% (HYGIENE — not GRR-gated, expected); enrichment/usage-triggered lanes healthy **by construction** (not evidence
+  of minting value): high-retrieval 44.9%, reflect 24.0%, signal-delta 15.6%; **INCONCLUSIVE (n<30 per review 05's
+  rule):** high-salience n=14 (57.1% — **02's delete-if-GRR<5% gate is NOT yet armed**, too few refs), recombine n=16
+  (6.3%), distill n=1. **Bet 1 verdict rendered in live numbers: SPLIT exactly as 01/03 bound — the MINTING half fails
+  the read-back floor, the ENRICHMENT half is healthy because usage is its trigger. Repoint minting→enrichment; keep
+  minting gated. Not uniformly wrong.**
+- **Bet 3 is NEW and load-bearing: "auto-accept is safe."** The whole audited-autonomous model (06: one rung, 100%
+  auto-resolve, **0/20,726 accepts ever human-labeled**) rests on the judge/quality-gate catching bad content with no
+  human backstop — never named or measured. **E3 APPROVED, BUNDLED with 07's fail-CLOSED change** (`quality-gate.ts:155,172`):
+  owner labels ~50 random auto-accepts (first-ever gate-precision anchor; seeds 03 R-5) **and** the fail-CLOSED fix ships
+  as one unit. Observed failure class so far is *worthless* not *destructive* content (consolidate 95-floor: 9,612 accepts,
+  0 loss incidents) — do NOT demote high-volume lanes to per-item approval (06 binding).
+- **Bet 4 is NEW: single-corpus generalization.** Every tuned threshold (5% GRR floor, salience weights, cooldowns,
+  curate-golden) derives from the owner's stash ALONE; zero transfer evidence, and 08's zero-telemetry boundary makes it
+  **structurally invisible forever.** Owner elected **E6 (second-corpus probe)** — a disjoint-domain stash or one recruited
+  beta user — over carrying it blind. This is the series' most structurally-invisible bet.
+- **Proactive-weekly FAIL verdict — DECIDE AT BATCH AFTER E0** (disable per 06-M5 vs overrule in writing); lane stays
+  `enabled:true` in the interim by explicit choice. The verdict is too weak to act on until E0 fixes the 13-ref cohort so
+  the next monthly verdict bears weight. "Ignored for 3 days" was manufactured urgency (weekly task, no run skipped).
+- **Bet 5 (substrate) reframed:** the SQLite-vs-long-context frame is **near-strawman** (ignores unbounded corpus growth,
+  the secrets-on-disk privacy boundary, and the automation-platform pillar). The real unproven complexity is **hybrid stack
+  (embeddings + graph + rank-blend) vs plain FTS5** — settled by **02's already-approved contributor ablation** (run it
+  before any substrate re-litigation), NOT by E5's blind-compare (which tests only today's 302-entry working set, falsifies
+  nothing about scale/privacy/year-3 cost).
+- **Bet 6 (salience) — nothing new;** already conceded+gated by 02. Residual: execute the 02 lane-GRR pre-commitment when
+  the number lands; leave stored salience unwired (cheaper than fixing); **doc demotion → review 14** (stop presenting
+  recombine/salience as neuroscience-grounded — the project's own survey grades recombine's confirmation gate "Loose, no
+  biological analogue").
+- **The ONE approved consumption-side addition:** extend the EXISTING monthly verdict script to emit per-lane 30d GRR
+  alongside its retrieval-quality delta (it already joins treatment refs to eval outcomes). **DON'T-ADD (binding):** no new
+  health checks reading `metrics_json`, no GRR dashboard, no alert layer. The 03 rule stands: re-adjudicate the compounding
+  verdict only at **≥30 days** of `improve_cycle_metrics` (7 rows / 2 days now).
+- **Docs → review 14 batch (append):** neuroscience-framing demotion of `improve-neuroscience-alignment-survey.md` +
+  `improve-vs-brain-analysis.md` (justification→inspiration). **Distribution hygiene → 08/14 batch:** repoint npm `latest`
+  (=0.8.14 vs working beta.56) or publish stable; deprecate the older sibling plugin repo; record that npm/GitHub are the
+  ONLY adoption instruments (chosen invisibility, owned in writing).
