@@ -285,6 +285,10 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
 }
 
 function isPathLikeRef(ref: string): boolean {
+  // A leading `@` marks an npm scope (`@scope/pkg`), never a filesystem path —
+  // treat it as non-path so it falls through to the npm branch instead of
+  // being resolved (and rejected) as an explicit local path.
+  if (ref.startsWith("@")) return false;
   if (ref === "." || ref === "..") return true;
   if (path.isAbsolute(ref)) return true;
   if (ref.startsWith("./") || ref.startsWith("../") || ref.startsWith(".\\") || ref.startsWith("..\\")) {
