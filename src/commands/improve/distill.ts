@@ -62,7 +62,7 @@ import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
@@ -871,9 +871,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // into the distill prompt so the LLM avoids overwriting prior generalizations
   // (catastrophic interference). DEFAULT OFF.
   const clsConfig =
-    (config.profiles?.improve?.default?.processes?.distill?.cls as
-      | { enabled?: boolean; adjacentCount?: number }
-      | undefined) ?? {};
+    (getImproveProcessConfig(config, "distill")?.cls as { enabled?: boolean; adjacentCount?: number } | undefined) ??
+    {};
   let clsContext = "";
   if (clsConfig.enabled) {
     try {
@@ -1133,7 +1132,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // source memories. A contradiction flag routes to human review (not auto-accept).
   // DEFAULT OFF. Fail-open: any error is treated as no-contradiction.
   const fidelityConfig =
-    (config.profiles?.improve?.default?.processes?.distill?.fidelityCheck as { enabled?: boolean } | undefined) ?? {};
+    (getImproveProcessConfig(config, "distill")?.fidelityCheck as { enabled?: boolean } | undefined) ?? {};
   if (fidelityConfig.enabled && assetContent) {
     try {
       const proposalBody = stripBodyForFidelity(content);

@@ -30,7 +30,7 @@ import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, LlmProfileConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
@@ -677,8 +677,7 @@ async function processSession(
   // so they spend ONE consolidation cycle in probation before the deterministic
   // dedup+quality pass promotes them. Default OFF.
   const hotProbationEnabled =
-    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
-      ?.enabled === true;
+    (getImproveProcessConfig(config, "extract")?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
 
   for (const candidate of payload.candidates) {
     if (dryRun) {
@@ -801,9 +800,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // is what stops a non-default profile's `extract.enabled` from being silently
   // overridden by the default profile and vice-versa.
   const activeProfile = options.improveProfile;
-  const extractProcess = activeProfile
-    ? activeProfile.processes?.extract
-    : config.profiles?.improve?.default?.processes?.extract;
+  const extractProcess = activeProfile ? activeProfile.processes?.extract : getImproveProcessConfig(config, "extract");
   // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
   // (the activeProfile path) — consistent with #593/#594 where the active profile,
   // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
@@ -1289,7 +1286,7 @@ export interface CountNewExtractCandidatesOptions {
  * changed session is actually re-processed.
  */
 export function countNewExtractCandidates(config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
-  const extractProcess = config.profiles?.improve?.default?.processes?.extract;
+  const extractProcess = getImproveProcessConfig(config, "extract");
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
   // Mirror akmExtract: when no explicit window is set, default per-harness to
   // "since the last run" (floored at 48h) instead of a fixed 24h. Keeps this

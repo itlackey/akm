@@ -12,7 +12,7 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 // Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
@@ -880,7 +880,7 @@ function archiveMemory(
  * `/tmp/akm-health-investigations/consolidation-no-op.md`.
  */
 function resolveConsolidateLlmConfig(config: AkmConfig) {
-  const consolidateProcess = config.profiles?.improve?.default?.processes?.consolidate;
+  const consolidateProcess = getImproveProcessConfig(config, "consolidate");
   const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
   if (runnerSpec && runnerIsLlm(runnerSpec)) {
     return runnerSpec.connection;
@@ -1025,8 +1025,7 @@ async function akmConsolidateInner(
   // Without that flag no assets will ever carry the hot-probation marker, so
   // running the filter loop would be pure unnecessary I/O over the full corpus.
   const hotProbationEnabled =
-    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
-      ?.enabled === true;
+    (getImproveProcessConfig(config, "extract")?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
   let hotProbationCount = 0;
   if (hotProbationEnabled) {
     const hotProbationMemories: typeof memories = [];
@@ -1277,7 +1276,7 @@ async function akmConsolidateInner(
   let finalClusteredMemories = clusteredMemories;
   {
     const antiCollapseForCluster: AntiCollapseConfig =
-      (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+      (getImproveProcessConfig(config, "consolidate")?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
     if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
       const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
       const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
@@ -2051,7 +2050,7 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
   // pipeline from building ever-deeper LLM-merged trees that lose the
   // source fidelity of the original episodes.
   const antiCollapseConfig: AntiCollapseConfig =
-    (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+    (getImproveProcessConfig(config, "consolidate")?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
   if (antiCollapseConfig.enabled !== false) {
     const allParticipants = [op.primary, ...op.secondaries];
     // One read per participant: generation counter, stripped body (for the

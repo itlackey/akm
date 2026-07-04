@@ -30,6 +30,7 @@ import { randomBytes } from "node:crypto";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
+import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -477,7 +478,7 @@ export function runCollapseDetector(args: {
       const db = indexDb;
       // Over-generation threshold mirrors the guard actually in effect —
       // reading the same config key keeps the two aligned when tuned.
-      const antiCollapse = args.config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as
+      const antiCollapse = getImproveProcessConfig(args.config, "consolidate")?.antiCollapse as
         | { maxGeneration?: number }
         | undefined;
       const maxGeneration = antiCollapse?.maxGeneration ?? DEFAULT_MAX_GENERATION;
