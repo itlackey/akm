@@ -713,6 +713,25 @@ The plan's *Reuse unchanged* list is accordingly narrowed: `executeRunner`,
 `runAgent`/`runOpencodeSdk`, and `callStructured` are reused *through additive
 extension*, not literally untouched.
 
+### Two open seam decisions (assumed defaults — override if desired)
+
+Both surfaced from the review and affect the **default** native path; the plan
+assumes the first option in each:
+
+1. **SDK worktree isolation.** `runOpencodeSdk` is a process-wide singleton with
+   no per-call cwd (`sdk-runner.ts:48,117`), so `isolation: worktree` is
+   unimplementable against it as-is. *Assumed:* refactor the SDK runner to key
+   its server by working directory (also fixes the concurrent-run test-isolation
+   hazard). *Cheaper interim:* keep the singleton for non-isolated units and
+   route `isolation: worktree` units to the CLI runner (`runAgent` honors `cwd`
+   today) — two default paths, less refactor. *Smallest:* defer worktree
+   isolation past v1 with a documented gap.
+2. **Mid-unit abort.** No `AbortSignal` exists today; `runAgent` only self-cancels
+   via its timeout. *Assumed:* thread `signal` through in P0.5 so budget ceilings
+   can preempt a *running* unit and `watch` can cancel. *Cheaper:* v1 only skips
+   un-started units at the ceiling (a runaway unit overshoots until it finishes),
+   add `signal` later.
+
 ## Rollout phases
 
 - **P0 — IR + compiler.** `ir/schema.ts`, `ir/compile.ts`. Existing linear
