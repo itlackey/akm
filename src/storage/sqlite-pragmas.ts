@@ -65,8 +65,8 @@ export function resolveJournalMode(raw: string | undefined): JournalMode {
  * `process.env.AKM_SQLITE_JOURNAL_MODE`. Read at call time (per open) so tests
  * that set the env per-case see the right value and we avoid stale-env flakes.
  */
-export function resolveConfiguredJournalMode(): JournalMode {
-  return resolveJournalMode(process.env.AKM_SQLITE_JOURNAL_MODE);
+export function resolveConfiguredJournalMode(env: NodeJS.ProcessEnv = process.env): JournalMode {
+  return resolveJournalMode(env.AKM_SQLITE_JOURNAL_MODE);
 }
 
 function warnInvalidJournalModeOnce(raw: string): void {
@@ -126,6 +126,12 @@ export interface StandardPragmaOptions {
    * a real network mount.
    */
   fsTypeProbe?: (path: string) => number | undefined;
+  /**
+   * Injectable environment for resolving `AKM_SQLITE_JOURNAL_MODE`. Defaults to
+   * `process.env`; supplied by tests (and `ManagedDbSpec.pragmas`) so the
+   * journal-mode read is not an ambient global. Omit for the default.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -144,7 +150,7 @@ export interface StandardPragmaOptions {
  * WAL path emits no `synchronous` pragma, exactly as before.
  */
 export function applyStandardPragmas(db: Database, opts: StandardPragmaOptions = {}): JournalMode {
-  let mode = resolveConfiguredJournalMode();
+  let mode = resolveConfiguredJournalMode(opts.env);
 
   // Network-FS fallback only fires for the WAL default and only when we have a
   // directory to probe. An explicitly-requested DELETE/TRUNCATE is never

@@ -286,7 +286,8 @@ async function migrateEventsJsonl(ctx: MigrationContext): Promise<StepResult> {
 
   try {
     ensureDir(ctx.paths.dataDir);
-    const { openStateDatabase, importEventsJsonl } = await import("../src/core/state-db");
+    const { openStateDatabase } = await import("../src/core/state-db");
+    const { importEventsJsonl } = await import("../src/storage/repositories/events-repository");
     const db = openStateDatabase(ctx.paths.stateDbPath);
     try {
       // Wrap the whole-file import in a single transaction so SIGINT or any
@@ -488,7 +489,8 @@ async function migrateTaskHistoryToDb(ctx: MigrationContext): Promise<StepResult
   try {
     ensureDir(ctx.paths.dataDir);
 
-    const { openStateDatabase, upsertTaskHistory } = await import("../src/core/state-db");
+    const { openStateDatabase } = await import("../src/core/state-db");
+    const { upsertTaskHistory } = await import("../src/storage/repositories/task-history-repository");
     const db = openStateDatabase(ctx.paths.stateDbPath);
 
     let imported = 0;

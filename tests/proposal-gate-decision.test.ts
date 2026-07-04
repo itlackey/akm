@@ -30,10 +30,10 @@ import {
   type PromoteResult,
   type Proposal,
   recordGateDecision,
-} from "../src/commands/proposal/validators/proposals";
-import type { AkmConfig } from "../src/core/config/config";
+} from "../src/commands/proposal/repository";
 import { shapeProposalEntry } from "../src/output/shapes/helpers";
 import { formatProposalListPlain, formatProposalShowPlain } from "../src/output/text/helpers";
+import { makeConfig } from "./_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -227,14 +227,6 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 // ── improve auto-accept gate records on each path ───────────────────────────
 
 describe("runAutoAcceptGate records a gate decision per path (#577)", () => {
-  function makeConfig(stash: string): AkmConfig {
-    return {
-      stashDir: stash,
-      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
-      defaultWriteTarget: "stash",
-    } as AkmConfig;
-  }
-
   test("auto-accepted: confidence >= threshold stamps above-threshold with the comparison operands", async () => {
     const stash = makeStashDir();
     const p = seed(stash, "lesson:hi", "reflect", VALID_LESSON);

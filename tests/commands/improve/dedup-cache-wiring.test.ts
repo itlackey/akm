@@ -22,8 +22,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { cacheHash, runDeterministicDedup } from "../../../src/commands/improve/dedup";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { getBodyEmbeddings, openStateDatabase, upsertBodyEmbeddings } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
+import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../../src/storage/repositories/embeddings-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 

@@ -260,6 +260,16 @@ describe("getCacheDir", () => {
     const result = getCacheDir();
     expect(result).toBe(path.join("/iso/cache", "akm"));
   });
+
+  test("honors an injected env without reading or mutating process.env", () => {
+    // Pin the real global to a value that MUST NOT influence the result.
+    process.env.AKM_CACHE_DIR = "/host/should-be-ignored";
+    const before = JSON.stringify(process.env);
+    const result = getCacheDir({ XDG_CACHE_HOME: "/injected/cache" });
+    expect(result).toBe(path.join("/injected/cache", "akm"));
+    // The resolver read only the injected env and left the global untouched.
+    expect(JSON.stringify(process.env)).toBe(before);
+  });
 });
 
 // ── getDataDir ──────────────────────────────────────────────────────────────
@@ -463,5 +473,14 @@ describe("getDefaultStashDir", () => {
     process.env.AKM_STASH_DIR = "/override/stash";
     const result = getDefaultStashDir();
     expect(result).toBe("/override/stash");
+  });
+
+  test("honors an injected env without reading or mutating process.env", () => {
+    // Pin the real global to a value that MUST NOT influence the result.
+    process.env.AKM_STASH_DIR = "/host/should-be-ignored";
+    const before = JSON.stringify(process.env);
+    const result = getDefaultStashDir({ HOME: "/injected/home" });
+    expect(result).toBe(path.join("/injected/home", "akm"));
+    expect(JSON.stringify(process.env)).toBe(before);
   });
 });

@@ -64,7 +64,7 @@ export const initCommand = defineJsonCommand({
     const legacyDir = parseFlagValue(process.argv, "--stashDir") ?? parseFlagValue(process.argv, "--stash-dir");
     const result = await akmInit({
       dir: args.dir ?? legacyDir,
-      setDefault: getHyphenatedBoolean(args, "set-default"),
+      setDefault: args["set-default"],
     });
     output("init", result);
   },

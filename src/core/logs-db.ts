@@ -39,11 +39,10 @@
  * @module logs-db
  */
 
-import fs from "node:fs";
 import path from "node:path";
-import { type Database, openDatabase, type SqlValue } from "../storage/database";
+import type { Database, SqlValue } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
-import { applyStandardPragmas } from "../storage/sqlite-pragmas";
+import { openManagedDatabase } from "../storage/managed-db";
 import { getDataDir } from "./paths";
 
 // Re-export the boundary Database type so consumers can type their handles
@@ -82,20 +81,13 @@ export function getLogsDbPath(): string {
  */
 export function openLogsDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? getLogsDbPath();
-  const dir = path.dirname(resolvedPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const db = openDatabase(resolvedPath);
-
-  // PRAGMAs must run before any DDL or DML. foreignKeys:false preserves this
-  // opener's historical behaviour — logs.db has never enforced foreign keys.
-  applyStandardPragmas(db, { dataDir: dir, foreignKeys: false });
-
-  runMigrations(db);
-
-  return db;
+  // foreignKeys:false preserves this opener's historical behaviour — logs.db
+  // has never enforced foreign keys.
+  return openManagedDatabase({
+    path: resolvedPath,
+    pragmas: { dataDir: path.dirname(resolvedPath), foreignKeys: false },
+    init: runMigrations,
+  });
 }
 
 // ── Migrations ───────────────────────────────────────────────────────────────

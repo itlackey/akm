@@ -132,13 +132,25 @@ export interface IndexResponse {
     density: number;
   };
   /** Timing counters in milliseconds */
-  timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
+  timing?: {
+    totalMs: number;
+    walkMs: number;
+    llmMs: number;
+    embedMs: number;
+    ftsMs: number;
+    finalizeMs: number;
+    cleanMs: number;
+    preflightMs: number;
+    leaseWaitMs: number;
+    sourceCacheMs: number;
+    endToEndMs: number;
+  };
   /** Present when --clean was passed: stale-entry purge results. */
   clean?: IndexCleanResult;
 }
 
 export interface IndexProgressEvent {
-  phase: "summary" | "scan" | "llm" | "fts" | "embeddings" | "verify";
+  phase: "summary" | "preflight" | "scan" | "llm" | "embeddings" | "fts" | "finalize" | "verify";
   message: string;
   processed?: number;
   total?: number;
@@ -318,6 +330,7 @@ async function runEmbeddingPhase(ctx: IndexRunContext): Promise<void> {
  */
 async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   const { db, config, sources, sourceDirs, isIncremental, stashDir, signal, onProgress } = ctx;
+  ctx.timing.tFinalizeStart = Date.now();
 
   // Rebuild FTS after all inserts. Use incremental mode when this whole
   // index run is incremental — only entries touched by `upsertEntry`
@@ -330,11 +343,14 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   ctx.timing.tFtsEnd = Date.now();
 
   // Re-link detached usage_events and recompute utility scores.
+  onProgress({ phase: "finalize", message: "Relinking usage events." });
   relinkUsageEvents(db);
+  onProgress({ phase: "finalize", message: "Recomputing utility scores." });
   recomputeUtilityScores(db);
 
   // Purge LLM cache entries for assets that no longer exist in the index.
   try {
+    onProgress({ phase: "finalize", message: "Clearing stale LLM cache entries." });
     clearStaleCacheEntries(db);
   } catch {
     /* ignore */
@@ -342,6 +358,7 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
 
   // Regenerate each wiki's index.md from its pages' frontmatter. Best-effort.
   try {
+    onProgress({ phase: "finalize", message: "Regenerating wiki indexes." });
     const { regenerateAllWikiIndexes } = await import("../wiki/wiki.js");
     regenerateAllWikiIndexes(stashDir);
   } catch {
@@ -361,6 +378,7 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
 
   const totalEntries = getEntryCount(db);
   const semanticEntryCount = getEmbeddableEntryCount(db);
+  onProgress({ phase: "finalize", message: "Verifying semantic search state." });
   const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
 
   if (config.semanticSearchMode === "off") {
@@ -381,6 +399,7 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   // Store verification result and totalEntries on ctx for the caller to use
   ctx.verification = verification;
   ctx.totalEntries = totalEntries;
+  ctx.timing.tFinalizeEnd = Date.now();
 
   // suppress unused warning — sources was previously used inline
   void sources;
@@ -439,134 +458,172 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 }
 
 async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
-  return withIndexWriterLease({ purpose: "akm-index", signal: options?.signal }, async () => {
-    const stashDir = options?.stashDir || resolveStashDir();
-    const onProgress = options?.onProgress ?? (() => {});
-    const signal = options?.signal;
-    const reEnrich = options?.reEnrich === true;
-    const full = options?.full === true;
-    const clean = options?.clean === true;
-    const dryRun = options?.dryRun === true;
+  const requestedAt = Date.now();
+  let acquiredAt = requestedAt;
+  return withIndexWriterLease(
+    {
+      purpose: "akm-index",
+      signal: options?.signal,
+      onWait: ({ waitedMs }) => {
+        options?.onProgress?.({
+          phase: "preflight",
+          message: `Waiting for index writer lease (${Math.round(waitedMs / 1000)}s elapsed).`,
+        });
+      },
+      onAcquired: ({ waitedMs }) => {
+        acquiredAt = requestedAt + waitedMs;
+      },
+    },
+    async () => {
+      const stashDir = options?.stashDir || resolveStashDir();
+      const onProgress = options?.onProgress ?? (() => {});
+      const signal = options?.signal;
+      const reEnrich = options?.reEnrich === true;
+      const full = options?.full === true;
+      const clean = options?.clean === true;
+      const dryRun = options?.dryRun === true;
 
-    // Load config and resolve all stash sources
-    const { loadConfig } = await import("../core/config/config.js");
-    const config = loadConfig();
+      // Load config and resolve all stash sources
+      const { loadConfig } = await import("../core/config/config.js");
+      const config = loadConfig();
 
-    // One-time, read-only guard: warn if the writable stash still holds an
-    // un-migrated `vaults/` directory. In 0.9.0 the indexer skips `vaults/`
-    // entirely, so an unmigrated vault's `.env` data would silently never be
-    // indexed. Non-destructive — only stats, never reads/writes/deletes.
-    const { warnOnUnmigratedVaults } = await import("./usage/unmigrated-vaults-guard.js");
-    warnOnUnmigratedVaults(stashDir);
+      // One-time, read-only guard: warn if the writable stash still holds an
+      // un-migrated `vaults/` directory. In 0.9.0 the indexer skips `vaults/`
+      // entirely, so an unmigrated vault's `.env` data would silently never be
+      // indexed. Non-destructive — only stats, never reads/writes/deletes.
+      const { warnOnUnmigratedVaults } = await import("./usage/unmigrated-vaults-guard.js");
+      warnOnUnmigratedVaults(stashDir);
 
-    // Ensure git stash caches are extracted before resolving stash dirs,
-    // so their content directories exist on disk for the walker to discover.
-    const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
-    await ensureSourceCaches(config, { force: full });
-    const allSourceEntries = resolveSourceEntries(stashDir, config);
-    const allSourceDirs = allSourceEntries.map((s) => s.path);
-
-    const t0 = Date.now();
-
-    // Open database — pass embedding dimension from config if available
-    const dbPath = getDbPath();
-    const embeddingDim = config.embedding?.dimension;
-    const db = openIndexDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
-
-    try {
-      // Determine incremental vs full mode
-      const prevStashDir = getMeta(db, "stashDir");
-      const prevBuiltAt = getMeta(db, "builtAt");
-      const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
-      const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
-
-      // Assemble the run context
-      const ctx: IndexRunContext = {
-        db,
-        config,
-        sources: allSourceEntries,
-        sourceDirs: allSourceDirs,
-        full,
-        reEnrich,
-        stashDir,
-        onProgress,
-        signal,
-        timing: {
-          t0,
-          tWalkStart: t0,
-          tWalkEnd: t0,
-          tLlmEnd: t0,
-          tFtsEnd: t0,
-          tEmbedEnd: t0,
-        },
-        isIncremental,
-        builtAtMs,
-        hadRemovedSources: false,
-        scannedDirs: 0,
-        skippedDirs: 0,
-        generatedCount: 0,
-        walkWarnings: [],
-        dirsNeedingLlm: [],
-        embeddingResult: null,
-        graphExtractionResult: null,
-      };
-
+      // Ensure git stash caches are extracted before resolving stash dirs,
+      // so their content directories exist on disk for the walker to discover.
+      const sourceCacheStart = Date.now();
+      onProgress({ phase: "preflight", message: "Hydrating source caches." });
+      const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
+      await ensureSourceCaches(config, { force: full });
+      const sourceCacheEnd = Date.now();
+      const allSourceEntries = resolveSourceEntries(stashDir, config);
+      const allSourceDirs = allSourceEntries.map((s) => s.path);
       onProgress({
-        phase: "summary",
-        message: buildIndexSummaryMessage({
-          mode: isIncremental ? "incremental" : "full",
-          sourcesCount: allSourceDirs.length,
-          semanticSearchMode: config.semanticSearchMode,
-          embeddingProvider: getEmbeddingProvider(config.embedding),
-          llmEnabled: !!resolveIndexPassLLM("enrichment", config),
-          vecAvailable: isVecAvailable(db),
-        }),
+        phase: "preflight",
+        message: `Resolved ${allSourceDirs.length} stash source${allSourceDirs.length === 1 ? "" : "s"}.`,
       });
 
-      // ── Phase sequence ───────────────────────────────────────────────────────
-      await runSourceCachePhase(ctx);
-      await runWalkPhase(ctx);
-      await runEmbeddingPhase(ctx);
-      await runFinalizePhase(ctx);
-      // ────────────────────────────────────────────────────────────────────────
+      const t0 = Date.now();
 
-      // runFinalizePhase always populates these before returning.
-      const verification = ctx.verification as IndexVerification;
-      const totalEntries = ctx.totalEntries as number;
-      const { timing } = ctx;
+      // Open database — pass embedding dimension from config if available
+      const dbPath = getDbPath();
+      const embeddingDim = config.embedding?.dimension;
+      const db = openIndexDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
 
-      // ── Clean pass ───────────────────────────────────────────────────────────
-      // After the normal index completes, remove entries whose source files no
-      // longer exist on disk. Remote entries (empty file_path) are skipped.
-      let cleanResult: IndexCleanResult | undefined;
-      if (clean) {
-        cleanResult = runCleanPass(db, dryRun);
+      try {
+        // Determine incremental vs full mode
+        const prevStashDir = getMeta(db, "stashDir");
+        const prevBuiltAt = getMeta(db, "builtAt");
+        const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
+        const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
+
+        // Assemble the run context
+        const ctx: IndexRunContext = {
+          db,
+          config,
+          sources: allSourceEntries,
+          sourceDirs: allSourceDirs,
+          full,
+          reEnrich,
+          stashDir,
+          onProgress,
+          signal,
+          timing: {
+            t0,
+            tWalkStart: t0,
+            tWalkEnd: t0,
+            tLlmEnd: t0,
+            tFtsEnd: t0,
+            tEmbedEnd: t0,
+            tFinalizeStart: t0,
+            tFinalizeEnd: t0,
+          },
+          isIncremental,
+          builtAtMs,
+          hadRemovedSources: false,
+          scannedDirs: 0,
+          skippedDirs: 0,
+          generatedCount: 0,
+          walkWarnings: [],
+          dirsNeedingLlm: [],
+          embeddingResult: null,
+          graphExtractionResult: null,
+        };
+
+        onProgress({
+          phase: "summary",
+          message: buildIndexSummaryMessage({
+            mode: isIncremental ? "incremental" : "full",
+            sourcesCount: allSourceDirs.length,
+            semanticSearchMode: config.semanticSearchMode,
+            embeddingProvider: getEmbeddingProvider(config.embedding),
+            llmEnabled: !!resolveIndexPassLLM("enrichment", config),
+            vecAvailable: isVecAvailable(db),
+          }),
+        });
+
+        // ── Phase sequence ───────────────────────────────────────────────────────
+        await runSourceCachePhase(ctx);
+        await runWalkPhase(ctx);
+        await runEmbeddingPhase(ctx);
+        await runFinalizePhase(ctx);
+        // ────────────────────────────────────────────────────────────────────────
+
+        // runFinalizePhase always populates these before returning.
+        const verification = ctx.verification as IndexVerification;
+        const totalEntries = ctx.totalEntries as number;
+        const { timing } = ctx;
+
+        // ── Clean pass ───────────────────────────────────────────────────────────
+        // After the normal index completes, remove entries whose source files no
+        // longer exist on disk. Remote entries (empty file_path) are skipped.
+        let cleanResult: IndexCleanResult | undefined;
+        const cleanStart = Date.now();
+        if (clean) {
+          onProgress({
+            phase: "finalize",
+            message: dryRun ? "Scanning for stale index entries (dry run)." : "Removing stale index entries.",
+          });
+          cleanResult = runCleanPass(db, dryRun);
+        }
+        const cleanEnd = Date.now();
+        // ────────────────────────────────────────────────────────────────────────
+
+        return {
+          stashDir,
+          totalEntries,
+          generatedMetadata: ctx.generatedCount,
+          indexPath: dbPath,
+          mode: isIncremental ? "incremental" : "full",
+          directoriesScanned: ctx.scannedDirs,
+          directoriesSkipped: ctx.skippedDirs,
+          ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
+          verification,
+          timing: {
+            totalMs: Date.now() - timing.t0,
+            walkMs: timing.tWalkEnd - timing.tWalkStart,
+            llmMs: timing.tLlmEnd - timing.tWalkEnd,
+            embedMs: timing.tEmbedEnd - timing.tLlmEnd,
+            ftsMs: timing.tFtsEnd - timing.tEmbedEnd,
+            finalizeMs: timing.tFinalizeEnd - timing.tFinalizeStart,
+            cleanMs: clean ? cleanEnd - cleanStart : 0,
+            preflightMs: timing.t0 - requestedAt,
+            leaseWaitMs: acquiredAt - requestedAt,
+            sourceCacheMs: sourceCacheEnd - sourceCacheStart,
+            endToEndMs: Date.now() - requestedAt,
+          },
+          ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
+        };
+      } finally {
+        closeDatabase(db);
       }
-      // ────────────────────────────────────────────────────────────────────────
-
-      return {
-        stashDir,
-        totalEntries,
-        generatedMetadata: ctx.generatedCount,
-        indexPath: dbPath,
-        mode: isIncremental ? "incremental" : "full",
-        directoriesScanned: ctx.scannedDirs,
-        directoriesSkipped: ctx.skippedDirs,
-        ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
-        verification,
-        timing: {
-          totalMs: Date.now() - timing.t0,
-          walkMs: timing.tWalkEnd - timing.tWalkStart,
-          llmMs: timing.tLlmEnd - timing.tWalkEnd,
-          embedMs: timing.tEmbedEnd - timing.tLlmEnd,
-          ftsMs: timing.tFtsEnd - timing.tEmbedEnd,
-        },
-        ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
-      };
-    } finally {
-      closeDatabase(db);
-    }
-  });
+    },
+  );
 }
 
 // ── Extracted helpers for indexing ────────────────────────────────────────────
@@ -1211,32 +1268,44 @@ async function generateEmbeddingsForDb(
       }
     }
 
-    const embeddings = await embedBatch(texts, config.embedding, signal);
-    throwIfAborted(signal);
-    // Wrap all embedding upserts in a single transaction so partial
-    // state is rolled back on failure rather than leaving the table half-filled.
-    let storedCount = 0;
-    let skippedCount = 0;
-    db.transaction(() => {
-      for (let i = 0; i < allEntries.length; i++) {
-        if (upsertEmbedding(db, allEntries[i].id, embeddings[i])) {
-          storedCount++;
-        } else {
-          skippedCount++;
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    try {
+      heartbeatTimer = setInterval(() => {
+        onProgress({
+          phase: "embeddings",
+          message: `Still generating embeddings for ${allEntries.length} entr${allEntries.length === 1 ? "y" : "ies"}; waiting on embedding provider.`,
+        });
+      }, 15000);
+
+      const embeddings = await embedBatch(texts, config.embedding, signal);
+      throwIfAborted(signal);
+      // Wrap all embedding upserts in a single transaction so partial
+      // state is rolled back on failure rather than leaving the table half-filled.
+      let storedCount = 0;
+      let skippedCount = 0;
+      db.transaction(() => {
+        for (let i = 0; i < allEntries.length; i++) {
+          if (upsertEmbedding(db, allEntries[i].id, embeddings[i])) {
+            storedCount++;
+          } else {
+            skippedCount++;
+          }
         }
+      })();
+      if (skippedCount > 0) {
+        warn(
+          `[embed] ${skippedCount} embedding${skippedCount === 1 ? "" : "s"} skipped (entry deleted between queue and write)`,
+        );
       }
-    })();
-    if (skippedCount > 0) {
-      warn(
-        `[embed] ${skippedCount} embedding${skippedCount === 1 ? "" : "s"} skipped (entry deleted between queue and write)`,
-      );
+      onProgress({
+        phase: "embeddings",
+        message: `Stored ${storedCount} embedding${storedCount === 1 ? "" : "s"}.`,
+      });
+      setMeta(db, "embeddingFingerprint", currentFingerprint);
+      return { success: true };
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
     }
-    onProgress({
-      phase: "embeddings",
-      message: `Stored ${storedCount} embedding${storedCount === 1 ? "" : "s"}.`,
-    });
-    setMeta(db, "embeddingFingerprint", currentFingerprint);
-    return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     warn("Embedding generation failed, continuing without:", message);

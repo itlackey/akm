@@ -20,6 +20,7 @@ import path from "node:path";
 import { resolveStandardsContext } from "../src/core/standards/resolve-standards-context";
 import { resolveStashStandards } from "../src/core/standards/resolve-stash-standards";
 import { resolveTypeConventions } from "../src/core/standards/resolve-type-conventions";
+import { writeFact } from "./_helpers/assets";
 import { makeSandboxDir, makeStashDir, type SandboxedDir } from "./_helpers/sandbox";
 
 function writeTypeConvention(stashRoot: string, type: string, body: string, category = "convention"): void {
@@ -27,12 +28,6 @@ function writeTypeConvention(stashRoot: string, type: string, body: string, cate
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   const fm = category === "" ? "" : `category: ${category}\n`;
   fs.writeFileSync(abs, `---\n${fm}---\n\n${body}\n`, "utf8");
-}
-
-function writeFact(stashRoot: string, relPath: string, category: string, body: string): void {
-  const abs = path.join(stashRoot, "facts", relPath);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, `---\ncategory: ${category}\n---\n\n${body}\n`, "utf8");
 }
 
 describe("resolveTypeConventions", () => {

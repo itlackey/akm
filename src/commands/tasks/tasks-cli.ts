@@ -17,7 +17,6 @@
 import { defineCommand } from "citty";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
-import { getHyphenatedArg } from "../../output/context";
 import { detectServerDefault, registerDefaultTasks } from "./default-tasks";
 import {
   akmTasksAdd,
@@ -66,7 +65,7 @@ const tasksAddCommand = defineJsonCommand({
       profile: args.profile,
       params: args.params,
       name: args.name,
-      when_to_use: getHyphenatedArg<string>(args, "when-to-use"),
+      when_to_use: args["when-to-use"],
       description: args.description,
       tags: args.tags
         ? args.tags

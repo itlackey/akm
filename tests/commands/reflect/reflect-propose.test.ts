@@ -18,10 +18,10 @@ import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../src/commands/proposal/propose";
-import { listProposals } from "../../../src/commands/proposal/validators/proposals";
+import { listProposals } from "../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../src/core/events";
-import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
+import { makeProfile } from "../../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
@@ -43,18 +43,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
-}
-
-function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
-  return {
-    name: "fake-agent",
-    bin: "fake-agent",
-    args: [],
-    stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
-    ...overrides,
-  };
 }
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {

@@ -23,3 +23,8 @@ test.sh
 # commit the output. Keep the dir (.gitkeep) and the generator.
 scripts/akm-eval/cases/real-query/rq-*.json
 scripts/akm-eval/cases/real-query.manifest.json
+
+# Meta-review findings analyze the owner's LIVE install and may contain
+# security-sensitive facts — they are local-only and must never be committed.
+# The prompts + README + runner (the reusable kit) ARE meant to be tracked.
+docs/reviews/akm-meta-review/findings/

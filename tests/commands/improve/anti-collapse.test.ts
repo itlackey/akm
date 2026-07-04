@@ -3,94 +3,27 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WS-3b homeostatic tier — unit tests.
+ * WS-3b Step 8 — anti-collapse merge guards — unit tests.
  *
  * Covers:
- *   - isSchemaConsistent: cosine-similarity gate with epsilon threshold.
  *   - readAssetGeneration / computeMergedGeneration: frontmatter read + math.
  *   - checkGenerationGuard: refuses merge when ≥2 participants above maxGeneration.
  *   - computeBigramDiversity: n-gram diversity metric.
  *   - checkLexicalDiversity: low-diversity cluster detection.
- *   - buildClsContext: CLS adjacent-lesson context block construction.
- *   - checkDistillFidelity: heuristic negation-pattern contradiction detection.
- *   - isHotProbation / shouldSkipHotProbationInLlm / buildHotProbationFrontmatter:
- *     captureMode: hot-probation helpers.
+ *   - checkMergeInformationFloor: provenance + specificity floor (R5 §4.2).
+ *   - anti-collapse guards default ON (R5 §4.1).
  */
 
 import { describe, expect, test } from "bun:test";
 import {
-  buildClsContext,
-  buildHotProbationFrontmatter,
-  CAPTURE_MODE_HOT_PROBATION,
-  checkDistillFidelity,
   checkGenerationGuard,
   checkLexicalDiversity,
   checkMergeInformationFloor,
   computeBigramDiversity,
   computeMergedGeneration,
   DEFAULT_MAX_GENERATION,
-  isHotProbation,
-  isSchemaConsistent,
   readAssetGeneration,
-  shouldSkipHotProbationInLlm,
-} from "../../../src/commands/improve/homeostatic";
-
-// (The runHomeostaticDemotion suite was removed with the pass itself — R4.
-// Continuous decay is covered by the recency-floor tests in salience.test.ts.)
-
-// ── isSchemaConsistent ────────────────────────────────────────────────────────
-
-describe("isSchemaConsistent", () => {
-  // Unit-vector embeddings for predictable cosine similarity
-  const vecA = [1, 0, 0];
-  const vecB = [0, 1, 0];
-  const vecSimilar = [0.9, 0.1, 0]; // sim to vecA ≈ 0.994
-
-  test("returns false when disabled", () => {
-    const result = isSchemaConsistent(vecA, [{ ref: "knowledge:x", embedding: vecA }], { enabled: false });
-    expect(result.consistent).toBe(false);
-  });
-
-  test("returns false when no existing derived embeddings", () => {
-    const result = isSchemaConsistent(vecA, [], { enabled: true });
-    expect(result.consistent).toBe(false);
-  });
-
-  test("returns true when candidate embedding is within epsilon of existing", () => {
-    const result = isSchemaConsistent(vecSimilar, [{ ref: "knowledge:x", embedding: vecA }], {
-      enabled: true,
-      epsilon: 0.85,
-    });
-    expect(result.consistent).toBe(true);
-    expect(result.matchedRef).toBe("knowledge:x");
-    expect(result.similarity).toBeGreaterThan(0.85);
-  });
-
-  test("returns false when candidate is dissimilar (orthogonal vectors)", () => {
-    const result = isSchemaConsistent(vecB, [{ ref: "knowledge:x", embedding: vecA }], {
-      enabled: true,
-      epsilon: 0.85,
-    });
-    expect(result.consistent).toBe(false);
-  });
-
-  test("uses default epsilon (0.85) when not specified", () => {
-    // vecA · vecA = 1.0 (identical), should be above any reasonable epsilon
-    const result = isSchemaConsistent(vecA, [{ ref: "knowledge:x", embedding: vecA }], { enabled: true });
-    expect(result.consistent).toBe(true);
-    expect(result.similarity).toBeCloseTo(1.0);
-  });
-
-  test("picks the highest-similarity match among multiple existing embeddings", () => {
-    const embeddings = [
-      { ref: "knowledge:a", embedding: vecB }, // sim to vecSimilar ≈ 0.1
-      { ref: "knowledge:b", embedding: vecA }, // sim to vecSimilar ≈ 0.994
-    ];
-    const result = isSchemaConsistent(vecSimilar, embeddings, { enabled: true, epsilon: 0.85 });
-    expect(result.consistent).toBe(true);
-    expect(result.matchedRef).toBe("knowledge:b");
-  });
-});
+} from "../../../src/commands/improve/anti-collapse";
 
 // ── readAssetGeneration / computeMergedGeneration ────────────────────────────
 
@@ -217,134 +150,6 @@ describe("checkLexicalDiversity", () => {
     ];
     const result = checkLexicalDiversity(bodies, { enabled: true });
     expect(result.lowDiversity).toBe(false);
-  });
-});
-
-// ── buildClsContext ───────────────────────────────────────────────────────────
-
-describe("buildClsContext", () => {
-  test("returns empty string when disabled", () => {
-    const ctx = buildClsContext([{ ref: "lesson:x", content: "foo" }], { enabled: false });
-    expect(ctx).toBe("");
-  });
-
-  test("returns empty string when adjacentItems is empty", () => {
-    const ctx = buildClsContext([], { enabled: true });
-    expect(ctx).toBe("");
-  });
-
-  test("returns formatted context block when enabled and items present", () => {
-    const ctx = buildClsContext(
-      [
-        { ref: "lesson:alpha", content: "Learn from past mistakes." },
-        { ref: "knowledge:beta", content: "The sky is blue." },
-      ],
-      { enabled: true },
-    );
-    expect(ctx).toContain("## Existing adjacent lessons / knowledge (CLS context)");
-    expect(ctx).toContain("lesson:alpha");
-    expect(ctx).toContain("Learn from past mistakes.");
-    expect(ctx).toContain("knowledge:beta");
-    expect(ctx).toContain("The sky is blue.");
-  });
-
-  test("truncates long content to 400 chars", () => {
-    const longContent = "x".repeat(1000);
-    const ctx = buildClsContext([{ ref: "lesson:long", content: longContent }], { enabled: true });
-    // Only first 400 chars should appear
-    expect(ctx).toContain("x".repeat(400));
-    expect(ctx).not.toContain("x".repeat(401));
-  });
-});
-
-// ── checkDistillFidelity ──────────────────────────────────────────────────────
-
-describe("checkDistillFidelity", () => {
-  test("returns no contradiction when disabled", () => {
-    const result = checkDistillFidelity("you must never deploy on Friday", ["always deploy on Friday"], {
-      enabled: false,
-    });
-    expect(result.contradictionDetected).toBe(false);
-  });
-
-  test("returns no contradiction when sourceBodies is empty", () => {
-    const result = checkDistillFidelity("you must never fail", [], { enabled: true });
-    expect(result.contradictionDetected).toBe(false);
-  });
-
-  test("returns no contradiction when proposal has no strong claims", () => {
-    const result = checkDistillFidelity("this is a mild suggestion", ["this is a mild suggestion"], { enabled: true });
-    expect(result.contradictionDetected).toBe(false);
-  });
-
-  test("detects contradiction: proposal 'always X' vs source 'never X'", () => {
-    // Proposal: "always deploy" creates positive claim { polarity: positive, term: "deploy" }
-    // Source: "never deploy" creates negative claim for "deploy" → contradiction
-    const result = checkDistillFidelity(
-      "always deploy the latest build immediately",
-      ["never deploy directly without review"],
-      { enabled: true },
-    );
-    expect(result.contradictionDetected).toBe(true);
-    expect(result.reason).toContain("deploy");
-  });
-
-  test("detects contradiction: proposal 'never X' vs source 'always X'", () => {
-    // Proposal: "never push" (negative), source: "always push" (positive) → contradiction
-    const result = checkDistillFidelity("never push to main without CI", ["always push to main when tests pass"], {
-      enabled: true,
-    });
-    expect(result.contradictionDetected).toBe(true);
-  });
-
-  test("no false positive when proposal and source agree", () => {
-    const result = checkDistillFidelity("always test before merging", ["always test before merging your changes"], {
-      enabled: true,
-    });
-    // Both say "always test" — not a contradiction
-    expect(result.contradictionDetected).toBe(false);
-  });
-});
-
-// ── hot-probation helpers ─────────────────────────────────────────────────────
-
-describe("CAPTURE_MODE_HOT_PROBATION constant", () => {
-  test("has the expected value", () => {
-    expect(CAPTURE_MODE_HOT_PROBATION).toBe("hot-probation");
-  });
-});
-
-describe("isHotProbation", () => {
-  test("returns true for hot-probation captureMode", () => {
-    expect(isHotProbation("hot-probation")).toBe(true);
-  });
-
-  test("returns false for other captureModes", () => {
-    expect(isHotProbation("hot")).toBe(false);
-    expect(isHotProbation("normal")).toBe(false);
-    expect(isHotProbation(undefined)).toBe(false);
-    expect(isHotProbation(null)).toBe(false);
-    expect(isHotProbation("")).toBe(false);
-  });
-});
-
-describe("shouldSkipHotProbationInLlm", () => {
-  test("returns true when frontmatter has captureMode: hot-probation", () => {
-    expect(shouldSkipHotProbationInLlm({ captureMode: "hot-probation" })).toBe(true);
-  });
-
-  test("returns false for other values", () => {
-    expect(shouldSkipHotProbationInLlm({ captureMode: "hot" })).toBe(false);
-    expect(shouldSkipHotProbationInLlm({})).toBe(false);
-    expect(shouldSkipHotProbationInLlm({ captureMode: undefined })).toBe(false);
-  });
-});
-
-describe("buildHotProbationFrontmatter", () => {
-  test("returns captureMode: hot-probation object", () => {
-    const fm = buildHotProbationFrontmatter();
-    expect(fm).toEqual({ captureMode: "hot-probation" });
-    expect(fm.captureMode).toBe(CAPTURE_MODE_HOT_PROBATION);
   });
 });
 

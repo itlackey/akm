@@ -43,10 +43,10 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig } from "../../core/config/config";
-import type { Database } from "../../core/state-db";
-import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
+import type { Database } from "../../storage/database";
+import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 
 /** Default strict cosine floor — high enough to skip distinct-but-related memories. */
 export const DEFAULT_DEDUP_COSINE_THRESHOLD = 0.97;

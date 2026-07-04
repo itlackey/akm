@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { defineCommand } from "citty";
-import { output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
+import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { parseAssetRef } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
@@ -128,7 +127,7 @@ function appendLessonStrength(type: string, name: string, feedbackRef: string): 
 
 // ── Command definition ────────────────────────────────────────────────────────
 
-export const feedbackCommand = defineCommand({
+export const feedbackCommand = defineJsonCommand({
   meta: {
     name: "feedback",
     description:
@@ -176,204 +175,200 @@ export const feedbackCommand = defineCommand({
         "`lessonStrength[]` frontmatter array (dedup, idempotent). Ignored on non-lesson targets.",
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const ref = (args.ref ?? "").trim();
-      if (!ref) {
+  async run({ args }) {
+    const ref = (args.ref ?? "").trim();
+    if (!ref) {
+      throw new UsageError(
+        "Asset ref is required. Usage: akm feedback <ref> --positive|--negative",
+        "MISSING_REQUIRED_ARGUMENT",
+        "Pass a ref like `skill:deploy` and either --positive or --negative.",
+      );
+    }
+    parseAssetRef(ref);
+    if (args.positive && args.negative) {
+      throw new UsageError("Specify either --positive or --negative, not both.");
+    }
+    if (!args.positive && !args.negative) {
+      throw new UsageError("Specify --positive or --negative.");
+    }
+    const signal = args.positive ? "positive" : "negative";
+    const reason = args.reason as string | undefined;
+
+    // F-3 / #384: Validate --failure-mode against the curated enum.
+    const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
+    if (failureMode) {
+      if (args.positive) {
         throw new UsageError(
-          "Asset ref is required. Usage: akm feedback <ref> --positive|--negative",
-          "MISSING_REQUIRED_ARGUMENT",
-          "Pass a ref like `skill:deploy` and either --positive or --negative.",
+          "--failure-mode is only valid for negative feedback.",
+          "INVALID_FLAG_VALUE",
+          "Remove --failure-mode or switch to --negative.",
         );
       }
-      parseAssetRef(ref);
-      if (args.positive && args.negative) {
-        throw new UsageError("Specify either --positive or --negative, not both.");
+      const cfg = loadConfig();
+      const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
+      if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
+        throw new UsageError(
+          `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
+          "INVALID_FLAG_VALUE",
+          `Use one of: ${allowedModes.join(", ")}`,
+        );
       }
-      if (!args.positive && !args.negative) {
-        throw new UsageError("Specify --positive or --negative.");
-      }
-      const signal = args.positive ? "positive" : "negative";
-      const reason = args.reason as string | undefined;
+    }
 
-      // F-3 / #384: Validate --failure-mode against the curated enum.
-      const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
-      if (failureMode) {
-        if (args.positive) {
-          throw new UsageError(
-            "--failure-mode is only valid for negative feedback.",
-            "INVALID_FLAG_VALUE",
-            "Remove --failure-mode or switch to --negative.",
-          );
-        }
-        const cfg = loadConfig();
-        const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
-        if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
-          throw new UsageError(
-            `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
-            "INVALID_FLAG_VALUE",
-            `Use one of: ${allowedModes.join(", ")}`,
-          );
-        }
+    if (args.negative === true && !reason?.trim()) {
+      // F-3 / #384: Default requireReason is now true. Load config to allow
+      // operators to opt out via feedback.requireReason: false in akm.json.
+      const cfg = loadConfig();
+      const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
+      if (requireReason) {
+        throw new UsageError(
+          "Negative feedback requires --reason (structured failure signals are needed for distillation). " +
+            "Use --failure-mode for a curated taxonomy or --reason for free text. " +
+            "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
+          "MISSING_REQUIRED_ARGUMENT",
+          `Hint: akm feedback ${ref} --negative --reason "..." [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
+        );
+      } else {
+        warn("Warning: negative feedback without --reason provides less distillation signal.");
       }
+    }
+    const rawTags = parseAllFlagValues("--tag");
+    const validatedTags = validateFeedbackTags(rawTags);
+    const metadataObj = {
+      signal,
+      ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      ...(failureMode ? { failureMode } : {}),
+      ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
+    };
+    const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
-      if (args.negative === true && !reason?.trim()) {
-        // F-3 / #384: Default requireReason is now true. Load config to allow
-        // operators to opt out via feedback.requireReason: false in akm.json.
-        const cfg = loadConfig();
-        const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
-        if (requireReason) {
-          throw new UsageError(
-            "Negative feedback requires --reason (structured failure signals are needed for distillation). " +
-              "Use --failure-mode for a curated taxonomy or --reason for free text. " +
-              "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
-            "MISSING_REQUIRED_ARGUMENT",
-            `Hint: akm feedback ${ref} --negative --reason "..." [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
-          );
-        } else {
-          warn("Warning: negative feedback without --reason provides less distillation signal.");
-        }
+    // Feedback only needs the index to exist, not to be current. A stale index
+    // is fine — the ref lookup works against any populated DB. We do NOT call
+    // ensureIndex here: it either blocks (3+ min inline reindex) or spawns a
+    // background process that holds the writer lock, causing the feedback write
+    // to spin-wait for the full reindex duration. If the DB is absent we give a
+    // clear error below rather than silently triggering a rebuild.
+    if (!fs.existsSync(getDbPath())) {
+      throw new UsageError(
+        "Index not found. Run 'akm index' first to build the index before recording feedback.",
+        "MISSING_REQUIRED_ARGUMENT",
+        "akm index",
+      );
+    }
+
+    // Feedback writes exactly 2 rows (usage_events + utility_score). SQLite
+    // WAL mode + busy_timeout=30s handles concurrent access with an ongoing
+    // `akm improve` run without needing the application-level writer lock.
+    // The lock was originally needed to prevent feedback from racing a
+    // background reindex it spawned — now that ensureIndex is removed, holding
+    // the lock only causes feedback to block for the full improve run duration.
+    let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+    const db = openExistingDatabase();
+    try {
+      const entryId = findEntryIdByRef(db, ref);
+      if (entryId === undefined) {
+        throw new UsageError(
+          `Ref "${ref}" is not in the index. ` +
+            "Run 'akm search' to verify the asset exists, then 'akm index' if it was recently added.",
+        );
       }
-      const rawTags = parseAllFlagValues("--tag");
-      const validatedTags = validateFeedbackTags(rawTags);
-      const metadataObj = {
+      // Persist the feedback signal into usage_events. For positive signals,
+      // the EMA utility score is updated immediately on the next read path.
+      // For negative signals, the score is adjusted the next time `akm index`
+      // runs — the signal is durable in the DB but does NOT suppress ranking
+      // in search results until after reindexing.
+      insertUsageEvent(db, {
+        event_type: "feedback",
+        entry_ref: ref,
+        entry_id: entryId,
         signal,
-        ...(reason?.trim() ? { reason: reason.trim() } : {}),
-        ...(failureMode ? { failureMode } : {}),
-        ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
-      };
-      const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
+        metadata: metadataStr,
+      });
 
-      // Feedback only needs the index to exist, not to be current. A stale index
-      // is fine — the ref lookup works against any populated DB. We do NOT call
-      // ensureIndex here: it either blocks (3+ min inline reindex) or spawns a
-      // background process that holds the writer lock, causing the feedback write
-      // to spin-wait for the full reindex duration. If the DB is absent we give a
-      // clear error below rather than silently triggering a rebuild.
-      if (!fs.existsSync(getDbPath())) {
-        throw new UsageError(
-          "Index not found. Run 'akm index' first to build the index before recording feedback.",
-          "MISSING_REQUIRED_ARGUMENT",
-          "akm index",
-        );
-      }
-
-      // Feedback writes exactly 2 rows (usage_events + utility_score). SQLite
-      // WAL mode + busy_timeout=30s handles concurrent access with an ongoing
-      // `akm improve` run without needing the application-level writer lock.
-      // The lock was originally needed to prevent feedback from racing a
-      // background reindex it spawned — now that ensureIndex is removed, holding
-      // the lock only causes feedback to block for the full improve run duration.
-      let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-      const db = openExistingDatabase();
+      // Apply feedback-derived utility score adjustment immediately so that
+      // positive/negative signals influence search ranking without requiring
+      // a full reindex. We query the total accumulated feedback counts from
+      // usage_events so the delta reflects the entire signal history.
+      // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
       try {
-        const entryId = findEntryIdByRef(db, ref);
-        if (entryId === undefined) {
-          throw new UsageError(
-            `Ref "${ref}" is not in the index. ` +
-              "Run 'akm search' to verify the asset exists, then 'akm index' if it was recently added.",
-          );
-        }
-        // Persist the feedback signal into usage_events. For positive signals,
-        // the EMA utility score is updated immediately on the next read path.
-        // For negative signals, the score is adjusted the next time `akm index`
-        // runs — the signal is durable in the DB but does NOT suppress ranking
-        // in search results until after reindexing.
-        insertUsageEvent(db, {
-          event_type: "feedback",
-          entry_ref: ref,
-          entry_id: entryId,
-          signal,
-          metadata: metadataStr,
+        const { pos, neg } = countFeedbackSignals(db, entryId);
+        utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
+      } catch {
+        // best-effort — feedback recording succeeds even if utility update fails
+      }
+    } finally {
+      closeDatabase(db);
+    }
+
+    appendEvent({
+      eventType: "feedback",
+      ref,
+      metadata: metadataObj,
+    });
+
+    // F-5 / #386: When a high-utility asset crosses below the review threshold,
+    // auto-create a review-needed escalation proposal so a human can confirm
+    // whether the negative feedback is valid before the asset falls out of
+    // the improve loop. Best-effort — failure is logged but does not fail the
+    // feedback command.
+    // Emit a structured event rather than a proposal so the review-needed
+    // signal is queryable via `akm events list --type improve_review_needed`
+    // without risking accidental asset overwrite if the proposal is accepted.
+    if (utilityResult?.crossedReviewThreshold) {
+      try {
+        appendEvent({
+          eventType: "improve_review_needed",
+          ref,
+          metadata: {
+            previousUtility: utilityResult.previousUtility,
+            nextUtility: utilityResult.nextUtility,
+            reason: reason?.trim() ?? null,
+            failureMode: failureMode ?? null,
+          },
         });
-
-        // Apply feedback-derived utility score adjustment immediately so that
-        // positive/negative signals influence search ranking without requiring
-        // a full reindex. We query the total accumulated feedback counts from
-        // usage_events so the delta reflects the entire signal history.
-        // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
-        try {
-          const { pos, neg } = countFeedbackSignals(db, entryId);
-          utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
-        } catch {
-          // best-effort — feedback recording succeeds even if utility update fails
-        }
-      } finally {
-        closeDatabase(db);
-      }
-
-      appendEvent({
-        eventType: "feedback",
-        ref,
-        metadata: metadataObj,
-      });
-
-      // F-5 / #386: When a high-utility asset crosses below the review threshold,
-      // auto-create a review-needed escalation proposal so a human can confirm
-      // whether the negative feedback is valid before the asset falls out of
-      // the improve loop. Best-effort — failure is logged but does not fail the
-      // feedback command.
-      // Emit a structured event rather than a proposal so the review-needed
-      // signal is queryable via `akm events list --type improve_review_needed`
-      // without risking accidental asset overwrite if the proposal is accepted.
-      if (utilityResult?.crossedReviewThreshold) {
-        try {
-          appendEvent({
-            eventType: "improve_review_needed",
-            ref,
-            metadata: {
-              previousUtility: utilityResult.previousUtility,
-              nextUtility: utilityResult.nextUtility,
-              reason: reason?.trim() ?? null,
-              failureMode: failureMode ?? null,
-            },
-          });
-        } catch (escalationErr) {
-          warn(
-            `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
-          );
-        }
-      }
-
-      // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
-      // target is a `lesson:<name>` ref and the signal is positive, append
-      // the feedback ref to the target lesson's `lessonStrength[]`
-      // frontmatter array (dedup, idempotent). Non-lesson targets are
-      // ignored. Failures here are warnings — feedback recording is the
-      // primary contract and must not regress on lesson-write errors.
-      const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();
-      let appliedToResult: { lessonRef: string; strength: number } | null = null;
-      if (appliedToRaw && signal === "positive") {
-        try {
-          const parsedApplied = parseAssetRef(appliedToRaw);
-          if (parsedApplied.type === "lesson") {
-            const updated = appendLessonStrength(parsedApplied.type, parsedApplied.name, ref);
-            if (updated) {
-              appliedToResult = { lessonRef: appliedToRaw, strength: updated.strength };
-            }
-          }
-        } catch (err) {
-          warn(
-            `[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      } else if (appliedToRaw && signal !== "positive") {
+      } catch (escalationErr) {
         warn(
-          "[feedback] --applied-to is ignored without --positive; lesson credit is only recorded on positive signals.",
+          `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
         );
       }
+    }
 
-      output("feedback", {
-        ok: true,
-        ref,
-        signal,
-        reason: reason?.trim() ?? null,
-        failureMode: failureMode ?? null,
-        tags: validatedTags,
-        ...(appliedToResult
-          ? { appliedTo: { ref: appliedToResult.lessonRef, lessonStrength: appliedToResult.strength } }
-          : {}),
-      });
+    // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
+    // target is a `lesson:<name>` ref and the signal is positive, append
+    // the feedback ref to the target lesson's `lessonStrength[]`
+    // frontmatter array (dedup, idempotent). Non-lesson targets are
+    // ignored. Failures here are warnings — feedback recording is the
+    // primary contract and must not regress on lesson-write errors.
+    const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();
+    let appliedToResult: { lessonRef: string; strength: number } | null = null;
+    if (appliedToRaw && signal === "positive") {
+      try {
+        const parsedApplied = parseAssetRef(appliedToRaw);
+        if (parsedApplied.type === "lesson") {
+          const updated = appendLessonStrength(parsedApplied.type, parsedApplied.name, ref);
+          if (updated) {
+            appliedToResult = { lessonRef: appliedToRaw, strength: updated.strength };
+          }
+        }
+      } catch (err) {
+        warn(`[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (appliedToRaw && signal !== "positive") {
+      warn(
+        "[feedback] --applied-to is ignored without --positive; lesson credit is only recorded on positive signals.",
+      );
+    }
+
+    output("feedback", {
+      ok: true,
+      ref,
+      signal,
+      reason: reason?.trim() ?? null,
+      failureMode: failureMode ?? null,
+      tags: validatedTags,
+      ...(appliedToResult
+        ? { appliedTo: { ref: appliedToResult.lessonRef, lessonStrength: appliedToResult.strength } }
+        : {}),
     });
   },
 });

@@ -5,7 +5,6 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
-import type { Proposal } from "../../src/commands/proposal/validators/proposals";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
@@ -14,6 +13,8 @@ import type { GraphExtractionResult } from "../../src/indexer/graph/graph-extrac
 import { akmIndex } from "../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
+import { writeMemory } from "../_helpers/assets";
+import { makeProposal } from "../_helpers/factories";
 
 const tempDirs: string[] = [];
 
@@ -21,42 +22,6 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
-}
-
-function writeMemory(stashDir: string, name: string, frontmatter: Record<string, unknown>, body: string): void {
-  const filePath = path.join(stashDir, "memories", `${name}.md`);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const lines = ["---", ...renderFrontmatter(frontmatter), "---", "", body.trim(), ""];
-  fs.writeFileSync(filePath, lines.join("\n"), "utf8");
-}
-
-function renderFrontmatter(frontmatter: Record<string, unknown>): string[] {
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(frontmatter)) {
-    if (Array.isArray(value)) {
-      lines.push(`${key}:`);
-      for (const item of value) lines.push(`  - ${String(item)}`);
-      continue;
-    }
-    if (typeof value === "boolean" || typeof value === "number") {
-      lines.push(`${key}: ${String(value)}`);
-      continue;
-    }
-    lines.push(`${key}: ${String(value)}`);
-  }
-  return lines;
-}
-
-function makeProposal(ref: string): Proposal {
-  return {
-    id: `proposal-${ref.replace(/[^a-z0-9-]/gi, "-")}`,
-    ref,
-    status: "pending",
-    source: "reflect",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    payload: { content: "# proposal" },
-  };
 }
 
 async function buildIndex(stashDir: string): Promise<void> {

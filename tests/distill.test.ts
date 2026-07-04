@@ -22,7 +22,7 @@ import {
 } from "../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../src/commands/improve/salience";
-import { listProposals } from "../src/commands/proposal/validators/proposals";
+import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { readEvents } from "../src/core/events";
 import { openStateDatabase } from "../src/core/state-db";
@@ -1318,7 +1318,7 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
     // D-1: UPDATE → proposal queued with merged content
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("queued");
-    const { listProposals } = await import("../src/commands/proposal/validators/proposals");
+    const { listProposals } = await import("../src/commands/proposal/repository");
     const proposals = listProposals(stash, { ref: result.lessonRef });
     expect(proposals.length).toBeGreaterThan(0);
     const proposal = proposals[0];

@@ -28,7 +28,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import type { Proposal } from "../../../src/commands/proposal/validators/proposals";
+import type { Proposal } from "../../../src/commands/proposal/repository";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
 import { assembleAssetFromString } from "../../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";

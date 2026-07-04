@@ -30,6 +30,7 @@ import type { StashEntry } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
 import type { Database } from "../src/storage/database";
+import { writeMemory } from "./_helpers/assets";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -46,26 +47,6 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
-}
-
-function writeMemory(stashDir: string, name: string, frontmatter: Record<string, unknown>, body: string): void {
-  const filePath = path.join(stashDir, "memories", `${name}.md`);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const lines = ["---", ...renderFrontmatter(frontmatter), "---", "", body.trim(), ""];
-  fs.writeFileSync(filePath, lines.join("\n"), "utf8");
-}
-
-function renderFrontmatter(frontmatter: Record<string, unknown>): string[] {
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(frontmatter)) {
-    if (Array.isArray(value)) {
-      lines.push(`${key}:`);
-      for (const item of value) lines.push(`  - ${String(item)}`);
-      continue;
-    }
-    lines.push(`${key}: ${String(value)}`);
-  }
-  return lines;
 }
 
 async function buildIndex(stashDir: string): Promise<void> {

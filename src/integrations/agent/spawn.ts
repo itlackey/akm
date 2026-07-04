@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { spawn as runtimeSpawn } from "../../runtime";
 import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
@@ -485,67 +486,20 @@ export async function runAgent(
   }
 
   if (parseOutput === "json" && stdioMode === "captured") {
-    // Strip <think> blocks and code fences, then try direct parse with
-    // embedded-JSON fallback for local LLMs that emit prose around the payload.
-    const cleaned = stdout
-      .trim()
-      .replace(/<think>[\s\S]*?<\/think>/gi, "")
-      .trim()
-      .replace(/^```(?:json)?\s*\n?/, "")
-      .replace(/\n?```\s*$/, "")
-      .trim();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      // Fallback: extract the first balanced {…} from prose output.
-      let found: unknown;
-      for (let s = 0; s < cleaned.length; s++) {
-        if (cleaned[s] !== "{") continue;
-        let depth = 0,
-          inStr = false,
-          esc = false;
-        for (let i = s; i < cleaned.length; i++) {
-          const c = cleaned[i];
-          if (inStr) {
-            if (esc) {
-              esc = false;
-            } else if (c === "\\") {
-              esc = true;
-            } else if (c === '"') {
-              inStr = false;
-            }
-            continue;
-          }
-          if (c === '"') {
-            inStr = true;
-            continue;
-          }
-          if (c === "{") depth++;
-          if (c === "}") {
-            depth--;
-            if (depth === 0) {
-              try {
-                found = JSON.parse(cleaned.slice(s, i + 1));
-              } catch {}
-              break;
-            }
-          }
-        }
-        if (found !== undefined) break;
-      }
-      if (found === undefined) {
-        return {
-          ok: false,
-          exitCode,
-          stdout,
-          stderr,
-          durationMs,
-          reason: "parse_error",
-          error: "no JSON object found in agent output",
-        };
-      }
-      parsed = found;
+    // Strip <think> blocks and code fences, then parse with embedded-JSON
+    // fallback for local LLMs that emit prose around the payload. Handles
+    // both top-level `{…}` and `[…]` structures.
+    const parsed = parseEmbeddedJsonResponse(stdout);
+    if (parsed === undefined) {
+      return {
+        ok: false,
+        exitCode,
+        stdout,
+        stderr,
+        durationMs,
+        reason: "parse_error",
+        error: "no JSON structure found in agent output",
+      };
     }
     return { ok: true, exitCode, stdout, stderr, durationMs, parsed };
   }

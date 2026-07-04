@@ -25,7 +25,7 @@ import { isoToSqlite, parseSinceToIso } from "../../core/time";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
 import type { Database } from "../../storage/database";
-import { listProposals } from "../proposal/validators/proposals";
+import { listProposals } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

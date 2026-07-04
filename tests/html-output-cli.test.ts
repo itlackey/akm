@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { createProposal, isProposalSkipped } from "../src/commands/proposal/validators/proposals";
+import { createProposal, isProposalSkipped } from "../src/commands/proposal/repository";
 import { runCliCapture } from "./_helpers/cli";
 import { type Cleanup, type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
 

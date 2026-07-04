@@ -27,8 +27,8 @@ import {
   isProposalSkipped,
   type Proposal,
   recordGateDecision,
-  repairProposalContent,
-} from "../src/commands/proposal/validators/proposals";
+} from "../src/commands/proposal/repository";
+import { repairProposalContent } from "../src/commands/proposal/validators/proposals";
 import type { EventsContext } from "../src/core/events";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -21,17 +21,17 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
+import { openStateDatabase } from "../../src/core/state-db";
+import type { Database } from "../../src/storage/database";
 import {
   type CycleMetricsRow,
-  type Database,
   deactivateCanarySet,
   getActiveCanaries,
   insertCanaries,
   insertCycleMetrics,
-  openStateDatabase,
   purgeOldCycleMetrics,
   queryRecentCycleMetrics,
-} from "../../src/core/state-db";
+} from "../../src/storage/repositories/canaries-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

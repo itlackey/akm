@@ -30,7 +30,7 @@ import { parsePositiveIntFlag } from "../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues, runWithJsonErrors } from "../cli/shared";
 import { closeDatabase, collectTagSetFromEntries, openExistingDatabase } from "../indexer/db/db";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "../output/cli-hints";
-import { getHyphenatedArg, getOutputMode, parseDetailLevel } from "../output/context";
+import { getOutputMode, parseDetailLevel } from "../output/context";
 import { formatEventLine } from "../output/text";
 import { getDirname } from "../runtime";
 import { akmEventsList, akmEventsTail } from "./events";
@@ -95,12 +95,9 @@ const eventsTailCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const intervalMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
-      const maxDurationMs = parsePositiveIntFlag(
-        getHyphenatedArg<string>(args, "max-duration-ms"),
-        "--max-duration-ms",
-      );
-      const maxEvents = parsePositiveIntFlag(getHyphenatedArg<string>(args, "max-events"), "--max-events");
+      const intervalMs = parsePositiveIntFlag(args["interval-ms"], "--interval-ms");
+      const maxDurationMs = parsePositiveIntFlag(args["max-duration-ms"], "--max-duration-ms");
+      const maxEvents = parsePositiveIntFlag(args["max-events"], "--max-events");
       const mode = getOutputMode();
       // In streaming text mode we want each event to print as soon as it
       // arrives. The polling loop emits via `onEvent`; the final result is

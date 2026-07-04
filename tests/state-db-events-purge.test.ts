@@ -7,7 +7,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { insertEvent, openStateDatabase, purgeOldEvents } from "../src/core/state-db";
+import { openStateDatabase } from "../src/core/state-db";
+import { insertEvent, purgeOldEvents } from "../src/storage/repositories/events-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

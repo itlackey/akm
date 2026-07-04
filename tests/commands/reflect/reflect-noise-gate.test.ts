@@ -24,10 +24,10 @@ import {
   normalizeMarkdownBody,
   normalizeTrailingWhitespace,
 } from "../../../src/commands/improve/reflect-noise";
-import { listProposals } from "../../../src/commands/proposal/validators/proposals";
+import { listProposals } from "../../../src/commands/proposal/repository";
 import { readEvents } from "../../../src/core/events";
-import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
+import { makeProfile } from "../../_helpers/factories";
 import {
   makeStashDir,
   sandboxXdgCacheHome,
@@ -180,17 +180,6 @@ function makeSandboxedStash(): string {
   const { dir, cleanup } = makeStashDir();
   stashCleanups.push(cleanup);
   return dir;
-}
-
-function makeProfile(): AgentProfile {
-  return {
-    name: "fake-agent",
-    bin: "fake-agent",
-    args: [],
-    stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
-  };
 }
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {

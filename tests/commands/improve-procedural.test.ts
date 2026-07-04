@@ -37,7 +37,7 @@ import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands
 // Imported from the module under test (now shipped).
 import { akmProcedural, normalizeSequence } from "../../src/commands/improve/procedural";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
-import { listProposals } from "../../src/commands/proposal/validators/proposals";
+import { listProposals } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";

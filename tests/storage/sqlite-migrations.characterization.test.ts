@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openStateDatabase, runMigrations as runStateMigrations } from "../../src/core/state-db";
+import { runMigrations as runStateMigrations } from "../../src/core/state/migrations";
+import { openStateDatabase } from "../../src/core/state-db";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "../../src/workflows/db";
 

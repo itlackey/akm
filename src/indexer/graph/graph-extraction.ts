@@ -52,13 +52,13 @@ import { resolveIndexPassLLM } from "../../llm/index-passes";
 import type { Database } from "../../storage/database";
 import {
   computeBodyHash,
-  GRAPH_SCHEMA_VERSION,
   getLlmCacheEntriesByRefs,
   getLlmCacheEntry,
   type LlmCacheEntry,
   upsertLlmCacheEntry,
 } from "../db/db";
 import { drainExtractionQueue, loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
+import { GRAPH_SCHEMA_VERSION } from "../db/schema";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
 import { deduplicateGraph } from "./graph-dedup";

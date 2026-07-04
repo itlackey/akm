@@ -25,10 +25,11 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { maybeAutoTuneThreshold } from "../../../src/commands/improve/improve";
 import type { AutoAcceptGateConfig, ProposalCandidate } from "../../../src/commands/improve/improve-auto-accept";
 import { makeGateConfig, runAutoAcceptGate } from "../../../src/commands/improve/improve-auto-accept";
-import { createProposal, recordGateDecision } from "../../../src/commands/proposal/validators/proposals";
+import { createProposal, recordGateDecision } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { getStateDbPathInDataDir } from "../../../src/core/paths";
-import { getPhaseThreshold, openStateDatabase, persistPhaseThreshold } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
+import { getPhaseThreshold, persistPhaseThreshold } from "../../../src/storage/repositories/improve-runs-repository";
 import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

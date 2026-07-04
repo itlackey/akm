@@ -95,10 +95,10 @@ export const searchCommand = defineJsonCommand({
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
     const filters = parseScopeFilterFlags(filterTokens, "--filter");
-    const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
+    const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
-    const includeSessions = getHyphenatedBoolean(args, "include-sessions");
+    const includeSessions = args["include-sessions"];
     const result = await akmSearch({
       query,
       type,

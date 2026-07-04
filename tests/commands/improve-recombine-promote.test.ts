@@ -35,13 +35,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmRecombine } from "../../src/commands/improve/recombine";
-import { listProposals } from "../../src/commands/proposal/validators/proposals";
+import { listProposals } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
-// Imported from src/core/state-db.ts (migration 014).
-import { getRecombineHypothesis, openStateDatabase } from "../../src/core/state-db";
+import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
+// recombine_hypotheses repository (migration 014).
+import { getRecombineHypothesis } from "../../src/storage/repositories/recombine-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;

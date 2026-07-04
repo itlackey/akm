@@ -28,10 +28,11 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
-import type { Proposal } from "../../src/commands/proposal/validators/proposals";
 import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
+import { writeLesson } from "../_helpers/assets";
+import { makeProposal } from "../_helpers/factories";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -48,35 +49,6 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
-}
-
-function writeLesson(stashDir: string, name: string, description: string, whenToUse: string): void {
-  const filePath = path.join(stashDir, "lessons", `${name}.md`);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const lines = [
-    "---",
-    `description: ${description}`,
-    `when_to_use: ${whenToUse}`,
-    "---",
-    "",
-    `# ${name}`,
-    "",
-    "Body text.",
-    "",
-  ];
-  fs.writeFileSync(filePath, lines.join("\n"), "utf8");
-}
-
-function makeProposal(ref: string): Proposal {
-  return {
-    id: `proposal-${ref.replace(/[^a-z0-9-]/gi, "-")}`,
-    ref,
-    status: "pending",
-    source: "reflect",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    payload: { content: "# proposal" },
-  };
 }
 
 async function buildIndex(stashDir: string): Promise<void> {

@@ -13,14 +13,13 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { writeSkill } from "../../_helpers/assets";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const cleanups: Array<() => void> = [];
@@ -32,12 +31,6 @@ function isolatedStash(): string {
   const iso = withIsolatedAkmStorage();
   cleanups.push(iso.cleanup);
   return iso.stashDir;
-}
-
-function writeSkill(stashDir: string, name: string, body: string): void {
-  const filePath = path.join(stashDir, "skills", `${name}.md`);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `---\nname: ${name}\ndescription: ${name}\n---\n\n${body}\n`, "utf8");
 }
 
 async function buildIndex(stashDir: string): Promise<void> {

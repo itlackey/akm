@@ -17,7 +17,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { importEventsJsonl, openStateDatabase } from "../src/core/state-db";
+import { openStateDatabase } from "../src/core/state-db";
+import { importEventsJsonl } from "../src/storage/repositories/events-repository";
 
 let tmpDir: string;
 let dbPath: string;

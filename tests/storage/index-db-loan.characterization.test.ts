@@ -82,6 +82,20 @@ describe("withIndexDb loan helper (WS5)", () => {
     }
   });
 
+  test("openIndexDatabase applies the standard pragmas via the managed-db open recipe", () => {
+    // Pins that routing openIndexDatabase through openManagedDatabase still
+    // applies the shared open PRAGMAs (journal_mode WAL + 30s busy_timeout).
+    const db = openIndexDatabase(path.join(dataDir, "index.db"));
+    try {
+      const journal = (db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
+      const busy = (db.prepare("PRAGMA busy_timeout").get() as { timeout: number }).timeout;
+      expect(journal).toBe("wal");
+      expect(busy).toBe(30000);
+    } finally {
+      db.close();
+    }
+  });
+
   test("busyTimeoutMs option overrides the connection's busy_timeout pragma", () => {
     // Default connections get the standard 30s pragma.
     const standard = withIndexDb((db) => (db.prepare("PRAGMA busy_timeout").get() as { timeout: number }).timeout);

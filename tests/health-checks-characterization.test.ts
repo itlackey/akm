@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmHealth, type HealthCheckResult } from "../src/commands/health";
+import { akmHealth } from "../src/commands/health";
+import type { HealthCheckResult } from "../src/commands/health/types";
 import { appendEvent } from "../src/core/events";
-import { openStateDatabase, upsertTaskHistory } from "../src/core/state-db";
+import { openStateDatabase } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
+import { upsertTaskHistory } from "../src/storage/repositories/task-history-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // Characterization net for WS9 (#490): pins the FULL ordered hardChecks +

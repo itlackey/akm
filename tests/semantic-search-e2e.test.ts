@@ -17,13 +17,13 @@ import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
 import {
   closeDatabase,
-  EMBEDDING_DIM,
   getEmbeddableEntryCount,
   getEmbeddingCount,
   getEntryCount,
   getMeta,
   openIndexDatabase,
 } from "../src/indexer/db/db";
+import { EMBEDDING_DIM } from "../src/indexer/db/schema";
 import { akmIndex } from "../src/indexer/indexer";
 import { searchLocal } from "../src/indexer/search/db-search";
 import { clearEmbeddingCache } from "../src/llm/embedder";

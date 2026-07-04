@@ -84,13 +84,10 @@ import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { graphCommand } from "./commands/graph/graph-cli";
-import {
-  akmHealth,
-  parseWindowSpec,
-  renderRunsDetailMd,
-  renderWindowCompareMd,
-  type WindowSpec,
-} from "./commands/health";
+import { akmHealth } from "./commands/health";
+import { renderRunsDetailMd, renderWindowCompareMd } from "./commands/health/md-report";
+import type { WindowSpec } from "./commands/health/types";
+import { parseWindowSpec } from "./commands/health/windows";
 import { extractCommand } from "./commands/improve/extract-cli";
 import { improveCommand } from "./commands/improve/improve-cli";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
@@ -260,8 +257,8 @@ const setupCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = getHyphenatedBoolean(args, "no-init");
-      const detectOnly = getHyphenatedBoolean(args, "detect-only");
-      const resetRecommended = getHyphenatedBoolean(args, "reset-recommended");
+      const detectOnly = args["detect-only"];
+      const resetRecommended = args["reset-recommended"];
       if (detectOnly) {
         // Detection only: no prompts, no writes.
         const { runDetectOnly } = await import("./setup/setup");
@@ -362,8 +359,8 @@ const healthCommand = defineCommand({
       const rawWindows = parseAllFlagValues("--windows");
       const windows: WindowSpec[] | undefined =
         rawWindows.length > 0 ? rawWindows.map((raw) => parseWindowSpec(raw)) : undefined;
-      const groupBy = (args as Record<string, unknown>)["group-by"] as string | undefined;
-      const windowCompareRaw = (args as Record<string, unknown>)["window-compare"] as string | undefined;
+      const groupBy = args["group-by"];
+      const windowCompareRaw = args["window-compare"];
       const mode = getOutputMode();
 
       // `--format html` is health-specific: render the full HTML health

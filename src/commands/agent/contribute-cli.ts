@@ -30,7 +30,6 @@ import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { getHyphenatedArg } from "../../output/context";
 import { akmLint } from "../lint/index";
 import { akmPropose } from "../proposal/propose";
 import { akmAgentDispatch } from "./agent-dispatch";
@@ -75,7 +74,7 @@ export const agentCommand = defineCommand({
         );
       }
 
-      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+      const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
 
       const config = loadConfig();
       const { getDefaultLlmConfig } = await import("../../core/config/config.js");
@@ -226,7 +225,7 @@ export const proposeCommand = defineCommand({
       assertFlatAssetName(String(args.name));
       const proposedName = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), String(args.name));
       const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
-      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+      const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const result = await akmPropose({
         type: String(args.type),
         name: proposedName,

@@ -16,13 +16,7 @@ import type {
 } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
-import {
-  type CycleMetricsRow,
-  purgeOldCycleMetrics,
-  purgeOldEvents,
-  purgeOldImproveRuns,
-  withStateDb,
-} from "../../core/state-db";
+import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
@@ -38,13 +32,16 @@ import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import type { Database } from "../../storage/database";
+import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/repositories/canaries-repository";
+import { purgeOldEvents } from "../../storage/repositories/events-repository";
+import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import {
   createProposal,
   expireStaleProposals,
   isProposalSkipped,
   listProposals,
   purgeOrphanProposals,
-} from "../proposal/validators/proposals";
+} from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
 import { type AkmDistillResult, deriveLessonRef } from "./distill";
@@ -69,6 +66,7 @@ import { akmProcedural } from "./procedural";
 import { akmRecombine } from "./recombine";
 import type { AkmReflectResult } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
+import { errMessage, refSlug } from "./shared";
 
 // ── improve loop / post-loop / maintenance stages ───────────────────
 // The cycle stages run by akmImprove, extracted from improve.ts.
@@ -601,10 +599,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           }
         }
         if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
-          const slug = planned.ref
-            .replace(/[^a-z0-9]/gi, "-")
-            .toLowerCase()
-            .slice(0, 60);
+          const slug = refSlug(planned.ref);
           writeEvalCase(primaryStashDir, {
             ref: planned.ref,
             failureReason: distillResult.reason ?? "quality gate rejected",
@@ -617,10 +612,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
         // D6: use pre-loaded map instead of per-iteration DB query
         const rejectedProposalEvent = rejectedProposalsByRef.get(planned.ref);
         if (rejectedProposalEvent && primaryStashDir) {
-          const slug = planned.ref
-            .replace(/[^a-z0-9]/gi, "-")
-            .toLowerCase()
-            .slice(0, 60);
+          const slug = refSlug(planned.ref);
           writeEvalCase(primaryStashDir, {
             ref: planned.ref,
             failureReason: (rejectedProposalEvent.metadata?.reason as string | undefined) ?? "proposal rejected",
@@ -659,7 +651,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
         actions.push({
           ref: planned.ref,
           mode: "error",
-          result: { ok: false, error: err instanceof Error ? err.message : String(err) },
+          result: { ok: false, error: errMessage(err) },
         });
       }
     }
@@ -688,7 +680,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           phase,
         );
       } catch (err) {
-        warn(`[improve] calibration auto-tune (${phase}) skipped: ${err instanceof Error ? err.message : String(err)}`);
+        warn(`[improve] calibration auto-tune (${phase}) skipped: ${errMessage(err)}`);
       }
     }
   }
@@ -1027,7 +1019,7 @@ export async function runImproveMaintenancePasses(args: {
           );
         } catch (err) {
           memoryInferenceDurationMs = Date.now() - inferenceStart;
-          allWarnings.push(`memory inference failed: ${err instanceof Error ? err.message : String(err)}`);
+          allWarnings.push(`memory inference failed: ${errMessage(err)}`);
         }
       }
 
@@ -1038,9 +1030,7 @@ export async function runImproveMaintenancePasses(args: {
           reindexedAfterInference = true;
           info("[improve] reindex after memory inference complete");
         } catch (err) {
-          allWarnings.push(
-            `reindex after memory inference failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          allWarnings.push(`reindex after memory inference failed: ${errMessage(err)}`);
         }
       }
 
@@ -1077,9 +1067,7 @@ export async function runImproveMaintenancePasses(args: {
               reindexedAfterInference = true;
               info("[improve] reindex after consolidation complete");
             } catch (err) {
-              allWarnings.push(
-                `reindex after consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
-              );
+              allWarnings.push(`reindex after consolidation failed: ${errMessage(err)}`);
             }
           }
           // #584: no close/reopen needed here — reindexWithIndexDbReleased
@@ -1133,7 +1121,7 @@ export async function runImproveMaintenancePasses(args: {
           );
         } catch (err) {
           graphExtractionDurationMs = Date.now() - extractionStart;
-          allWarnings.push(`graph extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+          allWarnings.push(`graph extraction failed: ${errMessage(err)}`);
         }
       } else if (sources.length > 0 && !graphEnabled) {
         info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
@@ -1169,7 +1157,7 @@ export async function runImproveMaintenancePasses(args: {
             eventsCtx,
           );
         } catch (err) {
-          allWarnings.push(`orphan purge failed: ${err instanceof Error ? err.message : String(err)}`);
+          allWarnings.push(`orphan purge failed: ${errMessage(err)}`);
         }
 
         // Phase 6B (Advantage D6b): expire pending proposals that have aged past
@@ -1201,7 +1189,7 @@ export async function runImproveMaintenancePasses(args: {
             eventsCtx,
           );
         } catch (err) {
-          allWarnings.push(`proposal expiration failed: ${err instanceof Error ? err.message : String(err)}`);
+          allWarnings.push(`proposal expiration failed: ${errMessage(err)}`);
         }
       }
 
@@ -1284,7 +1272,7 @@ export async function runImproveMaintenancePasses(args: {
               { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
             );
           } catch (err) {
-            allWarnings.push(`events purge failed: ${err instanceof Error ? err.message : String(err)}`);
+            allWarnings.push(`events purge failed: ${errMessage(err)}`);
           }
 
           // task_logs in logs.db (#579) shares the same retention window as
@@ -1310,7 +1298,7 @@ export async function runImproveMaintenancePasses(args: {
               eventsCtx,
             );
           } catch (err) {
-            allWarnings.push(`task_logs purge failed: ${err instanceof Error ? err.message : String(err)}`);
+            allWarnings.push(`task_logs purge failed: ${errMessage(err)}`);
           } finally {
             if (logsDb) {
               try {
@@ -1341,7 +1329,7 @@ export async function runImproveMaintenancePasses(args: {
           }
           for (const w of stalenessDetection.warnings) allWarnings.push(`[improve] staleness detection: ${w}`);
         } catch (err) {
-          allWarnings.push(`staleness detection failed: ${err instanceof Error ? err.message : String(err)}`);
+          allWarnings.push(`staleness detection failed: ${errMessage(err)}`);
         }
       }
     } finally {

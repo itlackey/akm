@@ -31,8 +31,8 @@ import {
   promoteProposal,
   resolveProposalId,
   revertProposal,
-  validateProposal,
-} from "./validators/proposals";
+} from "./repository";
+import { validateProposal } from "./validators/proposals";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 

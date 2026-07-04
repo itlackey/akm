@@ -27,7 +27,6 @@ import { warn } from "../warn";
 export type {
   AgentProfileConfig,
   AkmConfig,
-  BaseConnectionConfig,
   ConfiguredSource,
   EmbeddingConnectionConfig,
   HarnessId,
@@ -35,15 +34,12 @@ export type {
   ImproveProcessConfig,
   ImproveProfileConfig,
   IndexConfig,
-  IndexConfigReservedKeys,
   IndexPassConfig,
-  LlmCapabilities,
   LlmConnectionConfig,
   LlmProfileConfig,
   OutputConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
-  SourceConfigEntryOptions,
   SourceSpec,
 } from "./config-types";
 // Canonical harness-id source of truth (#565) — runtime value re-export.

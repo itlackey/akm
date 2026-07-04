@@ -7,8 +7,8 @@ import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
 import type { AkmConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
-import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
+import { makeProfile } from "../_helpers/factories";
 import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §11 — Proposal queue (Planned for v1).
@@ -141,17 +141,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, sub), { recursive: true });
   }
   return stash;
-}
-
-function makeProfile(): AgentProfile {
-  return {
-    name: "fake-agent",
-    bin: "fake-agent",
-    args: [],
-    stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
-  };
 }
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {

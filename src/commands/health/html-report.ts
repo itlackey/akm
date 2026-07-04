@@ -27,7 +27,7 @@ import type {
   ImproveDegradationMetrics,
   ImprovePerfTelemetry,
   ImproveRunSummary,
-} from "../health";
+} from "./types";
 
 /**
  * Distill skip-reasons hidden from the breakdown chart. `no new signal since

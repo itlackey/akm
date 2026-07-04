@@ -19,8 +19,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
-import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
+import { makeProfile } from "../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -44,18 +44,6 @@ afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
-  return {
-    name: "fake-agent",
-    bin: "fake-agent",
-    args: [],
-    stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
-    ...overrides,
-  };
-}
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);

@@ -21,15 +21,15 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-// Imported from state-db.ts (migration 014).
+import { openStateDatabase } from "../../src/core/state-db";
+import type { Database } from "../../src/storage/database";
+// recombine_hypotheses repository (migration 014).
 import {
-  type Database,
   decayUnseenRecombineHypotheses,
   getRecombineHypothesis,
   markRecombineHypothesisPromoted,
-  openStateDatabase,
   recordRecombineInduction,
-} from "../../src/core/state-db";
+} from "../../src/storage/repositories/recombine-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

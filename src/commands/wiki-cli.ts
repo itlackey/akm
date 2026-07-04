@@ -18,7 +18,6 @@ import { defineGroupCommand, defineJsonCommand, output, runWithJsonErrors } from
 import { resolveStashDir } from "../core/common";
 import { loadConfig, resolveConfiguredSources } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
-import { getHyphenatedArg, getHyphenatedBoolean } from "../output/context";
 import { akmAgentDispatch } from "./agent/agent-dispatch";
 import { readKnowledgeInput } from "./read/knowledge";
 import { buildWebsiteOptions } from "./sources/add-cli";
@@ -117,7 +116,7 @@ const wikiRemoveCommand = defineJsonCommand({
       process.stderr.write("Aborted.\n");
       return;
     }
-    const withSources = getHyphenatedBoolean(args, "with-sources");
+    const withSources = args["with-sources"];
     const { removeWiki } = await import("../wiki/wiki.js");
     const { akmIndex } = await import("../indexer/indexer");
     const stashDir = resolveStashDir();
@@ -276,7 +275,7 @@ const wikiIngestCommand = defineJsonCommand({
       );
     }
 
-    const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
+    const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
     const model = getStringArg(args, "model");
 
     const { getDefaultLlmConfig } = await import("../core/config/config.js");

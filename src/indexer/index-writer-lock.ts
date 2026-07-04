@@ -23,6 +23,8 @@ interface AcquireIndexWriterLeaseOptions {
   purpose: string;
   signal?: AbortSignal;
   maxWaitMs?: number;
+  onWait?: (info: { waitedMs: number }) => void;
+  onAcquired?: (info: { waitedMs: number }) => void;
 }
 
 function buildPayload(purpose: string, pid = process.pid): string {
@@ -75,18 +77,23 @@ export async function acquireIndexWriterLease(
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
   if (heldLocks.has(lockPath)) {
+    options.onAcquired?.({ waitedMs: 0 });
     return retainHeldLock(lockPath);
   }
+
+  let lastWaitNoticeMs = 0;
 
   while (true) {
     throwIfAborted(options.signal);
 
     if (tryAcquireLockSync(lockPath, buildPayload(options.purpose))) {
+      options.onAcquired?.({ waitedMs: Date.now() - startedAt });
       return retainHeldLock(lockPath);
     }
 
     const probe = probeLock(lockPath, { staleAfterMs: INDEX_WRITER_LOCK_STALE_AFTER_MS });
     if (probe.state === "held" && probe.holderPid === process.pid) {
+      options.onAcquired?.({ waitedMs: Date.now() - startedAt });
       return retainHeldLock(lockPath);
     }
     if (probe.state === "stale") {
@@ -100,6 +107,11 @@ export async function acquireIndexWriterLease(
     // instead of throwing before it ever tries.
     if (maxWaitMs >= 0 && Date.now() - startedAt >= maxWaitMs) {
       throw new Error(`timed out waiting for index writer lease for ${options.purpose}`);
+    }
+    const waitedMs = Date.now() - startedAt;
+    if (waitedMs - lastWaitNoticeMs >= 15000) {
+      options.onWait?.({ waitedMs });
+      lastWaitNoticeMs = waitedMs;
     }
     await delay(INDEX_WRITER_WAIT_MS);
   }

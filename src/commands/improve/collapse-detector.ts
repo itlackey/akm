@@ -31,6 +31,16 @@ import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
+import { withStateDb } from "../../core/state-db";
+import { warn } from "../../core/warn";
+import {
+  closeDatabase,
+  type DbIndexedEntry,
+  getAllEntries,
+  openExistingDatabase,
+  searchFts,
+} from "../../indexer/db/db";
+import type { Database as IndexDatabase, Database as StateDatabase } from "../../storage/database";
 import {
   type CanaryQueryRow,
   type CycleMetricsRow,
@@ -41,19 +51,8 @@ import {
   insertCycleMetrics,
   listActiveCanarySetIds,
   queryRecentCycleMetrics,
-  type Database as StateDatabase,
-  withStateDb,
-} from "../../core/state-db";
-import { warn } from "../../core/warn";
-import {
-  closeDatabase,
-  type DbIndexedEntry,
-  getAllEntries,
-  openExistingDatabase,
-  searchFts,
-} from "../../indexer/db/db";
-import type { Database as IndexDatabase } from "../../storage/database";
-import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./homeostatic";
+} from "../../storage/repositories/canaries-repository";
+import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./anti-collapse";
 import { getAllRankScores } from "./salience";
 
 // ── Defaults (mirrored in config-schema.ts ImproveCollapseDetectorSchema) ────

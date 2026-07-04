@@ -91,7 +91,7 @@ describe("pickDefaultAgentProfile", () => {
 
 describe("stepAgentCliDetection (setup wizard)", () => {
   test("persists default + leaves block absent when nothing detected & no prior config", async () => {
-    const { stepAgentCliDetection } = await import("../../src/setup/setup");
+    const { stepAgentCliDetection } = await import("../../src/setup/steps/platforms");
     const result = stepAgentCliDetection({ semanticSearchMode: "auto" }, () => [
       { name: "claude", bin: "claude", available: false },
       { name: "codex", bin: "codex", available: false },
@@ -101,7 +101,7 @@ describe("stepAgentCliDetection (setup wizard)", () => {
   });
 
   test("writes agent.default to the first detected profile", async () => {
-    const { stepAgentCliDetection } = await import("../../src/setup/setup");
+    const { stepAgentCliDetection } = await import("../../src/setup/steps/platforms");
     const result = stepAgentCliDetection({ semanticSearchMode: "auto" }, () => [
       { name: "claude", bin: "claude", available: false },
       { name: "codex", bin: "codex", available: true },
@@ -110,7 +110,7 @@ describe("stepAgentCliDetection (setup wizard)", () => {
   });
 
   test("preserves user-overridden default when still available", async () => {
-    const { stepAgentCliDetection } = await import("../../src/setup/setup");
+    const { stepAgentCliDetection } = await import("../../src/setup/steps/platforms");
     const result = stepAgentCliDetection(
       {
         semanticSearchMode: "auto",

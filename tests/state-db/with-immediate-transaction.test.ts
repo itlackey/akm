@@ -18,7 +18,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { type Database, openStateDatabase, withImmediateTransaction } from "../../src/core/state-db";
+import { openStateDatabase, withImmediateTransaction } from "../../src/core/state-db";
+import type { Database } from "../../src/storage/database";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 describe("withImmediateTransaction", () => {

@@ -28,7 +28,7 @@ import {
   DISTILL_KNOWLEDGE_JSON_SCHEMA,
   DISTILL_LESSON_JSON_SCHEMA,
 } from "../../../src/commands/improve/distill";
-import { listProposals } from "../../../src/commands/proposal/validators/proposals";
+import { listProposals } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { readEvents } from "../../../src/core/events";
 
