@@ -308,3 +308,192 @@ From **09 steelman-the-bets** (adjudicated 2026-07-04; E0 authorized for immedia
   `improve-vs-brain-analysis.md` (justification→inspiration). **Distribution hygiene → 08/14 batch:** repoint npm `latest`
   (=0.8.14 vs working beta.56) or publish stable; deprecate the older sibling plugin repo; record that npm/GitHub are the
   ONLY adoption instruments (chosen invisibility, owned in writing).
+
+From **10 what-10×s-what-dies** (adjudicated 2026-07-04; strategy artifact — no code changed, dispositions only):
+
+- **Two obsolescence axes are binding for later reviews, not one.** Every DIES test must be scored on BOTH the
+  **M-axis** (model trajectory: long context / native retrieval / cheap inference / better tool use) AND the
+  **P-axis** (platform trajectory: Claude Code / OpenCode shipping native skills, subagents, plugins, MCP, project
+  memory). The most-exposed subsystem is the **tool-dispatch tier** on the P-axis — it lives inside the harnesses'
+  extension points, so the harness is simultaneously akm's distribution channel and its principal competitor. The
+  defensible property is **harness portability** (the bench survives switching harnesses), NOT dispatch-the-mechanism
+  → keep the CLI the source of truth and plugins THIN adapters (binding hedge).
+- **The store is regenerable exhaust, not the moat.** Live quality distribution (sqlite ro, 2026-07-04):
+  enriched=19,493, generated=5,174, **curated=9 → 0.036% human-curated**; 98.2% write-only. The moat is
+  **taste + trust + the audit trail**. Stop measuring value in entry counts. Exhibit that proves it:
+  `knowledge:akm-hybrid-rendering-architecture` is a misfiled static-site-generator doc that the review prompt's own
+  ref list mistook for an akm subsystem.
+- **Consumption/context-assembly is DURABLE, not dying** (settles the sealed-prediction divergence): the owned corpus
+  (24,676 entries / 684 MB) exceeds any 128K–1M window on the 2-year horizon, so selective retrieval/packing survives
+  BECAUSE the store is too big for the window. What dies is the *compression* machinery that assumes scarce context —
+  consolidation-future-vision's chunk-orchestration ("dies before built"), pre-filter's 32K-era truncation, encoding
+  salience's keyword compression.
+- **Q1 (freeze scope) — OWNER DECLINED THE 1.0 FREEZE for now.** Do NOT narrow/mark-EXPERIMENTAL the v1 spec surface
+  yet: "a 1.0 contract is premature for a product of one; keep everything unfrozen, revisit after distribution exists."
+  The §5 four-contract frozen surface (consumption / dispatch+toolPolicy / env-secret / provenance) is the *shape to
+  freeze WHEN a freeze happens*, not an authorized edit. The E6 second-corpus probe (09 Bet-4) is the prerequisite
+  before any freeze is reconsidered. Later reviews: do not treat the 1.0 contract as settled.
+- **Q2 (proactive lane) — DEFER TO POST-E0** (consistent with 09): decide disable-per-06-M5 vs overrule at the batch
+  after E0/G5 ship and the number is final. Lane stays `enabled:true` in the interim by explicit choice.
+- **Q3 (staleness-detect) — DELETE; keep only the more reliable audit path (matches the analysis).** (An initial
+  "enable" answer was an owner misread, corrected same session.) Binding: do NOT run two overlapping audit mechanisms.
+  Keep only the **usage-event/GRR loop** (row 9) — model- AND platform-durable, actually populated — and **retire
+  staleness-detect** + the belief-currency mechanism as theater (1 `lastConfirmedAt` in the whole stash, self-erasing
+  contradiction edges). Resolves the row-10 tension in favor of a single audit trail. Do not re-propose reviving
+  belief-lifecycle currency on a 2-year horizon.
+- **Q4 (positioning) — ADOPTED (binding positioning sentence):** "akm is FOR the owner's *taste made durable*: a
+  portable, provenance-audited bench of his own tested tools and curated knowledge — with a provable read-back trail
+  of what earned its place — that outlives whichever model or agent harness he runs this year." Supersedes the
+  secrets+dispatch+trail draft triad. env/secret is a **1.0 contract, not a headline pillar** (commodity locally:
+  direnv/sops/doppler/1Password-CLI).
+- **Q5 (extract) — DOWNGRADE CONFIRMED:** freeze `pre-filter.ts` (zero retuning of `DEFAULT_MAX_TOTAL_CHARS`/truncation
+  for 131K models), execute pre-approved **E2** (48×/day → nightly), **fix the 03-ratified `opencode-sdk
+  sessionLogs=false` input bug**, then re-measure. The ratified <5% minting-lane rule executes itself at the
+  re-measure. Do NOT delete extract on today's 0.0% — GRR is blind to its feeder role and its input pipe was starved.
+- **NOT-BUILD (binding, adds to prior DON'T-ADD lists):** consolidation-future-vision's graph-cluster + chunk-orchestration
+  layer (one prompt at 131K+); R7 bi-temporal validity lifecycle; pre-filter retuning for long-context; any GRR
+  dashboard/alert/new `metrics_json` health check (re-affirms 09); a **facts minting lane** (grow `fact` type via
+  curation — the B7 `.meta/index.md` fill + `/akm-memory-promote` PI rung — NOT minting); registry trust machinery for
+  an ecosystem of one. **chunking.ts "subtract the token formula" claim was CUT after code verification** (it already
+  reads configured `contextLength`; 4096 is a legitimate agent-CLI overhead fallback) — do not resurrect it.
+- **Sealed-prediction outcome:** DIVERGE. Owner predicted prompt/context assembly dies first ("just dump it all in");
+  analysis flips *packing* to a frozen-contract (corpus > any window) while agreeing the *compression* sub-parts die.
+  Real first casualty relocated to the minting lanes + the platform-absorbed dispatch layer.
+
+From **11 decisions-into-policy** (adjudicated 2026-07-04; nothing executed — dispositions only):
+
+- **Binding thesis:** every decision akm *mechanized* (isolation lint + shrink-only ratchet, CI release `needs:`
+  gate, code-encoded runtime thresholds) stopped recurring the day it landed; every decision left as *prose*
+  (CLAUDE.md rules, stash memories) kept recurring — including the only two with REALIZED irreversible costs
+  (2026-05-22 `rm -rf` on NVMe+TRIM; 2× unrequested `akm improve recombine` on live data). Current enforcement =
+  ZERO (`~/.claude/settings.json` hooks `{"Notification":[],"Stop":[]}`, no PreToolUse). The estate's ONE fully
+  mechanized subtraction principle is the test-isolation lint (`scripts/lint-tests-isolation.ts` + strict-equality
+  ratchet `ALLOWLIST_RATCHET_BASELINE=64`) — the before/after proof that enforcement beats memory.
+- **§3.1 PreToolUse gate — APPROVED, ASK-MODE (not deny).** ONE hook in `~/.claude/settings.json` covering (a)
+  destructive `rm`/`rm -rf`/`rmdir`/`git clean -fd`/`find … -delete` outside the CLAUDE.md always-safe list, and (b)
+  unrequested `akm improve|recombine|extract|consolidate` + `akm proposal accept` in dev sessions. **WIDENED (owner):**
+  also guard writes to the live `~/.config/akm/config.json` / `stashDir` from a non-sandboxed session (closes the
+  HOME/XDG-config-repoint incident `akm-isolate-config-in-init-repros`, cron improve killed exit 78). Semantics =
+  **ask-for-confirmation**, preserving an escape hatch for genuine per-path deletes / authorized runs. This is the
+  series' one authorized addition (quadrant A: expensive+irreversible+failed-twice-as-prose). CLAUDE.md prose STAYS;
+  the hook only makes its floor mechanical. Supersedes ~3 documenting artifacts → merge/archive via proposal queue.
+- **Install-version-unification NOT added as a new worklist item** — stays where **08-F3** routed it (uninstall stale
+  `akm-cli@0.7.4` + delete the `~/.local/bin/akm` wrapper npm/usr-local fallback branches). Divergence recorded, scope
+  not expanded.
+- **§3.3 WS-4 auto-tune/exploration path — OWNER KEPT OPEN (declined deletion).** Despite 0 `improve_gate_thresholds`
+  rows ever / `autoTune` off / effective `improve={}` / unreachable, owner keeps it (possible 09-E3 revival). Treat as
+  **owner-kept-open, NOT on-track-for-deletion** (mirrors 04 staleness-detect). The DON'T-ADD "no rebuilding WS-4
+  properly" still stands — keeping dead code ≠ authorizing a rebuild.
+- **§3.2 06-M5 execution — HELD (still ratified-but-unexecuted).** Do NOT delete the `proactiveMaintenance:{enabled:true}`
+  block from `src/assets/profiles/default.json:14` (verified still present this session) or add the
+  builtin-vs-`IMPROVE_PROCESS_DEFAULTS` pinning test this batch. The effective-config trap stays re-armed by explicit
+  choice; contradicting `docs/design/improve-optimal-default-config.md` still routes to the **review-14** doc-sync batch.
+- **Meta-rule (new capture policy, prose-only by nature):** a memory→lesson promotion must attach an enforcing artifact
+  (test/lint/code-seam/hook) OR declare itself documentation-only; code-mechanic memories must cite a **greppable symbol
+  name, not a line number** (the gather phase burned effort on 2 ghost memory refs + 1 moved gate; the salience
+  working-reference lesson still teaches the #644 bug the code FIXED via `isContentEncodingRow`).
+- **Defended KEEPs (binding):** release-gate memory (SPLIT — gate already lives in CI via `release.yml` `needs:`,
+  taxonomy of ~17-22 host-state flakes correctly lives in memory; prompt's "move to CI" premise was half-wrong);
+  decentralized 6-YAML + advisory-lock lane shape (REFUSE a central scheduler); documented-only check-before-push
+  (REFUSE a pre-push hook — CI catches it); code-encoded runtime thresholds (signal-delta, 95-floor, `salienceThreshold`
+  0.75, `archiveRetentionDays` 90, extract 48h floor — settled policy, do not re-litigate as tunable heuristics).
+- **Sealed-prediction outcome:** PARTIAL MATCH — owner nailed the enforcement half exactly ("only documented"), diverged
+  on the named decision (owner: felt friction of repro-sandboxing + unified installs; analysis: realized irreversible
+  cost of delete + prod-mutation). Intersection = sandbox-during-repro = row 1's prod-mutation family, which drove the
+  hook-widening decision above.
+
+From **12 one-real-constraint** (adjudicated 2026-07-04; nothing executed — dispositions only):
+
+- **THE binding constraint (binding framing for later reviews):** demand-side **read-back at the resurface→session
+  link, for self-generated content only.** ~14,937 promotions/30d → **77 engaged self-generated refs (~194:1
+  mint-to-engagement)**, vs pack **311** / hand-authored **149** from far smaller corpora. Every other stage measures
+  CLEAR: throughput (17 pending lifetime, queue empty), capture (over-provisioned — 79.7% `no_candidates`, sessions
+  drain faster than they fill), trust (0/20,955 accepts human-annotated — owner was never a gate). **Rank/salience
+  collapse is a SYMPTOM, not the constraint** (a learning ranker can't discriminate over a 91%-never-read pool because
+  its training signal IS read-back). Do NOT re-headline rank as the constraint in later reviews — that re-triggers the
+  #682 tuning investment this review audits.
+- **Effort-vs-constraint audit (named failure-mode instance):** the month's dominant engineering stream —
+  `improve-pipeline-deep-tuning-analysis.md` (17 HIGH items, zero aimed at the leak), PR #682 self-learning wiring
+  (+2,944/−1,039; its outcome-loop centerpiece measured DEAD within a week: `outcome-proxy-dead` |corr|=0.064,
+  `salience-uniformity-collapse` Gini 0.0404), 303/728 commits/30d on `src/commands/improve` — sits **entirely upstream
+  of the leak**. `memory:akm-improve-success-metric` warned against exactly this ("do NOT optimize promotion
+  volume/churn") *before* the investment. `docs/technical/akm-production-readiness-findings.md` (Postgres multi-writer
+  for a single-writer/single-owner deploy) was **stale the day it landed** → route to review-14 doc-sync (update/archive,
+  owner call — NOT deletion).
+- **The ONE move (stage REMOVAL, already ratified across 03/06/09/10):** remove the autonomous minting stage —
+  E2 (extract 48×/day → nightly + drain routing), proactive lane OFF (fails 5% floor: 1.55% this session), delete
+  `session_checkpoint --force` writes (03-R1/06-M1) + `recombine.ts:233–258` filters, delete `update --all` cron
+  (06-M2). Second-order once gone: signal density recovers → rank work becomes possible on real signal; the ~13k/15k
+  monthly accepted-proposal flood stops (slows `result_json` growth); GRR becomes a readable instrument.
+- **ADJUDICATION (owner, 2026-07-04) — the three calls resolve to ONE ordered plan:**
+  1. **D1 = DEFER shutdown UNTIL beta.57+ CLEAN.** Shutdown approved in substance (components stay ratified) but gated
+     on measurement integrity: **ship beta.57+ (G5 provenance fix, PR #701) to the cron dist FIRST** so before/after is
+     measured on clean `usage_events`. The expected post-shutdown DROP in numbers is correction (self-reads finally
+     tagged), NOT regression — do not panic-re-expand minting when numbers fall (§6 caveat is load-bearing).
+  2. **D2 = FREEZE NEW tuning, FINISH IN-FLIGHT.** No new salience/tuning/outcome-loop work and no new pipeline
+     analysis docs; in-flight salience work may reach a clean stopping point only. Nothing new starts until shutdown
+     lands AND **≥30 days of clean `improve_cycle_metrics`** exist (11 rows / 2 days now). Rank = symptom ruling stands;
+     first rank touch after the freeze = **02's approved curate-golden ablation**, not new machinery.
+  3. **D3 = NEXT SERIES UNIT = EXECUTION BATCH, not review 13.** The adjudication→execution gap (5 of 11 reviews
+     "nothing executed") is accepted as the meta-constraint. Resulting sequence: (1) ship beta.57+ to cron dist →
+     (2) accrue clean events + re-run `findings/09-grr-receipt.sql.md` as the before-baseline → (3) execute the §4
+     shutdown batch on that baseline → (4) hold all tuning until +30 clean days.
+- **NEXT constraint (prediction, so the owner sees the next link):** once minting stops, the constraint moves to
+  **retrieval precision at genuine use** (curate/SessionStart surfacing the right asset) — masked today by the flood
+  (only 998 distinct refs ever shown, 232 ever with feedback — too sparse to tune on). Behind it: **single-owner demand**
+  itself (09 Bet-4; npm `latest`=0.8.14, zero telemetry). **Anticipation guard:** when engagement plateaus post-shutdown,
+  the reflex to restart minting is exactly wrong — sequence via existing instruments (curate-golden + 02 ablation, then
+  E6 second-corpus probe), build nothing new until they report.
+- **Sealed-prediction outcome:** HALF-CONFIRMED, HALF-INVERTED — owner sealed "combo of capture and improve." Improve
+  half CONFIRMED and sharpened (right subsystem; the leak is its read-back link, fix = remove not tune). Capture half
+  INVERTED — analysis argues capture is *over-provisioned* (waste feeding the dead pool), so the correct capture move is
+  also subtraction (nightly), same shape as the improve fix; both ride the one batch.
+
+## EXECUTION BATCH 1 (2026-07-04) — what SHIPPED / BLOCKED / REMAINS
+
+First execution session against the ratified dispositions (branch `meta-review-exec-2026-07-04`, off
+main 074ef2df in akm and off `release/0.9.0` 0965e66 in the SINGULAR akm-plugin). One-item-per-commit,
+each gate-green (`bun run check` / `bun test tests/`) + adversarial code-review. **Do NOT re-do the
+COMMITTED items.**
+
+**akm — COMMITTED (11 commits):** [02] curate_rerank dead-key delete `d171ef0b`; [06-M7] dead
+`autoAccept` param + extract `maxDiffLines` cap `fbb3d93f`; [06-M4] archive-on-validation-throw
+`56ae805b` (gated on **structured `UsageError` code**, NOT message-sniffing — a transient git-push
+`[rejected]` was a false positive); [03-R4] null content_hash on llm_unavailable/triaged_out `015fd07b`;
+[07 P0-1] registry.md scanner-claim fix `ea881294`; [07 P0-3] extract-transcript fence `6c85020b`;
+[07 P1-B akm] workflow_started event → `{runId,status}` `3e2c0b4a`; [07 P1-D] show-layer toolPolicy
+ceiling `407c09fe` (keys off **primary-stash identity**, and `findSourceForPath` is now longest-prefix
+— NOT registryId/writable, which both had bypasses); [08-F2] distill env/secret structural refusal
+`b1d3f0b9`; [08-F4] config backups 0600 file + 0700 dir `34a99678`; [08 health] `stash-git-exposure`
+advisory + `.gitignore` env/secrets scaffold `c9ddd0e5`.
+
+**akm-plugin — COMMITTED (1 commit `48f9345`):** [07 P1-B plugin] SubagentStart drops raw workflow
+title/params; [07 hardening] provenance-tag on recalled/curated content (interim captureMemory
+mitigation — the WRITE deletion stays deferred behind the shutdown gate).
+
+**BLOCKED / RE-SCOPE / SUBSUMED:**
+- **[07 P0-2] quality-gate fail-CLOSED — BLOCKED, change READY+PROVEN, reverted.** Flipping
+  `quality-gate.ts` fail-open→closed is correct (5 unit tests pass) but breaks ~30–50 distill/reflect
+  *mechanics* tests that relied on the judge failing OPEN (their chat stubs supply no judge verdict).
+  Needs a dedicated test migration (inject a passing judge via `options.chat` for reflect; judge-aware
+  stub or disable `distill.qualityGate` in per-file `configEnabled` for distill). **P0 security — do
+  this FIRST next session.** Ready diff + proven test saved off-repo.
+- **[10-Q3] retire staleness-detect — NEEDS-RE-SCOPING (owner confirm).** ~15 files; the
+  `StalenessDetectionResult` type threads through the improve pipeline output; 04 kept-OPEN vs 10-DELETE.
+  Reported per the CAUTION, not forced.
+- **[07 dispatch-D] plugin toolPolicy ceiling — SUBSUMED by P1-D (item `407c09fe`).** Both dispatch
+  paths consume `akm show` output (now ceilinged at source); a plugin-side re-check would re-introduce
+  the registryId weakness P1-D fixed. DON'T-ADD.
+
+**REMAINING (not executed — next session):**
+- [03] delete two `type==="memory"` belief guards; [03-R3] supersede base on `.derived` + delete
+  `derivedBoost`; [02] contributor ablation — all **curate-golden nDCG/MRR Δ-gated** (need eval runs).
+- [03] one-**directed**-edge contradiction fix (`memory-contradiction-detect.ts` mutual A↔B → one edge)
+  — **behavioral gate** (edges persist across a read-only re-run), NOT eval-gated → most tractable.
+- [03/10-Q5] opencode-sdk `sessionLogs=false` reader — confirmed lives in **akm** (`opencode-sdk/index.ts:27`);
+  needs storage verification (SDK sessions land in `opencode.db`?) before wiring the reader.
+
+**⚠ OWNER RELEASE STEP:** the akm-side security fixes only reach the cron dist after `bun run build` +
+reinstall of the global (~beta.58). Committing alone does NOT protect cron. This ALSO satisfies the D1
+precondition (beta.57+ on cron) — after it, accrue clean events → re-baseline via
+`findings/09-grr-receipt.sql.md` → then the deferred minting-shutdown batch can run.

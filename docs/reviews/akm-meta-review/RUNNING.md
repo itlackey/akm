@@ -61,10 +61,23 @@ decisions in an **Adjudication** section. Then append the binding decisions to `
 
 Done: **01** goal-orientation, **05** metrics-and-evals (adjudicated + shipped); **02** bitter-lesson,
 **03** memory-compounding, **04** self-model, **06** autonomy-ladder, **07** prompt-injection,
-**08** attack-surface, **09** steelman-the-bets (adjudicated — dispositions only + E0 authorized to
-execute; see CONTEXT.md carry-forward).
+**08** attack-surface, **09** steelman-the-bets, **10** what-10×s-what-dies, **11** decisions-into-policy,
+**12** one-real-constraint (adjudicated — dispositions only; see CONTEXT.md carry-forward).
 
 - **Core system audits:** ~~02 → 03 → 04 → 06 autonomy~~ — DONE.
 - **Security pair:** ~~07 injection → 08 attack-surface~~ — DONE.
-- **Direction:** ~~09 steelman~~ → 10 what-10×s → 12 constraint.
-- **Housekeeping:** 11 policy, 13 bus-factor, 14 docs, 15 loop.
+- **Direction:** ~~09 steelman~~ → ~~10 what-10×s~~ → ~~12 constraint~~ — DONE.
+- **Housekeeping:** ~~11 policy~~ → 13 bus-factor, 14 docs, 15 loop.
+- **⚠ Owner-adjudicated (12):** the next series unit is an **EXECUTION batch, not review 13** — ship beta.57+ to the
+  cron dist, then execute the ratified §4 minting-shutdown on clean numbers. See CONTEXT.md "From 12".
+
+## Execution batches
+
+- **Batch 1 (2026-07-04) — PARTIAL, see CONTEXT.md "EXECUTION BATCH 1".** 11 akm commits + 1 akm-plugin commit
+  (branch `meta-review-exec-2026-07-04`), all gate-green + adversarially reviewed. Shipped: 02 dead-key,
+  06-M4/M7, 03-R4, and the whole 07/08 security surface (transcript fence, toolPolicy ceiling, env/secret
+  refusal, backups 0600, stash-git-exposure + gitignore) plus the plugin SubagentStart/re-injection hardening.
+  BLOCKED: 07-P0-2 fail-CLOSED (ready+proven, needs a distill/reflect test migration — **do first**).
+  RE-SCOPE: 10-Q3 staleness-detect (owner confirm). REMAINING: 03 belief-guard/derived/one-edge + 02 ablation
+  (curate-golden-gated) + opencode-sdk sessionLogs reader. **Deferred carve-outs (minting shutdown) untouched.**
+  Needs owner release: `bun run build` + reinstall global (~beta.58) before the akm fixes protect cron.
