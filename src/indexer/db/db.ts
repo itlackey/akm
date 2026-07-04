@@ -1675,16 +1675,19 @@ export function relinkUsageEvents(db: Database): void {
       .all() as { ref: string }[];
 
     const update = db.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
-    for (const { ref } of refs) {
-      let id: number | undefined;
-      try {
-        id = findEntryIdByRef(db, ref);
-      } catch {
-        // Malformed ref (parseAssetRef throws): leave null, ages out via retention.
-        continue;
+    const relinkTx = db.transaction(() => {
+      for (const { ref } of refs) {
+        let id: number | undefined;
+        try {
+          id = findEntryIdByRef(db, ref);
+        } catch (err) {
+          if (err instanceof Error && err.name === "UsageError") continue;
+          throw err;
+        }
+        if (id !== undefined) update.run(id, ref);
       }
-      if (id !== undefined) update.run(id, ref);
-    }
+    });
+    relinkTx();
   }, "usage_events table may not exist yet during entry_id re-resolution");
 }
 
