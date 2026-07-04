@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { readEvents } from "../../src/core/events";
 import { resolveAgentIdentity } from "../../src/workflows/runtime/agent-identity";
 import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import {
@@ -113,6 +114,21 @@ describe("workflow run agent identity persistence", () => {
     const match = listed.runs.find((r) => r.id === started.run.id);
     expect(match?.agentHarness).toBe("claude-code");
     expect(match?.agentSessionId).toBe("session-xyz");
+  });
+
+  test("workflow_started event emits only run id + status, never the raw workflow title (07 P1-B)", async () => {
+    writeWorkflow("title-flow");
+    const started = await startWorkflowRun("workflow:title-flow", {});
+
+    const events = readEvents({ type: "workflow_started" }).events;
+    const evt = events.find((e) => (e.metadata as { runId?: string } | undefined)?.runId === started.run.id);
+    expect(evt).toBeDefined();
+    const metadata = (evt?.metadata ?? {}) as Record<string, unknown>;
+    // Only run id + status are emitted — the raw workflowTitle must not leak.
+    expect(metadata.runId).toBe(started.run.id);
+    expect(metadata.status).toBeDefined();
+    expect("title" in metadata).toBe(false);
+    expect(started.run.workflowTitle).toBeTruthy(); // the title still exists on the run record
   });
 
   test("environment-detected identity is captured when no explicit value is given", async () => {
