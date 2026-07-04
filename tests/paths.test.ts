@@ -185,6 +185,11 @@ describe("getConfigPath", () => {
     process.env.XDG_CONFIG_HOME = "/test-cfg";
     expect(getConfigPath()).toBe(path.join("/test-cfg", "akm", "config.json"));
   });
+
+  test("honors an injected env object (DI seam) over process.env", () => {
+    process.env.XDG_CONFIG_HOME = "/ambient-cfg";
+    expect(getConfigPath({ XDG_CONFIG_HOME: "/injected-cfg" })).toBe(path.join("/injected-cfg", "akm", "config.json"));
+  });
 });
 
 // ── getCacheDir ─────────────────────────────────────────────────────────────
@@ -387,6 +392,12 @@ describe("getDbPath", () => {
     process.env.XDG_DATA_HOME = "/data";
     delete process.env.AKM_DATA_DIR;
     expect(getDbPath()).toBe(path.join("/data", "akm", "index.db"));
+  });
+
+  test("honors an injected env object (DI seam) over process.env", () => {
+    process.env.XDG_DATA_HOME = "/ambient-data";
+    delete process.env.AKM_DATA_DIR;
+    expect(getDbPath({ XDG_DATA_HOME: "/injected-data" })).toBe(path.join("/injected-data", "akm", "index.db"));
   });
 });
 

@@ -285,6 +285,8 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           const reflectCallArgs = {
             ref: planned.ref,
             task: options.task,
+            // Active profile so reflect's per-process reads honor `--profile`.
+            ...(improveProfile ? { improveProfile } : {}),
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
             agentProcess: options.agentProcess ?? "reflect",
@@ -565,6 +567,8 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             ref: planned.ref,
             ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+            // Active profile so distill's per-process reads honor `--profile`.
+            ...(improveProfile ? { improveProfile } : {}),
             // Attribution: carry the eligibility lane so distill stamps it on the
             // distill_invoked event and the persisted proposal.
             ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -785,6 +789,7 @@ export async function runImprovePostLoopStage(args: {
       recombination = await recombineFn({
         stashDir: primaryStashDir,
         config: options.config ?? loadConfig(),
+        improveProfile,
         ...(options.runId ? { sourceRun: options.runId } : {}),
         ...(budgetSignal ? { signal: budgetSignal } : {}),
         ...(options.autoAccept !== undefined ? { autoAccept: options.autoAccept } : {}),
@@ -821,6 +826,7 @@ export async function runImprovePostLoopStage(args: {
       proceduralCompilation = await proceduralFn({
         stashDir: primaryStashDir,
         config: options.config ?? loadConfig(),
+        ...(improveProfile ? { improveProfile } : {}),
         ...(options.runId ? { sourceRun: options.runId } : {}),
         ...(budgetSignal ? { signal: budgetSignal } : {}),
         ...(options.autoAccept !== undefined ? { autoAccept: options.autoAccept } : {}),
@@ -845,6 +851,7 @@ export async function runImprovePostLoopStage(args: {
   if (!options.dryRun && (consolidationRan || recombineWorked)) {
     cycleMetrics = runCollapseDetector({
       runId: options.runId ?? "improve-adhoc",
+      ...(improveProfile ? { improveProfile } : {}),
       pass: consolidationRan && recombineWorked ? "both" : consolidationRan ? "consolidate" : "recombine",
       // prep+loop gate accepts, PLUS recombine's confirmed-lesson promotions —
       // recombine churn is the historically observed failure mode and its

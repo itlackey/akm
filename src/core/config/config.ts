@@ -267,22 +267,25 @@ type NamedKeys<T> = keyof {
 export type ImproveProcessName = NamedKeys<NonNullable<ImproveProfileConfig["processes"]>>;
 
 /**
- * Resolve the per-process config section for an improve process from the
- * on-disk config, centralizing the deeply-nested lookup
- * `config.profiles?.improve?.default?.processes?.<name>` that was previously
- * copy-pasted across the improve command family (20+ call sites).
+ * Resolve the per-process config section for an improve process,
+ * centralizing the deeply-nested lookup
+ * `profile?.processes?.<name>` that was previously copy-pasted across the
+ * improve command family (20+ call sites).
  *
- * KNOWN LATENT BUG (human follow-up): this hardcodes the `"default"` improve
- * profile rather than resolving the *active* profile. Behavior is preserved
- * intentionally — every caller already depended on `"default"` — but a config
- * that selects a non-default active improve profile would have its per-process
- * overrides silently ignored. Do NOT switch to active-profile resolution here
- * without auditing every call site for the behavior change.
+ * When an `activeProfile` is supplied (the profile resolved for the current
+ * `akm improve --profile <name>` run), its per-process override wins; otherwise
+ * — and as a fallback when the active profile does not define the section — the
+ * lookup falls back to the `"default"` improve profile from the on-disk config.
+ * Callers that have not yet threaded the active profile pass only `config` and
+ * get the historical default-profile behavior unchanged.
  */
 export function getImproveProcessConfig(
   config: AkmConfig,
   processName: ImproveProcessName,
+  activeProfile?: ImproveProfileConfig,
 ): ImproveProcessConfig | undefined {
+  const fromActiveProfile = activeProfile?.processes?.[processName];
+  if (fromActiveProfile !== undefined) return fromActiveProfile;
   return config.profiles?.improve?.default?.processes?.[processName];
 }
 

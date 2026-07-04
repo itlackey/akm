@@ -76,7 +76,7 @@ export const rememberCommand = defineJsonCommand({
     },
     expires: {
       type: "string",
-      description: "Expiry duration shorthand (e.g. 30d, 12h, 6m). Resolved to an ISO date.",
+      description: "Expiry duration shorthand — e.g. 30d, 12h, 5m (minutes), 3M (months). Resolved to an ISO date.",
     },
     source: {
       type: "string",

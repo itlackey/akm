@@ -130,8 +130,8 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
   return path.join(home, ".config", "akm");
 }
 
-export function getConfigPath(): string {
-  return path.join(getConfigDir(), "config.json");
+export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getConfigDir(env), "config.json");
 }
 
 // ── Cache directory ──────────────────────────────────────────────────────────
@@ -245,8 +245,8 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = proc
   return path.join(home, ".local", "share", "akm");
 }
 
-export function getDbPath(): string {
-  return path.join(getDataDir(), "index.db");
+export function getDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "index.db");
 }
 
 export function getIndexWriterLockPath(): string {

@@ -12,8 +12,14 @@ describe("parseDuration", () => {
     expect(parseDuration("12h")).toBe(12 * 60 * 60 * 1000);
   });
 
-  test("parses months as 30-day approximation", () => {
-    expect(parseDuration("6m")).toBe(6 * 30 * 24 * 60 * 60 * 1000);
+  test("parses minutes with lowercase `m`", () => {
+    expect(parseDuration("5m")).toBe(5 * 60 * 1000);
+  });
+
+  test("parses months as a 30-day approximation with uppercase `M`", () => {
+    // `m` = minutes, `M` = months — the CLI-wide canonical grammar. (`m` here
+    // formerly meant months; it is now minutes, with `M` reserved for months.)
+    expect(parseDuration("3M")).toBe(3 * 30 * 24 * 60 * 60 * 1000);
   });
 
   test("rejects invalid format", () => {

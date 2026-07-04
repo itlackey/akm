@@ -29,7 +29,7 @@
 import { randomBytes } from "node:crypto";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
-import type { AkmConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
@@ -465,6 +465,8 @@ export function runCollapseDetector(args: {
   acceptedActions: number;
   mergeFloorViolations: number;
   config: AkmConfig;
+  /** Active improve profile, so the threshold read honors `--profile`. */
+  improveProfile?: ImproveProfileConfig;
   eventsCtx?: EventsContext;
   indexDbPath?: string;
 }): CycleMetricsRow | undefined {
@@ -478,7 +480,7 @@ export function runCollapseDetector(args: {
       const db = indexDb;
       // Over-generation threshold mirrors the guard actually in effect —
       // reading the same config key keeps the two aligned when tuned.
-      const antiCollapse = getImproveProcessConfig(args.config, "consolidate")?.antiCollapse as
+      const antiCollapse = getImproveProcessConfig(args.config, "consolidate", args.improveProfile)?.antiCollapse as
         | { maxGeneration?: number }
         | undefined;
       const maxGeneration = antiCollapse?.maxGeneration ?? DEFAULT_MAX_GENERATION;

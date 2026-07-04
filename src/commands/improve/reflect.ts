@@ -32,7 +32,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
@@ -84,6 +84,12 @@ import { deriveLessonRef, runLessonQualityJudge } from "./distill";
 import { classifyReflectChange } from "./reflect-noise";
 
 export interface AkmReflectOptions {
+  /**
+   * Active improve profile for this run. When set, its per-process `reflect`
+   * override wins over the `default` profile (e.g. runner resolution); absent
+   * falls back to `default`.
+   */
+  improveProfile?: ImproveProfileConfig;
   /** Optional asset ref (`type:name`) to focus on. */
   ref?: string;
   /** Optional task hint passed through to the reflection prompt. */
@@ -1057,7 +1063,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       runnerSpec = options.runner;
     } else {
       const cfg = options.config ?? loadConfig();
-      const reflectProcess = getImproveProcessConfig(cfg, "reflect");
+      const reflectProcess = getImproveProcessConfig(cfg, "reflect", options.improveProfile);
       // Resolve the runner from the improve profile's reflect entry when present.
       runnerSpec = resolveImproveProcessRunnerFromProfile(reflectProcess, cfg) ?? undefined;
       if (runnerSpec) {

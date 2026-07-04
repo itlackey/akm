@@ -8,7 +8,7 @@ import { readEvents } from "../core/events";
 import { openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
 import { listExistingTableNames, openStateDatabase } from "../core/state-db";
-import { parseDuration, parseSinceToIso } from "../core/time";
+import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/search/semantic-status";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
@@ -83,17 +83,11 @@ export function parseHealthSince(since?: string): string {
     return new Date(Date.now() - DEFAULT_SINCE_MS).toISOString();
   }
   const trimmed = since.trim();
-  // TODO(product): `m` here means MONTHS (approximated as 30 days), but the
-  // since-parsers in consolidate.ts and `--window-compare` (windows.ts) read
-  // `m` as MINUTES. This month-vs-minute discrepancy for the same shorthand is
-  // a genuine inconsistency that needs a human product decision — do NOT
-  // silently unify it here; both semantics are preserved via explicit unit maps
-  // passed to core/time.ts `parseDuration`.
-  const durationMs = parseDuration(trimmed.toLowerCase(), {
-    h: 60 * 60 * 1000,
-    m: 30 * 24 * 60 * 60 * 1000,
-    d: 24 * 60 * 60 * 1000,
-  });
+  // Unit grammar is the CLI-wide canonical map: `m` = minutes, `M` = months.
+  // (Historically `--since 5m` meant 5 months here; it now means 5 minutes,
+  // with `5M` for months — unified with consolidate / `--window-compare`.)
+  // Not lower-cased: case distinguishes `m` (minutes) from `M` (months).
+  const durationMs = parseDuration(trimmed, DURATION_UNITS);
   if (durationMs !== null) {
     return new Date(Date.now() - durationMs).toISOString();
   }

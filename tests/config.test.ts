@@ -7,6 +7,7 @@ import {
   DEFAULT_CONFIG,
   getDefaultLlmConfig,
   getImproveProcessConfig,
+  type ImproveProfileConfig,
   loadConfig,
   loadUserConfig,
   requireLlmConfig,
@@ -694,10 +695,11 @@ describe("llm config", () => {
 
 // ── getImproveProcessConfig accessor ─────────────────────────────────────────
 
-// Characterization tests pinning the CURRENT behavior of the centralized
-// deep-chain accessor: it resolves the hardcoded "default" improve profile.
-// These lock in behavior for the refactor that migrated the 20+ inline
-// `config.profiles?.improve?.default?.processes?.X` call sites onto it.
+// The centralized deep-chain accessor. Without an active profile it resolves
+// the "default" improve profile (the historical 2-arg behavior); with an
+// active profile (an `akm improve --profile <name>` run) that profile's
+// per-process override wins, falling back to "default" when it doesn't define
+// the section.
 describe("getImproveProcessConfig", () => {
   test("returns the named process section from the default improve profile", () => {
     const cfg = {
@@ -722,7 +724,7 @@ describe("getImproveProcessConfig", () => {
     expect(getImproveProcessConfig({ ...DEFAULT_CONFIG, profiles: {} } as AkmConfig, "reflect")).toBeUndefined();
   });
 
-  test("hardcodes the 'default' profile — a non-default improve profile is ignored (latent bug)", () => {
+  test("without an active profile, only the 'default' profile is consulted", () => {
     const cfg = {
       ...DEFAULT_CONFIG,
       profiles: {
@@ -733,6 +735,31 @@ describe("getImproveProcessConfig", () => {
       },
     } as unknown as AkmConfig;
     expect(getImproveProcessConfig(cfg, "distill")).toBeUndefined();
+  });
+
+  test("an active profile's per-process override wins over the default", () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      profiles: {
+        improve: { default: { processes: { distill: { enabled: false } } } },
+      },
+    } as unknown as AkmConfig;
+    const activeProfile = { processes: { distill: { enabled: true } } } as unknown as ImproveProfileConfig;
+    // `--profile` honored: the active profile's section is returned, not default's.
+    expect(getImproveProcessConfig(cfg, "distill", activeProfile)).toEqual({ enabled: true });
+  });
+
+  test("falls back to the default profile when the active profile omits the section", () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      profiles: {
+        improve: { default: { processes: { consolidate: { enabled: true, minPoolSize: 7 } } } },
+      },
+    } as unknown as AkmConfig;
+    // Active profile defines `distill` but not `consolidate` → consolidate falls
+    // back to default; a profile that doesn't override a process keeps default.
+    const activeProfile = { processes: { distill: { enabled: true } } } as unknown as ImproveProfileConfig;
+    expect(getImproveProcessConfig(cfg, "consolidate", activeProfile)).toEqual({ enabled: true, minPoolSize: 7 });
   });
 });
 
