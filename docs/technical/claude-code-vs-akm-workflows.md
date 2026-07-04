@@ -358,13 +358,22 @@ Every difference reduces to one axis: **who holds the execution loop.**
   to resume, it must constrain the script (no wall-clock, no randomness, no FS)
   and keep it ephemeral. Parallelism is free because the runtime schedules it.
 
-- **akm workflows own memory, not execution.** akm never runs a step; it hands
-  instructions to an external agent and records what came back. Because it never
-  replays anything, it needs no determinism constraints — but it also can't
-  parallelize, can't spawn workers, and can't do anything the driving agent
-  doesn't do for it. Its value is *durability and gating*: state that outlives
-  any session, plus completion criteria and human `blocked` gates that a
-  fire-and-forget fan-out has no place to put.
+- **akm workflows own memory, not execution.** akm's *workflow engine* never
+  runs a step; it hands instructions to an external agent and records what came
+  back. Because it never replays anything, it needs no determinism constraints —
+  but as an engine it also doesn't parallelize and doesn't spawn workers of its
+  own. Its value is *durability and gating*: state that outlives any session,
+  plus completion criteria and human `blocked` gates that a fire-and-forget
+  fan-out has no place to put.
+
+  > **Important qualification.** This is a property of the *current workflow
+  > engine*, not of akm the tool. akm is already multi-harness and already
+  > spawns agents elsewhere: `RunnerSpec` (`llm|agent|sdk`) + `executeRunner`
+  > (`src/integrations/agent/`), the OpenCode SDK runner (`runOpencodeSdk`), the
+  > agent-CLI spawner (`runAgent`), and schema-validated output
+  > (`callStructured`). The workflow engine simply doesn't *use* that substrate
+  > yet. That is exactly what the extension plan changes — see
+  > [`akm-workflows-orchestration-plan.md`](./akm-workflows-orchestration-plan.md).
 
 Concretely:
 
@@ -387,6 +396,18 @@ is weak (durable, gated, cross-session procedures a human signs off on).
 ---
 
 ## Part F — How akm could integrate better with Claude Code workflows
+
+> **Superseded by the extension plan.** The integration ideas below were written
+> for the *current* passive-tracker engine. The direction akm is taking is more
+> ambitious: extend the workflow engine into a **harness-agnostic orchestrator**
+> that either compiles a workflow to a Claude Code script and delegates (with
+> report-back), or executes the same definition natively on the OpenCode SDK /
+> other harnesses — providing Claude-Code-equivalent parallelism, structured
+> output, phases, and budgeting on top of akm's existing agent-execution
+> substrate, while keeping akm's durable/gated spine. See
+> [`akm-workflows-orchestration-plan.md`](./akm-workflows-orchestration-plan.md)
+> for the full technical design. The lighter-weight ideas below remain valid as
+> incremental stepping stones.
 
 The two systems are natural partners: a Claude Code workflow is the ideal
 *driver* for an akm run, and an akm run is the ideal *durable spine* for a
