@@ -5,20 +5,20 @@ Audience: akm maintainers deciding how the two "workflow" systems should relate
 Scope: the technical mechanics of each system — how a workflow is authored,
 how it is executed, how progress/state is tracked, and how they could interoperate.
 
-> Note on terminology. Two unrelated things are both called "workflow" in this
-> repo's orbit:
+> Note on terminology. Two unrelated things are both called "workflow":
 >
 > - **Claude Code Workflows** — the `Workflow` *tool* exposed by the Claude Code
->   harness. A workflow is a JavaScript orchestration script that spawns
->   subagents. The repo already ships one:
->   `docs/reviews/akm-meta-review/run-review.workflow.mjs`.
+>   harness. A workflow is a JavaScript orchestration script the harness runs to
+>   spawn and coordinate subagents.
 > - **akm Workflows** — the `workflow` *asset type* and CLI subsystem in this
 >   codebase (`src/workflows/**`). A workflow is a Markdown runbook that an agent
 >   steps through via `akm workflow next/complete`.
 >
 > They share a name and a goal ("run a multi-step procedure reliably") but are
 > architecturally opposite in almost every dimension. This document pins down
-> both, then maps the overlap, the divergence, and the integration surface.
+> both, then maps the overlap, the divergence, and the integration surface. The
+> Claude Code side is described from the `Workflow` tool's documented contract;
+> the akm side from the source under `src/workflows/**`.
 
 ---
 
@@ -28,14 +28,15 @@ how it is executed, how progress/state is tracked, and how they could interopera
 
 A Claude Code Workflow is a **JavaScript program the harness executes** to
 orchestrate many subagents deterministically. It is invoked through the
-`Workflow` tool (`script`, `scriptPath`, or a saved `name`, plus optional
-`args`). The tool returns immediately with a `runId` and runs the script in the
-**background**; a `<task-notification>` is delivered when it completes.
+`Workflow` tool (an inline `script`, a `scriptPath`, or a saved `name`, plus
+optional `args`). The tool returns immediately with a `runId` and runs the script
+in the **background**; a `<task-notification>` is delivered when it completes.
 
 The orchestration logic lives in *code*, not in an agent's head. Control flow
 (loops, conditionals, fan-out, barriers) is expressed with ordinary JS and a
 small set of injected async primitives. The model's judgement is confined to the
-*leaves* — each `agent()` call spawns a subagent that does the actual reasoning.
+*leaves* — each `agent()` call spawns a subagent that does the actual reasoning
+and returns a value to the script.
 
 ### A.2 The script contract
 
@@ -44,58 +45,59 @@ async body:
 
 ```js
 export const meta = {
-  name: 'akm-meta-review',
+  name: 'review-changes',
   description: '…',                       // shown in the permission dialog
   whenToUse: '…',                         // optional, shown in the workflow list
-  phases: [{ title: 'Gather', detail: '…' }, { title: 'Analyze' }, …],
+  phases: [{ title: 'Review' }, { title: 'Verify' }],
 }
 // body runs in an async context; await directly
-phase('Gather')
-const evidence = (await parallel(buckets.map(b => () => gather(b)))).filter(Boolean)
-phase('Analyze')
-const analysis = await analyze(evidence)
-return { … }                              // returned to the caller as the tool result
+phase('Review')
+const findings = await agent(reviewPrompt, { schema: FINDINGS_SCHEMA })
+phase('Verify')
+const verdicts = await parallel(findings.items.map(f => () =>
+  agent(`Verify: ${f.title}`, { schema: VERDICT_SCHEMA })))
+return { confirmed: /* … */ }             // returned to the caller as the tool result
 ```
 
 `meta` must be a literal (no variables, calls, spreads, or interpolation) so the
 harness can statically read it for the permission dialog and the phase display.
-`meta.phases[].title` must match the `phase()` calls exactly.
+Required fields are `name` and `description`; `whenToUse` and `phases` are
+optional. `meta.phases[].title` must match the `phase()` calls exactly (a
+`phase()` with no matching meta entry simply gets its own progress group).
 
 ### A.3 Injected primitives (the "harness API")
 
-These are provided by the harness at execution time — they are **not** importable
-libraries:
+Provided by the harness at execution time — **not** importable libraries:
 
 | Primitive | Semantics |
 | --- | --- |
-| `agent(prompt, opts?)` | Spawn one subagent. Returns its final text, or — with `opts.schema` (a JSON Schema) — a validated object (the subagent is forced to call a `StructuredOutput` tool and the result is schema-checked with model-side retries). Returns `null` if the agent is skipped/dies. `opts`: `label`, `phase`, `schema`, `model`, `effort`, `isolation:'worktree'`, `agentType`. |
-| `parallel(thunks)` | **Barrier.** Runs thunks concurrently, awaits all. A thrown/failed thunk resolves to `null` (never rejects) — filter with `.filter(Boolean)`. |
-| `pipeline(items, ...stages)` | **No barrier.** Each item flows through all stages independently; item A can be in stage 3 while B is in stage 1. Wall-clock = slowest single-item chain. The default for multi-stage work. |
+| `agent(prompt, opts?)` | Spawn one subagent. Returns its final text, or — with `opts.schema` (a JSON Schema) — a validated object (the subagent is forced to call a `StructuredOutput` tool and the result is schema-checked with model-side retries). Returns `null` if the agent is skipped mid-run or dies after retries. `opts`: `label`, `phase`, `schema`, `model`, `effort`, `isolation:'worktree'`, `agentType`. |
+| `parallel(thunks)` | **Barrier.** Runs thunks concurrently, awaits all. A thrown/failed thunk resolves to `null` (the call never rejects) — filter with `.filter(Boolean)`. |
+| `pipeline(items, ...stages)` | **No barrier.** Each item flows through all stages independently; item A can be in stage 3 while B is in stage 1. Wall-clock = slowest single-item chain. The default for multi-stage work. Each stage callback gets `(prevResult, originalItem, index)`. |
 | `phase(title)` | Starts a progress group; subsequent `agent()` calls are grouped under it. |
 | `log(msg)` | Emits a narrator line above the live progress tree. |
-| `workflow(nameOrRef, args?)` | Runs another workflow inline as a sub-step (one level of nesting only). |
+| `workflow(nameOrRef, args?)` | Runs another workflow inline as a sub-step (one level of nesting only; shares the run's concurrency cap, agent counter, and token budget). |
 | `args` | The `args` value passed to the `Workflow` tool, verbatim. |
-| `budget` | `{ total, spent(), remaining() }` — the turn's shared output-token target; a hard ceiling. Used for budget-scaled loops. |
+| `budget` | `{ total, spent(), remaining() }` — the turn's shared output-token target; a hard ceiling (further `agent()` calls throw once spent reaches total). Used for budget-scaled loops. |
 
 The runtime deliberately **removes** `Date.now()`, `Math.random()`, and argless
 `new Date()` (they would break resume — see A.6). There is **no filesystem or
-Node API access** from the script itself; agents do file I/O, the script only
-orchestrates. This is visible in the real script: the comment "The script has no
-filesystem access, so agents Read the prompt file themselves" and the
-`resolveReviewId()` helper that defensively re-parses `args` in case the harness
-delivered it as a JSON string.
+Node API access** from the script itself; standard JS built-ins (`JSON`, `Math`,
+`Array`, …) are available, but file I/O and side effects belong to the *agents* —
+the script only orchestrates. Timestamps must be passed in via `args` or stamped
+after the workflow returns; randomness is varied by agent index/label instead.
 
 ### A.4 Execution model
 
 - The script runs **inside the harness** as a background task, not as a shell
   subprocess and not inside the main agent loop.
 - Concurrent `agent()` calls are capped at **min(16, cores−2)** per workflow;
-  excess calls queue. Lifetime agent count is capped at **1000** (a runaway
-  backstop).
+  excess calls queue and run as slots free. Lifetime agent count is capped at
+  **1000** (a runaway backstop).
 - A single `parallel()`/`pipeline()` call accepts at most **4096 items**.
-- Each subagent's model/effort/tools come from the `agent()` opts (falling back
-  to the session's resolved model). Subagents can reach session-connected MCP
-  tools via on-demand `ToolSearch`.
+- Each subagent's model/effort/tools come from the `agent()` opts (defaulting to
+  the session's resolved model, which is usually correct). Subagents can reach
+  session-connected MCP tools via on-demand `ToolSearch`.
 - Subagents are told their final text *is* the return value, so they emit raw
   data, not human-facing prose.
 
@@ -105,12 +107,13 @@ Progress is **harness-native**, not something the script maintains:
 
 - `phase()` / `agent({phase})` group agents into boxes in a live tree, watchable
   with `/workflows`.
-- `log()` writes narrator lines.
+- `log()` writes narrator lines above the tree.
 - On completion the harness delivers a `<task-notification>` and the tool result
   carries the script's `return` value.
 - A **journal** (`<transcriptDir>/journal.jsonl`) records each `agent()` call's
   actual return value; per-agent transcripts are `agent-<id>.jsonl`. These are
-  the ground truth for debugging what a completed run actually produced.
+  the ground truth for debugging what a completed run actually produced (and the
+  documented fallback for hand-authoring a resume script).
 
 ### A.6 Resume & determinism
 
@@ -118,36 +121,34 @@ Progress is **harness-native**, not something the script maintains:
   prefix** of `agent()` calls from cache instantly; the first edited/new call and
   everything after runs live. Same script + same args ⇒ 100% cache hit.
 - Determinism is why `Date.now`/`Math.random` are banned — a resumed run must
-  reproduce the same call sequence. Timestamps are passed in via `args` or stamped
-  after the workflow returns.
+  reproduce the same call sequence to line cached results up with `agent()` calls.
 
 ### A.7 Isolation & structured output
 
 - `opts.isolation:'worktree'` runs an agent in a fresh git worktree (expensive;
-  only when agents mutate files in parallel and would conflict). Auto-removed if
-  unchanged.
+  only when agents mutate files in parallel and would otherwise conflict).
+  Auto-removed if unchanged.
 - `opts.schema` turns an agent into a typed function: the harness enforces the
   JSON Schema at the tool-call layer and retries on mismatch, so the script gets a
-  validated object with no parsing. The real script defines `EVIDENCE_SCHEMA`,
-  `ANALYSIS_SCHEMA`, etc. and threads them through every stage.
+  validated object with no parsing.
 
-### A.8 The canonical shape (from the shipped script)
+### A.8 Canonical shapes
 
-`run-review.workflow.mjs` is a textbook single-phase-per-turn pipeline:
+The tool documents a handful of orchestration patterns that recur:
 
-```
-Gather   → parallel() over evidence buckets, agentType:'Explore', model:'sonnet',
-           schema:EVIDENCE_SCHEMA   (barrier: analysis needs all buckets)
-Analyze  → one agent, model:'fable', schema:ANALYSIS_SCHEMA
-Verify   → optional adversarial agent (only for reviews flagged adversarial)
-Synthesize → one agent that writes the findings doc
-return   → { review, findings, headline, buckets, adversarial, summary }
-```
+- **Review → verify (pipeline).** Each review dimension's findings verify as soon
+  as that dimension completes, no cross-dimension barrier.
+- **Loop-until-count / loop-until-budget.** Keep spawning finders until a target
+  count or until `budget.remaining()` falls below a threshold.
+- **Adversarial / perspective-diverse verify.** Spawn N skeptics per finding
+  (identical refuters, or each with a distinct lens) and keep a finding only if a
+  majority survive.
+- **Barrier only when needed.** `parallel()` between stages is reserved for the
+  cases that genuinely need every prior result together (dedup/merge, early-exit
+  on zero, "compare against the other findings"); otherwise `pipeline()`.
 
-Model tier is chosen in exactly one place; safety rules are embedded verbatim in
-every agent prompt so they hold even if a file read is skipped. This is the
-important cultural point: **the orchestration, the model policy, and the safety
-envelope are all *code*, versioned in the repo.**
+The load-bearing cultural point: **the orchestration, the model policy, and any
+safety envelope are all *code*** — versioned, reviewable, and re-runnable.
 
 ---
 
@@ -288,7 +289,7 @@ A workflow source is treated like a package dependency ("`akm add github:x/stash
 + `akm workflow next` is functionally piping a stranger's bash into your shell").
 Trust is by pinning versions and auditing before run.
 
-### B.10 (Aside) akm *does* have a code-driven agent spawner
+### B.10 (Aside) akm *does* have a code-driven agent spawner — elsewhere
 
 Separately from the markdown-runbook workflow engine, akm can **shell out to a
 harness CLI** — `src/integrations/harnesses/claude/agent-builder.ts` builds
@@ -298,7 +299,7 @@ harness CLI** — `src/integrations/harnesses/claude/agent-builder.ts` builds
 vocabulary. akm invariant #222: it **never imports an LLM SDK** — agents are
 reachable only via shell-out. This is akm's nearest analog to Workflow's
 `agent()` primitive, but it is used by the `improve`/`reflect` pipeline, **not**
-by the workflow engine. The workflow engine has no agent-spawn capability at all.
+by the workflow engine. The workflow engine itself has no agent-spawn capability.
 
 ---
 
@@ -342,9 +343,6 @@ by the workflow engine. The workflow engine has no agent-spawn capability at all
 5. **Identity is already wired.** akm's `agent-identity.ts` reads
    `CLAUDE_SESSION_ID`; a Workflow subagent (or the main loop) is exactly the
    process that would set it. The correlation key already exists on both sides.
-6. **They already coexist in this repo.** `run-review.workflow.mjs` is a real
-   Claude Code Workflow whose *agents operate on akm* (read-only) — the two
-   systems are one `git clone` apart today.
 
 ## Part E — Where they fundamentally diverge
 
@@ -369,7 +367,7 @@ Consequences that follow directly:
 - **Progress:** harness-owned live tree in Workflow; poll-and-infer in akm.
 - **Failure to progress:** impossible-by-construction in Workflow (the script
   runs to completion or errors); the central hazard in akm, hence the check-in.
-- **Where the procedure lives:** a `.mjs` in the repo vs a Markdown *asset* that
+- **Where the procedure lives:** an executable script vs a Markdown *asset* that
   akm can index, search, `curate`, version, and improve over time. This is akm's
   genuine edge — workflows are *managed content*, not just executable files.
 
@@ -398,8 +396,8 @@ as a Workflow leaf* with zero engine changes.
 
 akm already stamps `agent_harness` + `agent_session_id` from `CLAUDE_SESSION_ID`.
 Extend `resolveAgentIdentity()` to also read a **workflow run id** (e.g. a new
-`AKM_WORKFLOW_PARENT` / a Claude-Code-provided `runId` env) and persist it on the
-`workflow_runs` row via an additive migration `004`. Result: an akm run can be
+`AKM_WORKFLOW_PARENT` env, or a Claude-Code-provided `runId`) and persist it on
+the `workflow_runs` row via an additive migration `004`. Result: an akm run can be
 traced back to the exact Claude Code Workflow (and `journal.jsonl` entry) that
 spawned it, and vice-versa. This is the cheapest concrete "integration" and it
 fits akm's existing identity-capture seam exactly.
@@ -408,13 +406,13 @@ fits akm's existing identity-capture seam exactly.
 
 akm already parses a workflow into a structured `WorkflowDocument` with steps,
 instructions, and completion criteria. Add an emitter
-(`akm workflow export <ref> --format claude-workflow`) that generates a `.mjs`
-with a `meta.phases` per step and a `pipeline()`/sequential body where each stage
-is `agent(step.instructions, { schema: criteriaSchema })`. Completion criteria
+(`akm workflow export <ref> --format claude-workflow`) that generates a script
+with a `meta.phases` entry per step and a sequential body where each stage is
+`agent(step.instructions, { schema: criteriaSchema })`. Completion criteria
 become the `schema`/verification contract. This lets a user *author once in
 managed Markdown* and *execute with the harness's real orchestration + progress
-tree* — akm becomes the content layer, Workflow the execution layer. The
-`run-review.workflow.mjs` shape is the proof this maps cleanly.
+tree* — akm becomes the content layer, Workflow the execution layer. Because akm
+steps are already ordered and self-contained, the mapping is close to mechanical.
 
 ### F4. Let akm be the durable store for Workflow runs (medium effort)
 
@@ -441,14 +439,14 @@ akm's check-in exists because akm can't see whether the agent is alive. Inside a
 Claude Code Workflow, the harness *does* own the run and *does* have a live
 progress tree — so the check-in is redundant there. When a run's
 `agent_harness` indicates it is being driven under a harness that owns
-orchestration, akm could **suppress the check-in directive** (the harness won't
+orchestration, akm could **suppress the check-in directive** (that harness won't
 stall the way a free-form chat agent does) and instead treat phase transitions as
 the heartbeat. Small change, avoids two systems both trying to "nudge" the agent.
 
 ### F7. Distribute Workflow scripts *as akm assets* (larger, strategic)
 
 The `workflow` asset type today is Markdown-only. Allow a workflow asset to carry
-(or reference) a Claude Code Workflow `.mjs` as an alternate executable form.
+(or reference) a Claude Code Workflow script as an alternate executable form.
 Then akm's real strengths — `add` from GitHub/npm, unified FTS search, `curate`,
 version pinning, feedback/improve — apply to *executable* Workflow scripts too.
 `akm curate "release"` could surface either a runbook to step through *or* a
@@ -480,8 +478,9 @@ in-turn execution engine — rather than two things that happen to share a name.
 - akm agent identity: `src/workflows/runtime/agent-identity.ts`
 - akm scope keying: `src/workflows/authoring/scope-key.ts`
 - akm CLI surface: `docs/features/workflows.md`, `src/workflows/cli.ts`
-- akm agent shell-out (the code-driven analog): 
-  `src/integrations/harnesses/claude/agent-builder.ts`,
+- akm agent shell-out (the code-driven analog, used by improve/reflect — not the
+  workflow engine): `src/integrations/harnesses/claude/agent-builder.ts`,
   `src/integrations/agent/spawn.ts`
-- Real Claude Code Workflow in-repo:
-  `docs/reviews/akm-meta-review/run-review.workflow.mjs`
+- Claude Code Workflow: the `Workflow` tool contract (script `meta` + injected
+  `agent`/`parallel`/`pipeline`/`phase`/`log`/`workflow`/`args`/`budget`
+  primitives, background execution, `journal.jsonl` progress, `resumeFromRunId`).
