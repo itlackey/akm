@@ -552,7 +552,6 @@ async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
           walkWarnings: [],
           dirsNeedingLlm: [],
           embeddingResult: null,
-          graphExtractionResult: null,
         };
 
         onProgress({

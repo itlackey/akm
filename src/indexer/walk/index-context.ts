@@ -14,7 +14,6 @@
 
 import type { AkmConfig } from "../../core/config/config";
 import type { Database } from "../../storage/database";
-import type { GraphExtractionResult } from "../graph/graph-extraction";
 import type { SearchSource } from "../search/search-source";
 import type { SemanticSearchReason, SemanticSearchRuntimeStatus } from "../search/semantic-status";
 
@@ -110,8 +109,6 @@ export interface IndexRunContext {
     reason?: SemanticSearchReason;
     message?: string;
   } | null;
-  /** Result from the graph extraction phase. */
-  graphExtractionResult: GraphExtractionResult | null;
 
   // ── Finalize-phase results ───────────────────────────────────────────────────
   // Written by `runFinalizePhase` and read back by `akmIndex()` to assemble the
