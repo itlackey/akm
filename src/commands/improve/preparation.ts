@@ -390,6 +390,9 @@ export async function runConsolidationPass(args: {
         ...options.consolidateOptions,
         config: consolidationConfig,
         stashDir: options.stashDir,
+        // Active profile for this improve run — lets consolidate's secondary
+        // process-config reads honor `--profile <name>` instead of `default`.
+        improveProfile,
         autoTriggered: volumeTriggered,
         // Tie consolidate proposals back to this improve invocation so
         // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
@@ -588,6 +591,7 @@ async function runSessionExtractPass(args: {
       const countFn = options.extractCandidateCountFn ?? countNewExtractCandidates;
       const newCandidateCount = countFn(extractConfig, {
         ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+        improveProfile,
         // Use the ACTIVE profile's discovery window so the gate counts over the
         // same window akmExtract will scan (not always `default`).
         ...(improveProfile.processes?.extract?.defaultSince

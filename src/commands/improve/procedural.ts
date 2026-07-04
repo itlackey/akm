@@ -26,7 +26,7 @@ import fs from "node:fs";
 import proceduralSystemPrompt from "../../assets/prompts/procedural-system.md" with { type: "text" };
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, ProceduralCompilationResult } from "../../core/improve-types";
@@ -59,6 +59,8 @@ export type ProceduralLlmFn = (prompt: string) => Promise<string | null>;
 export interface AkmProceduralOptions {
   stashDir?: string;
   config: AkmConfig;
+  /** Active improve profile, so the LLM runner selection honors `--profile`. */
+  improveProfile?: ImproveProfileConfig;
   /** PROV-DM run token stamped on every emitted proposal. */
   sourceRun?: string;
   /** Caller budget signal; an aborted signal short-circuits before any LLM call. */
@@ -359,6 +361,7 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
       systemPrompt: PROCEDURAL_SYSTEM_PROMPT,
       tag: "[procedural]",
       signal: opts.signal,
+      activeProfile: opts.improveProfile,
     });
   if (!llmFn) {
     warnings.push("procedural: no LLM configured — skipping");

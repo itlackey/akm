@@ -61,7 +61,7 @@ import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/f
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
@@ -167,6 +167,11 @@ export function isDistillRefusedInputType(type: string): boolean {
 export interface AkmDistillOptions {
   /** Asset ref to distil from (`[origin//]type:name`). */
   ref: string;
+  /**
+   * Active improve profile for this run. When set, its per-process `distill`
+   * overrides win over the `default` profile; absent falls back to `default`.
+   */
+  improveProfile?: ImproveProfileConfig;
   /**
    * Proposal target mode. `lesson` preserves the legacy behaviour.
    * `auto` lets memory refs graduate into knowledge proposals when a
@@ -871,8 +876,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // into the distill prompt so the LLM avoids overwriting prior generalizations
   // (catastrophic interference). DEFAULT OFF.
   const clsConfig =
-    (getImproveProcessConfig(config, "distill")?.cls as { enabled?: boolean; adjacentCount?: number } | undefined) ??
-    {};
+    (getImproveProcessConfig(config, "distill", options.improveProfile)?.cls as
+      | { enabled?: boolean; adjacentCount?: number }
+      | undefined) ?? {};
   let clsContext = "";
   if (clsConfig.enabled) {
     try {
@@ -1132,7 +1138,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // source memories. A contradiction flag routes to human review (not auto-accept).
   // DEFAULT OFF. Fail-open: any error is treated as no-contradiction.
   const fidelityConfig =
-    (getImproveProcessConfig(config, "distill")?.fidelityCheck as { enabled?: boolean } | undefined) ?? {};
+    (getImproveProcessConfig(config, "distill", options.improveProfile)?.fidelityCheck as
+      | { enabled?: boolean }
+      | undefined) ?? {};
   if (fidelityConfig.enabled && assetContent) {
     try {
       const proposalBody = stripBodyForFidelity(content);

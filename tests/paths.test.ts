@@ -188,9 +188,7 @@ describe("getConfigPath", () => {
 
   test("honors an injected env object (DI seam) over process.env", () => {
     process.env.XDG_CONFIG_HOME = "/ambient-cfg";
-    expect(getConfigPath({ XDG_CONFIG_HOME: "/injected-cfg" })).toBe(
-      path.join("/injected-cfg", "akm", "config.json"),
-    );
+    expect(getConfigPath({ XDG_CONFIG_HOME: "/injected-cfg" })).toBe(path.join("/injected-cfg", "akm", "config.json"));
   });
 });
 

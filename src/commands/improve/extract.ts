@@ -676,6 +676,11 @@ async function processSession(
   // When enabled, system-generated extractions enter captureMode: hot-probation
   // so they spend ONE consolidation cycle in probation before the deterministic
   // dedup+quality pass promotes them. Default OFF.
+  // Reads the `default` profile deliberately: this per-session hot-probation
+  // flag lives inside the 18-arg `processSession`, which has no handle to the
+  // active profile, and threading a 19th positional arg for a DEFAULT-OFF flag
+  // isn't worth the param bloat. The extract STAGE toggle (in `akmExtract`,
+  // below) already honors `--profile`.
   const hotProbationEnabled =
     (getImproveProcessConfig(config, "extract")?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
 
@@ -1267,6 +1272,8 @@ export interface CountNewExtractCandidatesOptions {
    * gate never re-reads `XDG_DATA_HOME` live mid-run.
    */
   stateDbPath?: string;
+  /** Active improve profile, so the discovery window honors `--profile`. */
+  improveProfile?: ImproveProfileConfig;
 }
 
 /**
@@ -1286,7 +1293,7 @@ export interface CountNewExtractCandidatesOptions {
  * changed session is actually re-processed.
  */
 export function countNewExtractCandidates(config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
-  const extractProcess = getImproveProcessConfig(config, "extract");
+  const extractProcess = getImproveProcessConfig(config, "extract", options.improveProfile);
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
   // Mirror akmExtract: when no explicit window is set, default per-harness to
   // "since the last run" (floored at 48h) instead of a fixed 24h. Keeps this

@@ -11,7 +11,7 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 // Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
@@ -268,6 +268,13 @@ export interface ConsolidatePerfTelemetry {
 type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
 
 export interface AkmConsolidateOptions {
+  /**
+   * The improve profile resolved for the current `akm improve --profile <name>`
+   * run. When set, its per-process overrides win over the `default` profile at
+   * the secondary process-config reads inside this pass; absent (standalone
+   * `akm consolidate`) falls back to the `default` profile.
+   */
+  improveProfile?: ImproveProfileConfig;
   target?: string; // which source to target; defaults to primary writable stash
   dryRun?: boolean; // generate AI plan but skip all writes
   /**
@@ -879,8 +886,8 @@ function archiveMemory(
  * silent 400s from LM Studio). The investigation lives at
  * `/tmp/akm-health-investigations/consolidation-no-op.md`.
  */
-function resolveConsolidateLlmConfig(config: AkmConfig) {
-  const consolidateProcess = getImproveProcessConfig(config, "consolidate");
+function resolveConsolidateLlmConfig(config: AkmConfig, activeProfile?: ImproveProfileConfig) {
+  const consolidateProcess = getImproveProcessConfig(config, "consolidate", activeProfile);
   const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
   if (runnerSpec && runnerIsLlm(runnerSpec)) {
     return runnerSpec.connection;
@@ -1115,7 +1122,8 @@ async function narrowConsolidationPool(
   // Without that flag no assets will ever carry the hot-probation marker, so
   // running the filter loop would be pure unnecessary I/O over the full corpus.
   const hotProbationEnabled =
-    (getImproveProcessConfig(config, "extract")?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
+    (getImproveProcessConfig(config, "extract", opts.improveProfile)?.hotProbation as { enabled?: boolean } | undefined)
+      ?.enabled === true;
   let hotProbationCount = 0;
   if (hotProbationEnabled) {
     const hotProbationMemories: typeof memories = [];
@@ -1363,7 +1371,7 @@ async function planConsolidation(
   //
   // Honor `profiles.improve.default.processes.consolidate.profile` first; fall
   // back to the default LLM. See {@link resolveConsolidateLlmConfig}.
-  const llmConfig = resolveConsolidateLlmConfig(config);
+  const llmConfig = resolveConsolidateLlmConfig(config, opts.improveProfile);
   const isHttpPath = !!llmConfig;
 
   // Chunk sizing: derive a safe chunk size from the configured model context
@@ -1406,7 +1414,9 @@ async function planConsolidation(
   let finalClusteredMemories = clusteredMemories;
   {
     const antiCollapseForCluster: AntiCollapseConfig =
-      (getImproveProcessConfig(config, "consolidate")?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+      (getImproveProcessConfig(config, "consolidate", opts.improveProfile)?.antiCollapse as
+        | AntiCollapseConfig
+        | undefined) ?? {};
     if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
       const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
       const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
@@ -1776,6 +1786,7 @@ async function applyConsolidationPlan(
   allOps: ConsolidateOperation[],
   accounting: ConsolidateAccounting,
   dedupCollapsed: number,
+  activeProfile?: ImproveProfileConfig,
 ): Promise<{
   merged: number;
   deleted: number;
@@ -1815,6 +1826,7 @@ async function applyConsolidationPlan(
 
   const opCtx: ConsolidateOpContext = {
     config,
+    improveProfile: activeProfile,
     stashDir,
     sourceRun,
     target,
@@ -1971,7 +1983,17 @@ async function akmConsolidateInner(
 
   // -- Pass 3: execute the plan against the filesystem ------------------------
   const { merged, deleted, contradicted, mergeFloorViolations, mergedSecondaries, promoted } =
-    await applyConsolidationPlan(config, stashDir, sourceRun, memories, warnings, allOps, accounting, dedupCollapsed);
+    await applyConsolidationPlan(
+      config,
+      stashDir,
+      sourceRun,
+      memories,
+      warnings,
+      allOps,
+      accounting,
+      dedupCollapsed,
+      opts.improveProfile,
+    );
 
   const runDurationMs = Date.now() - startMs;
   const budgetFraction =
@@ -2022,6 +2044,8 @@ async function akmConsolidateInner(
  */
 export interface ConsolidateOpContext {
   config: AkmConfig;
+  /** Active improve profile for this run, if any (see AkmConsolidateOptions). */
+  improveProfile?: ImproveProfileConfig;
   stashDir: string;
   sourceRun: string;
   target: ReturnType<typeof resolveWriteTarget>;
@@ -2129,7 +2153,14 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
     return;
   }
 
-  const mergeResult = await generateMergedContent(config, op.primary, primaryBody, op.secondaries, memoryByRef);
+  const mergeResult = await generateMergedContent(
+    config,
+    op.primary,
+    primaryBody,
+    op.secondaries,
+    memoryByRef,
+    ctx.improveProfile,
+  );
 
   if ("error" in mergeResult) {
     warnings.push(`Merge: ${mergeResult.error} for ${mergeResult.detail}.`);
@@ -2198,7 +2229,9 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
   // pipeline from building ever-deeper LLM-merged trees that lose the
   // source fidelity of the original episodes.
   const antiCollapseConfig: AntiCollapseConfig =
-    (getImproveProcessConfig(config, "consolidate")?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+    (getImproveProcessConfig(config, "consolidate", ctx.improveProfile)?.antiCollapse as
+      | AntiCollapseConfig
+      | undefined) ?? {};
   if (antiCollapseConfig.enabled !== false) {
     const allParticipants = [op.primary, ...op.secondaries];
     // One read per participant: generation counter, stripped body (for the
@@ -2855,6 +2888,7 @@ async function generateMergedContent(
   primaryBody: string,
   secondaryRefs: string[],
   memoryByRef: Map<string, MemoryEntry>,
+  activeProfile?: ImproveProfileConfig,
 ): Promise<MergeResult> {
   // Only handle single-secondary merges per design (one call per merge op)
   const secRef = secondaryRefs[0];
@@ -2901,7 +2935,7 @@ async function generateMergedContent(
 
   // Use the same per-process profile resolution as the chunk-plan call above
   // so the merge generation step doesn't silently revert to the default LLM.
-  const llmConfig = resolveConsolidateLlmConfig(config);
+  const llmConfig = resolveConsolidateLlmConfig(config, activeProfile);
   const result = await tryLlmFeature(
     "memory_consolidation",
     config,
