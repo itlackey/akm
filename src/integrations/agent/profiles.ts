@@ -64,7 +64,13 @@ export interface AgentProfile {
   readonly modelAliases?: Readonly<Record<string, string>>;
 }
 
-const COMMON_PASSTHROUGH = ["HOME", "PATH", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR"] as const;
+// AKM_EVENT_SOURCE carries usage-event provenance (improve/task) so that akm
+// invocations a spawned agent makes are recorded as machine traffic, not user
+// demand (DRIFT-6). Without it in the passthrough whitelist, buildChildEnv drops
+// the stamp at the agent boundary — e.g. `akm wiki ingest` spawns an agent whose
+// `akm curate/show/search` tool-calls then log source='user', silently inflating
+// every lane's read-back (GRR). It is a provenance tag, never a secret.
+const COMMON_PASSTHROUGH = ["HOME", "PATH", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "AKM_EVENT_SOURCE"] as const;
 
 /**
  * Built-in profiles for the five agent CLIs the v1 spec calls out
