@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   assessMemoryKnowledgePromotionCandidate,
-  DEFAULT_PROMOTION_POLICY_CORPUS,
   evaluateMemoryPromotionBenchmark,
   getDefaultPromotionPolicySelection,
   type PromotionBenchmarkCase,
 } from "../../../src/commands/improve/distill-promotion-policy";
+import { DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
 
 function fixtureByName(name: string): PromotionBenchmarkCase {
   const fixture = DEFAULT_PROMOTION_POLICY_CORPUS.find((candidate) => candidate.name === name);

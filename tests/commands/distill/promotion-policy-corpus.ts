@@ -1,0 +1,313 @@
+import type { PromotionBenchmarkCase } from "../../../src/commands/improve/distill-promotion-policy";
+import { assembleAssetFromString } from "../../../src/core/asset/asset-serialize";
+
+// Benchmark corpus for the memory-promotion policy. This used to live in
+// src/commands/improve/distill-promotion-policy.ts and was evaluated at module
+// import time to select the production model. The selection is now frozen into
+// DEFAULT_PROMOTION_POLICY_SELECTION; this corpus stays here as test-only data
+// so the grid search never ships in the production bundle. The bench test
+// re-runs selectPromotionPolicy over it to keep the frozen constant honest.
+
+function memoryContent(frontmatter: string[], body: string): string {
+  return assembleAssetFromString(frontmatter.join("\n"), body);
+}
+
+function benchmarkCase(
+  name: string,
+  expectPromote: boolean,
+  split: "train" | "heldout",
+  frontmatter: string[],
+  body: string,
+  feedbackSignals: Array<"positive" | "negative">,
+  outcome?: Partial<Pick<PromotionBenchmarkCase, "promoteValue" | "falsePromoteCost" | "missedPromoteCost">>,
+): PromotionBenchmarkCase {
+  return {
+    name,
+    expectPromote,
+    split,
+    input: {
+      inputRef: `memory:${name}`,
+      assetContent: memoryContent(frontmatter, body),
+      feedbackEvents: feedbackSignals.map((signal) => ({ metadata: { signal } })),
+    },
+    ...outcome,
+  };
+}
+
+export const DEFAULT_PROMOTION_POLICY_CORPUS: readonly PromotionBenchmarkCase[] = [
+  benchmarkCase(
+    "deploy-vpn-required",
+    true,
+    "train",
+    [
+      "description: VPN required before deploy",
+      "source: skill:deploy",
+      "observed_at: 2026-04-20",
+      "confidence: 0.95",
+      "tags: [deploy, ops]",
+    ],
+    "Always connect the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "release-smoke-test",
+    true,
+    "train",
+    [
+      "description: Smoke test gates release",
+      "quality: curated",
+      "source: skill:release",
+      "observed_at: 2026-04-18",
+      "confidence: 0.85",
+    ],
+    "Run the smoke test before tagging a release candidate.",
+    ["positive", "positive", "positive"],
+  ),
+  benchmarkCase(
+    "kubernetes-rollout-check",
+    true,
+    "train",
+    [
+      "description: Verify rollout status after apply",
+      "source: skill:k8s",
+      "observed_at: 2026-04-15",
+      "confidence: 0.95",
+      "tags: [k8s]",
+    ],
+    "Check rollout status after kubectl apply before declaring success.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "incident-channel-rule",
+    true,
+    "train",
+    [
+      "description: Incident bridge stays single-threaded",
+      "quality: curated",
+      "source: skill:incident",
+      "observed_at: 2026-04-12",
+      "confidence: 0.95",
+    ],
+    "Keep one operator narrating decisions in the incident bridge to avoid conflicting instructions.",
+    ["positive", "positive", "positive"],
+  ),
+  benchmarkCase(
+    "weak-single-signal",
+    false,
+    "train",
+    [
+      "description: VPN required before deploy",
+      "source: skill:deploy",
+      "observed_at: 2026-04-20",
+      "confidence: 0.95",
+      "tags: [deploy]",
+    ],
+    "Always connect the VPN before starting production deploys.",
+    ["positive"],
+  ),
+  benchmarkCase(
+    "contested-fact",
+    false,
+    "train",
+    [
+      "description: VPN required before deploy",
+      "quality: curated",
+      "source: skill:deploy",
+      "observed_at: 2026-04-20",
+      "confidence: 0.95",
+    ],
+    "Always connect the VPN before starting production deploys.",
+    ["positive", "negative", "positive"],
+    { falsePromoteCost: 5 },
+  ),
+  benchmarkCase(
+    "tentative-fact",
+    false,
+    "train",
+    ["description: Deploy may require VPN", "source: skill:deploy", "observed_at: 2026-04-20", "confidence: 0.95"],
+    "Maybe connect the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "subjective-preference",
+    false,
+    "train",
+    [
+      "description: VPN required before deploy",
+      "subjective: true",
+      "source: skill:deploy",
+      "observed_at: 2026-04-20",
+      "confidence: 0.95",
+    ],
+    "I prefer connecting the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "feedback-conflict",
+    false,
+    "train",
+    ["description: VPN required before deploy", "source: skill:deploy", "observed_at: 2026-04-20", "confidence: 0.95"],
+    "Always connect the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "derived-memory",
+    false,
+    "train",
+    ["description: VPN required before deploy", "source: skill:deploy", "confidence: 0.95"],
+    "Always connect the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "staging-cutover-order",
+    true,
+    "train",
+    [
+      "description: Cut over staging after migrations",
+      "source: skill:database",
+      "observed_at: 2026-04-10",
+      "confidence: 0.85",
+      "tags: [db, deploy]",
+    ],
+    "Run database migrations before shifting staging traffic onto the new release.",
+    ["positive", "positive", "positive"],
+  ),
+  benchmarkCase(
+    "temporary-token-workaround",
+    false,
+    "train",
+    [
+      "description: Temporary deploy token workaround",
+      "source: skill:deploy",
+      "observed_at: 2026-04-20",
+      "confidence: 0.95",
+      "expires: 2026-06-01",
+    ],
+    "Use the temporary deploy token workaround until the incident is closed.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "thin-metadata-memory",
+    false,
+    "train",
+    ["description: VPN required before deploy", "source: skill:deploy"],
+    "Always connect the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "promoted-quality-memory",
+    false,
+    "train",
+    [
+      "description: VPN required before deploy",
+      "quality: proposed",
+      "source: skill:deploy",
+      "observed_at: 2026-04-20",
+      "confidence: 0.95",
+    ],
+    "Always connect the VPN before starting production deploys.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "kafka-rebalance-note",
+    true,
+    "heldout",
+    [
+      "description: Pause consumers during rebalance",
+      "quality: curated",
+      "source: skill:kafka",
+      "observed_at: 2026-04-08",
+      "confidence: 0.95",
+      "tags: [kafka, ops]",
+    ],
+    "Pause consumers during partition rebalances to avoid duplicate processing while assignments settle.",
+    ["positive", "positive", "positive"],
+    { promoteValue: 4 },
+  ),
+  benchmarkCase(
+    "gha-token-scope",
+    true,
+    "heldout",
+    [
+      "description: Minimize GitHub token scopes",
+      "source: skill:github-actions",
+      "observed_at: 2026-04-07",
+      "confidence: 0.85",
+      "tags: [gha, security]",
+    ],
+    "Use the narrowest GitHub token scope that still allows the workflow step to succeed.",
+    ["positive", "positive"],
+    { promoteValue: 4 },
+  ),
+  benchmarkCase(
+    "helm-debug-guess",
+    false,
+    "heldout",
+    [
+      "description: Helm upgrade might need --debug",
+      "source: skill:helm",
+      "observed_at: 2026-04-05",
+      "confidence: 0.85",
+    ],
+    "It might help to add --debug to helm upgrade output during failures.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "terraform-state-location",
+    true,
+    "heldout",
+    [
+      "description: Use remote state locks",
+      "quality: curated",
+      "source: skill:terraform",
+      "observed_at: 2026-04-04",
+      "confidence: 0.95",
+      "tags: [terraform]",
+    ],
+    "Use remote state with locking enabled before applying shared Terraform stacks.",
+    ["positive", "positive", "positive"],
+  ),
+  benchmarkCase(
+    "mixed-signal-rollback",
+    false,
+    "heldout",
+    [
+      "description: Rollback the cluster immediately",
+      "quality: curated",
+      "source: skill:incident",
+      "observed_at: 2026-04-03",
+      "confidence: 0.95",
+    ],
+    "Rollback the cluster immediately after any 5xx spike.",
+    ["positive", "negative", "positive"],
+    { falsePromoteCost: 6 },
+  ),
+  benchmarkCase(
+    "cache-ttl-fact",
+    true,
+    "heldout",
+    [
+      "description: Cache TTL defaults to five minutes",
+      "source: skill:platform",
+      "observed_at: 2026-04-02",
+      "confidence: 0.95",
+      "tags: [cache, platform]",
+    ],
+    "The shared platform cache TTL defaults to five minutes unless the service opts out.",
+    ["positive", "positive"],
+  ),
+  benchmarkCase(
+    "personal-shell-alias",
+    false,
+    "heldout",
+    [
+      "description: Preferred shell alias",
+      "subjective: true",
+      "source: skill:shell",
+      "observed_at: 2026-04-01",
+      "confidence: 0.95",
+    ],
+    "I prefer aliasing kubectl to k.",
+    ["positive", "positive"],
+  ),
+];
