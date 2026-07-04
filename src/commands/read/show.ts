@@ -432,6 +432,21 @@ export async function showLocal(input: {
 
   const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, source?.registryId);
   const response = renderer.buildShowResponse(renderCtx);
+  // 07 P1-D: provenance-aware toolPolicy CEILING. An agent's self-declared
+  // `tools` frontmatter is honoured ONLY for the operator's own PRIMARY stash —
+  // the assets they authored. Every other source is content pulled from
+  // elsewhere and must not name its own tool grant: registry-installed packs, a
+  // configured secondary source, and even a git source the operator marked
+  // `--writable` to contribute edits upstream (writability is "can I push", not
+  // "do I trust this content to grant itself tools"). Drop the policy so dispatch
+  // falls back to the parent/default grant. Keys off primary-stash identity —
+  // `allSources[0]` is always the primary (search-source.ts) — not a
+  // name-derived registryId or the orthogonal `writable` bit. `source` undefined
+  // (unresolved path) also fails closed.
+  const isPrimaryStash = source !== undefined && source.path === allSources[0]?.path;
+  if (response.toolPolicy !== undefined && !isPrimaryStash) {
+    delete (response as { toolPolicy?: unknown }).toolPolicy;
+  }
   const editable = isEditable(assetPath, config);
   const fullResponse: ShowResponse = {
     ...response,
