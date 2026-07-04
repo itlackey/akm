@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmHealth, parseHealthSince } from "../src/commands/health";
+import type { GitRunner } from "../src/commands/health/stash-exposure";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { appendEvent } from "../src/core/events";
 import { buildTaskRunId, insertTaskLogLines, openLogsDatabase } from "../src/core/logs-db";
@@ -105,6 +106,21 @@ describe("akmHealth", () => {
     expect(result.improve.completed).toBe(1);
     expect(result.improve.skipped).toBe(1);
     expect(result.improve.skipReasons.reflect_cooldown).toBe(1);
+  });
+
+  test("surfaces stash-git-exposure advisory via the injected git seam (08-F1 wiring)", () => {
+    // Injecting stashExposureGit exercises the health.ts wiring without spawning
+    // a real subprocess (the default path is guarded behind a .git existence
+    // check so non-git sandbox stashes never spawn).
+    const gitRunner: GitRunner = (_dir, args) => {
+      if (args[0] === "rev-parse") return { ok: true, stdout: "true" };
+      if (args[0] === "ls-files") return { ok: true, stdout: "env/prod.env\nsecrets/key" };
+      if (args[0] === "remote") return { ok: true, stdout: "origin" };
+      return { ok: false, stdout: "" };
+    };
+    const result = akmHealth({ since: "7d", stashExposureGit: gitRunner });
+    const advisory = result.advisories.find((a) => a.name === "stash-git-exposure");
+    expect(advisory?.status).toBe("warn");
   });
 
   test("aggregated snapshot skip reasons use the latest run's count, not the sum across runs", () => {

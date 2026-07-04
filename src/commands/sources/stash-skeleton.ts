@@ -73,6 +73,40 @@ export function scaffoldStashMeta(stashDir: string): void {
   }
 }
 
+/** Marks the akm-authored block in a stash `.gitignore` (idempotency anchor). */
+const STASH_GITIGNORE_MARKER = "# akm: keep secret material out of git by default";
+const STASH_GITIGNORE_BLOCK = [
+  STASH_GITIGNORE_MARKER,
+  "# env/ and secrets/ assets hold tokens and keys. They are ignored by default",
+  "# so `git push` can never leak them. To version a specific one (e.g. for a",
+  "# private-remote backup), un-ignore its path below once you accept the risk.",
+  "env/",
+  "secrets/",
+  "",
+].join("\n");
+
+/**
+ * Ensure the stash `.gitignore` keeps `env/` and `secrets/` out of git by
+ * default (08-F1: the v0.8.0 `vaults/` → `env/`+`secrets/` migration never
+ * carried the ignore rules forward, and init scaffolded none).
+ *
+ * Idempotent + non-clobbering: creates the file when absent, appends the akm
+ * block when the file exists but lacks it (preserving the user's own rules),
+ * and no-ops once the marker is present. The user opts INTO versioning by
+ * un-ignoring a path.
+ */
+export function ensureStashGitignore(stashDir: string): void {
+  try {
+    const gitignorePath = path.join(stashDir, ".gitignore");
+    const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+    if (existing.includes(STASH_GITIGNORE_MARKER)) return;
+    const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+    fs.writeFileSync(gitignorePath, `${existing}${gap}${STASH_GITIGNORE_BLOCK}`);
+  } catch {
+    // Non-fatal — the stash is usable without the ignore scaffold.
+  }
+}
+
 const STASH_META_INDEX_TEMPLATE = `---
 # Optional, human-authored orientation for this stash. Not indexed; surfaced
 # on demand via \`akm show meta\` (this file) or \`akm show <stash>//meta\`.
