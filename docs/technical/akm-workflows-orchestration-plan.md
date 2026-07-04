@@ -68,16 +68,27 @@ rationale is given so you can override.
    survives a mid-run crash. *Cost:* the generated script depends on the `akm`
    CLI being on PATH inside the CC session.
 
-3. **Native resume → durable-row, no determinism ban.** Keep akm's SQLite
-   model; add per-unit result rows; resume re-dispatches only incomplete units.
-   Rationale: fits the declarative IR, avoids a JS-determinism sandbox, and
-   reuses the existing migration discipline.
+3. **Native resume → configurable: durable-row by default, deterministic
+   replay available.** Durable-row resume is the default and the only mode the
+   declarative-IR path needs: per-unit result rows, resume re-dispatches only
+   incomplete units, no JS-determinism ban. A **deterministic replay mode** is
+   also supported for workflows that need CC-exact semantics (primarily the
+   future imperative frontend): the run caches unit results by input hash and
+   replays the plan, which requires the determinism constraints
+   (`Date.now`/`random` banned) to hold *for that mode only*. The two modes
+   share the `workflow_run_units` store; replay mode adds an input-hash cache
+   lookup before dispatch. See [Resume — two modes](#resume--two-modes).
 
-4. **v1 parity scope → parallel fan-out + structured schema output first;**
-   phases/progress-stream and budget/worktree isolation as fast-follow.
-   Rationale: fan-out and schema output are the load-bearing parity features and
-   both have existing substrate (`executeRunner`, `callStructured`); progress
-   streaming and budget ceilings are additive and can land incrementally.
+4. **v1 parity scope → parallel fan-out + structured schema output only;**
+   phases/progress-stream and budget/worktree isolation are explicitly
+   **deferred** to fast-follow. Fan-out and schema output are the load-bearing
+   parity features and both have existing substrate (`executeRunner`,
+   `callStructured`); progress streaming and budget ceilings are additive and
+   land incrementally (P3).
+
+> These four are **decided** (owner-confirmed), not open. Decision 3 was the one
+> change from the first draft: resume is *configurable* (both modes), not
+> durable-row-only.
 
 ## Architecture
 
@@ -216,9 +227,34 @@ boundary crosses back into akm's durable model.
   collide — the same guard CC offers.
 - **Budget.** `usage-telemetry` aggregates tokens across units; the run aborts
   pending units when `budget.maxTokens`/`maxUnits` is hit (hard ceiling).
-- **Resume.** On restart, completed `workflow_run_units` rows are treated as
-  done; only incomplete units re-dispatch. No script replay, so no
-  determinism constraints.
+- **Resume.** Configurable per run (default durable-row) — see next section.
+
+## Resume — two modes
+
+Resume is a per-run mode (`resume: "durable" | "replay"`, default `"durable"`),
+selectable in workflow frontmatter or on the CLI. Both modes use the same
+`workflow_run_units` store; they differ only in what a re-dispatch is allowed to
+assume.
+
+- **Durable-row (default).** On restart, units with a terminal status
+  (`completed`/`skipped`) are treated as done; `pending`/`running` units
+  re-dispatch from scratch. The plan graph is walked fresh each time, so a unit
+  that ran but didn't persist simply runs again. No constraints on the workflow.
+  This is the only mode the declarative-IR path needs, and the right default
+  because it is robust to partial writes and non-deterministic node bodies.
+
+- **Deterministic replay (opt-in).** For workflows that need Claude-Code-exact
+  resume semantics — primarily the future imperative frontend, where the plan is
+  produced by *running code* rather than a static graph — the executor caches
+  each unit's result keyed by `input_hash` (a stable hash of the resolved
+  prompt + runner + model + schema) and, on replay, returns the cached result
+  instead of re-dispatching. This makes resume a pure prefix replay, matching
+  CC's `runId` cache. The cost is CC's constraint: the workflow must be
+  deterministic in replay (no wall-clock/random in node inputs), enforced only
+  when `resume: "replay"` is set so it never burdens the default path.
+
+Both modes preserve the gated spine: a `gate` unit that was `blocked` stays
+blocked across resume regardless of mode (human approval is never cached).
 
 ## Persistence changes
 
@@ -294,19 +330,22 @@ authorizing N parallel agents, not one.
 - **P1 — native fan-out + schema (v1 parity core).** `scheduler.ts`,
   `native-executor.ts`, `workflow_run_units` (migration 004), extended
   Markdown grammar for `Runner`/`Fan-out`/`Schema`. New `akm workflow run`
-  drives a step's IR subgraph natively.
+  drives a step's IR subgraph natively. Resume: durable-row mode only.
 - **P2 — CC delegation.** `cc-emitter.ts`, `akm workflow report`, launch/handoff
   glue. Delegation path reaches parity with native for the shared IR.
 - **P3 — phases, progress stream, budget, worktree.** `akm workflow watch`,
   budget ceilings, `isolation: worktree`.
-- **P4 — hardening.** Conformance suite across backends; optional imperative
-  frontend.
+- **P4 — hardening + imperative frontend.** Conformance suite across backends;
+  optional imperative frontend and, with it, the opt-in deterministic **replay**
+  resume mode (`exec/replay-cache.ts`, `input_hash` lookup). Durable-row remains
+  the default throughout.
 
 ## File-by-file touch list
 
 New:
 - `src/workflows/ir/schema.ts`, `src/workflows/ir/compile.ts`
 - `src/workflows/exec/scheduler.ts`, `native-executor.ts`, `cc-emitter.ts`, `report.ts`
+- `src/workflows/exec/replay-cache.ts` (P4 — deterministic replay resume mode)
 - `tests/workflows/conformance/**` (golden IR + both-backend assertions)
 
 Extend:
