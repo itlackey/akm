@@ -38,7 +38,9 @@ export function getCachedEmbedding(key: string): EmbeddingVector | undefined {
 }
 
 export function setCachedEmbedding(key: string, value: EmbeddingVector): void {
-  // Evict oldest entry if at capacity
+  // Delete first so an overwrite refreshes LRU recency AND is not counted as a
+  // new insert: only a genuinely new key at capacity should evict the oldest.
+  embedCache.delete(key);
   if (embedCache.size >= EMBED_CACHE_MAX) {
     const oldest = embedCache.keys().next().value;
     if (oldest !== undefined) {

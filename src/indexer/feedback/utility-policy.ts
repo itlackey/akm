@@ -35,17 +35,6 @@ const FEEDBACK_REWARD_POSITIVE = 1.0;
 const FEEDBACK_REWARD_NEGATIVE = 0.0;
 
 /**
- * Maximum total negative utility delta allowed in a single
- * `applyFeedbackToUtilityScore` call regardless of negativeCount.
- *
- * This caps the per-day negative impact (the function is called once per
- * feedback event — spamming 10 negatives in one session can move utility
- * at most `MAX_NEG_DELTA_PER_CALL`). The cap prevents a noisy negative-
- * feedback stream from silently destroying a high-utility asset's ranking.
- */
-export const MAX_NEG_DELTA_PER_CALL = 0.15;
-
-/**
  * Utility threshold below which a review-needed escalation is triggered.
  * When a previously high-utility asset (≥ HIGH_UTILITY_THRESHOLD) drops
  * below this value, the caller should create an escalation proposal.
@@ -82,8 +71,12 @@ export interface FeedbackUtilityResult {
  *   reward   = weighted average of positive and negative signals
  *   nextUtil = clamp(currentUtil + lr × (reward − currentUtil), 0, 1)
  *
- * The negative impact is additionally capped at {@link MAX_NEG_DELTA_PER_CALL}
- * to prevent a noisy feedback stream from silently erasing a high-utility asset.
+ * The step is inherently bounded: reward ∈ [0, 1] and currentUtil ∈ [0, 1], so
+ * a single call moves utility by at most {@link FEEDBACK_LR} in either
+ * direction. `reward` is a proportion of the counts, not their magnitude, so
+ * with no positive signals the number of negatives is irrelevant (reward is 0
+ * whether there is 1 negative or 100). Mixing in positives shifts reward and so
+ * the step, but never past the learning-rate bound.
  *
  * Pure: no DB access. When both counts are zero, utility is unchanged.
  */
@@ -105,13 +98,8 @@ export function computeNextUtility(
         ? FEEDBACK_REWARD_NEGATIVE
         : (positiveCount * FEEDBACK_REWARD_POSITIVE + negativeCount * FEEDBACK_REWARD_NEGATIVE) / total;
 
-  // MemRL bounded-step EMA: lr × (reward − current)
-  let delta = FEEDBACK_LR * (reward - previousUtility);
-
-  // Per-call negative cap: if delta is negative (net negative feedback), cap it.
-  if (delta < 0) {
-    delta = Math.max(delta, -MAX_NEG_DELTA_PER_CALL);
-  }
+  // MemRL bounded-step EMA: lr × (reward − current). |delta| ≤ FEEDBACK_LR.
+  const delta = FEEDBACK_LR * (reward - previousUtility);
 
   const nextUtility = Math.max(0, Math.min(1, previousUtility + delta));
 

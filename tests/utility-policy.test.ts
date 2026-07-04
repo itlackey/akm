@@ -7,7 +7,6 @@ import {
   computeNextUtility,
   FEEDBACK_LR,
   HIGH_UTILITY_THRESHOLD,
-  MAX_NEG_DELTA_PER_CALL,
   UTILITY_REVIEW_THRESHOLD,
 } from "../src/indexer/feedback/utility-policy";
 
@@ -50,7 +49,7 @@ describe("computeNextUtility", () => {
     expect(r.nextUtility).toBeCloseTo(0.5, 10);
   });
 
-  test("clamps the result into [0, 1] and never over-steps the negative cap", () => {
+  test("clamps into [0, 1] and a single call steps by at most FEEDBACK_LR", () => {
     for (const prev of [0, 0.25, 0.5, 0.75, 1]) {
       for (const [pos, neg] of [
         [0, 0],
@@ -61,9 +60,19 @@ describe("computeNextUtility", () => {
         const r = computeNextUtility(prev, pos, neg);
         expect(r.nextUtility).toBeGreaterThanOrEqual(0);
         expect(r.nextUtility).toBeLessThanOrEqual(1);
-        // A single call can only move utility down by at most the per-call cap.
-        expect(prev - r.nextUtility).toBeLessThanOrEqual(MAX_NEG_DELTA_PER_CALL + 1e-9);
+        // The EMA step is bounded by the learning rate in BOTH directions —
+        // reward ∈ [0,1] and prev ∈ [0,1] ⇒ |delta| ≤ FEEDBACK_LR. This is the
+        // real bound (the former 0.15 cap could never bind at lr=0.1).
+        expect(Math.abs(prev - r.nextUtility)).toBeLessThanOrEqual(FEEDBACK_LR + 1e-9);
       }
     }
+  });
+
+  test("negativeCount magnitude does not enlarge the downward step", () => {
+    // reward is a proportion, so 1 vs 100 negatives (0 positives) produce the
+    // same step — the guarantee the removed per-call cap falsely claimed to add.
+    const one = computeNextUtility(0.8, 0, 1).nextUtility;
+    const many = computeNextUtility(0.8, 0, 100).nextUtility;
+    expect(many).toBeCloseTo(one, 10);
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { UsageError } from "../src/core/errors";
 import {
+  parseRegistryRef,
   trustedNpmTarballHosts,
   UntrustedNpmTarballError,
   validateGitRef,
@@ -170,5 +171,34 @@ describe("validateNpmTarballUrl", () => {
     const hosts = trustedNpmTarballHosts();
     expect(hosts.has("registry.npmjs.org")).toBe(true);
     expect(hosts.size).toBe(1);
+  });
+});
+
+// ── parseRegistryRef: scoped-npm vs path disambiguation ──────────────────────
+
+describe("parseRegistryRef — bare scoped npm package", () => {
+  // Regression: a ref starting with `@` is an npm scope, never a filesystem
+  // path. `isPathLikeRef` used to return true for any ref containing `/`, so
+  // `@scope/pkg` was routed to tryParseLocalRef(explicitPath=true) and threw
+  // NotFoundError before the `@`-npm branch could run.
+  test("parses `@scope/pkg` (not on disk) as an npm ref instead of throwing", () => {
+    const parsed = parseRegistryRef("@scope/pkg");
+    expect(parsed.source).toBe("npm");
+    expect(parsed).toMatchObject({ source: "npm", packageName: "@scope/pkg" });
+  });
+
+  test("parses `@scope/pkg@1.2.3` as npm with the requested version", () => {
+    const parsed = parseRegistryRef("@scope/pkg@1.2.3");
+    expect(parsed).toMatchObject({
+      source: "npm",
+      packageName: "@scope/pkg",
+      requestedVersionOrTag: "1.2.3",
+    });
+  });
+
+  test("still routes an explicit `./@scope` path through the local branch", () => {
+    // Leading ./ marks an explicit path; a missing one must throw the local
+    // NotFoundError, proving it did NOT fall through to npm parsing.
+    expect(() => parseRegistryRef("./@scope/does-not-exist")).toThrow(/Local path not found/);
   });
 });
