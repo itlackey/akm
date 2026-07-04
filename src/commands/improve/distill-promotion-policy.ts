@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { assembleAsset } from "../../core/asset/asset-serialize";
+import { assembleAsset, assembleAssetFromString } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 
 export interface PromotionFeedbackEvent {
@@ -155,7 +155,7 @@ function deriveDescription(body: string, description: string | undefined): strin
 }
 
 function memoryContent(frontmatter: string[], body: string): string {
-  return ["---", ...frontmatter, "---", "", body, ""].join("\n");
+  return assembleAssetFromString(frontmatter.join("\n"), body);
 }
 
 export function deriveKnowledgeRef(inputRef: string): string {
