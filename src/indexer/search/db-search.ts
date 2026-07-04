@@ -338,9 +338,7 @@ async function searchDatabase(
     const qualityFiltered = includeProposed
       ? scopeFiltered
       : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
-    const beliefFiltered = qualityFiltered.filter((ie) =>
-      matchBeliefFilter(ie.entry.type, ie.entry.beliefState, beliefFilter),
-    );
+    const beliefFiltered = qualityFiltered.filter((ie) => matchBeliefFilter(ie.entry.beliefState, beliefFilter));
     const selected = beliefFiltered.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
@@ -519,9 +517,7 @@ async function searchDatabase(
   const qualityFiltered = includeProposed
     ? scopeFiltered
     : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
-  const beliefFiltered = qualityFiltered.filter((item) =>
-    matchBeliefFilter(item.entry.type, item.entry.beliefState, beliefFilter),
-  );
+  const beliefFiltered = qualityFiltered.filter((item) => matchBeliefFilter(item.entry.beliefState, beliefFilter));
 
   const rankMs = Date.now() - tRank0;
 
@@ -555,9 +551,11 @@ async function searchDatabase(
   return { embedMs, rankMs, hits };
 }
 
-function matchBeliefFilter(type: string, beliefState: string | undefined, filter: BeliefFilterMode): boolean {
+function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
   if (filter === "all") return true;
-  if (type !== "memory") return true;
+  // 03: the belief filter applies to ANY flagged entry, not just memories, so
+  // `current`/`historical` filters catch contradicted/superseded KNOWLEDGE too.
+  // Unflagged entries (beliefState === undefined) still pass the `current` filter.
   if (filter === "current") {
     // Phase 1A: `asserted` is a "current" state (stronger authority than `active`);
     // `deprecated` is excluded from current results.

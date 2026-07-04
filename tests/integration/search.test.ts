@@ -525,8 +525,9 @@ describe("Score boosts", () => {
 
     // Parent has a longer searchHints to prevent its shorter document from
     // dominating BM25 length normalization. This ensures the derived entry's
-    // richer metadata (tags, searchHints, +0.12 memory contributor) is
-    // decisive rather than TF-normalization artefacts.
+    // richer metadata (tags + searchHints coverage of the query tokens) is
+    // decisive rather than TF-normalization artefacts. (The old `.derived`
+    // name boost was deleted in 03-R3; richer metadata is the real signal now.)
     writeFile(
       path.join(stashDir, "memories", "deploy-debugging.md"),
       [
@@ -563,9 +564,8 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     // "deploy debugging" matches both entries. The derived entry scores at least
-    // as high as the parent because: (a) it has richer tag/hint coverage of the
-    // query tokens, and (b) the memory contributor gives +0.12 to .derived
-    // entries vs -0.08 for raw parent notes.
+    // as high as the parent because it has richer tag + searchHints coverage of
+    // the query tokens (the `.derived` name boost was deleted in 03-R3).
     const result = await akmSearch({ query: "deploy debugging", source: "local", type: "memory", skipLogging: true });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
