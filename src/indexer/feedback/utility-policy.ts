@@ -72,9 +72,11 @@ export interface FeedbackUtilityResult {
  *   nextUtil = clamp(currentUtil + lr × (reward − currentUtil), 0, 1)
  *
  * The step is inherently bounded: reward ∈ [0, 1] and currentUtil ∈ [0, 1], so
- * a single call moves utility by at most {@link FEEDBACK_LR}. Because `reward`
- * is a proportion, the magnitude of `negativeCount` does not enlarge the step —
- * a burst of negatives cannot over-erase a high-utility asset in one call.
+ * a single call moves utility by at most {@link FEEDBACK_LR} in either
+ * direction. `reward` is a proportion of the counts, not their magnitude, so
+ * with no positive signals the number of negatives is irrelevant (reward is 0
+ * whether there is 1 negative or 100). Mixing in positives shifts reward and so
+ * the step, but never past the learning-rate bound.
  *
  * Pure: no DB access. When both counts are zero, utility is unchanged.
  */
