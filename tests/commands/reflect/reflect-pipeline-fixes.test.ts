@@ -166,6 +166,28 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.error).toContain("env");
   });
 
+  test("secret:* ref is rejected (08-F2: secret material must never reach reflect's LLM)", async () => {
+    const stash = makeStashDir();
+    let spawned = false;
+    const spy: SpawnFn = (cmd) => {
+      spawned = true;
+      return fakeSpawn("", "", 0)(cmd, {});
+    };
+    const result = await akmReflect({
+      ref: "secret:signing-key",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: spy },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    // Allowlist (REFLECT_ALLOWED_TYPES) refuses structurally — the LLM is never
+    // spawned, so secret bytes are never read or sent.
+    expect(result.reason).toBe("unsupported_type");
+    expect(result.error).toContain("secret");
+    expect(spawned).toBe(false);
+  });
+
   test("task:* ref is rejected (YAML tasks are not markdown-shaped)", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({

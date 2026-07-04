@@ -1505,6 +1505,31 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.lessonRef).not.toMatch(/-lesson-lesson$/);
   });
 
+  test("refuses env/secret refs as input (08-F2: secret bytes never reach the LLM)", async () => {
+    const stash = makeStashDir();
+    for (const ref of ["env:prod-api", "secret:signing-key"]) {
+      const result = await akmDistill({
+        ref,
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () => {
+          throw new Error("chat must not be called for a secret input");
+        },
+        // The structural refusal fires BEFORE lookup/readFileSync — proving the
+        // secret file is never opened.
+        lookupFn: async () => {
+          throw new Error("lookup/readFileSync must not run for a secret input");
+        },
+        readEventsFn: emptyEvents,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.outcome).toBe("skipped");
+      const { events } = readEvents({ type: "distill_invoked" });
+      expect(events.at(-1)?.metadata?.skipReason).toBe("refused_secret_input");
+    }
+    expect(listProposals(stash)).toEqual([]);
+  });
+
   test("LLM returns the archived recursive-lesson bad fixture → validation_failed (no broken proposal queued)", async () => {
     // Synthesised from proposal id 187de1c9-d7eb-47c1-92a2-23ad29f669cc (lesson-of-a-lesson
     // with double frontmatter, placeholder description, and circular when_to_use). The
