@@ -6,8 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { firstString, groupBy, stringArray } from "../../../core/common";
+import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
+import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
@@ -645,27 +645,27 @@ function archiveCleanupCandidate(
 }
 
 function persistBeliefStateTransition(filePath: string, transition: MemoryBeliefStateTransition): void {
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = parseFrontmatter(raw);
-  const nextFrontmatter: Record<string, unknown> = {
-    ...parsed.data,
-    beliefState: transition.toState,
-  };
+  mutateFrontmatter(filePath, (parsed) => {
+    const nextFrontmatter: Record<string, unknown> = {
+      ...parsed.data,
+      beliefState: transition.toState,
+    };
 
-  const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
-  if (transition.toState === "contradicted") {
-    nextFrontmatter.contradictedBy = [...currentBeliefRefs];
-  } else {
-    delete nextFrontmatter.contradictedBy;
-    if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
-      delete nextFrontmatter.supersededBy;
+    const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
+    if (transition.toState === "contradicted") {
+      nextFrontmatter.contradictedBy = [...currentBeliefRefs];
+    } else {
+      delete nextFrontmatter.contradictedBy;
+      if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
+        delete nextFrontmatter.supersededBy;
+      }
     }
-  }
 
-  if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
-  else delete nextFrontmatter.currentBeliefRefs;
+    if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
+    else delete nextFrontmatter.currentBeliefRefs;
 
-  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
+    return nextFrontmatter;
+  });
 }
 
 function appendBeliefStateTransitionLog(stashDir: string, transitions: MemoryBeliefStateTransition[]): string {
@@ -738,8 +738,8 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
     if (parentRefFilter && parentRef !== parentRefFilter) continue;
     if (!isDerivedMemory(name, parsed.data)) continue;
 
-    const title = firstString(parsed.data.title) ?? extractHeading(parsed.content) ?? "";
-    const description = firstString(parsed.data.description) ?? "";
+    const title = asNonEmptyString(parsed.data.title) ?? extractHeading(parsed.content) ?? "";
+    const description = asNonEmptyString(parsed.data.description) ?? "";
     const tags = stringArray(parsed.data.tags);
     const searchHints = stringArray(parsed.data.searchHints);
     const body = parsed.content.trim();
@@ -800,7 +800,7 @@ function isFrozenHistoricalBeliefState(state: Exclude<MemoryBeliefState, "archiv
 }
 
 function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<MemoryBeliefState, "archived"> {
-  const explicit = firstString(frontmatter.beliefState);
+  const explicit = asNonEmptyString(frontmatter.beliefState);
   if (
     explicit === "active" ||
     explicit === "asserted" ||
@@ -818,10 +818,10 @@ function isDerivedMemory(name: string, frontmatter: Record<string, unknown>): bo
 }
 
 function resolveParentRef(name: string, frontmatter: Record<string, unknown>): string | undefined {
-  const fromSource = parseMemoryRef(firstString(frontmatter.source));
+  const fromSource = parseMemoryRef(asNonEmptyString(frontmatter.source));
   if (fromSource) return fromSource;
 
-  const derivedFrom = firstString(frontmatter.derivedFrom);
+  const derivedFrom = asNonEmptyString(frontmatter.derivedFrom);
   if (derivedFrom) return makeAssetRef("memory", derivedFrom);
 
   if (name.endsWith(DERIVED_SUFFIX)) {

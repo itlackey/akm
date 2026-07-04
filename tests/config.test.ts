@@ -3,8 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  type AkmConfig,
   DEFAULT_CONFIG,
   getDefaultLlmConfig,
+  getImproveProcessConfig,
   loadConfig,
   loadUserConfig,
   requireLlmConfig,
@@ -687,6 +689,50 @@ describe("llm config", () => {
       expect(getDefaultLlmConfig(cfg)).toEqual(explicit);
       expect(requireLlmConfig(cfg)).toEqual(explicit);
     });
+  });
+});
+
+// ── getImproveProcessConfig accessor ─────────────────────────────────────────
+
+// Characterization tests pinning the CURRENT behavior of the centralized
+// deep-chain accessor: it resolves the hardcoded "default" improve profile.
+// These lock in behavior for the refactor that migrated the 20+ inline
+// `config.profiles?.improve?.default?.processes?.X` call sites onto it.
+describe("getImproveProcessConfig", () => {
+  test("returns the named process section from the default improve profile", () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      profiles: {
+        improve: { default: { processes: { consolidate: { enabled: true, minPoolSize: 42 } } } },
+      },
+    } as unknown as AkmConfig;
+    expect(getImproveProcessConfig(cfg, "consolidate")).toEqual({ enabled: true, minPoolSize: 42 });
+  });
+
+  test("returns undefined when the process is absent", () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      profiles: { improve: { default: { processes: { consolidate: { enabled: true } } } } },
+    } as unknown as AkmConfig;
+    expect(getImproveProcessConfig(cfg, "extract")).toBeUndefined();
+  });
+
+  test("returns undefined when profiles/improve/default/processes chain is missing", () => {
+    expect(getImproveProcessConfig(DEFAULT_CONFIG, "reflect")).toBeUndefined();
+    expect(getImproveProcessConfig({ ...DEFAULT_CONFIG, profiles: {} } as AkmConfig, "reflect")).toBeUndefined();
+  });
+
+  test("hardcodes the 'default' profile — a non-default improve profile is ignored (latent bug)", () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      profiles: {
+        improve: {
+          // Only a non-default profile carries the override.
+          aggressive: { processes: { distill: { enabled: true } } },
+        },
+      },
+    } as unknown as AkmConfig;
+    expect(getImproveProcessConfig(cfg, "distill")).toBeUndefined();
   });
 });
 

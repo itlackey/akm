@@ -112,13 +112,7 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
   const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
   const fd = fs.openSync(tmp, "w", mode ?? 0o600);
   try {
-    // fs.writeSync has two non-overlapping overloads (Buffer vs string); branch
-    // so each call resolves to a single overload. Both write byte-exact.
-    if (typeof content === "string") {
-      fs.writeSync(fd, content);
-    } else {
-      fs.writeSync(fd, content);
-    }
+    fs.writeSync(fd, typeof content === "string" ? Buffer.from(content) : content);
     try {
       fs.fdatasyncSync(fd);
     } catch {
@@ -510,14 +504,6 @@ export function asNonEmptyString(value: unknown): string | undefined {
 }
 
 // ── Generic data utilities ───────────────────────────────────────────────────
-
-/**
- * Return the trimmed string if non-empty, otherwise `undefined`.
- * Equivalent to `firstString` previously defined in `memory-improve.ts`.
- */
-export function firstString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
 
 /**
  * Coerce an unknown value to a filtered, trimmed string array.

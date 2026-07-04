@@ -38,8 +38,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import contradictionJudgeTemplate from "../../../assets/prompts/contradiction-judge.md" with { type: "text" };
-import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { getDefaultLlmConfig } from "../../../core/config/config";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
@@ -162,21 +161,19 @@ function resolveParentRef(
  */
 /** Returns true if the edge was newly written, false if it already existed. */
 function writeContradictedByEdge(filePath: string, contradictedByRef: string): boolean {
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = parseFrontmatter(raw);
+  return mutateFrontmatter(filePath, (parsed) => {
+    const existing: string[] = Array.isArray(parsed.data.contradictedBy)
+      ? (parsed.data.contradictedBy as string[])
+      : [];
+    if (existing.includes(contradictedByRef)) return null; // Edge already written.
 
-  const existing: string[] = Array.isArray(parsed.data.contradictedBy) ? (parsed.data.contradictedBy as string[]) : [];
-  if (existing.includes(contradictedByRef)) return false; // Edge already written.
-
-  const updatedContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
-  const nextFrontmatter: Record<string, unknown> = {
-    ...parsed.data,
-    contradictedBy: updatedContradictedBy,
-    beliefState: "contradicted",
-  };
-
-  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
-  return true;
+    const updatedContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
+    return {
+      ...parsed.data,
+      contradictedBy: updatedContradictedBy,
+      beliefState: "contradicted",
+    };
+  });
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────

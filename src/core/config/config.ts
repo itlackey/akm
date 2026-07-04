@@ -10,6 +10,8 @@ import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from
 import { AkmConfigSchema } from "./config-schema";
 import type {
   AkmConfig,
+  ImproveProcessConfig,
+  ImproveProfileConfig,
   IndexConfig,
   IndexPassConfig,
   LlmConnectionConfig,
@@ -47,23 +49,9 @@ export { VALID_HARNESS_IDS } from "./config-types";
 
 // ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
 
-/**
- * Curated taxonomy of failure modes for negative feedback.
- *
- * Structured failure modes enable aggregation across feedback events so the
- * distill pipeline can detect that "5 assets failed for the same reason" and
- * act on it — free-text strings about the same issue are not aggregatable.
- */
-export const FEEDBACK_FAILURE_MODES = [
-  "incorrect", // Factually wrong or logically flawed content
-  "outdated", // Correct at some point but now stale
-  "dangerous", // Could cause harm if followed (security, safety)
-  "incomplete", // Missing key steps, context, or caveats
-  "redundant", // Duplicates another asset without adding value
-] as const;
-
-/** Union of the curated failure-mode values. */
-export type FeedbackFailureMode = (typeof FEEDBACK_FAILURE_MODES)[number];
+// Canonical taxonomy lives in the schema/validator layer; re-exported here so
+// existing `../core/config/config` import sites keep working.
+export { FEEDBACK_FAILURE_MODES, type FeedbackFailureMode } from "./config-schema";
 
 /**
  * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
@@ -265,6 +253,37 @@ export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | un
   const defaultName = resolveDefaultLlmProfileName(config);
   if (!defaultName) return undefined;
   return config.profiles?.llm?.[defaultName];
+}
+
+// Drop the string index signature that `.passthrough()` adds to the processes
+// object, keeping only the explicitly-named process keys — so the accessor's
+// key argument is the concrete union (`consolidate` | `extract` | …) rather
+// than being widened to `string`.
+type NamedKeys<T> = keyof {
+  [K in keyof T as string extends K ? never : number extends K ? never : K]: unknown;
+};
+
+/** Name of an improve process section under `processes` (`consolidate`, `extract`, …). */
+export type ImproveProcessName = NamedKeys<NonNullable<ImproveProfileConfig["processes"]>>;
+
+/**
+ * Resolve the per-process config section for an improve process from the
+ * on-disk config, centralizing the deeply-nested lookup
+ * `config.profiles?.improve?.default?.processes?.<name>` that was previously
+ * copy-pasted across the improve command family (20+ call sites).
+ *
+ * KNOWN LATENT BUG (human follow-up): this hardcodes the `"default"` improve
+ * profile rather than resolving the *active* profile. Behavior is preserved
+ * intentionally — every caller already depended on `"default"` — but a config
+ * that selects a non-default active improve profile would have its per-process
+ * overrides silently ignored. Do NOT switch to active-profile resolution here
+ * without auditing every call site for the behavior change.
+ */
+export function getImproveProcessConfig(
+  config: AkmConfig,
+  processName: ImproveProcessName,
+): ImproveProcessConfig | undefined {
+  return config.profiles?.improve?.default?.processes?.[processName];
 }
 
 /**

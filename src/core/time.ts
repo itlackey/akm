@@ -12,6 +12,36 @@
 
 import { UsageError } from "./errors";
 
+// ── Duration-shorthand parsing ───────────────────────────────────────────────
+
+/**
+ * Parse a compact duration shorthand (e.g. `"30d"`, `"12h"`, `"6m"`) into a
+ * number of milliseconds using an explicit `units` map, or return `null` when
+ * the input does not match `<digits><letter>` or the unit is not in the map.
+ *
+ * The unit map is passed by the caller ON PURPOSE: the codebase historically
+ * disagreed on what `"m"` means — some call sites read it as MINUTES
+ * (`consolidate`, `--window-compare`) and others as MONTHS (`akm health`,
+ * `--expires`). This helper deliberately does NOT pick a winner; each caller
+ * supplies the multipliers matching its own long-standing semantics so this
+ * consolidation is pure DRY and changes no observable behaviour. See the TODO
+ * at `parseHealthSince` for the unresolved product decision.
+ *
+ * Matching is case-sensitive against the map keys; callers that accept
+ * mixed-case units (e.g. `"7D"`) should lower-case the spec before calling.
+ * Amount is parsed with base-10 `parseInt`; `null` is returned rather than
+ * throwing so each caller keeps its own error/fallback policy.
+ */
+export function parseDuration(spec: string, units: Record<string, number>): number | null {
+  const match = spec.trim().match(/^(\d+)([a-zA-Z])$/);
+  if (!match) return null;
+  const amount = Number.parseInt(match[1] ?? "", 10);
+  if (!Number.isFinite(amount)) return null;
+  const multiplier = units[match[2] ?? ""];
+  if (multiplier === undefined) return null;
+  return amount * multiplier;
+}
+
 // ── Since-flag parsing ───────────────────────────────────────────────────────
 
 /**

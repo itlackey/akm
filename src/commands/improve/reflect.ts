@@ -33,7 +33,7 @@ import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
-import { loadConfig } from "../../core/config/config";
+import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
@@ -1057,7 +1057,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       runnerSpec = options.runner;
     } else {
       const cfg = options.config ?? loadConfig();
-      const reflectProcess = cfg.profiles?.improve?.default?.processes?.reflect;
+      const reflectProcess = getImproveProcessConfig(cfg, "reflect");
       // Resolve the runner from the improve profile's reflect entry when present.
       runnerSpec = resolveImproveProcessRunnerFromProfile(reflectProcess, cfg) ?? undefined;
       if (runnerSpec) {

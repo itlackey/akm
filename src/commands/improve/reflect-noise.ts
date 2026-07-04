@@ -282,7 +282,7 @@ export function normalizeTrailingWhitespace(text: string): string {
 export function cosmeticNormalForm(text: string): string {
   const { fmText, body } = splitFrontmatterText(normalizeTrailingWhitespace(text));
   const fmCanonical = fmText === null ? "" : canonicalizeYamlText(fmText);
-  return `${fmCanonical} ${normalizeMarkdownBody(body)}`;
+  return `${fmCanonical}\u0000${normalizeMarkdownBody(body)}`;
 }
 
 /**

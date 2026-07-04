@@ -12,12 +12,13 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 // Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { detectTruncatedDescription } from "../../core/text-truncation";
+import { parseDuration } from "../../core/time";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
 import {
   hasSupersededStatus,
@@ -879,7 +880,7 @@ function archiveMemory(
  * `/tmp/akm-health-investigations/consolidation-no-op.md`.
  */
 function resolveConsolidateLlmConfig(config: AkmConfig) {
-  const consolidateProcess = config.profiles?.improve?.default?.processes?.consolidate;
+  const consolidateProcess = getImproveProcessConfig(config, "consolidate");
   const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
   if (runnerSpec && runnerIsLlm(runnerSpec)) {
     return runnerSpec.connection;
@@ -985,15 +986,105 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
 // Inner implementation — all early-return paths are here; sharedStateDb is
 // closed by the outer finally in `akmConsolidate`.
-async function akmConsolidateInner(
+/**
+ * Mutable accounting accumulators shared across the plan and apply passes of a
+ * single consolidate run. The chunk loop in {@link planConsolidation} populates
+ * these; the op-handlers invoked by {@link applyConsolidationPlan} mutate them
+ * further via {@link ConsolidateAccounting.pushSkipReason}; the final envelope
+ * reads them. Bundled into one object (rather than plain locals) so the passes
+ * can be separate functions while threading the same live counters.
+ *
+ * Invariant: `processed == actioned + judgedNoAction + Σ(skipReasons) +
+ * failedChunkMemories`.
+ */
+interface ConsolidateAccounting {
+  /** Memories the LLM saw inside a chunk but proposed no op for. */
+  judgedNoAction: number;
+  /** Memories in chunks whose LLM call failed or were never attempted. */
+  failedChunkMemories: number;
+  /** Count of LLM chunks that failed (transport error or invalid plan). */
+  totalChunksFailed: number;
+  /** Structured per-op skip reasons, one entry per ref. */
+  skipReasons: Array<{
+    ref: string;
+    skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }>;
+  }>;
+  /** Per-ref index into {@link skipReasons} (one accounting bucket per ref). */
+  skipReasonByRef: Map<string, { ref: string; skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }> }>;
+  /** Refs that contributed to judgedNoAction in their own chunk. */
+  judgedNoActionRefs: Set<string>;
+  /** Record a deterministic post-LLM op rejection for `ref`. */
+  pushSkipReason: (op: ConsolidateOpKind | "unknown", ref: string, reason: string) => void;
+}
+
+/** Fresh, zeroed accounting accumulators for one consolidate run. */
+function createConsolidateAccounting(): ConsolidateAccounting {
+  const acc: ConsolidateAccounting = {
+    judgedNoAction: 0,
+    failedChunkMemories: 0,
+    totalChunksFailed: 0,
+    skipReasons: [],
+    skipReasonByRef: new Map(),
+    judgedNoActionRefs: new Set(),
+    pushSkipReason: () => {},
+  };
+  acc.pushSkipReason = (op, ref, reason) => {
+    // 2026-05-27 cross-chunk double-count fix: if `ref` already contributed
+    // to judgedNoAction in its own chunk (a different chunk proposed an op
+    // for it that is now being rejected here), promote it from the
+    // judgedNoAction bucket into the more specific skipReason bucket.
+    // Preserves the invariant: processed == actioned + judgedNoAction +
+    // Σ(skipReasons) + failedChunkMemories.
+    if (acc.judgedNoActionRefs.delete(ref)) acc.judgedNoAction--;
+    const existing = acc.skipReasonByRef.get(ref);
+    if (existing) {
+      // Already counted once for accounting. Append the extra skip to the
+      // ref's grouped entry for observability without adding a new array
+      // entry (which would break the accounting invariant).
+      existing.skips.push({ op, reason });
+      return;
+    }
+    const entry = { ref, skips: [{ op, reason }] };
+    acc.skipReasonByRef.set(ref, entry);
+    acc.skipReasons.push(entry);
+  };
+  return acc;
+}
+
+/**
+ * Result of the narrowing pass. Either the run is already decided (an early
+ * envelope — empty pool, no incremental candidates, or judged-cache emptied the
+ * pool) and `done` carries the finished {@link ConsolidateResult}, or the pool
+ * survived narrowing and the pass hands back the filtered memories plus the
+ * state the later passes need.
+ */
+type NarrowPoolResult =
+  | { done: true; result: ConsolidateResult }
+  | {
+      done: false;
+      memories: MemoryEntry[];
+      dedupCollapsed: number;
+      perfMs: { dedupPoolSize: number; judgedCacheSkipped: number };
+      judgedCacheEnabled: boolean;
+      currentHashByName: Map<string, string>;
+    };
+
+/**
+ * Pass 1 — narrow the memory pool before any LLM work: drop stale DB entries,
+ * partition hot-probation assets, run the deterministic dedup pre-pass, apply
+ * incremental-since and judged-state-cache narrowing, and cap to `opts.limit`
+ * (oldest-modified first). Returns an early envelope when the pool empties at
+ * any stage; otherwise returns the narrowed pool and the state the plan/apply
+ * passes consume. Behavior-identical to the former inlined narrowing block.
+ */
+async function narrowConsolidationPool(
   opts: AkmConsolidateOptions,
-  config: import("../../core/config/config").AkmConfig,
+  config: AkmConfig,
   stashDir: string,
   startMs: number,
-  sourceRun: string,
   warnings: string[],
   sharedStateDb: Database | undefined,
-): Promise<ConsolidateResult> {
+): Promise<NarrowPoolResult> {
   let memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
   // Pre-flight: filter out stale DB entries whose files no longer exist on
@@ -1024,8 +1115,7 @@ async function akmConsolidateInner(
   // Without that flag no assets will ever carry the hot-probation marker, so
   // running the filter loop would be pure unnecessary I/O over the full corpus.
   const hotProbationEnabled =
-    (config.profiles?.improve?.default?.processes?.extract?.hotProbation as { enabled?: boolean } | undefined)
-      ?.enabled === true;
+    (getImproveProcessConfig(config, "extract")?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
   let hotProbationCount = 0;
   if (hotProbationEnabled) {
     const hotProbationMemories: typeof memories = [];
@@ -1096,27 +1186,33 @@ async function akmConsolidateInner(
   }
 
   if (memories.length === 0) {
-    return makeConsolidateResult({
-      dryRun: opts.dryRun ?? false,
-      target: opts.target ?? stashDir,
-      // #617: the deterministic dedup pre-pass may have emptied the pool by
-      // collapsing every remaining memory into a canonical. Surface those
-      // collapses in `deleted` so the run reports the work it actually did.
-      deleted: dedupCollapsed,
-      warnings,
-      durationMs: Date.now() - startMs,
-    });
+    return {
+      done: true,
+      result: makeConsolidateResult({
+        dryRun: opts.dryRun ?? false,
+        target: opts.target ?? stashDir,
+        // #617: the deterministic dedup pre-pass may have emptied the pool by
+        // collapsing every remaining memory into a canonical. Surface those
+        // collapses in `deleted` so the run reports the work it actually did.
+        deleted: dedupCollapsed,
+        warnings,
+        durationMs: Date.now() - startMs,
+      }),
+    };
   }
 
   if (opts.incrementalSince) {
     memories = narrowToIncrementalCandidates(memories, opts.incrementalSince, warnings, opts.neighborsPerChanged);
     if (memories.length === 0) {
-      return makeConsolidateResult({
-        dryRun: opts.dryRun ?? false,
-        target: opts.target ?? stashDir,
-        warnings,
-        durationMs: Date.now() - startMs,
-      });
+      return {
+        done: true,
+        result: makeConsolidateResult({
+          dryRun: opts.dryRun ?? false,
+          target: opts.target ?? stashDir,
+          warnings,
+          durationMs: Date.now() - startMs,
+        }),
+      };
     }
   }
 
@@ -1188,13 +1284,16 @@ async function akmConsolidateInner(
       );
     }
     if (memories.length === 0) {
-      return makeConsolidateResult({
-        dryRun: opts.dryRun ?? false,
-        target: opts.target ?? stashDir,
-        deleted: dedupCollapsed,
-        warnings,
-        durationMs: Date.now() - startMs,
-      });
+      return {
+        done: true,
+        result: makeConsolidateResult({
+          dryRun: opts.dryRun ?? false,
+          target: opts.target ?? stashDir,
+          deleted: dedupCollapsed,
+          warnings,
+          durationMs: Date.now() - startMs,
+        }),
+      };
     }
   }
 
@@ -1227,6 +1326,37 @@ async function akmConsolidateInner(
     memories = memories.slice(0, opts.limit);
   }
 
+  return { done: false, memories, dedupCollapsed, perfMs, judgedCacheEnabled, currentHashByName };
+}
+
+/**
+ * Pass 2 — turn the narrowed pool into an executable plan. Sizes chunks to the
+ * model context window, clusters by embedding similarity, injects the
+ * anti-collapse random fraction, applies the cold-start budget cap, runs the
+ * per-chunk LLM calls (with retry + failure-rate abort), records judged-state
+ * cache outcomes, and reconciles the per-chunk op arrays via {@link mergePlans}.
+ * Populates `accounting` in place. Behavior-identical to the former inlined
+ * plan-generation block.
+ */
+async function planConsolidation(
+  opts: AkmConsolidateOptions,
+  config: AkmConfig,
+  stashDir: string,
+  startMs: number,
+  memories: MemoryEntry[],
+  warnings: string[],
+  sharedStateDb: Database | undefined,
+  judgedCacheEnabled: boolean,
+  currentHashByName: Map<string, string>,
+  accounting: ConsolidateAccounting,
+): Promise<{
+  allOps: ConsolidateOperation[];
+  totalChunks: number;
+  llmPoolSize: number;
+  embedTelemetry: ClusterEmbedTelemetry;
+  isHttpPath: boolean;
+  sourceName: string;
+}> {
   // Consolidation always uses the HTTP LLM client directly — never the agent
   // CLI. The agent CLI is for interactive agent sessions (reflect, propose);
   // structured JSON generation works better and faster via HTTP.
@@ -1276,7 +1406,7 @@ async function akmConsolidateInner(
   let finalClusteredMemories = clusteredMemories;
   {
     const antiCollapseForCluster: AntiCollapseConfig =
-      (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+      (getImproveProcessConfig(config, "consolidate")?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
     if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
       const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
       const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
@@ -1375,46 +1505,13 @@ async function akmConsolidateInner(
   const standardsContext = resolveStashStandards(stashDir);
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
-  // Structured skip-reason histogram (2026-05-26): every deterministic
-  // post-LLM op rejection site below also calls `pushSkipReason` so the
-  // health rollup can aggregate without regex-parsing English warning
-  // strings. See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
-  const skipReasons: Array<{
-    ref: string;
-    skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }>;
-  }> = [];
-  // Per-ref grouping of skipReasons entries. A ref occupies exactly one
-  // accounting bucket and therefore exactly one skipReasons array entry;
-  // subsequent skip ops for the same ref append to that entry's `skips[]`
-  // rather than pushing a second array entry (that would inflate
-  // Σ(skipReasons) and break the invariant by +1 per duplicate).
-  const skipReasonByRef = new Map<
-    string,
-    { ref: string; skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }> }
-  >();
-  const pushSkipReason = (op: ConsolidateOpKind | "unknown", ref: string, reason: string): void => {
-    // 2026-05-27 cross-chunk double-count fix: if `ref` already contributed
-    // to judgedNoAction in its own chunk (a different chunk proposed an op
-    // for it that is now being rejected here), promote it from the
-    // judgedNoAction bucket into the more specific skipReason bucket.
-    // Preserves the invariant: processed == actioned + judgedNoAction +
-    // Σ(skipReasons) + failedChunkMemories.
-    if (judgedNoActionRefs.delete(ref)) judgedNoAction--;
-    const existing = skipReasonByRef.get(ref);
-    if (existing) {
-      // Already counted once for accounting. Append the extra skip to the
-      // ref's grouped entry for observability without adding a new array
-      // entry (which would break the accounting invariant).
-      existing.skips.push({ op, reason });
-      return;
-    }
-    const entry = { ref, skips: [{ op, reason }] };
-    skipReasonByRef.set(ref, entry);
-    skipReasons.push(entry);
-  };
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
   // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
-  let judgedNoAction = 0;
+  // The structured skip-reason histogram (2026-05-26) plus the cross-chunk
+  // double-count fixes now live on `accounting`; every deterministic post-LLM
+  // op rejection site calls `accounting.pushSkipReason`. See
+  // `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
+  //
   // Judged-state cache (#581): coarse outcome per memory NAME the LLM actually
   // judged in a successfully-parsed chunk this run. "actioned" = an op targeted
   // it; "no_action" = the LLM saw it and proposed nothing. Populated only when
@@ -1422,24 +1519,12 @@ async function akmConsolidateInner(
   // step is a no-op). Memories in failed/aborted chunks are NOT recorded, so a
   // transient LLM failure never poisons the cache into skipping them next run.
   const judgedOutcomeByName = new Map<string, "actioned" | "no_action">();
-  // 2026-05-27 cross-chunk double-count fix: refs that contributed to
-  // judgedNoAction in their own chunk. When a different chunk's op references
-  // one of these as a secondary and that op later fails, the ref would land
-  // in BOTH judgedNoAction and skipReasons (delta +1 per occurrence). Track
-  // the set so the merge-failure path can decrement and re-bucket.
-  const judgedNoActionRefs = new Set<string>();
-  // 2026-05-26 accounting-leak fix: memories that belong to a chunk whose
-  // LLM call failed before any per-chunk noAction calculation runs. They
-  // would otherwise vanish from the envelope's accounting (no judgedNoAction
-  // bump, no skipReasons entry, no actioned counter).
-  let failedChunkMemories = 0;
   // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
   // Consecutive-count policies are brittle against transient LM Studio reloads:
   // two transient failures abort the run even though the next chunk would succeed.
   // Rate-based abort (≥50% failure over ≥4 chunks) is more robust.
   // Tanenbaum, Distributed Systems §8 — rate-based policies with minimum sample sizes.
   let totalChunksProcessed = 0;
-  let totalChunksFailed = 0;
   const ABORT_MIN_CHUNKS = 4;
   const ABORT_FAILURE_RATE = 0.5;
 
@@ -1453,14 +1538,14 @@ async function akmConsolidateInner(
       warnings.push(msg);
       // Account for memories in unprocessed chunks.
       for (let i = chunkIdx; i < chunks.length; i++) {
-        failedChunkMemories += (chunks[i] as MemoryEntry[]).length;
+        accounting.failedChunkMemories += (chunks[i] as MemoryEntry[]).length;
       }
       break;
     }
 
     // Abort if failure rate >= 50% over at least 4 processed chunks.
     if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
-      const failureRate = totalChunksFailed / totalChunksProcessed;
+      const failureRate = accounting.totalChunksFailed / totalChunksProcessed;
       if (failureRate >= ABORT_FAILURE_RATE) {
         const skipped = chunks.length - chunkIdx;
         const abortMsg = `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`;
@@ -1471,7 +1556,7 @@ async function akmConsolidateInner(
         // rejected). Without this, the accounting invariant fails by
         // `Σ(unattempted_chunk.length)` whenever the abort fires.
         for (let i = chunkIdx; i < chunks.length; i++) {
-          failedChunkMemories += chunks[i].length;
+          accounting.failedChunkMemories += chunks[i].length;
         }
         break;
       }
@@ -1490,8 +1575,8 @@ async function akmConsolidateInner(
     // Σ(skipReasons) + failedChunkMemories`. Not counted toward the
     // LLM-failure-rate abort policy — no request was attempted.
     if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
-      for (const m of chunk) judgedNoActionRefs.add(`memory:${m.name}`);
-      judgedNoAction += chunk.length;
+      for (const m of chunk) accounting.judgedNoActionRefs.add(`memory:${m.name}`);
+      accounting.judgedNoAction += chunk.length;
       warn(
         `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
       );
@@ -1550,12 +1635,12 @@ async function akmConsolidateInner(
         warn(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
         warnings.push(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
         totalChunksProcessed++;
-        totalChunksFailed++;
+        accounting.totalChunksFailed++;
         // Account for the chunk's memories under the failed-chunk bucket.
         // judgedNoAction does NOT run on this path (it's after the success
         // guards) so without this the accounting invariant breaks on every
         // chunk-level transport/parse failure.
-        failedChunkMemories += chunk.length;
+        accounting.failedChunkMemories += chunk.length;
         continue;
       }
       raw = retry;
@@ -1575,8 +1660,8 @@ async function akmConsolidateInner(
       warn(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
       warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
       totalChunksProcessed++;
-      totalChunksFailed++;
-      failedChunkMemories += chunk.length;
+      accounting.totalChunksFailed++;
+      accounting.failedChunkMemories += chunk.length;
       continue;
     }
 
@@ -1615,7 +1700,7 @@ async function akmConsolidateInner(
       const memRef = `memory:${m.name}`;
       if (!targetRefs.has(memRef)) {
         chunkNoAction++;
-        judgedNoActionRefs.add(memRef);
+        accounting.judgedNoActionRefs.add(memRef);
         // Judged-state cache (#581): the LLM saw this memory and proposed
         // nothing → record judged-unchanged so the next run can skip it.
         if (judgedCacheEnabled) judgedOutcomeByName.set(m.name, "no_action");
@@ -1624,7 +1709,7 @@ async function akmConsolidateInner(
         judgedOutcomeByName.set(m.name, "actioned");
       }
     }
-    judgedNoAction += chunkNoAction;
+    accounting.judgedNoAction += chunkNoAction;
 
     chunkOpsArrays.push(ops);
   }
@@ -1672,66 +1757,33 @@ async function akmConsolidateInner(
   const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays, knownRefs);
   warnings.push(...mergeWarnings);
 
-  // -- Dry-run: show AI plan without executing any writes --------------------
-  if (opts.dryRun) {
-    return makeConsolidateResult({
-      dryRun: true,
-      previewOnly: true,
-      target: sourceName,
-      processed: memories.length,
-      failedChunks: totalChunksFailed,
-      totalChunks: chunks.length,
-      judgedNoAction,
-      skipReasons,
-      // No merge has executed on the preview path — the per-secondary tally is
-      // provably still 0 here (it only increments in the op-execution loop).
-      mergedSecondaries: 0,
-      failedChunkMemories,
-      planned: allOps,
-      warnings,
-      durationMs: Date.now() - startMs,
-    });
-  }
+  return { allOps, totalChunks: chunks.length, llmPoolSize, embedTelemetry, isHttpPath, sourceName };
+}
 
-  warn(`[consolidate] plan: ${allOps.length} operation(s)`);
-
-  // -- HTTP path: warn about quality and confirm unless auto-accepted --------
-  if (isHttpPath) {
-    warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
-    // Per-proposal confidence gating is handled by the caller (improve.ts)
-    // via runAutoAcceptGate after this function returns. The gate reads
-    // proposal.confidence (forwarded from op.confidence above) and applies
-    // a minimumThreshold floor of 95 for consolidate's destructive ops.
-    // Here we only gate the interactive-confirm path for manual/HTTP invocations.
-    if (opts.autoAccept === undefined && allOps.length > 0) {
-      const n = allOps.length;
-      // Non-interactive contexts (CI / test runners / piped stdin) must not
-      // block on an unanswerable prompt. Default to a non-destructive "no"
-      // so callers in those contexts get the same "aborted, preview only"
-      // shape they'd get from explicit user dismissal. AKM_NON_INTERACTIVE
-      // lets callers force this path even when stdin happens to be a TTY.
-      const nonInteractive = process.stdin.isTTY === false || process.env.AKM_NON_INTERACTIVE === "1";
-      const answer = nonInteractive ? false : await promptConfirm(`Apply ${n} operations? [y/N] `);
-      if (!answer) {
-        return makeConsolidateResult({
-          previewOnly: true,
-          target: sourceName,
-          processed: memories.length,
-          failedChunks: totalChunksFailed,
-          totalChunks: chunks.length,
-          judgedNoAction,
-          skipReasons,
-          // No merge executed on the abort path — mergedSecondaries is still 0.
-          mergedSecondaries: 0,
-          failedChunkMemories,
-          planned: allOps,
-          warnings: [...warnings, nonInteractive ? "Non-interactive context: skipped apply." : "Aborted by user."],
-          durationMs: Date.now() - startMs,
-        });
-      }
-    }
-  }
-
+/**
+ * Pass 3 — execute the reconciled plan against the filesystem: resolve the
+ * write target, journal the batch, dispatch each op to its handler, then commit
+ * the batch at the boundary and clean up the journal. Mutates `accounting` via
+ * the op-handlers' `pushSkipReason`. Behavior-identical to the former inlined
+ * write block. Never invoked on the dry-run or aborted-confirm paths.
+ */
+async function applyConsolidationPlan(
+  config: AkmConfig,
+  stashDir: string,
+  sourceRun: string,
+  memories: MemoryEntry[],
+  warnings: string[],
+  allOps: ConsolidateOperation[],
+  accounting: ConsolidateAccounting,
+  dedupCollapsed: number,
+): Promise<{
+  merged: number;
+  deleted: number;
+  contradicted: number;
+  mergeFloorViolations: number;
+  mergedSecondaries: number;
+  promoted: string[];
+}> {
   // -- Phase B + writes -------------------------------------------------------
   const target = resolveWriteTarget(config);
   const timestamp = timestampForFilename();
@@ -1772,7 +1824,7 @@ async function akmConsolidateInner(
     promotedSourceRefs,
     warnings,
     counts,
-    pushSkipReason,
+    pushSkipReason: accounting.pushSkipReason,
   };
 
   // Thin dispatch over the op discriminator — each branch is now an isolated,
@@ -1825,6 +1877,102 @@ async function akmConsolidateInner(
     );
   }
 
+  return { merged, deleted, contradicted, mergeFloorViolations, mergedSecondaries, promoted };
+}
+
+async function akmConsolidateInner(
+  opts: AkmConsolidateOptions,
+  config: import("../../core/config/config").AkmConfig,
+  stashDir: string,
+  startMs: number,
+  sourceRun: string,
+  warnings: string[],
+  sharedStateDb: Database | undefined,
+): Promise<ConsolidateResult> {
+  // -- Pass 1: narrow the memory pool (may early-return an envelope) ----------
+  const narrowed = await narrowConsolidationPool(opts, config, stashDir, startMs, warnings, sharedStateDb);
+  if (narrowed.done) return narrowed.result;
+  const { memories, dedupCollapsed, perfMs, judgedCacheEnabled, currentHashByName } = narrowed;
+
+  // -- Pass 2: build the LLM plan (populates the shared accounting counters) ---
+  const accounting = createConsolidateAccounting();
+  const { allOps, totalChunks, llmPoolSize, embedTelemetry, isHttpPath, sourceName } = await planConsolidation(
+    opts,
+    config,
+    stashDir,
+    startMs,
+    memories,
+    warnings,
+    sharedStateDb,
+    judgedCacheEnabled,
+    currentHashByName,
+    accounting,
+  );
+
+  // -- Dry-run: show AI plan without executing any writes --------------------
+  if (opts.dryRun) {
+    return makeConsolidateResult({
+      dryRun: true,
+      previewOnly: true,
+      target: sourceName,
+      processed: memories.length,
+      failedChunks: accounting.totalChunksFailed,
+      totalChunks,
+      judgedNoAction: accounting.judgedNoAction,
+      skipReasons: accounting.skipReasons,
+      // No merge has executed on the preview path — the per-secondary tally is
+      // provably still 0 here (it only increments in the op-execution loop).
+      mergedSecondaries: 0,
+      failedChunkMemories: accounting.failedChunkMemories,
+      planned: allOps,
+      warnings,
+      durationMs: Date.now() - startMs,
+    });
+  }
+
+  warn(`[consolidate] plan: ${allOps.length} operation(s)`);
+
+  // -- HTTP path: warn about quality and confirm unless auto-accepted --------
+  if (isHttpPath) {
+    warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
+    // Per-proposal confidence gating is handled by the caller (improve.ts)
+    // via runAutoAcceptGate after this function returns. The gate reads
+    // proposal.confidence (forwarded from op.confidence above) and applies
+    // a minimumThreshold floor of 95 for consolidate's destructive ops.
+    // Here we only gate the interactive-confirm path for manual/HTTP invocations.
+    if (opts.autoAccept === undefined && allOps.length > 0) {
+      const n = allOps.length;
+      // Non-interactive contexts (CI / test runners / piped stdin) must not
+      // block on an unanswerable prompt. Default to a non-destructive "no"
+      // so callers in those contexts get the same "aborted, preview only"
+      // shape they'd get from explicit user dismissal. AKM_NON_INTERACTIVE
+      // lets callers force this path even when stdin happens to be a TTY.
+      const nonInteractive = process.stdin.isTTY === false || process.env.AKM_NON_INTERACTIVE === "1";
+      const answer = nonInteractive ? false : await promptConfirm(`Apply ${n} operations? [y/N] `);
+      if (!answer) {
+        return makeConsolidateResult({
+          previewOnly: true,
+          target: sourceName,
+          processed: memories.length,
+          failedChunks: accounting.totalChunksFailed,
+          totalChunks,
+          judgedNoAction: accounting.judgedNoAction,
+          skipReasons: accounting.skipReasons,
+          // No merge executed on the abort path — mergedSecondaries is still 0.
+          mergedSecondaries: 0,
+          failedChunkMemories: accounting.failedChunkMemories,
+          planned: allOps,
+          warnings: [...warnings, nonInteractive ? "Non-interactive context: skipped apply." : "Aborted by user."],
+          durationMs: Date.now() - startMs,
+        });
+      }
+    }
+  }
+
+  // -- Pass 3: execute the plan against the filesystem ------------------------
+  const { merged, deleted, contradicted, mergeFloorViolations, mergedSecondaries, promoted } =
+    await applyConsolidationPlan(config, stashDir, sourceRun, memories, warnings, allOps, accounting, dedupCollapsed);
+
   const runDurationMs = Date.now() - startMs;
   const budgetFraction =
     opts.runBudgetMs !== undefined && opts.runBudgetMs > 0 ? runDurationMs / opts.runBudgetMs : undefined;
@@ -1845,12 +1993,12 @@ async function akmConsolidateInner(
     promoted,
     contradicted,
     mergeFloorViolations,
-    failedChunks: totalChunksFailed,
-    totalChunks: chunks.length,
-    judgedNoAction,
-    skipReasons,
+    failedChunks: accounting.totalChunksFailed,
+    totalChunks,
+    judgedNoAction: accounting.judgedNoAction,
+    skipReasons: accounting.skipReasons,
     mergedSecondaries,
-    failedChunkMemories,
+    failedChunkMemories: accounting.failedChunkMemories,
     warnings,
     durationMs: runDurationMs,
     perfTelemetry: {
@@ -2050,7 +2198,7 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
   // pipeline from building ever-deeper LLM-merged trees that lose the
   // source fidelity of the original episodes.
   const antiCollapseConfig: AntiCollapseConfig =
-    (config.profiles?.improve?.default?.processes?.consolidate?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+    (getImproveProcessConfig(config, "consolidate")?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
   if (antiCollapseConfig.enabled !== false) {
     const allParticipants = [op.primary, ...op.secondaries];
     // One read per participant: generation counter, stripped body (for the
@@ -2578,10 +2726,13 @@ async function checkPreEmitDedup(opts: {
  * doesn't match the pattern (assumed to already be an ISO timestamp).
  */
 function parseSinceToIso(since: string): string {
-  const m = since.match(/^(\d+)(m|h|d)$/);
-  if (!m) return since;
-  const multiplier = { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
-  return new Date(Date.now() - parseInt(m[1], 10) * multiplier).toISOString();
+  // Case-sensitive units, matching the original local regex `/^(\d+)(m|h|d)$/`.
+  // NOTE: here `m` = MINUTES (see core/time.ts parseDuration for the cross-call
+  // `m` month-vs-minute discrepancy). Non-matching input is returned unchanged
+  // (assumed to already be an ISO timestamp).
+  const ms = parseDuration(since, { m: 60_000, h: 3_600_000, d: 86_400_000 });
+  if (ms === null) return since;
+  return new Date(Date.now() - ms).toISOString();
 }
 
 export function narrowToIncrementalCandidates(

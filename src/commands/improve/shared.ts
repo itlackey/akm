@@ -10,7 +10,7 @@
  */
 
 import type { AkmConfig } from "../../core/config/config";
-import { getDefaultLlmConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, getImproveProcessConfig } from "../../core/config/config";
 import { warn } from "../../core/warn";
 import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
@@ -47,7 +47,7 @@ export function resolveImproveLlmFn(
     signal?: AbortSignal;
   },
 ): ((prompt: string) => Promise<string | null>) | undefined {
-  const processConfig = config.profiles?.improve?.default?.processes?.[opts.processKey];
+  const processConfig = getImproveProcessConfig(config, opts.processKey);
   const runnerSpec = resolveImproveProcessRunnerFromProfile(processConfig, config);
   const llmConfig = runnerSpec && runnerIsLlm(runnerSpec) ? runnerSpec.connection : getDefaultLlmConfig(config);
   if (!llmConfig) return undefined;
