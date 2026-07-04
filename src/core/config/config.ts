@@ -49,23 +49,9 @@ export { VALID_HARNESS_IDS } from "./config-types";
 
 // ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
 
-/**
- * Curated taxonomy of failure modes for negative feedback.
- *
- * Structured failure modes enable aggregation across feedback events so the
- * distill pipeline can detect that "5 assets failed for the same reason" and
- * act on it — free-text strings about the same issue are not aggregatable.
- */
-export const FEEDBACK_FAILURE_MODES = [
-  "incorrect", // Factually wrong or logically flawed content
-  "outdated", // Correct at some point but now stale
-  "dangerous", // Could cause harm if followed (security, safety)
-  "incomplete", // Missing key steps, context, or caveats
-  "redundant", // Duplicates another asset without adding value
-] as const;
-
-/** Union of the curated failure-mode values. */
-export type FeedbackFailureMode = (typeof FEEDBACK_FAILURE_MODES)[number];
+// Canonical taxonomy lives in the schema/validator layer; re-exported here so
+// existing `../core/config/config` import sites keep working.
+export { FEEDBACK_FAILURE_MODES, type FeedbackFailureMode } from "./config-schema";
 
 /**
  * Default value for {@link IndexPassConfig.graphExtractionBatchSize}. Chosen
