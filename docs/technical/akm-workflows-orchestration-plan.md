@@ -42,7 +42,7 @@ reuses, rather than reinvents, this substrate:
 | Harness-agnostic runner union `llm \| agent \| sdk` + single dispatch seam | `src/integrations/agent/runner.ts` (`RunnerSpec`), `runner-dispatch.ts` (`executeRunner`) |
 | OpenCode SDK session runner (fs access) | `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` (`runOpencodeSdk`) |
 | Agent CLI spawn: timeouts, process-group kill, structured failure reasons | `src/integrations/agent/spawn.ts` (`runAgent`, `AgentRunResult`) |
-| Per-platform argv construction | `src/integrations/agent/builders.ts`, `harnesses/{claude,opencode}/agent-builder.ts` |
+| Per-platform argv construction | `src/integrations/agent/builders.ts`, `src/integrations/harnesses/{claude,opencode}/agent-builder.ts` |
 | Structured (schema-validated) LLM output with retry | `src/llm/structured-call.ts` (`callStructured`, `responseSchema`) |
 | Token/usage metering | `src/llm/usage-telemetry.ts`, `usage-persist.ts` |
 | Durable run state + additive migrations | `src/workflows/db.ts`, `storage/repositories/workflow-runs-repository.ts` |
@@ -751,7 +751,7 @@ assumes the first option in each:
   only. Structured-output normalization + retry-until-valid loop.
 - **P2 — harness adapters.** A builder + result-extractor + identity marker per
   harness: Codex, Copilot CLI, Pi, then Gemini / Aider / Amazon Q / OpenHands.
-  Each is contained to `harnesses/<name>/{agent-builder,result-extractor}.ts`;
+  Each is contained to `src/integrations/harnesses/<name>/{agent-builder,result-extractor}.ts`;
   the conformance suite runs the golden workflows across all of them.
 - **P3 — CC delegation.** `cc-emitter.ts`, `akm workflow report`,
   launch/handoff glue. In-harness path reaches parity with native for the
@@ -790,5 +790,5 @@ Extend:
 
 Reuse unchanged:
 - `src/integrations/agent/runner-dispatch.ts`, `spawn.ts`, `runner.ts` (core), `builders.ts` (mechanism)
-- `src/integrations/harnesses/opencode-sdk/**`, `harnesses/{claude,opencode}/agent-builder.ts`
+- `src/integrations/harnesses/opencode-sdk/**`, `src/integrations/harnesses/{claude,opencode}/agent-builder.ts`
 - `src/llm/structured-call.ts`, `usage-telemetry.ts`
