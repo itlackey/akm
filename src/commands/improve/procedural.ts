@@ -65,8 +65,6 @@ export interface AkmProceduralOptions {
   sourceRun?: string;
   /** Caller budget signal; an aborted signal short-circuits before any LLM call. */
   signal?: AbortSignal;
-  /** Auto-accept threshold forwarded to the proposal gate (reserved; v1 queues pending). */
-  autoAccept?: number;
   /** Attribution tag persisted on emitted proposals. Defaults to `"procedural"`. */
   eligibilitySource?: EligibilitySource;
   /** Test seam — state.db path override for proposal/event writes. */
