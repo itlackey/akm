@@ -56,7 +56,7 @@ export const DURATION_UNITS: Readonly<Record<string, number>> = {
  * two collapse. Amount is parsed with base-10 `parseInt`; `null` is returned
  * rather than throwing so each caller keeps its own error/fallback policy.
  */
-export function parseDuration(spec: string, units: Record<string, number> = DURATION_UNITS): number | null {
+export function parseDuration(spec: string, units: Readonly<Record<string, number>> = DURATION_UNITS): number | null {
   const match = spec.trim().match(/^(\d+)([a-zA-Z])$/);
   if (!match) return null;
   const amount = Number.parseInt(match[1] ?? "", 10);
