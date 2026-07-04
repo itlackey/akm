@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { firstString, groupBy, stringArray } from "../../../core/common";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
@@ -645,27 +645,27 @@ function archiveCleanupCandidate(
 }
 
 function persistBeliefStateTransition(filePath: string, transition: MemoryBeliefStateTransition): void {
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = parseFrontmatter(raw);
-  const nextFrontmatter: Record<string, unknown> = {
-    ...parsed.data,
-    beliefState: transition.toState,
-  };
+  mutateFrontmatter(filePath, (parsed) => {
+    const nextFrontmatter: Record<string, unknown> = {
+      ...parsed.data,
+      beliefState: transition.toState,
+    };
 
-  const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
-  if (transition.toState === "contradicted") {
-    nextFrontmatter.contradictedBy = [...currentBeliefRefs];
-  } else {
-    delete nextFrontmatter.contradictedBy;
-    if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
-      delete nextFrontmatter.supersededBy;
+    const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
+    if (transition.toState === "contradicted") {
+      nextFrontmatter.contradictedBy = [...currentBeliefRefs];
+    } else {
+      delete nextFrontmatter.contradictedBy;
+      if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
+        delete nextFrontmatter.supersededBy;
+      }
     }
-  }
 
-  if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
-  else delete nextFrontmatter.currentBeliefRefs;
+    if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
+    else delete nextFrontmatter.currentBeliefRefs;
 
-  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
+    return nextFrontmatter;
+  });
 }
 
 function appendBeliefStateTransitionLog(stashDir: string, transitions: MemoryBeliefStateTransition[]): string {

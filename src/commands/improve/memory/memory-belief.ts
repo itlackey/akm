@@ -29,9 +29,7 @@
  * - MemOS (arXiv:2507.03724) — formal archive/merge/transition with shared state model
  */
 
-import fs from "node:fs";
-import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import { mutateFrontmatter } from "../../../core/asset/frontmatter";
 
 // ── Re-exported belief-state types ───────────────────────────────────────────
 
@@ -59,18 +57,17 @@ export type {
  * @param contradictedByRef - The ref that contradicts this memory.
  */
 export function writeContradictEdge(filePath: string, contradictedByRef: string): void {
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = parseFrontmatter(raw);
+  mutateFrontmatter(filePath, (parsed) => {
+    const existing: string[] = Array.isArray(parsed.data.contradictedBy)
+      ? (parsed.data.contradictedBy as string[])
+      : [];
+    if (existing.includes(contradictedByRef)) return null; // Already written — idempotent.
 
-  const existing: string[] = Array.isArray(parsed.data.contradictedBy) ? (parsed.data.contradictedBy as string[]) : [];
-  if (existing.includes(contradictedByRef)) return; // Already written — idempotent.
-
-  const nextContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
-  const nextFrontmatter: Record<string, unknown> = {
-    ...parsed.data,
-    contradictedBy: nextContradictedBy,
-    beliefState: "contradicted",
-  };
-
-  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
+    const nextContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
+    return {
+      ...parsed.data,
+      contradictedBy: nextContradictedBy,
+      beliefState: "contradicted",
+    };
+  });
 }

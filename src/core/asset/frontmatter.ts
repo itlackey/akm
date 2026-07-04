@@ -10,7 +10,9 @@
  * sequences) is handled correctly without a brittle hand-rolled state machine.
  */
 
+import fs from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+import { assembleAsset } from "./asset-serialize";
 
 /**
  * Sub-signal breakdown produced by `scoreEncodingSalience` in encoding-salience.ts.
@@ -125,6 +127,29 @@ function parseFrontmatterLenient(frontmatter: string): Record<string, unknown> {
     }
   }
   return data;
+}
+
+/**
+ * Read a file, parse its frontmatter, let `mutator` compute the next
+ * frontmatter object, and write the reassembled asset back to disk.
+ *
+ * This is the shared read→parse→mutate→write primitive. The `mutator` receives
+ * the parsed result and returns either the next frontmatter object (to write)
+ * or `null` to skip the write entirely (e.g. for idempotent no-ops). The body
+ * content is preserved from the parse.
+ *
+ * @returns `true` if a write occurred, `false` if the mutator returned `null`.
+ */
+export function mutateFrontmatter(
+  filePath: string,
+  mutator: (parsed: ReturnType<typeof parseFrontmatter>) => Record<string, unknown> | null,
+): boolean {
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const nextFrontmatter = mutator(parsed);
+  if (nextFrontmatter === null) return false;
+  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
+  return true;
 }
 
 export function parseFrontmatterBlock(
