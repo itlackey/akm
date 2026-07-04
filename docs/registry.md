@@ -198,10 +198,17 @@ akm add file:///absolute/path/to/stash
 3. **Download and extract** -- The tarball is downloaded (or repo cloned) to a
    cache directory under `~/.cache/akm/registry/` and extracted securely
    (path traversal is rejected).
-4. **Security audit** -- The extracted stash is audited before install completes.
-   akm scans source files, metadata, prompts, and install scripts for suspicious
-   patterns such as prompt-injection phrases, remote shell pipes, and risky
-   lifecycle hooks. Critical findings block the install by default.
+4. **Security audit** -- Before install completes, the extracted stash's
+   `env`/`secret` asset **key names** are checked against a denylist of
+   process-execution-hijacking variables -- dynamic-linker hooks
+   (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, ...), `PATH`, shell/runtime startup
+   hooks (`BASH_ENV`, `PROMPT_COMMAND`, `NODE_OPTIONS`, `PYTHONSTARTUP`, ...),
+   and interactive-tool overrides (`EDITOR`, `PAGER`, `GIT_SSH_COMMAND`, ...).
+   `akm add` **blocks the install** when a dangerous key is present unless
+   `--allow-insecure` is set (or you confirm at an interactive prompt).
+   This is a **key-name audit only** (plus the path-traversal rejection in step
+   3) -- akm does **not** scan source files, prompts, metadata, or install
+   scripts for prompt-injection phrases, shell pipes, or lifecycle hooks.
 5. **Stash root detection** -- The extracted contents are scanned for asset
    type directories (`scripts/`, `skills/`, etc.) or a `.stash/` marker. If the
    stash nests its stash under an `opencode/` subdirectory, that is detected
