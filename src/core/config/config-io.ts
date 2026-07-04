@@ -112,13 +112,22 @@ export function backupExistingConfig(configPath: string): ConfigBackupResult | u
   if (!fs.existsSync(configPath)) return undefined;
 
   const backupDir = path.join(getCacheDir(), "config-backups");
-  fs.mkdirSync(backupDir, { recursive: true });
+  // 08-F4: lock the backup dir owner-only up front (0700) — matching the
+  // env.ts/secret.ts convention — so no other local user can traverse in during
+  // the copy→chmod window. chmod again to tighten a dir from an older version.
+  fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(backupDir, 0o700);
 
   const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
   const timestamped = path.join(backupDir, `config-${timestamp}.json`);
   const latest = path.join(backupDir, "config.latest.json");
   fs.copyFileSync(configPath, timestamped);
   fs.copyFileSync(configPath, latest);
+  // 08-F4: a config backup carries the same sensitive fields as the live config
+  // (endpoints, tokens). `copyFileSync` inherits the source's (often 0644) mode,
+  // so tighten the backups to owner-only — mirrors the env-cli 0600 write floor.
+  fs.chmodSync(timestamped, 0o600);
+  fs.chmodSync(latest, 0o600);
 
   pruneOldBackups(backupDir);
 

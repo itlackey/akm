@@ -382,6 +382,28 @@ describe("saveConfig", () => {
     expect(backups.length).toBeGreaterThan(0);
   });
 
+  test("config backups are written owner-only (0600) — they can carry secrets (08-F4)", () => {
+    saveConfig({ semanticSearchMode: "off" });
+    // A second save backs up the first config file.
+    saveConfig({ semanticSearchMode: "auto" });
+
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    // The backup dir is owner-only (0700) so the copy→chmod window is not
+    // traversable by other local users.
+    expect(fs.statSync(backupDir).mode & 0o777).toBe(0o700);
+    const latestPath = path.join(backupDir, "config.latest.json");
+    expect(fs.existsSync(latestPath)).toBe(true);
+    expect(fs.statSync(latestPath).mode & 0o777).toBe(0o600);
+
+    const timestamped = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("config-") && name.endsWith(".json"));
+    expect(timestamped.length).toBeGreaterThan(0);
+    for (const name of timestamped) {
+      expect(fs.statSync(path.join(backupDir, name)).mode & 0o777).toBe(0o600);
+    }
+  });
+
   test("prunes config backups to the 5 most-recent (#459)", () => {
     // 10 saves → 10 distinct backup timestamps (but at most 5 should remain).
     for (let i = 0; i < 10; i++) {

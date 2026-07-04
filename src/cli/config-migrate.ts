@@ -17,12 +17,18 @@ const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
 function backupConfigFile(configPath: string): void {
   if (!fs.existsSync(configPath)) return;
   const backupDir = path.join(getCacheDir(), "config-backups");
-  fs.mkdirSync(backupDir, { recursive: true });
+  // 08-F4: lock the backup dir owner-only (0700) — see config-io.ts.
+  fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(backupDir, 0o700);
   const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
   const backupPath = path.join(backupDir, `config-${timestamp}.json`);
   fs.copyFileSync(configPath, backupPath);
   const latestPath = path.join(backupDir, "config.latest.json");
   fs.copyFileSync(configPath, latestPath);
+  // 08-F4: config backups can carry secrets (endpoints/tokens) — keep them
+  // owner-only rather than inheriting the source file's (often 0644) mode.
+  fs.chmodSync(backupPath, 0o600);
+  fs.chmodSync(latestPath, 0o600);
 }
 
 function acquireMigrateLock(lockPath: string, noWait: boolean): (() => void) | null {
