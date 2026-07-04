@@ -239,23 +239,29 @@ boundary crosses back into akm's durable model.
 
 `src/workflows/exec/native-executor.ts` + `scheduler.ts`:
 
-- **Dispatch.** Each `agent` node builds a `RunnerSpec` (default `sdk` →
-  `runOpencodeSdk`; or `agent` CLI; or `llm`) and calls the existing
-  `executeRunner(spec, prompt, opts)`. No new agent-spawning code — the
-  substrate is done.
+- **Dispatch.** The scheduler selects a `UnitExecutor` per node (see
+  *Reconciliation*). The common `SpawnUnitExecutor` builds a `RunnerSpec`
+  (default `sdk` → `runOpencodeSdk`; or `agent` CLI; or `llm`) and calls the
+  existing `executeRunner(spec, prompt, opts)` — no new agent-spawning code.
+  `delegate` nodes use a separate `DelegateUnitExecutor`, not a `RunnerSpec`.
 - **Scheduler.** A semaphore-bounded async scheduler enforces
   `concurrency = min(16, cores − 2)` (matching CC). `parallel` awaits all
   children (barrier); `pipeline` advances each item through stages
   independently (no barrier); `map` expands the item list then schedules like
   `parallel`. A lifetime unit cap backstops runaways.
-- **Structured output.** Schema nodes route through `callStructured` with
-  `responseSchema`; a validation failure retries, then records a `parse_error`
-  unit — mirroring CC's forced-`StructuredOutput` retry.
+- **Structured output.** Schema nodes route through the extracted
+  `runStructured` core (see *Reconciliation* — `callStructured` today has no
+  validation-driven retry, so this is a factor-out, not a drop-in reuse); a
+  validation miss retries with feedback, then records a `parse_error` unit —
+  mirroring CC's forced-`StructuredOutput` retry.
 - **Worktree isolation.** `isolation: worktree` nodes get a fresh `git
   worktree` (auto-removed if unchanged), so parallel file-mutating units don't
   collide — the same guard CC offers.
-- **Budget.** `usage-telemetry` aggregates tokens across units; the run aborts
-  pending units when `budget.maxTokens`/`maxUnits` is hit (hard ceiling).
+- **Budget.** `maxUnits` is meterable today (count dispatches). `maxTokens`
+  requires threading `usage` through `AgentRunResult` first (today
+  `runOpencodeSdk` discards it — see *Reconciliation*); once landed,
+  `usage-telemetry` aggregates across units and the run aborts pending units at
+  the ceiling. Aborting a *running* unit needs the new `signal` seam.
 - **Resume.** Configurable per run (default durable-row) — see next section.
 
 ## Resume — two modes
@@ -555,11 +561,169 @@ cap, lifetime unit cap, per-run budget ceiling, per-unit timeout (already in
 executable code" doc guidance extends to: a workflow that fans out is
 authorizing N parallel agents, not one.
 
+## Reconciliation with existing akm seams (critical-review findings)
+
+A code-level review of the existing agent seams (runner-dispatch, harness
+registry, structured-output/LLM, and the improve-slice/tasks orchestration
+precedent) surfaced concrete alignment work. The governing rule: **the new
+engine grafts onto akm's existing seams as a thin layer above them — it does not
+fork a parallel execution stack.** The findings below correct several loose
+statements earlier in this plan; where they conflict, this section wins.
+
+### Layering — one new port, existing seams underneath
+
+```
+DOMAIN     workflows/ir/*            Plan Graph, gate spine (pure, no IO)
+              │
+APPLICATION  workflows/exec/
+  scheduler.ts        ── generalize core/concurrent.ts (concurrentMap) — do NOT fork
+  native-executor.ts  ── walks IR, selects a UnitExecutor per node
+  UnitExecutor (NEW port)  interface: run(unit, {signal, emit, budget}) → UnitResult
+       ├─ SpawnUnitExecutor      ─► executeRunner(spec,…)   // llm|agent|sdk — REUSE as-is
+       ├─ StructuredUnitExecutor ─► runStructured(core)     // schema nodes + gates
+       └─ DelegateUnitExecutor   ─► cloud assign/poll/ingest// NOT a RunnerSpec arm
+              │
+INFRA      integrations/agent/*, harnesses/*  (REUSE) ; workflow-runs repo (EXTEND)
+```
+
+Dependency direction is one-way: `workflows/exec/* → integrations/agent/*`,
+never back. `executeRunner` (`runner-dispatch.ts:62`) stays the **leaf spawn
+port** for the three synchronous, in-process kinds; the scheduler owns
+concurrency, abort, budget, and schema *above* it.
+
+### `delegate` is a strategy, not a fourth `RunnerSpec` arm
+
+Earlier this plan said `RunnerSpec` "gains `delegate`." **Reverted.** The union
+`llm|agent|sdk` is exhaustively switched across the improve slice and fused to
+the config `mode` type (`runner.ts:42-60,240`; `runner-dispatch.ts:85`
+`assertNever`). A cloud delegate is semantically alien — async *assign → poll →
+ingest-PR*, not a single-prompt spawn returning `AgentRunResult`. It belongs as
+a sibling **`DelegateUnitExecutor`** strategy the scheduler selects, leaving the
+spawn union and every existing switch untouched.
+
+### Unify structured output by extracting a transport-free core
+
+There are two structured paths today and they do **not** share code:
+`callStructured` (LLM HTTP, `responseSchema`) and agent `parseOutput:"json"`
+(`spawn.ts:492`, embedded-JSON scan, **no schema, no retry**). Critically,
+`callStructured` has **no validation-driven retry** — its only retry is
+transport-level inside `chatCompletion` (`client.ts:290-313`). So the earlier
+"schema nodes reuse `callStructured`'s retry discipline" would in fact be
+*reimplementing* it.
+
+Fix: extract `runStructured<T>({ dispatch, parse, validate, maxAttempts })`
+where `dispatch: (feedback?) => Promise<string>` is injected transport. Then:
+- **llm adapter** = `chatCompletion` + `responseSchema`;
+- **native-schema adapter** (Codex `--output-schema`) = pass schema through, still validate;
+- **agent/sdk adapters** = `runAgent`/`runOpencodeSdk` + prompt-injected schema + `parseEmbeddedJsonResponse`;
+- **gate/summary** = the same core in judge flavor.
+
+**Layering constraint:** this core must live at a **neutral layer** (`core/` or
+`workflows/exec/`), not in `llm/`. `spawn.ts:15` forbids the agent path from
+importing an LLM SDK, and `core/parse.ts` was split out precisely to keep
+`agent/ ⇏ llm/`. Today `runs.ts:522-534` already `require()`s `llm/client`
+from `workflows/` — the refactor must **remove** that coupling, not entrench it.
+
+### The step summary gate is a special case of the general gate
+
+`validateStepSummary` (`validate-summary.ts:79`) is structurally a looping
+`gate`: LLM judge → `{complete, missing[], feedback}` → block-or-pass, fail-open.
+`buildDefaultSummaryJudge` (`runs.ts:518`) is a bespoke `chatCompletion` closure
+with no schema/retry/usage. Refactor it into one gate-flavored `runStructured`
+adapter; fail-open vs. block becomes a per-node policy flag, not a separate
+mechanism.
+
+### Budget is unmeterable for agent/sdk today — additive fields required
+
+`emitLlmUsage` fires **only** in `chatCompletionReal` (`client.ts:434`).
+`AgentRunResult` has no token fields (`spawn.ts:164-175`) and `runOpencodeSdk`
+**discards** the SDK's token accounting (`sdk-runner.ts:254-264`). So
+`budget.maxTokens` is a **no-op for the default `sdk` runner**. `maxUnits` is
+meterable today (count dispatches); `maxTokens` needs usage threaded through
+(additive change below). The plan's earlier "usage-telemetry aggregates tokens
+across units" holds only once this lands.
+
+### Scheduler and writer-queue — generalize one, add the other
+
+- **Scheduler:** `core/concurrent.ts` (`concurrentMap`, semaphore + `allSettled`)
+  already is the bounded pool — but it's used only in indexer passes, never on
+  the agent path. Generalize it (add `AbortSignal`, budget, unit cap) rather
+  than writing a second primitive.
+- **Writer-queue:** `withWorkflowRunsRepo` opens a **fresh connection per call**
+  (`workflow-runs-repository.ts:286`); N concurrent unit completions contend on
+  SQLite's single writer + 30 s `busy_timeout`. The serialized writer-queue in
+  *Persistence changes* is therefore genuinely new and load-bearing — route all
+  `workflow_run_units` writes through one promise-chained queue; keep reads and
+  gates concurrent and off it.
+
+### Invariant: never bypass the gate spine
+
+The durable/gated contract lives in `completeWorkflowStep` (`runs.ts:293-314`,
+gate-outside-txn). Both the native executor and the `report` ingest path **must
+re-enter `completeWorkflowStep`** to advance a step, not write step rows
+directly — otherwise the summary-validation gate (akm's differentiator) is
+silently dropped for speed.
+
+### Kill registry drift: derive execution lists from the descriptor
+
+`#562` unified *ids + capability membership* into `HARNESS_REGISTRY`, but the
+**execution machinery is still ~6 hand-maintained parallel lists**:
+`BUILTIN_BUILDERS` (+ `-headless` keys, `builders.ts:64`), `profiles.ts`
+`BUILTINS`/`HEADLESS_BUILTINS`, the `session-logs` provider array,
+`model-aliases`, the `agent-identity` if/else chain, and the `detectHarness`
+chain. The drift is already real: `codex`/`gemini`/`aider` have **profiles but
+no descriptor and no builder** (`profiles.ts:93-116`), so dispatching them hits
+the **default builder** (`builders.ts:43-60`) — whose `--system-prompt/--model/--`
+convention is wrong for all of them, producing a silently broken command.
+
+Fix, before adding harnesses:
+1. Add descriptor fields to `AkmHarness`: `pattern`
+   (`in-harness|local-runner|cloud-delegate`), `structuredOutput`
+   (`native-schema|native-json|none`), `resume?: {flag}`, `identityEnv?: string[]`,
+   and optional harness-owned `builder?` / `extractor?`.
+2. **Derive** `BUILTIN_BUILDERS`, the identity table, the session-log provider
+   array, and model-alias columns *from the registry* — so "add a harness = one
+   directory + one `HARNESS_REGISTRY` entry."
+3. Make a **missing builder an error**, not a silent fallback to the default —
+   the default builder is a footgun for these CLIs.
+
+### `tasks/` stays orthogonal
+
+`src/tasks/` is a cron/OS-scheduler **frontend** (`schema.ts` target =
+`workflow|prompt|command`; it just calls `startWorkflowRun`). It has no
+reusable scheduler/queue and no per-step state. Don't grow cron/polling inside
+the executor — periodic cloud-delegate re-checks should lean on `tasks/` or the
+existing check-in, not a new daemon.
+
+### Required seam changes (additive, backward-compatible)
+
+Every consumer signature below is depended on by the improve slice / tasks and
+must not change shape — these are **additive optional fields only**:
+
+| Seam | Change | Why |
+|---|---|---|
+| `AgentRunResult` (`spawn.ts:164`) | add `usage?: TokenUsage`, `sessionId?` | budget metering; harness session reuse |
+| `runOpencodeSdk` (`sdk-runner.ts:254`) | stop discarding SDK usage; per-call `cwd`/server keyed by cwd | budget + **`isolation: worktree` on the default harness** |
+| `RunAgentOptions` (`spawn.ts:123`) | add `signal?: AbortSignal`, `onEvent?` | cooperative cancel + `watch --stream` |
+| `AgentDispatchRequest` (`builder-shared.ts:27`) | add `effort?`, `schema?`/`schemaPath?` | IR `effort`; Codex `--output-schema` |
+| `AkmHarness` (`types.ts:65`) | add `pattern`, `structuredOutput`, `resume`, `identityEnv`, `builder?`, `extractor?` | route without a parallel switch |
+| `callStructured` (`structured-call.ts`) | factor out transport-free `runStructured` core | reuse validate/retry across runners |
+
+The plan's *Reuse unchanged* list is accordingly narrowed: `executeRunner`,
+`runAgent`/`runOpencodeSdk`, and `callStructured` are reused *through additive
+extension*, not literally untouched.
+
 ## Rollout phases
 
 - **P0 — IR + compiler.** `ir/schema.ts`, `ir/compile.ts`. Existing linear
   workflows compile to a linear IR; execution still goes through today's
   step loop. No behavior change; pure refactor + new tests.
+- **P0.5 — seam alignment (prerequisite, no new features).** The additive seam
+  changes from *Reconciliation*: `usage`/`signal` on the runner result/options,
+  SDK usage + per-call cwd, extracted `runStructured` core, generalized
+  `concurrentMap` scheduler, and **deriving the builder/identity/model-alias
+  lists from `HARNESS_REGISTRY`** (closing the existing codex/gemini/aider
+  drift). Each is independently landable and independently useful.
 - **P1 — native fan-out + schema (v1 parity core).** `scheduler.ts`,
   `native-executor.ts`, `workflow_run_units` (migration 004), extended
   Markdown grammar for `Runner`/`Fan-out`/`Schema`, plus `router` node and
@@ -599,7 +763,8 @@ Extend:
 - `src/workflows/db.ts` (migration 004 + units table), `workflow-runs-repository.ts`
 - `src/workflows/runtime/runs.ts` (route a step to the executor; ingest reports)
 - `src/workflows/runtime/agent-identity.ts` (detect codex/copilot/pi/gemini + markers)
-- `src/integrations/agent/runner.ts` (`RunnerSpec` gains `delegate`), `builders.ts` (register new builders), `harnesses/index.ts` (`HARNESS_REGISTRY` entries)
+- `src/integrations/agent/spawn.ts` (additive: `usage?`/`sessionId?` on `AgentRunResult`; `signal?`/`onEvent?` on `RunAgentOptions`; make missing builder an error), `sdk-runner.ts` (stop discarding usage; per-call cwd), `builder-shared.ts` (`effort?`/`schema?`), `builders.ts` + `harnesses/index.ts` (**derive** `BUILTIN_BUILDERS`/identity/model-aliases from `HARNESS_REGISTRY`; new descriptor fields) — `RunnerSpec` itself is unchanged (`delegate` is a `UnitExecutor` strategy, not a union arm)
+- `src/llm/structured-call.ts` (factor out transport-free `runStructured` core), `core/concurrent.ts` (generalize `concurrentMap` → scheduler with abort/budget)
 - `src/workflows/cli.ts` + `src/commands/workflow-cli.ts` (`run`, `watch`, `report`)
 - `src/workflows/runtime/checkin.ts` (unit-level stall)
 - `src/workflows/renderer.ts` (surface orchestration in `show`)
