@@ -193,8 +193,10 @@ describe("remember --expires", () => {
     expect(parsed.data.expires as string).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("--expires 6m resolves to a future ISO date ~6 months from now", async () => {
-    const { result } = await runCli(["remember", "Long-term access", "--tag", "access", "--expires", "6m"]);
+  test("--expires 6M resolves to a future ISO date ~6 months from now", async () => {
+    // Canonical grammar: `M` = months (30-day approximation). `m` now means
+    // minutes, so months must be requested with the upper-case unit.
+    const { result } = await runCli(["remember", "Long-term access", "--tag", "access", "--expires", "6M"]);
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { path: string };

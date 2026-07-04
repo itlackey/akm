@@ -14,25 +14,49 @@ import { UsageError } from "./errors";
 
 // ── Duration-shorthand parsing ───────────────────────────────────────────────
 
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A month is approximated as 30 days — this shorthand is not calendar-exact. */
+const MONTH_MS = 30 * DAY_MS;
+
 /**
- * Parse a compact duration shorthand (e.g. `"30d"`, `"12h"`, `"6m"`) into a
- * number of milliseconds using an explicit `units` map, or return `null` when
- * the input does not match `<digits><letter>` or the unit is not in the map.
+ * Canonical duration-shorthand unit map shared by every `--since` / `--expires`
+ * / `--window-compare` consumer.
  *
- * The unit map is passed by the caller ON PURPOSE: the codebase historically
- * disagreed on what `"m"` means — some call sites read it as MINUTES
- * (`consolidate`, `--window-compare`) and others as MONTHS (`akm health`,
- * `--expires`). This helper deliberately does NOT pick a winner; each caller
- * supplies the multipliers matching its own long-standing semantics so this
- * consolidation is pure DRY and changes no observable behaviour. See the TODO
- * at `parseHealthSince` for the unresolved product decision.
+ * The grammar is intentionally uniform across the whole CLI:
+ *   - `m` = MINUTES, `M` = MONTHS (30-day approximation)
+ *   - `h`/`H` = hours, `d`/`D` = days
  *
- * Matching is case-sensitive against the map keys; callers that accept
- * mixed-case units (e.g. `"7D"`) should lower-case the spec before calling.
- * Amount is parsed with base-10 `parseInt`; `null` is returned rather than
- * throwing so each caller keeps its own error/fallback policy.
+ * Matching is CASE-SENSITIVE (see {@link parseDuration}), which is what lets
+ * `m` and `M` mean different things. Historically `akm health --since` and
+ * `remember --expires` read a case-insensitive `m` as MONTHS while
+ * `consolidate` / `--window-compare` read it as MINUTES; that split is now
+ * resolved in favour of the conventional `m`=minutes, with `M` reserved for
+ * months. Upper-case `H`/`D` aliases are retained so specs that previously
+ * relied on the old case-insensitive parsers (e.g. `"7D"`) keep working.
  */
-export function parseDuration(spec: string, units: Record<string, number>): number | null {
+export const DURATION_UNITS: Readonly<Record<string, number>> = {
+  m: MINUTE_MS,
+  M: MONTH_MS,
+  h: HOUR_MS,
+  H: HOUR_MS,
+  d: DAY_MS,
+  D: DAY_MS,
+};
+
+/**
+ * Parse a compact duration shorthand (e.g. `"30d"`, `"12h"`, `"5m"`, `"3M"`)
+ * into a number of milliseconds using an explicit `units` map (default
+ * {@link DURATION_UNITS}), or return `null` when the input does not match
+ * `<digits><letter>` or the unit is not in the map.
+ *
+ * Matching is CASE-SENSITIVE against the map keys, so `m` (minutes) and `M`
+ * (months) are distinct — do NOT lower-case the spec before calling, or the
+ * two collapse. Amount is parsed with base-10 `parseInt`; `null` is returned
+ * rather than throwing so each caller keeps its own error/fallback policy.
+ */
+export function parseDuration(spec: string, units: Record<string, number> = DURATION_UNITS): number | null {
   const match = spec.trim().match(/^(\d+)([a-zA-Z])$/);
   if (!match) return null;
   const amount = Number.parseInt(match[1] ?? "", 10);

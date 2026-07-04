@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { buildTaskRunId, getLoggedRunIds } from "../../core/logs-db";
-import { parseDuration } from "../../core/time";
+import { DURATION_UNITS, parseDuration } from "../../core/time";
 import type { Database } from "../../storage/database";
 import { queryTaskHistory, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import {
@@ -41,13 +41,9 @@ import {
  */
 export function resolveWindowCompare(duration: string, now: () => number = () => Date.now()): WindowSpec[] {
   const trimmed = duration.trim();
-  // NOTE: `m` = MINUTES here (unlike `akm health --since` / `--expires` where
-  // `m` = months). Preserved via the explicit unit map; see core/time.ts.
-  const ms = parseDuration(trimmed.toLowerCase(), {
-    h: 60 * 60 * 1000,
-    m: 60 * 1000,
-    d: 24 * 60 * 60 * 1000,
-  });
+  // Canonical CLI unit grammar: `m` = minutes, `M` = months. Not lower-cased,
+  // so case distinguishes the two. See core/time.ts DURATION_UNITS.
+  const ms = parseDuration(trimmed, DURATION_UNITS);
   if (ms === null) {
     throw new UsageError("--window-compare must be a duration like '24h', '7d', or '30m'.", "INVALID_FLAG_VALUE");
   }

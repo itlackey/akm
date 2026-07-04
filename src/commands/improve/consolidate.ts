@@ -18,7 +18,7 @@ import { ConfigError } from "../../core/errors";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { detectTruncatedDescription } from "../../core/text-truncation";
-import { parseDuration } from "../../core/time";
+import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
 import {
   hasSupersededStatus,
@@ -2726,11 +2726,10 @@ async function checkPreEmitDedup(opts: {
  * doesn't match the pattern (assumed to already be an ISO timestamp).
  */
 function parseSinceToIso(since: string): string {
-  // Case-sensitive units, matching the original local regex `/^(\d+)(m|h|d)$/`.
-  // NOTE: here `m` = MINUTES (see core/time.ts parseDuration for the cross-call
-  // `m` month-vs-minute discrepancy). Non-matching input is returned unchanged
-  // (assumed to already be an ISO timestamp).
-  const ms = parseDuration(since, { m: 60_000, h: 3_600_000, d: 86_400_000 });
+  // Canonical CLI unit grammar: `m` = minutes, `M` = months (see core/time.ts
+  // DURATION_UNITS). Non-matching input is returned unchanged (assumed to
+  // already be an ISO timestamp).
+  const ms = parseDuration(since, DURATION_UNITS);
   if (ms === null) return since;
   return new Date(Date.now() - ms).toISOString();
 }

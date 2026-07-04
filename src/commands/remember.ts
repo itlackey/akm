@@ -14,7 +14,7 @@ import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { getDefaultLlmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
-import { parseDuration as parseDurationSpec } from "../core/time";
+import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
@@ -56,19 +56,19 @@ export interface MemoryFrontmatterFields {
 
 /**
  * Parse a shorthand duration string to a number of milliseconds.
- * Supports: `30d` (days), `12h` (hours), `6m` (months, approximated as 30d).
+ * Supports the CLI-wide canonical grammar: `30d` (days), `12h` (hours),
+ * `5m` (minutes), `3M` (months, approximated as 30d).
  */
 export function parseDuration(s: string): number {
-  // NOTE: `m` = MONTHS here (approximated as 30 days), unlike consolidate /
-  // --window-compare where `m` = minutes. Lower-case first so mixed-case units
-  // (e.g. "7D") match the lower-case unit map. See core/time.ts parseDuration.
-  const ms = parseDurationSpec(s.trim().toLowerCase(), {
-    d: 24 * 60 * 60 * 1000,
-    h: 60 * 60 * 1000,
-    m: 30 * 24 * 60 * 60 * 1000,
-  });
+  // Canonical CLI unit grammar: `m` = minutes, `M` = months. Not lower-cased,
+  // so case distinguishes the two (`5m` = 5 minutes, `5M` = 5 months). See
+  // core/time.ts DURATION_UNITS.
+  const ms = parseDurationSpec(s.trim(), DURATION_UNITS);
   if (ms === null) {
-    throw new UsageError(`Invalid --expires format "${s}". Use shorthand like 30d, 12h, or 6m.`, "INVALID_FLAG_VALUE");
+    throw new UsageError(
+      `Invalid --expires format "${s}". Use shorthand like 30d, 12h, 5m, or 3M.`,
+      "INVALID_FLAG_VALUE",
+    );
   }
   return ms;
 }
