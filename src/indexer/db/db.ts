@@ -839,7 +839,8 @@ function runFtsQuery(
       });
     }
     return results;
-  } catch {
+  } catch (err) {
+    warn("[db] runFtsQuery failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
