@@ -295,8 +295,8 @@ Concretely:
   `processes.<name>.enabled` toggle under `profiles.improve.<name>` (improve-
   bound features such as memory inference, graph extraction, consolidation,
   feedback distillation) or a first-class section toggle
-  (`index.metadataEnhance.enabled`, `index.stalenessDetection.enabled`,
-  `search.curateRerank.enabled`) — and falls back to a deterministic path
+  (`index.metadataEnhance.enabled`, `index.stalenessDetection.enabled`) —
+  and falls back to a deterministic path
   when the flag is `false`, the endpoint is unreachable, or parsing fails.
   See `docs/configuration.md` for canonical paths.
 

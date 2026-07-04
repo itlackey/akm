@@ -983,7 +983,8 @@ describe("v2 config shape parsing", () => {
     const loaded = loadConfig();
     expect(loaded.profiles?.improve?.default?.processes?.memoryInference?.enabled).toBe(true);
     expect(loaded.index?.metadataEnhance?.enabled).toBe(false);
-    expect(loaded.search?.curateRerank?.enabled).toBe(true);
+    // curate_rerank is a removed dead feature — dropped on migration, not carried forward.
+    expect(loaded.search?.curateRerank).toBeUndefined();
   });
 
   test("sanitizeConfigForWrite strips apiKey from profiles.llm entries", () => {

@@ -36,7 +36,7 @@ describe("config schema drift pins", () => {
     expect(Object.keys(index.properties ?? {})).toContain("metadataEnhance");
     expect(Object.keys(index.properties ?? {})).toContain("stalenessDetection");
     const search = props.search as { properties?: Record<string, unknown> };
-    expect(Object.keys(search.properties ?? {})).toContain("curateRerank");
+    expect(Object.keys(search.properties ?? {})).toContain("graphBoost");
   });
 
   test("legacy llm/agent/features top-level entries are gone from the schema", () => {

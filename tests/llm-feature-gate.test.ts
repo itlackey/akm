@@ -23,7 +23,6 @@ type FeatureKey =
   | "memory_inference"
   | "graph_extraction"
   | "metadata_enhance"
-  | "curate_rerank"
   | "lesson_quality_gate"
   | "proposal_quality_gate"
   | "memory_contradiction_detection";
@@ -55,9 +54,6 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
       case "metadata_enhance":
         cfg.index = { ...(cfg.index ?? {}), metadataEnhance: { enabled: val } };
         break;
-      case "curate_rerank":
-        cfg.search = { ...(cfg.search ?? {}), curateRerank: { enabled: val } };
-        break;
       case "lesson_quality_gate":
         processes.distill = { ...(processes.distill ?? {}), qualityGate: { enabled: val } };
         break;
@@ -77,8 +73,8 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
 
 describe("isLlmFeatureEnabled", () => {
   test("returns false when no llm config is present", () => {
-    expect(isLlmFeatureEnabled(undefined, "curate_rerank")).toBe(false);
-    expect(isLlmFeatureEnabled({} as AkmConfig, "curate_rerank")).toBe(false);
+    expect(isLlmFeatureEnabled(undefined, "metadata_enhance")).toBe(false);
+    expect(isLlmFeatureEnabled({} as AkmConfig, "metadata_enhance")).toBe(false);
   });
 
   test("returns feature defaults when the process block is missing", () => {
@@ -87,7 +83,7 @@ describe("isLlmFeatureEnabled", () => {
     expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "distill")).toBe(true);
-    expect(isLlmFeatureEnabled(cfg, "curate_rerank")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "metadata_enhance")).toBe(false);
   });
 
   test("returns true when graph_extraction key is absent (default-true)", () => {
@@ -106,7 +102,7 @@ describe("tryLlmFeature", () => {
     let called = false;
     const events: unknown[] = [];
     const result = await tryLlmFeature(
-      "curate_rerank",
+      "metadata_enhance",
       configWith({}),
       async () => {
         called = true;
@@ -117,7 +113,7 @@ describe("tryLlmFeature", () => {
     );
     expect(result).toBe("fallback");
     expect(called).toBe(false);
-    expect(events).toEqual([{ feature: "curate_rerank", reason: "disabled" }]);
+    expect(events).toEqual([{ feature: "metadata_enhance", reason: "disabled" }]);
   });
 
   test("invokes a thunk fallback only on the fallback path", async () => {
@@ -138,8 +134,8 @@ describe("tryLlmFeature", () => {
   test("returns the fallback on a synchronous throw", async () => {
     const events: { reason: string; error?: Error }[] = [];
     const result = await tryLlmFeature(
-      "curate_rerank",
-      configWith({ curate_rerank: true }),
+      "metadata_enhance",
+      configWith({ metadata_enhance: true }),
       () => {
         throw new Error("boom");
       },
@@ -231,7 +227,7 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
 // Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`
 // — we restrict this parametrised sweep to the 4 keys that are
 // definitely actually-implemented and used by the current code.
-const STABLE_FEATURE_KEYS = ["distill", "memory_inference", "graph_extraction", "curate_rerank"] as const;
+const STABLE_FEATURE_KEYS = ["distill", "memory_inference", "graph_extraction", "metadata_enhance"] as const;
 // 0.8.0: distill unified gate defaults to true (matches the built-in `default` profile).
 const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "graph_extraction", "distill"]);
 
