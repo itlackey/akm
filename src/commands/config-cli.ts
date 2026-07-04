@@ -17,8 +17,7 @@
  *   - `parseConfigValue` returns a Partial<AkmConfig> so it can be merged with
  *     the runtime config object via `mergeConfigValue`.
  */
-import { hasSubcommand } from "../cli/parse-args";
-import { defineJsonCommand, output } from "../cli/shared";
+import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 import { resolveStashDir } from "../core/common";
 import {
   type AkmConfig,
@@ -243,7 +242,7 @@ function toggleComponent(
   throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
 }
 
-export const configCommand = defineJsonCommand({
+export const configCommand = defineGroupCommand({
   meta: { name: "config", description: "Show and manage configuration" },
   args: {
     list: { type: "boolean", description: "List current configuration", default: false },
@@ -415,14 +414,12 @@ export const configCommand = defineJsonCommand({
       },
     }),
   },
-  run({ args }) {
-    if (hasSubcommand(args, CONFIG_SUBCOMMAND_SET)) return;
-    if (args.list) {
-      output("config", listConfig(loadConfig()));
-      return;
-    }
+  // The bare `akm config` invocation (and `akm config --list`) dumps the
+  // current config. defineGroupCommand short-circuits this body when a
+  // registered subcommand ran, so the routing set stays derived from the
+  // subCommands map and can never desync (previously validate/migrate were
+  // missing from a hand-maintained set, causing a spurious second dump).
+  defaultRun() {
     output("config", listConfig(loadConfig()));
   },
 });
-
-const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset", "enable", "disable"]);
