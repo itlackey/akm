@@ -144,3 +144,95 @@ From **06 autonomy-ladder** (adjudicated 2026-07-03; nothing executed — dispos
 - **Docs → review 14 batch:** `improve-workflow.md` narrates a human-in-the-loop review that the DB proves never
   happens (0 owner annotations); also add the M7 sentence that the drain tier is deterministic-policy-gated, not
   confidence-gated. Route with the 02/03 doc-sync items (DB_VERSION drift, v1-spec, storage-locations).
+
+From **07 prompt-injection** (adjudicated 2026-07-03; nothing executed — approvals authorize the execution batch):
+
+- **Repo scope is now BOTH repos, and ALL akm-plugins work is APPROVED (owner 2026-07-04).** This series'
+  execution batch **covers akm-plugins**, not only akm, and every akm-plugins item review 07 surfaced is approved
+  for execution (no per-item confirmation pending): the `captureMemory` shell-out subtraction + SessionStart
+  re-injection provenance-tagging, the `/akm-agent`·`/akm-cmd` **dispatch-side** toolPolicy ceiling, and the
+  SubagentStart hook side. The akm side (`renderers.ts`, `docs`, `quality-gate`, `extract-prompt`, workflow-run
+  emission) lands here. Later reviews may assume akm-plugins is in-scope.
+- **The captureMemory chain is CROSS-REPO + already ratified.** `akm-hook.ts` / `akm-agent.md` / `akm-cmd.md` /
+  `akm-curator.md` do **not** exist in the akm repo (verified). The verbatim SessionEnd→`remember --force`→
+  SessionStart re-injection chain is **03-R1 / 06-M1**, not a new finding — do not re-headline it. Its akm-side
+  support is deleting the `recombine.ts:233–258` exclusion filters once the memory writes stop.
+- **Approved Phase-0 (in-repo, eval-free, subtractive):** (1) delete the FALSE `docs/registry.md:201–204`
+  "install scans for prompt-injection phrases" paragraph — **no such scanner exists** (grep: zero source-body
+  scans; the only real audit is `add-cli.ts:65–215` env **key-name** allowlist + path-traversal) → replace with
+  the truth, do NOT build the advertised scanner; (2) `quality-gate.ts:155,172` **fail-CLOSED** on
+  parse-failure/timeout for minted content (currently `pass:true` — verified the gate IS enabled in effective
+  config, no profile overrides `distill.qualityGate`; note the 2.5–3.5 `reviewNeeded` band already returns
+  `pass:false`, so the fail-open is ONLY parse/timeout/no-LLM); (3) fence the extract transcript with the
+  **existing** `=== ASSET N ===` marker (`graph-extract.ts:38`), reused in `extract-prompt.ts`.
+- **Approved Phase-1 (in-repo, structural):** (B) **stop emitting raw workflow-run titles/params into subagent
+  context** — emit only run IDs/status (`src/workflows/runtime/runs.ts` copies `workflowTitle: asset.title` from
+  frontmatter into EVERY SubagentStart payload, unfenced — proven live). (D akm-side) provenance-aware
+  **toolPolicy CEILING** at the show layer (`renderers.ts:262–263` hands over an asset's self-declared `tools`);
+  reuse the `env-cli.ts:316–324` `registryId` provenance test so a third-party asset cannot widen the grant. NB:
+  `toolPolicy` is a **ceiling-capped request, not a self-grant** — a subagent cannot exceed the parent's grant;
+  the real residual is default-inheritance with no provenance ceiling. The **dispatch-side** ceiling
+  (`/akm-agent`,`/akm-cmd`) is akm-plugins and is **APPROVED** (owner 2026-07-04 blanket-approved all akm-plugins
+  work; the earlier akm-side-only scoping is lifted).
+- **KEEPs (binding, defend):** the **tool-less HTTP runner** (`chatCompletion`, no tools/filesystem — used by
+  extract/graph-extract/judge; injection corrupts output text only, cannot execute); the **env-key-name audit +
+  third-party `registryId` refusal** (`add-cli.ts`,`env-cli.ts` — precise, provenance-aware, fails closed). Chain
+  G (reflect *can* resolve a tool-capable runner in unattended improve) is **LATENT** — effective config not
+  shown to trigger it; carried as P1.3 hardening (pin unattended-improve reflect to the tool-less runner), not a
+  gated KILL.
+- **DON'T-ADD (binding):** do not build the advertised prompt-injection phrase-scanner; do not thread a new
+  origin-trust column through recall/curate/show (`quality` already conflates editorial-state with origin — a
+  trust field everywhere is net-additive machinery that still leaves the mint paths open). The leverage is
+  **removing** untrusted→trusted mint paths, not tagging around them.
+- **Sealed-prediction outcome:** PARTIAL MATCH — owner named the registry-kit surface correctly, but the feared
+  "poisoned agent self-grants privilege" is overstated (ceiling-capped request); the sharper in-repo edges are
+  the workflow-title channel (B) and the fail-open gate (C).
+
+From **08 attack-surface** (adjudicated 2026-07-04; nothing executed — dispositions binding):
+
+- **The single worst surface is the OUTER boundary, not the inner walls.** akm's value-redaction architecture
+  (leak-free renderers with no content field, key-name-only `listKeys`, child-only env injection, `redactErrorBody`,
+  `sanitizeConfigForWrite`, tool-less HTTP runner, zero remote telemetry) is **excellent and every piece is a KEEP** —
+  do NOT propose replacing any with generic scanning/encryption machinery (reaffirms 07's DON'T-ADD). The gap is that
+  these walls sit INSIDE an unguarded directory.
+- **F1 git-tracking of `env/`+`secrets/` — REFRAMED by owner, NOT a purge.** `~/akm` is a git repo tracking 16
+  env/secret files incl a signing key + bot creds (verified live), saved only by no remote. Owner ruling:
+  **versioning env/secrets is an intentional, supported use case** (private-remote backup). The bug is they're
+  tracked BY DEFAULT. Fix = akm must **scaffold a default `.gitignore` ignoring `env/`+`secrets/`** at init/setup
+  (the v0.8.0 vaults→env/+secrets/ migration never migrated the ignore rules — `.gitignore` still covers only dead
+  `vaults/*`; init/setup scaffold none). User **opts in by un-ignoring**. **On this host: KEEP tracked as-is — no
+  `git rm --cached`, no `filter-repo`** (deliberate opt-in). Health advisory `stash-git-exposure` APPROVED but
+  **re-tuned: warn only when tracked AND a remote is configured**, not merely tracked (catch the leak moment, don't
+  nag the opt-in). This is a **default-safe-scaffold**, the inverse of the finding's delete framing.
+- **F2 APPROVED (the one justified addition):** add `env`/`secret` to a **structural type refusal** at the
+  distill/reflect raw-`readFileSync` sites (`distill.ts:718-728`, `reflect.ts:391,1034`; mirror the existing
+  `DISTILL_REFUSED_INPUT_TYPES={'lesson'}`, ~2 lines) so the floor is **code, not config**. Today only `allowedTypes`
+  config stands between secret bytes and the LLM endpoint in unattended cron (live proof: `improve_skipped` fired
+  516×/453× for env/secret refs, `profile_filtered_all_passes`; 0 distill/reflect invocations ever).
+- **Approved subtractions:** (F3) uninstall stale `akm-cli@0.7.4` + **delete the `~/.local/bin/akm` wrapper's
+  npm/usr-local fallback branches** so it errors loudly instead of degrading against the shared config/DBs (proven
+  incident class: PR #676 skew, 2026-05-23 config clobber); (F4) `chmod 600/700` the downgraded env/secret/backup/DB
+  set + `gio trash` the **two ORPHANED `config-backups/` dirs** (`$DATA`,`$CONFIG` — legacy write locations, no longer
+  pruned; the 5-cap prune only ever governed `$CACHE/config-backups`, which dissolves the docs "5 vs forever"
+  contradiction) + 15 ad hoc `.bak-*`; write env/secret/backup files `0600` akm-side (extend the `env-cli.ts:180-197`
+  pattern, don't invent one).
+- **F5 KEEP narrow — REFUSE per-stash config layering** (net-additive machinery for a subcase with no live occurrence;
+  the 2026-05-23 tmp-sandbox trigger is already closed by `paths.ts` redirect + `assertSetupSandbox`).
+- **F6 carry-forward:** the raw workflow-title injection fix is **owned by 07 Phase-1 B** (do not re-headline). NEW
+  hygiene disposition: **expire/complete the 8 stale 2026-05-12 "Test Flow" runs** (still `active` 54 days later,
+  injected verbatim into every subagent) via workflow commands; consider a staleness WHERE-clause on the `--active`
+  query (not machinery).
+- **DON'T-ADD (binding):** no encryption-at-rest for env/secret (threat model is git-push + `$HOME` traversal, both
+  solved by the ignore boundary + perms); no redaction scanner; no per-stash config layering; **no standalone
+  AttackSurface skill or AssessAttackSurface flow** — the deliverable **folds into `akm health`** (a read-only
+  `surfaces` advisory group: `stash-git-exposure`, `secret-file-perms`, binary-vs-configVersion skew, orphan-store
+  detection, egress list) and **re-running review 08** is the re-audit. The living inventory doc IS
+  `findings/08-attack-surface.md` (Part 1 table row-key = surface name, diffable run-to-run).
+- **Docs → review 14 batch:** F7 undocumented 285MB `~/.local/state/akm-claude` tier (no retention) + `logs.db`
+  missing from `storage-locations.md` index + events-table schema drift + backup-location truth (one live, two dead) +
+  `storage-locations.md:371`/`data-and-telemetry.md:51` perms corrections. Add `state.db.bak-20260614` (2.6GB) to the
+  standing post-GA `result_json` prune list.
+- **Sealed-prediction outcome:** PARTIAL MATCH — owner nailed Q1 (env/secret assets hurt most = confirmed single worst
+  surface) but Q2 diverged (predicted shared `config.json` least-protected; actual weakest link is the **same
+  env/secret store** from the git-boundary angle, which the owner didn't model — config-sharing is real but only
+  HIGH/MED at F3/F5). Hurts-most and least-protected turned out to be the same files, two sides.
