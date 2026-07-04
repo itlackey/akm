@@ -33,7 +33,7 @@ import { UsageError } from "./errors";
  * throwing so each caller keeps its own error/fallback policy.
  */
 export function parseDuration(spec: string, units: Record<string, number>): number | null {
-  const match = spec.trim().match(/^(\d+)([a-zA-Z]+)$/);
+  const match = spec.trim().match(/^(\d+)([a-zA-Z])$/);
   if (!match) return null;
   const amount = Number.parseInt(match[1] ?? "", 10);
   if (!Number.isFinite(amount)) return null;

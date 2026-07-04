@@ -38,6 +38,16 @@ describe("parseDuration", () => {
     expect(parseDuration("", units)).toBeNull();
   });
 
+  test("the unit is exactly one letter — multi-letter shorthands do not match", () => {
+    // The contract is <digits><letter> (single unit letter). A multi-letter
+    // token like "ms" must fail the syntax match, not slip through to a
+    // map-miss. This keeps the regex honest with the documented grammar.
+    const units = { m: MINUTE, h: HOUR, d: DAY };
+    expect(parseDuration("30ms", units)).toBeNull();
+    expect(parseDuration("5hh", units)).toBeNull();
+    expect(parseDuration("1dd", { ...units, dd: DAY })).toBeNull();
+  });
+
   test("returns null when the matched unit is absent from the map", () => {
     // Case-sensitive against map keys: an upper-case `M` misses a lower-case map.
     expect(parseDuration("5M", { m: MINUTE })).toBeNull();
