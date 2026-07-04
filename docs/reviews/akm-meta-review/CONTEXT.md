@@ -497,3 +497,69 @@ mitigation — the WRITE deletion stays deferred behind the shutdown gate).
 reinstall of the global (~beta.58). Committing alone does NOT protect cron. This ALSO satisfies the D1
 precondition (beta.57+ on cron) — after it, accrue clean events → re-baseline via
 `findings/09-grr-receipt.sql.md` → then the deferred minting-shutdown batch can run.
+
+## EXECUTION BATCH 2 (2026-07-04) — resumed on branch `meta-review-exec-2026-07-04`
+
+Continued off batch-1 head. Same process (one item/commit, TEST-FIRST, `bun run check` green +
+adversarial code-review + apply findings before commit). Base re-confirmed green (12 ahead of main,
+0 behind; baseline check exit 0) before starting.
+
+**akm — COMMITTED (3 commits):**
+- **[07 P0-2] quality-gate fail-CLOSED** `4866371d` (+245/−39, 15 files) — the reverted P0 security fix,
+  now landed. Flipped all three fail-open returns in `runLessonQualityJudge` (no-LLM / parse-failure /
+  timeout) from `pass:true`→`pass:false`; unjudgeable minted content is now `quality_rejected`, not
+  passed through. Test migration: distill mechanics tests disable the (default-on) gate via
+  `qualityGate:{enabled:false}` in the per-file config helpers; reflect mechanics tests use a shared
+  `quietQualityGateConfig()` (the no-LLM branch fires FIRST in the sandbox, so injecting a passing judge
+  chat can't help — must disable the gate). New `quality-gate-fail-closed.test.ts` (unit) + an end-to-end
+  `akmDistill` reject test. Reviewer findings applied: 3 stale "fail-open" comments fixed
+  (`distill.ts`, `promote-memory.ts`, and the load-bearing `feature-gate.ts` default rationale) + the
+  end-to-end test added.
+- **[03] one-directed-edge contradiction fix** `305fc2da` (+172/−29, 2 files) — behavioral gate met.
+  Write ONE directed edge (loser by **lexicographic ref order = a total order → provably acyclic**),
+  not mutual A↔B. Reviewer finding applied by SUBTRACTION: the speculative `createdAt`-recency branch
+  was **deleted** (no writer sets `createdAt` — verified in `memory-inference.ts`; it was dead code AND
+  a 3-cycle landmine when `createdAt` is inconsistent within a family). Legacy mutual edges **self-heal**
+  via the resolver (it deletes both `contradictedBy` arrays on the 2-cycle refresh, then next detection
+  writes the canonical single edge). Migrated the test that asserted the buggy `edgesWritten===2`; added
+  a persistence test (survives resolver + read-only re-run) and a 3-memory-family acyclicity test.
+- **[03] belief penalties reach flagged knowledge + drop derivedBoost** `41b797ca` (+50/−41, 5 files) —
+  deleted the two `type==="memory"` guards (`db-search.ts` matchBeliefFilter — dropped the now-unused
+  `type` param; `ranking-contributors.ts` beliefStateBoost) AND broadened the (renamed)
+  `beliefStateRankingContributor` to fire on any belief-state-carrying entry (the ranking guard deletion
+  is INERT without this — beliefStateBoost was only called from a memory-gated contributor). Deleted the
+  `derivedBoost` constant (03-R3). **Gate met: curate-golden Δ=0** (mean 0.890/ndcg 0.854/mrr 0.900/
+  0-leapfrog — golden has no flagged/memory entries). Reviewer doc findings applied (stale JSDoc in
+  `search.ts`, stale rationale comments in `search.test.ts`, stale module-docstring paths).
+
+**NEEDS-RE-SCOPING (verified, not forced):**
+- **[03-R3] "supersede base on `.derived` write" — NOT executed (direction is contradictory in the source
+  dispositions).** R-3's label says *supersede the base* (demote it), but 04's structural-leak text says
+  the STALE FLAG-FREE TWIN outranks the corrected base (so the TWIN should be demoted / inherit the flag,
+  not the base). The two point opposite ways, and the citation (`ranking-contributors.ts:153-162`) is the
+  ranking file while "on `.derived` write" implies the `memory-inference.ts` write path. Deleting
+  `derivedBoost` (done) already shrinks the twin leak (twin +0.12 boost removed). Needs owner clarification
+  on the intended direction before the write-path half is safe to build.
+- **[02] contributor ablation — measured, 0 safe deletions (gate is insufficient).** Ran per-contributor
+  ablation on curate-golden: **12 of 13 `defaultRankingContributors` are Δ=0** and `typeRankingContributor`
+  removal even *improves* it +0.003. But Δ=0 here means the 10-case golden corpus **doesn't exercise** the
+  contributor (no memory/lesson/fact/flagged/graph/project-context/exact-name paths), NOT that it's useless.
+  Mechanically deleting the Δ=0 set would delete `belief-state-ranking` (just shipped), `exact-name-ranking`
+  (core), `graph`, `project-context`, and all type-specific boosts — regressing real queries the corpus
+  can't measure. The gate (curate-golden Δ≈0/contributor) is **necessary but not sufficient**; the real
+  prerequisite is the **E6 second-corpus probe** (09 Bet-4 / 10). 0 LOC deleted by design.
+- **[03/10-Q5] opencode-sdk `sessionLogs=false` — verified; the "fix the reader" framing is a misdiagnosis.**
+  SDK sessions land in the **shared** `~/.local/share/opencode/opencode.db` (the SDK server uses opencode's
+  default store — no isolated dir), the **same store the `opencode` CLI harness already reads**. They are
+  **DELETED per-dispatch** (`sdk-runner.ts:277-278`, `session.delete` in the finally block, explicitly "to
+  prevent disk accumulation") and titled "akm" (akm-internal improve/wiki/propose dispatches, not user
+  coding). So there is **no reader gap** — flipping `sessionLogs=true` on opencode-sdk would cause
+  **DUPLICATE discovery** (both harnesses enumerate the same db → double extraction), violating the gate's
+  own "don't break existing readers" constraint. The real fix needs an **owner decision** on a genuine
+  tradeoff: (a) stop deleting + dedup SDK sessions against the `opencode` harness + accept opencode.db bloat
+  from one-shot akm-dispatch sessions, OR (b) capture the transcript to an akm-owned session asset (new
+  persistence path = machinery). Neither is the clean "wire the reader / flip the capability" the disposition
+  assumed. The extract value is also questionable (akm mining its own agent dispatches — circular).
+
+**⚠ OWNER RELEASE STEP (unchanged, now covers batch-2 too):** the batch-2 akm-side fixes — especially the
+07 P0-2 quality-gate fail-CLOSED — only protect cron after `bun run build` + global reinstall (~beta.58).
