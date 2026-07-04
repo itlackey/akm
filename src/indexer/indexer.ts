@@ -627,64 +627,65 @@ async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
 
 // ── Extracted helpers for indexing ────────────────────────────────────────────
 
-async function indexEntries(
+type DirScanReason = {
+  kind:
+    | "duplicate-dir"
+    | "no-indexable-files"
+    | "unchanged"
+    | "full-rebuild"
+    | "no-previous-rows"
+    | "cached-zero-row-state"
+    | "mtime-changed"
+    | "file-set-changed"
+    | "missing-file";
+  detail?: string;
+};
+
+type DirRecord = {
+  dirPath: string;
+  currentStashDir: string;
+  files: string[];
+  stash: StashFile | null;
+  skip: boolean;
+  reason?: DirScanReason;
+  persistedRowCount?: number;
+};
+
+type DirNeedingLlm = {
+  dirPath: string;
+  files: string[];
+  currentStashDir: string;
+  stash: StashFile;
+};
+
+/**
+ * Phase 1 (async): walk every source directory and pre-generate all metadata
+ * outside any transaction, producing the per-directory scan records that
+ * {@link persistDirRecords} later writes.
+ *
+ * generateMetadataFlat is async (uses dynamic import for the matcher/renderer
+ * registry), so it cannot run inside a db.transaction() callback — hence the
+ * split into a pure-ish scan pass and a synchronous persist pass.
+ */
+async function scanSourceDirs(
   db: Database,
   allSourceEntries: SearchSource[],
   isIncremental: boolean,
   builtAtMs: number,
   hadRemovedSources: boolean,
-  doFullDelete = false,
   onProgress?: (event: IndexProgressEvent) => void,
 ): Promise<{
+  dirRecords: DirRecord[];
   scannedDirs: number;
   skippedDirs: number;
   generatedCount: number;
   warnings: string[];
-  dirsNeedingLlm: Array<{
-    dirPath: string;
-    files: string[];
-    currentStashDir: string;
-    stash: StashFile;
-  }>;
 }> {
-  // Phase 1 (async): walk directories and pre-generate all metadata outside the transaction.
-  // generateMetadataFlat is async (uses dynamic import for matcher/renderer registry),
-  // so it cannot be called inside a db.transaction() callback.
-  type DirRecord = {
-    dirPath: string;
-    currentStashDir: string;
-    files: string[];
-    stash: StashFile | null;
-    skip: boolean;
-    reason?: DirScanReason;
-    persistedRowCount?: number;
-  };
-
-  type DirScanReason = {
-    kind:
-      | "duplicate-dir"
-      | "no-indexable-files"
-      | "unchanged"
-      | "full-rebuild"
-      | "no-previous-rows"
-      | "cached-zero-row-state"
-      | "mtime-changed"
-      | "file-set-changed"
-      | "missing-file";
-    detail?: string;
-  };
-
   let scannedDirs = 0;
   let skippedDirs = 0;
   let generatedCount = 0;
   const warnings: string[] = [];
   const seenPaths = new Set<string>();
-  const dirsNeedingLlm: Array<{
-    dirPath: string;
-    files: string[];
-    currentStashDir: string;
-    stash: StashFile;
-  }> = [];
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
@@ -713,6 +714,61 @@ async function indexEntries(
       `${kind === "scan" ? "Rescanning" : "Skipping"} ${path.relative(currentStashDir, dirPath) || "."} ` +
         `from ${currentStashDir}: ${reason.kind}${detail}${rowInfo}`,
     );
+  };
+
+  // Duplicate-directory guard shared by the wiki-root and normal branches. A
+  // dir may surface via multiple stash roots; only the first occurrence is
+  // indexed, and the later ones are recorded as skips. Returns true when the
+  // dir was already seen (caller should skip further processing).
+  const markSeenOrSkipDuplicate = (dirPath: string, currentStashDir: string, files: string[]): boolean => {
+    const resolved = path.resolve(dirPath);
+    if (seenPaths.has(resolved)) {
+      const reason = { kind: "duplicate-dir" } satisfies DirScanReason;
+      dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true, reason });
+      reportDirDecision("skip", dirPath, currentStashDir, reason);
+      return true;
+    }
+    seenPaths.add(resolved);
+    return false;
+  };
+
+  // Incremental freshness gate shared by both branches: consult the persisted
+  // dir state and record either a skip (unchanged + eligible for incremental
+  // skip) or a scan record carrying the candidate stash.
+  const recordFreshnessDecision = (
+    dirPath: string,
+    currentStashDir: string,
+    stateFiles: string[],
+    stash: StashFile | null,
+  ): void => {
+    const previousState = getDirIndexState(db, dirPath, stateFiles, builtAtMs);
+    if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
+      skippedDirs++;
+      dirRecords.push({
+        dirPath,
+        currentStashDir,
+        files: stateFiles,
+        stash: null,
+        skip: true,
+        reason: previousState.reason,
+      });
+      reportDirDecision("skip", dirPath, currentStashDir, previousState.reason, previousState.persistedRowCount);
+      return;
+    }
+
+    scannedDirs++;
+    priorDirsChanged = true;
+    const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
+    dirRecords.push({
+      dirPath,
+      currentStashDir,
+      files: stateFiles,
+      stash,
+      skip: false,
+      reason,
+      persistedRowCount: previousState.persistedRowCount,
+    });
+    reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
   };
 
   for (const sourceAdded of allSourceEntries) {
@@ -752,35 +808,8 @@ async function indexEntries(
         }
       }
       for (const [dirPath, { files, entries }] of wikiDirGroups) {
-        if (seenPaths.has(path.resolve(dirPath))) {
-          const reason = { kind: "duplicate-dir" } satisfies DirScanReason;
-          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true, reason });
-          reportDirDecision("skip", dirPath, currentStashDir, reason);
-          continue;
-        }
-        seenPaths.add(path.resolve(dirPath));
-
-        const previousState = getDirIndexState(db, dirPath, files, builtAtMs);
-        if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
-          skippedDirs++;
-          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true, reason: previousState.reason });
-          reportDirDecision("skip", dirPath, currentStashDir, previousState.reason, previousState.persistedRowCount);
-          continue;
-        }
-
-        scannedDirs++;
-        priorDirsChanged = true;
-        const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
-        dirRecords.push({
-          dirPath,
-          currentStashDir,
-          files,
-          stash: { entries },
-          skip: false,
-          reason,
-          persistedRowCount: previousState.persistedRowCount,
-        });
-        reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
+        if (markSeenOrSkipDuplicate(dirPath, currentStashDir, files)) continue;
+        recordFreshnessDecision(dirPath, currentStashDir, files, { entries });
       }
       continue;
     }
@@ -796,13 +825,7 @@ async function indexEntries(
     for (const [dirPath, files] of dirGroups) {
       const indexableFiles = files.filter((file) => shouldIndexStashFile(currentStashDir, file));
 
-      if (seenPaths.has(path.resolve(dirPath))) {
-        const reason = { kind: "duplicate-dir" } satisfies DirScanReason;
-        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true, reason });
-        reportDirDecision("skip", dirPath, currentStashDir, reason);
-        continue;
-      }
-      seenPaths.add(path.resolve(dirPath));
+      if (markSeenOrSkipDuplicate(dirPath, currentStashDir, indexableFiles)) continue;
 
       if (indexableFiles.length === 0) {
         skippedDirs++;
@@ -844,39 +867,25 @@ async function indexEntries(
         generatedCount += generated.entries.length;
       }
 
-      const previousState = getDirIndexState(db, dirPath, staleFiles, builtAtMs);
-      if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
-        skippedDirs++;
-        dirRecords.push({
-          dirPath,
-          currentStashDir,
-          files: staleFiles,
-          stash: null,
-          skip: true,
-          reason: previousState.reason,
-        });
-        reportDirDecision("skip", dirPath, currentStashDir, previousState.reason, previousState.persistedRowCount);
-        continue;
-      }
-
-      scannedDirs++;
-      priorDirsChanged = true;
-      const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
-      dirRecords.push({
-        dirPath,
-        currentStashDir,
-        files: staleFiles,
-        stash,
-        skip: false,
-        reason,
-        persistedRowCount: previousState.persistedRowCount,
-      });
-      reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
+      recordFreshnessDecision(dirPath, currentStashDir, staleFiles, stash);
     }
   }
 
-  // Phase 2 (sync): write all pre-generated metadata inside a single transaction.
-  //
+  return { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings };
+}
+
+/**
+ * Phase 2 (sync): write all pre-generated scan records inside a single
+ * transaction, returning the directories that still need LLM enrichment.
+ */
+function persistDirRecords(
+  db: Database,
+  dirRecords: DirRecord[],
+  doFullDelete: boolean,
+  warnings: string[],
+): { dirsNeedingLlm: DirNeedingLlm[] } {
+  const dirsNeedingLlm: DirNeedingLlm[] = [];
+
   // Cross-stash dedup: track indexed assets by content identity
   // (type + filename + description) so the same asset from a lower-priority
   // stash root is skipped when a higher-priority root already covers it.
@@ -1006,6 +1015,38 @@ async function indexEntries(
   });
 
   insertTransaction();
+
+  return { dirsNeedingLlm };
+}
+
+async function indexEntries(
+  db: Database,
+  allSourceEntries: SearchSource[],
+  isIncremental: boolean,
+  builtAtMs: number,
+  hadRemovedSources: boolean,
+  doFullDelete = false,
+  onProgress?: (event: IndexProgressEvent) => void,
+): Promise<{
+  scannedDirs: number;
+  skippedDirs: number;
+  generatedCount: number;
+  warnings: string[];
+  dirsNeedingLlm: DirNeedingLlm[];
+}> {
+  // Phase 1 (async): walk directories and pre-generate all metadata outside the
+  // transaction.
+  const { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings } = await scanSourceDirs(
+    db,
+    allSourceEntries,
+    isIncremental,
+    builtAtMs,
+    hadRemovedSources,
+    onProgress,
+  );
+
+  // Phase 2 (sync): write all pre-generated metadata inside a single transaction.
+  const { dirsNeedingLlm } = persistDirRecords(db, dirRecords, doFullDelete, warnings);
 
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
 }
