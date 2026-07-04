@@ -14,6 +14,7 @@ import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { getDefaultLlmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
+import { parseDuration as parseDurationSpec } from "../core/time";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
@@ -58,15 +59,18 @@ export interface MemoryFrontmatterFields {
  * Supports: `30d` (days), `12h` (hours), `6m` (months, approximated as 30d).
  */
 export function parseDuration(s: string): number {
-  const match = s.trim().match(/^(\d+)([dhm])$/i);
-  if (!match)
+  // NOTE: `m` = MONTHS here (approximated as 30 days), unlike consolidate /
+  // --window-compare where `m` = minutes. Lower-case first so mixed-case units
+  // (e.g. "7D") match the lower-case unit map. See core/time.ts parseDuration.
+  const ms = parseDurationSpec(s.trim().toLowerCase(), {
+    d: 24 * 60 * 60 * 1000,
+    h: 60 * 60 * 1000,
+    m: 30 * 24 * 60 * 60 * 1000,
+  });
+  if (ms === null) {
     throw new UsageError(`Invalid --expires format "${s}". Use shorthand like 30d, 12h, or 6m.`, "INVALID_FLAG_VALUE");
-  const n = Number(match[1]);
-  const unit = match[2].toLowerCase();
-  if (unit === "d") return n * 24 * 60 * 60 * 1000;
-  if (unit === "h") return n * 60 * 60 * 1000;
-  // 'm' = months, approximated as 30 days
-  return n * 30 * 24 * 60 * 60 * 1000;
+  }
+  return ms;
 }
 
 /**

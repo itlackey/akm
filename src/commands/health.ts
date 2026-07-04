@@ -8,7 +8,7 @@ import { readEvents } from "../core/events";
 import { openLogsDatabase } from "../core/logs-db";
 import { getStateDbPathInDataDir } from "../core/paths";
 import { listExistingTableNames, openStateDatabase } from "../core/state-db";
-import { parseSinceToIso } from "../core/time";
+import { parseDuration, parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/search/semantic-status";
 import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
@@ -83,15 +83,19 @@ export function parseHealthSince(since?: string): string {
     return new Date(Date.now() - DEFAULT_SINCE_MS).toISOString();
   }
   const trimmed = since.trim();
-  const durationMatch = trimmed.match(/^(\d+)([dhm])$/i);
-  if (durationMatch) {
-    const amount = Number.parseInt(durationMatch[1] ?? "0", 10);
-    const unit = (durationMatch[2] ?? "d").toLowerCase();
-    if (!Number.isFinite(amount) || amount < 0) {
-      throw new UsageError("--since must be a non-negative duration or timestamp.", "INVALID_FLAG_VALUE");
-    }
-    const multiplier = unit === "h" ? 60 * 60 * 1000 : unit === "m" ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-    return new Date(Date.now() - amount * multiplier).toISOString();
+  // TODO(product): `m` here means MONTHS (approximated as 30 days), but the
+  // since-parsers in consolidate.ts and `--window-compare` (windows.ts) read
+  // `m` as MINUTES. This month-vs-minute discrepancy for the same shorthand is
+  // a genuine inconsistency that needs a human product decision — do NOT
+  // silently unify it here; both semantics are preserved via explicit unit maps
+  // passed to core/time.ts `parseDuration`.
+  const durationMs = parseDuration(trimmed.toLowerCase(), {
+    h: 60 * 60 * 1000,
+    m: 30 * 24 * 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  });
+  if (durationMs !== null) {
+    return new Date(Date.now() - durationMs).toISOString();
   }
   return parseSinceToIso(trimmed);
 }
