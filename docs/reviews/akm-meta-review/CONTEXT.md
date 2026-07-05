@@ -561,5 +561,20 @@ adversarial code-review + apply findings before commit). Base re-confirmed green
   persistence path = machinery). Neither is the clean "wire the reader / flip the capability" the disposition
   assumed. The extract value is also questionable (akm mining its own agent dispatches — circular).
 
+**OWNER RESOLUTIONS (2026-07-04, on PR #706 review) — the three NEEDS-RE-SCOPING items are now decided:**
+- **[03-R3] = DEMOTE THE TWIN (propagate the flag), NOT supersede the base.** When a base memory is flagged
+  (contradicted/superseded/archived), propagate that belief state onto its `.derived` twin so the stale twin
+  is demoted too (fixes 04's leak: the flag-free twin resurfacing corrected content). This is a belief-state
+  transition/persistence change, NOT a memory-inference write-path change and NOT "supersede the base." It
+  **builds on the belief-state broadening shipped in `41b797ca`**, so it lands as the FIRST item of the next
+  batch, AFTER #706 merges — do not stack it onto #706.
+- **[02] contributor ablation = DEFER to the E6 second-corpus probe.** No contributor deletions until a
+  broader eval corpus actually exercises the paths curate-golden can't (memory/lesson/fact/flagged/graph/
+  project-context/exact-name). The curate-golden Δ≈0 gate is insufficient on its own. 0 deletions; closed.
+- **[10-Q5] opencode-sdk `sessionLogs=false` = WON'T-FIX (drop).** Keep `sessionLogs=false` + the
+  per-dispatch `session.delete`. SDK sessions are akm's own internal agent dispatches (improve/wiki/propose)
+  in the shared `opencode.db`, deleted to avoid bloat; feeding them to extract is circular/low-value and
+  would double-count against the `opencode` harness. Closed as won't-fix — do not re-investigate.
+
 **⚠ OWNER RELEASE STEP (unchanged, now covers batch-2 too):** the batch-2 akm-side fixes — especially the
 07 P0-2 quality-gate fail-CLOSED — only protect cron after `bun run build` + global reinstall (~beta.58).
