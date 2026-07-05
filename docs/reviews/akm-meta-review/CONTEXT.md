@@ -555,6 +555,36 @@ form the **doc-sync batch** that 13's sequencing note reserved for 14):
   single most-contradicted doc is `v1-architecture-spec.md` and the headline is the broken router —
   a structural failure no subsystem guess would name.
 
+From **15 maintenance-loop** (adjudicated 2026-07-05 — the FINAL review; **REJECTED**, nothing armed):
+
+- **The standing maintenance loop is REJECTED entirely (owner, unambiguous).** No `/loop` cycles, no
+  crontab entry, no scheduled agent — the design at `findings/15-maintenance-loop.md` stays a cold
+  local-only record. **Do not re-propose a standing autonomous maintenance loop**; the owner rejected
+  it even with his own hard gate (never delete/prune data) encoded verbatim in the spec (G5/E1). The
+  revealed preference is binding: the meta-review gates belong to MANUAL owner-driven sessions, not to
+  a new autonomous actor.
+- **The ONE surviving design call — manual-batch queue order (ratified):** review-14 doc-sync batch
+  first (pure git-tracked ops, per-path pre-approved, net −12 live docs) → review-13 exec items
+  (C2 failRate advisory + exit-143 triage, A1 profile fallback, C1 distill-skipped aggregation, B1,
+  A3, D1 lint-half) → the 12-D1 shutdown before-baseline (read-only re-run of
+  `findings/09-grr-receipt.sql.md`). Owner explicitly declined bumping DB hygiene (his sealed
+  priority) ahead of doc-sync. Red main CI still preempts everything (zero-tolerance).
+- **Facts verified by the run that remain useful to the batches:** 14's doc-sync batch was verified
+  UNEXECUTED at 2026-07-05 (all 12 archival targets still live); open-issue tracker = 15 issues /
+  0 PRs, slow-moving; state.db growth ≈ 3.8GB/month (two-point 21-day estimate) pending 13-C1;
+  the live stash `.gitignore` is still vaults-only with NO env/secrets rules and NO remote (08-F1
+  scaffold latent, correctly silent); 13-B4 proven again (3 of the review's own prompt memory-refs
+  failed exact resolution — cite memories by search-terms).
+- **Loose ends closed as moot:** flake-detect's `continue-on-error` hit-rate gap stays noted-only
+  (one-line log grep if ever wanted, no tooling); no disarm rule needed since nothing arms.
+- **Sealed-prediction outcome:** gate = STRONG MATCH (owner sealed "never delete/prune data"; the
+  design independently encoded it twice), task = PARTIAL (sealed "DB hygiene/prune" was in the queue
+  but ranked second; owner then kept it second at adjudication) — plus the meta-outcome above: the
+  loop itself was the thing rejected.
+- **SERIES COMPLETE: all 15 reviews adjudicated.** Remaining work is execution, not review: the 14
+  doc-sync batch, the 13-item exec batch, and the minting-shutdown sequence (re-baseline first), in
+  the ratified order above.
+
 ## EXECUTION BATCH 1 (2026-07-04) — what SHIPPED / BLOCKED / REMAINS
 
 First execution session against the ratified dispositions (branch `meta-review-exec-2026-07-04`, off
