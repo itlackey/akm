@@ -1738,6 +1738,43 @@ describe("health — distill skipReasons", () => {
       const result = akmHealth({ since: "7d" });
       expect(result.improve.actions.distill.skipped).toBe(1);
     });
+
+    // C1 (13-bus-factor): new runs persist the bounded `distillSkipped`
+    // aggregate instead of per-ref rows. akmHealth must read the SAME
+    // `distill.skipped` total and `skippedByReason` histogram from the
+    // aggregate, so the metric's meaning is unchanged.
+    test("reads distill.skipped + skippedByReason from the aggregate (new-shape run)", () => {
+      const tsIso = new Date(Date.now() - 60_000).toISOString();
+      appendEvent({ eventType: "improve_completed", metadata: {} });
+      insertImproveRun(
+        {
+          schemaVersion: 1,
+          ok: true,
+          plannedRefs: [],
+          actions: [], // no per-ref distill-skipped rows persisted anymore
+          distillSkipped: {
+            total: 13000,
+            byReason: {
+              "no new signal since last proposal": 12000,
+              "pending proposal exists": 999,
+              unknown: 1,
+            },
+            samples: [{ ref: "memory:a", reason: "no new signal since last proposal" }],
+          },
+        },
+        tsIso,
+      );
+
+      const result = akmHealth({ since: "7d" });
+      expect(result.improve.actions.distill.skipped).toBe(13000);
+      expect(result.improve.actions.distill.skippedByReason).toEqual({
+        "no new signal since last proposal": 12000,
+        "pending proposal exists": 999,
+        unknown: 1,
+      });
+      const sum = Object.values(result.improve.actions.distill.skippedByReason).reduce((a, b) => a + b, 0);
+      expect(sum).toBe(result.improve.actions.distill.skipped);
+    });
   });
 });
 

@@ -34,6 +34,7 @@ import { isWithin, resolveStashDir } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
+import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,37 @@ export function sanitizeCommitMessage(input: string): string {
   return out;
 }
 
+// ── Portability advisory (review 13, D1) ────────────────────────────────────
+
+/**
+ * Matches an absolute host **home** path — `/home/<user>` or `/Users/<user>` —
+ * requiring at least one user segment after the prefix. A bare `/home/` or
+ * `/Users/` (no user segment) does NOT match. The user segment stops at the
+ * first path separator, whitespace, or common delimiter so we capture just the
+ * `/home/<user>` prefix rather than the whole path.
+ *
+ * Deliberately conservative: it does not exempt fenced code blocks, so content
+ * that legitimately *documents* a system path (e.g. a tutorial) can produce a
+ * false positive. That is accepted — the advisory is non-fatal and correctness
+ * (never missing a real leak) is preferred over cleverness here.
+ */
+const ABSOLUTE_HOME_PATH_RE = /\/(?:home|Users)\/[^\s/"'`)\]}<>|:;,]+/g;
+
+/**
+ * Return the distinct `/home/<user>` / `/Users/<user>` prefixes embedded in
+ * `content`, in first-seen order. Empty when the content is portable.
+ *
+ * Used by {@link writeAssetToSource} to emit a write-time advisory: absolute
+ * host home paths make the stash non-portable and leak the local username.
+ */
+export function findAbsoluteHomePaths(content: string): string[] {
+  const seen = new Set<string>();
+  for (const match of content.matchAll(ABSOLUTE_HOME_PATH_RE)) {
+    seen.add(match[0]);
+  }
+  return [...seen];
+}
+
 // ── Public helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -170,6 +202,17 @@ export async function writeAssetToSource(
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const normalized = content.endsWith("\n") ? content : `${content}\n`;
   fs.writeFileSync(filePath, normalized, "utf8");
+
+  // Non-fatal portability advisory (review 13, D1): flag absolute host home
+  // paths in the written content. These make the stash non-portable and leak
+  // the local username. We warn AFTER the write so the advisory never blocks it.
+  const hostPaths = findAbsoluteHomePaths(normalized);
+  if (hostPaths.length > 0) {
+    warn(
+      `warning: asset "${formatRefForMessage(ref)}" embeds absolute host path(s): ${hostPaths.join(", ")}. ` +
+        "These make the stash non-portable and leak the local username — prefer $HOME or ~ relative references.",
+    );
+  }
 
   return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
 }

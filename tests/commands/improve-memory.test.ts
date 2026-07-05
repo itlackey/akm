@@ -1035,18 +1035,23 @@ describe("akm improve memory cleanup", () => {
 
     expect(distilledRefs).toEqual([]);
     // 0.8.0: refs without any new feedback signal are fully skipped at the
-    // planner level (signal-delta gate). The synthetic distill-skipped
-    // action carries the new "no new signal since last proposal" reason.
+    // planner level (signal-delta gate). C1 (13-bus-factor): the per-ref
+    // distill-skipped rows are no longer persisted in `result.actions` — they
+    // are folded into the bounded `distillSkipped` aggregate. Assert the ref +
+    // its reason survive on the aggregate (this single ref lands in the capped
+    // sample list) and that no per-ref distill-skipped row leaked into actions.
+    expect(result.actions?.some((a) => a.mode === "distill-skipped")).toBe(false);
     expect(
-      result.actions?.some(
-        (action) =>
-          action.ref === "memory:deploy" &&
-          action.mode === "distill-skipped" &&
-          "reason" in action.result &&
-          (action.result.reason === "no new signal since last proposal" ||
-            action.result.reason === "memory requires recent feedback signal"),
+      result.distillSkipped?.samples.some(
+        (s) =>
+          s.ref === "memory:deploy" &&
+          (s.reason === "no new signal since last proposal" || s.reason === "memory requires recent feedback signal"),
       ),
     ).toBe(true);
+    expect(
+      (result.distillSkipped?.byReason["no new signal since last proposal"] ?? 0) +
+        (result.distillSkipped?.byReason["memory requires recent feedback signal"] ?? 0),
+    ).toBeGreaterThanOrEqual(1);
   });
 
   test("improve runs memory inference after distill and skips refs promoted to knowledge", async () => {

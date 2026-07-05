@@ -300,6 +300,75 @@ describe("recordImproveRun", () => {
       errorCount: 0,
     });
   });
+
+  // C1 (13-bus-factor): the per-ref distill-skipped rows no longer live in
+  // `result.actions`; they are folded into the `distillSkipped` aggregate. The
+  // metric total must still be counted from the aggregate, NOT from per-ref rows.
+  test("counts distillSkipped aggregate into skippedCount and actionsCount", () => {
+    const result = buildMinimalResult({
+      plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
+      actions: [{ ref: "lesson:a", mode: "reflect", result: { ok: true } as never }],
+      distillSkipped: {
+        total: 13000,
+        byReason: { "no new signal since last proposal": 12000, "pending proposal exists": 1000 },
+        samples: [{ ref: "memory:a", reason: "no new signal since last proposal" }],
+      },
+    });
+    const metrics = computeImproveRunMetrics(result);
+    // 1 reflect + 13000 folded skips.
+    expect(metrics.actionsCount).toBe(13001);
+    expect(metrics.acceptedCount).toBe(1);
+    expect(metrics.skippedCount).toBe(13000);
+    expect(metrics.rejectedCount).toBe(0);
+    expect(metrics.errorCount).toBe(0);
+  });
+
+  // The aggregate that gets persisted is bounded — the sample list is small even
+  // for a 13k-skip run, so result_json can no longer grow with the ref pool.
+  test("persists the bounded distillSkipped aggregate (no unbounded per-ref rows)", () => {
+    const db = openStateDatabase();
+    try {
+      const result = buildMinimalResult({
+        actions: [],
+        distillSkipped: {
+          total: 13000,
+          byReason: { "no new signal since last proposal": 13000 },
+          samples: [
+            { ref: "memory:a", reason: "no new signal since last proposal" },
+            { ref: "memory:b", reason: "no new signal since last proposal" },
+            { ref: "memory:c", reason: "no new signal since last proposal" },
+          ],
+        },
+      });
+      recordImproveRun(db, {
+        id: "run-aggregate",
+        startedAt: "2026-07-05T12:00:00.000Z",
+        completedAt: "2026-07-05T12:00:00.000Z",
+        stashDir: "/tmp/test-stash",
+        dryRun: false,
+        profile: null,
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result,
+      });
+      const row = db.prepare("SELECT result_json, metrics_json FROM improve_runs WHERE id = 'run-aggregate'").get() as {
+        result_json: string;
+        metrics_json: string;
+      };
+      const persisted = JSON.parse(row.result_json) as AkmImproveResult;
+      // No per-ref distill-skipped rows survive in the persisted actions array.
+      expect((persisted.actions ?? []).some((a) => a.mode === "distill-skipped")).toBe(false);
+      // The aggregate IS persisted, and its sample list is bounded (3, not 13000).
+      expect(persisted.distillSkipped?.total).toBe(13000);
+      expect(persisted.distillSkipped?.samples.length).toBe(3);
+      const metrics = JSON.parse(row.metrics_json) as Record<string, number>;
+      expect(metrics.skippedCount).toBe(13000);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("purgeOldImproveRuns", () => {

@@ -6,6 +6,8 @@ import {
   shouldSkipRef,
 } from "../../src/commands/improve/improve-profiles";
 import type { AkmConfig } from "../../src/core/config/config";
+import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
+import { ConfigError } from "../../src/core/errors";
 
 const MINIMAL_CONFIG: AkmConfig = {
   semanticSearchMode: "off",
@@ -82,11 +84,58 @@ describe("resolveImproveProfile", () => {
     expect(profile.sync?.enabled).toBe(true);
   });
 
-  test("unknown name falls back to default built-in", () => {
-    const profile = resolveImproveProfile("does-not-exist", MINIMAL_CONFIG);
-    // Falls back to 'default' built-in
+  test("unknown profile name throws ConfigError naming the bad profile and valid ones", () => {
+    // The −96% incident class: a cron pointed at a profile that isn't a built-in
+    // and isn't in config must fail LOUDLY, not silently run the default.
+    let thrown: unknown;
+    try {
+      resolveImproveProfile("does-not-exist", MINIMAL_CONFIG);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ConfigError);
+    const err = thrown as ConfigError;
+    expect(err.code).toBe("UNKNOWN_IMPROVE_PROFILE");
+    expect(err.message).toContain("does-not-exist");
+    // Lists valid built-ins so the operator can self-correct.
+    expect(err.message).toContain("default");
+    expect(err.message).toContain("reflect-distill");
+  });
+
+  test("unknown name from config.defaults.improve also throws (no silent fallback)", () => {
+    const config: AkmConfig = { ...MINIMAL_CONFIG, defaults: { improve: "typo-profile" } };
+    expect(() => resolveImproveProfile(undefined, config)).toThrow(ConfigError);
+  });
+
+  // ── A1: the three profiles promoted from live config to shipped built-ins ──
+  // Previously these existed ONLY in the owner's ~/.config/akm/config.json, so
+  // a fresh machine running `--profile reflect-distill` would silently fall
+  // back to default (proactive-off). They must now resolve without any config.
+  for (const name of ["reflect-distill", "proactive-maintenance", "recombine-only"] as const) {
+    test(`built-in '${name}' resolves from empty config and validates against the schema`, () => {
+      const profile = resolveImproveProfile(name, MINIMAL_CONFIG);
+      // Loads and is a valid ImproveProfileConfig.
+      expect(ImproveProfileConfigSchema.safeParse(profile).success).toBe(true);
+      expect(typeof profile.description).toBe("string");
+    });
+  }
+
+  test("built-in 'reflect-distill' enables the sustaining proactive-maintenance lane", () => {
+    const profile = resolveImproveProfile("reflect-distill", MINIMAL_CONFIG);
     expect(profile.processes?.reflect?.enabled).toBe(true);
     expect(profile.processes?.distill?.enabled).toBe(true);
+    expect(profile.processes?.proactiveMaintenance?.enabled).toBe(true);
+    expect(profile.processes?.consolidate?.enabled).toBe(false);
+    // Sync off — interrupted runs would leave an uncommitted backlog (#662).
+    expect(profile.sync?.enabled).toBe(false);
+  });
+
+  test("built-in 'recombine-only' enables only the recombine pass", () => {
+    const profile = resolveImproveProfile("recombine-only", MINIMAL_CONFIG);
+    expect(resolveProcessEnabled("recombine", profile)).toBe(true);
+    expect(profile.processes?.reflect?.enabled).toBe(false);
+    expect(profile.processes?.distill?.enabled).toBe(false);
+    expect(profile.processes?.consolidate?.enabled).toBe(false);
   });
 
   test("user config deep-merges on top of built-in", () => {

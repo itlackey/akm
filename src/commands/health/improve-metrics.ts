@@ -304,6 +304,24 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     }
   }
 
+  // C1 (13-bus-factor): new runs persist the bounded `distillSkipped` aggregate
+  // instead of per-ref `distill-skipped` rows. Read the total + per-reason
+  // histogram from it into the SAME `distill.skipped` / `skippedByReason`
+  // metric the per-ref loop above populated. Legacy rows carry the per-ref rows
+  // and NO aggregate (counted above); new rows carry the aggregate and NO
+  // per-ref rows (counted here) — so a run is never double-counted.
+  const distillSkipped = result.distillSkipped as { total?: unknown; byReason?: Record<string, unknown> } | undefined;
+  if (distillSkipped && typeof distillSkipped === "object") {
+    metrics.actions.distill.skipped += toFiniteNumber(distillSkipped.total);
+    const byReason = distillSkipped.byReason;
+    if (byReason && typeof byReason === "object") {
+      for (const [reason, count] of Object.entries(byReason)) {
+        metrics.actions.distill.skippedByReason[reason] =
+          (metrics.actions.distill.skippedByReason[reason] ?? 0) + toFiniteNumber(count);
+      }
+    }
+  }
+
   metrics.autoAccept.promoted += toFiniteNumber(result.gateAutoAcceptedCount);
   metrics.autoAccept.validationFailed += toFiniteNumber(result.gateAutoAcceptFailedCount);
   metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);

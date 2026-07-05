@@ -42,12 +42,15 @@ Options:
                         Note: until proposals carry real confidence scores, any non-`false`
                         value behaves like the legacy "safe" mode (whole-batch auto-accept).
   --profile <name>     Improve profile to apply. Built-ins: default, quick,
-                        thorough, memory-focus. User-defined profiles under
-                        `profiles.improve.<name>` in config are also accepted.
-                        Profiles bundle process gating, type filters, and
-                        run-level autoAccept/limit defaults. Falls back to
-                        `defaults.improve` in config, then to "default".
-                        Unknown names fall back to default with a warning.
+                        thorough, memory-focus, frequent, catchup, consolidate,
+                        graph-refresh, synthesize, reflect-distill,
+                        proactive-maintenance, recombine-only. User-defined
+                        profiles under `profiles.improve.<name>` in config are
+                        also accepted. Profiles bundle process gating, type
+                        filters, and run-level autoAccept/limit defaults. Falls
+                        back to `defaults.improve` in config, then to "default".
+                        An unknown name is a hard error listing the valid names
+                        (no silent fallback to default).
                         Sync behavior by profile: default and thorough enable
                         auto-commit + push; quick and memory-focus skip sync.
   --sync               Commit (and optionally push) the git-backed primary
