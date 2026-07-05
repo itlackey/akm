@@ -3,16 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Embedded core task registry — asserts the 7 bundled templates are present
+ * Embedded core task registry — asserts the 6 bundled templates are present
  * with the exact ids, commands, and default schedules from issue #512, and
  * that they are read from the bundled assets dir (not any user stash).
+ *
+ * `update-stashes` (nightly `akm update --all`) was retired in meta-review
+ * 06-M2 — third-party stash pulls are on-demand only now.
  */
 import { describe, expect, test } from "bun:test";
 import { listEmbeddedTasks } from "../src/tasks/embedded";
 
 const EXPECTED = [
   { id: "improve", command: "akm improve --auto-accept safe", schedule: "0 2 * * *" },
-  { id: "update-stashes", command: "akm update", schedule: "0 1 * * *" },
   { id: "backup", command: "akm db backups", schedule: "0 3 * * 0" },
   { id: "version-check", command: "akm info --check-version", schedule: "0 9 * * 1" },
   { id: "index-refresh", command: "akm index", schedule: "0 4 * * *" },
@@ -21,9 +23,9 @@ const EXPECTED = [
 ] as const;
 
 describe("embedded core task registry", () => {
-  test("enumerates all 7 templates", () => {
+  test("enumerates all 6 templates", () => {
     const tasks = listEmbeddedTasks();
-    expect(tasks.length).toBe(7);
+    expect(tasks.length).toBe(6);
   });
 
   test("each template has the exact id, command, and default schedule", () => {
