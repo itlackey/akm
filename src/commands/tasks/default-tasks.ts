@@ -44,8 +44,9 @@ export interface DefaultTaskSpec {
 }
 
 /**
- * The canonical default improve task set. `update-stashes` is deliberately NOT
- * listed here — it ships as an embedded core template and is left unchanged.
+ * The canonical default improve task set. The `update-stashes` embedded core
+ * template (nightly `akm update --all`) was retired in meta-review 06-M2:
+ * third-party stash pulls are on-demand only now, not a scheduled cron.
  */
 export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {

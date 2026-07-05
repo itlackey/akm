@@ -90,11 +90,11 @@ function makeDeps(installed: Array<{ id: string; enabled: boolean }>) {
 describe("stepScheduledTasks", () => {
   beforeEach(resetClack);
 
-  test("lists all 7 embedded tasks with id, description, and schedule in the multiselect", async () => {
+  test("lists all 6 embedded tasks with id, description, and schedule in the multiselect", async () => {
     const { deps } = makeDeps([]);
     await stepScheduledTasks(deps);
     const opts = state.multiselectConfig?.options ?? [];
-    expect(opts.length).toBe(7);
+    expect(opts.length).toBe(6);
     const improve = opts.find((o) => o.value === "improve");
     expect(improve?.label).toBe("core/improve");
     expect(improve?.hint).toContain("Run improve pipeline nightly");
