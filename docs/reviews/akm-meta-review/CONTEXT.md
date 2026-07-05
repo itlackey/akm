@@ -492,6 +492,69 @@ From **13 bus-factor** (adjudicated 2026-07-05; nothing executed — disposition
   fallback, blob growth); the owner's top concern (absolute paths in stash assets) was MISSED by the run
   entirely and confirmed real post-hoc → D1.
 
+From **14 docs-consolidation** (adjudicated 2026-07-05; nothing executed — dispositions only; these
+form the **doc-sync batch** that 13's sequencing note reserved for 14):
+
+- **Headline:** `docs/README.md` — the stated entry point — is the broken router (3 dead links whose
+  targets exist only under gitignored `.plans/done/`, latest=0.8.0 vs shipped 0.9.0, six doc areas
+  unreachable), and 12 of ~60 live design/technical docs are already SHIPPED or SUPERSEDED. The
+  archive convention (`docs/archive/README.md`) existed all along and was skipped 12 times — a
+  process failure, not a subsystem one. Fix shape = **zero new docs**: edit 2 existing indexes, net
+  −12 live docs.
+- **APPROVED — archive 12 per-path by name** (moves to `docs/archive/` with 2-line banners, git
+  history is recovery): `technical/v1-architecture-spec.md` (5-way code-contradicted; DB_VERSION 9 vs
+  live 17), `technical/d1-design.md` + `d2-design.md` + `d3-design.md` + `r5-design.md` (all four
+  code-verified shipped), `technical/health-command-enhancements.md` (fix/drop the README:34 link),
+  `technical/proposal-storage.md`, `technical/improve-pipeline-analysis-0.8.0.md`,
+  `technical/index-consistency-adr.md`, `technical/akm-production-readiness-findings.md` (banner
+  cites 10-Q4 — owner chose ARCHIVE over update, closing 12's open call),
+  `design/improve-vs-brain-analysis.md` + `design/improve-pipeline-deep-tuning-analysis.md` (both
+  superseded BY NAME by `improve-self-learning-analysis.md`).
+- **APPROVED — MERGE-FIRST then DELETE** the 486-line near-duplicate
+  `technical/claude-code-workflows-vs-akm-workflows.md`: diff against the keeper
+  `claude-code-vs-akm-workflows.md` (the one anchored by `akm-workflows-orchestration-plan.md`'s
+  supersession chain), port unique paragraphs into the keeper, then delete. NOT a straight delete.
+- **APPROVED — edit-in-place set (all):** README router rewrite (drop the 3 dead `.plans/` links,
+  0.8.0→0.9.0, one route per subsystem incl. the 6 unreachable areas); "Section 0" prepended to
+  `design/self-improvement-learning-memory-reference-index.md` (subsystem→doc→status table — extend
+  the existing index, NO new index file); `technical/storage-locations.md` one batched edit
+  (DB_VERSION 17, events schema `id/event_type/ts/ref/metadata_json`, add logs.db ~1.06GB +
+  akm-claude/akm-opencode state tiers, backup truth = one live $CACHE/config-backups, perms line +
+  `data-and-telemetry.md:51`); `technical/improve-workflow.md` 2 fictions (human-in-loop →
+  audited-autonomous per 06; delete the confidence-threshold claim — no such score exists, 06-M7);
+  `technical/architecture.md` + `migration/v1.md` add shipped `lesson`/`fact` types;
+  `design/improve-salience-working-reference.md` (re-anchor all improve.ts cites to SYMBOLS — every
+  line-cite points past EOF of the 1,454-line post-D1 file; fix F7 default-OFF → ON per
+  `salience.ts:355`; repoint :357 to `improve-self-learning-analysis.md`); 3 one-liners
+  (neuroscience-survey gets "inspiration, not justification" header and KEEPs as the grading source;
+  `improve-optimal-default-config.md` gets the 06-M5 ratified-unexecuted status note;
+  `src-reorganization-plan.md` ghost `490-refactor-plan.md` reference deleted).
+- **APPROVED — the 5-line new-docs rule** (README footer): one current-truth doc per subsystem;
+  unshipped designs in `docs/design/` with mandatory Status/Supersedes/Date header; the SHIPPING PR
+  moves the design to `docs/archive/` in the same PR; cite code by SYMBOL + memories by search-terms
+  (11-B4/13-B4); nothing in `docs/` may reference `.plans/` (scratch — promote or drop); per 12-D2 no
+  new improve-analysis docs until the 30-clean-day gate.
+- **APPROVED — supersession (owner resolved flag):** `src-reorganization-plan.md`'s indexer half is
+  SUPERSEDED by `docs/analysis/indexer-vertical-slice-refactor-plan.md` (2026-07-03) — add the note.
+- **Defended KEEPs (binding):** `storage-locations.md` (only storage inventory — edit, never archive);
+  `improve-salience-working-reference.md` (the only per-claim-cited improve map; stash knowledge
+  defers to it); `search.md` + `search-updated.md` pair (self-declared companion, no rename churn);
+  `.plans/` untouched (gitignored user data, ZERO file operations — the fix is the rule, not
+  promotion). Review-13 doc leftovers (bun-shim, VACUUM) CLOSED as no-ops — zero matching doc lines
+  exist. Stash-vs-repo: NO contradiction (all 3 stash knowledge refs defer to repo docs); fold
+  `config-system-architecture`'s still-true "Missing Process Schema" known-issue into
+  `docs/configuration.md`.
+- **Routed elsewhere:** npm `latest`=0.8.14 repoint (already in the 08/09 hygiene batch); the weekly
+  YAML "disabled-by-default" false claim is a LIVE STASH ASSET → its one-line correction rides the
+  execution batch, not the doc-sync batch.
+- **DON'T-ADD:** no new index file, no new orientation doc (04-B7 already covers `meta/index.md`),
+  no doc-lint tooling — the 5-line rule + ship-PR convention is the whole mechanism.
+- **Sealed-prediction outcome:** STRONG MATCH on rot density, DIVERGE on worst artifact — owner
+  sealed "improve pipeline docs"; 7 of 17 contradiction rulings ARE improve docs (churn→rot theory
+  confirmed: D1 refactor + betas 44–59 invalidated cites and turned passages into fiction), but the
+  single most-contradicted doc is `v1-architecture-spec.md` and the headline is the broken router —
+  a structural failure no subsystem guess would name.
+
 ## EXECUTION BATCH 1 (2026-07-04) — what SHIPPED / BLOCKED / REMAINS
 
 First execution session against the ratified dispositions (branch `meta-review-exec-2026-07-04`, off
