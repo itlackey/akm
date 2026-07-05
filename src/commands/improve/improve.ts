@@ -19,7 +19,7 @@ import type {
   ProceduralCompilationResult,
   RecombineResult,
 } from "../../core/improve-types";
-import { classifyImproveAction } from "../../core/improve-types";
+import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
@@ -1088,6 +1088,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       if (gateAcceptedThisCycle === 0) break;
     }
 
+    // C1 (13-bus-factor): fold the per-ref `distill-skipped` rows (~13k/run,
+    // ~91% of result_json bytes) into a bounded aggregate BEFORE persistence.
+    // The metric total + per-reason breakdown are preserved on `distillSkipped`;
+    // the unbounded row list never reaches result_json. Reflect skip counters
+    // below still read `finalActions` (reflect skips are not folded).
+    const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
+
     const result: AkmImproveResult = {
       schemaVersion: 1,
       ok: true,
@@ -1118,7 +1125,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         : {}),
       plannedRefs: preparation.actionableRefs,
       ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
-      actions: finalActions,
+      actions: persistedActions,
+      ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),
       ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),
       ...(preparation.schemaRepairs.length > 0 ? { schemaRepairs: preparation.schemaRepairs } : {}),
       ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
@@ -1326,6 +1334,14 @@ function emitImproveCompletedEvent(
         assertNever(action.mode);
     }
   }
+
+  // C1: distill-skipped rows are no longer in `result.actions` (folded into the
+  // bounded `distillSkipped` aggregate at assembly). Add the aggregate total to
+  // the per-variant counter AND the coarse `skipped` bucket so the emitted event
+  // still reports the true skipped volume.
+  const distillSkippedTotal = result.distillSkipped?.total ?? 0;
+  actionCounts.distillSkipped += distillSkippedTotal;
+  classCounts.skipped += distillSkippedTotal;
 
   appendEvent(
     {

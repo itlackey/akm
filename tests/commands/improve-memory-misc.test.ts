@@ -260,8 +260,11 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 
     expect(result.ok).toBe(true);
     expect(distilledRefs).not.toContain("memory:auth-tips");
-    const distillSkipped = result.actions?.find((a) => a.ref === "memory:auth-tips" && a.mode === "distill-skipped");
-    expect(distillSkipped).toBeDefined();
+    // C1 (13-bus-factor): the per-ref distill-skipped row is folded into the
+    // bounded `distillSkipped` aggregate rather than persisted in `actions`.
+    // The single skipped ref lands in the capped sample list.
+    expect(result.actions?.some((a) => a.mode === "distill-skipped")).toBe(false);
+    expect(result.distillSkipped?.samples.some((s) => s.ref === "memory:auth-tips")).toBe(true);
   });
 
   test("D-2: --scope <ref> bypasses distill reject cooldown (O-2 interaction)", async () => {

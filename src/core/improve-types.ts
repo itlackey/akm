@@ -173,6 +173,71 @@ export interface ImproveActionResult {
     | { ok: false; error: string };
 }
 
+/**
+ * C1 (13-bus-factor) — bounded replacement for the per-ref `distill-skipped`
+ * action rows that used to be persisted verbatim in
+ * `improve_runs.result_json`. On a whole-stash run the loop emits one
+ * `distill-skipped` action per gated ref (~13k rows/run, ~91% of result_json
+ * bytes on the live stash — the 90-day TTL cannot bound this per-run growth),
+ * yet the ONLY consumer of the detail (`health/improve-metrics.ts`) needs just
+ * the total and the per-reason breakdown. So we fold the list into this
+ * aggregate before persistence: the metric survives, the unbounded row list
+ * does not.
+ */
+export interface DistillSkippedAggregate {
+  /** Total number of distill-skipped actions this run (the metric total). */
+  total: number;
+  /** Per-reason histogram: reason string -> count. Sums to {@link total}. */
+  byReason: Record<string, number>;
+  /**
+   * A small CAPPED sample of refs per reason (first
+   * {@link DISTILL_SKIPPED_SAMPLE_CAP_PER_REASON} seen), retained only for
+   * debugging. Bounded by construction so result_json can never grow with the
+   * indexed-ref pool.
+   */
+  samples: Array<{ ref: string; reason: string }>;
+}
+
+/** Upper bound on retained sample refs PER reason in {@link DistillSkippedAggregate}. */
+export const DISTILL_SKIPPED_SAMPLE_CAP_PER_REASON = 3;
+
+/**
+ * Partition an action list into the rows to persist and the `distill-skipped`
+ * aggregate. Pure — no I/O. Called once at improve-result assembly time so the
+ * serialized envelope never carries per-ref distill-skipped rows.
+ *
+ * Non-`distill-skipped` actions are returned verbatim and in order. When there
+ * are zero distill-skipped actions the aggregate is omitted (the envelope stays
+ * byte-identical to a run that skipped nothing).
+ */
+export function foldDistillSkipped(actions: ImproveActionResult[]): {
+  actions: ImproveActionResult[];
+  aggregate?: DistillSkippedAggregate;
+} {
+  const kept: ImproveActionResult[] = [];
+  const byReason: Record<string, number> = {};
+  const samples: Array<{ ref: string; reason: string }> = [];
+  const sampleCountByReason: Record<string, number> = {};
+  let total = 0;
+  for (const action of actions) {
+    if (action.mode !== "distill-skipped") {
+      kept.push(action);
+      continue;
+    }
+    total += 1;
+    const r = action.result as { reason?: unknown } | undefined;
+    const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
+    byReason[reason] = (byReason[reason] ?? 0) + 1;
+    const seen = sampleCountByReason[reason] ?? 0;
+    if (seen < DISTILL_SKIPPED_SAMPLE_CAP_PER_REASON) {
+      sampleCountByReason[reason] = seen + 1;
+      samples.push({ ref: action.ref, reason });
+    }
+  }
+  if (total === 0) return { actions: kept };
+  return { actions: kept, aggregate: { total, byReason, samples } };
+}
+
 export interface ImproveMemoryCleanupResult {
   analyzedDerived: number;
   pruneCandidates: MemoryPruneCandidate[];
@@ -280,6 +345,15 @@ export interface AkmImproveResult {
    */
   profileFilteredRefs?: ImproveEligibleRef[];
   actions?: ImproveActionResult[];
+  /**
+   * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
+   * actions that used to bloat {@link actions} (and thus `result_json`). Built
+   * by {@link foldDistillSkipped} at assembly time; the per-ref rows are NOT
+   * persisted. Omitted when zero refs were distill-skipped. Consumers read
+   * `distill.skipped` / `skippedByReason` from here (see
+   * `health/improve-metrics.ts`) instead of scanning per-ref rows.
+   */
+  distillSkipped?: DistillSkippedAggregate;
   validationFailures?: Array<{ ref: string; reason: string }>;
   schemaRepairs?: Array<{
     ref: string;
