@@ -11,7 +11,13 @@ import { type DbSearchResult, getUtilityScoresByIds } from "../db/db";
 import type { GraphBoostContext } from "../graph/graph-boost";
 import type { StashEntry } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
-import { applyScoreContributors, applyUtilityContributors } from "./ranking-contributors";
+import {
+  applyContributorAblation,
+  applyScoreContributors,
+  applyUtilityContributors,
+  defaultRankingContributors,
+  defaultUtilityRankingContributors,
+} from "./ranking-contributors";
 
 export interface RankedEntryInput {
   id: number;
@@ -199,8 +205,15 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
     projectContext: options.projectContext,
   };
 
+  // Eval/debug only: AKM_ABLATE_CONTRIBUTORS lets the ablation harness drop
+  // named contributors to measure their effect. Resolved once per query;
+  // a no-op (full lists) when the env var is unset — see applyContributorAblation.
+  const ablateEnv = process.env.AKM_ABLATE_CONTRIBUTORS;
+  const activeScoreContributors = applyContributorAblation(defaultRankingContributors, ablateEnv);
+  const activeUtilityContributors = applyContributorAblation(defaultUtilityRankingContributors, ablateEnv);
+
   for (const item of options.items) {
-    applyScoreContributors(item, rankingContext);
+    applyScoreContributors(item, rankingContext, activeScoreContributors);
   }
 
   const { global: utilScoresMap, scoped: scopedUtilScoresMap } = getUtilityScoresByIds(
@@ -223,7 +236,7 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
     salienceRankScores,
   };
   for (const item of options.items) {
-    applyUtilityContributors(item, utilityContext);
+    applyUtilityContributors(item, utilityContext, activeUtilityContributors);
   }
 
   return options.items;
