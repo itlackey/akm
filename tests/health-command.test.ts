@@ -150,12 +150,15 @@ describe("akmHealth", () => {
   });
 
   test("reports rich improve metrics from improve_runs (Phase 1)", () => {
-    const startA = new Date(Date.now() - 60_000).toISOString();
-    const endA = new Date(Date.now() - 30_000).toISOString();
-    const startB = new Date(Date.now() - 25_000).toISOString();
-    const endB = new Date(Date.now() - 10_000).toISOString();
-    const startDry = new Date(Date.now() - 9_000).toISOString();
-    const endDry = new Date(Date.now() - 5_000).toISOString();
+    // Single clock read so every derived interval is exact regardless of CI
+    // scheduling (see the #499 note on the legacy-row test below).
+    const now = Date.now();
+    const startA = new Date(now - 60_000).toISOString();
+    const endA = new Date(now - 30_000).toISOString();
+    const startB = new Date(now - 25_000).toISOString();
+    const endB = new Date(now - 10_000).toISOString();
+    const startDry = new Date(now - 9_000).toISOString();
+    const endDry = new Date(now - 5_000).toISOString();
 
     // Wall-time rows in task_history for task_id='akm-improve'.
     const db = openStateDatabase();
@@ -386,8 +389,11 @@ describe("akmHealth", () => {
   });
 
   test("manual run row with distinct started_at<completed_at and no task_history yields wallTime from the row delta (#499)", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 45_000).toISOString(); // 15s row delta
+    // Single clock read so the 15s delta is exact regardless of CI scheduling
+    // (see the #499 note on the legacy-row test below).
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 45_000).toISOString(); // 15s row delta
     const db = openStateDatabase();
     try {
       // No task_history interval — this is a manually-invoked `akm improve`.
@@ -426,10 +432,11 @@ describe("akmHealth", () => {
   });
 
   test("window memorySummary is the latest run's whole-stash snapshot, not the sum across runs", () => {
-    const olderStart = new Date(Date.now() - 120_000).toISOString();
-    const olderEnd = new Date(Date.now() - 110_000).toISOString();
-    const newerStart = new Date(Date.now() - 60_000).toISOString();
-    const newerEnd = new Date(Date.now() - 50_000).toISOString();
+    const now = Date.now();
+    const olderStart = new Date(now - 120_000).toISOString();
+    const olderEnd = new Date(now - 110_000).toISOString();
+    const newerStart = new Date(now - 60_000).toISOString();
+    const newerEnd = new Date(now - 50_000).toISOString();
     const db = openStateDatabase();
     try {
       for (const [id, start, end, eligible, derived] of [
@@ -478,10 +485,11 @@ describe("akmHealth", () => {
   });
 
   test("improve run is attributed to its scheduled akm-improve task via the ±5min task_history join", () => {
-    const taskStart = new Date(Date.now() - 60_000).toISOString();
-    const runStart = new Date(Date.now() - 59_000).toISOString(); // 1s after the task fired
-    const runEnd = new Date(Date.now() - 40_000).toISOString();
-    const taskEnd = new Date(Date.now() - 39_000).toISOString();
+    const now = Date.now();
+    const taskStart = new Date(now - 60_000).toISOString();
+    const runStart = new Date(now - 59_000).toISOString(); // 1s after the task fired
+    const runEnd = new Date(now - 40_000).toISOString();
+    const taskEnd = new Date(now - 39_000).toISOString();
     const db = openStateDatabase();
     try {
       upsertTaskHistory(db, {
@@ -527,10 +535,15 @@ describe("akmHealth", () => {
   });
 
   test("legacy row with started_at==completed_at falls back to containing task_history interval duration (#499)", () => {
-    const taskStart = new Date(Date.now() - 60_000).toISOString();
-    const taskEnd = new Date(Date.now() - 38_000).toISOString(); // 22s interval
+    // Capture the clock ONCE — deriving taskStart/taskEnd from two separate
+    // Date.now() calls made the 22s interval flaky: if ≥1ms elapsed between the
+    // calls (a loaded CI shard scheduler), the duration became 22001+ and the
+    // exact `toBe(22_000)` assertion below failed. (#499 residual root cause.)
+    const now = Date.now();
+    const taskStart = new Date(now - 60_000).toISOString();
+    const taskEnd = new Date(now - 38_000).toISOString(); // 22s interval
     // Legacy/backfill row: started_at == completed_at, falling inside the task interval.
-    const stamp = new Date(Date.now() - 50_000).toISOString();
+    const stamp = new Date(now - 50_000).toISOString();
     const db = openStateDatabase();
     try {
       upsertTaskHistory(db, {
@@ -578,8 +591,9 @@ describe("akmHealth", () => {
   });
 
   test("reflect content-policy guard hits are counted separately from failed (Pattern A)", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -641,8 +655,9 @@ describe("akmHealth", () => {
   });
 
   test("distill outcome:skipped surfaces as actions.distill.deferred with skipReason breakdown", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -709,8 +724,9 @@ describe("akmHealth", () => {
     // result.reason for reflect-skipped, so 18/18 type-filter+raw-wiki skips
     // were a single opaque scalar in `akm health`. Mirror the
     // `distill.deferredByReason` shape (commit d1273d0).
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -766,8 +782,9 @@ describe("akmHealth", () => {
     // The split lets dashboards distinguish prompt-tuning levers from
     // validator-config levers. Legacy `qualityRejected` is preserved as the
     // sum for back-compat.
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -815,8 +832,9 @@ describe("akmHealth", () => {
     // had no LLM verdict and were a pure silent drop. The new
     // `judgedNoAction` counter surfaces them; `skipReasons` turns the
     // free-text warnings bag into a typed histogram.
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -1101,8 +1119,9 @@ describe("akmHealth", () => {
   // rate reflects the rate model output succeeded for the calls that
   // actually hit the LLM, independent of cache state.
   test("memoryInference.yieldRate uses freshAttempts (considered - cacheHits), not considered", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -1151,10 +1170,11 @@ describe("health — window comparison", () => {
   // ── Phase 2: --group-by run ────────────────────────────────────────────────
   describe("akm health --group-by run", () => {
     function seedTwoRuns(): { startA: string; endA: string; startB: string; endB: string } {
-      const startA = new Date(Date.now() - 60_000).toISOString();
-      const endA = new Date(Date.now() - 30_000).toISOString();
-      const startB = new Date(Date.now() - 25_000).toISOString();
-      const endB = new Date(Date.now() - 10_000).toISOString();
+      const now = Date.now();
+      const startA = new Date(now - 60_000).toISOString();
+      const endA = new Date(now - 30_000).toISOString();
+      const startB = new Date(now - 25_000).toISOString();
+      const endB = new Date(now - 10_000).toISOString();
       const db = openStateDatabase();
       try {
         upsertTaskHistory(db, {
@@ -1255,8 +1275,9 @@ describe("health — window comparison", () => {
 
     test("per-run summary fields parity with window aggregator (one row)", () => {
       // Seed a single run, then compare aggregator output vs runs[0].
-      const startA = new Date(Date.now() - 60_000).toISOString();
-      const endA = new Date(Date.now() - 30_000).toISOString();
+      const now = Date.now();
+      const startA = new Date(now - 60_000).toISOString();
+      const endA = new Date(now - 30_000).toISOString();
       const db = openStateDatabase();
       try {
         upsertTaskHistory(db, {
@@ -1585,11 +1606,12 @@ describe("health — window comparison", () => {
     });
 
     test("duplicate window names throw UsageError", () => {
+      const now = Date.now();
       expect(() =>
         akmHealth({
           windows: [
-            { name: "dup", since: new Date(Date.now() - 7200_000).toISOString() },
-            { name: "dup", since: new Date(Date.now() - 3600_000).toISOString() },
+            { name: "dup", since: new Date(now - 7200_000).toISOString() },
+            { name: "dup", since: new Date(now - 3600_000).toISOString() },
           ],
         }),
       ).toThrow(/duplicate name/);
@@ -1785,8 +1807,9 @@ describe("akm health --group-by run", () => {
     pinHealthEnv("gbrun");
     const db = openStateDatabase();
     try {
-      const startA = new Date(Date.now() - 60_000).toISOString();
-      const endA = new Date(Date.now() - 30_000).toISOString();
+      const now = Date.now();
+      const startA = new Date(now - 60_000).toISOString();
+      const endA = new Date(now - 30_000).toISOString();
       upsertTaskHistory(db, {
         task_id: "akm-improve",
         status: "completed",
