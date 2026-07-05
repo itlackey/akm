@@ -44,7 +44,6 @@ import {
   capClusters,
   isJunkEntity,
   isJunkTag,
-  isSessionCaptureMemoryName,
   selectClustersForRun,
 } from "../src/commands/improve/recombine";
 import { listProposals } from "../src/commands/proposal/repository";
@@ -558,18 +557,6 @@ describe("recombine #632 — entity-based clustering", () => {
   });
 });
 
-// ── #632 — exclude session-capture telemetry memories from the pool ────────────
-//
-// The dominant real-world noise source: AKM session-end checkpoint memories
-// (`<harness>-session-<YYYYMMDD>-<id>` / `<harness>-checkpoint-<YYYYMMDD…>-<id>`)
-// carry an embedded `akm_memory_kind: session_checkpoint` metadata block whose
-// fields the graph extracts as ENTITIES (`session_checkpoint`, `harness`,
-// `buffered observations`, `tool_*_observed`, …). With ~20% of the pool being
-// these telemetry dumps, those bookkeeping entities form the largest clusters
-// and dominate the largest-first selection — reproducing #632 under entity
-// signatures. They are telemetry, not durable knowledge, so they are excluded
-// from the recombine pool.
-
 describe("recombine #632 — selectClustersForRun (entity/tag blend)", () => {
   // Build a cluster of `size` members with the given signature.
   const cl = (signature: string, size: number) => ({
@@ -650,64 +637,5 @@ describe("recombine #632 — selectClustersForRun (entity/tag blend)", () => {
     expect(selectClustersForRun(ranked, 1).map((c) => c.signature)).toEqual(["entity:x"]);
     // cap 2 → 1 entity + 1 tag (entity not crowded out by the 3-slot reserve).
     expect(selectClustersForRun(ranked, 2).map((c) => c.signature)).toEqual(["entity:x", "tag:a"]);
-  });
-});
-
-describe("recombine #632 — session-capture telemetry detection", () => {
-  test("recognises AKM session/checkpoint capture names (datestamped)", () => {
-    for (const name of [
-      "claude-session-20260623-00db9c0b",
-      "opencode-session-20260529-ses_18ae",
-      "opencode-checkpoint-20260529T195618-ses_18db",
-    ]) {
-      expect(isSessionCaptureMemoryName(name)).toBe(true);
-    }
-  });
-
-  test("keeps durable memories that merely mention session/checkpoint", () => {
-    for (const name of [
-      "akm-plugins-session-end-extract-hook",
-      "session-checkpoint-lint-skips",
-      "print-md-source-provider",
-      "guardian-auth-boundary",
-    ]) {
-      expect(isSessionCaptureMemoryName(name)).toBe(false);
-    }
-  });
-});
-
-describe("recombine #632 — pool excludes session-capture memories", () => {
-  test("session-capture memories never cluster, even when they share a signal", () => {
-    // Three session-capture memories sharing a tag AND an entity — must NOT cluster.
-    const entries = [
-      memoryEntry(1, "claude-session-20260601-aaaa", ["akm"]),
-      memoryEntry(2, "claude-session-20260602-bbbb", ["akm"]),
-      memoryEntry(3, "opencode-checkpoint-20260603T010101-ses_1", ["akm"]),
-    ];
-    const entityByEntryId = new Map<number, string[]>([
-      [1, ["session_checkpoint"]],
-      [2, ["session_checkpoint"]],
-      [3, ["session_checkpoint"]],
-    ]);
-    const clusters = buildRelatednessClusters(entries, {
-      minClusterSize: 3,
-      relatednessSource: "both",
-      entityByEntryId,
-    });
-    expect(clusters).toEqual([]);
-  });
-
-  test("durable memories still cluster when session-capture siblings are filtered out", () => {
-    const entries = [
-      memoryEntry(1, "print-md-a", ["print"]),
-      memoryEntry(2, "print-md-b", ["print"]),
-      memoryEntry(3, "print-md-c", ["print"]),
-      // Telemetry sibling sharing the same tag — excluded, so it must not inflate the cluster.
-      memoryEntry(4, "claude-session-20260601-aaaa", ["print"]),
-    ];
-    const clusters = buildRelatednessClusters(entries, { minClusterSize: 3, relatednessSource: "tags" });
-    expect(clusterShape(clusters)).toEqual([
-      { signature: "tag:print", members: ["memory:print-md-a", "memory:print-md-b", "memory:print-md-c"] },
-    ]);
   });
 });

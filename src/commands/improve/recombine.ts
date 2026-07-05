@@ -72,7 +72,7 @@ import {
   isValidWhenToUse,
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
-import { isConsolidationEligibleMemoryName, isSessionCaptureMemoryName } from "./consolidate";
+import { isConsolidationEligibleMemoryName } from "./consolidate";
 import { resolveImproveLlmFn } from "./shared";
 
 export type { RecombineResult } from "../../core/improve-types";
@@ -251,11 +251,6 @@ const JUNK_ENTITY_NORMS = new Set([
   "status",
 ]);
 
-// #632 — `isSessionCaptureMemoryName` now lives in ./consolidate/eligibility so
-// both recombine and consolidate can reuse it without a circular import. It is
-// re-exported here for back-compat (existing importers + tests).
-export { isSessionCaptureMemoryName };
-
 /**
  * #632 — an entity carries no clustering signal (and must be skipped) when it is
  * a generic extraction artefact (session / structured-log bookkeeping), a raw
@@ -325,15 +320,7 @@ export function buildRelatednessClusters(
   },
 ): MemoryCluster[] {
   // Only consolidation-eligible memories participate (exclude `.derived`).
-  // #632 — durable memories only: exclude `.derived` (via
-  // `isConsolidationEligibleMemoryName`) AND session-capture telemetry dumps
-  // whose embedded metadata pollutes both tag and entity clustering.
-  const memories = entries.filter(
-    (e) =>
-      e.entry.type === "memory" &&
-      isConsolidationEligibleMemoryName(e.entry.name) &&
-      !isSessionCaptureMemoryName(e.entry.name),
-  );
+  const memories = entries.filter((e) => e.entry.type === "memory" && isConsolidationEligibleMemoryName(e.entry.name));
 
   // signal -> member entries
   const groups = new Map<string, DbIndexedEntry[]>();

@@ -29,7 +29,7 @@ import {
   gateDecisionsToSamples,
   summarizeCalibration,
 } from "./calibration";
-import { akmConsolidate, type ConsolidateResult, isSessionCaptureMemoryName } from "./consolidate";
+import { akmConsolidate, type ConsolidateResult } from "./consolidate";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
   buildLatestFeedbackTsMap,
@@ -1354,12 +1354,7 @@ export async function runImprovePreparationStage(args: {
         // collapse the lane to exactly 1 ref via the bare `?? 10` fallback.
         const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit ?? 10;
         const highSalienceCap = Math.max(1, Math.floor(effectiveLimit * 0.1));
-        // #632/#4 — session-capture telemetry (checkpoints) must never consume
-        // the scarce high-salience budget. Even with a content-scored row, these
-        // are pipeline bookkeeping, not assets worth reflecting/rewriting.
-        const candidates = noFeedbackCandidates.filter(
-          (r) => !proactiveAndRetrievalSet.has(r.ref) && !isSessionCaptureMemoryName(parseAssetRef(r.ref).name),
-        );
+        const candidates = noFeedbackCandidates.filter((r) => !proactiveAndRetrievalSet.has(r.ref));
         // Collect ALL qualifying candidates, then take the top-N BY SCORE — the
         // previous first-N-in-scan-order break meant a higher-salience candidate
         // found later in the scan lost its slot to an earlier lower-scoring one.

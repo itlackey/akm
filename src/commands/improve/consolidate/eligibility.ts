@@ -14,24 +14,6 @@ export function isConsolidationEligibleMemoryName(name: string): boolean {
 }
 
 /**
- * #632 — AKM session-capture telemetry memories: auto-generated session-end
- * checkpoints named `<harness>-session-<YYYYMMDD>-<id>` or
- * `<harness>-checkpoint-<YYYYMMDD…>-<id>`, carrying an embedded
- * `akm_memory_kind: session_checkpoint` metadata block. Their bodies are
- * pipeline bookkeeping, not durable knowledge, so the improve passes exclude
- * them from their pools (recombine, consolidate). The `\d{8}` datestamp anchor
- * is what distinguishes a capture name from a durable memory that merely
- * MENTIONS session/checkpoint (e.g. `akm-plugins-session-end-extract-hook`,
- * `session-checkpoint-lint-skips`), which stay in the pool.
- *
- * Lives here (the eligibility module) rather than in recombine so both
- * recombine and consolidate can reuse it without a circular import.
- */
-export function isSessionCaptureMemoryName(name: string): boolean {
-  return /-(session|checkpoint)-\d{8}/.test(name);
-}
-
-/**
  * Returns true when the memory file has `captureMode: hot` in its frontmatter.
  *
  * Hot memories are USER-EXPLICIT (written via `akm remember` on the hot path).
