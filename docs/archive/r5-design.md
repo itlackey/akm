@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Shipped: `InstallKind` is live in `src/registry/types.ts`. Retained as a design-decision record.
+> Current truth = the code under `src/registry/`. Git history is the recovery path.
+
 # R5 — Finalized design: separate the install discriminator, move `buildInstallRef`, no table
 
 **Verdict (one line):** No descriptor table. Introduce a 4-member `InstallKind` install discriminator (severing the misleading `KitSource = SourceSpec["type"]` alias on install-only structures), move `buildInstallRef` from `static-index.ts` next to its inverse `parseRegistryRef` in `resolve.ts`, and add compile-time exhaustiveness to the two genuinely-uniform install switches. Everything else is left as-is. Net ≈ −8 to −12 LOC, coupling removed, behavior byte-identical.

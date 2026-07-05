@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Accepted ADR (2026-05-16), shipped; moved here per the archive convention (the archive is the ADR home).
+> Current truth = `src/indexer/` and `docs/technical/indexing.md`. Git history is the recovery path.
+
 # Index Consistency Architecture Decision Record (M-4 / #395)
 
 **Date:** 2026-05-16

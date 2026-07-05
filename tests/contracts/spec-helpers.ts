@@ -3,7 +3,7 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 
-export const SPEC_PATH = path.join(repoRoot, "docs", "technical", "v1-architecture-spec.md");
+export const SPEC_PATH = path.join(repoRoot, "docs", "archive", "v1-architecture-spec.md");
 export const CLI_DOC_PATH = path.join(repoRoot, "docs", "cli.md");
 export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "configuration.md");
 export const MIGRATION_PATH = path.join(repoRoot, "docs", "migration", "v1.md");

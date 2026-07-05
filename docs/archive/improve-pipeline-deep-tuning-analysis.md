@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Superseded by name by `docs/design/improve-self-learning-analysis.md`; review 12 froze new pipeline-tuning work (12-D2), and this roadmap sat upstream of the read-back constraint.
+> Current truth = `docs/design/improve-self-learning-analysis.md`. Git history is the recovery path.
+
 # AKM Improve Pipeline — Deep Tuning Analysis
 
 _Multi-agent analysis: per-process deep-dive (production data + source + published research + comparable implementations), adversarially verified, then synthesized._

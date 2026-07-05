@@ -532,10 +532,10 @@ PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
 
 - [`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md) —
   operator quick-start.
-- [`docs/archive/akm-eval-implementation-plan.md`](technical/akm-eval-implementation-plan.md) —
+- [`docs/archive/akm-eval-implementation-plan.md`](archive/akm-eval-implementation-plan.md) —
   the full eight-phase plan.
 - `akm health` (0.8.0+) — built-in per-improve-run + window analysis
-  ([health-command-enhancements.md](technical/health-command-enhancements.md)).
-- [`docs/technical/improve-pipeline-analysis-0.8.0.md`](technical/improve-pipeline-analysis-0.8.0.md) —
+  ([health-command-enhancements.md](archive/health-command-enhancements.md), archived — shipped 0.8.0).
+- [`docs/archive/improve-pipeline-analysis-0.8.0.md`](archive/improve-pipeline-analysis-0.8.0.md) —
   the roadmap this toolkit implements R10 of (and Phases 2–6 implement
   R1, R3, R5, R8).

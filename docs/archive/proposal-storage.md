@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Shipped in 0.9.0: the proposal queue lives in state.db. Retained as a design-decision record.
+> Current truth = `src/core/state/` and `docs/technical/improve-workflow.md`. Git history is the recovery path.
+
 # Proposal storage — SQLite single source of truth (#578)
 
 Status: shipped in 0.9.0.

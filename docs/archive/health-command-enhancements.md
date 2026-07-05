@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Shipped: all three phases landed in 0.8.0 (`akm health` --since / --group-by / --window-compare / --windows). Retained as a design-decision record.
+> Current truth = `src/commands/health/` and `docs/cli.md`. Git history is the recovery path.
+
 # `akm health` enhancement roadmap
 
 > **Status (May 2026):** All three phases shipped on `release/0.8.0`.

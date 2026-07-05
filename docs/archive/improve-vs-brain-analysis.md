@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Superseded by name by `docs/design/improve-self-learning-analysis.md` (canonical 2026-07-01); per review 09 the neuroscience framing is inspiration, not justification.
+> See `docs/design/improve-neuroscience-alignment-survey.md` for the graded comparison. Git history is the recovery path.
+
 # `akm improve` vs. the brain's perception→knowledge workflow
 
 > Analysis (2026-06-14) of how akm's self-improvement pipeline aligns with the

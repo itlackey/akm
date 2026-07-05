@@ -1,7 +1,7 @@
 # Contract Tests
 
 This directory holds **doc-pinning contract tests** for the v1 architecture
-spec (`docs/technical/v1-architecture-spec.md`). Each test file pins a
+spec (`docs/archive/v1-architecture-spec.md` — archived 2026-07-05, meta-review 14; retained as the pinned historical contract text). Each test file pins a
 specific locked section. Test names reference the spec section they
 enforce, so a failure points to both the test and the doc.
 

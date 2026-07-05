@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** 0.6-era v1 planning spec, code-contradicted five ways by ship time (e.g. spec DB_VERSION 9 vs live 17); the owner declined a 1.0 freeze (review 10-Q1), so this is not a live contract.
+> Current truth = `docs/technical/architecture.md` + `docs/technical/storage-locations.md`. Git history is the recovery path.
+
 # akm v1 — Architecture Specification
 
 **Status:** Draft for implementation (rev. 2026-04-27 — proposal/agent/lesson surfaces declared)

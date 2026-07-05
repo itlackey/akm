@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Aspirational Postgres/multi-writer readiness findings, contradicted by the ratified positioning (review 10-Q4: single-owner, taste-made-durable; no pg client exists in src). Archived rather than updated (owner call, 2026-07-05).
+> Current truth = `docs/technical/architecture.md`. Git history is the recovery path.
+
 # akm Production-Readiness Findings & Hardening Plan
 
 > Status: DRAFT for adversarial review. Every claim below must be challenged against the real code.

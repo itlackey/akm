@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Shipped: `improve.ts` decomposed 5,395 -> ~1,454 LOC with `eligibility.ts` extracted (D-series refactor). Retained as a design-decision record.
+> Current truth = the code under `src/commands/improve/`. Git history is the recovery path.
+
 # D1 / D1b — Finalized design: decompose `improve.ts` via lock-RAII-first, then scoped dedup + cohesion moves
 
 **Verdict (one line):** Do **D1b (`withProcessLock` RAII) first** — it is the strongest coupling-delete and pins the regressed exit-78 family — then the small verified dedups (`runWithTelemetry` over **2** sites; a recombine+procedural **duo** registry), then honest relocations (`eligibility.ts`, an `ImproveBaseContext` spine, and a new **D1c** decomposition of the 1,656-LOC `runImprovePreparationStage`). **Drop** the `budget.ts` extraction and the `extract`-in-registry / full-`ImproveRunContext`-unification over-scopes.

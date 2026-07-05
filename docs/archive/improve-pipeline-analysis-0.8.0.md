@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Historical May-2026 analysis of the 0.8.0-era pipeline.
+> Superseded by `docs/design/improve-self-learning-analysis.md` (canonical 2026-07-01). Git history is the recovery path.
+
 # akm Improve Pipeline — Audit, Roadmap, and Recommended Next Steps (`release/0.8.0`)
 
 > **Historical note (May 2026):** This document references the bash

@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Shipped: `state-db.ts` reduced to a thin facade over the `src/core/state/` split. Retained as a design-decision record.
+> Current truth = the code under `src/core/state/`. Git history is the recovery path.
+
 # D2 — Finalized design: decompose `state-db.ts` via verbatim per-table repo moves + ONE migration literal
 
 **Verdict (one line):** Move the 9 per-table CRUD clusters verbatim into `src/core/state/<domain>-repo.ts` behind a re-export shim, move the `MIGRATIONS` array **verbatim as a single ordered literal** into `core/state/migrations.ts` (NO per-repo fragments), relocate the misplaced `REGISTRY_INDEX_CACHE_DDL` to the indexer, and keep the X1 seam in place. **No fragment registry, no salience repo, and the `Proposal` core→commands fix is DEFERRED.**

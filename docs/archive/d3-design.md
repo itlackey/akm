@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-07-05 (meta-review 14).** Shipped: consolidate split into `src/commands/improve/consolidate/` (chunking/eligibility/merge/sanitize) via PR #669. Retained as a design-decision record.
+> Current truth = the code under `src/commands/improve/consolidate/`. Git history is the recovery path.
+
 # D3 — Finalized design: decompose `consolidate.ts` via subtract-first pure moves
 
 **Verdict (one line):** Extract **5 modules** (one types-sink + four cohesive leaves) as byte-identical pure moves behind re-export shims; **SKIP** the journal-cluster extraction, the `clusterMemoriesBySimilarity` extraction, and **both** X2 `callStructured` migrations (the chunk-plan call and the merge leaf) — all three fail the subtract-first / fit tests. Net effect: `akmConsolidateInner` shrinks, four genuinely-independent responsibilities stop sharing a file with the transactional spine, and **no** new abstraction or force-fit is introduced.
