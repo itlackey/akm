@@ -62,14 +62,16 @@ decisions in an **Adjudication** section. Then append the binding decisions to `
 Done: **01** goal-orientation, **05** metrics-and-evals (adjudicated + shipped); **02** bitter-lesson,
 **03** memory-compounding, **04** self-model, **06** autonomy-ladder, **07** prompt-injection,
 **08** attack-surface, **09** steelman-the-bets, **10** what-10×s-what-dies, **11** decisions-into-policy,
-**12** one-real-constraint (adjudicated — dispositions only; see CONTEXT.md carry-forward).
+**12** one-real-constraint, **13** bus-factor (adjudicated — dispositions only; see CONTEXT.md carry-forward).
 
 - **Core system audits:** ~~02 → 03 → 04 → 06 autonomy~~ — DONE.
 - **Security pair:** ~~07 injection → 08 attack-surface~~ — DONE.
 - **Direction:** ~~09 steelman~~ → ~~10 what-10×s~~ → ~~12 constraint~~ — DONE.
-- **Housekeeping:** ~~11 policy~~ → 13 bus-factor, 14 docs, 15 loop.
-- **⚠ Owner-adjudicated (12):** the next series unit is an **EXECUTION batch, not review 13** — ship beta.57+ to the
-  cron dist, then execute the ratified §4 minting-shutdown on clean numbers. See CONTEXT.md "From 12".
+- **Housekeeping:** ~~11 policy~~ → ~~13 bus-factor~~ → 14 docs, 15 loop.
+- **⚠ 12-D3 execution batches 1+2 SHIPPED & DEPLOYED** (beta.58 live in cron, 2026-07-05). Remaining before 14/15:
+  the deferred **minting-shutdown batch** (re-baseline via `findings/09-grr-receipt.sql.md` first) and the
+  **13 execution items** (A1 profiles/fallback, C1 skip-sweep aggregation, C2 failRate advisory + exit-143 triage,
+  B1/A3 docs, D1 path-normalization + lint, approved per-path trash). See CONTEXT.md "From 13".
 
 ## Execution batches
 

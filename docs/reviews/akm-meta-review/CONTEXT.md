@@ -449,6 +449,49 @@ From **12 one-real-constraint** (adjudicated 2026-07-04; nothing executed — di
   INVERTED — analysis argues capture is *over-provisioned* (waste feeding the dead pool), so the correct capture move is
   also subtraction (nightly), same shape as the improve fix; both ride the one batch.
 
+From **13 bus-factor** (adjudicated 2026-07-05; nothing executed — dispositions only):
+
+- **The bus-factor shape:** risk concentrates in ONE gitignored file + TWO silent mechanisms, NOT in docs
+  gaps. `~/.config/akm/config.json` is the only copy of 3 cron-load-bearing improve profiles behind a
+  silent unknown-profile fallback (proven −96% incident class); state.db grows ~4.4GB/month from per-asset
+  `distill-skipped` records (~13k/run, 91% of result_json bytes — the 90-day TTL cannot bound it, per-run
+  rows grew 10×); a live 15–16% cron failure rate is invisible (`taskFailRate` computed + rendered but
+  never wired into `checks.ts` advisories; exit-143 spike undiagnosed).
+- **APPROVED (new work, next execution batch):** [A1] DELETE the silent fallback in
+  `improve-profiles.ts:128-133` (unknown profile = hard ConfigError) + promote `reflect-distill`/
+  `proactive-maintenance`/`recombine-only` to `src/assets/profiles/` builtins — `default.json` untouched
+  (11-§3.2 HOLD). [C1] **RE-OPENS the wait-until-GA blob decision:** stop persisting per-ref
+  `distill-skipped`; aggregate `{reason→count, capped samples}`; move the one consumer
+  (`improve-metrics.ts:284`); then the ratified prune list executes. [C2] wire `taskFailRate` into
+  `checks.ts` advisories (5% threshold from html-report) + triage the exit-143 spike as a priority bug.
+  [B1] ~30-line committed advisory→action doc for the health warns. [A3] ~25-line fresh-host rebuild
+  runbook + ONE versioned config.json copy in stash git (08-F1 pattern).
+- **APPROVED per-path trash (gio trash, owner named each path; execute in batch):** `~/akm/.akm/state.db`
+  (0-byte decoy), `~/.local/share/akm/state.db.bak-20260614` (2.6GB), 2 orphan `config-backups/` dirs,
+  18 `config.json.bak-*` files (the .baks only AFTER the A3 stash-git copy exists). ~5.5GB reclaimable.
+- **NEW D1 (from the sealed prediction — the audit's blind spot, owner-confirmed + quantified):** ~500
+  curated stash assets (379 knowledge, 99 memories, 7 workflows, 7 skills, 5 scripts) contain
+  `/home/founder3` absolute paths → stash is not machine-portable. APPROVED both fixes: one-shot
+  normalization pass (`$HOME`/`~` rewrite, owner-reviewed diff) + write-time lint/advisory against
+  absolute host paths in asset content. Also a fresh-install product-bug class, not just this host.
+- **SEQUENCING:** the pure-execution items (08-F3 uninstall/fallback-branch delete, 08-F4 host cleanup,
+  08 `surfaces` dist-skew fold-in, 09 latest-repoint) ride the NEXT execution batch alongside the 12-D1
+  shutdown sequence; only doc lines (bun-shim correction, logs.db in storage-locations, the VACUUM
+  sentence — verify `auto_vacuum` first) wait for review 14's doc-sync batch.
+- **Defended KEEPs (binding):** flake taxonomy stays in memory + lock error-text stays the runbook (B3,
+  reaffirms 11's SPLIT); resolved-proposal rows are NEVER purged — they are the audit trail 10 named as
+  the moat (C3; re-examine only if post-shutdown growth >100MB/yr).
+- **META-RULE AMENDMENT (B4, binding on future reviews):** cite memories by SEARCH-TERMS, not exact ref
+  names — memories rename/merge under improve, so exact refs rot (6 of 13's prompt refs were
+  ASSET_NOT_FOUND). No alias/redirect machinery.
+- **DON'T-ADD (extends prior lists):** no cron-builds-own-dist; no doctor cron; no config-sync machinery;
+  no in-code acknowledged-advisories layer; no new alert channels; no logrotate for flat logs; no
+  per-table retention knobs; no proposal purge; no improve `--force` flag.
+- **Sealed-prediction outcome:** PARTIAL MATCH + ONE AUDIT MISS — owner called cron/dist first-to-break
+  (audit agrees, ranks it low-cost with ratified fixes) but not the top two silent mechanisms (profile
+  fallback, blob growth); the owner's top concern (absolute paths in stash assets) was MISSED by the run
+  entirely and confirmed real post-hoc → D1.
+
 ## EXECUTION BATCH 1 (2026-07-04) — what SHIPPED / BLOCKED / REMAINS
 
 First execution session against the ratified dispositions (branch `meta-review-exec-2026-07-04`, off
