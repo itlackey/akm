@@ -1123,15 +1123,10 @@ interface EligibleFile {
  *
  * Inferred-child memories (frontmatter `inferred: true`) are skipped — they
  * are already derived summaries, with no additional internal graph structure worth
- * extracting. Session-capture telemetry checkpoints are skipped too (see below).
+ * extracting.
  *
  * Exported for direct unit testing.
  */
-// #632 — canonical session-capture name shape, mirrored from
-// isSessionCaptureMemoryName (src/commands/improve/consolidate/eligibility.ts).
-// Inlined to avoid an improve-layer import from the indexer layer.
-const SESSION_CAPTURE_NAME_RE = /-(session|checkpoint)-\d{8}/;
-
 export function collectEligibleFiles(
   stashRoot: string,
   includeTypes: string[] = [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES],
@@ -1155,13 +1150,6 @@ export function collectEligibleFiles(
       // Skip inferred memory children — they are atomic and there's no
       // graph to extract from a single-fact body.
       if (type === "memory" && parsed.data.inferred === true) continue;
-      // #632 — skip session-capture telemetry checkpoints (named
-      // `<harness>-(session|checkpoint)-<YYYYMMDD>-<id>`). Their bodies are
-      // pipeline bookkeeping; graph-extracting them lifts metadata fields as
-      // entities that then dominate clustering as bland stash-wide buckets.
-      // Mirrors isSessionCaptureMemoryName (consolidate/eligibility.ts); inlined
-      // here to keep the indexer layer free of an improve-layer import.
-      if (type === "memory" && SESSION_CAPTURE_NAME_RE.test(path.basename(filePath, ".md"))) continue;
       const body = parsed.content.trim();
       if (!body) continue;
       out.push({ absPath: filePath, type, body });

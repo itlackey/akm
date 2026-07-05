@@ -113,14 +113,9 @@ import {
   consolidateGuardStatus,
   isConsolidationEligibleMemoryName,
   isHotCapturedMemory,
-  isSessionCaptureMemoryName,
 } from "./consolidate/eligibility";
 
-export {
-  isConsolidationEligibleMemoryName,
-  isHotCapturedMemory,
-  isSessionCaptureMemoryName,
-} from "./consolidate/eligibility";
+export { isConsolidationEligibleMemoryName, isHotCapturedMemory } from "./consolidate/eligibility";
 
 // Plan parsing / merging (pure op-reconciliation algebra) lives in
 // ./consolidate/merge. Imported for internal use; mergePlans re-exported.
@@ -2828,10 +2823,6 @@ function loadMemoriesForSource(source: string | undefined, stashDir: string, war
         return path.resolve(e.stashDir) === path.resolve(source);
       })
       .filter((e) => isConsolidationEligibleMemoryName(e.entry.name))
-      // #632 — exclude session-capture telemetry (checkpoints) from the
-      // consolidation pool, mirroring recombine. Their bodies are pipeline
-      // bookkeeping, so consolidating them burns LLM calls on pure noise.
-      .filter((e) => !isSessionCaptureMemoryName(e.entry.name))
       // Skip stale DB entries whose file was deleted by a prior run but not yet
       // re-indexed. Without this guard the deleted file's ref appears in chunks
       // sent to the LLM, which then proposes a second delete → delete_failed
@@ -2861,7 +2852,6 @@ function loadMemoriesForSource(source: string | undefined, stashDir: string, war
         const filePath = path.join(memoriesDir, fname);
         const name = fname.replace(/\.md$/, "");
         if (!isConsolidationEligibleMemoryName(name)) continue;
-        if (isSessionCaptureMemoryName(name)) continue; // #632 — skip telemetry checkpoints
         memories.push({ name, filePath, description: "", tags: [], stashDir: fsStashDir });
       }
     }
