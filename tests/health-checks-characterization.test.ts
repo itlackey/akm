@@ -118,6 +118,14 @@ describe("health checks characterization (WS9)", () => {
           "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles where consolidate/recombine did work (synthesis lanes may be idle).",
       },
       {
+        name: "task-fail-rate",
+        kind: "deterministic",
+        status: "pass",
+        confidence: "high",
+        // Message embeds the volatile `since` ISO; identity/order pinned here.
+        message: findCheck(result.advisories, "task-fail-rate").message,
+      },
+      {
         name: "semantic-search-runtime",
         kind: "deterministic",
         status: "pass",
@@ -217,6 +225,7 @@ describe("health checks characterization (WS9)", () => {
     ]);
     expect(result.advisories.map((c) => c.name)).toEqual([
       "collapse-churn-detector",
+      "task-fail-rate",
       "semantic-search-runtime",
       "session-log-failures",
       "session-extraction",

@@ -497,6 +497,15 @@ export const ENRICHMENT_MINTED_WARN_SHARE = 0.05;
 export const ENRICHMENT_MINTED_FAIL_SHARE = 0.15;
 
 /**
+ * Cron task failure rate at or above which the `task-fail-rate` health advisory
+ * warns. 0.05 (5%) is the SAME threshold the HTML report already applies as its
+ * fail-rate pass/warn cutoff (`failOk = taskFailRate < 0.05` in
+ * src/commands/health/html-report.ts) — this constant makes it the single
+ * source so the advisory and the rendered badge cannot drift.
+ */
+export const TASK_FAIL_RATE_WARN = 0.05;
+
+/**
  * The enrichment-vs-minting split over the health window's accepted,
  * lane-attributed proposals. Create-vs-update is discriminated by
  * `metadata_json.backupContent`: apply captures the prior content for

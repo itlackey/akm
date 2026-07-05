@@ -20,13 +20,14 @@ import path from "node:path";
 import { escapeHtml } from "../../output/html-render";
 import { getDirname } from "../../runtime";
 import { pkgVersion } from "../../version";
-import type {
-  AkmHealthResult,
-  DeltaEntry,
-  HealthCheckResult,
-  ImproveDegradationMetrics,
-  ImprovePerfTelemetry,
-  ImproveRunSummary,
+import {
+  type AkmHealthResult,
+  type DeltaEntry,
+  type HealthCheckResult,
+  type ImproveDegradationMetrics,
+  type ImprovePerfTelemetry,
+  type ImproveRunSummary,
+  TASK_FAIL_RATE_WARN,
 } from "./types";
 
 /**
@@ -481,7 +482,7 @@ export function buildHealthHtmlReplacements(
   } as const;
   const badge = badgeByStatus[result.status];
   const statusBadge = `<span class="badge-pill ${badge.badge}"><span class="dot ${badge.dot}"></span>${badge.label}</span>`;
-  const failOk = result.metrics.taskFailRate < 0.05;
+  const failOk = result.metrics.taskFailRate < TASK_FAIL_RATE_WARN;
   const failBadge =
     `<span class="badge-pill ${failOk ? "badge-pass" : "badge-warn"}">` +
     `<span class="dot ${failOk ? "dot-pass" : "dot-warn"}"></span>${taskFailRate} Fail Rate</span>`;

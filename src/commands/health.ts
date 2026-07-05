@@ -270,6 +270,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       missingTables,
       probe,
       taskRowCount: taskRows.length,
+      taskFailRate,
       taskRowsWithLogsCount: taskRowsWithLogs.length,
       existingLogRowsCount: existingLogRows.length,
       logBackingRate,

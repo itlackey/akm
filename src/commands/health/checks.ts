@@ -7,7 +7,12 @@ import { loadConfig } from "../../core/config/config";
 import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
 import type { AgentProfile } from "../../integrations/agent";
 import { detectAgentCliProfiles, requireAgentProfile } from "../../integrations/agent";
-import type { HealthCheckResult, ImproveHealthMetrics, SessionLogAdvisory } from "./types";
+import {
+  type HealthCheckResult,
+  type ImproveHealthMetrics,
+  type SessionLogAdvisory,
+  TASK_FAIL_RATE_WARN,
+} from "./types";
 
 const ACTIVE_RUN_WARN_MS = 15 * 60 * 1000;
 
@@ -30,6 +35,8 @@ export interface HealthCheckContext {
   probe: { ok: boolean; durationMs: number | null; error?: string };
   /** Total task_history rows read in the window. */
   taskRowCount: number;
+  /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
+  taskFailRate: number;
   /** task_history rows whose log_path is non-null. */
   taskRowsWithLogsCount: number;
   /** Subset of {@link taskRowsWithLogsCount} whose log_path resolves on disk. */
@@ -252,6 +259,32 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "agent-profile",
     channel: "hard",
     run: () => runAgentProbe(),
+  },
+  {
+    // C2 (13-bus-factor): the cron task-failure rate was computed and rendered
+    // in the HTML report but never surfaced as an advisory, so a sustained
+    // 15–16% fail rate stayed invisible on `akm health`. Warn at/above the SAME
+    // 5% threshold the html-report badge uses (see TASK_FAIL_RATE_WARN).
+    name: "task-fail-rate",
+    channel: "advisory",
+    run: (ctx) => {
+      const pctStr = `${(ctx.taskFailRate * 100).toFixed(1)}%`;
+      const thresholdPct = `${(TASK_FAIL_RATE_WARN * 100).toFixed(0)}%`;
+      const warn = ctx.taskFailRate >= TASK_FAIL_RATE_WARN;
+      return {
+        name: "task-fail-rate",
+        kind: "deterministic",
+        status: warn ? "warn" : "pass",
+        confidence: "high",
+        message:
+          ctx.taskRowCount === 0
+            ? `No cron tasks ran since ${ctx.since} — no task-fail-rate signal.`
+            : warn
+              ? `Cron task fail rate ${pctStr} across ${ctx.taskRowCount} task(s) since ${ctx.since} ≥ ${thresholdPct} threshold — inspect failed runs (ok=false) for early-exit/harness errors.`
+              : `Cron task fail rate ${pctStr} across ${ctx.taskRowCount} task(s) since ${ctx.since} (below ${thresholdPct} threshold).`,
+        evidence: { taskFailRate: ctx.taskFailRate, taskRowCount: ctx.taskRowCount, threshold: TASK_FAIL_RATE_WARN },
+      };
+    },
   },
   {
     name: "semantic-search-runtime",
