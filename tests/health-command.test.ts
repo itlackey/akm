@@ -591,8 +591,9 @@ describe("akmHealth", () => {
   });
 
   test("reflect content-policy guard hits are counted separately from failed (Pattern A)", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -654,8 +655,9 @@ describe("akmHealth", () => {
   });
 
   test("distill outcome:skipped surfaces as actions.distill.deferred with skipReason breakdown", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -722,8 +724,9 @@ describe("akmHealth", () => {
     // result.reason for reflect-skipped, so 18/18 type-filter+raw-wiki skips
     // were a single opaque scalar in `akm health`. Mirror the
     // `distill.deferredByReason` shape (commit d1273d0).
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -779,8 +782,9 @@ describe("akmHealth", () => {
     // The split lets dashboards distinguish prompt-tuning levers from
     // validator-config levers. Legacy `qualityRejected` is preserved as the
     // sum for back-compat.
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -828,8 +832,9 @@ describe("akmHealth", () => {
     // had no LLM verdict and were a pure silent drop. The new
     // `judgedNoAction` counter surfaces them; `skipReasons` turns the
     // free-text warnings bag into a typed histogram.
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -1114,8 +1119,9 @@ describe("akmHealth", () => {
   // rate reflects the rate model output succeeded for the calls that
   // actually hit the LLM, independent of cache state.
   test("memoryInference.yieldRate uses freshAttempts (considered - cacheHits), not considered", () => {
-    const start = new Date(Date.now() - 60_000).toISOString();
-    const end = new Date(Date.now() - 30_000).toISOString();
+    const now = Date.now();
+    const start = new Date(now - 60_000).toISOString();
+    const end = new Date(now - 30_000).toISOString();
     const db = openStateDatabase();
     try {
       recordImproveRun(db, {
@@ -1164,10 +1170,11 @@ describe("health — window comparison", () => {
   // ── Phase 2: --group-by run ────────────────────────────────────────────────
   describe("akm health --group-by run", () => {
     function seedTwoRuns(): { startA: string; endA: string; startB: string; endB: string } {
-      const startA = new Date(Date.now() - 60_000).toISOString();
-      const endA = new Date(Date.now() - 30_000).toISOString();
-      const startB = new Date(Date.now() - 25_000).toISOString();
-      const endB = new Date(Date.now() - 10_000).toISOString();
+      const now = Date.now();
+      const startA = new Date(now - 60_000).toISOString();
+      const endA = new Date(now - 30_000).toISOString();
+      const startB = new Date(now - 25_000).toISOString();
+      const endB = new Date(now - 10_000).toISOString();
       const db = openStateDatabase();
       try {
         upsertTaskHistory(db, {
@@ -1268,8 +1275,9 @@ describe("health — window comparison", () => {
 
     test("per-run summary fields parity with window aggregator (one row)", () => {
       // Seed a single run, then compare aggregator output vs runs[0].
-      const startA = new Date(Date.now() - 60_000).toISOString();
-      const endA = new Date(Date.now() - 30_000).toISOString();
+      const now = Date.now();
+      const startA = new Date(now - 60_000).toISOString();
+      const endA = new Date(now - 30_000).toISOString();
       const db = openStateDatabase();
       try {
         upsertTaskHistory(db, {
@@ -1598,11 +1606,12 @@ describe("health — window comparison", () => {
     });
 
     test("duplicate window names throw UsageError", () => {
+      const now = Date.now();
       expect(() =>
         akmHealth({
           windows: [
-            { name: "dup", since: new Date(Date.now() - 7200_000).toISOString() },
-            { name: "dup", since: new Date(Date.now() - 3600_000).toISOString() },
+            { name: "dup", since: new Date(now - 7200_000).toISOString() },
+            { name: "dup", since: new Date(now - 3600_000).toISOString() },
           ],
         }),
       ).toThrow(/duplicate name/);
@@ -1798,8 +1807,9 @@ describe("akm health --group-by run", () => {
     pinHealthEnv("gbrun");
     const db = openStateDatabase();
     try {
-      const startA = new Date(Date.now() - 60_000).toISOString();
-      const endA = new Date(Date.now() - 30_000).toISOString();
+      const now = Date.now();
+      const startA = new Date(now - 60_000).toISOString();
+      const endA = new Date(now - 30_000).toISOString();
       upsertTaskHistory(db, {
         task_id: "akm-improve",
         status: "completed",

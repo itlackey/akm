@@ -206,8 +206,9 @@ describe("remember --expires", () => {
     expect(expires).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
     const expiresDate = new Date(expires);
-    const expectedMin = new Date(Date.now() + 170 * 24 * 60 * 60 * 1000); // ~5.7 months
-    const expectedMax = new Date(Date.now() + 185 * 24 * 60 * 60 * 1000); // ~6.2 months
+    const now = Date.now();
+    const expectedMin = new Date(now + 170 * 24 * 60 * 60 * 1000); // ~5.7 months
+    const expectedMax = new Date(now + 185 * 24 * 60 * 60 * 1000); // ~6.2 months
     expect(expiresDate >= expectedMin).toBe(true);
     expect(expiresDate <= expectedMax).toBe(true);
   });

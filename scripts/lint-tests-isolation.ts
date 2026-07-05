@@ -53,6 +53,16 @@
  * poisoning. Use the swap-and-restore seams instead (tests/_helpers/seams.ts;
  * pattern: docs/design/di-seams-plan.md). No allowlist — zero is the invariant.
  *
+ * Rule 7 (non-atomic Date.now()): flag ≥2 `new Date(Date.now() …)` timestamp
+ * constructions in ONE scope (test/it/describe/hook/function). Reading the wall
+ * clock more than once for a set of related timestamps means the reads can
+ * straddle a millisecond boundary under load, so any exact assertion on the
+ * delta between the derived timestamps flakes. This is the verified root cause
+ * of the #499 release-blocking health flake (a `22s`/22000ms task interval
+ * intermittently measured 22001+). Capture the clock ONCE — `const now =
+ * Date.now()` — and derive every timestamp from `now`. A single
+ * `new Date(Date.now() …)` per scope is fine. No allowlist — zero is the invariant.
+ *
  * Exit codes:
  *   0 — no violations
  *   1 — violations found (or internal error)
@@ -311,7 +321,14 @@ export function collectTestFiles(dir: string): string[] {
   return results;
 }
 
-type Rule = "mkdtemp-env" | "unguarded-env" | "elapsed-assertion" | "raw-akm-mkdtemp" | "unit-real-spawn" | "mock-module";
+type Rule =
+  | "mkdtemp-env"
+  | "unguarded-env"
+  | "elapsed-assertion"
+  | "raw-akm-mkdtemp"
+  | "unit-real-spawn"
+  | "mock-module"
+  | "nonatomic-now";
 
 interface Violation {
   file: string;
@@ -490,6 +507,43 @@ function lintFile(filePath: string): Violation[] {
     }
   }
 
+  // ── Rule 7: non-atomic Date.now() timestamp construction ───────────────────
+  // Building ≥2 `new Date(Date.now() …)` timestamps in ONE scope reads the wall
+  // clock more than once; if the reads straddle a millisecond boundary (a loaded
+  // CI shard scheduler), any exact assertion on the delta between the derived
+  // timestamps flakes. This is the verified root cause of the #499 release-
+  // blocking health flake — its `22s` (22000ms) task interval intermittently
+  // measured 22001+ because `taskStart`/`taskEnd` came from two `Date.now()`
+  // calls. Fix: capture the clock ONCE (`const now = Date.now()`) and derive
+  // every timestamp from `now` (skew-immune by construction). A single
+  // `new Date(Date.now() …)` per scope is fine. No allowlist — zero is the
+  // invariant. Scopes are delimited by test/it/describe/hook/function starts.
+  {
+    const lines = src.split("\n");
+    const SCOPE_START = /\b(?:test|it|describe|beforeEach|afterEach|beforeAll|afterAll)\s*\(|\bfunction\b/;
+    const NOW_TS = /new Date\(\s*Date\.now\(\)/g;
+    let hits: number[] = [];
+    const flush = () => {
+      if (hits.length >= 2) {
+        violations.push({
+          file: rel,
+          rule: "nonatomic-now",
+          detail: `${hits.length} \`new Date(Date.now() …)\` reads in one scope (lines ${hits.join(", ")}) — capture the clock once (\`const now = Date.now()\`) and derive every timestamp from \`now\`, else an exact delta assertion flakes under CI load (#499 class)`,
+          line: hits[0],
+        });
+      }
+      hits = [];
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\s*(\/\/|\*)/.test(l)) continue; // skip comment lines
+      if (SCOPE_START.test(l)) flush();
+      const matches = l.match(NOW_TS);
+      if (matches) for (let k = 0; k < matches.length; k++) hits.push(i + 1);
+    }
+    flush();
+  }
+
   return violations;
 }
 
@@ -525,6 +579,7 @@ if (import.meta.main) {
     "raw-akm-mkdtemp": "raw mkdtempSync(…akm-test…) outside tests/_helpers/",
     "unit-real-spawn": "real process spawn in unit-scope test",
     "mock-module": "mock.module call (banned — suite runs without --isolate)",
+    "nonatomic-now": "non-atomic Date.now() timestamp construction (#499 flake class)",
   };
 
   console.error(`lint-tests-isolation: ${violations.length} violation(s) found\n`);

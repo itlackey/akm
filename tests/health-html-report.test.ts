@@ -30,8 +30,9 @@ afterEach(() => {
 
 /** Seed one realistic improve run into the isolated state.db. */
 function seedImproveRun(id = "run-html-1", ok = true): void {
-  const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
-  const completedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  const now = Date.now();
+  const startedAt = new Date(now - 10 * 60_000).toISOString();
+  const completedAt = new Date(now - 5 * 60_000).toISOString();
   const db = openStateDatabase();
   try {
     recordImproveRun(db, {

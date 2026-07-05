@@ -202,8 +202,9 @@ describe("runProposalQualityCase — windowed validationPassRate", () => {
 
   test("WITH since: 24h, a recent successful proposal + zero recent rejections = 100%", async () => {
     const f = freshFixture();
-    const oneHourAgo = new Date(Date.now() - 3_600_000).toISOString();
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const now = Date.now();
+    const oneHourAgo = new Date(now - 3_600_000).toISOString();
+    const thirtyDaysAgo = new Date(now - 30 * 86_400_000).toISOString();
     buildStateDb({
       dbPath: f.dbPath,
       proposals: [
