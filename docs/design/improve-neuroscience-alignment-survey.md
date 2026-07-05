@@ -1,5 +1,7 @@
 # Neuroscience Alignment Survey for `akm improve`
 
+> **Status (2026-07-05, meta-review 14):** the neuroscience framing is **inspiration, not justification** — this survey is the grading source for that ruling (e.g. it grades recombine's confirmation gate "Loose, no biological analogue"). Do not cite brain analogies as design justification.
+
 **Purpose.** `akm improve` is a self-learning memory-curation pipeline for AI-agent knowledge that explicitly models several of its mechanisms on brain function: encoding salience, an outcome/feedback loop, retrieval-strength decay, homeostatic demotion, consolidation, REM-like recombination, procedural compilation, proactive maintenance, and contradiction detection/belief revision. This document is a citation-rigorous survey of the actual neuroscience behind each of those analogies, written for a technical review panel judging how faithful — and where deliberately or accidentally divergent — the engineering is relative to biology.
 
 **Method.** Three research passes were run independently, each using web search and page fetches to verify every citation (author, year, venue, and a source URL) rather than relying on model memory. Citations that could not be independently confirmed are explicitly marked **UNVERIFIED** or **PLAUSIBLE (not independently re-verified)** in place, rather than presented as settled fact. Section numbering follows the ten neuroscience areas requested; a cross-cutting synthesis table follows Section 10.

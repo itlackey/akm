@@ -6,7 +6,7 @@
 > `improve-salience-working-reference.md` remain valid as navigation aids.
 >
 > **Method.** Every code claim was re-verified against `main` @ `0.9.0-beta.52` by parallel
-> source reads (findings archived in `.plans/improve-self-learning-review/code-01…05.md`),
+> source reads (findings archived in local review notes, `code-01…05.md` — not in the repo),
 > cross-checked against prior analysis docs (`docs-06-prior-claims.md`), grounded in
 > read-only queries against the live `~/.local/share/akm/{state.db,index.db}`
 > (`live-09-metrics.md`), and validated against published neuroscience
@@ -532,7 +532,7 @@ To prevent well-meaning "biological fidelity" changes that would harm an auditab
 
 ## 8. References
 
-**Neuroscience** (full citations in `.plans/improve-self-learning-review/research-07-neuroscience.md`):
+**Neuroscience** (full citations in the local review notes, `research-07-neuroscience.md` — not in the repo):
 McClelland, McNaughton & O'Reilly 1995 (*Psych Review*); Kumaran, Hassabis & McClelland 2016 (*TiCS*);
 Diekelmann & Born 2010 (*Nat Rev Neuro*); Wilson & McNaughton 1994 (*Science*); Nader, Schafe & LeDoux
 2000 (*Nature*); Lee 2009 (*TiNS*); Tononi & Cirelli 2014 (*Neuron*); Richards & Frankland 2017
@@ -549,5 +549,5 @@ Generative Agents (Park 2023, arXiv:2304.03442); A-MEM (Xu 2025, arXiv:2502.1211
 (Vectorize Hindsight 2026; TianPan 2026); LongMemEval (Wu 2024, arXiv:2410.10813); LoCoMo; foundation-
 agent memory survey (arXiv:2602.06052).
 
-**Internal evidence** (`.plans/improve-self-learning-review/`): `code-01…05` (source analyses),
+**Internal evidence** (local review notes, not in the repo): `code-01…05` (source analyses),
 `docs-06-prior-claims` (prior-doc ledger), `live-09-metrics` (read-only live-data validation).

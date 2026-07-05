@@ -273,6 +273,12 @@ default, and range) lives in the field comments of
 [`config-schema.ts`](https://github.com/itlackey/akm/blob/main/src/core/config/config-schema.ts)
 and the published [JSON schema](https://itlackey.github.io/akm/schemas/akm-config.json).
 
+> **Known issue — process-key typos are silently ignored.** `ImproveProfileProcessesSchema`
+> (`config-schema.ts`) uses `.passthrough()` so configs written by newer/older akm versions
+> still load (version-skew tolerance, #676). The trade-off: a misspelled process name (e.g.
+> `extrct`) validates cleanly and becomes a silent no-op. After editing process config, verify
+> the effective result with `akm config get profiles` rather than trusting the write.
+
 | Process | Default (built-in `default` profile) | Description & key knobs |
 | --- | --- | --- |
 | `reflect` | enabled, all markdown types | Reflection pass — generates per-asset proposals. `qualityGate.enabled` runs an LLM-as-judge check; `lowValueFilter.enabled` defers low-value proposals. |
@@ -283,7 +289,7 @@ and the published [JSON schema](https://itlackey.github.io/akm/schemas/akm-confi
 | `extract` | enabled | Reads native session files and extracts insight proposals via LLM. `defaultSince`, `maxTotalChars`, `minContentChars`, `minNewSessions`, `maxSessionsPerRun`, `indexSessions`, `minSessionDuration`, `triage` (`{enabled, minScore}`), `hotProbation`. |
 | `validation` | disabled → falls back to `defaults.llm` | Lower-tier classifier (staleness/confidence/lesson classification). Point at a smaller/cheaper LLM profile. |
 | `triage` | disabled | Drains the standing pending-proposal backlog via a deterministic policy. `applyMode` (`queue`\|`promote`), `policy`, `maxAcceptsPerRun`, `maxDiffLines`, `rejectEmpty`, `judgment`. |
-| `proactiveMaintenance` | disabled | Surfaces top-N highest-priority *due* assets for refresh on a schedule. `dueDays` (30), `maxPerRun`/`limit` (25). |
+| `proactiveMaintenance` | **enabled** in the built-in `default` profile (`src/assets/profiles/default.json` sets `enabled:true`, overriding the code-default false — removing this block is ratified-but-unexecuted, 06-M5) | Surfaces top-N highest-priority *due* assets for refresh on a schedule. `dueDays` (30), `maxPerRun`/`limit` (25). |
 | `recombine` | disabled | Clusters memories by relatedness and induces cross-episodic generalizations. `minClusterSize`, `maxClustersPerRun`, `maxClusterSize`, `excludeTags`, `excludeEntities`, `relatednessSource` (`tags`\|`graph`\|`both`), `confirmThreshold`. |
 | `procedural` | disabled | Compiles recurring successful action sequences into workflow proposals. `minRecurrence`, `maxProposalsPerRun`, `emitAs`. |
 

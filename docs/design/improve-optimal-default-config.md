@@ -4,6 +4,7 @@
 
 **Author:** review of production data (`~/.local/share/akm/state.db`, 30-day window) + 12 tuning memories.
 **Date:** 2026-06-29.
+**Status (2026-07-05, meta-review 14):** 06-M5 (delete the builtin `default.json` `proactiveMaintenance:{enabled:true}` block) is **ratified but unexecuted** — held per review 11 §3.2. This doc matches today's shipped code; when 06-M5 executes, the proactiveMaintenance guidance below flips to SUPERSEDED.
 
 > Method note: hard recommendations below are tied to **directly-verified data** (proposal outcomes, the proactiveMaintenance-removal regression of 2026-06-28) and the **shipped code I read** (`default.json`, `IMPROVE_PROCESS_DEFAULTS`). Tuning *rationale* drawn from memories is attributed and marked "verify file:line before coding" — memories are point-in-time.
 
