@@ -4,8 +4,9 @@ akm is a Bun-based CLI for discovering and using agent assets from local
 filesystem sources, cache-backed sources (git, website, npm), and registry
 catalogs.
 
-This document is the operating summary of the v1 architecture. The full design
-contract lives in `docs/technical/v1-architecture-spec.md`.
+This document is the operating summary of the current architecture and is the
+current-truth reference. The historical v1 planning spec is archived at
+`docs/archive/v1-architecture-spec.md` (archived 2026-07-05; not a live contract).
 
 ---
 
@@ -20,6 +21,8 @@ Built-in asset types are:
 - `workflow`
 - `script`
 - `memory`
+- `lesson`
+- `fact`
 - `env`
 - `secret`
 - `wiki`
@@ -29,7 +32,7 @@ The deprecated `vault` type was removed in 0.9.0 and replaced by `env` (whole
 
 Each type maps to a canonical source directory through `src/core/asset/asset-spec.ts`
 (`skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, `scripts/`,
-`memories/`, `env/`, `secrets/`, `wikis/`).
+`memories/`, `lessons/`, `facts/`, `env/`, `secrets/`, `wikis/`).
 
 ---
 
