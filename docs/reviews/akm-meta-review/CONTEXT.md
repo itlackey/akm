@@ -579,3 +579,37 @@ adversarial code-review + apply findings before commit). Base re-confirmed green
 
 **⚠ OWNER RELEASE STEP (unchanged, now covers batch-2 too):** the batch-2 akm-side fixes — especially the
 07 P0-2 quality-gate fail-CLOSED — only protect cron after `bun run build` + global reinstall (~beta.58).
+
+## SHIPPED & DEPLOYED (2026-07-05) — batches 1+2 are LIVE in cron
+
+Everything above is now merged, released, installed, and verified running. This closes the
+adjudication→execution gap (12-D3) for the security/correctness half of the series.
+
+- **PR #706 MERGED to main** (squash `597cadea`) — all 19 commits (batch 1 + batch 2 + 03-R3 +
+  resolution docs). Released as **`akm-cli@0.9.0-beta.58`** (npm `next` dist-tag; version bump
+  `537bc38b`). First release run FAILED on the #499 test flake (below), re-run succeeded.
+- **Global reinstalled to beta.58** (`bun add -g akm-cli@0.9.0-beta.58`) — the owner release step is
+  DONE. All three wrapper modes report beta.58 (stable/build/default).
+- **Verified LIVE in cron 2026-07-05** (the crontab invokes the global `dist/cli.js`): beta.58 installed
+  20:34, cron tasks ran after (frequent 21:51 / quick 22:02 / extract 22:06), **all `exitCode 0`**. Latest
+  `akm-improve-quick` processed 74 actionable refs (real work), **0 config errors** (the old
+  `INVALID_CONFIG` lines were historical, not recurring), **0 spurious "failing closed" events** — the
+  lmstudio judge endpoint is UP (HTTP 200), so the fail-CLOSED gate passes legitimate content and does not
+  starve the pipeline. `akm health` = `warn` (advisories, not errors). So the D1 "beta.57+ on clean cron"
+  precondition is now satisfied — the deferred **minting-shutdown batch** can proceed on a clean baseline
+  (re-run `findings/09-grr-receipt.sql.md` for the before-number first).
+- **#499 release-flake root-caused + fixed + guarded — PR #707 MERGED** (squash `ec20aeb6`; test/lint-only,
+  no new release needed). The flake was NOT the long-assumed XDG env race (that half was already fixed via
+  `withIsolatedAkmStorage`); the true cause was **non-atomic `Date.now()`**: the health wallTime tests built
+  `taskStart`/`taskEnd` from two separate clock reads and asserted their delta exactly (`toBe(22000)`), so a
+  loaded CI shard's ≥1ms gap → 22001+ → fail. Fixed by capturing the clock once; added **Rule 7** to
+  `scripts/lint-tests-isolation.ts` (flag ≥2 `new Date(Date.now() …)` per scope, no allowlist) so the whole
+  class is now un-writable. Corrected `memory:akm-brittleness-and-flake-rootcause` (it had the wrong cause).
+
+**GitHub issues:** the executed items were disposition-tracked here (findings/ + this file), not as 1:1
+GitHub issues, and the underlying FEATURE issues were already closed before this work — so this work
+HARDENED already-shipped features rather than closing new issues. Traceability comments added to the
+directly-affected closed issues: **#367** (M-1 contradiction pass → the mutual-edge bug it introduced is
+fixed by 03's one-directed-edge change), **#374** (R-5 lesson_quality_gate on reflect → hardened by 07
+P0-2 fail-CLOSED), **#499** (per-run wallTime → its test flake fixed by #707). No currently-OPEN issue is
+completed by this work (#692 R2-salience-gate remains genuinely open; the rest are unrelated features).
