@@ -1,6 +1,6 @@
 # akm improve — Workflow Reference
 
-`akm improve` is the scheduled self-improvement loop that walks every asset in the stash (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, runs memory consolidation across the corpus, and then performs improve-owned maintenance passes such as memory inference and graph extraction. It is the primary mechanism for turning accumulated feedback signals into queued proposals that humans (or automation) can accept.
+`akm improve` is the scheduled self-improvement loop that walks every asset in the stash (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, runs memory consolidation across the corpus, and then performs improve-owned maintenance passes such as memory inference and graph extraction. It is the primary mechanism for turning accumulated feedback signals into queued proposals. Proposal resolution is **audited-autonomous**: in practice proposals are resolved by the pipeline's own gates (auto-accept gate, drain policy, TTL), not by per-item human review — the audit trail (events + resolved proposal rows) is the oversight mechanism. Per-item human approval exists only at `/akm-memory-promote` and `/akm-proposal accept`.
 
 ## Command surface
 
@@ -10,7 +10,7 @@
 | `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
 | `--dry-run` | `boolean` | Compute the plan and memory cleanup analysis; emit no events, acquire no lock, write nothing. |
 | `--target` | `string` | Passed through to `akmConsolidate` as the write-target source override. |
-| `--auto-accept` | `number \| "safe" \| false` (default `90`) | Confidence threshold (0-100) for auto-accepting proposals. Flag absent → ON at threshold 90. Bare `--auto-accept` → 90. `--auto-accept=<N>` → integer threshold. `--auto-accept=safe` → permanent alias for 90. `--auto-accept=false` → disable auto-accept; HTTP consolidation path prompts interactively before Phase B. Until proposals expose real confidence scores, any non-`false` value behaves like the legacy whole-batch accept. |
+| `--auto-accept` | `number \| "safe" \| false` (default: **off**) | Opt-in threshold for the shared auto-accept gate (`runAutoAcceptGate`). Flag absent or bare `--auto-accept` → OFF (`parseAutoAcceptFlag`; deliberate flip from the 0.8.0-RC default-ON-at-90 behaviour). `--auto-accept=<N>` → integer threshold 0-100. `--auto-accept=safe` → permanent alias for 90. `--auto-accept=false` → explicit disable. Until proposals expose per-operation confidence scores, an enabled gate accepts the consolidate batch whole (legacy behaviour). The drain tier never consults this threshold — it is deterministic-policy-gated. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
 | `--consolidate-recovery` | `"abort" \| "clean"` | Recovery mode for stale/incomplete consolidate journals. Default: `abort`. |
