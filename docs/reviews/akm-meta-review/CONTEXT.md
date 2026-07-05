@@ -562,12 +562,13 @@ adversarial code-review + apply findings before commit). Base re-confirmed green
   assumed. The extract value is also questionable (akm mining its own agent dispatches — circular).
 
 **OWNER RESOLUTIONS (2026-07-04, on PR #706 review) — the three NEEDS-RE-SCOPING items are now decided:**
-- **[03-R3] = DEMOTE THE TWIN (propagate the flag), NOT supersede the base.** When a base memory is flagged
-  (contradicted/superseded/archived), propagate that belief state onto its `.derived` twin so the stale twin
-  is demoted too (fixes 04's leak: the flag-free twin resurfacing corrected content). This is a belief-state
-  transition/persistence change, NOT a memory-inference write-path change and NOT "supersede the base." It
-  **builds on the belief-state broadening shipped in `41b797ca`**, so it lands as the FIRST item of the next
-  batch, AFTER #706 merges — do not stack it onto #706.
+- **[03-R3] = DEMOTE THE TWIN (propagate the flag) — SHIPPED in this PR (`71fcc875`).** Owner asked for it in
+  the same beta, so it landed on this branch. Implemented as **search-time inheritance**, NOT a frontmatter
+  write: a `.derived` twin with no state of its own inherits its base's demoting belief state into its
+  in-memory ranking entry, so the (03) belief ranker + filter demote it. A persisted copy was rejected after
+  verifying the **SCC resolver erases any non-frozen state** written to a derived memory on the next improve
+  run (only `deprecated` is frozen). Applied on both the FTS-scored and enumerate/browse paths. Gate:
+  curate-golden Δ=0 + integration tests (demotion below an identical unflagged twin; browse-path filtering).
 - **[02] contributor ablation = DEFER to the E6 second-corpus probe.** No contributor deletions until a
   broader eval corpus actually exercises the paths curate-golden can't (memory/lesson/fact/flagged/graph/
   project-context/exact-name). The curate-golden Δ≈0 gate is insufficient on its own. 0 deletions; closed.
