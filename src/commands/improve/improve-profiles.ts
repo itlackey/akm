@@ -8,12 +8,15 @@ import profileDefault from "../../assets/profiles/default.json" with { type: "js
 import profileFrequent from "../../assets/profiles/frequent.json" with { type: "json" };
 import profileGraphRefresh from "../../assets/profiles/graph-refresh.json" with { type: "json" };
 import profileMemoryFocus from "../../assets/profiles/memory-focus.json" with { type: "json" };
+import profileProactiveMaintenance from "../../assets/profiles/proactive-maintenance.json" with { type: "json" };
 import profileQuick from "../../assets/profiles/quick.json" with { type: "json" };
+import profileRecombineOnly from "../../assets/profiles/recombine-only.json" with { type: "json" };
+import profileReflectDistill from "../../assets/profiles/reflect-distill.json" with { type: "json" };
 import profileSynthesize from "../../assets/profiles/synthesize.json" with { type: "json" };
 import profileThorough from "../../assets/profiles/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import { warn } from "../../core/warn";
+import { ConfigError } from "../../core/errors";
 
 export type { ImproveProfileConfig } from "../../core/config/config";
 
@@ -40,6 +43,9 @@ const BUILTIN_PROFILES: Record<string, ImproveProfileConfig> = {
   consolidate: profileConsolidate as ImproveProfileConfig,
   catchup: profileCatchup as ImproveProfileConfig,
   synthesize: profileSynthesize as ImproveProfileConfig,
+  "reflect-distill": profileReflectDistill as ImproveProfileConfig,
+  "proactive-maintenance": profileProactiveMaintenance as ImproveProfileConfig,
+  "recombine-only": profileRecombineOnly as ImproveProfileConfig,
 };
 
 /**
@@ -124,17 +130,22 @@ export function resolveImproveProfile(name: string | undefined, config: AkmConfi
   const hasBuiltin = requestedName in BUILTIN_PROFILES;
   const hasUserDefined = !!config.profiles?.improve?.[requestedName];
 
-  let effectiveName = requestedName;
-  if (!hasBuiltin && !hasUserDefined && requestedName !== FALLBACK_PROFILE_NAME) {
-    warn(
-      `[akm] Improve profile "${requestedName}" not found in built-ins or config. ` +
-        `Falling back to "${FALLBACK_PROFILE_NAME}".`,
+  // An unknown profile name is a HARD error. Silently falling back to the
+  // default (proactive-off) profile is the −96% incident class: a cron pinned
+  // to `--profile reflect-distill` ran the default for weeks because the name
+  // only existed in one host's config and the resolver swallowed the miss.
+  if (!hasBuiltin && !hasUserDefined) {
+    const valid = [
+      ...new Set([...Object.keys(BUILTIN_PROFILES), ...Object.keys(config.profiles?.improve ?? {})]),
+    ].sort();
+    throw new ConfigError(
+      `Improve profile "${requestedName}" not found. Valid profiles: ${valid.join(", ")}.`,
+      "UNKNOWN_IMPROVE_PROFILE",
     );
-    effectiveName = FALLBACK_PROFILE_NAME;
   }
 
-  const builtin = BUILTIN_PROFILES[effectiveName] ?? BUILTIN_PROFILES[FALLBACK_PROFILE_NAME];
-  const userOverride = config.profiles?.improve?.[effectiveName] ?? {};
+  const builtin = BUILTIN_PROFILES[requestedName] ?? BUILTIN_PROFILES[FALLBACK_PROFILE_NAME];
+  const userOverride = config.profiles?.improve?.[requestedName] ?? {};
   return deepMerge(builtin, userOverride) as ImproveProfileConfig;
 }
 

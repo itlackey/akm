@@ -34,6 +34,11 @@ export type ConfigErrorCode =
   // See src/commands/init.ts.
   | "INIT_TMP_STASH_REFUSED"
   | "SETUP_TMP_STASH_REFUSED"
+  // An `--profile <name>` (or `defaults.improve`) that matches no built-in and
+  // no user-defined `profiles.improve` entry. Raised instead of silently
+  // falling back to the default profile — the −96% incident class where a cron
+  // pinned to a host-only profile name ran the default for weeks.
+  | "UNKNOWN_IMPROVE_PROFILE"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm init`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
@@ -89,6 +94,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Use a persistent directory, or set AKM_FORCE_SETUP_TMP_STASH=1 to opt in to a sandboxed setup (setup also pre-sets AKM_STASH_DIR so config and cache writes auto-isolate into $stashDir/.akm/ — host config is preserved).",
   UNSAFE_STASH_DIR:
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The stash directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
+  UNKNOWN_IMPROVE_PROFILE:
+    "Pass one of the listed profile names to `--profile`, or define it under `profiles.improve` in your config. Names are case-sensitive.",
 };
 
 /** Default hint for each UsageError code. */

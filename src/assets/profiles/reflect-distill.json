@@ -1,0 +1,30 @@
+{
+  "description": "Reflect + distill sustaining pass — reflect, distill, memoryInference, proposal triage (promote), and the proactive-maintenance lane; consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+  "processes": {
+    "reflect": {
+      "enabled": true,
+      "mode": "llm",
+      "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"]
+    },
+    "distill": { "enabled": true, "mode": "llm", "allowedTypes": ["memory"] },
+    "consolidate": { "enabled": false },
+    "memoryInference": { "enabled": true, "mode": "llm" },
+    "graphExtraction": { "enabled": false },
+    "extract": {
+      "enabled": false,
+      "timeoutMs": 300000,
+      "triage": { "enabled": true, "minScore": 2 },
+      "minNewSessions": 1
+    },
+    "triage": {
+      "enabled": true,
+      "applyMode": "promote",
+      "policy": "personal-stash",
+      "maxAcceptsPerRun": 15,
+      "maxDiffLines": 200,
+      "judgment": { "mode": "llm" }
+    },
+    "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 }
+  },
+  "sync": { "enabled": false }
+}
