@@ -24,12 +24,13 @@
 
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { getPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
 import type { Proposal } from "../proposal/repository";
-import { getProposal, promoteProposal, recordGateDecision } from "../proposal/repository";
+import { archiveProposal, getProposal, promoteProposal, recordGateDecision } from "../proposal/repository";
 
 async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
@@ -307,6 +308,29 @@ export async function runAutoAcceptGate(
         ...(currentContentHash !== undefined ? { contentHash: currentContentHash } : {}),
         gate: gateLabel,
       });
+      // A validation failure is permanent — the minted content can never satisfy
+      // the asset schema, so archive it as rejected instead of leaving it pending
+      // to be retried on every future run (the 90-day TTL is otherwise the first
+      // thing ever to touch these zombies). Best-effort; ctx=undefined mirrors the
+      // promoteFn call above so the archive hits the same stashDir-derived DB.
+      //
+      // Discriminate on the STRUCTURED error, not the `reason` string: promoteProposal
+      // throws UsageError("MISSING_REQUIRED_ARGUMENT") only for the validateProposal
+      // failure branch. Message-sniffing (`reason` = "validation:<kind>") would also
+      // match a transient git-push rejection ("[rejected] ... non-fast-forward") from
+      // a git-backed write target and permanently archive a valid, retryable proposal.
+      const isPermanentValidationFailure = err instanceof UsageError && err.code === "MISSING_REQUIRED_ARGUMENT";
+      if (isPermanentValidationFailure) {
+        try {
+          archiveProposal(cfg.stashDir as string, proposalId, "rejected", `auto-accept ${reason}`, undefined);
+        } catch (archiveErr) {
+          warn(
+            `[improve] ${cfg.phase} failed to archive validation-failed proposal ${proposalId}: ${
+              archiveErr instanceof Error ? archiveErr.message : String(archiveErr)
+            }`,
+          );
+        }
+      }
       // If exploration budget was consumed but promotion failed, restore the slot
       // so the budget isn't exhausted on errors.
       if (isExploration) explorationRemaining += 1;

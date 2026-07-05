@@ -143,6 +143,11 @@ export type DistillOutcome =
  * `lesson:lesson-<name>-lesson-lesson` (double `-lesson` suffix) — the
  * recursive-ref defect observed across 323 archived rejected proposals.
  *
+ * 08-F2: `env` and `secret` are refused as a STRUCTURAL floor — distill reads
+ * the input asset's bytes via `readFileSync` and hands them to the LLM, so
+ * secret material must never be a distill input. This gate is code, not config:
+ * it holds even when `allowedTypes` config is mis-set in unattended cron.
+ *
  * The runtime gate inside {@link akmDistill} still refuses these inputs
  * defensively (returning an `outcome: "skipped"` envelope with `skipReason:
  * "recursive_lesson_input"`). This exported set is the planner-side companion:
@@ -154,7 +159,7 @@ export type DistillOutcome =
  * type means updating this constant — the planner picks the change up for
  * free.
  */
-export const DISTILL_REFUSED_INPUT_TYPES: ReadonlySet<string> = new Set(["lesson"]);
+export const DISTILL_REFUSED_INPUT_TYPES: ReadonlySet<string> = new Set(["lesson", "env", "secret"]);
 
 /**
  * Returns true when `type` is structurally refused as an input by
@@ -283,7 +288,9 @@ export interface AkmDistillResult {
   feedbackFullyFiltered?: boolean;
   /**
    * Judge score (1–5 float) when `outcome === "quality_rejected"`.
-   * Also present as -1 when the judge failed/timed out and fell back to pass-through.
+   * Present as -1 when the judge could not run (no LLM / timeout / parse
+   * failure) and the gate failed CLOSED (07 P0-2) — the proposal is rejected,
+   * not minted.
    */
   score?: number;
   /**
@@ -684,15 +691,21 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // the improve planner can skip these refs before queuing distill attempts;
   // this runtime check stays as a defensive backstop for direct callers.
   if (isDistillRefusedInputType(parsedInputRef.type)) {
-    const skippedRef = `lesson:${parsedInputRef.name}`;
+    // 08-F2: env/secret are a secret-material refusal (never read the bytes);
+    // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
+    const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
+    const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
+    const message = isSecretInput
+      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
+      : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
       metadata: {
         outcome: "skipped" as const,
         lessonRef: skippedRef,
-        message: "distill refuses lesson inputs — lessons are the distilled form, not a source",
-        skipReason: "recursive_lesson_input",
+        message,
+        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
         ...eligMeta,
       },
     });
@@ -702,7 +715,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       outcome: "skipped",
       inputRef,
       lessonRef: skippedRef,
-      message: "Distill refuses lesson inputs — lessons are the distilled form, not a source.",
+      message,
     };
   }
 
@@ -1086,7 +1099,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   // LLM-as-judge quality gate (P2-B). Only active when the feature flag is
-  // explicitly enabled. Fail-open: judge failures always pass through.
+  // explicitly enabled. Fail-CLOSED (07 P0-2): an unjudgeable proposal (no LLM
+  // / timeout / parse failure) is rejected, not passed through.
   // D-5 / #388: Three-band system — review_needed band queues a proposal
   // with review_needed outcome rather than auto-rejecting.
   let lessonJudgeConfidence: number | undefined;
@@ -1127,9 +1141,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         options.eligibilitySource,
       );
     }
-    // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
-    // (no LLM / timeout / parse failure) — leave confidence undefined so
-    // the auto-accept gate treats the proposal as unscored and skips it.
+    // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict
+    // reaches here (07 P0-2: the judge now fails CLOSED on no-LLM / timeout /
+    // parse failure, so those return pass:false and never fall through to
+    // this line). A defensive score>0 guard keeps confidence undefined for any
+    // non-positive score the auto-accept gate should treat as unscored.
     if (judgeResult.score > 0) lessonJudgeConfidence = judgeResult.score / 5;
   }
 

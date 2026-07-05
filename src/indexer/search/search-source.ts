@@ -199,13 +199,26 @@ export function getWritableStashDirs(overrideStashDir?: string, existingConfig?:
 
 /**
  * Find which source a file path belongs to.
+ *
+ * Longest-matching-prefix wins: a source nested inside another (e.g. `akm add
+ * ./sub` where `./sub` lives under the primary stash — which is always
+ * `sources[0]`) is the more specific owner and must win over the enclosing
+ * source regardless of array order. A first-match-in-order scan would
+ * misattribute every asset under the nested source to the primary stash,
+ * corrupting origin / editability / provenance decisions for the affected files.
  */
 export function findSourceForPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
   const resolved = path.resolve(filePath);
+  let best: SearchSource | undefined;
+  let bestLen = -1;
   for (const source of sources) {
-    if (resolved.startsWith(path.resolve(source.path) + path.sep)) return source;
+    const base = path.resolve(source.path);
+    if (resolved.startsWith(base + path.sep) && base.length > bestLen) {
+      best = source;
+      bestLen = base.length;
+    }
   }
-  return undefined;
+  return best;
 }
 
 /**

@@ -57,6 +57,31 @@ describe("akm init", () => {
     expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(true);
   });
 
+  test("scaffolds a .gitignore ignoring env/ and secrets/ (08-F1)", async () => {
+    const stashDir = makeTempDir("akm-init-gitignore-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await akmInit({ dir: stashDir });
+    const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
+    expect(gitignore).toMatch(/^env\/$/m);
+    expect(gitignore).toMatch(/^secrets\/$/m);
+  });
+
+  test("gitignore scaffold is idempotent and preserves the user's own rules", async () => {
+    const stashDir = makeTempDir("akm-init-gitignore-idem-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    fs.mkdirSync(stashDir, { recursive: true });
+    fs.writeFileSync(path.join(stashDir, ".gitignore"), "# my rules\n*.log\n");
+
+    await akmInit({ dir: stashDir });
+    await akmInit({ dir: stashDir }); // second run must not duplicate the block
+
+    const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
+    expect(gitignore).toContain("*.log"); // user rule preserved
+    expect(gitignore).toMatch(/^env\/$/m);
+    const markerCount = gitignore.split("# akm: keep secret material out of git by default").length - 1;
+    expect(markerCount).toBe(1);
+  });
+
   test("re-running on an existing stash is idempotent and keeps lessons/", async () => {
     const stashDir = makeTempDir("akm-init-stash-2-");
     await akmInit({ dir: stashDir });

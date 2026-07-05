@@ -328,11 +328,14 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     expect(result.edgesWritten).toBe(0);
   });
 
-  test("detectAndWriteContradictions writes contradictedBy edges when LLM judges true", async () => {
+  test("detectAndWriteContradictions writes ONE directed contradictedBy edge when LLM judges true", async () => {
     const { detectAndWriteContradictions } = await import(
       "../../src/commands/improve/memory/memory-contradiction-detect"
     );
     const stashDir = makeTempDir("akm-m1-detect-");
+    // Direction is lexicographic ref order: the larger ref loses. "…derived2" >
+    // "…derived", so `derived2` is the loser (gets the edge) and `derived` is the
+    // surviving winner.
     writeMemory(stashDir, "auth-tips.derived", { inferred: true, source: "memory:auth-tips" }, "Always use VPN.");
     writeMemory(
       stashDir,
@@ -359,17 +362,124 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     );
 
     expect(result.pairsChecked).toBe(1);
-    expect(result.edgesWritten).toBe(2); // Both sides get a contradictedBy edge.
+    // A SINGLE directed edge — mutual A↔B edges form a 2-cycle the SCC resolver
+    // refreshes back to active, erasing the contradiction every run.
+    expect(result.edgesWritten).toBe(1);
 
-    // Verify frontmatter was updated.
-    const file1 = path.join(stashDir, "memories", "auth-tips.derived.md");
-    const file2 = path.join(stashDir, "memories", "auth-tips.derived2.md");
-    const raw1 = fs.readFileSync(file1, "utf8");
-    const raw2 = fs.readFileSync(file2, "utf8");
-    expect(raw1).toContain("contradictedBy");
-    expect(raw2).toContain("contradictedBy");
-    expect(raw1).toContain("auth-tips.derived2");
-    expect(raw2).toContain("auth-tips.derived");
+    // Only the loser (`derived2`) carries `contradictedBy → derived`; the winner
+    // (`derived`) has no edge.
+    const winner = fs.readFileSync(path.join(stashDir, "memories", "auth-tips.derived.md"), "utf8");
+    const loser = fs.readFileSync(path.join(stashDir, "memories", "auth-tips.derived2.md"), "utf8");
+    expect(loser).toContain("contradictedBy");
+    expect(loser).toContain("auth-tips.derived");
+    expect(winner).not.toContain("contradictedBy");
+  });
+
+  test("a detected contradiction edge PERSISTS across the SCC resolver and a read-only re-run (03)", async () => {
+    // The gate for the one-directed-edge fix: a mutual A↔B pair forms a 2-cycle
+    // the SCC resolver treats as a sink and refreshes BOTH back to active,
+    // erasing the contradiction every run. A single directed edge must survive
+    // both the resolver and a subsequent read-only detection re-run.
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
+    const { analyzeMemoryCleanup, applyMemoryCleanup } = await import(
+      "../../src/commands/improve/memory/memory-improve"
+    );
+    const stashDir = makeTempDir("akm-m1-persist-");
+    // Direction is lexicographic ref order: `vpn.derived2` (larger ref) loses.
+    writeMemory(stashDir, "vpn.derived", { inferred: true, source: "memory:vpn" }, "Always use VPN.");
+    writeMemory(stashDir, "vpn.derived2", { inferred: true, source: "memory:vpn" }, "VPN is never required.");
+
+    const config = {
+      semanticSearchMode: "auto",
+      stashDir,
+      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      defaultWriteTarget: "stash",
+      profiles: {
+        llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+        improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
+      },
+      defaults: { llm: "default" },
+    } as Parameters<typeof detectAndWriteContradictions>[1];
+    const judge = async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict." });
+
+    const loserPath = path.join(stashDir, "memories", "vpn.derived2.md");
+    const winnerPath = path.join(stashDir, "memories", "vpn.derived.md");
+
+    // 1. Detection writes ONE directed edge.
+    const first = await detectAndWriteContradictions(stashDir, config, judge);
+    expect(first.edgesWritten).toBe(1);
+
+    // 2. The SCC resolver marks the loser `contradicted` and KEEPS the edge (a
+    //    mutual 2-cycle would have been refreshed back to active here).
+    applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
+    expect(fs.readFileSync(loserPath, "utf8")).toContain("beliefState: contradicted");
+    expect(fs.readFileSync(loserPath, "utf8")).toContain("memory:vpn.derived");
+    expect(fs.readFileSync(winnerPath, "utf8")).not.toContain("beliefState: contradicted");
+
+    // 3. A read-only re-run of detection finds the edge already present and does
+    //    NOT rewrite or erase it — the contradiction is stable, not self-erasing.
+    const second = await detectAndWriteContradictions(stashDir, config, judge);
+    expect(second.edgesWritten).toBe(0);
+    const loserAfter = fs.readFileSync(loserPath, "utf8");
+    expect(loserAfter).toContain("beliefState: contradicted");
+    expect(loserAfter).toContain("memory:vpn.derived");
+    expect(fs.readFileSync(winnerPath, "utf8")).not.toContain("beliefState: contradicted");
+  });
+
+  test("a 3-memory family resolves to ONE acyclic winner — no multi-node self-erasure (03)", async () => {
+    // Lexicographic ref order is a TOTAL order (aaa < bbb < ccc), so the induced
+    // pairwise edges form a DAG with `aaa` as the sole sink/winner — never a
+    // cycle the SCC resolver would refresh back to active. This is the structural
+    // guarantee that replaced the earlier (never-populated) createdAt heuristic,
+    // which could produce non-transitive per-pair directions in families of 3+.
+    const { detectAndWriteContradictions } = await import(
+      "../../src/commands/improve/memory/memory-contradiction-detect"
+    );
+    const { analyzeMemoryCleanup, applyMemoryCleanup } = await import(
+      "../../src/commands/improve/memory/memory-improve"
+    );
+    const stashDir = makeTempDir("akm-m1-triad-");
+    writeMemory(stashDir, "vpn.aaa.derived", { inferred: true, source: "memory:vpn" }, "Always use VPN.");
+    writeMemory(stashDir, "vpn.bbb.derived", { inferred: true, source: "memory:vpn" }, "VPN is optional.");
+    writeMemory(stashDir, "vpn.ccc.derived", { inferred: true, source: "memory:vpn" }, "VPN is never required.");
+
+    const config = {
+      semanticSearchMode: "auto",
+      stashDir,
+      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      defaultWriteTarget: "stash",
+      profiles: {
+        llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
+        improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
+      },
+      defaults: { llm: "default" },
+    } as Parameters<typeof detectAndWriteContradictions>[1];
+    const judge = async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict." });
+
+    const first = await detectAndWriteContradictions(stashDir, config, judge);
+    expect(first.pairsChecked).toBe(3); // aaa-bbb, aaa-ccc, bbb-ccc
+    expect(first.edgesWritten).toBe(3); // one directed edge per confirmed pair
+
+    applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
+
+    const readState = (name: string) => fs.readFileSync(path.join(stashDir, "memories", `${name}.md`), "utf8");
+    // The sole sink (smallest ref) survives; the two larger refs are contradicted.
+    expect(readState("vpn.aaa.derived")).not.toContain("beliefState: contradicted");
+    expect(readState("vpn.bbb.derived")).toContain("beliefState: contradicted");
+    expect(readState("vpn.ccc.derived")).toContain("beliefState: contradicted");
+
+    // Re-run: belief STATES are stable — the winner stays current, the two
+    // losers stay contradicted. (The resolver normalizes a loser's contradictedBy
+    // to only its reachable sink, so the intermediate bbb→ccc edge may be
+    // re-written on re-runs, but that never destabilizes the states — the DAG has
+    // no cycle to refresh back to active.)
+    await detectAndWriteContradictions(stashDir, config, judge);
+    applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
+    expect(readState("vpn.aaa.derived")).not.toContain("beliefState: contradicted");
+    expect(readState("vpn.bbb.derived")).toContain("beliefState: contradicted");
+    expect(readState("vpn.ccc.derived")).toContain("beliefState: contradicted");
   });
 
   test("detectAndWriteContradictions skips pair when LLM judges no contradiction", async () => {

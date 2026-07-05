@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
+import path from "node:path";
+import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { readEvents } from "../core/events";
@@ -32,6 +35,7 @@ import {
   probeStateDbRoundTrip,
   readCalibration,
 } from "./health/metrics";
+import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { buildPerRunSummaries } from "./health/task-runs";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -74,6 +78,15 @@ export interface AkmHealthOptions {
    * Same test-isolation rationale as {@link stateDbPath}.
    */
   logsDbPath?: string;
+  /** Stash dir for the `stash-git-exposure` advisory. Defaults to `resolveStashDir()`. */
+  stashDir?: string;
+  /**
+   * Injectable git seam for the `stash-git-exposure` advisory. When omitted, the
+   * advisory only runs (via a real `git` subprocess) if the stash is actually a
+   * git repo, so the health hot path — including unit tests with non-git sandbox
+   * stashes — never spawns. Tests pass a fake to exercise the advisory directly.
+   */
+  stashExposureGit?: GitRunner;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -214,6 +227,24 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     improveSummary.enrichmentMinting = computeEnrichmentMintingRollup(db, since, until);
 
     advisories.push(...collectImproveAdvisories(db, stateDbPath, since, improveSummary));
+
+    // 08-F1: surface a `stash-git-exposure` advisory when env/secret assets are
+    // git-tracked AND a remote is configured (the leak moment). Best-effort.
+    // Cheap guard: only shell out to git when the stash has its OWN `.git` (or a
+    // test injected a fake seam), so the hot path never spawns for a non-git
+    // stash — the common unit-test case. Trade-off: a stash manually pointed at a
+    // bare subdirectory of a parent git repo (no `.git` of its own) is not
+    // checked. akm-init always creates `.git` at the stash root, so any
+    // akm-initialised stash is covered; this only skips hand-pointed nested ones.
+    try {
+      const exposureStashDir = options.stashDir ?? resolveStashDir();
+      if (options.stashExposureGit || fs.existsSync(path.join(exposureStashDir, ".git"))) {
+        const stashExposure = collectStashExposureAdvisory(exposureStashDir, options.stashExposureGit);
+        if (stashExposure) advisories.push(stashExposure);
+      }
+    } catch {
+      // Non-fatal — a git/probe failure must not abort the health report.
+    }
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {

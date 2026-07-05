@@ -254,7 +254,10 @@ describe("§11 event metadata shape (runtime)", () => {
         },
         improve: {
           default: {
-            processes: { distill: { enabled: true } },
+            // Quality gate OFF: the contract under test is the distill_invoked
+            // event metadata shape on the happy path, not the judge. The gate
+            // defaults ON and fails CLOSED (07 P0-2) with this non-judge chat stub.
+            processes: { distill: { enabled: true, qualityGate: { enabled: false } } },
           },
         },
       },

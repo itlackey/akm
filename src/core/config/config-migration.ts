@@ -290,11 +290,6 @@ export function migrateConfigShape(
         const me = getObj(index, "metadataEnhance");
         if (typeof llmFeatures.metadata_enhance === "boolean") me.enabled = llmFeatures.metadata_enhance;
       }
-      if ("curate_rerank" in llmFeatures) {
-        const search = getObj(result, "search");
-        const cr = getObj(search, "curateRerank");
-        if (typeof llmFeatures.curate_rerank === "boolean") cr.enabled = llmFeatures.curate_rerank;
-      }
       if ("lesson_quality_gate" in llmFeatures) {
         const distill = getImproveProcess(result, "distill");
         const qg = getObj(distill, "qualityGate");
@@ -445,15 +440,10 @@ export function migrateConfigShape(
 
     if (isObj(features.search)) {
       const fsearch = features.search as Record<string, unknown>;
-      if ("curate_rerank" in fsearch) {
-        const search = getObj(result, "search");
-        const cr = getObj(search, "curateRerank");
-        const val = fsearch.curate_rerank;
-        if (typeof val === "boolean") cr.enabled = val;
-        else if (isObj(val) && typeof val.enabled === "boolean") cr.enabled = val.enabled;
-      }
       // Catch-all: unknown features.search.<key> entries land at
       // search.<keyAsCamelCase> (preserving { enabled, options } when present).
+      // `curate_rerank` is a removed dead feature — listed here so the catch-all
+      // skips it and it is simply dropped (not resurrected under search.curateRerank).
       const knownSearchKeys = new Set(["curate_rerank"]);
       for (const [legacyKey, legacyVal] of Object.entries(fsearch)) {
         if (knownSearchKeys.has(legacyKey)) continue;

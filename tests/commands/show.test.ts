@@ -168,6 +168,110 @@ describe("akmShow installed ref", () => {
   });
 });
 
+// ── Agent toolPolicy provenance ceiling (07 P1-D) ─────────────────────────────
+
+describe("akmShow agent toolPolicy provenance ceiling", () => {
+  const AGENT_MD = [
+    "---",
+    "name: helper",
+    "description: A helper agent",
+    "tools: [Read, Write, Bash]",
+    "---",
+    "Do the thing.",
+  ].join("\n");
+
+  test("own-stash agent keeps its self-declared toolPolicy", async () => {
+    writeFile(path.join(stashDir, "agents", "helper.md"), AGENT_MD);
+    const result = await akmShow({ ref: "agent:helper" });
+    expect(result.type).toBe("agent");
+    // Own stash → no registry origin → the operator's declared policy stands.
+    expect(result.origin ?? null).toBeNull();
+    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
+  });
+
+  test("registry-installed third-party agent's self-declared tools are dropped", async () => {
+    const installedStashRoot = createTmpDir("akm-show-tp-agent-");
+    writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
+    saveConfig({
+      semanticSearchMode: "off",
+      installed: [
+        {
+          id: "github:evil/pack",
+          source: "github",
+          ref: "github:evil/pack",
+          artifactUrl: "https://example.com/x.tgz",
+          stashRoot: installedStashRoot,
+          cacheDir: installedStashRoot,
+          installedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const result = await akmShow({ ref: "github:evil/pack//agent:tools/agents/helper" });
+    expect(result.type).toBe("agent");
+    expect(result.origin).toBe("github:evil/pack");
+    // Provenance ceiling: only the primary stash may self-grant; an installed
+    // pack is not the primary stash.
+    expect(result.toolPolicy).toBeUndefined();
+  });
+
+  test("a --writable installed pack STILL drops toolPolicy (writable ≠ trusted to self-grant)", async () => {
+    // Regression: `akm add <ref> --writable` (opt-in to push edits upstream) marks
+    // a third-party pack writable. Writability must NOT be read as trust — the
+    // ceiling keys off primary-stash identity, not `source.writable`.
+    const installedStashRoot = createTmpDir("akm-show-writable-pack-");
+    writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
+    saveConfig({
+      semanticSearchMode: "off",
+      installed: [
+        {
+          id: "git:contrib/pack",
+          source: "git",
+          ref: "git:contrib/pack",
+          artifactUrl: "https://example.com/x.tgz",
+          stashRoot: installedStashRoot,
+          cacheDir: installedStashRoot,
+          installedAt: new Date().toISOString(),
+          writable: true,
+        },
+      ],
+    });
+    const result = await akmShow({ ref: "git:contrib/pack//agent:tools/agents/helper" });
+    expect(result.type).toBe("agent");
+    expect(result.toolPolicy).toBeUndefined();
+  });
+
+  test("a configured secondary source (nameless git/filesystem) drops toolPolicy", async () => {
+    // Regression for the original bypass: a source added WITHOUT a name has no
+    // registryId, so a registryId-based ceiling missed it. The primary-stash
+    // check catches it — a configured secondary source is not the primary stash.
+    const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
+    writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
+    // No `name` — the setup-wizard "add a source and leave the name blank" shape.
+    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: thirdPartyDir }] });
+
+    const result = await akmShow({ ref: "agent:helper" });
+    expect(result.type).toBe("agent");
+    // Reads back as `editable: true` (not under an installed cacheDir) — proving
+    // neither `editable` nor `writable` is the trust signal; primary-stash is.
+    expect(result.editable).toBe(true);
+    expect(result.toolPolicy).toBeUndefined();
+  });
+
+  test("a source NESTED inside the primary stash still drops toolPolicy (longest-prefix attribution)", async () => {
+    // Regression: `akm add ./vendor` where ./vendor lives under the primary stash.
+    // findSourceForPath must attribute the nested asset to the nested (more
+    // specific) source, not the enclosing primary — else its self-declared tools
+    // would be wrongly honoured.
+    const nestedDir = path.join(stashDir, "vendor");
+    writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
+    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: nestedDir }] });
+
+    const result = await akmShow({ ref: "agent:vendor/agents/helper" });
+    expect(result.type).toBe("agent");
+    expect(result.toolPolicy).toBeUndefined();
+  });
+});
+
 // ── Search path resolution ───────────────────────────────────────────────────
 
 describe("akmShow search path", () => {

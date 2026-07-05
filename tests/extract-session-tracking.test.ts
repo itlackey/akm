@@ -852,3 +852,71 @@ describe("akmExtract — per-session lock", () => {
     expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
   });
 });
+
+// ── R4: transient skip outcomes persist a NULL content_hash (stay retryable) ──
+//
+// llm_unavailable (the LLM was down) and triaged_out (deferred by the triage
+// gate) must NOT pin the session against its current byte content — persisting
+// the hash would make the next run skip it as "already_extracted" and it would
+// never be retried once the LLM recovers / the triage bar changes. Persisting a
+// null hash keeps the row eligible for the existing null-hash retry.
+describe("akmExtract — R4 transient outcomes stay retryable (null content_hash)", () => {
+  test("llm_unavailable → tracked row carries a null content_hash", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_llm_down", Date.now());
+    const db = openStateDatabase(":memory:");
+
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeHarness([session])],
+      stateDb: db,
+      // A throwing chat drives tryLlmFeature onto its fallback path → the
+      // session is skipped with skipReason "llm_unavailable".
+      chat: async () => {
+        throw new Error("llm endpoint unreachable");
+      },
+    });
+
+    expect(result.sessions[0]?.skipReason).toBe("llm_unavailable");
+    const row = getExtractedSession(db, "claude-code", "ses_llm_down");
+    expect(row).toBeDefined();
+    expect(row?.content_hash).toBeNull();
+    db.close();
+  });
+
+  test("triaged_out → tracked row carries a null content_hash", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_triaged", Date.now());
+    const db = openStateDatabase(":memory:");
+
+    // Force triage-out for ANY session by setting an unreachable minScore, so the
+    // outcome does not depend on a fragile low-signal fixture.
+    const config = configEnabled(stash);
+    const extractProcess = config.profiles?.improve?.default?.processes?.extract as Record<string, unknown>;
+    extractProcess.minContentChars = 1;
+    extractProcess.triage = { enabled: true, minScore: 999_999 };
+
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude-code",
+      stashDir: stash,
+      config,
+      harnesses: [makeHarness([session])],
+      stateDb: db,
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+
+    // Triaged out before the LLM call: no chat, skipReason triaged_out.
+    expect(chatCalls).toBe(0);
+    expect(result.sessions[0]?.skipReason).toBe("triaged_out");
+    const row = getExtractedSession(db, "claude-code", "ses_triaged");
+    expect(row).toBeDefined();
+    expect(row?.content_hash).toBeNull();
+    db.close();
+  });
+});

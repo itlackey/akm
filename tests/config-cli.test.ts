@@ -257,12 +257,10 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
     expect(withImprove.defaults?.improve).toBe("fast");
   });
 
-  test("search.minScore and search.curateRerank.enabled are settable", () => {
+  test("search.minScore is settable", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
     const withMinScore = setConfigValue(base, "search.minScore", "0.42");
     expect(withMinScore.search?.minScore).toBe(0.42);
-    const withRerank = setConfigValue(base, "search.curateRerank.enabled", "true");
-    expect(withRerank.search?.curateRerank?.enabled).toBe(true);
   });
 
   test("feedback.requireReason / archiveRetentionDays / improve.eventRetentionDays settable", () => {

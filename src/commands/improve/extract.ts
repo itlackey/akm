@@ -1175,7 +1175,14 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
             // #602 — persist the freshly computed content hash so the NEXT run
             // can compare byte-for-byte. read_failed (before hash) → null, which
             // keeps the row eligible for retry (matches failed-row semantics).
-            contentHash: result.contentHash ?? null,
+            // R4 — llm_unavailable (LLM was down) and triaged_out (deferred by the
+            // triage gate) are transient outcomes: persist null so the null-hash
+            // retry re-processes them on a later run instead of pinning them as
+            // "seen" forever against the current byte content.
+            contentHash:
+              result.skipReason === "llm_unavailable" || result.skipReason === "triaged_out"
+                ? null
+                : (result.contentHash ?? null),
             metadata: {
               preFilterInputCount: result.preFilter.inputCount,
               preFilterOutputCount: result.preFilter.outputCount,

@@ -45,8 +45,10 @@ const GeneratorSchema = z.enum(PROPOSAL_SOURCES as unknown as [string, ...string
 export const PERSONAL_STASH: DrainPolicy = {
   name: "personal-stash",
   accept: [
-    // Extract proposals carry freshly-pulled real content — accept when present.
-    { generator: "extract", minContentLines: 1 },
+    // Extract proposals carry freshly-pulled real content — accept when present,
+    // but cap the diff for parity with reflect(80)/consolidate(200): an
+    // arbitrarily large extract should not auto-promote with zero LLM calls.
+    { generator: "extract", minContentLines: 1, maxDiffLines: 200 },
     // Reflect refinements: accept small ones; larger refinements defer to review.
     { generator: "reflect", maxDiffLines: 80 },
     // Consolidate within the diff band; mid-band lands in `defer` below.

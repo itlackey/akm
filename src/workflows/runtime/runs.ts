@@ -150,10 +150,15 @@ export async function startWorkflowRun(
     });
 
     const result = await getWorkflowStatus(runId);
+    // 07 P1-B: emit only the run id + status — NOT the raw workflowTitle (which
+    // comes verbatim from the workflow asset's frontmatter and is therefore
+    // attacker-influenceable). Keeping raw titles out of the events stream
+    // shrinks the injectable footprint for any consumer that re-surfaces events
+    // into agent context.
     appendEvent({
       eventType: "workflow_started",
       ref: ref,
-      metadata: { runId: result.run.id, title: result.run.workflowTitle },
+      metadata: { runId: result.run.id, status: result.run.status },
     });
     return result;
   });

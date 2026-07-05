@@ -374,6 +374,50 @@ export function getDerivedForParent(db: Database, parentRef: string): DbIndexedE
 }
 
 /**
+ * 03-R3: for the given derived-twin row ids, fetch each twin's BASE memory
+ * `beliefState`, keyed by twin id.
+ *
+ * Used by the derived-twin belief inheritance in search ranking: a `.derived`
+ * twin has no belief state of its own, so it inherits its base memory's
+ * demoting state (contradicted/superseded/…) at search time. A twin's
+ * `entry_key` is exactly its base's `entry_key` plus the `.derived` suffix
+ * (same stash + type prefix, `<name>` vs `<name>.derived`), so the base is
+ * found by stripping that suffix — no ref/prefix reconstruction. Returns a map
+ * of twin id → base beliefState for bases that carry a non-empty state.
+ * Best-effort: any query error (e.g. legacy DB) yields no inheritance rather
+ * than failing the search.
+ */
+export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number[]): Map<number, string> {
+  const out = new Map<number, string>();
+  if (twinIds.length === 0) return out;
+  // Chunk at SQLITE_CHUNK_SIZE like the sibling bulk-by-id helpers, so a large
+  // `--limit` candidate set never trips SQLITE_MAX_VARIABLE_NUMBER (which would
+  // otherwise fall into the best-effort catch and silently disable the feature).
+  for (let i = 0; i < twinIds.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = twinIds.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    bestEffort(() => {
+      const rows = db
+        .prepare(
+          `SELECT twin.id AS twin_id, json_extract(base.entry_json, '$.beliefState') AS belief
+           FROM entries twin
+           JOIN entries base
+             ON base.entry_type = 'memory'
+            AND base.entry_key = substr(twin.entry_key, 1, length(twin.entry_key) - length('.derived'))
+           WHERE twin.id IN (${placeholders})
+             AND twin.entry_key LIKE '%.derived'
+             AND json_extract(base.entry_json, '$.beliefState') IS NOT NULL`,
+        )
+        .all(...chunk) as { twin_id: number; belief: string | null }[];
+      for (const r of rows) {
+        if (typeof r.belief === "string" && r.belief.trim().length > 0) out.set(r.twin_id, r.belief.trim());
+      }
+    }, "legacy DB / entry_json without beliefState — treat as no twin inheritance");
+  }
+  return out;
+}
+
+/**
  * Phase 2A / Rec 5: bulk-load positive feedback event counts for the given
  * entry ids. Used by the utility-decay forgetting curve to stabilize
  * (extend the half-life of) memories that have repeatedly proven useful.

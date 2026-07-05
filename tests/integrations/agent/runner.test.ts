@@ -48,7 +48,6 @@ function makeV2Config(): AkmConfig {
       },
     },
     defaults: { llm: "openai-mini", agent: "opencode-default", improve: "default" },
-    search: { curateRerank: { enabled: false } },
   });
 }
 
@@ -137,12 +136,5 @@ describe("isProcessEnabled", () => {
     expect(isProcessEnabled("index", "metadataEnhance", config)).toBe(true);
     const off: AkmConfig = { ...config, index: { metadataEnhance: { enabled: false } } };
     expect(isProcessEnabled("index", "metadataEnhance", off)).toBe(false);
-  });
-
-  test("reads curateRerank from search.curateRerank.enabled", () => {
-    const config = makeV2Config();
-    expect(isProcessEnabled("search", "curateRerank", config)).toBe(false);
-    const on: AkmConfig = { ...config, search: { curateRerank: { enabled: true } } };
-    expect(isProcessEnabled("search", "curateRerank", on)).toBe(true);
   });
 });

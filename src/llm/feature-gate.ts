@@ -35,7 +35,6 @@ export type LlmFeatureKey =
   | "memory_inference"
   | "graph_extraction"
   | "metadata_enhance"
-  | "curate_rerank"
   | "lesson_quality_gate"
   | "proposal_quality_gate"
   | "memory_contradiction_detection"
@@ -62,12 +61,11 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
   graph_extraction: (cfg) => cfg.profiles?.improve?.default?.processes?.graphExtraction?.enabled ?? true,
   // Legacy default: false
   metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
-  // Legacy default: false
-  curate_rerank: (cfg) => cfg.search?.curateRerank?.enabled ?? false,
   // Default ON since R3 (docs/design/improve-self-learning-analysis.md G5):
-  // distill is a primary acquisition path and the judge fails open (no LLM /
-  // timeout / parse failure all pass through), so the gate only ever filters
-  // when a judge verdict actually exists. Opt out via
+  // distill is a primary acquisition path, so the gate guards minted content by
+  // default. The judge fails CLOSED (07 P0-2): no LLM / timeout / parse failure
+  // reject the proposal rather than passing it through — an unjudgeable proposal
+  // must not slip into the stash. Opt out via
   // profiles.improve.default.processes.distill.qualityGate.enabled: false.
   lesson_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.qualityGate?.enabled ?? true,
   // Legacy default: false
@@ -188,9 +186,6 @@ export function isProcessEnabled(section: string, processName: string, config: A
     if (processName === "graph_extraction" || processName === "graphExtraction") {
       return isLlmFeatureEnabled(config, "graph_extraction");
     }
-  }
-  if (section === "search" && (processName === "curate_rerank" || processName === "curateRerank")) {
-    return config.search?.curateRerank?.enabled ?? false;
   }
   if (section === "improve") {
     const processes = config.profiles?.improve?.default?.processes as

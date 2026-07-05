@@ -42,8 +42,8 @@ directory.
 legacy top-level `llm`, `agent`, and `features` blocks have been **removed**.
 LLM and agent connections live exclusively under `profiles.*`, and per-process
 gating lives under `profiles.improve.<name>.processes.*`. Non-improve feature
-sections (`index.metadataEnhance`, `index.stalenessDetection`,
-`search.curateRerank`) are first-class top-level entries.
+sections (`index.metadataEnhance`, `index.stalenessDetection`) are first-class
+top-level entries.
 
 Configs without `configVersion` (or with a pre-0.8.0 version) are
 auto-migrated at first run. A timestamped backup is written before any
@@ -95,7 +95,7 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
     "stalenessDetection": { "enabled": false }
   },
   "search": {
-    "curateRerank": { "enabled": false }
+    "minScore": 0
   },
   "embedding": {
     "endpoint": "http://localhost:11434/v1/embeddings",
@@ -121,7 +121,6 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `index.metadataEnhance.enabled` | boolean | `false` | Toggles the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` entry. |
 | `index.stalenessDetection.enabled` | boolean | `false` | Toggles the `akm index` staleness-detection pass. |
 | `index.stalenessDetection.thresholdDays` | integer | `90` | Days before a memory is re-evaluated for staleness. |
-| `search.curateRerank.enabled` | boolean | `false` | Toggles the `akm curate` LLM-rerank pass. Replaces the legacy `features.search.curate_rerank` entry. |
 | `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. |
 | `embedding` | object | null (local) | Embedding connection settings. Unchanged from v1. |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`). |
@@ -397,7 +396,6 @@ provider/model/endpoint under `profiles.llm` only.
 
 | Section | Default | Description |
 | --- | --- | --- |
-| `search.curateRerank.enabled` | `false` | LLM re-ranking during `akm curate`. |
 | `search.minScore` | `0.2` | Minimum score floor for semantic-only hits. `0` disables. |
 | `search.defaultExcludeTypes` | `["session"]` | Asset types excluded from default (untyped) `akm search` / `akm curate`. Explicit `[]` disables exclusion; never applies when `--type` is given. |
 

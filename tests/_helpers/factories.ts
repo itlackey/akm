@@ -14,6 +14,28 @@ import type { AkmConfig } from "../../src/core/config/config";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 
 /**
+ * A config that turns the LLM-as-judge quality gate OFF for reflect/distill
+ * MECHANICS tests that don't exercise the judge.
+ *
+ * The gate defaults ON (`lesson_quality_gate` → `distill.qualityGate.enabled
+ * ?? true`), and after 07 P0-2 it fails CLOSED when the judge can't render a
+ * verdict — which is exactly the case in the test sandbox (no LLM configured,
+ * so `getDefaultLlmConfig` returns null and the gate rejects before any chat
+ * call). Passing this as `options.config` skips the gate so these tests stay
+ * focused on reflect/distill mechanics. The dedicated fail-closed behavior is
+ * covered by `tests/commands/improve/quality-gate-fail-closed.test.ts`.
+ *
+ * Reflect consumes `options.config` ONLY for the quality gate when an
+ * `agentProfile` is injected (the profile bypasses all other config lookup),
+ * so a minimal profiles-only object is sufficient.
+ */
+export function quietQualityGateConfig(): AkmConfig {
+  return {
+    profiles: { improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } } },
+  } as unknown as AkmConfig;
+}
+
+/**
  * A pending `reflect`-sourced proposal for `ref` with a fixed timestamp and a
  * `# proposal` body. The id is `proposal-<ref>` with non-alphanumerics slugged.
  */

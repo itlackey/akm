@@ -22,7 +22,7 @@ import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
-import { makeProfile } from "../../_helpers/factories";
+import { makeProfile, quietQualityGateConfig } from "../../_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -135,6 +135,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
       ref: "script:deploy.ts",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spy },
     });
 
@@ -158,6 +159,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
       ref: "env:default",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -166,12 +168,36 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.error).toContain("env");
   });
 
+  test("secret:* ref is rejected (08-F2: secret material must never reach reflect's LLM)", async () => {
+    const stash = makeStashDir();
+    let spawned = false;
+    const spy: SpawnFn = (cmd) => {
+      spawned = true;
+      return fakeSpawn("", "", 0)(cmd, {});
+    };
+    const result = await akmReflect({
+      ref: "secret:signing-key",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
+      runAgentOptions: { spawn: spy },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    // Allowlist (REFLECT_ALLOWED_TYPES) refuses structurally — the LLM is never
+    // spawned, so secret bytes are never read or sent.
+    expect(result.reason).toBe("unsupported_type");
+    expect(result.error).toContain("secret");
+    expect(spawned).toBe(false);
+  });
+
   test("task:* ref is rejected (YAML tasks are not markdown-shaped)", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
       ref: "task:nightly-backup",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -190,6 +216,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
       ref: "knowledge:foo",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
     // Allowed by the type guard — should at least pass that stage without
@@ -229,6 +256,7 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
       ref: "knowledge:policies/release",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -265,6 +293,7 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
       ref: "knowledge:x",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -297,6 +326,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
       ref: "knowledge:shrink",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -322,6 +352,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
       ref: "knowledge:expand",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -347,6 +378,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
       ref: "knowledge:modest",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -367,6 +399,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
       ref: "lesson:tiny",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: "---\ndescription: tiny\n---\nUse rg.\n",
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -412,6 +445,7 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       ref: "skill:openpalm-stack-diagnostics",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -449,6 +483,7 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       ref: "knowledge:id-protected",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -473,6 +508,7 @@ describe("Reflect positive control — markdown assets still flow through", () =
       ref: "knowledge:control",
       stashDir: stash,
       agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });

@@ -64,7 +64,10 @@ function configEnabled(stashDir: string): AkmConfig {
     defaultWriteTarget: "stash",
     profiles: {
       llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { distill: { enabled: true } } } },
+      // Quality gate OFF: these tests exercise the structured-output chat seam
+      // round-trip, not the LLM-as-judge. The gate defaults ON and fails CLOSED
+      // (07 P0-2) with a non-judge chat stub.
+      improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
     },
     defaults: { llm: "default" },
   };

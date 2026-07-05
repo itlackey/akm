@@ -147,20 +147,35 @@ function formatAlreadyPreserved(inlineRefs: InlineRefMention[]): string {
 }
 
 /**
+ * Delimiters that fence the untrusted session transcript in the extract prompt.
+ * Mirrors the `=== ASSET N ===` convention (`graph-extract.ts`): everything
+ * between the markers is DATA to analyze, never instructions to obey. The
+ * transcript is external, attacker-influenceable content, so an explicit,
+ * greppable boundary defuses prompt-injection that tries to pose as a command.
+ */
+export const TRANSCRIPT_FENCE_BEGIN = "=== BEGIN UNTRUSTED SESSION TRANSCRIPT ===";
+export const TRANSCRIPT_FENCE_END = "=== END UNTRUSTED SESSION TRANSCRIPT ===";
+
+/**
  * Format pre-filtered events as a transcript snippet. Each event becomes:
  *   [<role> @ <iso>] <text>
  * Events are already truncated/cleaned by the pre-filter; this is purely
  * a render step.
+ *
+ * Anti-spoof: any occurrence of the fence markers inside the transcript text is
+ * neutralised so a crafted session cannot forge the boundary and "escape" the
+ * fence to inject trusted-looking instructions.
  */
 function formatTranscript(events: SessionEvent[]): string {
   if (events.length === 0) return "(empty — pre-filter removed all events as noise)";
-  return events
+  const body = events
     .map((e) => {
       const tsLabel = e.ts ? new Date(e.ts).toISOString() : "unknown-ts";
       const roleLabel = e.role ?? "unknown";
       return `[${roleLabel} @ ${tsLabel}] ${e.text}`;
     })
     .join("\n\n");
+  return body.split(TRANSCRIPT_FENCE_BEGIN).join("=== (fence) ===").split(TRANSCRIPT_FENCE_END).join("=== (fence) ===");
 }
 
 /**
@@ -185,7 +200,7 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
     .replace("{{PROJECT_HINT}}", ref.projectHint ?? "(no project hint)")
     .replace("{{ALREADY_PRESERVED}}", formatAlreadyPreserved(input.inlineRefs))
     .replace("{{STANDARDS}}", standards)
-    .replace("{{TRANSCRIPT}}", formatTranscript(input.events));
+    .replace("{{TRANSCRIPT}}", `${TRANSCRIPT_FENCE_BEGIN}\n${formatTranscript(input.events)}\n${TRANSCRIPT_FENCE_END}`);
 }
 
 // ── Parser ──────────────────────────────────────────────────────────────────

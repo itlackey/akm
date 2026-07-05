@@ -106,7 +106,10 @@ export interface UtilityRankingContributor {
 
 function beliefStateBoost(item: RankedEntryInput): number {
   const entry = item.entry;
-  if (entry.type !== "memory") return 0;
+  // 03: belief-state penalties/boosts apply to ANY flagged entry (memory OR
+  // knowledge), so contradicted/superseded KNOWLEDGE is demoted from results
+  // just like flagged memories. Entries without a belief state fall through to
+  // the `return 0` below (default-safe — no effect on unflagged assets).
   // Phase 1A: `asserted` and `deprecated` are first-class states.
   // `asserted` carries stronger user-explicit authority than `active`.
   // `deprecated` is a frozen historical state — penalized but milder than `superseded`.
@@ -150,14 +153,18 @@ const typeRankingContributor: RankingContributor = {
   },
 };
 
-const memoryRankingContributor: RankingContributor = {
-  name: "memory-ranking",
+const beliefStateRankingContributor: RankingContributor = {
+  name: "belief-state-ranking",
   appliesTo(item) {
-    return item.entry.type === "memory";
+    // Fire for any entry that carries a belief state, regardless of type — so
+    // contradicted/superseded knowledge is demoted, not just memories. The
+    // `.derived`-twin `derivedBoost` (±0.12/−0.08) is deleted (03-R3): it made
+    // stale flag-free twins outrank their corrected base memory; belief-state
+    // demotion is the principled signal, not the twin-name heuristic.
+    return item.entry.beliefState !== undefined;
   },
   adjust(item) {
-    const derivedBoost = item.entry.name.toLowerCase().endsWith(".derived") ? 0.12 : -0.08;
-    return derivedBoost + beliefStateBoost(item);
+    return beliefStateBoost(item);
   },
 };
 
@@ -408,7 +415,7 @@ const projectContextRankingContributor: RankingContributor = {
 export const defaultRankingContributors: RankingContributor[] = [
   exactNameRankingContributor,
   typeRankingContributor,
-  memoryRankingContributor,
+  beliefStateRankingContributor,
   tagRankingContributor,
   searchHintRankingContributor,
   aliasRankingContributor,

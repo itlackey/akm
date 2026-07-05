@@ -83,13 +83,13 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(procs.processes?.feedbackDistillation).toBeUndefined();
   });
 
-  test("migrates curate_rerank → search.curateRerank.enabled", () => {
+  test("drops legacy curate_rerank (removed dead feature, not migrated)", () => {
     const input = {
       llm: { endpoint: "http://x.com/v1/chat/completions", model: "m", features: { curate_rerank: true } },
     };
     const { result } = migrateConfigShape(input);
-    const search = result.search as { curateRerank?: { enabled?: boolean } };
-    expect(search.curateRerank?.enabled).toBe(true);
+    const search = result.search as { curateRerank?: { enabled?: boolean } } | undefined;
+    expect(search?.curateRerank).toBeUndefined();
   });
 
   test("drops legacy reflectCooldownByType (0.8.0 removed time-based reflect cooldowns)", () => {
@@ -219,7 +219,7 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(result.configVersion).toBe("0.8.0");
   });
 
-  test("handles all 6 feature key migrations in one config", () => {
+  test("handles all 5 feature key migrations in one config", () => {
     const input = {
       llm: {
         endpoint: "http://x.com/v1/chat/completions",
@@ -230,7 +230,6 @@ describe("migrateConfigShape (CLI wrapper)", () => {
           metadata_enhance: true,
           memory_consolidation: true,
           feedback_distillation: false,
-          curate_rerank: true,
         },
       },
     };
@@ -244,7 +243,6 @@ describe("migrateConfigShape (CLI wrapper)", () => {
     expect(procs.processes?.consolidate?.enabled).toBe(true);
     expect(procs.processes?.distill?.enabled).toBe(false);
     expect((result.index as { metadataEnhance?: { enabled?: boolean } }).metadataEnhance?.enabled).toBe(true);
-    expect((result.search as { curateRerank?: { enabled?: boolean } }).curateRerank?.enabled).toBe(true);
   });
 
   test("empty config with no migratable keys is a no-op", () => {
@@ -388,7 +386,8 @@ describe("migrateConfigShape (CLI wrapper)", () => {
       // Known.
       expect(procs.processes?.consolidate?.enabled).toBe(true);
       expect((result.result.index as { metadataEnhance?: { enabled?: boolean } }).metadataEnhance?.enabled).toBe(true);
-      expect((result.result.search as { curateRerank?: { enabled?: boolean } }).curateRerank?.enabled).toBe(true);
+      // Removed dead feature: curate_rerank is dropped, not migrated.
+      expect((result.result.search as { curateRerank?: { enabled?: boolean } }).curateRerank).toBeUndefined();
       // Unknown.
       expect(procs.processes?.myCustom?.enabled).toBe(true);
       expect((result.result.index as { customIndexPass?: { enabled?: boolean } }).customIndexPass?.enabled).toBe(true);
@@ -473,14 +472,14 @@ describe("migrateConfigShape (core)", () => {
     expect(procs.feedbackDistillation).toBeUndefined();
   });
 
-  test("migrates llm.features.curate_rerank → search.curateRerank.enabled", () => {
+  test("drops legacy llm.features.curate_rerank (removed dead feature)", () => {
     const input = {
       llm: { endpoint: "http://localhost:11434", model: "qwen3", features: { curate_rerank: true } },
     };
     const { changed, result } = migrateConfigShapeCore(input);
     expect(changed).toBe(true);
-    const search = result.search as { curateRerank?: { enabled?: boolean } };
-    expect(search.curateRerank?.enabled).toBe(true);
+    const search = result.search as { curateRerank?: { enabled?: boolean } } | undefined;
+    expect(search?.curateRerank).toBeUndefined();
   });
 
   test("migrates llm.features.metadata_enhance → index.metadataEnhance.enabled", () => {

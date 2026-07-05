@@ -606,7 +606,6 @@ export const SearchConfigSchema = z
   .object({
     minScore: nonNegativeNumber.optional(),
     defaultExcludeTypes: z.array(nonEmptyString).optional(),
-    curateRerank: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     graphBoost: SearchGraphBoostSchema.optional(),
   })
   .passthrough();

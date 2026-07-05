@@ -234,9 +234,10 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
         ctx.eligibilitySource,
       );
     }
-    // Normalize 1-5 judge score to [0, 1]. Score of -1 means pass-through
-    // (no LLM / timeout / parse failure) — leave confidence undefined so
-    // the auto-accept gate treats the proposal as unscored and skips it.
+    // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict reaches
+    // here (07 P0-2: the judge now fails CLOSED on no-LLM / timeout / parse
+    // failure, so those return pass:false and early-return above). The score>0
+    // guard defensively leaves confidence undefined for any non-positive score.
     if (judgeResult.score > 0) knowledgeJudgeConfidence = judgeResult.score / 5;
   }
   const knowledgeParsed = parseFrontmatter(resolvedPromotionContent);

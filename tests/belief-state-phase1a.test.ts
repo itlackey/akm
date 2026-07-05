@@ -9,11 +9,11 @@
  *    (no spurious refresh, preserves `asserted` authority); `deprecated` is
  *    treated like `superseded` (frozen historical, never refreshed to active).
  *
- * 2. `beliefStateBoost` (`src/indexer/ranking-contributors.ts`):
+ * 2. `beliefStateBoost` (`src/indexer/search/ranking-contributors.ts`):
  *    `asserted` (+0.08) > `active` (+0.06) > unset (0) > `deprecated` (-0.15)
  *    > `superseded` (-0.25) > `contradicted` (-0.45) > `archived` (-0.6).
  *
- * 3. `matchBeliefFilter` (`src/indexer/db-search.ts`) — `asserted` is
+ * 3. `matchBeliefFilter` (`src/indexer/search/db-search.ts`) — `asserted` is
  *    surfaced under `belief=current`; `deprecated` is surfaced under
  *    `belief=historical`.
  */
@@ -221,24 +221,27 @@ describe("Phase 1A: beliefStateBoost ordering", () => {
     expect(contradicted.score).toBeGreaterThan(archived.score);
   });
 
-  test("non-memory entries are unaffected by beliefStateBoost (default-safe)", () => {
-    const skillAsserted = {
+  test("03: belief state now applies to NON-memory entries (contradicted knowledge demoted, asserted boosted)", () => {
+    // Pre-03 this contributor was memory-gated so flagged knowledge ranked as if
+    // unflagged. After deleting the `type === "memory"` guard + broadening the
+    // contributor to any belief-state-carrying entry, contradicted/superseded
+    // KNOWLEDGE is demoted and asserted knowledge is boosted, same as memories.
+    const mk = (name: string, overrides: Partial<StashEntry>) => ({
       id: 1,
-      entry: { name: "s1", type: "skill", beliefState: "asserted" } as StashEntry,
-      filePath: "/stash/skills/s1.md",
+      entry: { name, type: "knowledge", ...overrides } as StashEntry,
+      filePath: `/stash/knowledge/${name}.md`,
       score: 1,
       rankingMode: "fts" as const,
-    };
-    const skillPlain = {
-      id: 2,
-      entry: { name: "s2", type: "skill" } as StashEntry,
-      filePath: "/stash/skills/s2.md",
-      score: 1,
-      rankingMode: "fts" as const,
-    };
-    rank(skillAsserted, "irrelevant");
-    rank(skillPlain, "irrelevant");
-    expect(skillAsserted.score).toBeCloseTo(skillPlain.score, 9);
+    });
+    const contradicted = mk("k-contradicted", { beliefState: "contradicted" });
+    const plain = mk("k-plain", {});
+    const asserted = mk("k-asserted", { beliefState: "asserted" });
+    for (const item of [contradicted, plain, asserted]) rank(item, "irrelevant");
+
+    // `plain` (no belief state) is the neutral baseline between the two — proving
+    // unflagged entries of any type receive no belief-state adjustment.
+    expect(contradicted.score).toBeLessThan(plain.score);
+    expect(asserted.score).toBeGreaterThan(plain.score);
   });
 });
 

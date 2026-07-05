@@ -154,6 +154,14 @@ describe("classifyProposal", () => {
     expect(classifyProposal(p, PERSONAL_STASH)?.verdict).toBe("accept");
   });
 
+  test("extract exceeding the accept band's maxDiffLines → defer (no uncapped auto-promote)", () => {
+    // An arbitrarily large extract must not auto-promote with zero LLM calls.
+    const big = `---\nd: x\n---\n${Array.from({ length: 300 }, (_, i) => `line ${i}`).join("\n")}\n`;
+    const p = { source: "extract", payload: { content: big } } as Proposal;
+    const decision = classifyProposal(p, PERSONAL_STASH);
+    expect(decision?.verdict).toBe("defer");
+  });
+
   test("empty diff → reject", () => {
     const p = { source: "extract", payload: { content: EMPTY_LESSON } } as Proposal;
     const decision = classifyProposal(p, PERSONAL_STASH);
