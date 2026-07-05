@@ -77,6 +77,9 @@ Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` hea
 - [Classification](technical/classification.md) -- Matcher and renderer behavior
 - [Storage Locations](technical/storage-locations.md) -- Authoritative inventory of every on-disk read/write path
 - [Improve Workflow](technical/improve-workflow.md) -- `akm improve` command surface and pipeline reference
+- [Health Advisories](technical/health-advisories.md) -- `akm health` advisory-to-action map for operators
+- [Fresh-Host Rebuild Runbook](technical/fresh-host-rebuild-runbook.md) -- Rebuild an akm install on a new machine
+- [Ranking Ablation & Saturation Analysis](technical/ranking-ablation-and-saturation-analysis.md) -- Reproducible contributor-ablation measurement and the score-saturation trap
 - [Functional Contract Patterns](technical/functional-contract-patterns.md) -- Quick reference for contributor pipelines and small process contracts
 - [Test Coverage Guide](technical/test-coverage-guide.md) -- High-value testing areas
 - [Testing Workflow](technical/testing-workflow.md) -- End-to-end, Docker, deployment, and upgrade validation
