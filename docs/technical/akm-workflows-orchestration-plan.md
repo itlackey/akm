@@ -1,6 +1,7 @@
 # Extending akm workflows into a harness-agnostic orchestration engine
 
-**Status:** Draft plan for discussion. Supersedes Part F of
+**Status:** Formalized 2026-07-05 — owner decisions recorded in
+*Open decisions* and *Formalization addendum* below. Supersedes Part F of
 [`claude-code-vs-akm-workflows.md`](./claude-code-vs-akm-workflows.md).
 
 ## Goal
@@ -95,6 +96,32 @@ rationale is given so you can override.
 > These four are **decided** (owner-confirmed), not open. Decision 3 was the one
 > change from the first draft: resume is *configurable* (both modes), not
 > durable-row-only.
+
+### Formalization addendum (owner decisions, 2026-07-05)
+
+A structured owner review re-confirmed the plan's core and added two
+requirements plus a scope bound:
+
+5. **Execution model → engine-driven.** `akm workflow run` (P1) is the primary
+   surface: akm itself walks the plan and dispatches units. The existing
+   `next`/`complete` loop remains for manual/agent-driven advancement of the
+   same runs (both paths re-enter `completeWorkflowStep`, per the gate-spine
+   invariant below).
+6. **Authoring → extended Markdown confirmed** as the only v1 frontend
+   (decision 1 stands; the imperative frontend stays deferred to P5).
+7. **v1 scope → single machine.** "Distributed" means *across harnesses and
+   vendors*, not across hosts. The cloud-delegate pattern (P4) is the only
+   remote execution and it is assign-and-ingest, not a remote executor. The
+   run-state schema (`workflow_run_units`) must not bake in local-only
+   assumptions, but no multi-host runtime is built.
+8. **Model routing → global alias tiers.** Workflows reference semantic
+   aliases resolved per-harness/profile at dispatch time — new requirement,
+   design in *Model routing* below.
+9. **Dispatch context contract.** Every dispatched unit gets (a) optional
+   env/secret bindings resolved through the existing `akm env`/`akm secret`
+   machinery and (b) a small standard instruction preamble teaching the agent
+   to use the akm CLI for knowledge, env, secrets, and reporting — design in
+   *Dispatch context* below.
 
 ## Architecture
 
@@ -732,6 +759,134 @@ assumes the first option in each:
    un-started units at the ceiling (a runaway unit overshoots until it finishes),
    add `signal` later.
 
+## Model routing — global alias tiers (decided 2026-07-05)
+
+**Requirement:** a workflow names a semantic model alias (e.g. `fast` /
+`balanced` / `deep`); akm resolves it to the exact model string the unit's
+harness expects, at dispatch time. Workflows stay harness-agnostic; retargeting
+a run to another harness or vendor is a profile change, not a workflow edit.
+
+**Verified current state (2026-07-05):**
+
+- `resolveModel(model, platform, custom?)` resolves profile-custom → built-in
+  → verbatim (`src/integrations/agent/model-aliases.ts:67-72`). Built-ins are
+  only `opus`/`sonnet`/`haiku` with `claude` + `opencode` columns
+  (`model-aliases.ts:34-56`) — every other platform resolves verbatim.
+- **Config wiring bug:** `AgentProfileConfigSchema` has no `modelAliases`
+  field (`src/core/config/config-schema.ts:155-167`; `.passthrough()` keeps
+  the raw key but nothing reads it), and `resolveAgentProfile` copies
+  `modelAliases: base.modelAliases`, never `overrides.modelAliases`
+  (`src/integrations/agent/config.ts:76`) — so the documented per-profile
+  `modelAliases` config is silently dropped. Same bug class as the
+  `timeoutMs` override fix recorded at `config.ts:64-69`.
+- **SDK bypass:** `runOpencodeSdk` uses `profile.model` raw and never calls
+  `resolveModel` (`sdk-runner.ts:126-146`), so aliases don't work on the
+  default native harness at all.
+
+**Design:**
+
+1. New root config key `modelAliases`: `alias → { <platformId>: modelString,
+   "*"?: modelString }`. One resolution level — values are literal model
+   strings, never other aliases (no recursion). Platform keys are validated
+   against `HARNESS_REGISTRY` ids (the registry-derivation item in
+   *Reconciliation*), so a typo'd platform is a config error.
+2. Resolution order in `resolveModel`: profile `modelAliases` → global
+   `modelAliases[alias][platform]` → global `modelAliases[alias]["*"]` →
+   `BUILTIN_ALIASES` → verbatim. Case-insensitive as today.
+3. Fix the wiring: declare `modelAliases` on `AgentProfileConfigSchema` and
+   the new root key as **strict Zod fields** (the 0.9.0 config audit showed
+   `.passthrough()` hides nested typos — declared fields keep whole-config
+   `safeParse` protective), and merge `overrides.modelAliases` in
+   `resolveAgentProfile`.
+4. Route the SDK runner through `resolveModel` before building `sdkConfig`.
+5. The IR `model` field carries the alias; the unit's resolved profile
+   determines the platform at dispatch. Ship a recommended tier vocabulary
+   (`fast`/`balanced`/`deep`) in docs and the example config — convention,
+   not hardcoded.
+
+## Dispatch context — env, secrets, skills, and the akm preamble (decided 2026-07-05)
+
+**Verified current state:** env/secret injection is disconnected from agent
+dispatch. `akm env run` / `akm secret run` inject into their *own* child
+spawn (`src/commands/env/env-cli.ts:385-419`, `secret-cli.ts:160-246`), while
+`runAgent`'s `buildChildEnv` copies only `profile.envPassthrough` +
+`profile.env` + `options.env` (`spawn.ts:252-271`). Binding a stash env to a
+dispatched agent today requires shell nesting: `akm env run env:x -- akm
+agent …`. There is also no skills/commands sync into harnesses — agent assets
+reach a harness only as prompt text via `--agent-ref`/`--command`.
+
+**Design — two additive pieces:**
+
+1. **Env/secret bindings in the IR.** Per-node fields `env?: envRef[]` and
+   `secrets?: { VAR: secretRef }` (Markdown: an `### Env` subsection, or
+   run-level frontmatter). The native executor resolves them through the
+   existing `loadEnv` / `resolveSecretTokens` machinery
+   (`src/commands/env/env.ts`) and merges into `options.env` for
+   `executeRunner` — reuse, not a fork. All existing safety invariants carry
+   over unchanged: keys-only audit events (`env_access`/`secret_access`),
+   dangerous-key blocking (LD_PRELOAD/PATH), third-party-stash provenance
+   rules, values never on stdout.
+2. **The unit preamble.** A small template at
+   `src/assets/prompts/workflow-unit-preamble.md` (external `.md` with
+   `{{PLACEHOLDER}}` tokens, per the repo code-style rule), interpolated with
+   run id, unit id, and params, and prepended to every dispatched unit's
+   prompt. Content (~20 lines, harness-agnostic since every harness accepts a
+   prompt): how to pull knowledge on demand (`akm search`, `akm show`,
+   `akm curate`); how to access env/secrets safely (`akm env path|run`,
+   `akm secret path` — never echo values); how to report back
+   (`akm workflow report --run … --unit …` on the delegated path; the
+   completion contract on the native path). This is the "small set of
+   instructions" that makes any harness a first-class akm citizen without
+   per-harness skill syncing.
+
+**Skills stay pull-based.** No per-harness skill/command formatting or sync is
+added: the preamble (now) and the stash-as-MCP-server (P5) are the delivery
+mechanisms, matching akm's existing progressive-disclosure model.
+
+## Reconciliation with the check-in v2 redesign
+
+[`workflow-checkin-design-review.md`](./workflow-checkin-design-review.md)
+post-dates the check-in ADR and its owner-locked decisions govern. Points of
+contact with this plan:
+
+- **The implicit LLM summary judge is deleted** (review decision 3:
+  `validate-summary.ts`, `buildDefaultSummaryJudge`, the `summaryJudge` seam).
+  This plan's gate design is *compatible*, not in conflict: an IR `gate` node
+  with an evaluator is **author-declared opt-in**, implemented as the
+  gate-flavored `runStructured` adapter — a workflow that declares no
+  evaluator runs fully offline, preserving the review's
+  offline-by-construction engine. Deleting the implicit judge also removes
+  the `runs.ts` → `llm/client` coupling flagged in *Reconciliation*.
+- **The monitor** (review decision 2: detached `workflow monitor`, reaper)
+  remains a separate track. For native `workflow run` the engine process
+  itself is the live supervisor; the monitor matters for agent-driven runs
+  and for a delegated CC session that goes silent. Unit-level timestamp
+  check-in (above) is unchanged.
+- **P0 hygiene** — doc/code drift to fix while these files are open:
+  phantom `akm workflow abandon` advice in the concurrency-guard error
+  (`runs.ts:113`; add the verb or fix the message); the check-in `continue`
+  directive dropped by `formatWorkflowNextPlain`
+  (`src/output/text/helpers.ts:748-791`, review defect C2); `workflow status`
+  never evaluating check-in (review M1); the validator error message omitting
+  allowed keys `name`/`updated` (`validator.ts:34` vs `:16`); the documented
+  but nonexistent `workflow step` alias (`docs/features/workflows.md:31`).
+
+## Sequencing against the roadmap
+
+`docs/roadmap.md` commits 0.9 to "hardening over expansion" and reserves new
+surface (SDK, plugins) for 1.0. This plan splits cleanly along that line:
+
+- **0.9-compatible (hardening):** P0 (IR compile of existing linear
+  workflows — pure refactor), P0.5 (seam alignment: every item is an existing
+  bugfix or additive field — the `modelAliases` config drop, the
+  codex/gemini/aider registry drift with its silently-broken default builder,
+  the unconsumed `AgentDispatchRequest.cwd`, SDK usage discard), and the P0
+  hygiene list above.
+- **1.0-track (expansion):** P1 onward — `akm workflow run`, migration 004,
+  the extended grammar. If landed during 0.9 betas, `workflow run` ships
+  explicitly marked experimental in `STABILITY.md` and the stable CLI
+  contract (`start`/`next`/`complete`/`status`/`list`) is untouched.
+
 ## Rollout phases
 
 - **P0 — IR + compiler.** `ir/schema.ts`, `ir/compile.ts`. Existing linear
@@ -742,13 +897,25 @@ assumes the first option in each:
   SDK usage + per-call cwd, extracted `runStructured` core, generalized
   `concurrentMap` scheduler, and **deriving the builder/identity/model-alias
   lists from `HARNESS_REGISTRY`** (closing the existing codex/gemini/aider
-  drift). Each is independently landable and independently useful.
+  drift). Plus, from the formalization addendum: **global model-alias tiers**
+  (root `modelAliases` config key + fixing the dropped per-profile
+  `modelAliases` in `resolveAgentProfile` + routing the SDK runner through
+  `resolveModel`), **consuming `AgentDispatchRequest.cwd`** (declared at
+  `builder-shared.ts:42`, read by nothing) and adding `akm agent --cwd`, and
+  a **per-node `timeoutMs` policy** (the 60 s `DEFAULT_AGENT_TIMEOUT_MS` is
+  wrong for workflow units; IR nodes get an explicit timeout with a run-level
+  default). Each is independently landable and independently useful.
 - **P1 — native fan-out + schema (v1 parity core).** `scheduler.ts`,
   `native-executor.ts`, `workflow_run_units` (migration 004), extended
   Markdown grammar for `Runner`/`Fan-out`/`Schema`, plus `router` node and
   `map` reducers. New `akm workflow run` drives a step's IR subgraph natively
   on the **default local harness** (OpenCode SDK). Resume: durable-row mode
-  only. Structured-output normalization + retry-until-valid loop.
+  only. Structured-output normalization + retry-until-valid loop. Also from
+  the addendum: **unit preamble injection**
+  (`workflow-unit-preamble.md`), **env/secret bindings** resolved into the
+  child env at dispatch, and persisting `runAgent`'s `failureReason`
+  classification onto the unit row so retry/continue-on-error policy has
+  semantics to act on.
 - **P2 — harness adapters.** A builder + result-extractor + identity marker per
   harness: Codex, Copilot CLI, Pi, then Gemini / Aider / Amazon Q / OpenHands.
   Each is contained to `src/integrations/harnesses/<name>/{agent-builder,result-extractor}.ts`;
@@ -769,6 +936,7 @@ assumes the first option in each:
 ## File-by-file touch list
 
 New:
+- `src/assets/prompts/workflow-unit-preamble.md` (unit instruction preamble)
 - `src/workflows/ir/schema.ts`, `src/workflows/ir/compile.ts`
 - `src/workflows/exec/scheduler.ts`, `native-executor.ts`, `cc-emitter.ts`, `report.ts`
 - `src/workflows/exec/normalize.ts` (per-harness result-extractor + schema-validate loop)
@@ -778,7 +946,9 @@ New:
 - `tests/workflows/conformance/**` (golden IR + all-backend assertions)
 
 Extend:
-- `src/workflows/schema.ts` (orchestration fields), `parser.ts` (new subsections: `Runner`/`Fan-out`/`Schema`/`Route`/`Depends On`)
+- `src/integrations/agent/model-aliases.ts` (global tier resolution), `src/core/config/config-schema.ts` (root `modelAliases` + per-profile `modelAliases` as strict fields), `src/integrations/agent/config.ts` (merge `overrides.modelAliases` in `resolveAgentProfile`)
+- `src/commands/env/env.ts` (env/secret resolution reused by the executor — no fork)
+- `src/workflows/schema.ts` (orchestration fields), `parser.ts` (new subsections: `Runner`/`Fan-out`/`Schema`/`Route`/`Env`/`Depends On`)
 - `src/workflows/db.ts` (migration 004 + units table), `workflow-runs-repository.ts`
 - `src/workflows/runtime/runs.ts` (route a step to the executor; ingest reports)
 - `src/workflows/runtime/agent-identity.ts` (detect codex/copilot/pi/gemini + markers)
