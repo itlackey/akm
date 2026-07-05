@@ -6,6 +6,7 @@ A curated index of AKM stash assets and external research/articles covering four
 
 ## Table of Contents
 
+- [0. Orientation: AKM's Own Improve/Learning/Memory Docs](#0-orientation-akms-own-improvelearningmemory-docs)
 - [1. Agent Self-Improvement](#1-agent-self-improvement)
   - [1.1 AKM Stash Assets](#11-akm-stash-assets)
   - [1.2 External References](#12-external-references)
@@ -19,6 +20,26 @@ A curated index of AKM stash assets and external research/articles covering four
   - [4.1 AKM Stash Assets](#41-akm-stash-assets)
   - [4.2 External References](#42-external-references)
 - [5. Cross-Domain Notes](#5-cross-domain-notes)
+
+---
+
+## 0. Orientation: AKM's Own Improve/Learning/Memory Docs
+
+This index catalogues external research and stash assets on the four domains below — it is not
+a description of AKM's own improve/learning/memory subsystem. That subsystem has its own doc set
+across `docs/design/` and `docs/technical/`; the table below is the router into it so this file
+doesn't duplicate (or drift from) that status. Current as of the review-14 doc-sync batch (2026-07-05).
+
+| Subsystem | Canonical doc | Status |
+|---|---|---|
+| Improve pipeline analysis | `design/improve-self-learning-analysis.md` | current-truth — supersedes `archive/improve-vs-brain-analysis.md` and `archive/improve-pipeline-deep-tuning-analysis.md` (both superseded→archived by name), and `archive/improve-pipeline-analysis-0.8.0.md` (superseded→archived) |
+| Improve process | `technical/improve-workflow.md` | current-truth — corrected this batch: resolution is audited-autonomous, not human-gated |
+| Per-claim code map | `design/improve-salience-working-reference.md` | current-truth (KEEP) — the only per-claim-cited improve code map; stash knowledge defers to it |
+| Neuroscience framing | `design/improve-neuroscience-alignment-survey.md` | current-truth (KEEP) — inspiration, not justification |
+| Default-config policy | `design/improve-optimal-default-config.md` | design-unshipped — ratified but unexecuted (06-M5 held per 11-§3.2) |
+| Storage/DB inventory | `technical/storage-locations.md` | current-truth — the only storage inventory; edit in place, never archive |
+| Historical architecture specs | `archive/v1-architecture-spec.md`, `archive/d1-design.md`, `archive/d2-design.md`, `archive/d3-design.md`, `archive/r5-design.md` | superseded→archived — code-contradicted (v1 spec) / already shipped (D1–D3, R5) |
+| Other superseded technical docs (outside this index's 4 domains) | `archive/proposal-storage.md`, `archive/health-command-enhancements.md`, `archive/index-consistency-adr.md`, `archive/akm-production-readiness-findings.md` | superseded→archived |
 
 ---
 
