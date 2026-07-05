@@ -22,7 +22,7 @@ All paths below use these resolved base directories:
 
 ### `$DATA/index.db` — Main Search Index
 
-Schema version `DB_VERSION = 14`. WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
+Schema version `DB_VERSION = 17` (`src/indexer/db/schema.ts`). WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
 
 Opened by:
 - `openDatabase()` — full schema init, called by `akm index`
@@ -239,17 +239,15 @@ Tracks applied migration IDs.
 
 #### Table: `events`
 
-Replaces `events.jsonl`. Indexed on `event_type`, `ref`, `ts`. Monotonic rowid replaces byte-offset cursor.
+Replaces `events.jsonl`. Indexed on `event_type`, `ref`, `ts`. Monotonic rowid replaces byte-offset cursor. Defined by migration `001-initial-schema` in `src/core/state/migrations.ts` (`CREATE TABLE IF NOT EXISTS events`); no later migration alters it.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | Monotonic cursor (replaces JSONL byte offset) |
-| `schema_version` | INTEGER NOT NULL DEFAULT 1 | |
-| `ts` | TEXT NOT NULL | ISO-8601 |
 | `event_type` | TEXT NOT NULL | See event type catalog below |
+| `ts` | TEXT NOT NULL | ISO-8601 |
 | `ref` | TEXT | Asset ref or NULL |
-| `metadata` | TEXT | JSON blob or NULL |
-| `created_at` | TEXT NOT NULL DEFAULT (datetime('now')) | |
+| `metadata_json` | TEXT NOT NULL DEFAULT '{}' | JSON object; maps to `EventEnvelope.metadata` |
 
 Indexes: `idx_events_type` on `event_type`, `idx_events_ref` on `ref`, `idx_events_ts` on `ts`.
 
@@ -287,6 +285,28 @@ Replaces per-task JSONL files. Indexed on `task_id`, `started_at`.
 | `detail` | TEXT | JSON blob for extra fields |
 
 Indexes: `idx_task_history_task` on `task_id`, `idx_task_history_started` on `started_at`.
+
+---
+
+### `$DATA/logs.db` — Task/Run Log Lines
+
+Separate SQLite database from `state.db` (`src/core/logs-db.ts`, `getLogsDbPath()`). WAL mode, `busy_timeout = 30000 ms`, foreign keys OFF. Structured replacement for grepping the per-run flat log files under `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` (that per-run text file is still written as a transitional human-readable tail). Can grow large in practice — live installs have been observed at roughly 1 GB — because every scheduled task run appends its stdout/stderr lines here with no default cap on total size (only an age-based purge, see below).
+
+#### Table: `task_logs`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
+| `ts` | TEXT NOT NULL | ISO-8601 |
+| `task_id` | TEXT NOT NULL | Task identifier |
+| `run_id` | TEXT NOT NULL | `buildTaskRunId(task_id, started_at)` — joins to `state.db`'s `task_history` row |
+| `stream` | TEXT NOT NULL DEFAULT 'stdout' | `stdout` or `stderr` |
+| `level` | TEXT NOT NULL DEFAULT 'info' | `info`, `warn`, or `error` |
+| `line` | TEXT NOT NULL | One captured log line (no trailing newline) |
+
+Indexes: `idx_task_logs_ts` on `ts`, `idx_task_logs_task_id` on `task_id`, `idx_task_logs_run_id` on `run_id`.
+
+**Retention:** `purgeOldTaskLogs()` deletes rows older than 90 days by default; it runs as part of the improve maintenance stage (`loop-stages.ts`) alongside the `state.db` purges. Age-based only — there is no size cap, which is why the file can reach ~1 GB.
 
 ---
 
@@ -368,14 +388,14 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 |---|---|---|
 | `$CONFIG/config.json` | User config (stash dirs, sources, LLM endpoints, feature flags, registries). JSONC — `//` and `/* */` comments stripped at parse time. | Manual |
 | `<cwd>/.akm/config.json` | Project-scoped config overrides. Walked up to filesystem root; all ancestors merged. | Manual |
-| `$DATA/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json` before each write. `config.latest.json` symlink always points to the newest backup. | Accumulate forever |
+| `$CACHE/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json`, written by `backupExistingConfig()` in `src/core/paths.ts` before each config write. `config.latest.json` is a second copy (not a symlink) always overwritten with the newest snapshot. Dir created/chmod'd `0700`; both the timestamped file and `config.latest.json` are chmod'd `0600` (08-F4, mirroring the env-cli write-mode convention). This is the only live backup location — legacy `$DATA/config-backups/` and `$CONFIG/config-backups/` write paths have been removed. | Capped at `MAX_CONFIG_BACKUPS = 5` most-recent timestamped snapshots; `pruneOldBackups()` deletes the rest on every write |
 | `$CONFIG/akm.lock` | Legacy location. Removed in v0.8.0 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
 | `$DATA/akm.lock` | Installed stash lockfile (moved from `$CONFIG`). Application-managed install state. Same format as `$CONFIG/akm.lock`. | Managed by `akm add/remove` |
 | `$CACHE/semantic-status.json` | Embedding provider health: `status` (pending/ready-js/ready-vec/blocked), `reason`, `providerFingerprint`, `lastCheckedAt`, `entryCount`, `embeddingCount`. Blocked status auto-expires after 24h. | Reset on `akm index --full` |
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
-| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. As of graph schema v3 / `DB_VERSION = 14`, `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; every considered file persists a `status` and `reason`; `graph_file_entities` stores both canonical `entity` and normalized `entity_norm`; `graph_file_relations` stores canonical endpoints plus `from_entity_norm` / `to_entity_norm`; `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. `graph_meta` also stores the latest graph telemetry: model, prompt version, batch size, cache hits/misses, truncation count, and failure count. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity_norm(stash_root, entity_norm)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction / dropped and repopulated on `DB_VERSION` upgrade (next `akm improve` re-extracts) |
+| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. As of graph schema v3 / `DB_VERSION = 17`, `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; every considered file persists a `status` and `reason`; `graph_file_entities` stores both canonical `entity` and normalized `entity_norm`; `graph_file_relations` stores canonical endpoints plus `from_entity_norm` / `to_entity_norm`; `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. `graph_meta` also stores the latest graph telemetry: model, prompt version, batch size, cache hits/misses, truncation count, and failure count. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity_norm(stash_root, entity_norm)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction / dropped and repopulated on `DB_VERSION` upgrade (next `akm improve` re-extracts) |
 
 ---
 
@@ -476,6 +496,37 @@ Task definition XML written to `%TEMP%\akm-task-<id>-<ts>.xml`, used to register
 
 ---
 
+## Companion Plugin State (Claude Code / OpenCode Harnesses)
+
+These directories are written by the akm-plugins hook scripts (`akm-plugins` repo — the Claude Code and OpenCode integration layer that shells out to this `akm` CLI), not by the `akm` binary itself. They are part of the overall akm-ecosystem storage footprint and have been observed to grow large in practice (hundreds of MB) with **no retention/prune policy in code today** — no purge, TTL, or size cap was found in the hook sources.
+
+### `$XDG_STATE_HOME/akm-claude/` (Linux/macOS default `~/.local/state/akm-claude/`) — Claude Code Hook State
+
+Path resolved by `getHarnessStateDir("claude-code")` / `STATE_DIR` in `akm-plugins/claude/hooks/akm-hook.ts` and `akm-plugins/claude/shared/memory-events.ts`.
+
+| Path | Contents | Retention |
+|---|---|---|
+| `events.jsonl` | Append-only memory-event log (`AkmMemoryEvent`: session/tool/workflow/feedback observations), written via `appendMemoryEvent()` | No cleanup |
+| `memory-candidates.jsonl` | Candidate memories extracted from session activity, written via `getCandidateLogPath()` in `akm-plugins/claude/shared/memory-candidates.ts` | No cleanup |
+| `curated/prompt-<sessionId>.md`, `curated/session-<sessionId>.md` | Curated stash context written per prompt/session for the model to read (`CURATED_DIR`) | No cleanup |
+| `sessions/` | Per-session hook working state (`SESSIONS_DIR`) | No cleanup |
+| `session.log`, `feedback.log`, `memory.log` | Human-readable hook activity logs | No cleanup |
+| `quality-cache.tsv` | Cached asset-quality lookups | No cleanup |
+| `setup.stamp` | One-time setup marker | Manual |
+
+### `$XDG_STATE_HOME/akm-opencode/` (Linux/macOS default `~/.local/state/akm-opencode/`) — OpenCode Hook State
+
+Same shared helpers as above with `harness: "opencode"` (`getHarnessStateDir()` / `getCandidateLogPath()` in `akm-plugins/claude/shared/`).
+
+| Path | Contents | Retention |
+|---|---|---|
+| `events.jsonl` | Append-only memory-event log, same schema as the Claude Code tier | No cleanup |
+| `memory-candidates.jsonl` | Candidate memories extracted from OpenCode session activity | No cleanup |
+
+Note: the OpenCode plugin's curated-prompt files (`CURATED_DIR` in `akm-plugins/opencode/index.ts`) are written under the OS temp directory, not this state tier.
+
+---
+
 ## External / Read-Only Inputs
 
 These paths are read by `akm improve` to scan for repeated failure patterns in agent session logs. akm never writes to them.
@@ -531,7 +582,7 @@ akm search  (ranking phase)
 | 5 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 6 | `$CONFIG/config.json` | JSONC | User configuration |
 | 7 | `<cwd>/.akm/config.json` | JSONC | Project-scoped config overrides |
-| 8 | `$DATA/config-backups/config-<ts>.json` | JSON | Config pre-save backups |
+| 8 | `$CACHE/config-backups/config-<ts>.json` | JSON | Config pre-save backups (0600 files / 0700 dir; capped at 5, only live backup location) |
 | 9 | `$DATA/akm.lock` | JSON | Installed stash lockfile (moved from $CONFIG) |
 | 10 | `$CONFIG/akm.lock` | JSON | Legacy location (removed in v0.8.0). Run migration script to move to `$DATA/akm.lock`. |
 | 11 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
@@ -562,6 +613,9 @@ akm search  (ranking phase)
 | 36 | Windows Task Scheduler `\akm\<id>` | XML | Windows scheduled tasks |
 | 37 | `~/.claude/projects/**/*.jsonl` | JSONL | Claude Code session logs (read-only input) |
 | 38 | `~/.local/share/opencode/` | JSONL | OpenCode session logs (read-only input) |
+| 39 | `$DATA/logs.db` | SQLite 3 (WAL) | Task/run log lines (`task_logs`); observed ~1 GB on live installs; 90d age-based purge only, not size-capped |
+| 40 | `$XDG_STATE_HOME/akm-claude/` | JSONL+Markdown+text | Claude Code plugin hook state (events, memory candidates, curated prompts, logs); written by akm-plugins, not core akm; no retention policy today |
+| 41 | `$XDG_STATE_HOME/akm-opencode/` | JSONL | OpenCode plugin hook state (events, memory candidates); written by akm-plugins, not core akm; no retention policy today |
 
 ---
 
