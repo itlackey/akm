@@ -575,6 +575,116 @@ describe("Score boosts", () => {
     expect(parentHit.score).toBeDefined();
     expect(derivedHit.score).toBeGreaterThanOrEqual(parentHit.score as number);
   });
+
+  test("03-R3: a contradicted base's `.derived` twin inherits the flag and is demoted", async () => {
+    const stashDir = tmpStash();
+    // Two structurally identical base+twin pairs. `alpha` base is contradicted;
+    // `bravo` base is unflagged. Both twins carry NO belief state of their own
+    // and have byte-identical surface (only the name differs), so any ranking
+    // gap between the twins is due solely to the inherited belief penalty.
+    // Deliberately lean (no tag/searchHint boosts) so raw scores stay below the
+    // [0,1] clamp — otherwise the −0.45 contradicted penalty is invisible once
+    // both twins saturate at 1.0.
+    const twinBody = (title: string) =>
+      [
+        "---",
+        "inferred: true",
+        `source: memory:${title}`,
+        "description: connection tunnel requirement note",
+        `derivedFrom: ${title}`,
+        "---",
+        "",
+        "# Tunnel Note",
+        "",
+        "Always require a secure tunnel for production connection deploys.",
+      ].join("\n");
+    const baseBody = "Always require a secure tunnel for production connection deploys.";
+    writeFile(
+      path.join(stashDir, "memories", "alpha.md"),
+      [
+        "---",
+        "description: connection tunnel requirement note",
+        "beliefState: contradicted",
+        "contradictedBy: [memory:tunnel-policy-fix]",
+        "---",
+        "",
+        baseBody,
+      ].join("\n"),
+    );
+    writeFile(path.join(stashDir, "memories", "alpha.derived.md"), twinBody("alpha"));
+    writeFile(
+      path.join(stashDir, "memories", "bravo.md"),
+      ["---", "description: connection tunnel requirement note", "---", "", baseBody].join("\n"),
+    );
+    writeFile(path.join(stashDir, "memories", "bravo.derived.md"), twinBody("bravo"));
+
+    await buildTestIndex(stashDir, {});
+    const result = await akmSearch({
+      query: "tunnel",
+      source: "local",
+      type: "memory",
+      skipLogging: true,
+    });
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const alphaTwin = expectDefined(hits.find((h) => h.name === "alpha.derived"));
+    const bravoTwin = expectDefined(hits.find((h) => h.name === "bravo.derived"));
+
+    // The contradicted base's twin inherited the flag; the unflagged base's did not.
+    expect(alphaTwin.beliefState).toBe("contradicted");
+    expect(bravoTwin.beliefState).toBeUndefined();
+    // And the inherited penalty demotes the stale twin below its unflagged peer.
+    expect(alphaTwin.score ?? 0).toBeLessThan(bravoTwin.score ?? 0);
+  });
+
+  test("03-R3: twin inheritance also applies on the browse/enumerate (no-FTS-token) path", async () => {
+    const stashDir = tmpStash();
+    const twin = (t: string) =>
+      [
+        "---",
+        "inferred: true",
+        `source: memory:${t}`,
+        "description: browse note",
+        `derivedFrom: ${t}`,
+        "---",
+        "",
+        "# Note",
+        "",
+        "body",
+      ].join("\n");
+    writeFile(
+      path.join(stashDir, "memories", "alpha.md"),
+      [
+        "---",
+        "description: browse note",
+        "beliefState: contradicted",
+        "contradictedBy: [memory:fix]",
+        "---",
+        "",
+        "body",
+      ].join("\n"),
+    );
+    writeFile(path.join(stashDir, "memories", "alpha.derived.md"), twin("alpha"));
+    writeFile(
+      path.join(stashDir, "memories", "bravo.md"),
+      ["---", "description: browse note", "---", "", "body"].join("\n"),
+    );
+    writeFile(path.join(stashDir, "memories", "bravo.derived.md"), twin("bravo"));
+
+    await buildTestIndex(stashDir, {});
+    // "." has no FTS tokens → the enumerate/browse path. With belief=current the
+    // contradicted base's twin must be dropped via its INHERITED flag, while the
+    // unflagged base's twin is kept — proving the browse path inherits too.
+    const result = await akmSearch({
+      query: ".",
+      source: "local",
+      type: "memory",
+      belief: "current",
+      skipLogging: true,
+    });
+    const names = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
+    expect(names).toContain("bravo.derived");
+    expect(names).not.toContain("alpha.derived");
+  });
 });
 
 // ── 2.3 Auto-index on stale ──────────────────────────────────────────────────

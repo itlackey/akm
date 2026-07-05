@@ -29,6 +29,7 @@ import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key"
 import {
   closeDatabase,
   getAllEntries,
+  getBaseBeliefStatesForDerivedTwins,
   getEntryById,
   getEntryCount,
   getMeta,
@@ -338,6 +339,10 @@ async function searchDatabase(
     const qualityFiltered = includeProposed
       ? scopeFiltered
       : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
+    // 03-R3: derived twins inherit their base's demoting belief state here too,
+    // so the belief FILTER (and the reported hit state) stays consistent on the
+    // enumerate/browse path — not only on the FTS-scored path below.
+    inheritDerivedTwinBeliefStates(db, qualityFiltered);
     const beliefFiltered = qualityFiltered.filter((ie) => matchBeliefFilter(ie.entry.beliefState, beliefFilter));
     const selected = beliefFiltered.slice(0, limit);
     const hits = await Promise.all(
@@ -454,6 +459,10 @@ async function searchDatabase(
     // Non-fatal — ranking proceeds without scoped utility on any error.
   }
 
+  // 03-R3: derived twins inherit their base's demoting belief state before
+  // ranking, so the (03) belief-state ranker demotes a stale flag-free twin.
+  inheritDerivedTwinBeliefStates(db, scored);
+
   applyRankingRules({
     db,
     query,
@@ -549,6 +558,39 @@ async function searchDatabase(
   );
 
   return { embedMs, rankMs, hits };
+}
+
+/**
+ * 03-R3: let each `.derived` twin inherit its base memory's demoting belief
+ * state for this ranking pass, so a stale flag-free twin is demoted like its
+ * corrected base. The base carries the flag (a contradicted base takes a real
+ * ranking penalty); its near-duplicate `.derived` twin carries none and would
+ * otherwise outrank the corrected copy. Done in-memory at search time — NOT by
+ * writing the twin's frontmatter — because the SCC belief resolver refreshes any
+ * non-frozen state written to a derived memory back to `active` on the next
+ * improve run, erasing it. Only twins with no state of their own inherit; an
+ * explicit twin state always wins. Reuses the (03) belief-state ranker + filter.
+ */
+function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number; entry: StashEntry }>): void {
+  const DEMOTING = new Set(["contradicted", "superseded", "deprecated", "archived"]);
+  const twins = items.filter(
+    (it) =>
+      it.entry.type === "memory" &&
+      it.entry.beliefState === undefined &&
+      it.entry.name.toLowerCase().endsWith(".derived"),
+  );
+  if (twins.length === 0) return;
+  const baseBeliefByTwinId = getBaseBeliefStatesForDerivedTwins(
+    db,
+    twins.map((t) => t.id),
+  );
+  for (const t of twins) {
+    const baseBelief = baseBeliefByTwinId.get(t.id);
+    // Only inherit DEMOTIONS — never let a base's active/asserted state lift a twin.
+    if (baseBelief && DEMOTING.has(baseBelief)) {
+      t.entry.beliefState = baseBelief as StashEntry["beliefState"];
+    }
+  }
 }
 
 function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
