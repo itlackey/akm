@@ -10,12 +10,22 @@
  *
  * Resolution order (highest → lowest precedence):
  *   1. Profile-level modelAliases from config.json (user-defined)
- *   2. Built-in alias table
- *   3. Verbatim pass-through (caller already supplied an exact model ID)
+ *   2. Global modelAliases from config.json — platform column, then "*" fallback
+ *   3. Built-in alias table
+ *   4. Verbatim pass-through (caller already supplied an exact model ID)
  */
 
 /** Per-platform model string map. Keys are platform names; values are exact CLI model strings. */
 export type PlatformModelMap = Record<string, string>;
+
+/**
+ * Global alias table from the config root `modelAliases` key: alias →
+ * platform → exact model string. The reserved platform key `"*"` is a
+ * fallback used when no platform-specific column matches. Values are always
+ * literal model strings — never other aliases (one resolution level, no
+ * recursion).
+ */
+export type GlobalModelAliasTable = Record<string, PlatformModelMap>;
 
 interface ModelAliasEntry {
   readonly alias: string;
@@ -61,12 +71,21 @@ const BUILTIN_ALIASES: readonly ModelAliasEntry[] = [
  *
  * @param model   Raw alias ("opus") or exact model ID ("claude-opus-4-7").
  * @param platform Builder platform name ("claude", "opencode", ...).
- * @param custom  Profile-level aliases from config.json — take priority over builtins.
+ * @param custom  Profile-level aliases from config.json — take priority over globals and builtins.
+ * @param global  Config-root `modelAliases` tier table (alias → platform → model, `"*"` fallback).
  * @returns Resolved model string, or `model` verbatim when no alias matches.
  */
-export function resolveModel(model: string, platform: string, custom?: PlatformModelMap): string {
+export function resolveModel(
+  model: string,
+  platform: string,
+  custom?: PlatformModelMap,
+  global?: GlobalModelAliasTable,
+): string {
   const key = model.toLowerCase();
   if (custom?.[key]) return custom[key];
+  const tier = global?.[key];
+  const fromGlobal = tier?.[platform] ?? tier?.["*"];
+  if (fromGlobal) return fromGlobal;
   const entry = BUILTIN_ALIASES.find((a) => a.alias === key);
   return entry?.platforms[platform] ?? model;
 }

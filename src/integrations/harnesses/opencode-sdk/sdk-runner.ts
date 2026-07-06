@@ -17,6 +17,7 @@
 import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
+import { resolveModel } from "../../agent/model-aliases";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../agent/spawn";
 
@@ -114,17 +115,23 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
   return out;
 }
 
-async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
-  if (_server) return _server;
-
-  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
-    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
-  });
-
+/**
+ * Assemble the OpenCode SDK server config from the profile + LLM fallback.
+ * Pure and exported for tests. `profile.model` is resolved through the model
+ * alias tables (platform key `"opencode-sdk"`) so config aliases like
+ * `"model": "fast"` work on the SDK path the same way they do for CLI
+ * builders. Note there is no built-in alias column for `opencode-sdk` —
+ * built-in opus/sonnet/haiku strings are CLI-provider-qualified and would
+ * collide with the `akm-custom/` provider prefixing below, so only profile
+ * and config-root alias tables apply here.
+ */
+export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
   // Resolve endpoint and model: profile fields take precedence over config.llm
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
   const apiKey = resolveSecret(profile.apiKey ?? llmConfig?.apiKey);
-  const model = profile.model;
+  const model = profile.model
+    ? resolveModel(profile.model, "opencode-sdk", profile.modelAliases, profile.globalModelAliases)
+    : undefined;
 
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
@@ -144,6 +151,17 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
       sdkConfig.model = `akm-custom/${model}`;
     }
   }
+  return sdkConfig;
+}
+
+async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
+  if (_server) return _server;
+
+  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
+    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
+  });
+
+  const sdkConfig = buildSdkConfig(profile, llmConfig);
 
   _server = (await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {})) as SdkServer;
 

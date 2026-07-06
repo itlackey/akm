@@ -59,9 +59,16 @@ export interface AgentProfile {
   /**
    * Per-profile model aliases merged on top of the built-in alias table.
    * Keys are lowercase alias strings; values are the exact model string this
-   * platform's CLI expects. Configured under agent.profiles.<name>.modelAliases.
+   * platform's CLI expects. Configured under profiles.agent.<name>.modelAliases.
    */
   readonly modelAliases?: Readonly<Record<string, string>>;
+  /**
+   * Config-root `modelAliases` tier table (alias → platform → model string,
+   * `"*"` fallback), stamped onto the resolved profile so command builders can
+   * pass it to resolveModel without a config dependency. Precedence sits
+   * between the per-profile `modelAliases` and the built-in alias table.
+   */
+  readonly globalModelAliases?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 // AKM_EVENT_SOURCE carries usage-event provenance (improve/task) so that akm

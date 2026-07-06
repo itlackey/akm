@@ -186,3 +186,62 @@ describe("runOpencodeSdk — #564 bug fix (3): timeout enforcement", () => {
     expect(res.reason).toBeUndefined();
   });
 });
+
+// ── buildSdkConfig — model alias resolution on the SDK path ──────────────────
+
+describe("buildSdkConfig — model alias resolution", () => {
+  const baseProfile: AgentProfile = {
+    name: "opencode-sdk",
+    bin: "",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [],
+    parseOutput: "text",
+    sdkMode: true,
+  };
+
+  test("profile.modelAliases resolves before the SDK config is built", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const cfg = buildSdkConfig({
+      ...baseProfile,
+      model: "fast",
+      modelAliases: { fast: "anthropic/claude-haiku-4-5" },
+    });
+    expect(cfg.model).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  test("global tier table resolves via the opencode-sdk platform column, then '*'", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const viaColumn = buildSdkConfig({
+      ...baseProfile,
+      model: "deep",
+      globalModelAliases: { deep: { "opencode-sdk": "anthropic/claude-opus-4-7", "*": "wrong" } },
+    });
+    expect(viaColumn.model).toBe("anthropic/claude-opus-4-7");
+    const viaStar = buildSdkConfig({
+      ...baseProfile,
+      model: "deep",
+      globalModelAliases: { deep: { "*": "anthropic/claude-opus-4-7" } },
+    });
+    expect(viaStar.model).toBe("anthropic/claude-opus-4-7");
+  });
+
+  test("unaliased model passes through verbatim; unqualified model gets akm-custom prefix with endpoint", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const plain = buildSdkConfig({ ...baseProfile, model: "anthropic/claude-sonnet-4-6" });
+    expect(plain.model).toBe("anthropic/claude-sonnet-4-6");
+    const prefixed = buildSdkConfig({ ...baseProfile, model: "my-local-model", endpoint: "http://localhost:1234/v1" });
+    expect(prefixed.model).toBe("akm-custom/my-local-model");
+  });
+
+  test("alias resolving to an unqualified string still gets akm-custom prefix with endpoint", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const cfg = buildSdkConfig({
+      ...baseProfile,
+      model: "fast",
+      modelAliases: { fast: "qwen3-30b-a3b" },
+      endpoint: "http://localhost:1234/v1",
+    });
+    expect(cfg.model).toBe("akm-custom/qwen3-30b-a3b");
+  });
+});

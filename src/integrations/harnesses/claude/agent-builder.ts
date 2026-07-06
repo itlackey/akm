@@ -36,7 +36,7 @@ export const claudeBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, "claude", profile.modelAliases);
+      const resolved = resolveModel(req.model, "claude", profile.modelAliases, profile.globalModelAliases);
       args.push("--model", resolved);
     }
     if (req.tools) {

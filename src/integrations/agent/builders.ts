@@ -50,7 +50,7 @@ const defaultBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, profile.name, profile.modelAliases);
+      const resolved = resolveModel(req.model, profile.name, profile.modelAliases, profile.globalModelAliases);
       args.push("--model", resolved);
     }
     args.push("--");
