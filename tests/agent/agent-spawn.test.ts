@@ -359,3 +359,40 @@ describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => 
     expect(result.reason).toBeUndefined();
   });
 });
+
+describe("runAgent — dispatch.cwd is consumed (P0.5)", () => {
+  function captureSpawnOpts() {
+    const captured: { cwd?: string }[] = [];
+    const spawn: SpawnFn = (_argv, opts) => {
+      captured.push({ cwd: (opts as { cwd?: string } | undefined)?.cwd });
+      return {
+        exitCode: null,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream(""),
+        stderr: asReadableStream(""),
+        pid: 1234,
+        kill() {},
+      } as unknown as SpawnedSubprocess;
+    };
+    return { spawn, captured };
+  }
+
+  test("dispatch.cwd reaches the spawn options when options.cwd is absent", async () => {
+    const { spawn, captured } = captureSpawnOpts();
+    await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
+      spawn,
+      dispatch: { prompt: "go", cwd: "/tmp/unit-workdir" },
+    });
+    expect(captured[0]?.cwd).toBe("/tmp/unit-workdir");
+  });
+
+  test("options.cwd wins over dispatch.cwd", async () => {
+    const { spawn, captured } = captureSpawnOpts();
+    await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
+      spawn,
+      cwd: "/tmp/options-wins",
+      dispatch: { prompt: "go", cwd: "/tmp/dispatch-loses" },
+    });
+    expect(captured[0]?.cwd).toBe("/tmp/options-wins");
+  });
+});

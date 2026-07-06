@@ -63,6 +63,10 @@ export const agentCommand = defineCommand({
         "Model override — accepts aliases (opus, sonnet, haiku) or exact platform model IDs. Overrides the model specified in the agent asset.",
     },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+    cwd: {
+      type: "string",
+      description: "Working directory for the spawned agent (defaults to the current directory)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -102,6 +106,7 @@ export const agentCommand = defineCommand({
       const promptText = getStringArg(args, "prompt");
       const commandRef = getStringArg(args, "command");
       const workflowRef = getStringArg(args, "workflow");
+      const cwd = getStringArg(args, "cwd");
 
       // Only build a dispatch request when there is something to dispatch — a
       // prompt, an agent asset, or a model override. When none of these are
@@ -123,9 +128,11 @@ export const agentCommand = defineCommand({
                 systemPrompt,
                 model,
                 tools: assetTools,
+                ...(cwd ? { cwd } : {}),
               },
             }
           : {}),
+        ...(cwd ? { cwd } : {}),
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });
 

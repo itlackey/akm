@@ -388,7 +388,9 @@ export async function runAgent(
       stdout: stdioMode === "captured" ? "pipe" : "inherit",
       stderr: stdioMode === "captured" ? "pipe" : "inherit",
       env,
-      ...(options.cwd ? { cwd: options.cwd } : {}),
+      // options.cwd wins; dispatch.cwd is the request-level fallback (it was
+      // declared on AgentDispatchRequest but consumed by nothing — P0.5 fix).
+      ...((options.cwd ?? options.dispatch?.cwd) ? { cwd: options.cwd ?? options.dispatch?.cwd } : {}),
       // Spawn in its own process group so killGroup(-pid, signal) reaches all
       // descendants (e.g. the .opencode binary that opencode's node wrapper forks).
       // Only applied in captured mode — interactive mode inherits the parent
