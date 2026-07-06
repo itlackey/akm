@@ -11,7 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Workflow orchestration engine (P0 + P1 of the orchestration plan,
   experimental).** Workflows can now declare per-step orchestration —
   `### Runner`, `### Model`, `### Timeout`, `### Fan-out` (with
-  `collect`/`vote` reducers), `### Schema`, `### Env`, `### Depends On` —
+  `collect`/`vote` reducers), `### Schema`, `### Env`, `### Depends On`,
+  and `### Route` (classify-and-dispatch: branch on a step's structured
+  result, auto-skip unselected targets) —
   and be executed engine-driven with the new **`akm workflow run`**: akm
   compiles the markdown into a backend-agnostic Workflow Plan Graph IR
   (`src/workflows/ir/`), fans each step's units out through a
@@ -29,7 +31,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   through `completeWorkflowStep`, so completion-criteria gates are never
   bypassed; unit lifecycle is observable via new
   `workflow_unit_started`/`workflow_unit_finished` events. Linear workflows
-  compile and behave exactly as before. See "Orchestrated steps" in
+  compile and behave exactly as before. A conformance suite
+  (`tests/workflows/conformance/`) pins the golden compiled plans and
+  executed unit graphs so future backends (Claude Code delegation, cloud
+  delegate) must reproduce them; `akm show workflow:<name>` surfaces each
+  step's orchestration summary. See "Orchestrated steps" in
   `docs/features/workflows.md` and `STABILITY.md` (Experimental).
 - **`fable` built-in model alias** — resolves to `claude-fable-5`
   (`opencode/claude-fable-5` on opencode); recommended resolution target for

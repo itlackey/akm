@@ -16,10 +16,10 @@ import { UsageError } from "../core/errors";
 import type { StashEntry } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
-import type { ShowResponse } from "../sources/types";
+import type { ShowResponse, WorkflowStepOrchestrationSummary } from "../sources/types";
 import { parseWorkflow } from "./parser";
 import { cacheWorkflowDocument } from "./runtime/document-cache";
-import type { WorkflowDocument } from "./schema";
+import type { WorkflowDocument, WorkflowStepOrchestration } from "./schema";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -65,10 +65,34 @@ export const workflowMdRenderer: AssetRenderer = {
         instructions: s.instructions.text,
         ...(s.completionCriteria ? { completionCriteria: s.completionCriteria.map((c) => c.text) } : {}),
         sequenceIndex: s.sequenceIndex,
+        ...(s.orchestration ? { orchestration: summarizeOrchestration(s.orchestration) } : {}),
       })),
     };
   },
 };
+
+/** Project parsed orchestration into the compact show-facing summary. */
+function summarizeOrchestration(orch: WorkflowStepOrchestration): WorkflowStepOrchestrationSummary {
+  return {
+    ...(orch.runner ? { runner: orch.runner } : {}),
+    ...(orch.profile ? { profile: orch.profile } : {}),
+    ...(orch.model ? { model: orch.model } : {}),
+    ...(orch.timeoutMs !== undefined ? { timeoutMs: orch.timeoutMs } : {}),
+    ...(orch.fanOut ? { fanOut: { ...orch.fanOut } } : {}),
+    ...(orch.schema ? { hasSchema: true } : {}),
+    ...(orch.env ? { env: [...orch.env] } : {}),
+    ...(orch.dependsOn ? { dependsOn: [...orch.dependsOn] } : {}),
+    ...(orch.route
+      ? {
+          route: {
+            input: orch.route.input,
+            branches: orch.route.branches.map((b) => ({ ...b })),
+            ...(orch.route.defaultStepId ? { defaultStepId: orch.route.defaultStepId } : {}),
+          },
+        }
+      : {}),
+  };
+}
 
 registerMetadataContributor({
   name: "workflow-document-metadata",

@@ -25,7 +25,7 @@ import { UsageError } from "../../core/errors";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { compileWorkflowPlan } from "../ir/compile";
-import type { WorkflowPlanGraph } from "../ir/schema";
+import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -33,7 +33,7 @@ import {
   type WorkflowNextResult,
 } from "../runtime/runs";
 import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
-import { executeStepPlan, type UnitDispatcher } from "./native-executor";
+import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
 
 export interface RunWorkflowOptions {
   /** Workflow run id or workflow ref (auto-starts a run, like `workflow next`). */
@@ -95,6 +95,12 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   // Compile once per workflow ref; the asset snapshot is stable for a run.
   const plan = await loadPlan(next.run.workflowRef);
 
+  // Route bookkeeping (### Route): targets a completed router did NOT select
+  // are skipped when the spine reaches them; a target ANY router selected is
+  // protected (two routers may share a target).
+  const routeSelected = new Set<string>();
+  const routeUnselected = new Map<string, { router: string; selected: string }>();
+
   while (!next.done && next.step && next.run.status === "active" && executed.length < maxSteps) {
     if (options.signal?.aborted) break;
     const step = next.step;
@@ -104,6 +110,16 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
         `Step "${step.id}" of run ${next.run.id} is not present in the current workflow asset (${next.run.workflowRef}). ` +
           `The source file changed since the run started — advance this step manually with \`akm workflow complete\`.`,
       );
+    }
+
+    // A branch target no completed router selected → auto-skip, no dispatch.
+    const skipInfo = routeUnselected.get(step.id);
+    if (skipInfo && !routeSelected.has(step.id)) {
+      const notes = `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
+      executed.push({ stepId: step.id, ok: true, unitCount: 0, failedUnits: 0, summary: notes });
+      await completeWorkflowStep({ runId: next.run.id, stepId: step.id, status: "skipped", notes });
+      next = await getNextWorkflowStep(next.run.id);
+      continue;
     }
 
     // `### Depends On` is a declared ordering contract: every dependency must
@@ -156,6 +172,32 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
       break;
     }
 
+    // Evaluate `### Route` BEFORE completing the step: an unroutable value is
+    // an authoring/config failure and must fail the step deterministically
+    // rather than letting every branch run sequentially.
+    if (stepPlan.route) {
+      const decision = evaluateRoute(stepPlan.route, result, next);
+      if (!decision.ok) {
+        const notes = `Step "${step.id}" route failed: ${decision.error}`;
+        executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: notes };
+        await completeWorkflowStep({
+          runId: next.run.id,
+          stepId: step.id,
+          status: "failed",
+          notes,
+          evidence: result.evidence,
+        });
+        break;
+      }
+      routeSelected.add(decision.selected);
+      for (const target of decision.targets) {
+        if (target !== decision.selected && !routeUnselected.has(target)) {
+          routeUnselected.set(target, { router: step.id, selected: decision.selected });
+        }
+      }
+      result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
+    }
+
     const completion = await completeWorkflowStep({
       runId: next.run.id,
       stepId: step.id,
@@ -180,4 +222,74 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     ...(finalState.run.status === "completed" ? { done: true as const } : {}),
     ...(gateRejection ? { gateRejection } : {}),
   };
+}
+
+type RouteDecision = { ok: true; value: string; selected: string; targets: string[] } | { ok: false; error: string };
+
+/**
+ * Resolve a route's input value and pick the branch. Look-up order: the
+ * routed step's own result (vote winner, else the single unit's structured
+ * result field), then run params, then prior steps' evidence — own-property
+ * checks throughout. Only primitive values route; the comparison is exact
+ * string equality against the declared `when:` matches.
+ */
+function evaluateRoute(
+  route: NonNullable<IrStepPlan["route"]>,
+  result: StepExecutionResult,
+  next: WorkflowNextResult,
+): RouteDecision {
+  const candidates: unknown[] = [];
+
+  const vote = result.evidence.vote;
+  if (vote && typeof vote === "object" && Object.hasOwn(vote, "winner")) {
+    candidates.push((vote as { winner: unknown }).winner);
+  }
+  if (result.units.length === 1 && result.units[0].result !== undefined) {
+    candidates.push(result.units[0].result);
+  }
+
+  let value: unknown;
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && Object.hasOwn(candidate, route.input)) {
+      value = (candidate as Record<string, unknown>)[route.input];
+      break;
+    }
+  }
+  if (value === undefined) {
+    const params = next.run.params ?? {};
+    if (Object.hasOwn(params, route.input)) {
+      value = params[route.input];
+    } else {
+      for (const s of next.workflow.steps) {
+        if (s.evidence && Object.hasOwn(s.evidence, route.input)) {
+          value = s.evidence[route.input];
+          break;
+        }
+      }
+    }
+  }
+
+  if (value === undefined) {
+    return {
+      ok: false,
+      error: `route input "${route.input}" was not found in the step result, run params, or prior evidence.`,
+    };
+  }
+  if (value !== null && typeof value === "object") {
+    return {
+      ok: false,
+      error: `route input "${route.input}" resolved to a non-primitive value; branches match on strings/numbers/booleans.`,
+    };
+  }
+
+  const valueString = typeof value === "string" ? value : String(value);
+  const selected = route.branches.find((b) => b.match === valueString)?.stepId ?? route.defaultStepId;
+  const targets = [...route.branches.map((b) => b.stepId), ...(route.defaultStepId ? [route.defaultStepId] : [])];
+  if (!selected) {
+    return {
+      ok: false,
+      error: `value "${valueString}" matched no "when:" branch and the route declares no default.`,
+    };
+  }
+  return { ok: true, value: valueString, selected, targets };
 }

@@ -60,6 +60,25 @@ export interface WorkflowFanOut {
   reducer?: WorkflowFanOutReducer;
 }
 
+/** One `when: <value> => <step-id>` branch of a `### Route` declaration. */
+export interface WorkflowRouteBranch {
+  match: string;
+  stepId: string;
+}
+
+/**
+ * Routing declaration (`### Route`) — the *routing* orchestration pattern.
+ * After the step completes, the engine reads the `input` value (from the
+ * step's own structured result, run params, or prior evidence), selects the
+ * matching branch (or `defaultStepId`), and auto-skips every other branch
+ * target when the sequential spine reaches it.
+ */
+export interface WorkflowStepRoute {
+  input: string;
+  branches: WorkflowRouteBranch[];
+  defaultStepId?: string;
+}
+
 /**
  * Optional orchestration declared on a step (P1 extended grammar). Steps that
  * declare none behave exactly as before — a single manual/agent-driven step.
@@ -81,6 +100,8 @@ export interface WorkflowStepOrchestration {
   env?: string[];
   /** Non-linear ordering edges (`### Depends On`), validated against step ids. */
   dependsOn?: string[];
+  /** Branch routing after this step completes (`### Route`). */
+  route?: WorkflowStepRoute;
   /** Anchor of the first orchestration subsection, for editor jumps. */
   source: SourceRef;
 }

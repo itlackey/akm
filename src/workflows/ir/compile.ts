@@ -46,6 +46,7 @@ function compileStep(step: WorkflowStep): IrStepPlan {
     criteria: step.completionCriteria?.map((c) => c.text) ?? [],
   };
 
+  const route = step.orchestration?.route;
   return {
     stepId: step.id,
     title: step.title,
@@ -53,6 +54,15 @@ function compileStep(step: WorkflowStep): IrStepPlan {
     ...(step.orchestration?.dependsOn ? { dependsOn: [...step.orchestration.dependsOn] } : {}),
     root: compileRoot(step),
     gate,
+    ...(route
+      ? {
+          route: {
+            input: route.input,
+            branches: route.branches.map((b) => ({ ...b })),
+            ...(route.defaultStepId ? { defaultStepId: route.defaultStepId } : {}),
+          },
+        }
+      : {}),
   };
 }
 

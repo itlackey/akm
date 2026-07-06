@@ -546,6 +546,147 @@ y
     expect(result.run.status).toBe("failed");
   });
 
+  test("routing: the selected branch runs, unselected targets are auto-skipped", async () => {
+    seedRun({
+      steps: [
+        { id: "classify", title: "Classify" },
+        { id: "fix-bug", title: "Fix bug" },
+        { id: "build-feature", title: "Build feature" },
+        { id: "wrap-up", title: "Wrap up" },
+      ],
+    });
+    const ROUTED_WF = `# Workflow: R
+
+## Step: Classify
+Step ID: classify
+
+### Route
+input: kind
+when: bug => fix-bug
+when: feature => build-feature
+
+### Instructions
+Classify.
+
+### Schema
+\`\`\`json
+{ "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"] }
+\`\`\`
+
+## Step: Fix bug
+Step ID: fix-bug
+
+### Instructions
+Fix it.
+
+## Step: Build feature
+Step ID: build-feature
+
+### Instructions
+Build it.
+
+## Step: Wrap up
+Step ID: wrap-up
+
+### Instructions
+Wrap up.
+`;
+    const dispatchedNodes: string[] = [];
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        dispatchedNodes.push(req.nodeId);
+        return req.nodeId === "classify" ? { ok: true, text: '{"kind": "bug"}' } : { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(ROUTED_WF),
+    });
+
+    expect(result.done).toBe(true);
+    // build-feature must never dispatch; classify, fix-bug, wrap-up do.
+    expect(dispatchedNodes).toEqual(["classify", "fix-bug", "wrap-up"]);
+
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s]));
+    expect(byId.get("classify")?.status).toBe("completed");
+    expect(byId.get("fix-bug")?.status).toBe("completed");
+    expect(byId.get("build-feature")?.status).toBe("skipped");
+    expect(byId.get("wrap-up")?.status).toBe("completed");
+    // The routed step's evidence records the decision.
+    expect(byId.get("classify")?.evidence?.route).toEqual({ input: "kind", value: "bug", selected: "fix-bug" });
+  });
+
+  test("routing: falls back to default, and an unroutable value fails the step", async () => {
+    const ROUTED_WF = `# Workflow: R
+
+## Step: Classify
+Step ID: classify
+
+### Route
+input: kind
+when: bug => fix-bug
+default: triage
+
+### Instructions
+Classify.
+
+### Schema
+\`\`\`json
+{ "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"] }
+\`\`\`
+
+## Step: Fix bug
+Step ID: fix-bug
+
+### Instructions
+Fix it.
+
+## Step: Triage
+Step ID: triage
+
+### Instructions
+Triage it.
+`;
+    const NO_DEFAULT_WF = ROUTED_WF.replace("default: triage\n", "");
+
+    // Default fallback: "question" matches no branch → triage runs, fix-bug skipped.
+    seedRun({
+      steps: [
+        { id: "classify", title: "Classify" },
+        { id: "fix-bug", title: "Fix bug" },
+        { id: "triage", title: "Triage" },
+      ],
+    });
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) =>
+        req.nodeId === "classify" ? { ok: true, text: '{"kind": "question"}' } : { ok: true, text: "done" },
+      loadPlan: async () => plan(ROUTED_WF),
+    });
+    expect(result.done).toBe(true);
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s]));
+    expect(byId.get("fix-bug")?.status).toBe("skipped");
+    expect(byId.get("triage")?.status).toBe("completed");
+
+    // Unroutable: no matching branch and no default → the routing step fails.
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.mkdirSync(tmpDir, { recursive: true });
+    seedRun({
+      steps: [
+        { id: "classify", title: "Classify" },
+        { id: "fix-bug", title: "Fix bug" },
+      ],
+    });
+    const failed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => ({ ok: true, text: '{"kind": "question"}' }),
+      loadPlan: async () => plan(NO_DEFAULT_WF.replace(/## Step: Triage[\s\S]*$/, "")),
+    });
+    expect(failed.executed[0].ok).toBe(false);
+    expect(failed.executed[0].summary).toContain("question");
+    expect(failed.run.status).toBe("failed");
+  });
+
   test("maxSteps bounds the loop", async () => {
     seedRun({
       steps: [

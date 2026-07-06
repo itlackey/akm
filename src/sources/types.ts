@@ -103,12 +103,32 @@ export interface WorkflowParameter {
   description?: string;
 }
 
+/**
+ * Read-only projection of a step's orchestration declarations for `show`
+ * (P1 extended grammar). Values mirror the parsed subsections minus source
+ * anchors; the full JSON Schema is reduced to a presence flag to keep show
+ * output compact.
+ */
+export interface WorkflowStepOrchestrationSummary {
+  runner?: string;
+  profile?: string;
+  model?: string;
+  timeoutMs?: number | null;
+  fanOut?: { over: string; concurrency?: number; reducer?: string };
+  hasSchema?: boolean;
+  env?: string[];
+  dependsOn?: string[];
+  route?: { input: string; branches: Array<{ match: string; stepId: string }>; defaultStepId?: string };
+}
+
 export interface WorkflowStepDefinition {
   id: string;
   title: string;
   instructions: string;
   completionCriteria?: string[];
   sequenceIndex?: number;
+  /** Present only when the step declares orchestration subsections. */
+  orchestration?: WorkflowStepOrchestrationSummary;
 }
 
 export type WorkflowRunStatus = "active" | "completed" | "blocked" | "failed";

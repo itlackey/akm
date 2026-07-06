@@ -181,6 +181,25 @@ Review {{item}} for correctness bugs. ({{params.<name>}} also interpolates.)
 - every changed file has a verdict
 ````
 
+**Routing** (`### Route`) makes the classify-and-dispatch pattern first-class.
+After the routing step completes, the engine reads the `input:` value — from
+the step's own structured result (a `### Schema` field or vote winner), run
+params, or prior evidence — selects the matching `when:` branch (or
+`default:`), and auto-skips the other branch targets as the spine reaches
+them. Targets must be later steps; an unroutable value fails the step rather
+than letting every branch run:
+
+```markdown
+### Route
+input: verdict
+when: pass => ship
+when: fail => rework
+default: triage
+```
+
+Routing (like fan-out) is an engine feature: it applies under
+`akm workflow run` — the manual `next`/`complete` loop does not auto-skip.
+
 Unit output declared with `### Schema` is validated on **every** runner; a
 validation miss re-dispatches once with corrective feedback before the unit is
 recorded as failed. `### Depends On` declares ordering edges validated against

@@ -135,6 +135,26 @@ export interface IrGateNode {
   maxLoops?: number;
 }
 
+/** One `when` branch of a spine-level route. */
+export interface IrRouteBranch {
+  match: string;
+  stepId: string;
+}
+
+/**
+ * Spine-level routing (the *routing* pattern for the Markdown frontend).
+ * Because gates live BETWEEN steps, the declarative frontend expresses
+ * routing as a property of the step plan — evaluate the `input` value after
+ * the step's subgraph completes, select one target step, and skip the other
+ * targets as the sequential spine reaches them. {@link IrRouterNode} remains
+ * the node-level form for the future imperative frontend.
+ */
+export interface IrRouteSpec {
+  input: string;
+  branches: IrRouteBranch[];
+  defaultStepId?: string;
+}
+
 /** One step of the gated spine: an execution subgraph guarded by its gate. */
 export interface IrStepPlan {
   stepId: string;
@@ -144,6 +164,8 @@ export interface IrStepPlan {
   dependsOn?: string[];
   root: IrExecNode;
   gate: IrGateNode;
+  /** Branch routing evaluated after this step completes. */
+  route?: IrRouteSpec;
 }
 
 /** Run-level budget ceilings (enforced by the scheduler as they land). */

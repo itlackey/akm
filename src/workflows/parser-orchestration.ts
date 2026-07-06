@@ -24,6 +24,7 @@ export const ORCHESTRATION_SUBSECTIONS = new Set([
   "Schema",
   "Env",
   "Depends On",
+  "Route",
 ]);
 
 const RUNNER_KINDS = new Set(["llm", "agent", "sdk", "inherit"]);
@@ -89,6 +90,9 @@ export function collectOrchestration(
         break;
       case "Depends On":
         out = { ...out, ...parseDependsOn(sub, lines, stepTitle, errors) };
+        break;
+      case "Route":
+        out = { ...out, ...parseRoute(sub, lines, stepTitle, errors) };
         break;
     }
   }
@@ -368,6 +372,98 @@ function parseEnv(
     return {};
   }
   return { env: refs };
+}
+
+const WHEN_BRANCH = /^(.+?)\s*=>\s*(\S+)$/;
+
+function parseRoute(
+  sub: SubsectionSlice,
+  lines: string[],
+  stepTitle: string,
+  errors: WorkflowError[],
+): Pick<WorkflowStepOrchestration, "route"> | Record<string, never> {
+  let input: string | undefined;
+  let defaultStepId: string | undefined;
+  const branches: Array<{ match: string; stepId: string }> = [];
+  const seenMatches = new Set<string>();
+
+  for (const { line, text } of bodyLines(sub, lines)) {
+    const kv = text.match(KEY_VALUE_LINE);
+    if (!kv) {
+      errors.push({
+        line,
+        message: `Step "${stepTitle}" "### Route" has an unknown line "${text}". Use "input:", "when: <value> => <step-id>", and "default: <step-id>".`,
+      });
+      continue;
+    }
+    const [, key, rawValue] = kv;
+    const value = rawValue.trim();
+    switch (key) {
+      case "input":
+        if (!value) {
+          errors.push({ line, message: `Step "${stepTitle}" "### Route" has an empty "input:" value.` });
+          break;
+        }
+        input = value;
+        break;
+      case "when": {
+        const branch = value.match(WHEN_BRANCH);
+        if (!branch) {
+          errors.push({
+            line,
+            message: `Step "${stepTitle}" "### Route" branch "${value}" is malformed. Use "when: <value> => <step-id>".`,
+          });
+          break;
+        }
+        const match = branch[1].trim();
+        if (seenMatches.has(match)) {
+          errors.push({
+            line,
+            message: `Step "${stepTitle}" "### Route" has a duplicate "when:" match "${match}". Each match value may route once.`,
+          });
+          break;
+        }
+        seenMatches.add(match);
+        branches.push({ match, stepId: branch[2] });
+        break;
+      }
+      case "default":
+        if (defaultStepId !== undefined) {
+          errors.push({
+            line,
+            message: `Step "${stepTitle}" "### Route" declares more than one "default:". Keep only one.`,
+          });
+          break;
+        }
+        if (!value) {
+          errors.push({ line, message: `Step "${stepTitle}" "### Route" has an empty "default:" value.` });
+          break;
+        }
+        defaultStepId = value;
+        break;
+      default:
+        errors.push({
+          line,
+          message: `Step "${stepTitle}" "### Route" has an unknown key "${key}:". Use "input:", "when:", or "default:".`,
+        });
+    }
+  }
+
+  if (!input) {
+    errors.push({
+      line: sub.headingLine,
+      message: `Step "${stepTitle}" "### Route" is missing the required "input: <param-or-evidence-key>" line.`,
+    });
+    return {};
+  }
+  if (branches.length === 0) {
+    errors.push({
+      line: sub.headingLine,
+      message: `Step "${stepTitle}" "### Route" needs at least one "when: <value> => <step-id>" branch.`,
+    });
+    return {};
+  }
+  return { route: { input, branches, ...(defaultStepId !== undefined ? { defaultStepId } : {}) } };
 }
 
 function parseDependsOn(

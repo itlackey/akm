@@ -247,6 +247,114 @@ x
     expect(errors.some((m) => m.includes("secret:token"))).toBe(true);
   });
 
+  test("parses a route with branches and default", () => {
+    const doc = parseOk(`# Workflow: T
+
+## Step: Classify
+Step ID: classify
+
+### Route
+input: kind
+when: bug => fix-bug
+when: feature => build-feature
+default: triage
+
+### Instructions
+Classify the request.
+
+## Step: Fix bug
+Step ID: fix-bug
+
+### Instructions
+x
+
+## Step: Build feature
+Step ID: build-feature
+
+### Instructions
+y
+
+## Step: Triage
+Step ID: triage
+
+### Instructions
+z
+`);
+    expect(doc.steps[0].orchestration?.route).toEqual({
+      input: "kind",
+      branches: [
+        { match: "bug", stepId: "fix-bug" },
+        { match: "feature", stepId: "build-feature" },
+      ],
+      defaultStepId: "triage",
+    });
+  });
+
+  test("route parse errors: missing input, malformed when, duplicate match", () => {
+    const errors = parseErrors(`# Workflow: T
+
+## Step: Classify
+Step ID: classify
+
+### Route
+when: bug fix-bug
+when: dup => later
+when: dup => later
+
+### Instructions
+x
+
+## Step: Later
+Step ID: later
+
+### Instructions
+y
+`);
+    expect(errors.some((m) => m.includes("input:"))).toBe(true);
+    expect(errors.some((m) => m.includes("bug fix-bug"))).toBe(true);
+    expect(errors.some((m) => m.includes('duplicate "when:" match "dup"'))).toBe(true);
+  });
+
+  test("route reference errors: unknown target and self target", () => {
+    const errors = parseErrors(`# Workflow: T
+
+## Step: Classify
+Step ID: classify
+
+### Route
+input: kind
+when: a => ghost
+when: b => classify
+
+### Instructions
+x
+`);
+    expect(errors.some((m) => m.includes("ghost"))).toBe(true);
+    expect(errors.some((m) => m.includes("route to itself"))).toBe(true);
+  });
+
+  test("route targets must come after the routing step", () => {
+    const errors = parseErrors(`# Workflow: T
+
+## Step: Early
+Step ID: early
+
+### Instructions
+x
+
+## Step: Classify
+Step ID: classify
+
+### Route
+input: kind
+when: back => early
+
+### Instructions
+y
+`);
+    expect(errors.some((m) => m.includes("early") && m.includes("after"))).toBe(true);
+  });
+
   test("still rejects truly unknown subsections", () => {
     const errors = parseErrors(`# Workflow: T
 
