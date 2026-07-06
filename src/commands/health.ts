@@ -9,7 +9,7 @@ import { loadConfig } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { readEvents } from "../core/events";
 import { openLogsDatabase } from "../core/logs-db";
-import { getStateDbPathInDataDir } from "../core/paths";
+import { getCacheDir, getConfigDir, getConfigPath, getDataDir, getStateDbPathInDataDir } from "../core/paths";
 import { listExistingTableNames, openStateDatabase } from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/search/semantic-status";
@@ -36,6 +36,7 @@ import {
   readCalibration,
 } from "./health/metrics";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
+import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
 import { buildPerRunSummaries } from "./health/task-runs";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -186,10 +187,12 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     // leaves both undefined and the check falls back to its generic message.
     let semanticSearchMode: string | undefined;
     let embeddingEndpoint: string | undefined;
+    let egressConfigView: EgressConfigView | undefined;
     try {
       const config = loadConfig();
       semanticSearchMode = config.semanticSearchMode;
       embeddingEndpoint = config.embedding?.endpoint;
+      egressConfigView = config as EgressConfigView;
     } catch {
       // fall through with undefined
     }
@@ -244,6 +247,24 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       }
     } catch {
       // Non-fatal — a git/probe failure must not abort the health report.
+    }
+
+    // 08 surfaces: the remaining read-only advisory group (secret-file-perms,
+    // binary-config-skew, orphan-stores, egress-endpoints). Best-effort — a
+    // filesystem probe failure must not abort the health report.
+    try {
+      advisories.push(
+        ...collectSurfacesAdvisories({
+          stashDir: options.stashDir ?? resolveStashDir(),
+          cacheDir: getCacheDir(),
+          dataDir: getDataDir(),
+          configDir: getConfigDir(),
+          configPath: getConfigPath(),
+          config: egressConfigView,
+        }),
+      );
+    } catch {
+      // Non-fatal.
     }
 
     let sessionLogEntries: SessionLogAdvisory[] = [];

@@ -118,6 +118,16 @@ describe("health checks characterization (WS9)", () => {
           "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles where consolidate/recombine did work (synthesis lanes may be idle).",
       },
       {
+        // 08 surfaces: the default config ships one enabled registry, so the
+        // egress eyeball-diff advisory emits even in an empty sandbox.
+        name: "egress-endpoints",
+        kind: "deterministic",
+        status: "pass",
+        confidence: "high",
+        message:
+          "1 remote endpoint(s) in the effective config (registries/sources/LLM/embedding) — review the evidence list for unexpected destinations.",
+      },
+      {
         name: "task-fail-rate",
         kind: "deterministic",
         status: "pass",
@@ -225,6 +235,7 @@ describe("health checks characterization (WS9)", () => {
     ]);
     expect(result.advisories.map((c) => c.name)).toEqual([
       "collapse-churn-detector",
+      "egress-endpoints",
       "task-fail-rate",
       "semantic-search-runtime",
       "session-log-failures",
