@@ -460,9 +460,12 @@ function buildUnitPrompt(input: BuildPromptInput): string {
 // ── Fan-out source + reducers ────────────────────────────────────────────────
 
 function resolveFanOutSource(over: string, ctx: StepExecutionContext): unknown {
-  if (over in ctx.params) return ctx.params[over];
+  // Own-property checks only: `in` would also match Object.prototype keys
+  // (toString, constructor, …), letting a fan-out key resolve to a prototype
+  // member instead of actual params/evidence.
+  if (Object.hasOwn(ctx.params, over)) return ctx.params[over];
   for (const stepEvidence of Object.values(ctx.evidence)) {
-    if (stepEvidence && over in stepEvidence) return stepEvidence[over];
+    if (stepEvidence && Object.hasOwn(stepEvidence, over)) return stepEvidence[over];
   }
   return undefined;
 }

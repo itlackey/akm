@@ -158,6 +158,21 @@ describe("executeStepPlan — fan-out", () => {
     expect(result.units).toHaveLength(2);
   });
 
+  test("fan-out keys never resolve from Object.prototype (own properties only)", async () => {
+    seedRun({ steps: [{ id: "review", title: "Review files" }] });
+    const TOSTRING_WF = FAN_OUT_WF.replace("over: files", "over: toString");
+    const stepPlan = plan(TOSTRING_WF).steps[0];
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: { prior: { unrelated: true } },
+      dispatcher: async () => ({ ok: true, text: "must not run" }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain("not found");
+  });
+
   test("a non-array fan-out source fails the step with a clear error", async () => {
     seedRun({ params: { files: "not-a-list" }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0];

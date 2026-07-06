@@ -14,9 +14,11 @@
  * rejection (SummaryValidationFailure) STOPS the engine and surfaces the
  * corrective feedback — a gate is a gate, even for the engine.
  *
- * The plan graph is compiled fresh from the workflow asset each step
- * (durable-row resume: re-running a partially-executed run re-dispatches only
- * steps that never completed).
+ * The plan graph is compiled fresh from the workflow asset at the start of
+ * each invocation (once per `runWorkflowSteps` call, not per step — the run's
+ * step snapshot is fixed at start time, so a mid-invocation asset edit must
+ * not change the plan under the loop). Durable-row resume: re-invoking a
+ * partially-executed run re-dispatches only work that never completed.
  */
 
 import { UsageError } from "../../core/errors";

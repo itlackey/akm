@@ -214,6 +214,39 @@ x
     expect(doc.steps[0].orchestration?.env).toEqual(["env:build-vars"]);
   });
 
+  test("accepts the environment: alias and origin-qualified env refs", () => {
+    const doc = parseOk(`# Workflow: T
+
+## Step: S
+Step ID: s
+
+### Env
+- environment:build-vars
+- team//env:ci
+
+### Instructions
+x
+`);
+    expect(doc.steps[0].orchestration?.env).toEqual(["environment:build-vars", "team//env:ci"]);
+  });
+
+  test("rejects env entries that are not env-typed refs", () => {
+    const errors = parseErrors(`# Workflow: T
+
+## Step: S
+Step ID: s
+
+### Env
+- myenv:foo
+- secret:token
+
+### Instructions
+x
+`);
+    expect(errors.some((m) => m.includes("myenv:foo"))).toBe(true);
+    expect(errors.some((m) => m.includes("secret:token"))).toBe(true);
+  });
+
   test("still rejects truly unknown subsections", () => {
     const errors = parseErrors(`# Workflow: T
 

@@ -13,6 +13,7 @@
  * exactly like the base parser instead of throwing.
  */
 
+import { parseAssetRef } from "../core/asset/asset-ref";
 import type { SourceRef, WorkflowError, WorkflowStepOrchestration } from "./schema";
 
 export const ORCHESTRATION_SUBSECTIONS = new Set([
@@ -341,7 +342,16 @@ function parseEnv(
   for (const { line, text } of bodyLines(sub, lines)) {
     const bullet = text.match(BULLET_LINE);
     const ref = (bullet ? bullet[1] : text).trim();
-    if (!ref.includes("env:")) {
+    // Real ref validation, not a substring probe: parseAssetRef applies the
+    // canonical type-alias table (`environment:` → env) and origin syntax, so
+    // "myenv:foo" is rejected and "team//environment:ci" is accepted.
+    let refType: string | undefined;
+    try {
+      refType = parseAssetRef(ref).type;
+    } catch {
+      refType = undefined;
+    }
+    if (refType !== "env") {
       errors.push({
         line,
         message: `Step "${stepTitle}" "### Env" entry "${ref}" is not an env ref. Use "env:<name>" (or "<origin>//env:<name>").`,
