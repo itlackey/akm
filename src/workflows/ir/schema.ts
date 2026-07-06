@@ -100,6 +100,10 @@ export interface IrAgentNode {
  * `over` is the RAW whole-value `${{ … }}` expression string naming the
  * producer of the list (a run param or an earlier step's output) — resolved
  * at execution, never at compile.
+ *
+ * TODO(R1-cutover): plans compiled from the P1 markdown grammar carry a bare
+ * evidence key here (no `${{ … }}`) until that grammar is removed; the
+ * engine's legacy lookup handles those.
  */
 export interface IrMapNode {
   kind: "map";
@@ -146,21 +150,24 @@ export interface IrRouteSpec {
 }
 
 /**
- * One step of the gated spine. Exactly one of `root` (execution subgraph)
- * or `route` (spine-level routing) is present: YAML `route` steps dispatch
- * no units of their own.
+ * One step of the gated spine. For YAML programs exactly one of `root`
+ * (execution subgraph) or `route` (spine-level routing) is present: YAML
+ * `route` steps dispatch no units of their own. TODO(R1-cutover): plans from
+ * the P1 markdown grammar may carry BOTH (a markdown `### Route` attaches to
+ * an executing step) until that grammar is removed.
  */
 export interface IrStepPlan {
   stepId: string;
   title: string;
   sequenceIndex: number;
   /**
-   * Reserved: non-linear ordering edges. No current frontend emits them (the
-   * P1 markdown `### Depends On` grammar is removed by the R1 cutover; the
-   * YAML program has no equivalent yet) but the engine still honors them.
+   * Reserved: non-linear ordering edges. Only the transitional P1 markdown
+   * `### Depends On` grammar emits them today (removed by the R1 cutover; the
+   * YAML program has no equivalent yet); the engine honors them as a declared
+   * ordering contract.
    */
   dependsOn?: string[];
-  /** Execution subgraph; absent exactly when this is a `route` step. */
+  /** Execution subgraph; absent exactly when this is a YAML `route` step. */
   root?: IrExecNode;
   /** Spine-level routing evaluated when the spine reaches this step. */
   route?: IrRouteSpec;

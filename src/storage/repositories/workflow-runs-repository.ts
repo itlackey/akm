@@ -29,6 +29,14 @@ export type WorkflowRunRow = {
   agent_harness: string | null;
   agent_session_id: string | null;
   checkin_armed_at: string | null;
+  /** Frozen compiled plan — canonical plan JSON (migration 006, redesign addendum R1). NULL on legacy runs. */
+  plan_json: string | null;
+  /** sha256 (hex) of the canonical plan JSON; integrity-checked on every load. */
+  plan_hash: string | null;
+  /** TODO(R2): run-lease enforcement is engine-rework scope — columns land in migration 006, row fields only. */
+  engine_lease_until: string | null;
+  /** TODO(R2): see engine_lease_until. */
+  engine_lease_holder: string | null;
 };
 
 export type WorkflowRunStepRow = {
@@ -328,6 +336,19 @@ export class WorkflowRunsRepository {
 
   rearmCheckin(runId: string, checkinArmedAt: string): void {
     this.db.prepare("UPDATE workflow_runs SET checkin_armed_at = ? WHERE id = ?").run(checkinArmedAt, runId);
+  }
+
+  /**
+   * Freeze the compiled plan on the run row (migration 006, redesign addendum
+   * R1): `planJson` is the CANONICAL plan JSON (`ir/plan-hash.ts`), `planHash`
+   * its sha256. Called by `startWorkflowRun` inside the same transaction as
+   * `insertRun`, so a run row never exists without its frozen plan. Read back
+   * via {@link getRunById} (`plan_json` / `plan_hash` on the row).
+   */
+  setRunPlan(runId: string, planJson: string, planHash: string): void {
+    this.db
+      .prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ? WHERE id = ?")
+      .run(planJson, planHash, runId);
   }
 
   // ── unit rows (migration 004) ──────────────────────────────────────────────

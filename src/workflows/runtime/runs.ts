@@ -20,10 +20,11 @@ import {
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
+import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
-import { loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
+import { compileWorkflowAssetPlan, loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
   run: WorkflowRunSummary;
@@ -88,6 +89,13 @@ export async function startWorkflowRun(
   options?: { force?: boolean; agentHarness?: string | null; agentSessionId?: string | null },
 ): Promise<WorkflowRunDetail> {
   const asset = await loadWorkflowAsset(ref);
+  // Frozen plan (redesign addendum, R1): compile the plan ONCE at start and
+  // persist it on the run row in the same transaction as the insert. Every
+  // later invocation executes this snapshot — the asset file is never re-read
+  // for an in-flight run; re-planning is an explicit new run.
+  const plan = compileWorkflowAssetPlan(asset);
+  const planJson = canonicalPlanJson(plan);
+  const planHash = computePlanHash(plan);
   return withWorkflowRunsRepo(async (repo) => {
     const now = new Date().toISOString();
     const runId = randomUUID();
@@ -149,6 +157,10 @@ export async function startWorkflowRun(
           sequenceIndex: step.sequenceIndex ?? 0,
         })),
       );
+
+      // Same transaction as the insert: a run row never exists without its
+      // frozen plan (rows with NULL plan_json are pre-006 legacy runs).
+      repo.setRunPlan(runId, planJson, planHash);
     });
 
     const result = await getWorkflowStatus(runId);

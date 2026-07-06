@@ -3,14 +3,24 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Markdown frontend → Workflow Plan Graph compiler (P0).
+ * Frontends → Workflow Plan Graph (IR v2) compilers.
  *
- * Pure and deterministic: the same {@link WorkflowDocument} always compiles
- * to the same {@link WorkflowPlanGraph}. A linear workflow (no orchestration
- * subsections) compiles to one `agent` node per step, each guarded by its
- * `gate` — the exact behavior of today's step loop, so P0 is a refactor with
- * no behavior change. A step with a `### Fan-out` compiles to a `map` node
- * wrapping the agent template.
+ * Two frontends, one IR (redesign addendum, R1):
+ *
+ *   - {@link compileWorkflowProgram} — YAML orchestration programs
+ *     (`program/parser.ts`). Pure and deterministic; performs FULL expression
+ *     validation (closed `${{ … }}` grammar, earlier-step references,
+ *     whole-value contexts, `item`/`item_index` scoping) and MERGES the
+ *     program's `defaults` block into every unit node so the frozen plan is
+ *     self-contained. Returns accumulated `WorkflowError`s rather than
+ *     throwing.
+ *   - {@link compileWorkflowPlan} — classic markdown workflows (`parser.ts`).
+ *     Linear workflows (the stable CLI contract) compile to one `agent` node
+ *     per step with `runner: inherit` and the fail-fast default, exactly as
+ *     today. TODO(R1-cutover): the P1 orchestration subsections still present
+ *     on `WorkflowDocument` compile through transitionally (map `over` as a
+ *     bare evidence key, route on a bare input name) until the cutover task
+ *     removes that grammar — after which this path is linear-only.
  *
  * Node-id convention (stable, unique within a plan):
  *   step root  → `<stepId>`          (agent) or `<stepId>.map` (map)
@@ -18,7 +28,9 @@
  *   gate       → `<stepId>.gate`
  */
 
-import type { WorkflowDocument, WorkflowStep } from "../schema";
+import { type ExpressionAst, formatReference, listReferences, parseTemplate } from "../program/expressions";
+import type { ProgramDefaults, ProgramStep, ProgramUnit, WorkflowProgram } from "../program/schema";
+import type { WorkflowDocument, WorkflowError, WorkflowStep } from "../schema";
 import {
   type IrAgentNode,
   type IrExecNode,
@@ -28,17 +40,264 @@ import {
   type WorkflowPlanGraph,
 } from "./schema";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Frontend A — YAML workflow program
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type WorkflowProgramCompileResult =
+  | { ok: true; plan: WorkflowPlanGraph }
+  | { ok: false; errors: WorkflowError[] };
+
+/**
+ * Compile a parsed YAML program into a frozen-plan-ready graph. Assumes the
+ * program came out of `parseWorkflowProgram` ok (structure already valid);
+ * this pass owns the expression-language rules the parser deliberately does
+ * not check:
+ *
+ *   - every `${{ … }}` in instructions / `map.over` / `route.input` parses
+ *     against the CLOSED grammar;
+ *   - `steps.<id>` references name an EARLIER step (a producer that has
+ *     already run when the reference resolves);
+ *   - `map.over` and `route.input` are single whole-value references — a bare
+ *     `${{ … }}` with no surrounding text;
+ *   - `item` / `item_index` appear only inside a map unit's instructions.
+ */
+export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgramCompileResult {
+  const errors: WorkflowError[] = [];
+  const allStepIds = new Set(program.steps.map((s) => s.id));
+  const earlierStepIds = new Set<string>();
+  const steps: IrStepPlan[] = [];
+
+  program.steps.forEach((step, index) => {
+    const check = { allStepIds, earlierStepIds, errors };
+
+    if (step.unit) {
+      checkTemplateExpressions(step.unit.instructions, {
+        ...check,
+        line: step.unit.source.start,
+        label: `Step "${step.id}" instructions`,
+        inMapUnit: false,
+      });
+    }
+    if (step.map) {
+      checkWholeValueExpression(step.map.over, {
+        ...check,
+        line: step.source.start,
+        label: `Step "${step.id}" map.over`,
+      });
+      checkTemplateExpressions(step.map.unit.instructions, {
+        ...check,
+        line: step.map.unit.source.start,
+        label: `Step "${step.id}" instructions`,
+        inMapUnit: true,
+      });
+    }
+    if (step.route) {
+      checkWholeValueExpression(step.route.input, {
+        ...check,
+        line: step.source.start,
+        label: `Step "${step.id}" route.input`,
+      });
+    }
+
+    steps.push(compileProgramStep(step, index, program.defaults));
+    earlierStepIds.add(step.id);
+  });
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  const paramNames = program.params ? Object.keys(program.params) : [];
+  return {
+    ok: true,
+    plan: {
+      irVersion: WORKFLOW_IR_VERSION,
+      title: program.name,
+      ...(paramNames.length > 0 ? { params: paramNames } : {}),
+      steps,
+    },
+  };
+}
+
+function compileProgramStep(step: ProgramStep, index: number, defaults: ProgramDefaults | undefined): IrStepPlan {
+  const gate: IrGateNode = {
+    kind: "gate",
+    id: `${step.id}.gate`,
+    stepId: step.id,
+    criteria: step.gate?.criteria ?? [],
+    // TODO(R2): maxLoops execution (bounded evaluator-optimizer) is engine
+    // rework scope; carried through the frozen plan now.
+    ...(step.gate?.maxLoops !== undefined ? { maxLoops: step.gate.maxLoops } : {}),
+  };
+
+  let root: IrExecNode | undefined;
+  if (step.unit) {
+    root = compileProgramUnit(step.unit, step.id, defaults);
+  } else if (step.map) {
+    root = {
+      kind: "map",
+      id: `${step.id}.map`,
+      over: step.map.over,
+      template: compileProgramUnit(step.map.unit, `${step.id}.unit`, defaults),
+      ...(step.map.concurrency !== undefined ? { concurrency: step.map.concurrency } : {}),
+      reducer: step.map.reducer ?? "collect",
+      source: step.source,
+    };
+  }
+
+  return {
+    stepId: step.id,
+    title: step.title ?? step.id,
+    sequenceIndex: index,
+    ...(root ? { root } : {}),
+    ...(step.route
+      ? {
+          route: {
+            input: step.route.input,
+            when: Object.fromEntries(step.route.branches.map((b) => [b.match, b.stepId])),
+            ...(step.route.defaultStepId !== undefined ? { defaultStepId: step.route.defaultStepId } : {}),
+          },
+        }
+      : {}),
+    // TODO(R2): validating the reducer result against this schema (typed step
+    // artifacts) is engine-rework scope; the frozen plan carries it now.
+    ...(step.output !== undefined ? { outputSchema: step.output } : {}),
+    gate,
+  };
+}
+
+/**
+ * Lower one program unit into an agent node, merging the run-level `defaults`
+ * block (frozen resolution — addendum: "the plan is self-contained"). Per-unit
+ * declarations always win; the fail-fast `on_error` default applies last.
+ */
+function compileProgramUnit(unit: ProgramUnit, id: string, defaults: ProgramDefaults | undefined): IrAgentNode {
+  const model = unit.model ?? defaults?.model;
+  const timeoutMs = unit.timeoutMs !== undefined ? unit.timeoutMs : defaults?.timeoutMs;
+  return {
+    kind: "agent",
+    id,
+    instructions: unit.instructions,
+    runner: unit.runner ?? defaults?.runner ?? "inherit",
+    ...(unit.profile !== undefined ? { profile: unit.profile } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(unit.output !== undefined ? { schema: unit.output } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    // TODO(R2): retry dispatch is engine-rework scope; carried through now.
+    ...(unit.retry ? { retry: { max: unit.retry.max, on: [...unit.retry.on] } } : {}),
+    onError: unit.onError ?? defaults?.onError ?? "fail",
+    ...(unit.env ? { env: [...unit.env] } : {}),
+    ...(unit.isolation !== undefined ? { isolation: unit.isolation } : {}),
+    source: unit.source,
+  };
+}
+
+// ── Expression validation ────────────────────────────────────────────────────
+
+interface ExpressionCheck {
+  errors: WorkflowError[];
+  /** Every step id in the program (to tell "later step" from "no such step"). */
+  allStepIds: Set<string>;
+  /** Ids of steps declared BEFORE the one being checked. */
+  earlierStepIds: Set<string>;
+  line: number;
+  label: string;
+}
+
+/** Validate every `${{ … }}` in a free-text template (instructions). */
+function checkTemplateExpressions(text: string, check: ExpressionCheck & { inMapUnit: boolean }): void {
+  const parsed = parseTemplate(text);
+  if (!parsed.ok) {
+    for (const err of parsed.errors) {
+      check.errors.push({ line: check.line, message: `${check.label}: ${err.message}` });
+    }
+    return;
+  }
+  for (const ref of listReferences(parsed.segments)) {
+    checkReference(ref, check, check.inMapUnit);
+  }
+}
+
+/**
+ * Validate a whole-value field (`map.over`, `route.input`): the text must be
+ * exactly one `${{ … }}` reference with no surrounding literal text, so the
+ * engine can resolve it to a RAW value (array/object), never a string splice.
+ */
+function checkWholeValueExpression(text: string, check: ExpressionCheck): void {
+  const parsed = parseTemplate(text);
+  if (!parsed.ok) {
+    for (const err of parsed.errors) {
+      check.errors.push({ line: check.line, message: `${check.label}: ${err.message}` });
+    }
+    return;
+  }
+  const [first] = parsed.segments;
+  if (parsed.segments.length !== 1 || first?.kind !== "reference") {
+    check.errors.push({
+      line: check.line,
+      message:
+        `${check.label} must be a single whole-value \${{ … }} reference with no surrounding text ` +
+        `(e.g. "\${{ steps.discover.output.files }}"), got ${JSON.stringify(text)}.`,
+    });
+    return;
+  }
+  // `item`/`item_index` never exist where a whole-value field resolves (the
+  // item list itself, or a spine route input), so inMapUnit is always false.
+  checkReference(first.expr, check, false);
+}
+
+function checkReference(ref: ExpressionAst, check: ExpressionCheck, inMapUnit: boolean): void {
+  switch (ref.kind) {
+    case "item":
+    case "itemIndex": {
+      if (!inMapUnit) {
+        check.errors.push({
+          line: check.line,
+          message: `${check.label}: "\${{ ${formatReference(ref)} }}" is only valid inside a map unit's instructions.`,
+        });
+      }
+      return;
+    }
+    case "stepOutput": {
+      if (!check.earlierStepIds.has(ref.stepId)) {
+        const why = check.allStepIds.has(ref.stepId)
+          ? `step "${ref.stepId}" does not come before this step — references must name an earlier step (a producer that has already run)`
+          : `"${ref.stepId}" is not a step in this workflow`;
+        check.errors.push({
+          line: check.line,
+          message: `${check.label}: "\${{ ${formatReference(ref)} }}" cannot be resolved — ${why}.`,
+        });
+      }
+      return;
+    }
+    case "param":
+      // Param presence is a run-scope concern (params may be supplied at
+      // start time beyond the declared block); resolution errors surface at
+      // execution with the reference named.
+      return;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Frontend B — classic markdown workflow
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compile a markdown `WorkflowDocument` to IR v2. Pure and deterministic: the
+ * same document always compiles to the same plan. Linear workflows — the
+ * stable contract — produce one `agent` node per step (`runner: inherit`,
+ * fail-fast) guarded by its gate, identical behavior to today's step loop.
+ */
 export function compileWorkflowPlan(document: WorkflowDocument): WorkflowPlanGraph {
   const params = document.parameters?.map((p) => p.name);
   return {
     irVersion: WORKFLOW_IR_VERSION,
     title: document.title,
     ...(params && params.length > 0 ? { params } : {}),
-    steps: document.steps.map(compileStep),
+    steps: document.steps.map(compileMarkdownStep),
   };
 }
 
-function compileStep(step: WorkflowStep): IrStepPlan {
+function compileMarkdownStep(step: WorkflowStep): IrStepPlan {
   const gate: IrGateNode = {
     kind: "gate",
     id: `${step.id}.gate`,
@@ -46,27 +305,32 @@ function compileStep(step: WorkflowStep): IrStepPlan {
     criteria: step.completionCriteria?.map((c) => c.text) ?? [],
   };
 
+  // TODO(R1-cutover): `orchestration` (the P1 markdown grammar) is removed by
+  // the cutover task; until then its fields compile through in v2 shapes so
+  // in-flight orchestrated markdown keeps working. Note the transitional
+  // semantics: markdown `over`/`route.input` are bare evidence keys, not
+  // `${{ … }}` expressions — the engine's legacy lookup handles them.
   const route = step.orchestration?.route;
   return {
     stepId: step.id,
     title: step.title,
     sequenceIndex: step.sequenceIndex,
     ...(step.orchestration?.dependsOn ? { dependsOn: [...step.orchestration.dependsOn] } : {}),
-    root: compileRoot(step),
-    gate,
+    root: compileMarkdownRoot(step),
     ...(route
       ? {
           route: {
             input: route.input,
-            branches: route.branches.map((b) => ({ ...b })),
-            ...(route.defaultStepId ? { defaultStepId: route.defaultStepId } : {}),
+            when: Object.fromEntries(route.branches.map((b) => [b.match, b.stepId])),
+            ...(route.defaultStepId !== undefined ? { defaultStepId: route.defaultStepId } : {}),
           },
         }
       : {}),
+    gate,
   };
 }
 
-function compileRoot(step: WorkflowStep): IrExecNode {
+function compileMarkdownRoot(step: WorkflowStep): IrExecNode {
   const orch = step.orchestration;
   const fanOut = orch?.fanOut;
 
@@ -79,6 +343,8 @@ function compileRoot(step: WorkflowStep): IrExecNode {
     ...(orch?.model ? { model: orch.model } : {}),
     ...(orch?.schema ? { schema: orch.schema } : {}),
     ...(orch?.timeoutMs !== undefined ? { timeoutMs: orch.timeoutMs } : {}),
+    // Markdown has no failure-policy surface; the program default applies.
+    onError: "fail",
     ...(orch?.env ? { env: [...orch.env] } : {}),
     source: step.instructions.source,
   };

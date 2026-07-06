@@ -123,7 +123,7 @@ Deploy it.
 describe("conformance — linear workflow", () => {
   test("compiles to the golden plan", () => {
     expect(compile(LINEAR)).toEqual({
-      irVersion: 1,
+      irVersion: 2,
       title: "Golden",
       steps: [
         {
@@ -135,6 +135,7 @@ describe("conformance — linear workflow", () => {
             id: "build",
             instructions: "Build it.",
             runner: "inherit",
+            onError: "fail",
             source: { path: "workflows/golden.md", start: 7, end: 8 },
           },
           gate: { kind: "gate", id: "build.gate", stepId: "build", criteria: ["artifact exists"] },
@@ -148,6 +149,7 @@ describe("conformance — linear workflow", () => {
             id: "deploy",
             instructions: "Deploy it.",
             runner: "inherit",
+            onError: "fail",
             source: { path: "workflows/golden.md", start: 16, end: 17 },
           },
           gate: { kind: "gate", id: "deploy.gate", stepId: "deploy", criteria: [] },
@@ -207,6 +209,7 @@ describe("conformance — fan-out + schema + vote", () => {
           id: "judge.unit",
           instructions: "Judge {{item}}.",
           runner: "inherit",
+          onError: "fail",
           schema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
           source: { path: "workflows/golden.md", start: 12, end: 13 },
         },
@@ -276,10 +279,7 @@ describe("conformance — routed workflow", () => {
     const plan = compile(ROUTED);
     expect(plan.steps[0].route).toEqual({
       input: "verdict",
-      branches: [
-        { match: "pass", stepId: "ship" },
-        { match: "fail", stepId: "rework" },
-      ],
+      when: { pass: "ship", fail: "rework" },
     });
   });
 

@@ -20,6 +20,19 @@ for await (const src of assetGlob.scan(".")) {
   await Bun.write(dest, Bun.file(src));
 }
 
+// Module-local YAML templates (e.g. src/workflows/authoring/
+// workflow-program-template.yaml) are imported `with { type: "text" }` and
+// live NEXT TO the module that uses them rather than under src/assets/.
+// tsc only emits .ts sources, so mirror them into dist/ at the same relative
+// path the compiled importer expects.
+const yamlTemplateGlob = new Bun.Glob("src/**/*.{yaml,yml}");
+for await (const src of yamlTemplateGlob.scan(".")) {
+  if (src.startsWith("src/assets/")) continue; // already mirrored above
+  const dest = src.replace(/^src\//, "dist/");
+  await mkdir(dirname(dest), { recursive: true });
+  await Bun.write(dest, Bun.file(src));
+}
+
 // Soft check: the vendored ECharts payload backs `akm health --format html`
 // in self-contained (inline) mode. Missing it is non-fatal — the report can
 // still be generated with AKM_ECHARTS=cdn — but warn loudly so a broken

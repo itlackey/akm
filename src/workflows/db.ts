@@ -228,6 +228,28 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_run_units ADD COLUMN session_id TEXT;
     `,
   },
+  // ── Migration 006 — frozen plan + engine lease (redesign addendum, R1) ──────
+  //
+  // `workflow start` now compiles the workflow into its plan graph ONCE and
+  // freezes it on the run row: `plan_json` holds the canonical plan JSON
+  // (`ir/plan-hash.ts`) and `plan_hash` its sha256, so every subsequent
+  // invocation executes the frozen snapshot with an integrity check — the
+  // source file is never re-read for an in-flight run. Runs created before
+  // this migration have NULL plan_json (legacy) and fall back to
+  // compile-from-asset with a warning.
+  //
+  // `engine_lease_until` / `engine_lease_holder` reserve the run-lease columns
+  // (a second `workflow run` on a leased run refuses up front). TODO(R2):
+  // lease ENFORCEMENT is engine-rework scope — only the columns land now.
+  {
+    id: "006-frozen-plan-and-lease",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN plan_json TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN plan_hash TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN engine_lease_until TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN engine_lease_holder TEXT;
+    `,
+  },
 ];
 
 /**

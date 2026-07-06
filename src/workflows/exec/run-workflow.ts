@@ -14,17 +14,20 @@
  * rejection (SummaryValidationFailure) STOPS the engine and surfaces the
  * corrective feedback — a gate is a gate, even for the engine.
  *
- * The plan graph is compiled fresh from the workflow asset at the start of
- * each invocation (once per `runWorkflowSteps` call, not per step — the run's
- * step snapshot is fixed at start time, so a mid-invocation asset edit must
- * not change the plan under the loop). Durable-row resume: re-invoking a
+ * Frozen plan (redesign addendum, R1): the plan graph is read from the run
+ * row (`plan_json`, persisted by `startWorkflowRun` under migration 006) with
+ * a `plan_hash` integrity check — the workflow asset file is NEVER re-read
+ * for an in-flight run, so a mid-run asset edit cannot change behavior.
+ * Legacy runs (created before migration 006, NULL plan_json) fall back to
+ * compile-from-asset with a warning. Durable-row resume: re-invoking a
  * partially-executed run re-dispatches only work that never completed.
  */
 
 import { UsageError } from "../../core/errors";
+import { warn } from "../../core/warn";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
-import { compileWorkflowPlan } from "../ir/compile";
+import { computePlanHash } from "../ir/plan-hash";
 import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
 import {
   completeWorkflowStep,
@@ -32,7 +35,7 @@ import {
   type SummaryValidationFailure,
   type WorkflowNextResult,
 } from "../runtime/runs";
-import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
+import { compileWorkflowAssetPlan, loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
 
 export interface RunWorkflowOptions {
@@ -45,7 +48,11 @@ export interface RunWorkflowOptions {
   signal?: AbortSignal;
   /** Test seam / backend override for unit dispatch. */
   dispatcher?: UnitDispatcher;
-  /** Test seam: plan loader (defaults to loadWorkflowAsset + compile). */
+  /**
+   * Test seam: plan loader. Default: the run row's FROZEN plan (`plan_json`
+   * + `plan_hash` integrity check, migration 006); legacy runs with NULL
+   * plan_json fall back to loadWorkflowAsset + compile with a warning.
+   */
   loadPlan?: (workflowRef: string) => Promise<WorkflowPlanGraph>;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
@@ -69,10 +76,6 @@ export interface RunWorkflowResult {
 }
 
 export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<RunWorkflowResult> {
-  const loadPlan =
-    options.loadPlan ??
-    (async (workflowRef: string) => compileWorkflowPlan((await loadWorkflowAsset(workflowRef)).document));
-
   let next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params);
   const executed: ExecutedStepReport[] = [];
   let gateRejection: RunWorkflowResult["gateRejection"];
@@ -92,8 +95,11 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   // resumed or re-invoked run must not restart the runaway backstop at zero.
   let unitsDispatched = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id).length);
 
-  // Compile once per workflow ref; the asset snapshot is stable for a run.
-  const plan = await loadPlan(next.run.workflowRef);
+  // One plan per invocation: the test seam receives the workflow ref; the
+  // default reads the run's frozen plan and never touches the asset file.
+  const plan = options.loadPlan
+    ? await options.loadPlan(next.run.workflowRef)
+    : await loadFrozenPlan(next.run.id, next.run.workflowRef);
 
   // Route bookkeeping (### Route): targets a completed router did NOT select
   // are skipped when the spine reaches them; a target ANY router selected is
@@ -224,6 +230,49 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   };
 }
 
+/**
+ * Load the plan a run executes (frozen-plan contract, migration 006):
+ *
+ *   - `plan_json` present → parse it and verify `plan_hash` (sha256 of the
+ *     canonical JSON). A mismatch means the journaled plan was tampered with
+ *     or corrupted — fail loudly, never silently recompile. The workflow
+ *     asset file is NEVER touched on this path.
+ *   - `plan_json` NULL → the run predates frozen plans (created before
+ *     migration 006). Warn and fall back to compiling from the live asset,
+ *     preserving pre-006 behavior for in-flight legacy runs.
+ */
+async function loadFrozenPlan(runId: string, workflowRef: string): Promise<WorkflowPlanGraph> {
+  const row = await withWorkflowRunsRepo((repo) => {
+    const run = repo.getRunById(runId);
+    return run ? { planJson: run.plan_json, planHash: run.plan_hash } : undefined;
+  });
+
+  if (row?.planJson) {
+    let plan: WorkflowPlanGraph;
+    try {
+      plan = JSON.parse(row.planJson) as WorkflowPlanGraph;
+    } catch {
+      throw new UsageError(
+        `Workflow run ${runId} has a corrupt frozen plan (plan_json is not valid JSON). ` +
+          `The journaled plan cannot be executed — start a new run.`,
+      );
+    }
+    if (computePlanHash(plan) !== row.planHash) {
+      throw new UsageError(
+        `Workflow run ${runId} failed the frozen-plan integrity check: plan_json does not match plan_hash. ` +
+          `The journaled plan was modified after the run started — refusing to execute it. Start a new run.`,
+      );
+    }
+    return plan;
+  }
+
+  warn(
+    `Workflow run ${runId} predates frozen plans (no plan_json on the run row); ` +
+      `compiling the plan from the live asset ${workflowRef}. New runs freeze their plan at start.`,
+  );
+  return compileWorkflowAssetPlan(await loadWorkflowAsset(workflowRef));
+}
+
 type RouteDecision = { ok: true; value: string; selected: string; targets: string[] } | { ok: false; error: string };
 
 /**
@@ -232,6 +281,11 @@ type RouteDecision = { ok: true; value: string; selected: string; targets: strin
  * result field), then run params, then prior steps' evidence — own-property
  * checks throughout. Only primitive values route; the comparison is exact
  * string equality against the declared `when:` matches.
+ *
+ * TODO(R1-cutover): this bare-key lookup serves the transitional P1 markdown
+ * grammar only. YAML-program routes carry a `${{ … }}` expression in `input`;
+ * the executor cutover task resolves those through program/expressions
+ * against the journaled step artifacts.
  */
 function evaluateRoute(
   route: NonNullable<IrStepPlan["route"]>,
@@ -283,8 +337,10 @@ function evaluateRoute(
   }
 
   const valueString = typeof value === "string" ? value : String(value);
-  const selected = route.branches.find((b) => b.match === valueString)?.stepId ?? route.defaultStepId;
-  const targets = [...route.branches.map((b) => b.stepId), ...(route.defaultStepId ? [route.defaultStepId] : [])];
+  // Own-property check: `when` is author-controlled, and a value such as
+  // "constructor" must not resolve through Object.prototype.
+  const selected = Object.hasOwn(route.when, valueString) ? route.when[valueString] : route.defaultStepId;
+  const targets = [...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])];
   if (!selected) {
     return {
       ok: false,

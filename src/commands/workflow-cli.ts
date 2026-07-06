@@ -28,9 +28,12 @@ import { resolveAssetPath } from "../sources/resolve";
 import {
   createWorkflowAsset,
   formatWorkflowErrors,
+  getWorkflowProgramTemplate,
   getWorkflowTemplate,
+  validateWorkflowProgramSource,
   validateWorkflowSource,
 } from "../workflows/authoring/authoring";
+import { isWorkflowProgramPath } from "../workflows/program/project";
 import {
   hasWorkflowSubcommand,
   parseWorkflowJsonObject,
@@ -272,27 +275,51 @@ const workflowCreateCommand = defineJsonCommand({
 const workflowTemplateCommand = defineCommand({
   meta: {
     name: "template",
-    description: "Print a valid workflow markdown template",
+    description: "Print a valid workflow template (markdown by default, --yaml for a YAML program)",
   },
-  run() {
-    process.stdout.write(getWorkflowTemplate());
+  args: {
+    yaml: {
+      type: "boolean",
+      description: "Print a minimal valid YAML workflow program instead of the markdown template",
+      default: false,
+    },
+  },
+  run({ args }) {
+    process.stdout.write(args.yaml ? getWorkflowProgramTemplate() : getWorkflowTemplate());
   },
 });
 
 const workflowValidateCommand = defineJsonCommand({
   meta: {
     name: "validate",
-    description: "Validate a workflow markdown file or ref and print any errors",
+    description: "Validate a workflow file or ref (markdown document or YAML program) and print any errors",
   },
   args: {
     target: {
       type: "positional",
-      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md",
+      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md/.yaml",
       required: true,
     },
   },
   async run({ args }) {
     const filePath = await resolveWorkflowFilePath(args.target);
+    // YAML programs (redesign addendum, R1) validate through the program
+    // parser AND compiler so expression/reference errors surface at lint
+    // time; both error lists carry line numbers. Markdown is unchanged.
+    if (isWorkflowProgramPath(filePath)) {
+      const { result } = validateWorkflowProgramSource(filePath);
+      if (!result.ok) {
+        throw new UsageError(formatWorkflowErrors(filePath, result.errors));
+      }
+      output("workflow-validate", {
+        ok: true,
+        path: filePath,
+        format: "program",
+        title: result.program.name,
+        stepCount: result.program.steps.length,
+      });
+      return;
+    }
     const { parse } = validateWorkflowSource(filePath);
     if (parse.ok) {
       output("workflow-validate", {

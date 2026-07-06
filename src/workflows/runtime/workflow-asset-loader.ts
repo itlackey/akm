@@ -13,7 +13,12 @@ import { resolveAssetPath } from "../../sources/resolve";
 import type { WorkflowParameter, WorkflowStepDefinition } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
 import { formatWorkflowErrors } from "../authoring/authoring";
+import { compileWorkflowPlan, compileWorkflowProgram } from "../ir/compile";
+import type { WorkflowPlanGraph } from "../ir/schema";
 import { parseWorkflow } from "../parser";
+import { parseWorkflowProgram } from "../program/parser";
+import { isWorkflowProgramPath, projectProgramStepDefinitions, projectProgramParameters } from "../program/project";
+import type { WorkflowProgram } from "../program/schema";
 import type { WorkflowDocument } from "../schema";
 
 /**
@@ -30,10 +35,41 @@ export type WorkflowAsset = {
   /**
    * The full parsed document, retained so the run engine can compile the
    * orchestration IR (`workflows/ir/compile.ts`) — the step projection above
-   * intentionally drops orchestration subsections.
+   * intentionally drops orchestration subsections. Present for MARKDOWN
+   * workflows only; YAML programs carry `program` instead.
    */
-  document: WorkflowDocument;
+  document?: WorkflowDocument;
+  /**
+   * Parsed YAML workflow *program* (redesign addendum, R1). Present when the
+   * asset is a YAML orchestration program under `workflows/`; undefined for
+   * markdown workflows. `startWorkflowRun` compiles it via
+   * `compileWorkflowProgram` (falling back to `compileWorkflowPlan(document)`)
+   * when freezing the run's plan — see {@link compileWorkflowAssetPlan}.
+   */
+  program?: WorkflowProgram;
 };
+
+/**
+ * Compile a loaded workflow asset into the plan graph that gets frozen on the
+ * run row. YAML programs compile via `compileWorkflowProgram` with full
+ * expression validation; markdown documents compile via `compileWorkflowPlan`
+ * (linear workflows — the stable contract — produce the same linear plan as
+ * today). Exactly one of `program` / `document` is set by this loader.
+ */
+export function compileWorkflowAssetPlan(asset: WorkflowAsset): WorkflowPlanGraph {
+  if (asset.program) {
+    const compiled = compileWorkflowProgram(asset.program);
+    if (!compiled.ok) {
+      throw new UsageError(formatWorkflowErrors(asset.path, compiled.errors));
+    }
+    return compiled.plan;
+  }
+  if (asset.document) {
+    return compileWorkflowPlan(asset.document);
+  }
+  // Unreachable for assets produced by loadWorkflowAsset; guards hand-built ones.
+  throw new UsageError(`Workflow asset ${asset.ref} carries neither a parsed document nor a program to compile.`);
+}
 
 /**
  * Resolve a `workflow:<name>` ref to a fully-projected {@link WorkflowAsset}.
@@ -72,6 +108,13 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   const resolvedSourcePath = sourcePath ?? config.stashDir ?? assetPath;
   const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
 
+  // Format detection by extension: `.yaml`/`.yml` is a YAML workflow program
+  // (redesign addendum, R1); everything else is the markdown document format.
+  if (isWorkflowProgramPath(assetPath)) {
+    const program = loadWorkflowProgramFromDisk(assetPath);
+    return projectProgramAsset(program, fullRef, assetPath, resolvedSourcePath);
+  }
+
   const cached = readWorkflowDocumentFromIndex(resolvedSourcePath, fullRef);
   const document = cached ?? loadWorkflowDocumentFromDisk(assetPath);
   return projectAsset(document, fullRef, assetPath, resolvedSourcePath);
@@ -98,6 +141,15 @@ export function resolveWorkflowEntryId(sourcePath: string, ref: string): number 
       .get(entryKey) as { id: number } | undefined;
     return row?.id ?? null;
   });
+}
+
+function loadWorkflowProgramFromDisk(assetPath: string): WorkflowProgram {
+  const content = fs.readFileSync(assetPath, "utf8");
+  const result = parseWorkflowProgram(content, { path: assetPath });
+  if (!result.ok) {
+    throw new UsageError(formatWorkflowErrors(assetPath, result.errors));
+  }
+  return result.program;
 }
 
 function loadWorkflowDocumentFromDisk(assetPath: string): WorkflowDocument {
@@ -155,5 +207,28 @@ function projectAsset(doc: WorkflowDocument, ref: string, assetPath: string, sou
       sequenceIndex: s.sequenceIndex,
     })),
     document: doc,
+  };
+}
+
+/**
+ * Project a parsed YAML program into the run-repository asset shape. Step
+ * instructions carry the RAW `${{ … }}` templates — resolution happens in
+ * the engine against the frozen plan, never here.
+ */
+function projectProgramAsset(
+  program: WorkflowProgram,
+  ref: string,
+  assetPath: string,
+  sourcePath: string,
+): WorkflowAsset {
+  const parameters = projectProgramParameters(program);
+  return {
+    ref,
+    path: assetPath,
+    sourcePath,
+    title: program.name,
+    ...(parameters ? { parameters } : {}),
+    steps: projectProgramStepDefinitions(program),
+    program,
   };
 }

@@ -133,10 +133,15 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const dispatched = ctx.unitsDispatched ?? 0;
   const root = plan.root;
 
-  if (root.kind !== "agent" && root.kind !== "map") {
+  // TODO(R1-cutover): YAML route-only steps carry no execution subgraph —
+  // they dispatch no units and only decide the spine's path. The executor
+  // cutover task teaches the engine loop to evaluate those routes without
+  // calling this function; until then, reaching here without a root is an
+  // error, never a silent no-op.
+  if (!root) {
     return failedStep(
       dispatched,
-      `Step "${plan.stepId}" uses IR node kind "${root.kind}", which the native executor does not support yet.`,
+      `Step "${plan.stepId}" has no execution subgraph (a route-only step); the native executor cannot dispatch it yet.`,
     );
   }
 
@@ -230,6 +235,10 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
       },
   );
 
+  // TODO(R2): the IR v2 failure policy (`template.onError`, `template.retry`)
+  // is carried in the plan but not enforced here yet — failure policy and
+  // bounded retry land with the engine rework. Today every unit failure fails
+  // the step (the fail-fast default's behavior).
   const failed = units.filter((u) => !u.ok);
   const evidence = buildEvidence(units, reducer);
   const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";

@@ -13,6 +13,8 @@
 import { defaultRendererRegistry } from "../../core/asset/asset-registry";
 import { SCRIPT_EXTENSIONS } from "../../core/asset/asset-spec";
 import { looksLikeWorkflow } from "../../workflows/parser";
+import { looksLikeWorkflowProgram } from "../../workflows/program/parser";
+import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";
 import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
 import { registerMatcher } from "./file-context";
 
@@ -220,6 +222,32 @@ function classifyBySmartMd(ctx: FileContext): MatchFact | null {
   return { type: "knowledge", specificity: 5 };
 }
 
+/** YAML workflow *programs* (redesign addendum, R1): `.yaml`/`.yml` files. */
+const WORKFLOW_PROGRAM_EXTENSIONS = new Set([".yaml", ".yml"]);
+
+/**
+ * Classify YAML workflow programs. Two claims, mirroring the markdown rules:
+ *
+ *   - any `.yaml`/`.yml` under a `workflows/` dir (the directory rule —
+ *     specificity 15 when `workflows` is the immediate parent, 10 for a
+ *     deeper ancestor, same ladder as `matchDirectoryHint`);
+ *   - anywhere else, a content probe via `looksLikeWorkflowProgram`
+ *     (`version: 1` + `steps:` at column 0) at specificity 19, the same
+ *     level as `classifyBySmartMd`'s `looksLikeWorkflow` claim.
+ *
+ * The fact does NOT go through `toMatchResult` — the workflow TYPE maps to
+ * the markdown renderer by default, so this classifier names the
+ * `workflow-program-yaml` renderer on its result directly.
+ */
+function classifyByWorkflowProgram(ctx: FileContext): MatchFact | null {
+  if (!WORKFLOW_PROGRAM_EXTENSIONS.has(ctx.ext)) return null;
+  if (isTypedDirDocFile(ctx.fileName)) return null;
+  if (ctx.parentDir === "workflows") return { type: "workflow", specificity: 15 };
+  if (ctx.ancestorDirs.includes("workflows")) return { type: "workflow", specificity: 10 };
+  if (looksLikeWorkflowProgram(ctx.content())) return { type: "workflow", specificity: 19 };
+  return null;
+}
+
 function classifyByWiki(ctx: FileContext): MatchFact | null {
   if (ctx.ext !== ".md") return null;
   const idx = ctx.ancestorDirs.indexOf("wikis");
@@ -269,12 +297,20 @@ export function wikiMatcher(ctx: FileContext): MatchResult | null {
   return toMatchResult(ctx, classifyByWiki);
 }
 
+export function workflowProgramMatcher(ctx: FileContext): MatchResult | null {
+  const fact = classifyByWorkflowProgram(ctx);
+  if (!fact) return null;
+  // Named directly (not via rendererNameFor) — see classifyByWorkflowProgram.
+  return { type: fact.type, specificity: fact.specificity, renderer: WORKFLOW_PROGRAM_RENDERER_NAME };
+}
+
 const builtinMatchers: AssetMatcher[] = [
   extensionMatcher,
   directoryMatcher,
   parentDirHintMatcher,
   smartMdMatcher,
   wikiMatcher,
+  workflowProgramMatcher,
 ];
 
 export function registerBuiltinMatchers(): void {

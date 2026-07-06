@@ -95,6 +95,11 @@ describe("WorkflowRunsRepository reads", () => {
       agent_harness: "claude-code",
       agent_session_id: "sess-1",
       checkin_armed_at: "2026-01-02T00:00:00.000Z",
+      // Frozen plan + engine lease (migration 006): NULL on seeded legacy rows.
+      plan_json: null,
+      plan_hash: null,
+      engine_lease_until: null,
+      engine_lease_holder: null,
     });
   });
 

@@ -25,6 +25,7 @@ const AGENT_IDENTITY_MIGRATION_ID = "002-add-agent-identity";
 const CHECKIN_SUMMARY_MIGRATION_ID = "003-checkin-and-step-summary";
 const RUN_UNITS_MIGRATION_ID = "004-workflow-run-units";
 const UNIT_SESSION_MIGRATION_ID = "005-unit-session-id";
+const FROZEN_PLAN_MIGRATION_ID = "006-frozen-plan-and-lease";
 
 /** Every migration in application order — keep in sync with db.ts MIGRATIONS. */
 const ALL_MIGRATION_IDS = [
@@ -33,6 +34,7 @@ const ALL_MIGRATION_IDS = [
   CHECKIN_SUMMARY_MIGRATION_ID,
   RUN_UNITS_MIGRATION_ID,
   UNIT_SESSION_MIGRATION_ID,
+  FROZEN_PLAN_MIGRATION_ID,
 ];
 
 let tmpDir = "";
@@ -87,6 +89,12 @@ describe("workflow.db migrations", () => {
 
       // harness-native unit session id column was created (migration 005, P2)
       expect(hasColumn(db, "workflow_run_units", "session_id")).toBe(true);
+
+      // frozen plan + engine lease columns were created (migration 006, R1)
+      expect(hasColumn(db, "workflow_runs", "plan_json")).toBe(true);
+      expect(hasColumn(db, "workflow_runs", "plan_hash")).toBe(true);
+      expect(hasColumn(db, "workflow_runs", "engine_lease_until")).toBe(true);
+      expect(hasColumn(db, "workflow_runs", "engine_lease_holder")).toBe(true);
 
       // All migrations recorded, in order
       const applied = listAppliedMigrations(db);

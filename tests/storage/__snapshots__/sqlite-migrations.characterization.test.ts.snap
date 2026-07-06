@@ -434,6 +434,7 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
     "003-checkin-and-step-summary",
     "004-workflow-run-units",
     "005-unit-session-id",
+    "006-frozen-plan-and-lease",
   ],
   "schema": [
     {
@@ -548,7 +549,7 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
       created_at        TEXT NOT NULL,
       updated_at        TEXT NOT NULL,
       completed_at      TEXT
-    , scope_key TEXT, agent_harness TEXT, agent_session_id TEXT, checkin_armed_at TEXT)"
+    , scope_key TEXT, agent_harness TEXT, agent_session_id TEXT, checkin_armed_at TEXT, plan_json TEXT, plan_hash TEXT, engine_lease_until TEXT, engine_lease_holder TEXT)"
 ,
       "type": "table",
     },

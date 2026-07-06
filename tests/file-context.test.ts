@@ -558,9 +558,9 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 14 built-in renderers", async () => {
+  test("getAllRenderers() returns all 15 built-in renderers", async () => {
     const all = await getAllRenderers();
-    expect(all).toHaveLength(14);
+    expect(all).toHaveLength(15);
 
     const names = all.map((r) => r.name).sort();
     expect(names).toEqual([
@@ -578,6 +578,7 @@ describe("Renderer", () => {
       "task-yaml",
       "wiki-md",
       "workflow-md",
+      "workflow-program-yaml", // redesign addendum R1
     ]);
   });
 

@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
 import path from "node:path";
 import { buildWorkflowAction } from "../../output/renderers";
 import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
@@ -31,6 +32,39 @@ export interface AssetSpec {
    */
   actionBuilder?: (ref: string) => string;
 }
+
+/**
+ * Recognized workflow asset extensions, in resolution-priority order.
+ * `.md` (classic linear markdown workflows — the stable contract) stays
+ * FIRST for back-compat; `.yaml`/`.yml` hold YAML workflow *programs*
+ * (redesign addendum, R1). `workflow:<name>` refs resolve against this list.
+ */
+export const WORKFLOW_EXTENSIONS = [".md", ".yaml", ".yml"] as const;
+
+const workflowSpec: Omit<AssetSpec, "stashDir" | "rendererName" | "actionBuilder"> = {
+  isRelevantFile: (fileName) => (WORKFLOW_EXTENSIONS as readonly string[]).includes(path.extname(fileName).toLowerCase()),
+  toCanonicalName: (typeRoot, filePath) => {
+    const rel = toPosix(path.relative(typeRoot, filePath));
+    for (const ext of WORKFLOW_EXTENSIONS) {
+      if (rel.toLowerCase().endsWith(ext)) return rel.slice(0, -ext.length);
+    }
+    return rel;
+  },
+  toAssetPath: (typeRoot, name) => {
+    // Explicit extension wins (accepts refs like "release/ship.yaml").
+    const lower = name.toLowerCase();
+    for (const ext of WORKFLOW_EXTENSIONS) {
+      if (lower.endsWith(ext)) return path.join(typeRoot, name);
+    }
+    // Probe in priority order — `.md` first for back-compat — and fall back
+    // to the markdown path so error messages keep naming the canonical file.
+    for (const ext of WORKFLOW_EXTENSIONS) {
+      const candidate = path.join(typeRoot, `${name}${ext}`);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return path.join(typeRoot, `${name}.md`);
+  },
+};
 
 const markdownSpec: Omit<AssetSpec, "stashDir"> = {
   isRelevantFile: (fileName) => path.extname(fileName).toLowerCase() === ".md",
@@ -88,7 +122,10 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   knowledge: { stashDir: "knowledge", ...markdownSpec },
   workflow: {
     stashDir: "workflows",
-    ...markdownSpec,
+    ...workflowSpec,
+    // Type-level renderer for markdown workflows; YAML programs are claimed by
+    // the dedicated `workflowProgramMatcher`, which names the
+    // "workflow-program-yaml" renderer directly on its MatchResult.
     rendererName: "workflow-md",
     actionBuilder: (ref) => buildWorkflowAction(ref),
   },

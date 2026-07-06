@@ -9,8 +9,12 @@ import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
+import { compileWorkflowProgram } from "../ir/compile";
 import { parseWorkflow } from "../parser";
+import { parseWorkflowProgram } from "../program/parser";
+import type { WorkflowProgram } from "../program/schema";
 import type { WorkflowError } from "../schema";
+import workflowProgramTemplate from "./workflow-program-template.yaml" with { type: "text" };
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
   title: "Example Workflow",
@@ -20,6 +24,16 @@ const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
 
 export function getWorkflowTemplate(): string {
   return DEFAULT_WORKFLOW_TEMPLATE;
+}
+
+/**
+ * Minimal valid YAML workflow *program* (redesign addendum, R1), printed by
+ * `akm workflow template --yaml`. Kept as an external asset file per the repo
+ * convention (see `workflow-program-template.yaml` next to this module);
+ * `tests/workflows/program-assets.test.ts` pins that it parses AND compiles.
+ */
+export function getWorkflowProgramTemplate(): string {
+  return workflowProgramTemplate;
 }
 
 export function buildWorkflowTemplate(name?: string): string {
@@ -169,6 +183,34 @@ export function validateWorkflowSource(target: string): {
   }
   const content = fs.readFileSync(resolved, "utf8");
   return { path: target, parse: parseWorkflow(content, { path: target }) };
+}
+
+/**
+ * Validate a YAML workflow *program* by filesystem path: parse via
+ * `parseWorkflowProgram`, then — only when the parse is clean — compile via
+ * `compileWorkflowProgram` so expression/reference errors surface too. Both
+ * error lists carry line numbers and are returned in the same
+ * `WorkflowError[]` shape, ready for `formatWorkflowErrors`. Throws
+ * `UsageError` only when the target cannot be located on disk.
+ */
+export function validateWorkflowProgramSource(target: string): {
+  path: string;
+  result: { ok: true; program: WorkflowProgram } | { ok: false; errors: WorkflowError[] };
+} {
+  const resolved = path.resolve(target);
+  if (!fs.existsSync(resolved)) {
+    throw new UsageError(`Workflow file not found: "${target}".`);
+  }
+  const content = fs.readFileSync(resolved, "utf8");
+  const parse = parseWorkflowProgram(content, { path: target });
+  if (!parse.ok) {
+    return { path: target, result: { ok: false, errors: parse.errors } };
+  }
+  const compiled = compileWorkflowProgram(parse.program);
+  if (!compiled.ok) {
+    return { path: target, result: { ok: false, errors: compiled.errors } };
+  }
+  return { path: target, result: { ok: true, program: parse.program } };
 }
 
 function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {

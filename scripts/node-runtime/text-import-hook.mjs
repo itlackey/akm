@@ -16,7 +16,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const TEXT_EXTENSIONS = new Set([".md", ".xml", ".txt", ".sql"]);
+const TEXT_EXTENSIONS = new Set([".md", ".xml", ".txt", ".sql", ".yaml", ".yml"]);
 
 function isTextImport(url, importAttributes) {
   if (importAttributes && importAttributes.type === "text") return true;
