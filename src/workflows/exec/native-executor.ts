@@ -26,7 +26,7 @@ import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { runStructured } from "../../core/structured";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
-import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
+import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import type { IrAgentNode, IrStepPlan } from "../ir/schema";
 import { scheduleUnits, UnitCapExceededError } from "./scheduler";
 import { enqueueUnitWrite } from "./unit-writer";
@@ -163,6 +163,15 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   }
 
   const dispatcher = ctx.dispatcher ?? defaultUnitDispatcher;
+
+  // Durable-row resume: a unit whose previous attempt completed with the
+  // SAME input (prompt/runner/model/schema hash) is reused, not re-dispatched
+  // — a crash-resume must never double-issue side-effecting work.
+  const existingUnits = new Map<string, WorkflowRunUnitRow>();
+  for (const row of await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(ctx.runId, plan.stepId))) {
+    existingUnits.set(row.unit_id, row);
+  }
+
   let outcomes: Array<UnitOutcome | undefined>;
   try {
     outcomes = await scheduleUnits(
@@ -177,6 +186,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
           env,
           ctx,
           dispatcher,
+          existingUnits,
         }),
       {
         concurrency: root.kind === "map" ? root.concurrency : 1,
@@ -228,6 +238,8 @@ interface RunUnitInput {
   env?: Record<string, string>;
   ctx: StepExecutionContext;
   dispatcher: UnitDispatcher;
+  /** Prior unit rows for this step, for durable-row reuse. */
+  existingUnits?: Map<string, WorkflowRunUnitRow>;
 }
 
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
@@ -261,6 +273,14 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
       }),
     )
     .digest("hex");
+
+  // Durable-row reuse: same unit, same input, already completed → return the
+  // journaled result without touching the row, dispatching, or re-emitting
+  // events. Failed/running/stale-input rows fall through and re-dispatch.
+  const prior = input.existingUnits?.get(unitId);
+  if (prior && prior.status === "completed" && prior.input_hash === inputHash) {
+    return reuseCompletedUnit(unitId, prior, template.schema !== undefined);
+  }
 
   await enqueueUnitWrite(async () => {
     await withWorkflowRunsRepo((repo) =>
@@ -408,16 +428,21 @@ interface BuildPromptInput {
 
 function buildUnitPrompt(input: BuildPromptInput): string {
   const { plan, template, item, index, isFanOut, ctx, unitId } = input;
+  // Function replacements throughout: a string replacement would interpret
+  // GetSubstitution patterns ($&, $$, $', $`) inside item/param VALUES and
+  // silently corrupt the prompt (e.g. an item named "a$&b.ts").
   const preamble = unitPreambleTemplate
-    .replaceAll("{{RUN_ID}}", ctx.runId)
-    .replaceAll("{{STEP_ID}}", plan.stepId)
-    .replaceAll("{{UNIT_ID}}", unitId)
-    .replaceAll("{{PARAMS_JSON}}", safeJson(ctx.params));
+    .replaceAll("{{RUN_ID}}", () => ctx.runId)
+    .replaceAll("{{STEP_ID}}", () => plan.stepId)
+    .replaceAll("{{UNIT_ID}}", () => unitId)
+    .replaceAll("{{PARAMS_JSON}}", () => safeJson(ctx.params));
 
   let instructions = template.instructions;
   if (isFanOut) {
     const itemText = typeof item === "string" ? item : safeJson(item);
-    instructions = instructions.replaceAll("{{item}}", itemText).replaceAll("{{item_index}}", String(index));
+    instructions = instructions
+      .replaceAll("{{item}}", () => itemText)
+      .replaceAll("{{item_index}}", () => String(index));
   }
   instructions = instructions.replace(/\{\{params\.([A-Za-z0-9_.-]+)\}\}/g, (_, name: string) => {
     const value = ctx.params[name];
@@ -528,10 +553,37 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
 
   const resolved = resolveUnitRunner(request, config);
 
+  // `### Env` bindings can only reach a spawned child process. The opencode
+  // SDK server is process-wide (no per-call env — plan open decision 1) and
+  // the llm runner has no child at all. Failing loudly beats an audit event
+  // that claims an injection which never reached the unit.
+  if (request.env && Object.keys(request.env).length > 0 && resolved.kind !== "agent") {
+    return {
+      ok: false,
+      text: "",
+      failureReason: "env_unsupported",
+      error:
+        `unit "${request.unitId}" declares "### Env" bindings, which currently require the agent (CLI) runner — ` +
+        `the "${resolved.kind}" runner cannot inject a per-unit child environment.`,
+    };
+  }
+
   if (resolved.kind === "llm") {
     const { chatCompletion } = await import("../../llm/client.js");
+    const { resolveModel } = await import("../../integrations/agent/model-aliases.js");
+    const connection = request.model
+      ? { ...resolved.connection, model: resolveModel(request.model, "llm", undefined, config.modelAliases) }
+      : resolved.connection;
     try {
-      const text = await chatCompletion(resolved.connection, [{ role: "user", content: prompt }]);
+      const text = await chatCompletion(connection, [{ role: "user", content: prompt }], {
+        // null = author declared "### Timeout: none" — cap at the max signed
+        // 32-bit delay (setTimeout's ceiling, ~24.8 days ≈ unbounded here).
+        timeoutMs: request.timeoutMs === null ? 2 ** 31 - 1 : request.timeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+        // Native structured output where the connection supports it; the
+        // executor's subset validator still runs downstream either way.
+        ...(request.schema ? { responseSchema: request.schema } : {}),
+      });
       return { ok: true, text };
     } catch (err) {
       return { ok: false, text: "", failureReason: "llm_error", error: message(err) };
@@ -635,6 +687,30 @@ function requireDefaultLlm(
 
 function unitIdFor(template: IrAgentNode, index: number, isFanOut: boolean): string {
   return isFanOut ? `${template.id}[${index}]` : template.id;
+}
+
+/** Rehydrate a journaled completed unit row into a UnitOutcome (durable-row reuse). */
+function reuseCompletedUnit(unitId: string, row: WorkflowRunUnitRow, hasSchema: boolean): UnitOutcome {
+  let parsed: unknown;
+  try {
+    parsed = row.result_json === null ? undefined : JSON.parse(row.result_json);
+  } catch {
+    parsed = undefined;
+  }
+  return {
+    unitId,
+    ok: true,
+    // Text units journal their output as a JSON string; schema units journal
+    // the validated structure.
+    ...(hasSchema
+      ? { result: parsed }
+      : typeof parsed === "string"
+        ? { text: parsed }
+        : parsed !== undefined
+          ? { result: parsed }
+          : {}),
+    ...(row.tokens !== null ? { tokens: row.tokens } : {}),
+  };
 }
 
 function failedStep(dispatched: number, reason: string): StepExecutionResult {

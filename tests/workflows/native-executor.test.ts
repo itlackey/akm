@@ -112,6 +112,29 @@ describe("executeStepPlan — fan-out", () => {
     expect(result.units).toHaveLength(3);
     expect(prompts.some((p) => p.includes("Review a.ts carefully."))).toBe(true);
     expect(prompts.every((p) => p.includes(RUN_ID))).toBe(true); // preamble carries the run id
+  });
+
+  test("items containing $-substitution patterns interpolate verbatim (peer review #1)", async () => {
+    const items = ["src/a$&b.ts", "Makefile uses $$(CC)", "printf $'x'"];
+    seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
+    const prompts: string[] = [];
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: items, note: "cost is $& today" },
+      evidence: {},
+      dispatcher: async (req) => {
+        prompts.push(req.prompt);
+        return { ok: true, text: "ok" };
+      },
+    });
+    expect(prompts.some((p) => p.includes("Review src/a$&b.ts carefully."))).toBe(true);
+    expect(prompts.some((p) => p.includes("Review Makefile uses $$(CC) carefully."))).toBe(true);
+    expect(prompts.some((p) => p.includes("Review printf $'x' carefully."))).toBe(true);
+    // Preamble params JSON must also survive $-patterns un-mangled.
+    expect(prompts.every((p) => p.includes("cost is $& today"))).toBe(true);
+    expect(prompts.every((p) => !p.includes("{{item}}") && !p.includes("{{PARAMS_JSON}}"))).toBe(true);
 
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "review");
@@ -281,6 +304,76 @@ describe("executeStepPlan — vote reducer", () => {
   });
 });
 
+describe("executeStepPlan — durable-row reuse (peer review)", () => {
+  test("re-executing a step reuses completed units with the same input hash instead of re-dispatching", async () => {
+    seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const ctx = {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b"] },
+      evidence: {},
+    };
+
+    let dispatches = 0;
+    const first = await executeStepPlan(stepPlan, {
+      ...ctx,
+      dispatcher: async (req) => {
+        dispatches++;
+        return { ok: true, text: `run1 ${req.unitId}`, usage: { outputTokens: 7 } };
+      },
+    });
+    expect(first.ok).toBe(true);
+    expect(dispatches).toBe(2);
+
+    const second = await executeStepPlan(stepPlan, {
+      ...ctx,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "run2 — must not happen" };
+      },
+    });
+    expect(dispatches).toBe(2); // no re-dispatch
+    expect(second.ok).toBe(true);
+    expect(second.units.map((u) => u.text)).toEqual(["run1 review.unit[0]", "run1 review.unit[1]"]);
+    expect(second.units.every((u) => u.tokens === 7)).toBe(true);
+
+    // Journaled rows keep their original results (no OR REPLACE clobber).
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "review");
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.status === "completed")).toBe(true);
+      expect(rows.every((r) => (r.result_json ?? "").includes("run1"))).toBe(true);
+    });
+  });
+
+  test("a changed input hash re-dispatches instead of reusing", async () => {
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const dispatcher = async () => {
+      dispatches++;
+      return { ok: true, text: "done" };
+    };
+    await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher,
+    });
+    // Same unit id (index 0) but a different item → different prompt hash.
+    await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a-changed"] },
+      evidence: {},
+      dispatcher,
+    });
+    expect(dispatches).toBe(2);
+  });
+});
+
 describe("runWorkflowSteps — engine loop over the gated spine", () => {
   const TWO_STEP_WF = `# Workflow: Demo
 
@@ -347,6 +440,95 @@ Do second with {{params.flavor}}.
     expect(result.done).toBeUndefined();
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("failed");
+  });
+
+  test("refuses a non-active run BEFORE dispatching any unit (peer review #2)", async () => {
+    seedRun({ steps: [{ id: "first", title: "First" }] });
+    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    try {
+      db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
+    } finally {
+      closeWorkflowDatabase(db);
+    }
+    let dispatches = 0;
+    await expect(
+      runWorkflowSteps({
+        target: RUN_ID,
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true, text: "must not run" };
+        },
+        loadPlan: async () => plan(TWO_STEP_WF),
+      }),
+    ).rejects.toThrow(/failed and cannot be executed/);
+    expect(dispatches).toBe(0);
+  });
+
+  test("asserts Depends On edges before dispatching (peer review #6)", async () => {
+    seedRun({
+      steps: [
+        { id: "first", title: "First" },
+        { id: "second", title: "Second" },
+      ],
+    });
+    const OUT_OF_ORDER = `# Workflow: D
+
+## Step: First
+Step ID: first
+
+### Depends On
+- second
+
+### Instructions
+x
+
+## Step: Second
+Step ID: second
+
+### Instructions
+y
+`;
+    let dispatches = 0;
+    await expect(
+      runWorkflowSteps({
+        target: RUN_ID,
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true, text: "must not run" };
+        },
+        loadPlan: async () => plan(OUT_OF_ORDER),
+      }),
+    ).rejects.toThrow(/depends on step "second"/);
+    expect(dispatches).toBe(0);
+  });
+
+  test("the lifetime unit cap is seeded from the run's journal (peer review #4)", async () => {
+    seedRun({ steps: [{ id: "first", title: "First" }] });
+    const { LIFETIME_UNIT_CAP } = await import("../../src/workflows/exec/scheduler");
+    await withWorkflowRunsRepo((repo) => {
+      for (let i = 0; i < LIFETIME_UNIT_CAP; i++) {
+        repo.insertUnit({
+          runId: RUN_ID,
+          unitId: `prior[${i}]`,
+          stepId: "warm-up",
+          nodeId: "warm-up.unit",
+          parentUnitId: null,
+          phase: null,
+          runner: null,
+          model: null,
+          inputHash: null,
+          startedAt: new Date().toISOString(),
+        });
+      }
+    });
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => ({ ok: true, text: "should be blocked by the cap" }),
+      loadPlan: async () => plan(TWO_STEP_WF),
+    });
+    expect(result.executed[0].ok).toBe(false);
+    expect(result.executed[0].summary).toContain("lifetime unit cap");
+    expect(result.run.status).toBe("failed");
   });
 
   test("maxSteps bounds the loop", async () => {

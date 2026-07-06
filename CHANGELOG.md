@@ -15,8 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and be executed engine-driven with the new **`akm workflow run`**: akm
   compiles the markdown into a backend-agnostic Workflow Plan Graph IR
   (`src/workflows/ir/`), fans each step's units out through a
-  semaphore-bounded scheduler (cap `min(16, cores − 2)`, lifetime unit cap,
-  per-unit timeout default 10 m), validates `### Schema` output on every
+  semaphore-bounded scheduler (concurrency defaults to 1 per the
+  local-model LLM-defaults rule, capped at `min(16, cores − 2)`; per-run
+  lifetime unit cap seeded from the unit journal; per-unit timeout default
+  10 m enforced on every runner including llm), validates `### Schema`
+  output on every
   runner via a `runStructured` retry-with-feedback loop, resolves `### Env`
   bindings through the existing `akm env run` machinery (secret tokens,
   dangerous-key policy, keys-only audit events), and records every unit in

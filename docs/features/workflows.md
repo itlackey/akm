@@ -151,7 +151,7 @@ gates. Steps that declare nothing behave exactly as before, and the manual
 Step ID: review
 
 ### Runner
-sdk                  # llm | agent | sdk | inherit (default: inherit)
+agent                # llm | agent | sdk | inherit (default: inherit)
 profile: reviewer    # optional profile override
 
 ### Model
@@ -162,7 +162,7 @@ deep                 # model alias/tier or exact id, resolved per harness
 
 ### Fan-out
 over: changed_files  # run param or a prior step's evidence key (array)
-concurrency: 8       # capped by the engine limit min(16, cores − 2)
+concurrency: 8       # default 1 (local-model-safe); capped at min(16, cores − 2)
 reducer: collect     # collect (default) | vote (majority of identical results)
 
 ### Instructions
@@ -175,6 +175,7 @@ Review {{item}} for correctness bugs. ({{params.<name>}} also interpolates.)
 
 ### Env
 - env:build-vars     # injected via the `akm env run` machinery (secrets, audit)
+                     # requires the agent (CLI) runner — sdk/llm units fail loudly
 
 ### Completion Criteria
 - every changed file has a verdict
@@ -182,10 +183,12 @@ Review {{item}} for correctness bugs. ({{params.<name>}} also interpolates.)
 
 Unit output declared with `### Schema` is validated on **every** runner; a
 validation miss re-dispatches once with corrective feedback before the unit is
-recorded as failed. `### Depends On` declares non-linear ordering edges
-(validated against step ids). A failing unit fails its step, which fails the
-run — `akm workflow resume` re-opens it and `run` re-dispatches only
-incomplete work (durable-row resume).
+recorded as failed. `### Depends On` declares ordering edges validated against
+step ids and asserted before each step dispatches — execution itself remains
+sequential in step order for now. A failing unit fails its step, which fails
+the run — `akm workflow resume` re-opens it and `run` re-dispatches only
+incomplete units: a unit whose previous attempt completed with the same input
+hash is reused from the journal, never re-run (durable-row resume).
 
 **Model tiers.** Reference semantic aliases instead of exact model ids so a
 workflow stays harness-agnostic. Recommended vocabulary (convention, not

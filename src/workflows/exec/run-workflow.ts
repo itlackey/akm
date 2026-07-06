@@ -21,6 +21,7 @@
 
 import { UsageError } from "../../core/errors";
 import type { WorkflowRunSummary } from "../../sources/types";
+import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { compileWorkflowPlan } from "../ir/compile";
 import type { WorkflowPlanGraph } from "../ir/schema";
 import {
@@ -73,12 +74,26 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   let next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params);
   const executed: ExecutedStepReport[] = [];
   let gateRejection: RunWorkflowResult["gateRejection"];
-  let unitsDispatched = 0;
   const maxSteps = options.maxSteps ?? Number.POSITIVE_INFINITY;
+
+  // Refuse non-active runs BEFORE any dispatch — completeWorkflowStep would
+  // reject the completion anyway, but only after the units already ran (and
+  // cost money). Mirror its preflight up front.
+  if (!next.done && next.run.status !== "active") {
+    throw new UsageError(
+      `Workflow run ${next.run.id} is ${next.run.status} and cannot be executed. ` +
+        `Use \`akm workflow resume ${next.run.id}\` to reopen it first.`,
+    );
+  }
+
+  // Seed the lifetime unit cap from the journal so it is truly per-RUN: a
+  // resumed or re-invoked run must not restart the runaway backstop at zero.
+  let unitsDispatched = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id).length);
+
   // Compile once per workflow ref; the asset snapshot is stable for a run.
   const plan = await loadPlan(next.run.workflowRef);
 
-  while (!next.done && next.step && executed.length < maxSteps) {
+  while (!next.done && next.step && next.run.status === "active" && executed.length < maxSteps) {
     if (options.signal?.aborted) break;
     const step = next.step;
     const stepPlan = plan.steps.find((s) => s.stepId === step.id);
@@ -87,6 +102,20 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
         `Step "${step.id}" of run ${next.run.id} is not present in the current workflow asset (${next.run.workflowRef}). ` +
           `The source file changed since the run started — advance this step manually with \`akm workflow complete\`.`,
       );
+    }
+
+    // `### Depends On` is a declared ordering contract: every dependency must
+    // already be resolved before this step dispatches. Execution is sequential
+    // (spine order), so a violation means the author ordered steps
+    // inconsistently with their declared edges — fail fast, before spending.
+    for (const dep of stepPlan.dependsOn ?? []) {
+      const depState = next.workflow.steps.find((s) => s.id === dep);
+      if (!depState || (depState.status !== "completed" && depState.status !== "skipped")) {
+        throw new UsageError(
+          `Step "${step.id}" depends on step "${dep}", which is ${depState?.status ?? "missing"}. ` +
+            `Reorder the workflow so dependencies come first (execution is sequential in step order).`,
+        );
+      }
     }
 
     const evidence: Record<string, Record<string, unknown> | undefined> = {};

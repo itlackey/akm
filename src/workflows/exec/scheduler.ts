@@ -36,7 +36,13 @@ export class UnitCapExceededError extends Error {
 }
 
 export interface ScheduleOptions {
-  /** Requested per-step concurrency; clamped to {@link maxUnitConcurrency}. */
+  /**
+   * Requested per-step concurrency; clamped to {@link maxUnitConcurrency}.
+   * DEFAULTS TO 1 (not the cap): the repo's LLM-defaults rule is "works
+   * correctly for the lowest common denominator — a slow local model on a
+   * single-threaded server" (AGENTS.md). A fan-out that wants parallelism
+   * declares `concurrency:` explicitly; the engine cap only ever clamps.
+   */
   concurrency?: number;
   signal?: AbortSignal;
   /** Units already dispatched in this run, counted toward the lifetime cap. */
@@ -64,6 +70,6 @@ export async function scheduleUnits<T, R>(
     throw new UnitCapExceededError(LIFETIME_UNIT_CAP);
   }
   const cap = options.maxConcurrency ?? maxUnitConcurrency();
-  const concurrency = Math.max(1, Math.min(options.concurrency ?? cap, cap));
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 1, cap));
   return concurrentMap(items, dispatch, concurrency, { signal: options.signal });
 }
