@@ -212,6 +212,19 @@ function resolveProcessRunnerWithLlmFallback(
   return null;
 }
 
+/**
+ * Build the tool-less HTTP runner from `defaults.llm`, or `null` when unset.
+ * The unattended-improve reflect pin (meta-review 07 Chain-G / P1.3) uses this
+ * as the mandatory downgrade target when config would otherwise hand reflect a
+ * tool-capable (agent/SDK) runner in a scheduled run. Throws ConfigError when
+ * `defaults.llm` names a profile that does not exist.
+ */
+export function resolveDefaultLlmRunner(config: AkmConfig, timeoutMs?: number | null): RunnerSpec | null {
+  const name = config.defaults?.llm;
+  if (!name) return null;
+  return buildLlmRunnerSpec(name, timeoutMs, config);
+}
+
 export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
   const validation = config.profiles?.improve?.default?.processes?.validation;
   const block = validation && validation.enabled !== false ? validation : undefined;
