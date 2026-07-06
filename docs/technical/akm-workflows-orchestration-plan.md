@@ -3,6 +3,10 @@
 **Status:** Formalized 2026-07-05 — owner decisions recorded in
 *Open decisions* and *Formalization addendum* below. Supersedes Part F of
 [`claude-code-vs-akm-workflows.md`](./claude-code-vs-akm-workflows.md).
+**P0.5 SHIPPED 2026-07-05** — merged to main in
+[PR #713](https://github.com/itlackey/akm/pull/713) (see the annotated
+*Rollout phases* for exactly what landed vs. was deferred). Next up: P0
+(IR + compiler), then P1 (`akm workflow run`).
 
 ## Goal
 
@@ -662,20 +666,25 @@ mechanism.
 
 ### Budget is unmeterable for agent/sdk today — additive fields required
 
-`emitLlmUsage` fires **only** in `chatCompletionReal` (`client.ts:434`).
-`AgentRunResult` has no token fields (`spawn.ts:164-175`) and `runOpencodeSdk`
-**discards** the SDK's token accounting (`sdk-runner.ts:254-264`). So
-`budget.maxTokens` is a **no-op for the default `sdk` runner**. `maxUnits` is
-meterable today (count dispatches); `maxTokens` needs usage threaded through
-(additive change below). The plan's earlier "usage-telemetry aggregates tokens
-across units" holds only once this lands.
+**✅ RESOLVED in P0.5 (PR #713).** `AgentRunResult` now carries
+`usage?: AgentTokenUsage` + `sessionId?`, and `runOpencodeSdk` extracts the
+SDK's `AssistantMessage.tokens` (input/output/reasoning) instead of
+discarding it. `budget.maxTokens` is meterable on the default `sdk` runner
+as soon as the P1 scheduler aggregates unit usage. Pre-fix state for the
+record: `emitLlmUsage` fired only in `chatCompletionReal`; `AgentRunResult`
+had no token fields; the SDK runner discarded its token accounting. (The
+CLI spawn path still has no usage contract — per-harness result extractors
+in P2 are where CLI token reporting can land.)
 
 ### Scheduler and writer-queue — generalize one, add the other
 
 - **Scheduler:** `core/concurrent.ts` (`concurrentMap`, semaphore + `allSettled`)
   already is the bounded pool — but it's used only in indexer passes, never on
   the agent path. Generalize it (add `AbortSignal`, budget, unit cap) rather
-  than writing a second primitive.
+  than writing a second primitive. **P0.5 shipped the `{signal}` option
+  (workers stop claiming items on abort, in-flight completes) with tests;
+  budget metering and the lifetime unit cap land with the P1 scheduler that
+  needs them.**
 - **Writer-queue:** `withWorkflowRunsRepo` opens a **fresh connection per call**
   (`workflow-runs-repository.ts:286`); N concurrent unit completions contend on
   SQLite's single writer + 30 s `busy_timeout`. The serialized writer-queue in
@@ -703,16 +712,25 @@ no descriptor and no builder** (`profiles.ts:93-116`), so dispatching them hits
 the **default builder** (`builders.ts:43-60`) — whose `--system-prompt/--model/--`
 convention is wrong for all of them, producing a silently broken command.
 
-Fix, before adding harnesses:
+Fix, before adding harnesses (status as of P0.5, PR #713):
 1. Add descriptor fields to `AkmHarness`: `pattern`
    (`in-harness|local-runner|cloud-delegate`), `structuredOutput`
    (`native-schema|native-json|none`), `resume?: {flag}`, `identityEnv?: string[]`,
    and optional harness-owned `builder?` / `extractor?`.
+   **PARTIAL — `agentBuilder` shipped; the remaining descriptor fields land
+   with P2 (they have no consumer until the adapters/extractors exist).**
 2. **Derive** `BUILTIN_BUILDERS`, the identity table, the session-log provider
    array, and model-alias columns *from the registry* — so "add a harness = one
    directory + one `HARNESS_REGISTRY` entry."
+   **PARTIAL — `BUILTIN_BUILDERS` is now derived (id, `<id>-headless`,
+   aliases). The `agent-identity.ts` if/else chain and the session-log
+   provider array are still hand-maintained — derive them in P2 when
+   `identityEnv` exists.**
 3. Make a **missing builder an error**, not a silent fallback to the default —
    the default builder is a footgun for these CLIs.
+   **✅ DONE — dispatching a known built-in CLI without a dedicated builder
+   raises `ConfigError` with a `commandBuilder` hint; unknown custom
+   profiles keep the documented default-builder fallback.**
 
 ### `tasks/` stays orthogonal
 
@@ -727,14 +745,14 @@ existing check-in, not a new daemon.
 Every consumer signature below is depended on by the improve slice / tasks and
 must not change shape — these are **additive optional fields only**:
 
-| Seam | Change | Why |
-|---|---|---|
-| `AgentRunResult` (`spawn.ts:164`) | add `usage?: TokenUsage`, `sessionId?` | budget metering; harness session reuse |
-| `runOpencodeSdk` (`sdk-runner.ts:254`) | stop discarding SDK usage; per-call `cwd`/server keyed by cwd | budget + **`isolation: worktree` on the default harness** |
-| `RunAgentOptions` (`spawn.ts:123`) | add `signal?: AbortSignal`, `onEvent?` | cooperative cancel + `watch --stream` |
-| `AgentDispatchRequest` (`builder-shared.ts:27`) | add `effort?`, `schema?`/`schemaPath?` | IR `effort`; Codex `--output-schema` |
-| `AkmHarness` (`types.ts:65`) | add `pattern`, `structuredOutput`, `resume`, `identityEnv`, `builder?`, `extractor?` | route without a parallel switch |
-| `callStructured` (`structured-call.ts`) | factor out transport-free `runStructured` core | reuse validate/retry across runners |
+| Seam | Change | Why | Status (P0.5, PR #713) |
+|---|---|---|---|
+| `AgentRunResult` (`spawn.ts`) | add `usage?: AgentTokenUsage`, `sessionId?` | budget metering; harness session reuse | ✅ shipped |
+| `runOpencodeSdk` (`sdk-runner.ts`) | stop discarding SDK usage; per-call `cwd`/server keyed by cwd | budget + **`isolation: worktree` on the default harness** | usage ✅; per-cwd server **deferred** (open decision 1) |
+| `RunAgentOptions` (`spawn.ts`) | add `signal?: AbortSignal`, `onEvent?` | cooperative cancel + `watch --stream` | `signal` ✅ (new `"aborted"` reason); `onEvent` → P4 with `watch` |
+| `AgentDispatchRequest` (`builder-shared.ts`) | add `effort?`, `schema?` | IR `effort`; Codex `--output-schema` | ✅ reserved fields shipped (no builder consumes them yet) |
+| `AkmHarness` (`types.ts`) | add `pattern`, `structuredOutput`, `resume`, `identityEnv`, `builder?`, `extractor?` | route without a parallel switch | `agentBuilder` ✅; remaining fields → P2 |
+| `callStructured` (`structured-call.ts`) | factor out transport-free `runStructured` core | reuse validate/retry across runners | core ✅ (`src/core/structured.ts`, validation-retry + feedback); `callStructured`'s ~20 call sites intentionally NOT rewired — their per-caller fallback contract has no retry to share; P1 schema units are the first composer |
 
 The plan's *Reuse unchanged* list is accordingly narrowed: `executeRunner`,
 `runAgent`/`runOpencodeSdk`, and `callStructured` are reused *through additive
@@ -745,19 +763,21 @@ extension*, not literally untouched.
 Both surfaced from the review and affect the **default** native path; the plan
 assumes the first option in each:
 
-1. **SDK worktree isolation.** `runOpencodeSdk` is a process-wide singleton with
-   no per-call cwd (`sdk-runner.ts:48,117`), so `isolation: worktree` is
-   unimplementable against it as-is. *Assumed:* refactor the SDK runner to key
-   its server by working directory (also fixes the concurrent-run test-isolation
-   hazard). *Cheaper interim:* keep the singleton for non-isolated units and
-   route `isolation: worktree` units to the CLI runner (`runAgent` honors `cwd`
+1. **SDK worktree isolation. STILL OPEN.** `runOpencodeSdk` is a process-wide
+   singleton with no per-call cwd, so `isolation: worktree` is unimplementable
+   against it as-is. *Assumed:* refactor the SDK runner to key its server by
+   working directory (also fixes the concurrent-run test-isolation hazard).
+   *Cheaper interim:* keep the singleton for non-isolated units and route
+   `isolation: worktree` units to the CLI runner (`runAgent` honors `cwd`
    today) — two default paths, less refactor. *Smallest:* defer worktree
-   isolation past v1 with a documented gap.
-2. **Mid-unit abort.** No `AbortSignal` exists today; `runAgent` only self-cancels
-   via its timeout. *Assumed:* thread `signal` through in P0.5 so budget ceilings
-   can preempt a *running* unit and `watch` can cancel. *Cheaper:* v1 only skips
-   un-started units at the ceiling (a runaway unit overshoots until it finishes),
-   add `signal` later.
+   isolation past v1 with a documented gap. **P0.5 took the *smallest* path
+   (nothing shipped here); decide between the first two options no later
+   than P4, where `isolation: worktree` lands.**
+2. **Mid-unit abort. ✅ RESOLVED in P0.5** — `signal` is threaded through
+   both `runAgent` (SIGTERM→SIGKILL on the process group, `"aborted"`
+   failure reason) and `runOpencodeSdk` (prompt raced against the signal,
+   session reaped). Budget ceilings can preempt a *running* unit and `watch`
+   can cancel.
 
 ## Model routing — global alias tiers (decided 2026-07-05)
 
@@ -766,24 +786,27 @@ assumes the first option in each:
 harness expects, at dispatch time. Workflows stay harness-agnostic; retargeting
 a run to another harness or vendor is a profile change, not a workflow edit.
 
-**Verified current state (2026-07-05):**
+**Status: ✅ SHIPPED in P0.5 (PR #713).** The design below is implemented as
+specified; the pre-fix state is kept for the record.
 
-- `resolveModel(model, platform, custom?)` resolves profile-custom → built-in
-  → verbatim (`src/integrations/agent/model-aliases.ts:67-72`). Built-ins are
-  only `opus`/`sonnet`/`haiku` with `claude` + `opencode` columns
-  (`model-aliases.ts:34-56`) — every other platform resolves verbatim.
-- **Config wiring bug:** `AgentProfileConfigSchema` has no `modelAliases`
-  field (`src/core/config/config-schema.ts:155-167`; `.passthrough()` keeps
-  the raw key but nothing reads it), and `resolveAgentProfile` copies
-  `modelAliases: base.modelAliases`, never `overrides.modelAliases`
-  (`src/integrations/agent/config.ts:76`) — so the documented per-profile
-  `modelAliases` config is silently dropped. Same bug class as the
-  `timeoutMs` override fix recorded at `config.ts:64-69`.
-- **SDK bypass:** `runOpencodeSdk` uses `profile.model` raw and never calls
-  `resolveModel` (`sdk-runner.ts:126-146`), so aliases don't work on the
-  default native harness at all.
+**Pre-P0.5 state (all three fixed 2026-07-05):**
 
-**Design:**
+- `resolveModel(model, platform, custom?)` resolved profile-custom → built-in
+  → verbatim only. Built-ins are only `opus`/`sonnet`/`haiku` with `claude` +
+  `opencode` columns — every other platform resolved verbatim. *(Now takes a
+  fourth `global` tier table param.)*
+- **Config wiring bug (FIXED):** `AgentProfileConfigSchema` had no
+  `modelAliases` field and `resolveAgentProfile` copied only
+  `base.modelAliases` — the documented per-profile `modelAliases` config was
+  silently dropped. Both wired now; `resolveProfileFromConfig` threads the
+  config-root table onto the resolved profile as `globalModelAliases`.
+- **SDK bypass (FIXED):** `runOpencodeSdk` used `profile.model` raw. The SDK
+  config assembly is now the pure, tested `buildSdkConfig`, which resolves
+  through `resolveModel` under platform key `"opencode-sdk"` (deliberately no
+  built-in column — the CLI-provider-qualified built-in strings would collide
+  with the `akm-custom/` provider prefixing).
+
+**Design (implemented):**
 
 1. New root config key `modelAliases`: `alias → { <platformId>: modelString,
    "*"?: modelString }`. One resolution level — values are literal model
@@ -863,14 +886,20 @@ contact with this plan:
   itself is the live supervisor; the monitor matters for agent-driven runs
   and for a delegated CC session that goes silent. Unit-level timestamp
   check-in (above) is unchanged.
-- **P0 hygiene** — doc/code drift to fix while these files are open:
-  phantom `akm workflow abandon` advice in the concurrency-guard error
-  (`runs.ts:113`; add the verb or fix the message); the check-in `continue`
-  directive dropped by `formatWorkflowNextPlain`
-  (`src/output/text/helpers.ts:748-791`, review defect C2); `workflow status`
-  never evaluating check-in (review M1); the validator error message omitting
-  allowed keys `name`/`updated` (`validator.ts:34` vs `:16`); the documented
-  but nonexistent `workflow step` alias (`docs/features/workflows.md:31`).
+- **P0 hygiene** — doc/code drift to fix while these files are open
+  (status re-verified on main 2026-07-05, post-#713):
+  - ~~phantom `akm workflow abandon` advice~~ **✅ FIXED separately — the
+    `abandon` subcommand now exists** (`src/workflows/cli.ts`,
+    `src/commands/workflow-cli.ts`).
+  - **OPEN:** the check-in `continue` directive dropped by
+    `formatWorkflowNextPlain` (`src/output/text/helpers.ts`, review defect
+    C2 — grep for `checkin` in the formatter still returns nothing).
+  - **OPEN:** `workflow status` never evaluating check-in (review M1 —
+    `evaluateCheckin` is still called only from `getNextWorkflowStep`).
+  - **OPEN:** the validator error message omitting allowed keys
+    `name`/`updated` (`validator.ts:34` vs `:16`).
+  - **OPEN:** the documented but nonexistent `workflow step` alias
+    (`docs/features/workflows.md:31`).
 
 ## Sequencing against the roadmap
 
@@ -878,11 +907,11 @@ contact with this plan:
 surface (SDK, plugins) for 1.0. This plan splits cleanly along that line:
 
 - **0.9-compatible (hardening):** P0 (IR compile of existing linear
-  workflows — pure refactor), P0.5 (seam alignment: every item is an existing
-  bugfix or additive field — the `modelAliases` config drop, the
-  codex/gemini/aider registry drift with its silently-broken default builder,
-  the unconsumed `AgentDispatchRequest.cwd`, SDK usage discard), and the P0
-  hygiene list above.
+  workflows — pure refactor), P0.5 (**✅ shipped**, PR #713 — seam
+  alignment: the `modelAliases` config drop, the codex/gemini/aider registry
+  drift with its silently-broken default builder, the unconsumed
+  `AgentDispatchRequest.cwd`, SDK usage discard), and the still-open items
+  of the P0 hygiene list above.
 - **1.0-track (expansion):** P1 onward — `akm workflow run`, migration 004,
   the extended grammar. If landed during 0.9 betas, `workflow run` ships
   explicitly marked experimental in `STABILITY.md` and the stable CLI
@@ -893,19 +922,28 @@ surface (SDK, plugins) for 1.0. This plan splits cleanly along that line:
 - **P0 — IR + compiler.** `ir/schema.ts`, `ir/compile.ts`. Existing linear
   workflows compile to a linear IR; execution still goes through today's
   step loop. No behavior change; pure refactor + new tests.
-- **P0.5 — seam alignment (prerequisite, no new features).** The additive seam
-  changes from *Reconciliation*: `usage`/`signal` on the runner result/options,
-  SDK usage + per-call cwd, extracted `runStructured` core, generalized
-  `concurrentMap` scheduler, and **deriving the builder/identity/model-alias
-  lists from `HARNESS_REGISTRY`** (closing the existing codex/gemini/aider
-  drift). Plus, from the formalization addendum: **global model-alias tiers**
-  (root `modelAliases` config key + fixing the dropped per-profile
-  `modelAliases` in `resolveAgentProfile` + routing the SDK runner through
-  `resolveModel`), **consuming `AgentDispatchRequest.cwd`** (declared at
-  `builder-shared.ts:42`, read by nothing) and adding `akm agent --cwd`, and
-  a **per-node `timeoutMs` policy** (the 60 s `DEFAULT_AGENT_TIMEOUT_MS` is
-  wrong for workflow units; IR nodes get an explicit timeout with a run-level
-  default). Each is independently landable and independently useful.
+- **P0.5 — seam alignment (prerequisite, no new features). ✅ SHIPPED
+  2026-07-05, [PR #713](https://github.com/itlackey/akm/pull/713).**
+  Delivered: global model-alias tiers (root `modelAliases` config key,
+  per-profile `modelAliases` config-drop fix, SDK runner routed through
+  `resolveModel` via the extracted `buildSdkConfig`); `BUILTIN_BUILDERS`
+  derived from `HARNESS_REGISTRY` via the new `AkmHarness.agentBuilder`
+  field, with **missing builder = `ConfigError`** (codex/gemini/aider
+  dispatch no longer silently builds a broken command); `usage`/`sessionId`
+  on `AgentRunResult` + `signal: AbortSignal` on `RunAgentOptions` (new
+  `"aborted"` failure reason; SDK runner reports `AssistantMessage.tokens`
+  and honors aborts); `AgentDispatchRequest.cwd` consumed + `akm agent
+  --cwd`; reserved `effort`/`schema` dispatch fields; `runStructured` core
+  in `src/core/structured.ts`; `concurrentMap` gained `{signal}`.
+  **Deferred out of P0.5:** SDK server-per-cwd (open seam decision 1 — the
+  *smallest* option is in effect until P4 worktree isolation);
+  `onEvent?` on `RunAgentOptions` (lands with `watch --stream`, P4);
+  `concurrentMap` budget/unit-cap params (land with the P1 scheduler);
+  identity-table/session-log-provider derivation from the registry and the
+  remaining `AkmHarness` descriptor fields (`pattern`, `structuredOutput`,
+  `resume`, `identityEnv`, `extractor?` — land with P2 harness adapters);
+  the per-node `timeoutMs` policy (needs IR nodes to hang it on — **moved
+  to P1**).
 - **P1 — native fan-out + schema (v1 parity core).** `scheduler.ts`,
   `native-executor.ts`, `workflow_run_units` (migration 004), extended
   Markdown grammar for `Runner`/`Fan-out`/`Schema`, plus `router` node and
@@ -916,7 +954,10 @@ surface (SDK, plugins) for 1.0. This plan splits cleanly along that line:
   (`workflow-unit-preamble.md`), **env/secret bindings** resolved into the
   child env at dispatch, and persisting `runAgent`'s `failureReason`
   classification onto the unit row so retry/continue-on-error policy has
-  semantics to act on.
+  semantics to act on. Moved here from P0.5: the **per-node `timeoutMs`
+  policy** (the 60 s `DEFAULT_AGENT_TIMEOUT_MS` is wrong for workflow
+  units; IR nodes get an explicit timeout with a run-level default — it
+  needed IR nodes to hang the field on).
 - **P2 — harness adapters.** A builder + result-extractor + identity marker per
   harness: Codex, Copilot CLI, Pi, then Gemini / Aider / Amazon Q / OpenHands.
   Each is contained to `src/integrations/harnesses/<name>/{agent-builder,result-extractor}.ts`;
