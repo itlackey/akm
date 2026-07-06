@@ -448,7 +448,8 @@ export async function runAgent(
       if (!proc || proc.exitCode !== null) return;
       killGroup(proc, "SIGKILL");
     }, 5000);
-    (sigkillTimer as any)?.unref?.();
+    if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
+  };
   if (abortSignal) {
     // A signal that aborted between the pre-spawn check and here is handled
     // by calling the listener directly.
