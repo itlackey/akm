@@ -245,3 +245,68 @@ describe("buildSdkConfig — model alias resolution", () => {
     expect(cfg.model).toBe("akm-custom/qwen3-30b-a3b");
   });
 });
+
+// ── P0.5 seams: usage + sessionId + cooperative abort ─────────────────────────
+
+describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
+  const profile: AgentProfile = {
+    name: "opencode-sdk",
+    bin: "",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [],
+    parseOutput: "text",
+    sdkMode: true,
+  };
+
+  test("token usage from the AssistantMessage is surfaced (previously discarded)", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture, async () => ({
+      data: {
+        info: { tokens: { input: 120, output: 45, reasoning: 7 } },
+        parts: [{ type: "text", text: "answer" }],
+      },
+    }));
+    __setTestServer(fake.server as never);
+    const result = await runOpencodeSdk(profile, "hi", {});
+    expect(result.ok).toBe(true);
+    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 45, reasoningTokens: 7 });
+    expect(result.sessionId).toBe("sess-1");
+  });
+
+  test("missing token info yields no usage field, not a crash", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture);
+    __setTestServer(fake.server as never);
+    const result = await runOpencodeSdk(profile, "hi", {});
+    expect(result.ok).toBe(true);
+    expect(result.usage).toBeUndefined();
+    expect(result.sessionId).toBe("sess-1");
+  });
+
+  test("abort mid-prompt returns reason 'aborted' and reaps the session", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture, () => new Promise(() => {})); // never resolves
+    __setTestServer(fake.server as never);
+    const controller = new AbortController();
+    const promise = runOpencodeSdk(profile, "hi", { timeoutMs: null, signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    const result = await promise;
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("aborted");
+    expect(fake.deletedRef()).toBe(true);
+  });
+
+  test("pre-aborted signal short-circuits before any session is created", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture);
+    __setTestServer(fake.server as never);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runOpencodeSdk(profile, "hi", { signal: controller.signal });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("aborted");
+    expect(capture.body).toBeUndefined();
+  });
+});
