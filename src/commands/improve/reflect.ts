@@ -39,6 +39,7 @@ import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
+import { warn } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
 import {
   type AgentFailureReason,
@@ -56,6 +57,7 @@ import {
 } from "../../integrations/agent/prompts";
 import {
   type RunnerSpec,
+  resolveDefaultLlmRunner,
   resolveImproveProcessRunnerFromProfile,
   runnerIsLlm,
   runnerSupportsFileWrite,
@@ -1091,6 +1093,35 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
   }
+  // P1.3 (meta-review 07, Chain G): unattended `akm improve` must never hand
+  // reflect a tool-capable runner. Agent-CLI/SDK runners have filesystem
+  // access, so a poisoned asset body flowing through the scheduled reflect
+  // prompt could steer an agent with tools; the tool-less LLM HTTP runner
+  // corrupts output text at worst (src/llm/call-ai.ts). An llm RunnerSpec
+  // resolved from the process block is honored; anything else — an agent/sdk
+  // spec, a resolved agent profile, or the default-agent fallback below — is
+  // pinned to `defaults.llm`, failing CLOSED when that is unset.
+  // `options.agentProfile` stays exempt: it is a direct-injection test seam
+  // the cron path (loop-stages) never sets.
+  if (options.eventSource === "improve" && !options.agentProfile && (!runnerSpec || !runnerIsLlm(runnerSpec))) {
+    const cfg = options.config ?? loadConfig();
+    const pinned = resolveDefaultLlmRunner(cfg, resolvedTimeoutMs);
+    if (!pinned) {
+      throw new ConfigError(
+        "Unattended improve pins reflect to the tool-less LLM runner, but the config resolves a tool-capable runner and no defaults.llm profile exists to pin to.",
+        "LLM_NOT_CONFIGURED",
+        'Set processes.reflect.mode to "llm" on the active improve profile, or configure defaults.llm.',
+      );
+    }
+    warn(
+      runnerSpec
+        ? `[akm] reflect: unattended improve resolved a tool-capable "${runnerSpec.kind}" runner — pinned to the tool-less LLM runner (07 Chain-G).`
+        : "[akm] reflect: unattended improve would have fallen back to an agent profile — pinned to the tool-less LLM runner (07 Chain-G).",
+    );
+    runnerSpec = pinned;
+    profile = undefined;
+  }
+
   // Ensure profile is set for agent/sdk runners that don't use runnerSpec
   if (!runnerSpec && !profile) {
     const agent = options.agentConfig ?? loadAgentConfigFromDisk();

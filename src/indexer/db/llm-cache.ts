@@ -42,8 +42,8 @@ export interface WithLlmCacheHooks {
  *                          the wrapper skips its internal hashing — callers that
  *                          already hashed the body (e.g. to reuse it elsewhere)
  *                          should pass this to avoid the redundant work.
- * @param cacheVariant  - Namespace token for the cache row (e.g. staleness-detect
- *                        sets one so its rows do not collide with memory-inference).
+ * @param cacheVariant  - Namespace token for the cache row so different passes'
+ *                        rows do not collide (e.g. memory-inference vs graph).
  * @param hooks         - Optional event sink for telemetry (see {@link WithLlmCacheHooks}).
  */
 export async function withLlmCache<T>(

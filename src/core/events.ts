@@ -63,6 +63,8 @@ export type EventType =
   | "workflow_started"
   | "workflow_step_completed"
   | "workflow_finished"
+  /** Emitted by `akm workflow abandon` (08-F6) — metadata carries `{runId}` only, never the title. */
+  | "workflow_abandoned"
   | "search"
   | "show"
   // Phase 4 Team C event gaps:

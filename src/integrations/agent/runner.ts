@@ -212,6 +212,19 @@ function resolveProcessRunnerWithLlmFallback(
   return null;
 }
 
+/**
+ * Build the tool-less HTTP runner from `defaults.llm`, or `null` when unset.
+ * The unattended-improve reflect pin (meta-review 07 Chain-G / P1.3) uses this
+ * as the mandatory downgrade target when config would otherwise hand reflect a
+ * tool-capable (agent/SDK) runner in a scheduled run. Throws ConfigError when
+ * `defaults.llm` names a profile that does not exist.
+ */
+export function resolveDefaultLlmRunner(config: AkmConfig, timeoutMs?: number | null): RunnerSpec | null {
+  const name = config.defaults?.llm;
+  if (!name) return null;
+  return buildLlmRunnerSpec(name, timeoutMs, config);
+}
+
 export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
   const validation = config.profiles?.improve?.default?.processes?.validation;
   const block = validation && validation.enabled !== false ? validation : undefined;
@@ -273,16 +286,6 @@ export function resolveImproveProcessRunnerFromProfile(
     return buildAgentRunnerSpec(mode, profileName, timeoutMs, config);
   }
   return null;
-}
-
-/**
- * Convenience accessor for callers that previously read
- * `getProcessOptions("index", "staleness_detection", config).thresholdDays`.
- * After the 0.8.0 migration, those values live on first-class config keys —
- * see `config.index?.stalenessDetection?.thresholdDays` etc.
- */
-export function getStalenessDetectionThresholdDays(config: AkmConfig): number | undefined {
-  return config.index?.stalenessDetection?.thresholdDays;
 }
 
 // Re-export `isProcessEnabled` from feature-gate.ts so callers that previously

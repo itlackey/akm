@@ -26,7 +26,6 @@ import {
   type MemoryInferenceResult,
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
-import { runStalenessDetectionPass, type StalenessDetectionResult } from "../../indexer/passes/staleness-detect";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
 import { isProcessEnabled } from "../../llm/feature-gate";
@@ -869,7 +868,6 @@ export async function runImprovePostLoopStage(args: {
     ...(proceduralCompilation ? { proceduralCompilation } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
-    ...(maintenanceResult.stalenessDetection ? { stalenessDetection: maintenanceResult.stalenessDetection } : {}),
     ...(maintenanceResult.actions && maintenanceResult.actions.length > 0
       ? { maintenanceActions: maintenanceResult.actions }
       : {}),
@@ -923,12 +921,10 @@ export async function runImproveMaintenancePasses(args: {
   const sources = resolveSourceEntries(options.stashDir, config);
   const memoryInferenceFn = options.memoryInferenceFn ?? runMemoryInferencePass;
   const graphExtractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
-  const stalenessDetectionFn = options.stalenessDetectionFn ?? runStalenessDetectionPass;
 
   let db: Database | undefined;
   let memoryInference: MemoryInferenceResult | undefined;
   let graphExtraction: GraphExtractionResult | undefined;
-  let stalenessDetection: StalenessDetectionResult | undefined;
   let reindexedAfterInference = false;
   const actions: ImproveActionResult[] = [];
   let memoryInferenceDurationMs = 0;
@@ -946,7 +942,7 @@ export async function runImproveMaintenancePasses(args: {
   // Holding our handle across that call produced SQLITE_BUSY / "database is
   // locked" failures in production, so the handle is closed BEFORE every
   // reindex and reopened after — the fresh handle also sees the post-reindex
-  // state that graph extraction and staleness detection below rely on. The
+  // state that graph extraction below relies on. The
   // reopen runs in `finally` so a failed reindex still leaves a usable handle.
   const reindexWithIndexDbReleased = async (stashDir: string): Promise<void> => {
     if (db) {
@@ -1315,28 +1311,6 @@ export async function runImproveMaintenancePasses(args: {
           }
         }
       }
-
-      // Phase 4A (staleness detection). Activates the `deprecated` belief-state
-      // machinery shipped in Phase 1A. Default OFF — gated by
-      // `features.index.staleness_detection.enabled`. Runs after orphan purge
-      // and before the URL check (which lives in the outer caller).
-      if (sources.length > 0) {
-        try {
-          stalenessDetection = await withLlmStage("staleness-detection", () =>
-            stalenessDetectionFn({ config, sources, signal: budgetSignal, db }),
-          );
-          if (stalenessDetection.considered > 0) {
-            info(
-              `[improve] staleness detection complete (considered ${stalenessDetection.considered}, ` +
-                `deprecated ${stalenessDetection.deprecated}, confirmed ${stalenessDetection.confirmed}, ` +
-                `skipped ${stalenessDetection.skipped}, ${stalenessDetection.durationMs}ms)`,
-            );
-          }
-          for (const w of stalenessDetection.warnings) allWarnings.push(`[improve] staleness detection: ${w}`);
-        } catch (err) {
-          allWarnings.push(`staleness detection failed: ${errMessage(err)}`);
-        }
-      }
     } finally {
       if (db) closeDatabase(db);
     }
@@ -1345,7 +1319,6 @@ export async function runImproveMaintenancePasses(args: {
   return {
     ...(memoryInference ? { memoryInference } : {}),
     ...(graphExtraction ? { graphExtraction } : {}),
-    ...(stalenessDetection ? { stalenessDetection } : {}),
     ...(actions.length > 0 ? { actions } : {}),
     memoryInferenceDurationMs,
     graphExtractionDurationMs,

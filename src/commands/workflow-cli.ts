@@ -37,6 +37,7 @@ import {
   WORKFLOW_STEP_STATES,
 } from "../workflows/cli";
 import {
+  abandonWorkflowRun,
   completeWorkflowStep,
   getNextWorkflowStep,
   getWorkflowStatus,
@@ -324,6 +325,20 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
   throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
 }
 
+const workflowAbandonCommand = defineJsonCommand({
+  meta: {
+    name: "abandon",
+    description: "Give up on a workflow run: mark it failed so it stops counting as active (resume can reopen it)",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+  },
+  async run({ args }) {
+    const result = await abandonWorkflowRun(args.runId);
+    output("workflow-abandon", result);
+  },
+});
+
 const workflowResumeCommand = defineJsonCommand({
   meta: {
     name: "resume",
@@ -352,6 +367,7 @@ export const workflowCommand = defineCommand({
     create: workflowCreateCommand,
     template: workflowTemplateCommand,
     resume: workflowResumeCommand,
+    abandon: workflowAbandonCommand,
     validate: workflowValidateCommand,
   },
   run({ args }) {

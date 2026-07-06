@@ -17,7 +17,6 @@ import type { AkmReflectResult } from "../commands/improve/reflect";
 import type { DeadUrl } from "../commands/url-checker";
 import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
-import type { StalenessDetectionResult } from "../indexer/passes/staleness-detect";
 import { assertNever } from "./assert";
 
 /**
@@ -393,8 +392,6 @@ export interface AkmImproveResult {
    * Omitted entirely when the pass did not run.
    */
   graphExtractionDurationMs?: number;
-  /** Phase 4A: result of the staleness-detection pass (only present when the feature is enabled and produced telemetry). */
-  stalenessDetection?: StalenessDetectionResult;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
   orphansPurged?: number;
   /**

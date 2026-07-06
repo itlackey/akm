@@ -90,6 +90,7 @@ const PASSTHROUGH_COMMANDS = [
   "wiki-remove",
   "wiki-show",
   "wiki-stash",
+  "workflow-abandon",
   "workflow-complete",
   "workflow-complete-rejected",
   "workflow-create",

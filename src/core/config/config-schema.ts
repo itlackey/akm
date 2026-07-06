@@ -817,6 +817,13 @@ export const IndexPassConfigSchema = z.preprocess(
 
 const MetadataEnhanceSchema = z.object({ enabled: z.boolean().optional() }).passthrough();
 
+/**
+ * RETIRED (meta-review 10-Q3): the staleness-detect pass was deleted; nothing
+ * reads this section anymore. The key stays TOLERATED here so configs that
+ * still carry `index.stalenessDetection` (written by 0.8.x migrations) do not
+ * fail validation — deleting the key would route it into the per-pass
+ * catchall, which rejects its `enabled`/`thresholdDays` fields.
+ */
 const StalenessDetectionSchema = z
   .object({
     enabled: z.boolean().optional(),

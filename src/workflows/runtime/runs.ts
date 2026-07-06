@@ -257,6 +257,43 @@ export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetai
   });
 }
 
+/**
+ * Give up on a run (08-F6): flip it to `failed` so it stops counting as
+ * active — the run-level verb the concurrency-guard message in
+ * {@link startWorkflowRun} advertises. Terminal-state runs are refused;
+ * {@link resumeWorkflowRun} can reopen an abandoned run if it was a mistake.
+ */
+export async function abandonWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
+  return withWorkflowRunsRepo((repo) => {
+    const run = readWorkflowRun(repo, runId);
+    if (run.status === "completed" || run.status === "failed") {
+      throw new UsageError(`Workflow run ${run.id} is already ${run.status}.`);
+    }
+    const now = new Date().toISOString();
+    repo.updateRunState({
+      status: "failed",
+      currentStepId: run.current_step_id,
+      updatedAt: now,
+      completedAt: now,
+      checkinArmedAt: now,
+      runId: run.id,
+    });
+    const updated: WorkflowRunRow = {
+      ...run,
+      status: "failed",
+      updated_at: now,
+      completed_at: now,
+      checkin_armed_at: now,
+    };
+    const steps = readWorkflowRunSteps(repo, run.id);
+    const detail = buildWorkflowRunDetail(updated, steps);
+    // Same injectable-footprint rule as workflow_started (07 P1-B): ids and
+    // status only, never the frontmatter-derived title.
+    appendEvent({ eventType: "workflow_abandoned", ref: run.workflow_ref, metadata: { runId: run.id } });
+    return detail;
+  });
+}
+
 export async function completeWorkflowStep(
   input: CompleteWorkflowStepInput,
 ): Promise<WorkflowRunDetail | SummaryValidationFailure> {

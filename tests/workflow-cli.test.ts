@@ -753,6 +753,73 @@ describe("workflow list --active includes blocked", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 08-F6: `akm workflow abandon <run-id>` — the run-level give-up verb the
+// concurrency-guard error message always advertised. Marks the run failed
+// (resume can reopen it) so it stops counting as active.
+// ---------------------------------------------------------------------------
+describe("workflow abandon", async () => {
+  test("abandon marks an active run failed and removes it from --active", async () => {
+    const env = createWorkflowEnv();
+    await setupWorkflow(env);
+
+    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    expect(started.status).toBe(0);
+    const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
+
+    const abandoned = await runCli(["workflow", "abandon", startRun.id], env);
+    expect(abandoned.status).toBe(0);
+    const { run: abandonedRun } = JSON.parse(abandoned.stdout) as { run: { status: string } };
+    expect(abandonedRun.status).toBe("failed");
+
+    const listed = await runCli(["workflow", "list", "--active"], env);
+    expect(listed.status).toBe(0);
+    const { runs } = JSON.parse(listed.stdout) as { runs: Array<{ id: string }> };
+    expect(runs.some((r) => r.id === startRun.id)).toBe(false);
+  });
+
+  test("abandon on a completed run returns an error", async () => {
+    const env = createWorkflowEnv();
+    await setupWorkflow(env);
+
+    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    expect(started.status).toBe(0);
+    const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
+
+    for (const step of ["first", "second"]) {
+      expect(
+        (
+          await runCli(
+            ["workflow", "complete", startRun.id, "--step", step, "--summary", "Work completed and verified."],
+            env,
+          )
+        ).status,
+      ).toBe(0);
+    }
+
+    const abandoned = await runCli(["workflow", "abandon", startRun.id], env);
+    expect(abandoned.status).toBe(2);
+    const err = JSON.parse(abandoned.stderr) as { error: string };
+    expect(err.error).toContain("already");
+  });
+
+  test("an abandoned run can be resumed back to active", async () => {
+    const env = createWorkflowEnv();
+    await setupWorkflow(env);
+
+    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    expect(started.status).toBe(0);
+    const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
+
+    expect((await runCli(["workflow", "abandon", startRun.id], env)).status).toBe(0);
+
+    const resumed = await runCli(["workflow", "resume", startRun.id], env);
+    expect(resumed.status).toBe(0);
+    const { run: resumedRun } = JSON.parse(resumed.stdout) as { run: { status: string } };
+    expect(resumedRun.status).toBe("active");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. workflow next on a completed run: done:true, step:null
 // ---------------------------------------------------------------------------
 describe("workflow next — completed run signals done", async () => {

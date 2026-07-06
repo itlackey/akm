@@ -19,7 +19,7 @@ A three-mode wrapper at `~/.local/bin/akm`. One install, no version-management b
 | Mode | Resolves to | Use when |
 |---|---|---|
 | `build` (current default) | `<repo>/dist/cli.js` | Day-to-day, while actively developing. Behavior matches the last `bun run build`, not the live source. |
-| `stable` | The global install (`bun add -g akm-cli` or `npm i -g akm-cli`) | Comparing against the published version. **This will become the default after 0.8.0 GA** — flip `DEFAULT_MODE` in the wrapper. |
+| `stable` | The Bun global install (`bun add -g akm-cli`) — the ONE canonical install | Comparing against the published version. **This will become the default after 0.8.0 GA** — flip `DEFAULT_MODE` in the wrapper. |
 | `dev` | `<repo>/src/cli.ts` | Intentionally testing in-flight source changes. |
 
 `AKM_DEV_REPO` overrides the repo path (default `~/code/github/itlackey/akm`). `AKM_STABLE_BIN` overrides the global-install lookup if you want to pin stable to a specific binary or `dist/cli.js`.
@@ -38,12 +38,12 @@ cd ~/code/github/itlackey/akm
 bun run build
 
 # 3. (Optional) install the published version for `stable` mode.
-bun add -g akm-cli   # or: npm install -g akm-cli
+bun add -g akm-cli
 ```
 
 If you previously had `alias akm='bun .../src/cli.ts'` in `~/.profile`, `~/.bashrc`, or `~/.zshrc`, remove or comment it out — an alias shadows the wrapper in interactive shells only and makes "which akm runs?" non-deterministic across contexts.
 
-> **Heads up:** package managers (`bun add -g`, `npm i -g`) install bin shims into `~/.bun/bin/` and `~/.nvm/.../bin/`. On this machine those shims are symlinks back to the wrapper, so the wrapper has to reach into the package's `dist/cli.js` directly for stable mode. That's what the candidate-path lookup in the wrapper does.
+> **Heads up:** `bun add -g` installs a bin shim into `~/.bun/bin/`. On a working machine that shim symlinks back to the wrapper, so the wrapper reaches into the package's `dist/cli.js` directly for stable mode. The Bun global is the ONLY stable candidate (plus an explicit `AKM_STABLE_BIN` override): the old npm/`/usr/local` fallback branches were deleted (meta-review 08-F3) after they silently ran a stale `akm-cli@0.7.4` against the shared `config.json`/DBs. A missing install now errors loudly instead of degrading.
 
 ## Workflow
 

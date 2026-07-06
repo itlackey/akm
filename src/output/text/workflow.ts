@@ -25,4 +25,5 @@ export const workflowFormatters: TextFormatterEntry[] = [
   { command: "workflow-create", handler: (r) => formatWorkflowCreatePlain(r) },
   { command: "workflow-validate", handler: (r) => formatWorkflowValidatePlain(r) },
   { command: "workflow-resume", handler: (r) => formatWorkflowResumePlain(r) },
+  { command: "workflow-abandon", handler: (r) => formatWorkflowStatusPlain(r) },
 ];

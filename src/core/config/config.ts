@@ -529,7 +529,11 @@ export function resolveSecret(value: string | undefined): string | undefined {
  * filtering out the reserved feature-section keys so callers don't mistake
  * `metadataEnhance` / `stalenessDetection` for a pass.
  */
-/** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */
+/**
+ * Reserved well-known keys on IndexConfig that are NOT per-pass entries.
+ * `stalenessDetection` is retired (10-Q3) but stays reserved so a leftover
+ * config section is never misread as a pass entry.
+ */
 const INDEX_RESERVED_KEYS = new Set(["metadataEnhance", "stalenessDetection"]);
 
 export function getIndexPassConfig(config: IndexConfig | undefined, passName: string): IndexPassConfig | undefined {

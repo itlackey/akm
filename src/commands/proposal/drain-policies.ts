@@ -55,7 +55,9 @@ export const PERSONAL_STASH: DrainPolicy = {
     { generator: "consolidate", maxDiffLines: 200 },
     // Recombine: accept only confirmed type:lesson proposals (promoted by the
     // recombine confidence gate) within the diff band. type:hypothesis proposals
-    // have no matching rule here and stay pending for manual review.
+    // have no matching rule here and stay pending on the audited-autonomous
+    // queue until recombine supersedes them or the 90-day TTL sweeps them —
+    // there is no manual-review rung (06-M3).
     { generator: "recombine", requireType: "lesson", maxDiffLines: 200 },
   ],
   rejectEmpty: true,
