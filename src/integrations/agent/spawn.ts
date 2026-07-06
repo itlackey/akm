@@ -60,7 +60,11 @@ export type AgentFailureReason =
   | "llm_invalid_json"
   | "content_policy_reject"
   | "unsupported_type"
-  | "no_change";
+  | "no_change"
+  // Cooperative cancellation via RunAgentOptions.signal (P0.5 seam for the
+  // workflow scheduler's budget preemption). Distinct from "timeout" so
+  // callers can tell a budget/user abort from a wall-clock expiry.
+  | "aborted";
 
 /** Minimum subprocess surface we need. The runtime spawn returns this shape. */
 export interface SpawnedSubprocess {
@@ -135,6 +139,13 @@ export interface RunAgentOptions {
   args?: readonly string[];
   /** Optional stdin payload (only honoured in `captured` mode). */
   stdin?: string;
+  /**
+   * Cooperative cancellation. When the signal aborts, the child process
+   * group gets SIGTERM (then SIGKILL after 5 s) and the run resolves with
+   * `reason: "aborted"`. Lets a scheduler preempt a running agent at a
+   * budget ceiling instead of waiting out the timeout.
+   */
+  signal?: AbortSignal;
   /** Process env source. Defaults to `process.env`. Tests inject a fake. */
   envSource?: NodeJS.ProcessEnv;
   /** Spawn function. Defaults to the runtime spawn. Tests inject a fake. */
@@ -160,6 +171,18 @@ export interface RunAgentOptions {
   builderRegistry?: Record<string, import("./builders").AgentCommandBuilder>;
 }
 
+/**
+ * Best-effort token accounting for one agent run. Harness-neutral shape;
+ * fields are only set when the harness actually reported them (0 is a real
+ * value, absent means unknown). The CLI spawn path has no usage contract
+ * yet, so today this is populated only by the OpenCode SDK runner.
+ */
+export interface AgentTokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+}
+
 /** Result envelope. `ok=false` always carries a `reason`. */
 export interface AgentRunResult {
   ok: boolean;
@@ -172,6 +195,10 @@ export interface AgentRunResult {
   reason?: AgentFailureReason;
   /** Human-readable error message paired with `reason`. */
   error?: string;
+  /** Token accounting, when the harness reported it (SDK path today). */
+  usage?: AgentTokenUsage;
+  /** The harness's own session id, when it exposes one (SDK path today). */
+  sessionId?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_MS;
@@ -339,6 +366,20 @@ export async function runAgent(
   const env = { ...buildChildEnv(profile, options), ...(builtEnv ?? {}) };
   const start = Date.now();
 
+  // Cooperative cancel: refuse to spawn at all when the caller's signal is
+  // already aborted (e.g. the run's budget was exhausted before this unit).
+  if (options.signal?.aborted) {
+    return {
+      ok: false,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      durationMs: 0,
+      reason: "aborted",
+      error: `agent CLI "${profile.name}" not started: caller signal already aborted`,
+    };
+  }
+
   let proc: SpawnedSubprocess;
   try {
     const spawnFn = resolveSpawnFn(options);
@@ -347,7 +388,9 @@ export async function runAgent(
       stdout: stdioMode === "captured" ? "pipe" : "inherit",
       stderr: stdioMode === "captured" ? "pipe" : "inherit",
       env,
-      ...(options.cwd ? { cwd: options.cwd } : {}),
+      // options.cwd wins; dispatch.cwd is the request-level fallback (it was
+      // declared on AgentDispatchRequest but consumed by nothing — P0.5 fix).
+      ...((options.cwd ?? options.dispatch?.cwd) ? { cwd: options.cwd ?? options.dispatch?.cwd } : {}),
       // Spawn in its own process group so killGroup(-pid, signal) reaches all
       // descendants (e.g. the .opencode binary that opencode's node wrapper forks).
       // Only applied in captured mode — interactive mode inherits the parent
@@ -391,6 +434,27 @@ export async function runAgent(
         killGroup(proc, "SIGKILL");
       }, 5000);
     }, timeoutMs);
+  }
+
+  // Cooperative cancel: same SIGTERM→SIGKILL discipline as the timeout, but
+  // flagged separately so the result carries `reason: "aborted"`.
+  let aborted = false;
+  const abortSignal = options.signal;
+  const onAbort = () => {
+    if (!proc || proc.exitCode !== null) return;
+    aborted = true;
+    killGroup(proc, "SIGTERM");
+    const sigkillTimer = setTimeoutImpl(() => {
+      if (!proc || proc.exitCode !== null) return;
+      killGroup(proc, "SIGKILL");
+    }, 5000);
+    if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
+  };
+  if (abortSignal) {
+    // A signal that aborted between the pre-spawn check and here is handled
+    // by calling the listener directly.
+    if (abortSignal.aborted) onAbort();
+    else abortSignal.addEventListener("abort", onAbort, { once: true });
   }
 
   // Stream-drain timeout: the overall wall-clock budget plus a 2 s grace
@@ -440,6 +504,7 @@ export async function runAgent(
     exitCode = await proc.exited;
   } catch (err) {
     if (timer !== undefined) clearTimeoutImpl(timer);
+    abortSignal?.removeEventListener("abort", onAbort);
     // BUG-H2: drain stream readers before the early return so they don't
     // surface as unhandled rejections after the function resolves.
     // The streams already carry a built-in drain timeout so this allSettled
@@ -457,9 +522,22 @@ export async function runAgent(
     };
   }
   clearTimeoutImpl(timer);
+  abortSignal?.removeEventListener("abort", onAbort);
 
   const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
   const durationMs = Date.now() - start;
+
+  if (aborted) {
+    return {
+      ok: false,
+      exitCode,
+      stdout,
+      stderr,
+      durationMs,
+      reason: "aborted",
+      error: `agent CLI "${profile.name}" aborted by caller signal`,
+    };
+  }
 
   if (timedOut) {
     return {

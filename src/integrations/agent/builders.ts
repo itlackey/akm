@@ -14,8 +14,8 @@
  * `BUILTIN_BUILDERS`. Nothing else changes.
  */
 
-import { claudeBuilder } from "../harnesses/claude/agent-builder";
-import { opencodeBuilder } from "../harnesses/opencode/agent-builder";
+import { ConfigError } from "../../core/errors";
+import { HARNESS_REGISTRY } from "../harnesses";
 // Types + shared validation helpers live in the leaf module `builder-shared.ts`
 // so per-harness builders (harnesses/claude/agent-builder.ts) can depend on them
 // without importing this file back — avoiding an init-order cycle through
@@ -23,6 +23,7 @@ import { opencodeBuilder } from "../harnesses/opencode/agent-builder";
 // sites keep working.
 import { type AgentCommandBuilder, assertNotFlag } from "./builder-shared";
 import { resolveModel } from "./model-aliases";
+import { getBuiltinAgentProfile } from "./profiles";
 
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builder-shared";
 export { assertNotFlag, normalizeTools } from "./builder-shared";
@@ -50,7 +51,7 @@ const defaultBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, profile.name, profile.modelAliases);
+      const resolved = resolveModel(req.model, profile.name, profile.modelAliases, profile.globalModelAliases);
       args.push("--model", resolved);
     }
     args.push("--");
@@ -61,21 +62,47 @@ const defaultBuilder: AgentCommandBuilder = {
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
-const BUILTIN_BUILDERS: Readonly<Record<string, AgentCommandBuilder>> = {
-  opencode: opencodeBuilder,
-  "opencode-headless": opencodeBuilder,
-  claude: claudeBuilder,
-  "claude-headless": claudeBuilder,
-};
+/**
+ * DERIVED from `HARNESS_REGISTRY` (P0.5 registry-drift fix): each harness that
+ * owns an `agentBuilder` is registered under its canonical id, its
+ * `<id>-headless` profile variant, and every alias. Previously this was a
+ * hand-maintained map that could (and did) drift from the harness registry.
+ */
+const BUILTIN_BUILDERS: Readonly<Record<string, AgentCommandBuilder>> = (() => {
+  const registry: Record<string, AgentCommandBuilder> = {};
+  for (const harness of HARNESS_REGISTRY as readonly (typeof HARNESS_REGISTRY)[number][]) {
+    if (!harness.agentBuilder) continue;
+    registry[harness.id] = harness.agentBuilder;
+    registry[`${harness.id}-headless`] = harness.agentBuilder;
+    for (const alias of harness.aliases) registry[alias] = harness.agentBuilder;
+  }
+  return Object.freeze(registry);
+})();
 
 /**
- * Return the builder for the given platform name, falling back to the default
- * builder for unknown platforms. Custom builders injected via tests can be
- * passed as `registry`.
+ * Return the builder for the given platform name.
+ *
+ * A *custom* profile (unknown platform) falls back to the default builder —
+ * that generic `--system-prompt`/`--model`/`--` shape is the documented
+ * contract for user-defined wrappers. A *known built-in agent CLI* with no
+ * dedicated builder (codex, gemini, aider + their `-headless` variants) is a
+ * loud `ConfigError` instead: the default flag shape is wrong for those CLIs
+ * (aider, for one, treats positionals as file names), so the old silent
+ * fallback produced a broken command that "ran" and failed downstream.
+ * Custom builders injected via tests can be passed as `registry`.
  */
 export function getCommandBuilder(
   platform: string,
   registry: Record<string, AgentCommandBuilder> = BUILTIN_BUILDERS,
 ): AgentCommandBuilder {
-  return registry[platform] ?? defaultBuilder;
+  const found = registry[platform];
+  if (found) return found;
+  if (getBuiltinAgentProfile(platform)) {
+    throw new ConfigError(
+      `agent dispatch for "${platform}" is not supported yet: no command builder exists for this CLI, and the generic flag shape would produce a broken command.`,
+      "INVALID_CONFIG_FILE",
+      'Use an "opencode" or "claude" profile, or — if your CLI is flag-compatible with one of those — set `profiles.agent.<name>.commandBuilder` to "opencode" or "claude".',
+    );
+  }
+  return defaultBuilder;
 }

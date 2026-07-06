@@ -17,8 +17,9 @@
 import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
+import { resolveModel } from "../../agent/model-aliases";
 import type { AgentProfile } from "../../agent/profiles";
-import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../agent/spawn";
+import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
 
 /** Minimal surface of the OpenCode SDK client used by this runner. */
 interface SdkClient {
@@ -34,7 +35,15 @@ interface SdkClient {
         system?: string;
         tools?: Record<string, boolean>;
       };
-    }): Promise<{ data?: { parts?: { type: string; text?: string }[] } }>;
+    }): Promise<{
+      data?: {
+        // AssistantMessage projection (SDK 1.2.20 types.gen.d.ts): token
+        // accounting lives on info.tokens. Fields optional here so a fake or
+        // an older server that omits them cannot crash extraction.
+        info?: { tokens?: { input?: number; output?: number; reasoning?: number } };
+        parts?: { type: string; text?: string }[];
+      };
+    }>;
     delete(args: { path: { id: string } }): Promise<unknown>;
   };
 }
@@ -114,17 +123,23 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
   return out;
 }
 
-async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
-  if (_server) return _server;
-
-  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
-    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
-  });
-
+/**
+ * Assemble the OpenCode SDK server config from the profile + LLM fallback.
+ * Pure and exported for tests. `profile.model` is resolved through the model
+ * alias tables (platform key `"opencode-sdk"`) so config aliases like
+ * `"model": "fast"` work on the SDK path the same way they do for CLI
+ * builders. Note there is no built-in alias column for `opencode-sdk` —
+ * built-in opus/sonnet/haiku strings are CLI-provider-qualified and would
+ * collide with the `akm-custom/` provider prefixing below, so only profile
+ * and config-root alias tables apply here.
+ */
+export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
   // Resolve endpoint and model: profile fields take precedence over config.llm
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
   const apiKey = resolveSecret(profile.apiKey ?? llmConfig?.apiKey);
-  const model = profile.model;
+  const model = profile.model
+    ? resolveModel(profile.model, "opencode-sdk", profile.modelAliases, profile.globalModelAliases)
+    : undefined;
 
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
@@ -144,6 +159,17 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
       sdkConfig.model = `akm-custom/${model}`;
     }
   }
+  return sdkConfig;
+}
+
+async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
+  if (_server) return _server;
+
+  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
+    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
+  });
+
+  const sdkConfig = buildSdkConfig(profile, llmConfig);
 
   _server = (await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {})) as SdkServer;
 
@@ -155,6 +181,25 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
   return _server;
 }
 
+/**
+ * Extract best-effort token usage from a prompt response. Only numeric
+ * fields the server actually reported are copied; returns undefined when
+ * nothing usable is present (older servers, test fakes).
+ */
+function extractUsage(info?: {
+  tokens?: { input?: number; output?: number; reasoning?: number };
+}): AgentTokenUsage | undefined {
+  const tokens = info?.tokens;
+  if (!tokens) return undefined;
+  const usage: AgentTokenUsage = {};
+  if (typeof tokens.input === "number" && Number.isFinite(tokens.input)) usage.inputTokens = tokens.input;
+  if (typeof tokens.output === "number" && Number.isFinite(tokens.output)) usage.outputTokens = tokens.output;
+  if (typeof tokens.reasoning === "number" && Number.isFinite(tokens.reasoning)) {
+    usage.reasoningTokens = tokens.reasoning;
+  }
+  return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
 export async function runOpencodeSdk(
   profile: AgentProfile,
   prompt: string,
@@ -162,6 +207,18 @@ export async function runOpencodeSdk(
   llmConfig?: LlmConnectionConfig,
 ): Promise<AgentRunResult> {
   const start = Date.now();
+
+  if (opts.signal?.aborted) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: "",
+      durationMs: 0,
+      exitCode: null,
+      reason: "aborted" as AgentFailureReason,
+      error: `opencode-sdk agent "${profile.name}" not started: caller signal already aborted`,
+    };
+  }
 
   let client: SdkClient;
   try {
@@ -225,19 +282,50 @@ export async function runOpencodeSdk(
 
   let timer: ReturnType<typeof setTimeoutImpl> | undefined;
   const TIMED_OUT = Symbol("opencode-sdk-timeout");
+  const ABORTED = Symbol("opencode-sdk-aborted");
+
+  // Cooperative cancel: there is no OS process to signal, so an abort simply
+  // wins the race below; the finally block reaps the in-flight session, same
+  // as the timeout path.
+  let onAbort: (() => void) | undefined;
+  const abortSignal = opts.signal;
 
   try {
     const promptPromise = client.session.prompt({ path: { id: sessionId }, body });
+    type PromptResult = Awaited<typeof promptPromise>;
 
-    const result =
-      timeoutMs === null
-        ? await promptPromise
-        : await Promise.race<{ data?: { parts?: { type: string; text?: string }[] } } | typeof TIMED_OUT>([
-            promptPromise,
-            new Promise<typeof TIMED_OUT>((resolve) => {
-              timer = setTimeoutImpl(() => resolve(TIMED_OUT), timeoutMs);
-            }),
-          ]);
+    const racers: Promise<PromptResult | typeof TIMED_OUT | typeof ABORTED>[] = [promptPromise];
+    if (timeoutMs !== null) {
+      racers.push(
+        new Promise<typeof TIMED_OUT>((resolve) => {
+          timer = setTimeoutImpl(() => resolve(TIMED_OUT), timeoutMs);
+        }),
+      );
+    }
+    if (abortSignal) {
+      racers.push(
+        new Promise<typeof ABORTED>((resolve) => {
+          onAbort = () => resolve(ABORTED);
+          if (abortSignal.aborted) onAbort();
+          else abortSignal.addEventListener("abort", onAbort, { once: true });
+        }),
+      );
+    }
+
+    const result = racers.length === 1 ? await promptPromise : await Promise.race(racers);
+
+    if (result === ABORTED) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: null,
+        reason: "aborted" as AgentFailureReason,
+        error: `opencode-sdk agent "${profile.name}" aborted by caller signal`,
+        sessionId,
+      };
+    }
 
     if (result === TIMED_OUT) {
       return {
@@ -248,12 +336,17 @@ export async function runOpencodeSdk(
         exitCode: null,
         reason: "timeout" as AgentFailureReason,
         error: `opencode-sdk agent "${profile.name}" timed out after ${timeoutMs}ms`,
+        sessionId,
       };
     }
 
     const parts = result.data?.parts ?? [];
     const textPart = parts.find((p) => p.type === "text");
     const stdout = textPart?.text ?? "";
+    // Token accounting from the AssistantMessage (previously discarded) —
+    // the seam that makes workflow budget.maxTokens meterable on the
+    // default sdk runner.
+    const usage = extractUsage(result.data?.info);
 
     return {
       ok: true,
@@ -261,6 +354,8 @@ export async function runOpencodeSdk(
       stderr: "",
       durationMs: Date.now() - start,
       exitCode: 0,
+      sessionId,
+      ...(usage ? { usage } : {}),
     };
   } catch (e) {
     return {
@@ -271,9 +366,11 @@ export async function runOpencodeSdk(
       exitCode: 1,
       reason: "non_zero_exit" as AgentFailureReason,
       error: String(e),
+      sessionId,
     };
   } finally {
     if (timer !== undefined) clearTimeoutImpl(timer);
+    if (abortSignal && onAbort) abortSignal.removeEventListener("abort", onAbort);
     // Clean up session to prevent disk accumulation in ~/.local/share/opencode/
     await client.session.delete({ path: { id: sessionId } }).catch(() => {});
   }

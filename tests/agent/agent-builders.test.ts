@@ -436,3 +436,142 @@ describe("builders — argument injection guards", () => {
     ).not.toThrow();
   });
 });
+
+// ── Global model-alias tiers (config-root `modelAliases`) ─────────────────────
+
+describe("resolveModel — global alias tiers", () => {
+  const global = {
+    fast: { claude: "claude-haiku-4-5-20251001", opencode: "opencode/claude-haiku-4-5", "*": "haiku-generic" },
+    deep: { "*": "deep-generic" },
+    opus: { claude: "my-pinned-opus" },
+  };
+
+  test("platform column wins over '*' fallback", async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("fast", "claude", undefined, global)).toBe("claude-haiku-4-5-20251001");
+    expect(resolveModel("fast", "opencode", undefined, global)).toBe("opencode/claude-haiku-4-5");
+  });
+
+  test("'*' fallback used when no platform column matches", async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("fast", "codex", undefined, global)).toBe("haiku-generic");
+    expect(resolveModel("deep", "claude", undefined, global)).toBe("deep-generic");
+  });
+
+  test("profile-level custom alias beats the global table", async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("fast", "claude", { fast: "profile-wins" }, global)).toBe("profile-wins");
+  });
+
+  test("global table shadows the built-in alias table", async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("opus", "claude", undefined, global)).toBe("my-pinned-opus");
+    // …but only for platforms the global entry names: no column + no '*' falls
+    // through to the built-in table.
+    expect(resolveModel("opus", "opencode", undefined, global)).toBe("opencode/claude-opus-4-7");
+  });
+
+  test("alias lookup is case-insensitive; unknown alias passes through verbatim", async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("FAST", "claude", undefined, global)).toBe("claude-haiku-4-5-20251001");
+    expect(resolveModel("exact-model-id", "claude", undefined, global)).toBe("exact-model-id");
+  });
+});
+
+// ── resolveAgentProfile: modelAliases config wiring (previously dropped) ──────
+
+describe("resolveAgentProfile — modelAliases from config", () => {
+  test("overrides.modelAliases reaches the resolved profile (bug fix)", async () => {
+    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
+    const profile = resolveAgentProfile("claude", {
+      platform: "claude",
+      modelAliases: { quick: "claude-haiku-4-5-20251001" },
+    });
+    expect(profile?.modelAliases).toEqual({ quick: "claude-haiku-4-5-20251001" });
+  });
+
+  test("globalModelAliases is stamped onto the profile with and without overrides", async () => {
+    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
+    const global = { fast: { "*": "generic-fast" } };
+    const withOverrides = resolveAgentProfile("claude", { platform: "claude" }, global);
+    expect(withOverrides?.globalModelAliases).toEqual(global);
+    const withoutOverrides = resolveAgentProfile("claude", undefined, global);
+    expect(withoutOverrides?.globalModelAliases).toEqual(global);
+  });
+
+  test("resolveProfileFromConfig threads the config-root modelAliases table", async () => {
+    const { resolveProfileFromConfig } = await import("../../src/integrations/agent/config");
+    const config = {
+      modelAliases: { fast: { claude: "claude-haiku-4-5-20251001" } },
+      profiles: { agent: { claude: { platform: "claude" as const } } },
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: partial config shape for the seam under test
+    const profile = resolveProfileFromConfig("claude", config as any);
+    expect(profile?.globalModelAliases).toEqual(config.modelAliases);
+  });
+});
+
+// ── Integration: builder resolves through the global tier table ──────────────
+
+describe("builder + globalModelAliases integration", () => {
+  test("claudeBuilder resolves a global tier alias", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("claude");
+    const profile = makeClaudeProfile({
+      globalModelAliases: { fast: { claude: "claude-haiku-4-5-20251001" } },
+    });
+    const cmd = builder.build(profile, { prompt: "go", model: "fast" });
+    const argv = cmd.argv as string[];
+    expect(argv[argv.indexOf("--model") + 1]).toBe("claude-haiku-4-5-20251001");
+  });
+
+  test("profile.modelAliases beats globalModelAliases in the builder", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const builder = getCommandBuilder("opencode");
+    const profile = makeOpencodeProfile({
+      modelAliases: { fast: "opencode/profile-wins" },
+      globalModelAliases: { fast: { opencode: "opencode/global-loses" } },
+    });
+    const cmd = builder.build(profile, { prompt: "go", model: "fast" });
+    const argv = cmd.argv as string[];
+    expect(argv[argv.indexOf("--model") + 1]).toBe("opencode/profile-wins");
+  });
+});
+
+// ── Registry-derived builders + missing-builder error (P0.5 drift fix) ────────
+
+describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
+  test("canonical ids, -headless variants, and aliases resolve to the harness builder", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    expect(getCommandBuilder("opencode").platform).toBe("opencode");
+    expect(getCommandBuilder("opencode-headless").platform).toBe("opencode");
+    expect(getCommandBuilder("claude").platform).toBe("claude");
+    expect(getCommandBuilder("claude-headless").platform).toBe("claude");
+    // 'claude-code' is the registered alias of the claude harness.
+    expect(getCommandBuilder("claude-code").platform).toBe("claude");
+  });
+
+  test("known built-in CLIs without a dedicated builder throw a ConfigError", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const { ConfigError } = await import("../../src/core/errors");
+    for (const platform of ["codex", "gemini", "aider", "codex-headless", "gemini-headless", "aider-headless"]) {
+      expect(() => getCommandBuilder(platform)).toThrow(ConfigError);
+    }
+  });
+
+  test("unknown custom platforms still fall back to the default builder", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    expect(getCommandBuilder("my-custom-wrapper").platform).toBe("default");
+  });
+
+  test("dispatching a codex profile through runAgent surfaces the ConfigError", async () => {
+    const { runAgent } = await import("../../src/integrations/agent/spawn");
+    const profile = makeFakeProfile({ name: "codex", bin: "codex" });
+    await expect(
+      runAgent(profile, undefined, {
+        stdio: "captured",
+        dispatch: { prompt: "do a thing", model: "opus" },
+      }),
+    ).rejects.toThrow(/no command builder exists/);
+  });
+});

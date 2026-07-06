@@ -14,7 +14,7 @@
 import type { AkmConfig } from "../core/config/config";
 import { getDefaultLlmConfig } from "../core/config/config";
 import { warn } from "../core/warn";
-import { resolveAgentProfile, runAgent } from "../integrations/agent";
+import { resolveProfileFromConfig, runAgent } from "../integrations/agent";
 import { chatCompletion } from "./client";
 
 export interface CallAiOptions {
@@ -38,7 +38,7 @@ export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOpti
   const defaultAgentName = config.defaults?.agent;
   if (defaultAgentName) {
     try {
-      const profile = resolveAgentProfile(defaultAgentName, config.profiles?.agent?.[defaultAgentName]);
+      const profile = resolveProfileFromConfig(defaultAgentName, config);
       if (!profile) {
         return {
           ok: false,

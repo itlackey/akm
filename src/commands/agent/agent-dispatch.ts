@@ -35,6 +35,12 @@ export interface AkmAgentDispatchOptions {
   llmConfig?: LlmConnectionConfig;
   timeoutMs?: number;
   /**
+   * Working directory for the spawned agent CLI. Not honoured by the
+   * opencode-sdk path (the SDK server is process-wide; see the plan's open
+   * seam decision on per-call cwd).
+   */
+  cwd?: string;
+  /**
    * When present, the platform-specific AgentCommandBuilder uses these fields
    * to construct the argv (system prompt, model alias, tool policy). When
    * absent, falls back to the legacy positional-prompt behaviour.
@@ -136,6 +142,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
     parseOutput: "text" as const,
     ...(options.args?.length && !options.commandRef && !options.workflowRef ? { args: options.args } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
   };
   const result: AgentRunResult = profile.sdkMode

@@ -20,6 +20,7 @@
  */
 
 import { BaseHarness, type HarnessCapabilities } from "../types";
+import { opencodeBuilder } from "./agent-builder";
 
 export { opencodeBuilder } from "./agent-builder";
 export { openCodeImporter } from "./config-import";
@@ -53,6 +54,7 @@ export class OpencodeHarness extends BaseHarness {
   // `v1ProfilePlatform()` resolves most-specific-id-first, so "opencode-sdk-*"
   // is claimed by OpencodeSdkHarness before this prefix can over-match it.
   protected readonly v1ProfilePrefixes = ["opencode"] as const;
+  readonly agentBuilder = opencodeBuilder;
   readonly capabilities = caps({
     sessionLogs: true,
     agentDispatch: true,

@@ -15,6 +15,7 @@
  */
 import type { AgentProfileConfig, AkmConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
+import type { GlobalModelAliasTable } from "./model-aliases";
 import {
   type AgentProfile,
   BUILTIN_AGENT_PROFILE_NAMES,
@@ -33,7 +34,11 @@ export const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
  * user override (`profiles.agent[name]`) on top of the built-in profile (if
  * any). Returns `undefined` when neither yields a usable profile.
  */
-export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig): AgentProfile | undefined {
+export function resolveAgentProfile(
+  name: string,
+  overrides?: AgentProfileConfig,
+  globalModelAliases?: GlobalModelAliasTable,
+): AgentProfile | undefined {
   const builtin = getBuiltinAgentProfile(name);
   const platform = overrides?.platform;
   // For opencode-sdk profiles, allow synthesizing without a built-in.
@@ -52,7 +57,16 @@ export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig
       ...(sdkMode ? { sdkMode: true } : {}),
     } as AgentProfile);
 
-  if (!overrides) return base;
+  if (!overrides) {
+    return globalModelAliases ? { ...base, globalModelAliases } : base;
+  }
+
+  // Per-profile aliases from config extend (and shadow) the built-in
+  // profile's own entries. (Previously always used base.modelAliases, so the
+  // documented `profiles.agent.<name>.modelAliases` config was silently
+  // dropped — same bug class as the timeoutMs override below.)
+  const modelAliases =
+    overrides.modelAliases || base.modelAliases ? { ...base.modelAliases, ...overrides.modelAliases } : undefined;
 
   return {
     name,
@@ -73,16 +87,18 @@ export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig
     endpoint: base.endpoint,
     apiKey: base.apiKey,
     commandBuilder: base.commandBuilder,
-    modelAliases: base.modelAliases,
+    modelAliases,
+    ...(globalModelAliases ? { globalModelAliases } : {}),
   };
 }
 
 /**
  * Resolve the runnable profile for `name`, or `undefined` if none is
- * available (no built-in and no user override).
+ * available (no built-in and no user override). Threads the config-root
+ * `modelAliases` tier table onto the resolved profile.
  */
 export function resolveProfileFromConfig(name: string, config?: AkmConfig): AgentProfile | undefined {
-  return resolveAgentProfile(name, config?.profiles?.agent?.[name]);
+  return resolveAgentProfile(name, config?.profiles?.agent?.[name], config?.modelAliases);
 }
 
 /**

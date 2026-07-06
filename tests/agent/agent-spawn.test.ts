@@ -308,3 +308,91 @@ describe("runAgent — argument and env construction", () => {
     expect(capturedEnv?.AKM_EVENT_SOURCE).toBe("task");
   });
 });
+
+describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => {
+  test("pre-aborted signal returns reason 'aborted' without spawning", async () => {
+    let spawnCalled = false;
+    const spawn: SpawnFn = () => {
+      spawnCalled = true;
+      throw new Error("must not spawn");
+    };
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runAgent(makeProfile(), "task", { spawn, signal: controller.signal });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("aborted");
+    expect(spawnCalled).toBe(false);
+  });
+
+  test("aborting mid-run kills the child and maps to reason 'aborted'", async () => {
+    // Fake timers so the 5s SIGKILL follow-up never leaves a live timer.
+    const fakeSet = ((cb: () => void) => {
+      void cb;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const fakeClear = (() => {}) as unknown as typeof clearTimeout;
+
+    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
+    const controller = new AbortController();
+    const promise = runAgent(makeProfile(), "go", {
+      spawn,
+      setTimeoutFn: fakeSet,
+      clearTimeoutFn: fakeClear,
+      timeoutMs: null,
+      signal: controller.signal,
+    });
+    // Let runAgent register the abort listener, then abort.
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    const result = await promise;
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("aborted");
+    expect(result.error).toContain("aborted by caller signal");
+  });
+
+  test("a clean fast exit is not misreported when the signal aborts afterwards", async () => {
+    const { spawn } = fakeSpawnFn({ exitCode: 0, stdout: "done" });
+    const controller = new AbortController();
+    const result = await runAgent(makeProfile(), "go", { spawn, signal: controller.signal });
+    controller.abort(); // after completion — listener already removed
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+});
+
+describe("runAgent — dispatch.cwd is consumed (P0.5)", () => {
+  function captureSpawnOpts() {
+    const captured: { cwd?: string }[] = [];
+    const spawn: SpawnFn = (_argv, opts) => {
+      captured.push({ cwd: (opts as { cwd?: string } | undefined)?.cwd });
+      return {
+        exitCode: null,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream(""),
+        stderr: asReadableStream(""),
+        pid: 1234,
+        kill() {},
+      } as unknown as SpawnedSubprocess;
+    };
+    return { spawn, captured };
+  }
+
+  test("dispatch.cwd reaches the spawn options when options.cwd is absent", async () => {
+    const { spawn, captured } = captureSpawnOpts();
+    await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
+      spawn,
+      dispatch: { prompt: "go", cwd: "/tmp/unit-workdir" },
+    });
+    expect(captured[0]?.cwd).toBe("/tmp/unit-workdir");
+  });
+
+  test("options.cwd wins over dispatch.cwd", async () => {
+    const { spawn, captured } = captureSpawnOpts();
+    await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
+      spawn,
+      cwd: "/tmp/options-wins",
+      dispatch: { prompt: "go", cwd: "/tmp/dispatch-loses" },
+    });
+    expect(captured[0]?.cwd).toBe("/tmp/options-wins");
+  });
+});

@@ -163,6 +163,11 @@ export const AgentProfileConfigSchema = z
     // timeout (e.g. `akm wiki ingest` without `--timeout-ms`). null = no
     // timeout. Honored by resolveAgentProfile (integrations/agent/config.ts).
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    // Per-profile model aliases: lowercase alias → exact model string for
+    // this profile's CLI. Highest-precedence tier in resolveModel
+    // (integrations/agent/model-aliases.ts) — beats the config-root
+    // `modelAliases` table and the built-in opus/sonnet/haiku entries.
+    modelAliases: z.record(z.string().min(1), z.string().min(1)).optional(),
   })
   .passthrough();
 
@@ -937,6 +942,15 @@ export const AkmConfigShape = {
   configVersion: z.union([z.string().min(1), z.number()]).optional(),
   profiles: ProfilesSchema.optional(),
   defaults: DefaultsSchema.optional(),
+  // Global model-alias tiers: alias → platform → exact model string, with a
+  // reserved `"*"` platform key as fallback. Lets workflows/callers name a
+  // semantic tier ("fast", "deep") that resolves per-harness at dispatch
+  // time. Values are literal model strings, never other aliases (one
+  // resolution level). Platform keys match the platform string a command
+  // builder resolves against ("claude", "opencode", "opencode-sdk", or a
+  // custom profile's name for the default builder) — unknown keys are inert.
+  // Precedence: profile modelAliases > this table > built-in aliases.
+  modelAliases: z.record(z.string().min(1), z.record(z.string().min(1), z.string().min(1))).optional(),
   stashDir: nonEmptyString.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("auto"),
   embedding: EmbeddingConnectionConfigSchema.optional(),

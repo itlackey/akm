@@ -83,3 +83,38 @@ describe("AkmConfig derives from the Zod schema (single source of truth)", () =>
     expect(parsed.profiles?.improve?.default?.processes?.graphExtraction?.fullScan).toBe(false);
   });
 });
+
+// ── Config-root modelAliases (global model tiers) ─────────────────────────────
+
+describe("modelAliases config validation", () => {
+  test("root modelAliases table and per-profile modelAliases parse", () => {
+    const result = AkmConfigSchema.safeParse({
+      modelAliases: {
+        fast: { claude: "claude-haiku-4-5-20251001", "*": "haiku" },
+        deep: { "*": "claude-opus-4-7" },
+      },
+      profiles: {
+        agent: {
+          claude: { platform: "claude", modelAliases: { quick: "claude-haiku-4-5-20251001" } },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelAliases?.fast?.["*"]).toBe("haiku");
+      expect(result.data.profiles?.agent?.claude?.modelAliases?.quick).toBe("claude-haiku-4-5-20251001");
+    }
+  });
+
+  test("non-string leaf values are rejected loudly", () => {
+    const result = AkmConfigSchema.safeParse({
+      modelAliases: { fast: { claude: 42 } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("empty alias or platform keys are rejected", () => {
+    expect(AkmConfigSchema.safeParse({ modelAliases: { "": { claude: "x" } } }).success).toBe(false);
+    expect(AkmConfigSchema.safeParse({ modelAliases: { fast: { "": "x" } } }).success).toBe(false);
+  });
+});

@@ -787,9 +787,10 @@ a run to another harness or vendor is a profile change, not a workflow edit.
 
 1. New root config key `modelAliases`: `alias → { <platformId>: modelString,
    "*"?: modelString }`. One resolution level — values are literal model
-   strings, never other aliases (no recursion). Platform keys are validated
-   against `HARNESS_REGISTRY` ids (the registry-derivation item in
-   *Reconciliation*), so a typo'd platform is a config error.
+   strings, never other aliases (no recursion). Platform keys are free-form:
+   custom profiles resolve under their own name via the default builder, so a
+   closed enum would reject legitimate columns. Unknown keys are inert; the
+   `"*"` fallback covers new platforms without config churn.
 2. Resolution order in `resolveModel`: profile `modelAliases` → global
    `modelAliases[alias][platform]` → global `modelAliases[alias]["*"]` →
    `BUILTIN_ALIASES` → verbatim. Case-insensitive as today.

@@ -36,7 +36,7 @@ export const opencodeBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, "opencode", profile.modelAliases);
+      const resolved = resolveModel(req.model, "opencode", profile.modelAliases, profile.globalModelAliases);
       args.push("--model", resolved);
     }
     args.push("--");

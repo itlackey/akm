@@ -38,8 +38,24 @@ export interface AgentDispatchRequest {
   model?: string;
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
-  /** Working directory for the subprocess. */
+  /**
+   * Working directory for the subprocess. Consumed by `runAgent` (as the
+   * fallback when `RunAgentOptions.cwd` is absent), not by builders — argv
+   * never encodes a working directory.
+   */
   cwd?: string;
+  /**
+   * Reasoning-effort hint for harnesses that accept one (reserved for the
+   * workflow engine's IR `effort` field; no builder consumes it yet).
+   */
+  effort?: string;
+  /**
+   * JSON Schema the unit's output must validate against. Reserved for the
+   * workflow engine's structured-output normalization: harnesses with native
+   * schema flags (e.g. Codex `--output-schema`) will pass it through; others
+   * get it injected into the prompt. No builder consumes it yet.
+   */
+  schema?: Record<string, unknown>;
 }
 
 /** Concrete command ready to hand to the spawn wrapper. */

@@ -141,12 +141,20 @@ binary is on `PATH`):
 | --- | --- | --- | --- | --- |
 | `opencode` | `opencode` | `["run"]` | `interactive` | `opencode` |
 | `claude` | `claude` | `[]` | `interactive` | `claude` |
-| `codex` | `codex` | `[]` | `interactive` | `default` |
-| `gemini` | `gemini` | `[]` | `interactive` | `default` |
-| `aider` | `aider` | `["--no-auto-commits"]` | `interactive` | `default` |
+| `codex` | `codex` | `[]` | `interactive` | *(none — dispatch errors)* |
+| `gemini` | `gemini` | `[]` | `interactive` | *(none — dispatch errors)* |
+| `aider` | `aider` | `["--no-auto-commits"]` | `interactive` | *(none — dispatch errors)* |
 
 Each has a `-headless` variant (e.g. `opencode-headless`) that sets
 `stdio: "captured"` and `parseOutput: "json"` for automation contexts.
+
+The `codex`, `gemini`, and `aider` profiles have no dedicated command builder
+yet: dispatching them with a prompt/model/system-prompt raises a `ConfigError`
+instead of silently building a command with the wrong flag shapes (aider, for
+example, treats positional args as file names). Interactive launch (no
+dispatch flags) still works. If your CLI is flag-compatible with opencode or
+claude, set `commandBuilder` on a custom profile; dedicated builders for these
+CLIs arrive with the workflow-orchestration harness adapters.
 
 In v2 config the built-in profile names still resolve — but to use them from
 `profiles.agent`, declare them explicitly so the profile pool is self-contained.
@@ -188,6 +196,40 @@ Three convenience aliases resolve to platform-appropriate model strings:
 | `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
 Aliases are case-insensitive. An unrecognised alias is passed verbatim.
+
+### Global alias tiers
+
+The config-root `modelAliases` key defines semantic tiers once and resolves
+them per-platform at dispatch time. Each alias maps platform names to the
+exact model string that platform expects; the reserved `"*"` key is a
+fallback for platforms without their own column. Values are always literal
+model strings — never other aliases.
+
+```jsonc
+// ~/.config/akm/config.json
+{
+  "modelAliases": {
+    "fast":     { "claude": "claude-haiku-4-5-20251001", "opencode": "opencode/claude-haiku-4-5" },
+    "balanced": { "claude": "claude-sonnet-4-6",         "opencode": "opencode/claude-sonnet-4-6" },
+    "deep":     { "claude": "claude-opus-4-7",           "*": "opencode/claude-opus-4-7" }
+  }
+}
+```
+
+```sh
+akm agent claude-cli --model deep --prompt "architecture review"
+akm agent opencode-default --model deep --prompt "architecture review"
+# Same alias, per-platform model strings.
+```
+
+Platform keys match the platform string the profile's command builder
+resolves against: `claude`, `opencode`, `opencode-sdk`, or — for custom
+profiles handled by the default builder — the profile's own name. Unknown
+platform keys are inert.
+
+Resolution precedence (highest first): per-profile `modelAliases` → global
+`modelAliases` (platform column, then `"*"`) → built-in aliases → verbatim
+pass-through.
 
 ### Custom aliases
 

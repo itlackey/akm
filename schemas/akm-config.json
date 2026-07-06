@@ -127,6 +127,16 @@
                     "type": "null"
                   }
                 ]
+              },
+              "modelAliases": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "propertyNames": {
+                  "minLength": 1
+                }
               }
             },
             "required": [
@@ -4221,6 +4231,22 @@
       },
       "additionalProperties": true
     },
+    "modelAliases": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "minLength": 1
+        },
+        "propertyNames": {
+          "minLength": 1
+        }
+      },
+      "propertyNames": {
+        "minLength": 1
+      }
+    },
     "stashDir": {
       "type": "string",
       "minLength": 1
@@ -4885,6 +4911,16 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "modelAliases": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "propertyNames": {
+                      "minLength": 1
+                    }
                   }
                 },
                 "required": [
@@ -8978,6 +9014,22 @@
             }
           },
           "additionalProperties": true
+        },
+        "modelAliases": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            },
+            "propertyNames": {
+              "minLength": 1
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
         },
         "stashDir": {
           "type": "string",
