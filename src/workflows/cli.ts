@@ -21,6 +21,7 @@ export const WORKFLOW_SUBCOMMANDS = new Set([
   "create",
   "template",
   "resume",
+  "abandon",
   "validate",
 ]);
 
