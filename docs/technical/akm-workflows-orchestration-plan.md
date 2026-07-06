@@ -4,9 +4,14 @@
 *Open decisions* and *Formalization addendum* below. Supersedes Part F of
 [`claude-code-vs-akm-workflows.md`](./claude-code-vs-akm-workflows.md).
 **P0.5 SHIPPED 2026-07-05** — merged to main in
-[PR #713](https://github.com/itlackey/akm/pull/713) (see the annotated
-*Rollout phases* for exactly what landed vs. was deferred). Next up: P0
-(IR + compiler), then P1 (`akm workflow run`).
+[PR #713](https://github.com/itlackey/akm/pull/713).
+**P0/P1 SHIPPED, P2 SHIPPED 2026-07-06** on the PR #714 branch.
+**REDESIGN 2026-07-06:** after P2, an owner review found the P1 execution
+semantics brittle and coupled to Claude Code. The *Redesign addendum*
+at the end of this document records the owner decisions (YAML program
+format, full replay semantics) and **supersedes** the P1 markdown
+orchestration grammar, the P3 CC-delegation backend, and the P5 replay
+design below. Phases R1–R4 in the addendum replace P3–P5.
 
 ## Goal
 
@@ -1004,3 +1009,203 @@ Reuse unchanged:
 - `src/integrations/agent/runner-dispatch.ts`, `spawn.ts`, `runner.ts` (core), `builders.ts` (mechanism)
 - `src/integrations/harnesses/opencode-sdk/**`, `src/integrations/harnesses/{claude,opencode}/agent-builder.ts`
 - `src/llm/structured-call.ts`, `usage-telemetry.ts`
+
+## Redesign addendum (owner decisions, 2026-07-06) — the deterministic program format
+
+**Trigger.** A post-P2 owner review judged the shipped P1 execution semantics
+"brittle and not deterministic in the same way Claude Code workflows are." A
+root-cause review agreed and located the failure precisely: **P1 ported
+Claude Code's features without porting its foundation.** CC's robustness
+comes from four properties, none of which is a feature:
+
+1. the plan is an **immutable program** for the life of a run;
+2. data flows through **explicit variables**, producer → consumer;
+3. resume is **journaled replay** of that program against cached leaf
+   results;
+4. **exactly one runtime** drives the loop.
+
+The P1 implementation violated all four: the plan was recompiled from the
+live asset file on every invocation (a half-finished run could change
+behavior when the file changed — the IR was specified as "serialized
+alongside `WorkflowDocument`" and never was); data flowed through an
+ambient, string-keyed evidence search (`over:` matched params, then *any*
+prior step's evidence, first hit wins); unit identity was positional
+(`node.unit[3]`); nothing stopped two concurrent `akm workflow run`
+invocations from racing the same run. Two further defects independent of
+determinism: the completion gate judged an engine-generated summary
+("Executed 3 units…") instead of the work, and no failure policy existed
+despite `failure_reason` being persisted expressly to enable one. The
+markdown grammar was meanwhile accreting program semantics (routes, gate
+loops, data flow) one subsection at a time — becoming a bad programming
+language instead of either staying simple or being a real one.
+
+### Owner decisions (recorded verbatim, supersede conflicting text above)
+
+1. **Direction → program format, YAML.** Orchestrated workflows are a
+   deterministic orchestration *program* expressed in **YAML** (chosen over
+   markdown for lintability/parseability — a published JSON Schema in
+   `schemas/` validates it, and `akm workflow validate` lints it). The
+   durable, gated step spine remains the organizing principle; YAML is how
+   the program is written, not a change to what a run is.
+2. **Determinism bar → full replay semantics.** The compiled plan is frozen
+   per run; orchestration decisions are pure functions of (frozen plan,
+   params, journaled unit results). No wall-clock, randomness, or ambient
+   lookup exists in the expression language *by construction*, so a resumed
+   run is byte-reproducible in every decision the engine makes. The only
+   nondeterminism is inside agent/LLM calls — and those are journaled.
+3. **Rework scope → break the P1 surface freely.** The P1 markdown
+   orchestration subsections (`### Runner`/`### Fan-out`/`### Schema`/
+   `### Route`/…) are **removed**, not kept alongside (they were shipped
+   experimental and unreleased). Classic **linear markdown workflows remain
+   fully supported and unchanged** — they compile to a linear plan exactly
+   as today (that CLI contract is stable). `workflow.db` evolution stays
+   strictly additive; migrations 001–005 are untouched.
+4. **Failure policy → explicit surface, fail-fast default.** Per-unit
+   `on_error: fail | continue` and bounded `retry` (keyed on the persisted
+   `failure_reason` taxonomy). The default remains fail-fast so nothing
+   silently degrades.
+
+### The YAML workflow format (v1 sketch — normative schema ships in R1)
+
+```yaml
+version: 1
+name: review-changes
+description: Review changed files and route the outcome
+params:
+  changed_files: { type: array, items: { type: string } }
+defaults:            # run-level defaults, overridable per unit
+  runner: sdk        # llm | agent | sdk | inherit
+  model: balanced
+  timeout: 10m
+  on_error: fail
+
+steps:
+  - id: discover
+    title: Discover targets
+    unit:
+      instructions: |
+        List the files that need review for ${{ params.changed_files }}.
+      output:                      # TYPED step artifact (JSON Schema)
+        type: object
+        properties: { files: { type: array, items: { type: string } } }
+        required: [files]
+    gate:
+      criteria: [every target is listed]
+
+  - id: review
+    title: Review files
+    map:
+      over: ${{ steps.discover.output.files }}   # EXPLICIT producer address
+      concurrency: 8
+      reducer: collect
+      unit:
+        runner: agent
+        profile: reviewer
+        model: deep
+        timeout: 5m
+        retry: { max: 1, on: [timeout, llm_rate_limit] }
+        on_error: continue
+        instructions: |
+          Review ${{ item }} for correctness bugs.
+        output: { type: object, properties: { file: { type: string }, verdict: { type: string } }, required: [file, verdict] }
+    output:                        # step artifact produced by the reducer
+      type: object
+      properties: { verdict: { type: string } }
+    gate:
+      criteria: [every changed file has a verdict]
+      max_loops: 2                 # evaluator-optimizer, bounded
+
+  - id: triage
+    route:                         # routing on an EXPLICIT input
+      input: ${{ steps.review.output.verdict }}
+      when: { pass: ship, fail: rework }
+      default: manual-triage
+```
+
+**The expression language is the whole trick.** `${{ … }}` references are
+*parsed*, not string-replaced: a closed grammar of `params.<name>`,
+`steps.<id>.output.<json-path>`, `item`, `item_index` — nothing else. No
+functions, no clock, no randomness, no ambient search. Single-pass
+resolution over a parsed AST means substituted *content* can never inject
+further directives (the P1 `{{item}}`/`{{params.x}}` re-scan bug class is
+structurally impossible). Every reference names its producer explicitly, so
+shadowing and resolution-order surprises are gone, and the validator can
+check every edge at lint time (unknown step, unknown output path, type
+mismatch against the producer's declared schema).
+
+### Execution contract (replaces the P1 semantics)
+
+- **Frozen plan.** `workflow start` compiles YAML → plan graph and persists
+  `plan_json` + `plan_hash` on the run row (migration 006, additive). Every
+  subsequent invocation executes the frozen plan; the source file is never
+  re-read for an in-flight run. Re-planning is an explicit new run.
+- **Journal + replay.** Unit identity is **content-derived**:
+  `unit_id = <node_id>:<sha256(canonical(item))[:12]>` (`:solo` for
+  non-fan-out), so identity survives list regeneration and reordering. A
+  completed journal row with matching `input_hash` IS the result on replay;
+  same identity with a different hash is a **replay divergence error**
+  (impossible under a frozen plan unless the journal was tampered with —
+  fail loudly, never silently re-run). Failed/missing units dispatch live.
+  Gate evaluator calls are journaled like units (they are LLM calls);
+  human gate approvals are never cached (a blocked gate stays blocked).
+- **Typed artifacts, honest gates.** A step's `output` schema is validated
+  against the reducer result; the gate judge receives the **artifact**
+  (plus criteria), not engine-generated prose. `collect` produces the array
+  of unit outputs; `vote` produces the majority value; a step with no
+  `output` declaration carries its units' raw results as an untyped
+  artifact (permitted, but the validator warns).
+- **Run lease.** The engine takes a lease (`engine_lease_until` +
+  holder id, migration 006) before dispatching and renews it while running;
+  a second `workflow run` on a leased run refuses up front. The manual
+  `next`/`complete` loop also respects the lease.
+- **Failure policy.** `on_error: fail` (default) fails the step on the
+  first unit failure; `continue` records failures in the artifact and lets
+  the gate decide. `retry: { max, on: [<failure_reason>…] }` re-dispatches
+  transient failures (same unit identity, attempt counter on the row).
+- **What carries over unchanged from P0–P2:** the gated spine and
+  `completeWorkflowStep` invariant, `workflow_run_units` + writer queue +
+  migrations, the scheduler caps, `runStructured` + the JSON-schema-subset
+  validator, the unit preamble, env bindings, model-alias tiers, and all
+  seven P2 harness adapters (the dispatch seam is untouched by this
+  redesign — only what feeds it changes).
+
+### What is deleted or replaced
+
+- **Deleted:** the P1 markdown orchestration subsections and their parser
+  (`parser-orchestration.ts` grammar surface), the evidence-search data
+  flow, positional unit ids, the synthetic step summaries, and the P5
+  "replay as opt-in mode" design (full replay is now the *only* mode —
+  durable-row behavior is its degenerate case when the journal is empty).
+- **Replaced:** the P3 Claude-Code-delegation backend (a compiler emitting
+  CC-proprietary `Workflow` scripts + report-back) is replaced by a
+  **harness-neutral driver protocol**: `akm workflow brief <run>` emits the
+  frozen plan's pending units + report contract as plain markdown/JSON;
+  *any* agent session (Claude Code, opencode, Codex, a human) executes and
+  reports via `akm workflow report`. CC becomes documentation, not a
+  compile target. The `min(16, cores−2)` cap becomes an akm config knob
+  (`workflow.maxConcurrency`) with a conservative default, not a CC
+  constant.
+- **Still explicitly out of scope (owner):** the GitHub Copilot
+  coding-agent cloud delegate; the stash MCP server.
+
+### Revised phases (replace P3–P5)
+
+- **R1 — format + frozen plan.** YAML schema (`schemas/akm-workflow.json`)
+  + parser/linter (`workflow validate`), expression-language parser,
+  compiler to the (revised) IR, migration 006 (`plan_json`, `plan_hash`,
+  lease columns), plan freezing in `workflow start`/`run`. Linear markdown
+  workflows compile to the same IR unchanged. P1 orchestration grammar
+  removed. Conformance goldens rewritten against YAML sources.
+- **R2 — engine rework.** Content-derived unit identity, replay journal
+  semantics + divergence detection, run lease enforcement, typed step
+  artifacts + artifact-judging gates, failure policy (`on_error`/`retry`),
+  route-on-explicit-input. Re-land the P4 features on this foundation:
+  budget ceilings, `workflow watch`, `isolation: worktree` (resolving SDK
+  seam decision 1 properly — server keyed by cwd — so isolation and env
+  bindings work on the DEFAULT runner), bounded gate loops.
+- **R3 — driver protocol.** `workflow brief` + `workflow report` ingest +
+  unit-level check-in; the harness-neutral replacement for CC delegation.
+- **R4 — hardening.** Cross-surface conformance (engine-driven vs
+  brief/report-driven runs must produce identical unit graphs), chaos
+  tests (crash/resume, lease contention, hostile content), docs, and the
+  status sweep of this document.
