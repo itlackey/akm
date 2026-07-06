@@ -325,6 +325,9 @@ describe("conformance — fan-out + schema + vote", () => {
         votes: 3,
         total: 3,
       });
+      // The promoted step artifact of a vote step IS the winner — what
+      // `${{ steps.judge.output }}` resolves to downstream.
+      expect(status.workflow.steps[0].evidence?.output).toEqual({ verdict: "pass" });
     });
   }
 });
@@ -345,7 +348,7 @@ steps:
   - id: triage
     title: Triage
     route:
-      input: \${{ steps.classify.output.units[0].result.verdict }}
+      input: \${{ steps.classify.output.verdict }}
       when: { pass: ship, fail: rework }
   - id: ship
     title: Ship
@@ -365,7 +368,7 @@ describe("conformance — routed workflow", () => {
       title: "Triage",
       sequenceIndex: 1,
       route: {
-        input: "${{ steps.classify.output.units[0].result.verdict }}",
+        input: "${{ steps.classify.output.verdict }}",
         when: { pass: "ship", fail: "rework" },
       },
       gate: { kind: "gate", id: "triage.gate", stepId: "triage", criteria: [] },

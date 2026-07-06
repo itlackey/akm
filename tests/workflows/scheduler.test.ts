@@ -3,18 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import {
-  LIFETIME_UNIT_CAP,
-  maxUnitConcurrency,
-  scheduleUnits,
-  UnitCapExceededError,
-} from "../../src/workflows/exec/scheduler";
+import { maxUnitConcurrency, scheduleUnits } from "../../src/workflows/exec/scheduler";
 
 /**
  * Direct scheduler tests (orchestration plan §Trust & limits): the engine
  * caps that guard native fan-out — default concurrency 1 (local-model-safe),
- * clamping to min(16, cores − 2), the lifetime unit cap, and cooperative
- * abort semantics inherited from concurrentMap.
+ * clamping to min(16, cores − 2), and cooperative abort semantics inherited
+ * from concurrentMap. The lifetime unit cap is enforced per ACTUAL dispatch
+ * by the native executor (durable-row reuses are free — peer review R1), so
+ * it is tested there, not here.
  */
 
 /** Track the high-water mark of concurrent in-flight dispatches. */
@@ -59,21 +56,6 @@ describe("scheduleUnits", () => {
     expect(maxUnitConcurrency(8)).toBe(6);
     expect(maxUnitConcurrency(2)).toBe(1);
     expect(maxUnitConcurrency(1)).toBe(1);
-  });
-
-  test("throws UnitCapExceededError before dispatching anything past the lifetime cap", async () => {
-    let dispatches = 0;
-    await expect(
-      scheduleUnits(
-        [1, 2, 3],
-        async () => {
-          dispatches++;
-          return 0;
-        },
-        { unitsDispatched: LIFETIME_UNIT_CAP - 2 },
-      ),
-    ).rejects.toBeInstanceOf(UnitCapExceededError);
-    expect(dispatches).toBe(0);
   });
 
   test("an aborted signal stops claiming new items; unclaimed slots stay undefined", async () => {

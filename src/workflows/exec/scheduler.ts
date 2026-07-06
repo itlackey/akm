@@ -11,10 +11,16 @@
  *
  *   - Concurrency cap `min(16, cores − 2)` (matching Claude Code), applied on
  *     top of whatever per-step concurrency the workflow declares.
- *   - A lifetime unit cap per run as a runaway backstop.
  *   - Cooperative cancellation via AbortSignal (workers stop claiming items;
  *     the same signal is passed into each dispatch so in-flight units can be
  *     preempted too).
+ *
+ * The lifetime unit cap ({@link LIFETIME_UNIT_CAP}) is DECLARED here but
+ * enforced per actual dispatch by the native executor: a pre-batch check
+ * (`journaled + items.length`) counted durable-row REUSES as new dispatches,
+ * which made any partially-completed fan-out with more than ~cap/2 journaled
+ * units impossible to resume (peer review R1). Only work that really
+ * dispatches consumes the cap.
  */
 
 import os from "node:os";
@@ -45,30 +51,23 @@ export interface ScheduleOptions {
    */
   concurrency?: number;
   signal?: AbortSignal;
-  /** Units already dispatched in this run, counted toward the lifetime cap. */
-  unitsDispatched?: number;
   /** Test seam for the CPU-derived cap. */
   maxConcurrency?: number;
 }
 
 /**
- * Run `dispatch` over `items` under the engine caps. Individual failures do
- * not cancel siblings (allSettled semantics from `concurrentMap`); a slot
- * whose dispatch threw or that was never claimed after an abort stays
- * `undefined` in the result array.
- *
- * @throws UnitCapExceededError before dispatching anything when items would
- *         push the run past {@link LIFETIME_UNIT_CAP}.
+ * Run `dispatch` over `items` under the engine concurrency caps. Individual
+ * failures do not cancel siblings (allSettled semantics from `concurrentMap`);
+ * a slot whose dispatch threw or that was never claimed after an abort stays
+ * `undefined` in the result array. The lifetime unit cap is NOT checked here
+ * — the executor consumes it per actual dispatch, so durable-row reuses on
+ * resume stay free.
  */
 export async function scheduleUnits<T, R>(
   items: T[],
   dispatch: (item: T, index: number) => Promise<R>,
   options: ScheduleOptions = {},
 ): Promise<Array<R | undefined>> {
-  const already = options.unitsDispatched ?? 0;
-  if (already + items.length > LIFETIME_UNIT_CAP) {
-    throw new UnitCapExceededError(LIFETIME_UNIT_CAP);
-  }
   const cap = options.maxConcurrency ?? maxUnitConcurrency();
   const concurrency = Math.max(1, Math.min(options.concurrency ?? 1, cap));
   return concurrentMap(items, dispatch, concurrency, { signal: options.signal });

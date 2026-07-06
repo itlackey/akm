@@ -37,7 +37,7 @@ import {
   type WorkflowNextResult,
 } from "../runtime/runs";
 import { compileWorkflowAssetPlan, loadWorkflowAsset } from "../runtime/workflow-asset-loader";
-import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
+import { executeStepPlan, projectStepOutput, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
 
 export interface RunWorkflowOptions {
   /** Workflow run id or workflow ref (auto-starts a run, like `workflow next`). */
@@ -94,6 +94,9 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
 
   // Seed the lifetime unit cap from the journal so it is truly per-RUN: a
   // resumed or re-invoked run must not restart the runaway backstop at zero.
+  // Journal rows = past dispatch ATTEMPTS; the executor consumes the cap only
+  // on new dispatches (durable-row reuses are free), so a large partially-
+  // completed fan-out stays resumable.
   let unitsDispatched = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id).length);
 
   // One plan per invocation: the test seam receives the workflow ref; the
@@ -135,7 +138,18 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     // A branch target no completed router selected → auto-skip, no dispatch.
     const skipInfo = routeUnselected.get(step.id);
     if (skipInfo && !routeSelected.has(step.id)) {
-      const notes = `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
+      // Cascade (peer review R1): a skipped step that is ITSELF a router
+      // never evaluates its route, so none of its declared targets were
+      // selected — mark them all skip-on-reach too (a target another
+      // completed router selects stays protected via routeSelected). Without
+      // this, every branch of the skipped router would run unconditionally.
+      if (stepPlan.route) {
+        cascadeSkippedRouter(stepPlan.route, step.id, routeUnselected);
+      }
+      const notes =
+        skipInfo.selected === null
+          ? `Skipped by route: step "${skipInfo.router}" was itself skipped, so none of its branch targets run.`
+          : `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
       executed.push({ stepId: step.id, ok: true, unitCount: 0, failedUnits: 0, summary: notes });
       await completeWorkflowStep({ runId: next.run.id, stepId: step.id, status: "skipped", notes });
       next = await getNextWorkflowStep(next.run.id);
@@ -311,7 +325,24 @@ async function loadFrozenPlan(runId: string, workflowRef: string): Promise<Workf
 
 type RouteDecision = { ok: true; value: string; selected: string } | { ok: false; error: string };
 
-type RouteSkipInfo = { router: string; selected: string };
+/** `selected: null` = the router itself was skipped, so it selected nothing. */
+type RouteSkipInfo = { router: string; selected: string | null };
+
+/**
+ * Cascade a SKIPPED router: it never evaluated its route, so every declared
+ * target (branches + default) is marked skip-on-reach unless an earlier
+ * router already claimed it. Protection for targets some completed router DID
+ * select is applied at consumption time via `routeSelected`. Shared by the
+ * live skip path and the journal replay so the two cannot drift.
+ */
+function cascadeSkippedRouter(route: IrRouteSpec, routerId: string, routeUnselected: Map<string, RouteSkipInfo>): void {
+  const targets = [...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])];
+  for (const target of targets) {
+    if (!routeUnselected.has(target)) {
+      routeUnselected.set(target, { router: routerId, selected: null });
+    }
+  }
+}
 
 /**
  * Record one router's decision in the engine's skip bookkeeping: the selected
@@ -348,6 +379,11 @@ function applyRouteDecision(
  *   3. if neither yields a decision, fail loudly: dispatching the unselected
  *      branch targets would run the wrong branch and spend money. The manual
  *      loop (`next`/`complete`) remains available.
+ *
+ * A route step that was itself SKIPPED (an unselected target of an earlier
+ * router, or skipped manually) never decided anything: its declared targets
+ * cascade into the skip set exactly as on the live path — otherwise a resumed
+ * run would dispatch every branch of the skipped router (peer review R1).
  */
 function seedJournaledRouteDecisions(
   plan: WorkflowPlanGraph,
@@ -361,7 +397,12 @@ function seedJournaledRouteDecisions(
   for (const stepPlan of plan.steps) {
     if (!stepPlan.route) continue;
     const stepState = state.workflow.steps.find((s) => s.id === stepPlan.stepId);
-    if (!stepState || stepState.status !== "completed") continue;
+    if (!stepState) continue;
+    if (stepState.status === "skipped") {
+      cascadeSkippedRouter(stepPlan.route, stepPlan.stepId, routeUnselected);
+      continue;
+    }
+    if (stepState.status !== "completed") continue;
 
     let selected = journaledRouteSelection(stepState.evidence);
     if (selected === undefined) {
@@ -394,9 +435,11 @@ function journaledRouteSelection(evidence: Record<string, unknown> | undefined):
 /**
  * The `stepOutputs` scope a route resolves against: every prior step's
  * recorded evidence plus the just-finished step's fresh evidence (which has
- * not been persisted yet when the route is evaluated). TODO(R2: typed
- * artifacts): evidence stands in for the typed step artifact until the R2
- * engine rework.
+ * not been persisted yet when the route is evaluated) — each projected
+ * through {@link projectStepOutput}, so `steps.<id>.output` addresses the
+ * promoted step artifact for engine-executed steps and the raw recorded
+ * evidence for manually-completed ones. Same projection as unit templates
+ * (native-executor), so the two scopes cannot drift.
  */
 function routeStepOutputs(
   evidence: Record<string, Record<string, unknown> | undefined>,
@@ -405,9 +448,9 @@ function routeStepOutputs(
 ): Record<string, unknown> {
   const outputs: Record<string, unknown> = {};
   for (const [stepId, stepEvidence] of Object.entries(evidence)) {
-    if (stepEvidence !== undefined) outputs[stepId] = stepEvidence;
+    if (stepEvidence !== undefined) outputs[stepId] = projectStepOutput(stepEvidence);
   }
-  outputs[currentStepId] = currentEvidence;
+  outputs[currentStepId] = projectStepOutput(currentEvidence);
   return outputs;
 }
 

@@ -22,10 +22,16 @@
  * a `steps.<id>.output.<path>` reference addresses INTO that step's recorded
  * output explicitly.
  *
- * TODO(R2: typed artifacts): `stepOutputs` for R1 is the prior steps'
- * EVIDENCE objects keyed by step id (the engine loop's evidence map). The R2
- * engine rework replaces this with the typed step artifact validated against
- * `IrStepPlan.outputSchema`.
+ * Step outputs (`${{ steps.<id>.output… }}`): every engine-executed step
+ * journals a promoted ARTIFACT under `evidence.output` — the solo unit's
+ * result/text, the collect reducer's per-item array, or the vote reducer's
+ * winner — and that artifact is what the expression scope exposes
+ * ({@link projectStepOutput}). The documented addressing
+ * (`steps.discover.output.files`) therefore resolves against real step
+ * results, never the raw evidence envelope (peer review R1). Steps completed
+ * manually (no `output` key in their evidence) expose their recorded evidence
+ * object as-is. TODO(R2: typed artifacts): the artifact becomes the reducer
+ * result VALIDATED against `IrStepPlan.outputSchema`.
  *
  * Failure policy (addendum, "explicit surface, fail-fast default"):
  *   - `onError: "fail"` (default) fails the step on any unit failure;
@@ -59,7 +65,7 @@ import {
   resolveWholeValue,
   type TemplateSegment,
 } from "../program/expressions";
-import { scheduleUnits, UnitCapExceededError } from "./scheduler";
+import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./scheduler";
 import { enqueueUnitWrite } from "./unit-writer";
 
 /**
@@ -143,7 +149,11 @@ export interface StepExecutionContext {
   signal?: AbortSignal;
   /** Test seam / backend override; defaults to the runner-substrate dispatcher. */
   dispatcher?: UnitDispatcher;
-  /** Units already dispatched in this run (lifetime-cap accounting). */
+  /**
+   * Dispatch attempts already journaled for this run (lifetime-cap
+   * accounting). Only ACTUAL dispatches consume the cap — durable-row reuses
+   * are free, so a partially-completed fan-out stays resumable.
+   */
   unitsDispatched?: number;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
@@ -156,8 +166,38 @@ export interface StepExecutionResult {
   evidence: Record<string, unknown>;
   /** Deterministic machine summary for the step-completion gate. */
   summary: string;
-  /** Cumulative dispatched-unit count (input + this step). */
+  /**
+   * Cumulative dispatched-unit count: input + the attempts this step ACTUALLY
+   * dispatched (durable-row reuses are not dispatches and are not counted).
+   */
   unitsDispatched: number;
+}
+
+/**
+ * Mutable per-step dispatch budget for the lifetime unit cap. Consumed once
+ * per journaled dispatch attempt (including retries); durable-row reuses
+ * never touch it — the peer-review fix that keeps large partially-completed
+ * fan-outs resumable instead of tripping the cap on `journaled + items`.
+ * Check-and-increment is synchronous, so concurrent units cannot race it.
+ */
+class DispatchBudget {
+  used: number;
+  /** Set (once) when a dispatch was refused; the step fails with this message. */
+  capMessage: string | undefined;
+
+  constructor(alreadyDispatched: number) {
+    this.used = alreadyDispatched;
+  }
+
+  /** Consume one dispatch slot; false (and a sticky capMessage) when the cap is hit. */
+  tryConsume(): boolean {
+    if (this.used >= LIFETIME_UNIT_CAP) {
+      this.capMessage ??= new UnitCapExceededError(LIFETIME_UNIT_CAP).message;
+      return false;
+    }
+    this.used++;
+    return true;
+  }
 }
 
 /** Execute one step plan natively. Never throws for unit-level failures. */
@@ -232,7 +272,10 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     return {
       ok: true,
       units: [],
-      evidence: { units: [], itemCount: 0 },
+      // The promoted step artifact of an empty collect is the empty array; an
+      // empty vote has no winner, so its artifact is null (references into it
+      // fail loudly at resolution instead of falling back to the envelope).
+      evidence: { units: [], itemCount: 0, output: reducer === "collect" ? [] : null },
       summary: `Step "${plan.stepId}" fan-out list was empty — no units dispatched.`,
       unitsDispatched: dispatched,
     };
@@ -259,36 +302,39 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     existingUnits.set(row.unit_id, row);
   }
 
-  let outcomes: Array<UnitOutcome | undefined>;
-  try {
-    outcomes = await scheduleUnits(
-      items,
-      (item, index) =>
-        runUnit({
-          plan,
-          template,
-          instructionSegments,
-          scope,
-          item,
-          index,
-          isFanOut: root.kind === "map",
-          env,
-          ctx,
-          dispatcher,
-          existingUnits,
-        }),
-      {
-        concurrency: root.kind === "map" ? root.concurrency : 1,
-        signal: ctx.signal,
-        unitsDispatched: dispatched,
-        maxConcurrency: ctx.maxConcurrency,
-      },
-    );
-  } catch (err) {
-    if (err instanceof UnitCapExceededError) {
-      return failedStep(dispatched, err.message);
-    }
-    throw err;
+  // Lifetime-cap budget: seeded with the run's journaled dispatch count and
+  // consumed per ACTUAL dispatch inside runUnit — never for durable-row
+  // reuses, so resuming a large partially-completed fan-out works.
+  const budget = new DispatchBudget(dispatched);
+
+  const outcomes: Array<UnitOutcome | undefined> = await scheduleUnits(
+    items,
+    (item, index) =>
+      runUnit({
+        plan,
+        template,
+        instructionSegments,
+        scope,
+        item,
+        index,
+        isFanOut: root.kind === "map",
+        env,
+        ctx,
+        dispatcher,
+        existingUnits,
+        budget,
+      }),
+    {
+      concurrency: root.kind === "map" ? root.concurrency : 1,
+      signal: ctx.signal,
+      maxConcurrency: ctx.maxConcurrency,
+    },
+  );
+
+  // The cap is a hard backstop: a step that hit it FAILS regardless of
+  // on_error policy (a capped run must never quietly pass its gate).
+  if (budget.capMessage) {
+    return failedStep(budget.used, budget.capMessage);
   }
 
   const units = outcomes.map(
@@ -307,7 +353,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   // reducer with no majority fails the step under either policy — a routing
   // decision downstream must never consume a non-result.
   const failed = units.filter((u) => !u.ok);
-  const evidence = buildEvidence(units, reducer);
+  const evidence = buildEvidence(units, reducer, root.kind === "map");
   const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";
   const tolerateFailures = template.onError === "continue";
   const ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
@@ -321,7 +367,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
       : "") +
     reducerNote;
 
-  return { ok, units, evidence, summary, unitsDispatched: dispatched + units.length };
+  return { ok, units, evidence, summary, unitsDispatched: budget.used };
 }
 
 // ── One unit ─────────────────────────────────────────────────────────────────
@@ -341,6 +387,8 @@ interface RunUnitInput {
   dispatcher: UnitDispatcher;
   /** Prior unit rows for this step, for durable-row reuse. */
   existingUnits?: Map<string, WorkflowRunUnitRow>;
+  /** Shared lifetime-cap budget; consumed once per actual dispatch attempt. */
+  budget: DispatchBudget;
 }
 
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
@@ -416,6 +464,19 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   let outcome: UnitOutcome | undefined;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const attemptId = attemptIdFor(attempt);
+    // Lifetime cap, consumed per ACTUAL dispatch (reuses above returned before
+    // reaching here). Refusal fails this unit without journaling a row —
+    // nothing was dispatched — and the sticky capMessage fails the step.
+    if (!input.budget.tryConsume()) {
+      return (
+        outcome ?? {
+          unitId,
+          ok: false,
+          failureReason: "unit_cap_exceeded",
+          error: input.budget.capMessage ?? "lifetime unit cap exceeded",
+        }
+      );
+    }
     outcome = await dispatchJournaledAttempt({
       plan,
       template,
@@ -635,20 +696,45 @@ function buildUnitPrompt(input: BuildPromptInput): string {
 // ── Step outputs + reducers ──────────────────────────────────────────────────
 
 /**
- * Project the engine's evidence map into the expression scope's
- * `stepOutputs`. TODO(R2: typed artifacts): for R1 a step's "output" is its
- * raw evidence object; the R2 rework substitutes the typed artifact validated
- * against the step's declared `output` schema.
+ * The value `${{ steps.<id>.output }}` resolves to for ONE step, given that
+ * step's journaled evidence:
+ *
+ *   - engine-executed steps carry a promoted ARTIFACT under `evidence.output`
+ *     (written by {@link buildEvidence}: solo unit result/text, collect
+ *     array, or vote winner) — that artifact IS the step output, exactly the
+ *     addressing the docs teach (`steps.discover.output.files`);
+ *   - evidence without an `output` key (manually-completed steps, pre-R1
+ *     rows) is exposed as-is — whatever the author recorded is the output.
+ *
+ * TODO(R2: typed artifacts): the artifact becomes the reducer result
+ * validated against the step's declared `output` schema; this projection is
+ * the single seam the R2 rework replaces.
  */
+export function projectStepOutput(evidence: Record<string, unknown>): unknown {
+  return Object.hasOwn(evidence, "output") ? evidence.output : evidence;
+}
+
+/** Project the engine's evidence map into the expression scope's `stepOutputs`. */
 function stepOutputsFromEvidence(evidence: StepExecutionContext["evidence"]): Record<string, unknown> {
   const outputs: Record<string, unknown> = {};
   for (const [stepId, stepEvidence] of Object.entries(evidence)) {
-    if (stepEvidence !== undefined) outputs[stepId] = stepEvidence;
+    if (stepEvidence !== undefined) outputs[stepId] = projectStepOutput(stepEvidence);
   }
   return outputs;
 }
 
-function buildEvidence(units: UnitOutcome[], reducer: "collect" | "vote" | "best-of-n"): Record<string, unknown> {
+/** A unit's contribution to the step artifact: structured result, else text, else null (failures). */
+function unitOutputValue(unit: UnitOutcome): unknown {
+  if (!unit.ok) return null;
+  if (unit.result !== undefined) return unit.result;
+  return unit.text ?? null;
+}
+
+function buildEvidence(
+  units: UnitOutcome[],
+  reducer: "collect" | "vote" | "best-of-n",
+  isFanOut: boolean,
+): Record<string, unknown> {
   const collected = units.map((u) => ({
     unitId: u.unitId,
     ok: u.ok,
@@ -658,6 +744,21 @@ function buildEvidence(units: UnitOutcome[], reducer: "collect" | "vote" | "best
     ...(u.error ? { error: clip(u.error, 500) } : {}),
   }));
   const evidence: Record<string, unknown> = { units: collected, itemCount: units.length };
+
+  // Promoted step artifact (`evidence.output`) — what `${{ steps.<id>.output }}`
+  // resolves to (see projectStepOutput). Values are UNCLIPPED (the clipped
+  // copies above are diagnostics; downstream data flow must be lossless):
+  //   solo unit      → its structured result or text;
+  //   map + collect  → per-item values in item order (a failed unit under
+  //                    on_error: continue contributes null — positions stay
+  //                    aligned, and referencing the failed slot errs loudly);
+  //   map + vote     → the winner (set below; a vote with no winner fails the
+  //                    step, so its null artifact is never consumed).
+  if (reducer === "vote") {
+    evidence.output = null;
+  } else {
+    evidence.output = isFanOut ? units.map(unitOutputValue) : unitOutputValue(units[0]);
+  }
 
   if (reducer === "vote") {
     const counts = new Map<string, { value: unknown; count: number }>();
@@ -676,6 +777,7 @@ function buildEvidence(units: UnitOutcome[], reducer: "collect" | "vote" | "best
       evidence.voteError = `Vote reducer tied at ${ranked[0].count} vote(s) — no majority.`;
     } else {
       evidence.vote = { winner: ranked[0].value, votes: ranked[0].count, total: units.length };
+      evidence.output = ranked[0].value;
     }
   }
 

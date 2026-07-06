@@ -184,7 +184,7 @@ steps:
     map:
       over: ${{ steps.discover.output.files }}   # explicit producer address
       concurrency: 8
-      reducer: collect
+      reducer: collect             # step output = array of per-file verdicts
       unit:
         runner: agent
         profile: reviewer
@@ -195,16 +195,24 @@ steps:
         instructions: |
           Review ${{ item }} for correctness bugs.
         output: { type: object, properties: { file: { type: string }, verdict: { type: string } }, required: [file, verdict] }
-    output:                        # step artifact produced by the reducer
-      type: object
-      properties: { verdict: { type: string } }
     gate:
       criteria: [every changed file has a verdict]
       max_loops: 2                 # evaluator-optimizer, bounded
 
+  - id: aggregate
+    title: Combine verdicts
+    unit:
+      instructions: |
+        Combine these per-file review verdicts into one overall verdict
+        (pass or fail): ${{ steps.review.output }}
+      output:
+        type: object
+        properties: { verdict: { type: string } }
+        required: [verdict]
+
   - id: triage
     route:                         # routing on an explicit input
-      input: ${{ steps.review.output.verdict }}
+      input: ${{ steps.aggregate.output.verdict }}
       when: { pass: ship, fail: rework }
       default: manual-triage
 
@@ -257,6 +265,21 @@ names its producer explicitly, and `akm workflow validate` checks each edge
 One caveat: there is **no escape syntax**. A literal `${{` cannot appear in
 instructions — the validator reports a parse error if you write one.
 
+**What a step's output is.** `steps.<id>.output` resolves to the value the
+step's execution produced:
+
+- a `unit` step → the unit's structured result (when the unit declares
+  `output`) or its text;
+- a `map` step with `reducer: collect` → the array of per-item results, in
+  item order (under `on_error: continue`, a failed item's slot is `null`);
+- a `map` step with `reducer: vote` → the winning value.
+
+So in the example above, `${{ steps.discover.output.files }}` addresses into
+the discover unit's structured result, and `${{ steps.review.output }}` is
+the collected array of per-file verdicts (`[0].verdict` addresses the
+first). A step completed manually through `akm workflow complete` exposes
+whatever evidence was recorded for it as its output.
+
 ### Frozen plans
 
 `akm workflow start` compiles the program and freezes the resulting plan on
@@ -291,9 +314,12 @@ the explicit `input:` expression, selects the matching `when:` branch (or
 `default:`), and auto-skips the unselected branch targets as the spine
 reaches them. Targets must be later steps; an unroutable value with no
 `default` fails the step rather than letting every branch run. Route
-decisions are journaled, so a resumed run replays the same choice. Routing
-(like fan-out) is an engine feature: it applies under `akm workflow run` —
-the manual `next`/`complete` loop does not auto-skip.
+decisions are journaled, so a resumed run replays the same choice. Skips
+cascade: when a route step is itself skipped (it was the unselected target
+of an earlier route), its own branch targets are skipped too — a router that
+never decided selects nothing. Routing (like fan-out) is an engine feature:
+it applies under `akm workflow run` — the manual `next`/`complete` loop does
+not auto-skip.
 
 ### Not yet enforced (planned for R2)
 

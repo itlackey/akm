@@ -178,7 +178,8 @@ describe("executeStepPlan — fan-out", () => {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
       params: {},
-      // TODO(R2: typed artifacts): a step's "output" is its evidence object.
+      // Evidence WITHOUT an `output` key (e.g. a manually-completed step):
+      // the recorded evidence object itself is the step output.
       evidence: { discover: { files: ["x.ts", "y.ts"] } },
       dispatcher,
     });
@@ -624,6 +625,187 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
   });
 });
 
+describe("executeStepPlan — lifetime unit cap counts actual dispatches only (peer review R1)", () => {
+  test("durable-row reuse is free: a journal-heavy resume near the cap reuses instead of tripping the pre-batch check", async () => {
+    // Peer-review regression: the old pre-batch check (`journaled +
+    // items.length > cap`) plus reuse-counted-as-dispatch made any
+    // partially-completed fan-out with > ~cap/2 journaled units impossible
+    // to resume. Now only real dispatches consume the cap.
+    const { LIFETIME_UNIT_CAP } = await import("../../src/workflows/exec/scheduler");
+    const files = Array.from({ length: 20 }, (_, i) => `f${i}.ts`);
+    seedRun({ params: { files }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: { files }, evidence: {} };
+
+    // First pass: 19 units complete, one fails → 20 journaled attempt rows.
+    const first = await executeStepPlan(stepPlan, {
+      ...ctx,
+      dispatcher: async (req) =>
+        req.prompt.includes("Review f7.ts")
+          ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
+          : { ok: true, text: `done ${req.unitId}` },
+    });
+    expect(first.ok).toBe(false);
+    expect(first.unitsDispatched).toBe(20);
+
+    // Resume with the journal seeded close to the cap (journaled + items
+    // would blow past it): 19 reuses are free, exactly ONE unit dispatches.
+    let dispatches = 0;
+    const second = await executeStepPlan(stepPlan, {
+      ...ctx,
+      unitsDispatched: LIFETIME_UNIT_CAP - 10,
+      dispatcher: async (req) => {
+        dispatches++;
+        return { ok: true, text: `retried ${req.unitId}` };
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(dispatches).toBe(1);
+    expect(second.unitsDispatched).toBe(LIFETIME_UNIT_CAP - 10 + 1);
+  });
+
+  test("the cap still bites per dispatch: over-cap work fails the step after dispatching only the remaining budget", async () => {
+    const { LIFETIME_UNIT_CAP } = await import("../../src/workflows/exec/scheduler");
+    const files = ["a", "b", "c", "d", "e"];
+    seedRun({ params: { files }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files },
+      evidence: {},
+      unitsDispatched: LIFETIME_UNIT_CAP - 2,
+      maxConcurrency: 1,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "ok" };
+      },
+    });
+    expect(dispatches).toBe(2); // only the budget that was left
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain("lifetime unit cap");
+    expect(result.unitsDispatched).toBe(LIFETIME_UNIT_CAP);
+  });
+});
+
+describe("step output promotion — ${{ steps.<id>.output }} addresses real results (peer review R1)", () => {
+  const DOCS_SHAPE_WF = `version: 1
+name: Review
+steps:
+  - id: discover
+    title: Discover
+    unit:
+      instructions: List files.
+      output:
+        type: object
+        properties: { files: { type: array, items: { type: string } } }
+        required: [files]
+  - id: review
+    title: Review
+    map:
+      over: \${{ steps.discover.output.files }}
+      unit:
+        instructions: Review \${{ item }}.
+  - id: summarize
+    title: Summarize
+    unit:
+      instructions: "All: \${{ steps.review.output }} First: \${{ steps.review.output[0] }}"
+`;
+
+  test("the documented addressing works end-to-end: solo result feeds map.over, collect array feeds a later unit", async () => {
+    // The flagship docs example shape (docs/features/workflows.md): a solo
+    // unit's structured result is the step output — NOT the internal
+    // evidence envelope {units, itemCount} — and a collect fan-out's output
+    // is the array of per-item results in item order.
+    seedRun({
+      steps: [
+        { id: "discover", title: "Discover" },
+        { id: "review", title: "Review" },
+        { id: "summarize", title: "Summarize" },
+      ],
+    });
+    const prompts: string[] = [];
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        prompts.push(req.prompt);
+        if (req.nodeId === "discover") return { ok: true, text: '{"files": ["a.ts", "b.ts"]}' };
+        return { ok: true, text: `verdict:${req.unitId}` };
+      },
+      loadPlan: async () => plan(DOCS_SHAPE_WF),
+    });
+
+    expect(result.done).toBe(true);
+    expect(result.executed.map((s) => s.stepId)).toEqual(["discover", "review", "summarize"]);
+    // map.over resolved the solo unit's structured result — one unit per file.
+    expect(prompts.filter((p) => p.includes("Review a.ts.") || p.includes("Review b.ts.")).length).toBe(2);
+    // The collect artifact is the per-item value array (canonical JSON in
+    // templates); [0] addresses the first item's result.
+    const summarizePrompt = prompts[prompts.length - 1];
+    expect(summarizePrompt).toContain('All: ["verdict:review.unit[0]","verdict:review.unit[1]"]');
+    expect(summarizePrompt).toContain("First: verdict:review.unit[0]");
+  });
+
+  const VOTE_ROUTE_WF = `version: 1
+name: VoteRoute
+params:
+  attempts: { type: array }
+steps:
+  - id: judge
+    title: Judge
+    map:
+      over: \${{ params.attempts }}
+      reducer: vote
+      unit:
+        instructions: Judge \${{ item }}.
+        output:
+          type: object
+          properties: { verdict: { type: string } }
+          required: [verdict]
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ steps.judge.output.verdict }}
+      when: { pass: ship, fail: rework }
+  - id: ship
+    title: Ship
+    unit:
+      instructions: Ship it.
+  - id: rework
+    title: Rework
+    unit:
+      instructions: Rework it.
+`;
+
+  test("a vote step's output is the winner — routes address it directly", async () => {
+    seedRun({
+      params: { attempts: [1, 2, 3] },
+      steps: [
+        { id: "judge", title: "Judge" },
+        { id: "triage", title: "Triage" },
+        { id: "ship", title: "Ship" },
+        { id: "rework", title: "Rework" },
+      ],
+    });
+    const dispatched: string[] = [];
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        dispatched.push(req.nodeId);
+        return req.nodeId === "judge.unit" ? { ok: true, text: '{"verdict": "pass"}' } : { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(VOTE_ROUTE_WF),
+    });
+    expect(result.done).toBe(true);
+    expect(dispatched).toEqual(["judge.unit", "judge.unit", "judge.unit", "ship"]);
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
+    expect(byId.get("ship")).toBe("completed");
+    expect(byId.get("rework")).toBe("skipped");
+  });
+});
+
 describe("runWorkflowSteps — engine loop over the gated spine", () => {
   const TWO_STEP_WF = `version: 1
 name: Demo
@@ -784,7 +966,7 @@ steps:
   - id: triage
     title: Triage
     route:
-      input: \${{ steps.classify.output.units[0].result.kind }}
+      input: \${{ steps.classify.output.kind }}
       when: { bug: fix-bug, feature: build-feature }
   - id: fix-bug
     title: Fix bug
@@ -833,7 +1015,7 @@ steps:
     expect(byId.get("wrap-up")?.status).toBe("completed");
     // The route step's evidence records the decision.
     expect(byId.get("triage")?.evidence?.route).toEqual({
-      input: "${{ steps.classify.output.units[0].result.kind }}",
+      input: "${{ steps.classify.output.kind }}",
       value: "bug",
       selected: "fix-bug",
     });
@@ -854,7 +1036,7 @@ steps:
   - id: triage
     title: Triage
     route:
-      input: \${{ steps.classify.output.units[0].result.kind }}
+      input: \${{ steps.classify.output.kind }}
       when: { bug: fix-bug }
       default: manual-triage
   - id: fix-bug
@@ -1026,6 +1208,135 @@ steps:
       }),
     ).rejects.toThrow(/route step "triage" with no journaled route/);
     expect(dispatches).toBe(0);
+  });
+
+  const CASCADE_WF = `version: 1
+name: Cascade
+params:
+  pick: { type: string }
+steps:
+  - id: classify
+    title: Classify
+    route:
+      input: \${{ params.pick }}
+      when: { left: branch-router, right: safe }
+  - id: branch-router
+    title: Branch router
+    route:
+      input: \${{ params.branch }}
+      when: { m: c1, n: c2 }
+  - id: safe
+    title: Safe
+    unit:
+      instructions: Safe path.
+  - id: c1
+    title: C1
+    unit:
+      instructions: Branch c1.
+  - id: c2
+    title: C2
+    unit:
+      instructions: Branch c2.
+`;
+
+  const CASCADE_STEPS = [
+    { id: "classify", title: "Classify" },
+    { id: "branch-router", title: "Branch router" },
+    { id: "safe", title: "Safe" },
+    { id: "c1", title: "C1" },
+    { id: "c2", title: "C2" },
+  ];
+
+  test("cascaded routing: a skipped router's own branch targets are skipped, never dispatched (peer review)", async () => {
+    // Peer-review regression: branch-router is an UNSELECTED target of
+    // classify → it is skipped without evaluating its route. Its targets
+    // (c1, c2) must cascade into the skip set — the old code dispatched
+    // units for safe, c1 AND c2. Note params carries no "branch": the
+    // skipped router's input must never even be resolved.
+    seedRun({ params: { pick: "right" }, steps: CASCADE_STEPS });
+    const dispatched: string[] = [];
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        dispatched.push(req.nodeId);
+        return { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(CASCADE_WF),
+    });
+
+    expect(result.done).toBe(true);
+    expect(dispatched).toEqual(["safe"]);
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
+    expect(byId.get("classify")).toBe("completed");
+    expect(byId.get("branch-router")).toBe("skipped");
+    expect(byId.get("safe")).toBe("completed");
+    expect(byId.get("c1")).toBe("skipped");
+    expect(byId.get("c2")).toBe("skipped");
+  });
+
+  test("cascaded routing survives resume: a journaled skipped router keeps its targets skipped", async () => {
+    // Stop right after branch-router was journaled as skipped, then resume
+    // with fresh in-memory bookkeeping: seedJournaledRouteDecisions must
+    // cascade from the SKIPPED status (there is no journaled decision to
+    // replay — the router never decided anything).
+    seedRun({ params: { pick: "right" }, steps: CASCADE_STEPS });
+    const first = await runWorkflowSteps({
+      target: RUN_ID,
+      maxSteps: 2,
+      dispatcher: async () => ({ ok: true, text: "done" }),
+      loadPlan: async () => plan(CASCADE_WF),
+    });
+    expect(first.executed.map((s) => s.stepId)).toEqual(["classify", "branch-router"]);
+
+    const dispatched: string[] = [];
+    const resumed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        dispatched.push(req.nodeId);
+        return { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(CASCADE_WF),
+    });
+    expect(resumed.done).toBe(true);
+    expect(dispatched).toEqual(["safe"]);
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
+    expect(byId.get("c1")).toBe("skipped");
+    expect(byId.get("c2")).toBe("skipped");
+  });
+
+  test("resume after a fan-out failure re-dispatches ONLY the incomplete unit (peer review)", async () => {
+    // End-to-end confirmation of the documented resume contract: a failed
+    // 6-item fan-out journals 6 attempts; after `workflow resume`, the
+    // engine reuses the 5 completed rows and dispatches exactly one unit —
+    // and the journal-seeded cap counts the reuses as zero new dispatches.
+    const files = ["f0", "f1", "f2", "f3", "f4", "f5"];
+    seedRun({ params: { files }, steps: [{ id: "review", title: "Review files" }] });
+    const failing = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) =>
+        req.prompt.includes("Review f3")
+          ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
+          : { ok: true, text: "done" },
+      loadPlan: async () => plan(FAN_OUT_WF),
+    });
+    expect(failing.run.status).toBe("failed");
+
+    const { resumeWorkflowRun } = await import("../../src/workflows/runtime/runs");
+    await resumeWorkflowRun(RUN_ID);
+
+    let dispatches = 0;
+    const resumed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(FAN_OUT_WF),
+    });
+    expect(dispatches).toBe(1);
+    expect(resumed.done).toBe(true);
   });
 
   test("maxSteps bounds the loop", async () => {
