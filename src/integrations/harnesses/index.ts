@@ -18,9 +18,16 @@
  * harness in #563/#564; this step only owns ids + capability membership and
  * wires the existing call sites to consult it (behaviour-preserving).
  */
+import { AiderHarness } from "./aider";
+import { AmazonqHarness } from "./amazonq";
 import { ClaudeHarness } from "./claude";
+import { CodexHarness } from "./codex";
+import { CopilotHarness } from "./copilot";
+import { GeminiHarness } from "./gemini";
 import { OpencodeHarness } from "./opencode";
 import { OpencodeSdkHarness } from "./opencode-sdk";
+import { OpenhandsHarness } from "./openhands";
+import { PiHarness } from "./pi";
 import type { AkmHarness } from "./types";
 
 export type { AkmHarness, HarnessCapabilities } from "./types";
@@ -39,13 +46,22 @@ export type { AkmHarness, HarnessCapabilities } from "./types";
  * `z.enum(...)`, and the `platform` union all need the literal types.
  */
 // Order is significant: VALID_HARNESS_IDS derives from this array and feeds the
-// committed JSON-schema enum order. Kept as [opencode, claude, opencode-sdk] to
-// match the pre-unification VALID_HARNESS_IDS so the generated schema does not
-// drift (behaviour-preserving, #562).
+// committed JSON-schema enum order. The original [opencode, claude,
+// opencode-sdk] prefix is preserved so the pre-unification portion of the
+// generated schema enum does not reorder (#562); the seven P2 harness adapters
+// (plan §"Capability matrix") are appended after it, which extends the enum
+// additively (schemas/akm-config.json is regenerated in lockstep).
 export const HARNESS_REGISTRY = Object.freeze([
   new OpencodeHarness(),
   new ClaudeHarness(),
   new OpencodeSdkHarness(),
+  new CodexHarness(),
+  new CopilotHarness(),
+  new PiHarness(),
+  new GeminiHarness(),
+  new AiderHarness(),
+  new AmazonqHarness(),
+  new OpenhandsHarness(),
 ] as const) satisfies readonly AkmHarness[];
 
 /** Lookup by canonical id. */

@@ -319,6 +319,79 @@ describe("executeStepPlan — vote reducer", () => {
   });
 });
 
+describe("executeStepPlan — harness-native session id journaling (P2 peer review)", () => {
+  test("a dispatcher-revealed sessionId is persisted on the unit row and rehydrated on reuse", async () => {
+    // Peer-review regression: defaultUnitDispatcher extracts the harness
+    // session id (e.g. codex `session_configured`), but it used to evaporate
+    // inside dispatchUnit — never reaching workflow_run_units.session_id.
+    seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
+    const stepPlan = plan(SCHEMA_WF).steps[0];
+    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: {}, evidence: {} };
+
+    const first = await executeStepPlan(stepPlan, {
+      ...ctx,
+      dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}', sessionId: "codex-abc-123" }),
+    });
+    expect(first.ok).toBe(true);
+    expect(first.units[0].sessionId).toBe("codex-abc-123");
+
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "extract");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].session_id).toBe("codex-abc-123");
+    });
+
+    // Durable-row reuse rehydrates the journaled session id without re-dispatch.
+    const second = await executeStepPlan(stepPlan, {
+      ...ctx,
+      dispatcher: async () => {
+        throw new Error("must not re-dispatch");
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(second.units[0].sessionId).toBe("codex-abc-123");
+  });
+
+  test("a failed unit still journals the session id revealed before the failure", async () => {
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher: async () => ({
+        ok: false,
+        text: "",
+        failureReason: "timeout",
+        error: "timed out",
+        sessionId: "sess-before-crash",
+      }),
+    });
+    expect(result.ok).toBe(false);
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "review");
+      expect(rows[0].status).toBe("failed");
+      expect(rows[0].session_id).toBe("sess-before-crash");
+    });
+  });
+
+  test("units whose dispatch reveals no sessionId journal NULL", async () => {
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher: async () => ({ ok: true, text: "done" }),
+    });
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnitsForStep(RUN_ID, "review")[0].session_id).toBeNull();
+    });
+  });
+});
+
 describe("executeStepPlan — durable-row reuse (peer review)", () => {
   test("re-executing a step reuses completed units with the same input hash instead of re-dispatching", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });

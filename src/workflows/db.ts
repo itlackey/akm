@@ -213,6 +213,21 @@ const MIGRATIONS: Migration[] = [
         ON workflow_run_units(run_id, step_id);
     `,
   },
+  // ── Migration 005 — harness-native unit session id (plan P2) ────────────────
+  //
+  // The P2 harness adapters' result extractors reveal the harness-native
+  // session id of a dispatched unit (codex `session_configured`, gemini/pi
+  // JSON envelopes, the opencode SDK session). It is stored opportunistically
+  // on the unit row so resume can replay the harness's own context cache
+  // (e.g. `codex exec resume <id>`, `gemini --resume <id>`); akm never
+  // *depends* on it — `workflow_run_units` remains the durable source of
+  // truth (plan §"Session, MCP, and identity across harnesses").
+  {
+    id: "005-unit-session-id",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN session_id TEXT;
+    `,
+  },
 ];
 
 /**

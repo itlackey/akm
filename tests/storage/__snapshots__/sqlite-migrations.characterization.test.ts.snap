@@ -433,6 +433,7 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
     "002-add-agent-identity",
     "003-checkin-and-step-summary",
     "004-workflow-run-units",
+    "005-unit-session-id",
   ],
   "schema": [
     {
@@ -526,7 +527,7 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
         failure_reason TEXT,
         worktree_path  TEXT,
         started_at     TEXT,
-        finished_at    TEXT,
+        finished_at    TEXT, session_id TEXT,
         PRIMARY KEY (run_id, unit_id),
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
       )"

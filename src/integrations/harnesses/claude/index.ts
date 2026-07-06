@@ -26,8 +26,10 @@
  * that say `'claude-code'` keep working unchanged.
  */
 
+import type { SessionLogHarness } from "../../session-logs/types";
 import { BaseHarness, type HarnessCapabilities } from "../types";
 import { claudeBuilder } from "./agent-builder";
+import { ClaudeCodeProvider } from "./session-log";
 
 export { claudeBuilder } from "./agent-builder";
 export { claudeCodeImporter } from "./config-import";
@@ -60,6 +62,21 @@ export class ClaudeHarness extends BaseHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".claude";
   readonly agentBuilder = claudeBuilder;
+  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
+  // Claude Code is the in-harness pattern: the orchestrating session itself
+  // drives units via the `akm workflow` gate spine (`claude -p` headless
+  // dispatch also exists via `agentBuilder`, but the pattern classification
+  // follows the matrix row).
+  readonly pattern = "in-harness" as const;
+  // Structured output via tool-call input schemas (forced StructuredOutput) —
+  // the matrix's "via tool schema" ⇒ native-schema tier.
+  readonly structuredOutput = "native-schema" as const;
+  // `claude --resume <sessionId>` replays a previous session in headless mode.
+  readonly resume = { flag: "--resume", takesSessionId: true } as const;
+  // Session-id env marker: presence of a concrete session id (not the bare
+  // "running under Claude Code" flag) attributes a run to this harness.
+  readonly identityEnv = ["CLAUDE_SESSION_ID"] as const;
+  readonly sessionLogProvider = (): SessionLogHarness => new ClaudeCodeProvider();
   readonly capabilities = caps({
     sessionLogs: true,
     agentDispatch: true,

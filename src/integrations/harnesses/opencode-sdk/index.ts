@@ -46,6 +46,18 @@ export class OpencodeSdkHarness extends BaseHarness {
   readonly aliases = [] as const;
   // Decorated v1 profile names like "opencode-sdk-fast" belong to the SDK path.
   protected readonly v1ProfilePrefixes = ["opencode-sdk"] as const;
+  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
+  // Embedded-SDK dispatch on this machine ⇒ local-runner (the matrix's
+  // "local (sdk/cli)" row, SDK half).
+  readonly pattern = "local-runner" as const;
+  // `session.prompt` returns structured SDK events/messages; akm extracts the
+  // final message then validates against the node schema ⇒ native-json tier.
+  readonly structuredOutput = "native-json" as const;
+  // No `resume` flag: session reuse is programmatic — the SDK session id is
+  // stored opportunistically on the unit row and passed back to
+  // `session.prompt`, not replayed via a CLI flag.
+  // No `identityEnv`: the SDK runs in-process; it does not mark a child
+  // process environment with a session id of its own.
   readonly capabilities = caps({
     agentDispatch: true,
     detection: true,

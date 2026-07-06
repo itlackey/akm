@@ -561,11 +561,19 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     expect(getCommandBuilder("claude-code").platform).toBe("claude");
   });
 
-  test("known built-in CLIs without a dedicated builder throw a ConfigError", async () => {
+  test("P2 adapters: codex/gemini/aider (+ -headless) resolve to their harness builders — the missing-builder ConfigError no longer fires", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const { ConfigError } = await import("../../src/core/errors");
-    for (const platform of ["codex", "gemini", "aider", "codex-headless", "gemini-headless", "aider-headless"]) {
-      expect(() => getCommandBuilder(platform)).toThrow(ConfigError);
+    for (const platform of ["codex", "gemini", "aider"]) {
+      expect(getCommandBuilder(platform).platform).toBe(platform);
+      expect(getCommandBuilder(`${platform}-headless`).platform).toBe(platform);
+    }
+  });
+
+  test("the P2 profile additions (copilot, pi, amazonq, openhands) also resolve", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    for (const platform of ["copilot", "pi", "amazonq", "openhands"]) {
+      expect(getCommandBuilder(platform).platform).toBe(platform);
+      expect(getCommandBuilder(`${platform}-headless`).platform).toBe(platform);
     }
   });
 
@@ -574,14 +582,13 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     expect(getCommandBuilder("my-custom-wrapper").platform).toBe("default");
   });
 
-  test("dispatching a codex profile through runAgent surfaces the ConfigError", async () => {
-    const { runAgent } = await import("../../src/integrations/agent/spawn");
-    const profile = makeFakeProfile({ name: "codex", bin: "codex" });
-    await expect(
-      runAgent(profile, undefined, {
-        stdio: "captured",
-        dispatch: { prompt: "do a thing", model: "opus" },
-      }),
-    ).rejects.toThrow(/no command builder exists/);
+  test("a builtin profile whose builder is missing from the injected registry still surfaces the ConfigError", async () => {
+    // The loud missing-builder guard is still live for any future builtin
+    // profile that ships without a dedicated builder; simulate one by
+    // resolving against an EMPTY builder registry.
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const { ConfigError } = await import("../../src/core/errors");
+    expect(() => getCommandBuilder("codex", {})).toThrow(ConfigError);
+    expect(() => getCommandBuilder("codex", {})).toThrow(/no command builder exists/);
   });
 });

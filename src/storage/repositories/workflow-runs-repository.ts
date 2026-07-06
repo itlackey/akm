@@ -63,6 +63,8 @@ export type WorkflowRunUnitRow = {
   result_json: string | null;
   tokens: number | null;
   failure_reason: string | null;
+  /** Harness-native session id revealed by the unit's result extractor (migration 005, plan P2). */
+  session_id: string | null;
   worktree_path: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -90,6 +92,13 @@ export interface FinishUnitInput {
   resultJson: string | null;
   tokens: number | null;
   failureReason: string | null;
+  /**
+   * Harness-native session id revealed by the unit's dispatch (result
+   * extractor / SDK), stored opportunistically for resume (plan §"Session,
+   * MCP, and identity across harnesses"). Optional and additive: omitted ⇒
+   * NULL.
+   */
+  sessionId?: string | null;
   finishedAt: string;
 }
 
@@ -374,7 +383,7 @@ export class WorkflowRunsRepository {
     this.db
       .prepare(
         `UPDATE workflow_run_units
-           SET status = ?, result_json = ?, tokens = ?, failure_reason = ?, finished_at = ?
+           SET status = ?, result_json = ?, tokens = ?, failure_reason = ?, session_id = ?, finished_at = ?
            WHERE run_id = ? AND unit_id = ?`,
       )
       .run(
@@ -382,6 +391,7 @@ export class WorkflowRunsRepository {
         input.resultJson,
         input.tokens,
         input.failureReason,
+        input.sessionId ?? null,
         input.finishedAt,
         input.runId,
         input.unitId,

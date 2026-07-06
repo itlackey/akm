@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../src/core/events";
+import { denormalizeRuntimeIdentity, HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import { resolveAgentIdentity } from "../../src/workflows/runtime/agent-identity";
 import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import {
@@ -52,6 +53,75 @@ describe("resolveAgentIdentity", () => {
     const identity = resolveAgentIdentity({ AKM_AGENT_HARNESS: "   ", CLAUDE_SESSION_ID: "  cs  " });
     // blank harness override falls through to inference; session id is trimmed.
     expect(identity).toEqual({ harness: "claude-code", sessionId: "cs" });
+  });
+
+  // ── registry-derived markers (P2, plan §"Kill registry drift") ────────────
+  // Detection is DERIVED from HARNESS_REGISTRY `identityEnv` (session-id
+  // vars) and `presenceEnv` (presence-only flags), so every harness that
+  // declares a marker must be detected without this module knowing it.
+
+  test("every registry identityEnv marker detects its harness's runtime identity", () => {
+    const marked = HARNESS_REGISTRY.filter((h) => (h.identityEnv?.length ?? 0) > 0);
+    // Guard: the derivation is only meaningful if markers exist at all.
+    expect(marked.length).toBeGreaterThanOrEqual(2);
+    for (const h of marked) {
+      for (const envKey of h.identityEnv ?? []) {
+        const identity = resolveAgentIdentity({ [envKey]: "sess-1" });
+        expect(identity).toEqual({ harness: denormalizeRuntimeIdentity(h.id), sessionId: "sess-1" });
+      }
+    }
+  });
+
+  test("every registry presenceEnv flag infers its harness WITHOUT fabricating a session id", () => {
+    // Peer-review regression: presence flags (CODEX_SANDBOX=seatbelt,
+    // GEMINI_CLI=1) carry modes/flags, not sessions — their values must never
+    // be persisted as agent_session_id.
+    const flagged = HARNESS_REGISTRY.filter((h) => (h.presenceEnv?.length ?? 0) > 0);
+    expect(flagged.length).toBeGreaterThanOrEqual(2);
+    for (const h of flagged) {
+      for (const envKey of h.presenceEnv ?? []) {
+        const identity = resolveAgentIdentity({ [envKey]: "not-a-session-id" });
+        expect(identity).toEqual({ harness: denormalizeRuntimeIdentity(h.id), sessionId: null });
+      }
+    }
+  });
+
+  // ── P2 harness adapters: detection via their registered markers ───────────
+
+  test("infers codex from CODEX_SANDBOX but never records its value as a session id", () => {
+    const identity = resolveAgentIdentity({ CODEX_SANDBOX: "seatbelt" });
+    expect(identity).toEqual({ harness: "codex", sessionId: null });
+  });
+
+  test("infers gemini from GEMINI_CLI but never records its value as a session id", () => {
+    const identity = resolveAgentIdentity({ GEMINI_CLI: "1" });
+    expect(identity).toEqual({ harness: "gemini", sessionId: null });
+  });
+
+  test("a concrete session id outranks a presence flag (opencode inside a codex sandbox)", () => {
+    // Peer-review regression: the id-sorted flat table used to pick
+    // harness=codex + sessionId="seatbelt", displacing the real opencode
+    // session id. Session-id markers must win over presence flags.
+    const identity = resolveAgentIdentity({ OPENCODE_SESSION_ID: "oc-1", CODEX_SANDBOX: "seatbelt" });
+    expect(identity).toEqual({ harness: "opencode", sessionId: "oc-1" });
+  });
+
+  test("infers copilot from COPILOT_SESSION_ID (with the session id captured)", () => {
+    const identity = resolveAgentIdentity({ COPILOT_SESSION_ID: "cop-42" });
+    expect(identity).toEqual({ harness: "copilot", sessionId: "cop-42" });
+  });
+
+  test("infers pi from PI_SESSION_ID (with the session id captured)", () => {
+    const identity = resolveAgentIdentity({ PI_SESSION_ID: "pi-7" });
+    expect(identity).toEqual({ harness: "pi", sessionId: "pi-7" });
+  });
+
+  test("multiple markers present: claude wins over opencode (legacy precedence preserved)", () => {
+    // The pre-derivation if/else chain checked CLAUDE_SESSION_ID first; the
+    // registry-derived table sorts by canonical id ('claude' < 'opencode'),
+    // which keeps this byte-identical — including the paired session id.
+    const identity = resolveAgentIdentity({ OPENCODE_SESSION_ID: "oc-1", CLAUDE_SESSION_ID: "cc-1" });
+    expect(identity).toEqual({ harness: "claude-code", sessionId: "cc-1" });
   });
 });
 

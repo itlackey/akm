@@ -37,6 +37,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   delegate) must reproduce them; `akm show workflow:<name>` surfaces each
   step's orchestration summary. See "Orchestrated steps" in
   `docs/features/workflows.md` and `STABILITY.md` (Experimental).
+- **P2 harness adapters (orchestration plan).** Seven local coding-agent
+  CLIs are now first-class dispatch targets: Codex, Copilot CLI, Pi, Gemini,
+  Aider, Amazon Q, and OpenHands each get an `AgentCommandBuilder` +
+  result extractor under `src/integrations/harnesses/<id>/`, registered in
+  `HARNESS_REGISTRY` with the new descriptor fields (`pattern`,
+  `structuredOutput`, `resume` incl. `takesSessionId`, `identityEnv` /
+  `presenceEnv`, `resultExtractor`). Agent-identity detection and the
+  session-log provider list are now DERIVED from the registry (no more
+  hand-maintained parallel lists); presence-only flags (CODEX_SANDBOX,
+  GEMINI_CLI) infer the harness but never persist as a session id.
+  Harness-native unit session ids are journaled opportunistically on
+  `workflow_run_units` (migration 005) for future session-reuse.
 - **`fable` built-in model alias** — resolves to `claude-fable-5`
   (`opencode/claude-fable-5` on opencode); recommended resolution target for
   the `deep` workflow model tier.

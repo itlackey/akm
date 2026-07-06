@@ -75,6 +75,7 @@ describe("workflow_run_units persistence (migration 004)", () => {
         resultJson: JSON.stringify({ file: "a.ts" }),
         tokens: 42,
         failureReason: null,
+        sessionId: "codex-sess-abc",
         finishedAt: new Date().toISOString(),
       });
       const units = repo.getUnitsForRun(RUN_ID);
@@ -82,6 +83,8 @@ describe("workflow_run_units persistence (migration 004)", () => {
       expect(units[0].status).toBe("completed");
       expect(units[0].tokens).toBe(42);
       expect(JSON.parse(units[0].result_json ?? "{}")).toEqual({ file: "a.ts" });
+      // Harness-native session id journaled opportunistically (migration 005).
+      expect(units[0].session_id).toBe("codex-sess-abc");
     });
   });
 
@@ -111,6 +114,8 @@ describe("workflow_run_units persistence (migration 004)", () => {
       const units = repo.getUnitsForStep(RUN_ID, "step-1");
       expect(units[0].status).toBe("failed");
       expect(units[0].failure_reason).toBe("timeout");
+      // sessionId omitted on finishUnit (optional, additive) ⇒ NULL column.
+      expect(units[0].session_id).toBeNull();
     });
   });
 

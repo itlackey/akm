@@ -62,8 +62,21 @@ export interface UnitDispatchRequest {
 
 export interface UnitDispatchResult {
   ok: boolean;
-  /** Raw text output (agent stdout / SDK message / LLM content). */
+  /**
+   * Text output. For agent (CLI) units whose harness declares a
+   * `resultExtractor`, this is the NORMALIZED final answer (transport framing
+   * stripped — plan §"The adapter contract" step 3); otherwise the raw
+   * stdout / SDK message / LLM content.
+   */
   text: string;
+  /**
+   * Harness-native session id, when the harness's result extractor (or the
+   * SDK path) revealed one. Journaled opportunistically on the unit row
+   * (`workflow_run_units.session_id`, migration 005) via {@link UnitOutcome};
+   * akm never depends on it (plan §"Session, MCP, and identity across
+   * harnesses").
+   */
+  sessionId?: string;
   /** Structured failure vocabulary (spawn.ts AgentFailureReason or config/llm errors). */
   failureReason?: string;
   error?: string;
@@ -82,6 +95,11 @@ export interface UnitOutcome {
   failureReason?: string;
   error?: string;
   tokens?: number;
+  /**
+   * Harness-native session id revealed during dispatch (last one wins across
+   * structured-output retries). Persisted on the unit row by `finishUnit`.
+   */
+  sessionId?: string;
 }
 
 export interface StepExecutionContext {
@@ -322,6 +340,9 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
               : null,
         tokens: outcome.tokens ?? null,
         failureReason: outcome.failureReason ?? null,
+        // Harness-native session id (P2): journaled so resume can replay the
+        // harness's own context cache (e.g. `codex exec resume <id>`).
+        sessionId: outcome.sessionId ?? null,
         finishedAt: new Date().toISOString(),
       }),
     );
@@ -357,6 +378,11 @@ async function dispatchUnit(
 ): Promise<UnitOutcome> {
   let tokens = 0;
   let sawUsage = false;
+  // Harness-native session id revealed by dispatch (P2). Captured across
+  // structured-output retries (last one wins) so it survives into the
+  // UnitOutcome and gets journaled on the unit row by finishUnit — the seam's
+  // contract ("stored opportunistically on the unit row for resume").
+  let sessionId: string | undefined;
   const dispatchOnce = async (feedback?: string): Promise<string> => {
     const result = await dispatcher(request, feedback);
     if (result.usage) {
@@ -364,9 +390,16 @@ async function dispatchUnit(
       tokens +=
         (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0);
     }
+    // Capture before the ok-check: a failed attempt can still have configured
+    // a session (e.g. codex `session_configured` then a tool crash).
+    if (result.sessionId !== undefined) sessionId = result.sessionId;
     if (!result.ok) throw new UnitTransportError(result);
     return result.text;
   };
+  const captured = (): Partial<UnitOutcome> => ({
+    ...(sawUsage ? { tokens } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  });
 
   try {
     if (template.schema) {
@@ -379,7 +412,7 @@ async function dispatchUnit(
         },
       });
       if (structured.ok) {
-        return { unitId: request.unitId, ok: true, result: structured.value, ...(sawUsage ? { tokens } : {}) };
+        return { unitId: request.unitId, ok: true, result: structured.value, ...captured() };
       }
       return {
         unitId: request.unitId,
@@ -387,12 +420,12 @@ async function dispatchUnit(
         failureReason: structured.reason,
         error: structured.errors.join("; "),
         text: structured.raw,
-        ...(sawUsage ? { tokens } : {}),
+        ...captured(),
       };
     }
 
     const text = await dispatchOnce();
-    return { unitId: request.unitId, ok: true, text, ...(sawUsage ? { tokens } : {}) };
+    return { unitId: request.unitId, ok: true, text, ...captured() };
   } catch (err) {
     if (err instanceof UnitTransportError) {
       return {
@@ -401,7 +434,7 @@ async function dispatchUnit(
         failureReason: err.result.failureReason ?? "dispatch_error",
         error: err.result.error ?? "unit dispatch failed",
         text: err.result.text,
-        ...(sawUsage ? { tokens } : {}),
+        ...captured(),
       };
     }
     return {
@@ -409,7 +442,7 @@ async function dispatchUnit(
       ok: false,
       failureReason: "dispatch_error",
       error: message(err),
-      ...(sawUsage ? { tokens } : {}),
+      ...captured(),
     };
   }
 }
@@ -605,14 +638,49 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
     // aliases resolve per-harness (P0.5 model routing).
     ...(resolved.kind === "agent" ? { dispatch: { prompt, ...(request.model ? { model: request.model } : {}) } } : {}),
   });
+
+  // Harness result extraction (P2, plan §"The adapter contract" step 3):
+  // when the profile's harness declares a `resultExtractor`, normalize the
+  // raw stdout into the final answer (+ opportunistic session id) BEFORE the
+  // engine's schema validation / retry loop sees it. Only successful agent
+  // (CLI) runs are normalized — failures keep the raw stdout for diagnostics,
+  // and the default path is byte-identical when no extractor is registered.
+  let text = result.stdout;
+  let sessionId = result.sessionId;
+  if (resolved.kind === "agent" && result.ok) {
+    const extractor = await resolveHarnessExtractor(resolved.profile);
+    if (extractor) {
+      const extraction = extractor(result);
+      text = extraction.text;
+      if (extraction.sessionId !== undefined) sessionId = extraction.sessionId;
+    }
+  }
+
   return {
     ok: result.ok,
-    text: result.stdout,
+    text,
+    ...(sessionId !== undefined ? { sessionId } : {}),
     ...(result.reason ? { failureReason: result.reason } : {}),
     ...(result.error ? { error: result.error } : {}),
     ...(result.usage ? { usage: result.usage } : {}),
   };
 };
+
+/**
+ * Resolve the harness `resultExtractor` for an agent profile, mirroring the
+ * platform routing of `getCommandBuilder`: the profile's explicit
+ * `commandBuilder` wins, else its name (with the `-headless` builtin-variant
+ * suffix stripped, same derivation as BUILTIN_BUILDERS). Unknown/custom
+ * platforms resolve to no extractor — raw stdout passes through unchanged.
+ */
+async function resolveHarnessExtractor(
+  profile: import("../../integrations/agent/profiles").AgentProfile,
+): Promise<import("../../integrations/agent/builder-shared").AgentResultExtractor | undefined> {
+  const { getHarness } = await import("../../integrations/harnesses/index.js");
+  const platform = profile.commandBuilder ?? profile.name;
+  const harness = getHarness(platform) ?? getHarness(platform.replace(/-headless$/, ""));
+  return harness?.resultExtractor;
+}
 
 type ResolvedUnitRunner =
   | { kind: "llm"; connection: import("../../core/config/config").LlmConnectionConfig }
@@ -713,6 +781,9 @@ function reuseCompletedUnit(unitId: string, row: WorkflowRunUnitRow, hasSchema: 
           ? { result: parsed }
           : {}),
     ...(row.tokens !== null ? { tokens: row.tokens } : {}),
+    // Rehydrate the journaled harness session id so resume-with-native-context
+    // consumers see it on reuse exactly as on a fresh dispatch.
+    ...(row.session_id !== null && row.session_id !== undefined ? { sessionId: row.session_id } : {}),
   };
 }
 

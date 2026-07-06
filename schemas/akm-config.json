@@ -96,7 +96,14 @@
                 "enum": [
                   "opencode",
                   "claude",
-                  "opencode-sdk"
+                  "opencode-sdk",
+                  "codex",
+                  "copilot",
+                  "pi",
+                  "gemini",
+                  "aider",
+                  "amazonq",
+                  "openhands"
                 ]
               },
               "bin": {
@@ -4880,7 +4887,14 @@
                     "enum": [
                       "opencode",
                       "claude",
-                      "opencode-sdk"
+                      "opencode-sdk",
+                      "codex",
+                      "copilot",
+                      "pi",
+                      "gemini",
+                      "aider",
+                      "amazonq",
+                      "openhands"
                     ]
                   },
                   "bin": {
