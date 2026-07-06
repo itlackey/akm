@@ -27,6 +27,7 @@
  */
 
 import { BaseHarness, type HarnessCapabilities } from "../types";
+import { claudeBuilder } from "./agent-builder";
 
 export { claudeBuilder } from "./agent-builder";
 export { claudeCodeImporter } from "./config-import";
@@ -58,6 +59,7 @@ export class ClaudeHarness extends BaseHarness {
   // Home-relative config dir scanned by `akm setup` (#567). Claude Code has a
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".claude";
+  readonly agentBuilder = claudeBuilder;
   readonly capabilities = caps({
     sessionLogs: true,
     agentDispatch: true,

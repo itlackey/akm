@@ -141,12 +141,20 @@ binary is on `PATH`):
 | --- | --- | --- | --- | --- |
 | `opencode` | `opencode` | `["run"]` | `interactive` | `opencode` |
 | `claude` | `claude` | `[]` | `interactive` | `claude` |
-| `codex` | `codex` | `[]` | `interactive` | `default` |
-| `gemini` | `gemini` | `[]` | `interactive` | `default` |
-| `aider` | `aider` | `["--no-auto-commits"]` | `interactive` | `default` |
+| `codex` | `codex` | `[]` | `interactive` | *(none — dispatch errors)* |
+| `gemini` | `gemini` | `[]` | `interactive` | *(none — dispatch errors)* |
+| `aider` | `aider` | `["--no-auto-commits"]` | `interactive` | *(none — dispatch errors)* |
 
 Each has a `-headless` variant (e.g. `opencode-headless`) that sets
 `stdio: "captured"` and `parseOutput: "json"` for automation contexts.
+
+The `codex`, `gemini`, and `aider` profiles have no dedicated command builder
+yet: dispatching them with a prompt/model/system-prompt raises a `ConfigError`
+instead of silently building a command with the wrong flag shapes (aider, for
+example, treats positional args as file names). Interactive launch (no
+dispatch flags) still works. If your CLI is flag-compatible with opencode or
+claude, set `commandBuilder` on a custom profile; dedicated builders for these
+CLIs arrive with the workflow-orchestration harness adapters.
 
 In v2 config the built-in profile names still resolve — but to use them from
 `profiles.agent`, declare them explicitly so the profile pool is self-contained.

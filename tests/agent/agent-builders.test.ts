@@ -537,3 +537,41 @@ describe("builder + globalModelAliases integration", () => {
     expect(argv[argv.indexOf("--model") + 1]).toBe("opencode/profile-wins");
   });
 });
+
+// ── Registry-derived builders + missing-builder error (P0.5 drift fix) ────────
+
+describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
+  test("canonical ids, -headless variants, and aliases resolve to the harness builder", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    expect(getCommandBuilder("opencode").platform).toBe("opencode");
+    expect(getCommandBuilder("opencode-headless").platform).toBe("opencode");
+    expect(getCommandBuilder("claude").platform).toBe("claude");
+    expect(getCommandBuilder("claude-headless").platform).toBe("claude");
+    // 'claude-code' is the registered alias of the claude harness.
+    expect(getCommandBuilder("claude-code").platform).toBe("claude");
+  });
+
+  test("known built-in CLIs without a dedicated builder throw a ConfigError", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const { ConfigError } = await import("../../src/core/errors");
+    for (const platform of ["codex", "gemini", "aider", "codex-headless", "gemini-headless", "aider-headless"]) {
+      expect(() => getCommandBuilder(platform)).toThrow(ConfigError);
+    }
+  });
+
+  test("unknown custom platforms still fall back to the default builder", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    expect(getCommandBuilder("my-custom-wrapper").platform).toBe("default");
+  });
+
+  test("dispatching a codex profile through runAgent surfaces the ConfigError", async () => {
+    const { runAgent } = await import("../../src/integrations/agent/spawn");
+    const profile = makeFakeProfile({ name: "codex", bin: "codex" });
+    await expect(
+      runAgent(profile, undefined, {
+        stdio: "captured",
+        dispatch: { prompt: "do a thing", model: "opus" },
+      }),
+    ).rejects.toThrow(/no command builder exists/);
+  });
+});

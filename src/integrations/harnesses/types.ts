@@ -23,6 +23,8 @@
  * implementations are migrated under each harness in #563/#564.
  */
 
+import type { AgentCommandBuilder } from "../agent/builder-shared";
+
 /**
  * Capability flags describing which of akm's six integration surfaces a
  * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
@@ -95,6 +97,18 @@ export interface AkmHarness {
   readonly capabilities: HarnessCapabilities;
 
   /**
+   * The harness-owned agent command builder, when dispatch goes through the
+   * CLI spawn path. `BUILTIN_BUILDERS` in `agent/builders.ts` is DERIVED from
+   * this field (id, `<id>-headless`, and aliases all map to it) so the
+   * builder registry cannot drift from the harness registry. Absent for
+   * harnesses that dispatch without argv construction (opencode-sdk) — and
+   * for dispatch-capable CLIs that do not have a dedicated builder yet, in
+   * which case dispatch fails loudly rather than falling back to a
+   * wrong-flag-shape default (see `getCommandBuilder`).
+   */
+  readonly agentBuilder?: AgentCommandBuilder;
+
+  /**
    * Does a legacy v1 agent-profile name belong to this harness? (#566)
    *
    * v1 agent profiles never carried an explicit `platform`; the platform was
@@ -126,6 +140,7 @@ export abstract class BaseHarness implements AkmHarness {
   abstract readonly capabilities: HarnessCapabilities;
   readonly runtimeId?: string;
   readonly setupDetectionDir?: string;
+  readonly agentBuilder?: AgentCommandBuilder;
 
   /**
    * Lowercase prefixes that a decorated v1 profile name may start with and
