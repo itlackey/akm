@@ -9,14 +9,17 @@
  * persistence through the serialized writer queue, and `workflow_unit_*`
  * events for observability.
  *
- * Data flow (redesign addendum, R1): all workflow-authored templates go
- * through the deterministic `${{ … }}` expression language
- * (`program/expressions.ts`). Instruction templates are parsed ONCE per step
- * and resolved per unit against `{ params, stepOutputs, item, item_index }`;
- * `map.over` resolves as a single whole-value reference. Substituted content
- * is data, never re-scanned — the P1 `{{item}}` re-scan injection class is
- * structurally impossible. There is NO ambient key search: a
- * `steps.<id>.output.<path>` reference addresses INTO that step's recorded
+ * Data flow (redesign addendum, R1): workflow-authored templates go through
+ * the deterministic `${{ … }}` expression language (`program/expressions.ts`)
+ * — but ONLY for nodes the frontend marked `templating: "expressions"` (YAML
+ * program units). Classic linear markdown instructions are `"verbatim"`:
+ * opaque data handed to the agent byte-exact (the stable CLI contract — a
+ * literal `${{` there is content, never grammar). Expression templates are
+ * parsed ONCE per step and resolved per unit against `{ params, stepOutputs,
+ * item, item_index }`; `map.over` resolves as a single whole-value reference.
+ * Substituted content is data, never re-scanned — the P1 `{{item}}` re-scan
+ * injection class is structurally impossible. There is NO ambient key search:
+ * a `steps.<id>.output.<path>` reference addresses INTO that step's recorded
  * output explicitly.
  *
  * TODO(R2: typed artifacts): `stepOutputs` for R1 is the prior steps'
@@ -182,15 +185,25 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
 
   // Parse the instruction template ONCE per step (deterministic; resolution
   // is a single pass per unit — substituted content is never re-scanned).
-  const parsedInstructions = parseTemplate(template.instructions);
-  if (!parsedInstructions.ok) {
-    return failedStep(
-      dispatched,
-      `Step "${plan.stepId}" instructions template failed to parse: ` +
-        parsedInstructions.errors.map((e) => e.message).join(" "),
-    );
+  // Only nodes the frontend marked `templating: "expressions"` (YAML program
+  // units) carry the `${{ … }}` grammar; everything else — classic linear
+  // markdown steps, whose behavior is a stable contract — is opaque verbatim
+  // text, so a literal `${{` in markdown instructions passes through to the
+  // agent unchanged instead of failing the step.
+  let instructionSegments: TemplateSegment[];
+  if (template.templating === "expressions") {
+    const parsedInstructions = parseTemplate(template.instructions);
+    if (!parsedInstructions.ok) {
+      return failedStep(
+        dispatched,
+        `Step "${plan.stepId}" instructions template failed to parse: ` +
+          parsedInstructions.errors.map((e) => e.message).join(" "),
+      );
+    }
+    instructionSegments = parsedInstructions.segments;
+  } else {
+    instructionSegments = [{ kind: "literal", text: template.instructions }];
   }
-  const instructionSegments = parsedInstructions.segments;
 
   // Resolve fan-out items: `over` is a single whole-value `${{ … }}`
   // reference naming its producer explicitly (a run param or an earlier
@@ -737,7 +750,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   }
 
   if (resolved.kind === "llm") {
-    const { chatCompletion } = await import("../../llm/client.js");
+    const { chatCompletion, LlmCallError } = await import("../../llm/client.js");
     const { resolveModel } = await import("../../integrations/agent/model-aliases.js");
     const connection = request.model
       ? { ...resolved.connection, model: resolveModel(request.model, "llm", undefined, config.modelAliases) }
@@ -754,7 +767,13 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       });
       return { ok: true, text };
     } catch (err) {
-      return { ok: false, text: "", failureReason: "llm_error", error: message(err) };
+      // Map typed LlmCallError codes into the persisted AgentFailureReason
+      // taxonomy — the vocabulary `retry.on` is validated against (program
+      // schema PROGRAM_RETRY_REASONS) and the journal's failure_reason column
+      // speaks. A collapsed out-of-taxonomy value ("llm_error") made the
+      // declared failure policy dead for the entire llm runner.
+      const failureReason = err instanceof LlmCallError ? llmFailureReasonFor(err.code) : ("dispatch_error" as const);
+      return { ok: false, text: "", failureReason, error: message(err) };
     }
   }
 
@@ -797,6 +816,42 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
     ...(result.usage ? { usage: result.usage } : {}),
   };
 };
+
+/**
+ * Map a typed {@link import("../../llm/client").LlmCallErrorCode} into the
+ * persisted `AgentFailureReason` taxonomy (agent/spawn.ts) — the ONLY
+ * vocabulary `retry.on` accepts and the journal's `failure_reason` column
+ * carries. Exhaustive over the code union (typecheck fails on drift):
+ *
+ *   - `timeout`        → `timeout`         (wall-clock expiry; also covers
+ *                                           signal aborts, which chatCompletion
+ *                                           folds into its timeout code)
+ *   - `rate_limited`   → `llm_rate_limit`  (HTTP 429 — the canonical transient)
+ *   - `parse_error` / `provider_html_error`
+ *                      → `parse_error`     (a response arrived but was not the
+ *                                           promised JSON)
+ *   - `network_error` / `provider_error`
+ *                      → `spawn_failed`    (the backend could not be reached or
+ *                                           could not do the work — the LLM
+ *                                           analog of failing to start the
+ *                                           child; retryable as a transient)
+ */
+export function llmFailureReasonFor(
+  code: import("../../llm/client").LlmCallErrorCode,
+): import("../../integrations/agent/spawn").AgentFailureReason {
+  switch (code) {
+    case "timeout":
+      return "timeout";
+    case "rate_limited":
+      return "llm_rate_limit";
+    case "parse_error":
+    case "provider_html_error":
+      return "parse_error";
+    case "network_error":
+    case "provider_error":
+      return "spawn_failed";
+  }
+}
 
 /**
  * Resolve the harness `resultExtractor` for an agent profile, mirroring the

@@ -1190,12 +1190,20 @@ mismatch against the producer's declared schema).
 
 ### Revised phases (replace P3–P5)
 
-- **R1 — format + frozen plan.** YAML schema (`schemas/akm-workflow.json`)
+- **R1 — format + frozen plan. ✅ SHIPPED 2026-07-06.** YAML schema
+  (`schemas/akm-workflow.json`)
   + parser/linter (`workflow validate`), expression-language parser,
   compiler to the (revised) IR, migration 006 (`plan_json`, `plan_hash`,
   lease columns), plan freezing in `workflow start`/`run`. Linear markdown
   workflows compile to the same IR unchanged. P1 orchestration grammar
   removed. Conformance goldens rewritten against YAML sources.
+  Delivered: all of the above plus `workflow template --yaml`,
+  route-on-explicit-input with journaled decisions, and the
+  `on_error`/`retry` failure policy (pulled forward from R2); deferred to
+  R2 as planned: lease *enforcement* (columns only), content-derived unit
+  identity/replay divergence, typed step-artifact validation +
+  artifact-judging gates, `gate.max_loops` execution, budget/watch/worktree
+  (all carried through the IR with `TODO(R2)` markers).
 - **R2 — engine rework.** Content-derived unit identity, replay journal
   semantics + divergence detection, run lease enforcement, typed step
   artifacts + artifact-judging gates, failure policy (`on_error`/`retry`),

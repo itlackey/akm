@@ -174,6 +174,9 @@ function compileProgramUnit(unit: ProgramUnit, id: string, defaults: ProgramDefa
     kind: "agent",
     id,
     instructions: unit.instructions,
+    // YAML program instructions are `${{ … }}` templates (validated above);
+    // the executor resolves them per unit.
+    templating: "expressions",
     runner: unit.runner ?? defaults?.runner ?? "inherit",
     ...(unit.profile !== undefined ? { profile: unit.profile } : {}),
     ...(model !== undefined ? { model } : {}),
@@ -310,6 +313,10 @@ function compileMarkdownStep(step: WorkflowStep): IrStepPlan {
       kind: "agent",
       id: step.id,
       instructions: step.instructions.text,
+      // Stable contract: markdown instructions are opaque data, passed to the
+      // agent byte-exact. A literal `${{ … }}` (GitHub Actions syntax, docs of
+      // the YAML format) is content here, never expression grammar.
+      templating: "verbatim",
       runner: "inherit",
       // Markdown has no failure-policy surface; the fail-fast default applies.
       onError: "fail",

@@ -212,6 +212,42 @@ describe("loadWorkflowAsset over YAML programs", () => {
     expect(review?.root?.over).toBe("${{ steps.discover.output.files }}");
   });
 
+  test("gate criteria project into completionCriteria, persist on step rows, and arm the completion gate (peer review)", async () => {
+    writeStashFile("workflows/review-changes.yaml", ADDENDUM_EXAMPLE);
+    const asset = await loadWorkflowAsset("workflow:review-changes");
+
+    // The projection carries the gate criteria (previously dropped → the
+    // summary-validation gate silently failed open for every YAML program).
+    const byId = new Map(asset.steps.map((s) => [s.id, s]));
+    expect(byId.get("discover")?.completionCriteria).toEqual(["every target is listed"]);
+    expect(byId.get("review")?.completionCriteria).toEqual(["every changed file has a verdict"]);
+    // Steps without a gate stay criteria-less (fail-open there is intentional).
+    expect(byId.get("ship")?.completionCriteria).toBeUndefined();
+
+    // Criteria land in the run's step rows (completion_json)…
+    const { startWorkflowRun, completeWorkflowStep } = await import("../../src/workflows/runtime/runs");
+    const started = await startWorkflowRun("workflow:review-changes", { changed_files: ["a.ts"] });
+    const discover = started.workflow.steps.find((s) => s.id === "discover");
+    expect(discover?.completionCriteria).toEqual(["every target is listed"]);
+
+    // … so completeWorkflowStep actually judges the summary against them: a
+    // rejecting judge now BLOCKS completion instead of never being consulted.
+    const judged: string[] = [];
+    const verdict = await completeWorkflowStep({
+      runId: started.run.id,
+      stepId: "discover",
+      status: "completed",
+      summary: "Did something vague.",
+      summaryJudge: async ({ user }) => {
+        judged.push(user);
+        return JSON.stringify({ complete: false, missing: ["every target is listed"], feedback: "List the targets." });
+      },
+    });
+    expect(judged).toHaveLength(1);
+    expect(judged[0]).toContain("every target is listed");
+    expect("ok" in verdict && verdict.ok === false).toBe(true);
+  });
+
   test("a broken program fails the load with line-anchored errors", async () => {
     writeStashFile("workflows/broken.yaml", "version: 1\nname: broken\nsteps:\n  - id: a\n");
     await expect(loadWorkflowAsset("workflow:broken")).rejects.toThrow(/exactly one of "unit", "map", or "route"/);

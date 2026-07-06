@@ -10,6 +10,7 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import {
   executeStepPlan,
+  llmFailureReasonFor,
   type UnitDispatchRequest,
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
@@ -17,7 +18,9 @@ import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
-import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
+import { PROGRAM_RETRY_REASONS } from "../../src/workflows/program/schema";
+import { completeWorkflowStep, getWorkflowStatus } from "../../src/workflows/runtime/runs";
+import { makeSandboxDir, withEnv, withMockedFetch, writeSandboxConfig } from "../_helpers/sandbox";
 
 /**
  * Native executor over IR v2 (redesign addendum, R1): fan-out via `${{ … }}`
@@ -910,6 +913,121 @@ steps:
     expect(failed.run.status).toBe("failed");
   });
 
+  const ROUTED_STEPS = [
+    { id: "classify", title: "Classify" },
+    { id: "triage", title: "Triage" },
+    { id: "fix-bug", title: "Fix bug" },
+    { id: "build-feature", title: "Build feature" },
+    { id: "wrap-up", title: "Wrap up" },
+  ];
+
+  test("routing survives resume: the journaled decision replays, unselected targets stay skipped (peer review)", async () => {
+    // Route decisions must be pure functions of (frozen plan, params,
+    // journaled results) — NOT per-invocation memory. First invocation stops
+    // right after the route step completed (maxSteps), simulating a crash /
+    // Ctrl-C / gate stop between the decision and its targets.
+    seedRun({ steps: ROUTED_STEPS });
+    const firstNodes: string[] = [];
+    const first = await runWorkflowSteps({
+      target: RUN_ID,
+      maxSteps: 2,
+      dispatcher: async (req) => {
+        firstNodes.push(req.nodeId);
+        return req.nodeId === "classify" ? { ok: true, text: '{"kind": "bug"}' } : { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(ROUTED_WF),
+    });
+    expect(first.executed.map((s) => s.stepId)).toEqual(["classify", "triage"]);
+    expect(firstNodes).toEqual(["classify"]); // the route step dispatches nothing
+
+    // Fresh invocation = fresh in-memory bookkeeping: the decision journaled
+    // in the triage step's evidence must replay, or the UNSELECTED branch
+    // (build-feature) would dispatch units — the wrong branch, real money.
+    const resumedNodes: string[] = [];
+    const resumed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        resumedNodes.push(req.nodeId);
+        return { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(ROUTED_WF),
+    });
+    expect(resumed.done).toBe(true);
+    expect(resumedNodes).toEqual(["fix-bug", "wrap-up"]);
+
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s]));
+    expect(byId.get("fix-bug")?.status).toBe("completed");
+    expect(byId.get("build-feature")?.status).toBe("skipped");
+    expect(byId.get("wrap-up")?.status).toBe("completed");
+  });
+
+  test("resume re-derives the decision when the route step was completed manually (no journaled route evidence)", async () => {
+    seedRun({ steps: ROUTED_STEPS });
+    // classify runs through the engine, journaling its evidence.
+    await runWorkflowSteps({
+      target: RUN_ID,
+      maxSteps: 1,
+      dispatcher: async () => ({ ok: true, text: '{"kind": "bug"}' }),
+      loadPlan: async () => plan(ROUTED_WF),
+    });
+    // triage advanced by hand via the manual loop — no evidence.route written.
+    await completeWorkflowStep({
+      runId: RUN_ID,
+      stepId: "triage",
+      status: "completed",
+      summary: "Routed by hand.",
+      summaryJudge: null,
+    });
+
+    const resumedNodes: string[] = [];
+    const resumed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        resumedNodes.push(req.nodeId);
+        return { ok: true, text: "done" };
+      },
+      loadPlan: async () => plan(ROUTED_WF),
+    });
+    // Deterministic re-derivation from the frozen plan + journaled evidence:
+    // classify's journaled output still says "bug", so fix-bug runs.
+    expect(resumed.done).toBe(true);
+    expect(resumedNodes).toEqual(["fix-bug", "wrap-up"]);
+  });
+
+  test("resume fails loudly when a completed route step's decision is unrecoverable (never runs every branch)", async () => {
+    seedRun({ steps: ROUTED_STEPS });
+    // Both classify and triage completed manually: no journaled decision and
+    // no evidence to re-derive it from.
+    await completeWorkflowStep({
+      runId: RUN_ID,
+      stepId: "classify",
+      status: "completed",
+      summary: "Classified by hand.",
+      summaryJudge: null,
+    });
+    await completeWorkflowStep({
+      runId: RUN_ID,
+      stepId: "triage",
+      status: "completed",
+      summary: "Routed by hand.",
+      summaryJudge: null,
+    });
+
+    let dispatches = 0;
+    await expect(
+      runWorkflowSteps({
+        target: RUN_ID,
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true, text: "must not run" };
+        },
+        loadPlan: async () => plan(ROUTED_WF),
+      }),
+    ).rejects.toThrow(/route step "triage" with no journaled route/);
+    expect(dispatches).toBe(0);
+  });
+
   test("maxSteps bounds the loop", async () => {
     seedRun({
       params: { flavor: "vanilla" },
@@ -928,5 +1046,90 @@ steps:
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("active");
     expect(status.run.currentStepId).toBe("second");
+  });
+});
+
+describe("defaultUnitDispatcher — llm failures map into the retry taxonomy (peer review)", () => {
+  test("llmFailureReasonFor maps every LlmCallErrorCode to a reason retry.on accepts", () => {
+    expect(llmFailureReasonFor("timeout")).toBe("timeout");
+    expect(llmFailureReasonFor("rate_limited")).toBe("llm_rate_limit");
+    expect(llmFailureReasonFor("parse_error")).toBe("parse_error");
+    expect(llmFailureReasonFor("provider_html_error")).toBe("parse_error");
+    expect(llmFailureReasonFor("network_error")).toBe("spawn_failed");
+    expect(llmFailureReasonFor("provider_error")).toBe("spawn_failed");
+    // Closed loop with the program parser: every mapped value is a reason the
+    // parser accepts in `retry.on` — an out-of-taxonomy value ("llm_error")
+    // would make the declared failure policy dead for the whole llm runner.
+    const codes = [
+      "timeout",
+      "rate_limited",
+      "parse_error",
+      "provider_html_error",
+      "network_error",
+      "provider_error",
+    ] as const;
+    for (const code of codes) {
+      expect(PROGRAM_RETRY_REASONS).toContain(llmFailureReasonFor(code));
+    }
+  });
+
+  const LLM_RETRY_WF = `version: 1
+name: Flaky
+defaults:
+  runner: llm
+steps:
+  - id: fetch
+    title: Fetch
+    unit:
+      retry: { max: 1, on: [llm_rate_limit] }
+      instructions: Fetch the thing.
+`;
+
+  test("an HTTP 429 journals llm_rate_limit and `retry: { on: [llm_rate_limit] }` re-dispatches", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    const stepPlan = plan(LLM_RETRY_WF).steps[0];
+
+    const cfgDir = makeSandboxDir("akm-llm-cfg");
+    let calls = 0;
+    try {
+      await withEnv({ XDG_CONFIG_HOME: cfgDir.dir }, async () => {
+        writeSandboxConfig({
+          profiles: { llm: { default: { endpoint: "http://localhost:1/v1/chat/completions", model: "test" } } },
+        });
+        await withMockedFetch(
+          async () => {
+            // NO injected dispatcher: the default llm dispatch path is under test.
+            const result = await executeStepPlan(stepPlan, {
+              runId: RUN_ID,
+              workflowRef: "workflow:demo",
+              params: {},
+              evidence: {},
+            });
+            expect(result.ok).toBe(true);
+            expect(calls).toBe(2); // 429, then success — the retry actually fired
+            expect(result.units[0].unitId).toBe("fetch~r1");
+          },
+          () => {
+            calls++;
+            return calls === 1
+              ? new Response("rate limited", { status: 429 })
+              : new Response(JSON.stringify({ choices: [{ message: { content: "finally" } }] }), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                });
+          },
+        );
+      });
+    } finally {
+      cfgDir.cleanup();
+    }
+
+    // The journal speaks the persisted failure_reason taxonomy, not "llm_error".
+    await withWorkflowRunsRepo((repo) => {
+      const byId = new Map(repo.getUnitsForStep(RUN_ID, "fetch").map((r) => [r.unit_id, r]));
+      expect(byId.get("fetch")?.status).toBe("failed");
+      expect(byId.get("fetch")?.failure_reason).toBe("llm_rate_limit");
+      expect(byId.get("fetch~r1")?.status).toBe("completed");
+    });
   });
 });

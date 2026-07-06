@@ -53,6 +53,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`opencode/claude-fable-5` on opencode); recommended resolution target for
   the `deep` workflow model tier.
 
+### Changed
+
+- **Workflow orchestration is now authored as a YAML program; the P1 markdown
+  orchestration grammar was replaced before release (R1 of the redesign
+  addendum, experimental).** The per-step markdown orchestration subsections
+  listed above (`### Runner` / `### Model` / `### Timeout` / `### Fan-out` /
+  `### Schema` / `### Env` / `### Depends On` / `### Route`) are **removed** —
+  breaking only for the unreleased experimental surface; classic linear
+  markdown workflows and the stable workflow CLI contract
+  (`start`/`next`/`complete`/`status`/`list`) are untouched. Orchestrated
+  workflows are instead deterministic YAML programs (`workflows/*.yaml`,
+  `version: 1`) validated against a published JSON Schema
+  (`schemas/akm-workflow.json`) by `akm workflow validate`; scaffold one with
+  the new `akm workflow template --yaml`. R1 adds, on top of the format
+  swap: **frozen per-run plans** (`workflow start` compiles and persists
+  `plan_json` + `plan_hash` — migration 006, additive; a run executes the
+  plan compiled at start, and edits to the source file require a new run), a
+  **closed `${{ … }}` expression language** (exactly `params.<name>`,
+  `steps.<id>.output.<path>`, `item`, `item_index` — parsed once into an
+  AST and resolved in a single pass, so substituted content is never
+  re-scanned and the P1 evidence-search/interpolation-rescan data flow is
+  gone), and an **explicit failure policy** (per-unit
+  `on_error: fail | continue` with fail-fast default, plus bounded
+  `retry: { max, on: [<failure_reason>…] }` keyed on the persisted failure
+  taxonomy). Route steps now branch on an explicit `input:` expression
+  instead of an ambient evidence lookup, and route decisions are journaled
+  for replay. Migration 006 also lands the run-lease columns
+  (`engine_lease_until`/`engine_lease_holder`); lease enforcement, typed
+  step-artifact validation, artifact-judging gates + `gate.max_loops`,
+  budget/watch/worktree-isolation follow in R2. Conformance goldens are
+  rewritten against YAML sources. See "Orchestrated steps" in
+  `docs/features/workflows.md` and the redesign addendum in
+  `docs/technical/akm-workflows-orchestration-plan.md`.
+
 ### Fixed
 
 - **Check-in directives now survive plain-text output and `workflow

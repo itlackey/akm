@@ -106,7 +106,20 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   // when the spine reaches them; a target ANY router selected is protected
   // (two routers may share a target).
   const routeSelected = new Set<string>();
-  const routeUnselected = new Map<string, { router: string; selected: string }>();
+  const routeUnselected = new Map<string, RouteSkipInfo>();
+
+  // Resume contract: route decisions are journaled in the route step's
+  // evidence (`evidence.route.selected`) and must be REPLAYED into the
+  // bookkeeping before the spine advances — a re-invoked run (crash, Ctrl-C,
+  // maxSteps, gate rejection after the route completed) would otherwise reach
+  // the unselected targets with empty in-memory state and execute the wrong
+  // branch. Decisions stay pure functions of (frozen plan, params, journaled
+  // results) — the addendum determinism bar. A done run skips the seeding:
+  // nothing will dispatch, so an unrecoverable historical decision must not
+  // block the no-op status return below.
+  if (!next.done) {
+    seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
+  }
 
   while (!next.done && next.step && next.run.status === "active" && executed.length < maxSteps) {
     if (options.signal?.aborted) break;
@@ -216,12 +229,9 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
         });
         break;
       }
-      routeSelected.add(decision.selected);
-      for (const target of decision.targets) {
-        if (target !== decision.selected && !routeUnselected.has(target)) {
-          routeUnselected.set(target, { router: step.id, selected: decision.selected });
-        }
-      }
+      applyRouteDecision(stepPlan.route, step.id, decision.selected, routeSelected, routeUnselected);
+      // Journal the decision on the step evidence: resume replays it via
+      // seedJournaledRouteDecisions, so the skip set survives re-invocation.
       result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
       // A route-only step's summary IS its decision (deterministic).
       if (!stepPlan.root) {
@@ -299,7 +309,87 @@ async function loadFrozenPlan(runId: string, workflowRef: string): Promise<Workf
   return compileWorkflowAssetPlan(await loadWorkflowAsset(workflowRef));
 }
 
-type RouteDecision = { ok: true; value: string; selected: string; targets: string[] } | { ok: false; error: string };
+type RouteDecision = { ok: true; value: string; selected: string } | { ok: false; error: string };
+
+type RouteSkipInfo = { router: string; selected: string };
+
+/**
+ * Record one router's decision in the engine's skip bookkeeping: the selected
+ * target is protected, every other declared target (branches + default) is
+ * marked skip-on-reach unless an earlier router already claimed it. Shared by
+ * the live evaluation path and the journal replay so the two cannot drift.
+ */
+function applyRouteDecision(
+  route: IrRouteSpec,
+  routerId: string,
+  selected: string,
+  routeSelected: Set<string>,
+  routeUnselected: Map<string, RouteSkipInfo>,
+): void {
+  routeSelected.add(selected);
+  const targets = [...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])];
+  for (const target of targets) {
+    if (target !== selected && !routeUnselected.has(target)) {
+      routeUnselected.set(target, { router: routerId, selected });
+    }
+  }
+}
+
+/**
+ * Replay journaled route decisions into the skip bookkeeping (resume path).
+ * For every COMPLETED route step of the frozen plan, in spine order:
+ *
+ *   1. the decision journaled on the step's evidence (`evidence.route.selected`,
+ *      written by the engine when it completed the route) wins;
+ *   2. a completed route step WITHOUT a journaled decision (e.g. advanced
+ *      manually via `akm workflow complete`) is re-derived deterministically
+ *      from the frozen plan + journaled step evidence — still a pure function
+ *      of journaled results;
+ *   3. if neither yields a decision, fail loudly: dispatching the unselected
+ *      branch targets would run the wrong branch and spend money. The manual
+ *      loop (`next`/`complete`) remains available.
+ */
+function seedJournaledRouteDecisions(
+  plan: WorkflowPlanGraph,
+  state: WorkflowNextResult,
+  routeSelected: Set<string>,
+  routeUnselected: Map<string, RouteSkipInfo>,
+): void {
+  const evidence: Record<string, Record<string, unknown> | undefined> = {};
+  for (const s of state.workflow.steps) evidence[s.id] = s.evidence;
+
+  for (const stepPlan of plan.steps) {
+    if (!stepPlan.route) continue;
+    const stepState = state.workflow.steps.find((s) => s.id === stepPlan.stepId);
+    if (!stepState || stepState.status !== "completed") continue;
+
+    let selected = journaledRouteSelection(stepState.evidence);
+    if (selected === undefined) {
+      const scope: ExpressionScope = {
+        params: state.run.params ?? {},
+        stepOutputs: routeStepOutputs(evidence, stepPlan.stepId, stepState.evidence ?? {}),
+      };
+      const decision = evaluateRoute(stepPlan.route, scope);
+      if (decision.ok) selected = decision.selected;
+    }
+    if (selected === undefined) {
+      throw new UsageError(
+        `Workflow run ${state.run.id} has a completed route step "${stepPlan.stepId}" with no journaled route ` +
+          `decision, and the decision cannot be re-derived from the journaled evidence. Refusing to guess which ` +
+          `branch was selected — advance the remaining steps manually with \`akm workflow complete\`.`,
+      );
+    }
+    applyRouteDecision(stepPlan.route, stepPlan.stepId, selected, routeSelected, routeUnselected);
+  }
+}
+
+/** The `selected` target journaled on a route step's evidence, if well-formed. */
+function journaledRouteSelection(evidence: Record<string, unknown> | undefined): string | undefined {
+  const route = evidence?.route;
+  if (typeof route !== "object" || route === null || Array.isArray(route)) return undefined;
+  const selected = (route as Record<string, unknown>).selected;
+  return typeof selected === "string" && selected !== "" ? selected : undefined;
+}
 
 /**
  * The `stepOutputs` scope a route resolves against: every prior step's
@@ -347,12 +437,11 @@ function evaluateRoute(route: IrRouteSpec, scope: ExpressionScope): RouteDecisio
   // Own-property check: `when` is author-controlled, and a value such as
   // "constructor" must not resolve through Object.prototype.
   const selected = Object.hasOwn(route.when, valueString) ? route.when[valueString] : route.defaultStepId;
-  const targets = [...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])];
   if (!selected) {
     return {
       ok: false,
       error: `value "${valueString}" matched no "when:" branch and the route declares no default.`,
     };
   }
-  return { ok: true, value: valueString, selected, targets };
+  return { ok: true, value: valueString, selected };
 }

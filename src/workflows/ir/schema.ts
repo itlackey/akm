@@ -66,17 +66,34 @@ export interface IrRetry {
   on: string[];
 }
 
+/**
+ * How a unit's `instructions` string is interpreted at execution time.
+ *
+ *   - `"expressions"` — the text is a `${{ … }}` template: re-parsed
+ *     deterministically at execution (program/expressions.ts) and resolved in
+ *     a single pass. Emitted by the YAML program frontend, whose compiler has
+ *     already validated every reference.
+ *   - `"verbatim"` (also the default when the field is absent, so pre-marker
+ *     frozen plans keep the stable markdown behavior) — the text is opaque
+ *     data handed to the agent byte-exact. Emitted by the classic linear
+ *     markdown frontend: a literal `${{ github.sha }}` in markdown
+ *     instructions is content, never grammar (the stable CLI contract).
+ */
+export type IrInstructionTemplating = "expressions" | "verbatim";
+
 /** Run one unit: instructions + runner + model + optional schema. */
 export interface IrAgentNode {
   kind: "agent";
   id: string;
   /**
-   * RAW instruction template. `${{ … }}` references are re-parsed
-   * deterministically at execution time (program/expressions.ts) — the plan
-   * must serialize as plain JSON, so no parsed AST lives here. Classic
-   * markdown instructions carry no expressions and pass through verbatim.
+   * RAW instruction text. Interpretation is governed by {@link templating}:
+   * a `${{ … }}` template for YAML program units, opaque verbatim text for
+   * classic markdown steps. The plan must serialize as plain JSON, so no
+   * parsed AST lives here.
    */
   instructions: string;
+  /** Instruction interpretation; absent = `"verbatim"` (see {@link IrInstructionTemplating}). */
+  templating?: IrInstructionTemplating;
   runner: IrRunnerKind;
   /** Agent/LLM profile name overriding the run default. */
   profile?: string;

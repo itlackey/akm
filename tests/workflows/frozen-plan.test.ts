@@ -110,6 +110,32 @@ describe("plan freezing at workflow start (migration 006)", () => {
     expect(prompts[0]).not.toContain("Do the EDITED thing.");
   });
 
+  test("linear markdown instructions containing literal ${{ … }} pass through verbatim (stable contract)", async () => {
+    // Peer-review regression: classic markdown is a stable CLI contract — its
+    // instructions are opaque data, never `${{ … }}` grammar. A literal
+    // `${{ github.sha }}` (GitHub Actions syntax, or docs of the YAML format)
+    // used to fail parseTemplate at execution and permanently fail the step.
+    writeWorkflow("gha-doc", "Deploy the build for commit ${{ github.sha }}. Do not resolve ${{ params.tag }} either.");
+    const started = await startWorkflowRun("workflow:gha-doc", { tag: "v1" });
+
+    const prompts: string[] = [];
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async (req) => {
+        prompts.push(req.prompt);
+        return { ok: true, text: "done" };
+      },
+    });
+
+    expect(result.done).toBe(true);
+    expect(prompts).toHaveLength(1);
+    // Unknown roots are content, not a parse error …
+    expect(prompts[0]).toContain("${{ github.sha }}");
+    // … and even a well-formed reference is NOT substituted on the markdown path.
+    expect(prompts[0]).toContain("${{ params.tag }}");
+    expect(prompts[0]).not.toContain("v1.");
+  });
+
   test("a plan_json / plan_hash mismatch is rejected with an error naming the run", async () => {
     writeWorkflow("tampered", "Do the honest thing.");
     const started = await startWorkflowRun("workflow:tampered", {});

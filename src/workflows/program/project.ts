@@ -50,12 +50,20 @@ export function programStepInstructions(step: ProgramStep): string {
   return "";
 }
 
-/** Project the program's steps into flat `WorkflowStepDefinition`s. */
+/**
+ * Project the program's steps into flat `WorkflowStepDefinition`s.
+ *
+ * `gate.criteria` MUST project into `completionCriteria`: `startWorkflowRun`
+ * persists this projection as the step rows' `completion_json`, which is what
+ * `completeWorkflowStep` reads to run the summary-validation gate (fail-open
+ * when empty). Dropping the criteria here silently disarms every YAML gate.
+ */
 export function projectProgramStepDefinitions(program: WorkflowProgram): WorkflowStepDefinition[] {
   return program.steps.map((step, index) => ({
     id: step.id,
     title: step.title ?? step.id,
     instructions: programStepInstructions(step),
+    ...(step.gate && step.gate.criteria.length > 0 ? { completionCriteria: [...step.gate.criteria] } : {}),
     sequenceIndex: index,
   }));
 }
