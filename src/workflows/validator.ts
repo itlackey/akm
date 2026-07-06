@@ -24,6 +24,30 @@ export function runSemanticChecks(
   checkFrontmatterKeys(frontmatterData, frontmatterEndLine, errors);
   checkStepIdFormat(draft, errors);
   checkDuplicateStepIds(draft, errors);
+  checkDependsOnReferences(draft, errors);
+}
+
+/** `### Depends On` edges must reference existing, other steps. */
+function checkDependsOnReferences(draft: WorkflowDocument, errors: WorkflowError[]): void {
+  const ids = new Set(draft.steps.map((step) => step.id));
+  for (const step of draft.steps) {
+    for (const dep of step.orchestration?.dependsOn ?? []) {
+      const line = step.orchestration?.source.start ?? step.source.start;
+      if (!ids.has(dep)) {
+        errors.push({
+          line,
+          message: `Step "${step.id}" depends on unknown step "${dep}". "### Depends On" bullets must name existing Step IDs.`,
+        });
+        continue;
+      }
+      if (dep === step.id) {
+        errors.push({
+          line,
+          message: `Step "${step.id}" cannot depend on itself.`,
+        });
+      }
+    }
+  }
 }
 
 function checkFrontmatterKeys(data: Record<string, unknown>, fmEndLine: number, errors: WorkflowError[]): void {
@@ -31,7 +55,7 @@ function checkFrontmatterKeys(data: Record<string, unknown>, fmEndLine: number, 
     if (ALLOWED_FRONTMATTER_KEYS.has(key)) continue;
     errors.push({
       line: fmEndLine,
-      message: `Workflow frontmatter "${key}" is not supported. Use only: description, tags, params, when_to_use.`,
+      message: `Workflow frontmatter "${key}" is not supported. Use only: description, tags, params, name, updated, when_to_use.`,
     });
   }
 }

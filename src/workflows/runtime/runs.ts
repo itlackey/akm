@@ -32,6 +32,8 @@ export interface WorkflowRunDetail {
     title: string;
     steps: WorkflowRunStepState[];
   };
+  /** Present when the run looks stalled — a strong `continue` directive (#506). */
+  checkin?: CheckinDirective;
 }
 
 export interface WorkflowNextResult {
@@ -474,6 +476,16 @@ function readWorkflowRunSteps(repo: WorkflowRunsRepository, runId: string): Work
 }
 
 function buildWorkflowRunDetail(run: WorkflowRunRow, steps: WorkflowRunStepRow[]): WorkflowRunDetail {
+  // Review M1: `workflow status` (and every other detail-shaped response) now
+  // evaluates the check-in, not just `workflow next`. Pure timestamp check —
+  // no background thread (see checkin.ts).
+  const checkin = evaluateCheckin({
+    status: run.status,
+    updatedAt: run.updated_at,
+    checkinArmedAt: run.checkin_armed_at,
+    agentHarness: run.agent_harness,
+    agentSessionId: run.agent_session_id,
+  });
   return {
     run: toWorkflowRunSummary(run),
     workflow: {
@@ -481,6 +493,7 @@ function buildWorkflowRunDetail(run: WorkflowRunRow, steps: WorkflowRunStepRow[]
       title: run.workflow_title,
       steps: steps.map(toWorkflowRunStepState),
     },
+    ...(checkin ? { checkin } : {}),
   };
 }
 

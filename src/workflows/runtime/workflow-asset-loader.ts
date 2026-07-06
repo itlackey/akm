@@ -27,6 +27,12 @@ export type WorkflowAsset = {
   title: string;
   parameters?: WorkflowParameter[];
   steps: WorkflowStepDefinition[];
+  /**
+   * The full parsed document, retained so the run engine can compile the
+   * orchestration IR (`workflows/ir/compile.ts`) — the step projection above
+   * intentionally drops orchestration subsections.
+   */
+  document: WorkflowDocument;
 };
 
 /**
@@ -148,5 +154,6 @@ function projectAsset(doc: WorkflowDocument, ref: string, assetPath: string, sou
       ...(s.completionCriteria ? { completionCriteria: s.completionCriteria.map((c) => c.text) } : {}),
       sequenceIndex: s.sequenceIndex,
     })),
+    document: doc,
   };
 }

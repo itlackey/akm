@@ -28,7 +28,7 @@ akm workflow start workflow:ship-release --params '{"version":"2.0.0"}'
 # → {"run": {"id":"<uuid>","status":"active","currentStepId":"validate",...}}
 ```
 
-## akm workflow next / akm workflow step
+## akm workflow next
 
 `akm workflow next` returns the current actionable step for an active run. If
 no active run exists for the given ref in the current scope, it auto-starts
@@ -135,6 +135,81 @@ akm workflow start workflow:print-book-review --params '{"draft":"v3.pdf"}'
 akm workflow next workflow:print-book-review
 # agent reads instructions → runs checks → completes each step in sequence
 ```
+
+## Orchestrated steps and `akm workflow run` (experimental)
+
+Steps may additionally declare **orchestration subsections** and be executed
+engine-driven with `akm workflow run <run-id|workflow:ref>`: akm compiles the
+workflow into a plan graph, dispatches each step's units to the configured
+runner (fan-out runs units concurrently), records every unit in
+`workflow_run_units`, and advances the run through the normal completion
+gates. Steps that declare nothing behave exactly as before, and the manual
+`next`/`complete` loop keeps working on the same runs.
+
+````markdown
+## Step: Review changed files
+Step ID: review
+
+### Runner
+sdk                  # llm | agent | sdk | inherit (default: inherit)
+profile: reviewer    # optional profile override
+
+### Model
+deep                 # model alias/tier or exact id, resolved per harness
+
+### Timeout
+10m                  # per-unit; "<n>ms" | "<n>s" | "<n>m" | none
+
+### Fan-out
+over: changed_files  # run param or a prior step's evidence key (array)
+concurrency: 8       # capped by the engine limit min(16, cores − 2)
+reducer: collect     # collect (default) | vote (majority of identical results)
+
+### Instructions
+Review {{item}} for correctness bugs. ({{params.<name>}} also interpolates.)
+
+### Schema
+```json
+{ "type": "object", "properties": { "file": { "type": "string" } }, "required": ["file"] }
+```
+
+### Env
+- env:build-vars     # injected via the `akm env run` machinery (secrets, audit)
+
+### Completion Criteria
+- every changed file has a verdict
+````
+
+Unit output declared with `### Schema` is validated on **every** runner; a
+validation miss re-dispatches once with corrective feedback before the unit is
+recorded as failed. `### Depends On` declares non-linear ordering edges
+(validated against step ids). A failing unit fails its step, which fails the
+run — `akm workflow resume` re-opens it and `run` re-dispatches only
+incomplete work (durable-row resume).
+
+**Model tiers.** Reference semantic aliases instead of exact model ids so a
+workflow stays harness-agnostic. Recommended vocabulary (convention, not
+hardcoded) via the config-root `modelAliases` key:
+
+```jsonc
+{
+  "modelAliases": {
+    "fast":     { "*": "claude-haiku-4-5" },
+    "balanced": { "*": "claude-sonnet-4-6" },
+    "deep":     { "claude": "claude-fable-5", "opencode": "opencode/claude-fable-5", "*": "claude-fable-5" }
+  }
+}
+```
+
+The built-in aliases `fable`, `opus`, `sonnet`, and `haiku` resolve per
+platform with no config. Point `deep` work (review, verification, judging) at
+`fable` — Anthropic's tier above Opus — and keep high-volume fan-out units on
+`fast`/`balanced`.
+
+Trust note: a workflow that fans out is authorizing **N parallel agents**, not
+one — the security section below applies with multiplied blast radius. The
+engine enforces a concurrency cap, a lifetime unit cap per run, and per-unit
+timeouts.
 
 ## Security: workflow sources are executed code
 

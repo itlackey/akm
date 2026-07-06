@@ -65,6 +65,13 @@ export type EventType =
   | "workflow_finished"
   /** Emitted by `akm workflow abandon` (08-F6) — metadata carries `{runId}` only, never the title. */
   | "workflow_abandoned"
+  /**
+   * Per-unit lifecycle of the native workflow executor (orchestration P1).
+   * Metadata carries ids/status/tokens only — never instructions or results,
+   * which are attacker-influenceable workflow content (07 P1-B rule).
+   */
+  | "workflow_unit_started"
+  | "workflow_unit_finished"
   | "search"
   | "show"
   // Phase 4 Team C event gaps:

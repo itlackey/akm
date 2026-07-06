@@ -95,6 +95,12 @@ for scripted use.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
   contradiction edges, and the consolidate journal are observable but
   the algorithm that writes them is tuning across patch releases.
+- **`akm workflow run` + orchestrated steps** — the engine-driven native
+  executor (per-step fan-out, schema-validated unit output, `### Runner` /
+  `### Model` / `### Timeout` / `### Fan-out` / `### Schema` / `### Env` /
+  `### Depends On` subsections) is new. The stable workflow CLI contract
+  (`start`/`next`/`complete`/`status`/`list`) is untouched; `run`'s flags and
+  JSON output shape may change while the orchestration engine matures.
 
 ## On the horizon
 

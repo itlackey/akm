@@ -97,6 +97,7 @@ const PASSTHROUGH_COMMANDS = [
   "workflow-list",
   "workflow-next",
   "workflow-resume",
+  "workflow-run",
   "workflow-start",
   "workflow-status",
   "workflow-validate",

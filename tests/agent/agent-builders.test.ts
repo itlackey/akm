@@ -66,6 +66,16 @@ describe("resolveModel — builtin aliases", () => {
     expect(resolveModel("haiku", "opencode")).toBe("opencode/claude-haiku-4-5");
   });
 
+  test('resolveModel("fable", "claude") → "claude-fable-5"', async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("fable", "claude")).toBe("claude-fable-5");
+  });
+
+  test('resolveModel("fable", "opencode") → "opencode/claude-fable-5"', async () => {
+    const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
+    expect(resolveModel("fable", "opencode")).toBe("opencode/claude-fable-5");
+  });
+
   test('resolveModel("claude-opus-4-7", "opencode") → pass-through (no alias match)', async () => {
     const { resolveModel } = await import("../../src/integrations/agent/model-aliases");
     // Exact model ID — not a known alias key, so returned verbatim.

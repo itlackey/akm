@@ -43,6 +43,15 @@ interface ModelAliasEntry {
  */
 const BUILTIN_ALIASES: readonly ModelAliasEntry[] = [
   {
+    // Anthropic's Mythos-class tier above Opus — the recommended resolution
+    // target for the `deep` workflow tier (see docs/features/workflows.md).
+    alias: "fable",
+    platforms: {
+      claude: "claude-fable-5",
+      opencode: "opencode/claude-fable-5",
+    },
+  },
+  {
     alias: "opus",
     platforms: {
       claude: "claude-opus-4-7",

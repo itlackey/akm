@@ -175,6 +175,44 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_run_steps ADD COLUMN summary TEXT;
     `,
   },
+  // ── Migration 004 — per-unit run state (orchestration plan P1) ──────────────
+  //
+  // A step's execution may now fan out into N concurrent units (native
+  // executor, docs/technical/akm-workflows-orchestration-plan.md). Units hang
+  // off the gated step spine: `workflow_run_steps` stays the durable top-level
+  // record; each dispatched unit gets its own row here so a crash-and-resume
+  // re-dispatches only incomplete units (durable-row resume) and budget/usage
+  // is attributable per unit. `input_hash` is reserved for the P5 deterministic
+  // replay mode; `failure_reason` carries runAgent's structured failure
+  // vocabulary so retry/continue-on-error policy has semantics to act on.
+  {
+    id: "004-workflow-run-units",
+    up: `
+      CREATE TABLE IF NOT EXISTS workflow_run_units (
+        run_id         TEXT NOT NULL,
+        unit_id        TEXT NOT NULL,
+        step_id        TEXT,
+        node_id        TEXT NOT NULL,
+        parent_unit_id TEXT,
+        phase          TEXT,
+        runner         TEXT,
+        model          TEXT,
+        status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        input_hash     TEXT,
+        result_json    TEXT,
+        tokens         INTEGER,
+        failure_reason TEXT,
+        worktree_path  TEXT,
+        started_at     TEXT,
+        finished_at    TEXT,
+        PRIMARY KEY (run_id, unit_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id);
+    `,
+  },
 ];
 
 /**

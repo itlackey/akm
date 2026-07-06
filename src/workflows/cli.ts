@@ -23,6 +23,7 @@ export const WORKFLOW_SUBCOMMANDS = new Set([
   "resume",
   "abandon",
   "validate",
+  "run",
 ]);
 
 export function parseWorkflowJsonObject(

@@ -121,11 +121,17 @@ describe("SQLite migration runner characterization", () => {
       const snap = snapshotSchema(db);
 
       // Every workflow migration applied, in order.
-      expect(snap.migrations).toEqual(["001-add-scope-key", "002-add-agent-identity", "003-checkin-and-step-summary"]);
+      expect(snap.migrations).toEqual([
+        "001-add-scope-key",
+        "002-add-agent-identity",
+        "003-checkin-and-step-summary",
+        "004-workflow-run-units",
+      ]);
 
       const names = snap.schema.map((o) => `${o.type}:${o.name}`);
       expect(names).toContain("table:workflow_runs");
       expect(names).toContain("table:workflow_run_steps");
+      expect(names).toContain("table:workflow_run_units");
       expect(names).toContain("table:schema_migrations");
 
       expect(snap).toMatchSnapshot();
@@ -175,7 +181,12 @@ describe("SQLite migration runner characterization", () => {
     const db = openWorkflowDatabase(dbPath);
     try {
       const snap = snapshotSchema(db);
-      expect(snap.migrations).toEqual(["001-add-scope-key", "002-add-agent-identity", "003-checkin-and-step-summary"]);
+      expect(snap.migrations).toEqual([
+        "001-add-scope-key",
+        "002-add-agent-identity",
+        "003-checkin-and-step-summary",
+        "004-workflow-run-units",
+      ]);
       // The scope_key column must exist exactly once (bootstrap did not re-ALTER).
       const cols = db.prepare<{ name: string }>("PRAGMA table_info(workflow_runs)").all();
       expect(cols.filter((c) => c.name === "scope_key").length).toBe(1);

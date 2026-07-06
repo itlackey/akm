@@ -742,7 +742,28 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
       }
     }
   }
+
+  // Review C2: the check-in `continue` directive must survive plain-text
+  // rendering — JSON consumers saw `checkin` but the text path dropped it.
+  const checkinLine = formatWorkflowCheckinLine(result);
+  if (checkinLine) {
+    lines.push("");
+    lines.push(checkinLine);
+  }
   return lines.join("\n");
+}
+
+/**
+ * Render the stalled-run check-in directive (#506) when present on a
+ * workflow-next/status result. Returns null when the run is healthy.
+ */
+function formatWorkflowCheckinLine(result: Record<string, unknown>): string | null {
+  const checkin =
+    typeof result.checkin === "object" && result.checkin !== null
+      ? (result.checkin as Record<string, unknown>)
+      : undefined;
+  if (!checkin || typeof checkin.directive !== "string" || !checkin.directive.trim()) return null;
+  return checkin.directive.trim();
 }
 
 export function formatWorkflowNextPlain(result: Record<string, unknown>): string | null {
@@ -787,6 +808,41 @@ export function formatWorkflowNextPlain(result: Record<string, unknown>): string
     lines.push(`  akm workflow complete '${runId}' --step '<step-id>'`);
   }
 
+  return lines.join("\n");
+}
+
+export function formatWorkflowRunPlain(result: Record<string, unknown>): string | null {
+  const run =
+    typeof result.run === "object" && result.run !== null ? (result.run as Record<string, unknown>) : undefined;
+  if (!run) return null;
+
+  const lines = [`run: ${String(run.id ?? "unknown")}`, `status: ${String(run.status ?? "unknown")}`];
+  const executed = Array.isArray(result.executed) ? (result.executed as Array<Record<string, unknown>>) : [];
+  if (executed.length === 0) {
+    lines.push("executed: (no steps — run was already done or blocked)");
+  } else {
+    lines.push("executed:");
+    for (const step of executed) {
+      const marker = step.ok === true ? "ok" : "FAILED";
+      lines.push(
+        `  - ${String(step.stepId ?? "?")} [${marker}] units: ${String(step.unitCount ?? 0)}` +
+          (Number(step.failedUnits ?? 0) > 0 ? ` (${String(step.failedUnits)} failed)` : ""),
+      );
+      if (typeof step.summary === "string" && step.summary.trim()) {
+        lines.push(`    ${step.summary}`);
+      }
+    }
+  }
+  const gate =
+    typeof result.gateRejection === "object" && result.gateRejection !== null
+      ? (result.gateRejection as Record<string, unknown>)
+      : undefined;
+  if (gate) {
+    lines.push(`gate rejected step ${String(gate.stepId ?? "?")}: ${String(gate.feedback ?? "")}`);
+    const missing = Array.isArray(gate.missing) ? gate.missing : [];
+    for (const item of missing) lines.push(`  missing: ${String(item)}`);
+  }
+  if (result.done === true) lines.push("workflow completed.");
   return lines.join("\n");
 }
 

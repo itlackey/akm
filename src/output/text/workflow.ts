@@ -10,6 +10,7 @@ import {
   formatWorkflowListPlain,
   formatWorkflowNextPlain,
   formatWorkflowResumePlain,
+  formatWorkflowRunPlain,
   formatWorkflowStatusPlain,
   formatWorkflowValidatePlain,
 } from "./helpers";
@@ -26,4 +27,5 @@ export const workflowFormatters: TextFormatterEntry[] = [
   { command: "workflow-validate", handler: (r) => formatWorkflowValidatePlain(r) },
   { command: "workflow-resume", handler: (r) => formatWorkflowResumePlain(r) },
   { command: "workflow-abandon", handler: (r) => formatWorkflowStatusPlain(r) },
+  { command: "workflow-run", handler: (r) => formatWorkflowRunPlain(r) },
 ];

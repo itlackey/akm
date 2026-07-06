@@ -149,11 +149,12 @@ akm agent opencode agent:code-reviewer --model opencode/claude-opus-4-7 --prompt
 akm agent opencode agent:architect
 ```
 
-**Built-in model aliases** — `opus`, `sonnet`, and `haiku` are resolved
-per platform automatically:
+**Built-in model aliases** — `fable`, `opus`, `sonnet`, and `haiku` are
+resolved per platform automatically:
 
 | Alias | opencode | claude |
 | --- | --- | --- |
+| `fable` | `opencode/claude-fable-5` | `claude-fable-5` |
 | `opus` | `opencode/claude-opus-4-7` | `claude-opus-4-7` |
 | `sonnet` | `opencode/claude-sonnet-4-6` | `claude-sonnet-4-6` |
 | `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5-20251001` |

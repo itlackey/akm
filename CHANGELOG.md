@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Workflow orchestration engine (P0 + P1 of the orchestration plan,
+  experimental).** Workflows can now declare per-step orchestration —
+  `### Runner`, `### Model`, `### Timeout`, `### Fan-out` (with
+  `collect`/`vote` reducers), `### Schema`, `### Env`, `### Depends On` —
+  and be executed engine-driven with the new **`akm workflow run`**: akm
+  compiles the markdown into a backend-agnostic Workflow Plan Graph IR
+  (`src/workflows/ir/`), fans each step's units out through a
+  semaphore-bounded scheduler (cap `min(16, cores − 2)`, lifetime unit cap,
+  per-unit timeout default 10 m), validates `### Schema` output on every
+  runner via a `runStructured` retry-with-feedback loop, resolves `### Env`
+  bindings through the existing `akm env run` machinery (secret tokens,
+  dangerous-key policy, keys-only audit events), and records every unit in
+  the new `workflow_run_units` table (migration 004) behind a serialized
+  writer queue. Every dispatched unit gets a standard akm preamble (run/unit
+  ids, knowledge + env/secret + reporting contract). Steps advance strictly
+  through `completeWorkflowStep`, so completion-criteria gates are never
+  bypassed; unit lifecycle is observable via new
+  `workflow_unit_started`/`workflow_unit_finished` events. Linear workflows
+  compile and behave exactly as before. See "Orchestrated steps" in
+  `docs/features/workflows.md` and `STABILITY.md` (Experimental).
+- **`fable` built-in model alias** — resolves to `claude-fable-5`
+  (`opencode/claude-fable-5` on opencode); recommended resolution target for
+  the `deep` workflow model tier.
+
+### Fixed
+
+- **Check-in directives now survive plain-text output and `workflow
+  status`** (check-in review C2/M1): `formatWorkflowNextPlain` and
+  `formatWorkflowStatusPlain` render the `CONTINUE` directive, and every
+  run-detail response (status/start/complete) evaluates the check-in instead
+  of only `workflow next`.
+- Workflow frontmatter validator error message now lists the actually-allowed
+  keys (`name`, `updated` were missing); removed the documented-but-nonexistent
+  `akm workflow step` alias from `docs/features/workflows.md`.
+
 ## [0.9.0] — 2026-06-30
 
 ### Fixed

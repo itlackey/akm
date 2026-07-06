@@ -14,6 +14,7 @@
  */
 
 import { defineCommand } from "citty";
+import { getStringArg } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { parseAssetRef } from "../core/asset/asset-ref";
@@ -325,6 +326,37 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
   throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
 }
 
+const workflowRunCommand = defineJsonCommand({
+  meta: {
+    name: "run",
+    description:
+      "EXPERIMENTAL: execute a workflow's steps with the native engine — akm dispatches each step's units " +
+      "(fan-out, schema output) to the configured runner and advances the run through the normal completion gates",
+  },
+  args: {
+    target: { type: "positional", description: "Workflow run id or workflow ref (auto-starts a run)", required: true },
+    params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
+    "max-steps": { type: "string", description: "Stop after executing this many steps" },
+  },
+  async run({ args }) {
+    const { runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
+    const rawMaxSteps = getStringArg(args, "max-steps");
+    let maxSteps: number | undefined;
+    if (rawMaxSteps !== undefined) {
+      maxSteps = Number.parseInt(rawMaxSteps, 10);
+      if (!/^\d+$/.test(rawMaxSteps) || maxSteps <= 0) {
+        throw new UsageError(`--max-steps must be a positive integer, got "${rawMaxSteps}".`, "INVALID_FLAG_VALUE");
+      }
+    }
+    const result = await runWorkflowSteps({
+      target: args.target,
+      ...(args.params ? { params: parseWorkflowJsonObject(args.params, "--params") } : {}),
+      ...(maxSteps !== undefined ? { maxSteps } : {}),
+    });
+    output("workflow-run", result);
+  },
+});
+
 const workflowAbandonCommand = defineJsonCommand({
   meta: {
     name: "abandon",
@@ -369,6 +401,7 @@ export const workflowCommand = defineCommand({
     resume: workflowResumeCommand,
     abandon: workflowAbandonCommand,
     validate: workflowValidateCommand,
+    run: workflowRunCommand,
   },
   run({ args }) {
     return runWithJsonErrors(async () => {

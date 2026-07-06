@@ -45,6 +45,54 @@ export type WorkflowRunStepRow = {
   summary: string | null;
 };
 
+/** Lifecycle states for one dispatched unit (migration 004). */
+export type WorkflowRunUnitStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+/** Row shape of `workflow_run_units` — per-unit state under the gated step spine. */
+export type WorkflowRunUnitRow = {
+  run_id: string;
+  unit_id: string;
+  step_id: string | null;
+  node_id: string;
+  parent_unit_id: string | null;
+  phase: string | null;
+  runner: string | null;
+  model: string | null;
+  status: WorkflowRunUnitStatus;
+  input_hash: string | null;
+  result_json: string | null;
+  tokens: number | null;
+  failure_reason: string | null;
+  worktree_path: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+/** Input row for {@link WorkflowRunsRepository.insertUnit}. Inserted as `running`. */
+export interface InsertUnitInput {
+  runId: string;
+  unitId: string;
+  stepId: string | null;
+  nodeId: string;
+  parentUnitId: string | null;
+  phase: string | null;
+  runner: string | null;
+  model: string | null;
+  inputHash: string | null;
+  startedAt: string;
+}
+
+/** Input for {@link WorkflowRunsRepository.finishUnit}. */
+export interface FinishUnitInput {
+  runId: string;
+  unitId: string;
+  status: Exclude<WorkflowRunUnitStatus, "pending" | "running">;
+  resultJson: string | null;
+  tokens: number | null;
+  failureReason: string | null;
+  finishedAt: string;
+}
+
 /** Input row for {@link WorkflowRunsRepository.insertRun}. */
 export interface InsertRunInput {
   id: string;
@@ -271,6 +319,73 @@ export class WorkflowRunsRepository {
 
   rearmCheckin(runId: string, checkinArmedAt: string): void {
     this.db.prepare("UPDATE workflow_runs SET checkin_armed_at = ? WHERE id = ?").run(checkinArmedAt, runId);
+  }
+
+  // ── unit rows (migration 004) ──────────────────────────────────────────────
+  //
+  // Writes to `workflow_run_units` should go through the serialized writer
+  // queue (`src/workflows/exec/unit-writer.ts`) when N units may complete
+  // concurrently — SQLite has a single writer and `withWorkflowRunsRepo`
+  // opens a fresh connection per call.
+
+  getUnitsForRun(runId: string): WorkflowRunUnitRow[] {
+    return this.db
+      .prepare("SELECT * FROM workflow_run_units WHERE run_id = ? ORDER BY started_at ASC, unit_id ASC")
+      .all(runId) as WorkflowRunUnitRow[];
+  }
+
+  getUnitsForStep(runId: string, stepId: string): WorkflowRunUnitRow[] {
+    return this.db
+      .prepare("SELECT * FROM workflow_run_units WHERE run_id = ? AND step_id = ? ORDER BY started_at ASC, unit_id ASC")
+      .all(runId, stepId) as WorkflowRunUnitRow[];
+  }
+
+  /**
+   * Insert a unit row in `running` state (a dispatch is starting now).
+   *
+   * OR REPLACE: durable-row resume re-dispatches units whose previous attempt
+   * never reached a terminal status (a crash mid-step leaves `running` rows).
+   * The fresh dispatch replaces the stale row for the same (run, unit) key.
+   */
+  insertUnit(input: InsertUnitInput): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO workflow_run_units (
+          run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model,
+          status, input_hash, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+      )
+      .run(
+        input.runId,
+        input.unitId,
+        input.stepId,
+        input.nodeId,
+        input.parentUnitId,
+        input.phase,
+        input.runner,
+        input.model,
+        input.inputHash,
+        input.startedAt,
+      );
+  }
+
+  /** Record a unit's terminal state (completed / failed / skipped). */
+  finishUnit(input: FinishUnitInput): void {
+    this.db
+      .prepare(
+        `UPDATE workflow_run_units
+           SET status = ?, result_json = ?, tokens = ?, failure_reason = ?, finished_at = ?
+           WHERE run_id = ? AND unit_id = ?`,
+      )
+      .run(
+        input.status,
+        input.resultJson,
+        input.tokens,
+        input.failureReason,
+        input.finishedAt,
+        input.runId,
+        input.unitId,
+      );
   }
 }
 
