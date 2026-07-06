@@ -187,6 +187,16 @@ interface VerdictReport {
     acceptByCohort: { proactive: AcceptStats; reactive: AcceptStats };
     retrievalQuality: { baselineRunId: string | null; currentRunId: string | null; delta: number | null; note?: string };
     downstreamLift: { treatment: DownstreamLift; control: DownstreamLift };
+    /**
+     * Per-lane 30d GRR (meta-review 09's approved consumption-side addition).
+     * Mirrors the canonical receipt query: lane = COALESCE(eligibilitySource,
+     * source); promoted = distinct accepted refs created in the last 30d;
+     * read-back = the ref appears (origin-stripped) in any external
+     * show/curate/search/select usage event. Post-G5, events tagged with a
+     * non-'user' source (improve/task self-reads) are EXCLUDED from the
+     * numerator; pre-G5 rows still tagged 'user' keep this an upper bound.
+     */
+    laneGrr: LaneGrr[];
   };
   dataSources: { indexDb: string; stateDb: string };
 }
@@ -269,6 +279,7 @@ interface ProposalRow {
   ref: string;
   status: string;
   source: string;
+  createdAt: string;
   metadata: Record<string, unknown>;
 }
 
@@ -408,6 +419,64 @@ function downstreamLift(
   };
 }
 
+/** One row of the per-lane 30d GRR table (09's approved instrument). */
+interface LaneGrr {
+  lane: string;
+  promoted30d: number;
+  readBack: number;
+  /** read_back / promoted_30d, null when the lane promoted nothing. */
+  grr: number | null;
+}
+
+/** Read-back event types that count as external consumption (receipt query). */
+const READBACK_EVENT_TYPES = new Set(["show", "curate", "search", "select"]);
+
+/**
+ * Per-lane 30d GRR, mirroring `findings/09-grr-receipt.sql.md` in memory:
+ * lane key = COALESCE(metadata.eligibilitySource, source); the read-back set
+ * is origin-stripped `entry_ref`s from external usage events. Events tagged
+ * with a non-'user' provenance source (post-G5 improve/task self-reads) are
+ * excluded so the numerator counts genuine demand only.
+ */
+function computeLaneGrr(
+  proposals: ProposalRow[],
+  usageEvents: Array<{ eventType: string; entryRef: string | null; source: string | null }>,
+  now: Date,
+): LaneGrr[] {
+  const readBackRefs = new Set<string>();
+  for (const e of usageEvents) {
+    if (!READBACK_EVENT_TYPES.has(e.eventType) || !e.entryRef) continue;
+    if (e.source !== null && e.source !== "user") continue; // G5: drop tagged self-reads
+    const idx = e.entryRef.indexOf("//");
+    readBackRefs.add(idx >= 0 ? e.entryRef.slice(idx + 2) : e.entryRef);
+  }
+
+  const thirtyDaysAgoMs = now.getTime() - 30 * 86_400_000;
+  const lanes = new Map<string, { promoted: Set<string>; readBack: Set<string> }>();
+  for (const p of proposals) {
+    if (p.status !== "accepted") continue;
+    const created = Date.parse(p.createdAt.includes("T") ? p.createdAt : `${p.createdAt.replace(" ", "T")}Z`);
+    if (Number.isNaN(created) || created < thirtyDaysAgoMs) continue;
+    const lane = eligibilityOf(p.metadata) ?? p.source;
+    let bucket = lanes.get(lane);
+    if (!bucket) {
+      bucket = { promoted: new Set(), readBack: new Set() };
+      lanes.set(lane, bucket);
+    }
+    bucket.promoted.add(p.ref);
+    if (readBackRefs.has(p.ref)) bucket.readBack.add(p.ref);
+  }
+
+  return [...lanes.entries()]
+    .map(([lane, b]) => ({
+      lane,
+      promoted30d: b.promoted.size,
+      readBack: b.readBack.size,
+      grr: b.promoted.size === 0 ? null : b.readBack.size / b.promoted.size,
+    }))
+    .sort((a, b) => b.promoted30d - a.promoted30d);
+}
+
 function fmt(n: number | null): string {
   return n === null ? "n/a" : n.toFixed(3);
 }
@@ -431,9 +500,9 @@ function main(): number {
     try {
       proposals = (
         sdb
-          .query(`SELECT ref, status, source, metadata_json FROM proposals`)
-          .all() as Array<{ ref: string; status: string; source: string; metadata_json: string | null }>
-      ).map((r) => ({ ref: r.ref, status: r.status, source: r.source, metadata: safeJson(r.metadata_json) }));
+          .query(`SELECT ref, status, source, created_at, metadata_json FROM proposals`)
+          .all() as Array<{ ref: string; status: string; source: string; created_at: string; metadata_json: string | null }>
+      ).map((r) => ({ ref: r.ref, status: r.status, source: r.source, createdAt: r.created_at, metadata: safeJson(r.metadata_json) }));
       reflectEvents = readEvents(sdb, ["reflect_invoked", "distill_invoked", "promoted"]);
     } finally {
       sdb.close();
@@ -443,19 +512,19 @@ function main(): number {
   const { proactive, reactive, usedFallback } = classifyProposals(proposals, treatmentRefs);
 
   // ---- index.db: usage events + known refs ------------------------------
-  const usageEvents: Array<{ eventType: string; entryRef: string | null; signal: string | null; metadata: string | null; ts: number }> = [];
+  const usageEvents: Array<{ eventType: string; entryRef: string | null; signal: string | null; metadata: string | null; source: string | null; ts: number }> = [];
   const allKnownRefs = new Set<string>();
   const indexAvailable = fs.existsSync(opts.indexDb);
   if (indexAvailable) {
     const idb = new Database(opts.indexDb, { readonly: true });
     try {
       const rows = idb
-        .query(`SELECT event_type, entry_ref, signal, metadata, created_at FROM usage_events`)
-        .all() as Array<{ event_type: string; entry_ref: string | null; signal: string | null; metadata: string | null; created_at: string }>;
+        .query(`SELECT event_type, entry_ref, signal, metadata, source, created_at FROM usage_events`)
+        .all() as Array<{ event_type: string; entry_ref: string | null; signal: string | null; metadata: string | null; source: string | null; created_at: string }>;
       for (const r of rows) {
         const iso = r.created_at.includes("T") ? r.created_at : `${r.created_at.replace(" ", "T")}Z`;
         const t = Date.parse(iso);
-        usageEvents.push({ eventType: r.event_type, entryRef: r.entry_ref, signal: r.signal, metadata: r.metadata, ts: Number.isNaN(t) ? 0 : t });
+        usageEvents.push({ eventType: r.event_type, entryRef: r.entry_ref, signal: r.signal, metadata: r.metadata, source: r.source, ts: Number.isNaN(t) ? 0 : t });
         if (r.entry_ref) {
           const n = normalizeRef(r.entry_ref);
           if (n) allKnownRefs.add(n);
@@ -570,6 +639,7 @@ function main(): number {
         note: retrievalNote || undefined,
       },
       downstreamLift: { treatment: liftTreatment, control: liftControl },
+      laneGrr: computeLaneGrr(proposals, usageEvents, now),
     },
     dataSources: {
       indexDb: indexAvailable ? opts.indexDb : `MISSING: ${opts.indexDb}`,
@@ -667,6 +737,20 @@ function renderMarkdown(r: VerdictReport): string {
   lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
   lines.push(`| treatment | ${lt.refCount} | ${lt.positiveFeedback} | ${lt.negativeFeedback} | ${fmt(lt.positiveRate)} | ${lt.retrievalCount} | ${fmt(lt.retrievalPerRef)} |`);
   lines.push(`| control | ${lc.refCount} | ${lc.positiveFeedback} | ${lc.negativeFeedback} | ${fmt(lc.positiveRate)} | ${lc.retrievalCount} | ${fmt(lc.retrievalPerRef)} |`);
+  lines.push("");
+  lines.push("## Per-lane 30d GRR (external read-back; upper bound until pre-G5 rows age out)");
+  lines.push("");
+  if (m.laneGrr.length === 0) {
+    lines.push("- no accepted proposals in the last 30 days");
+  } else {
+    lines.push("| Lane | promoted 30d | read back | GRR |");
+    lines.push("| --- | ---: | ---: | ---: |");
+    for (const l of m.laneGrr) {
+      lines.push(`| ${l.lane} | ${l.promoted30d} | ${l.readBack} | ${l.grr === null ? "n/a" : `${(l.grr * 100).toFixed(1)}%`} |`);
+    }
+    lines.push("");
+    lines.push("_Minting lanes are gated at 5% GRR with n≥30 (ratified); enrichment lanes are healthy by construction. Lane = COALESCE(eligibilitySource, source)._");
+  }
   lines.push("");
   lines.push("## Thresholds");
   lines.push("");
