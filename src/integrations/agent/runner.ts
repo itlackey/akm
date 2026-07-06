@@ -275,16 +275,6 @@ export function resolveImproveProcessRunnerFromProfile(
   return null;
 }
 
-/**
- * Convenience accessor for callers that previously read
- * `getProcessOptions("index", "staleness_detection", config).thresholdDays`.
- * After the 0.8.0 migration, those values live on first-class config keys —
- * see `config.index?.stalenessDetection?.thresholdDays` etc.
- */
-export function getStalenessDetectionThresholdDays(config: AkmConfig): number | undefined {
-  return config.index?.stalenessDetection?.thresholdDays;
-}
-
 // Re-export `isProcessEnabled` from feature-gate.ts so callers that previously
 // imported it from runner.ts continue to work.
 export { isProcessEnabled } from "../../llm/feature-gate";

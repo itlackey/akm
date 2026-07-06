@@ -28,7 +28,6 @@ import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index
 import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
 import { akmIndex } from "../../indexer/indexer";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
-import type { runStalenessDetectionPass, StalenessDetectionResult } from "../../indexer/passes/staleness-detect";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
@@ -151,12 +150,6 @@ export interface AkmImproveOptions {
    * being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
    */
   proceduralFn?: typeof akmProcedural;
-  /**
-   * Phase 4A: injectable staleness-detection pass for tests. When omitted, the
-   * real `runStalenessDetectionPass` runs (which is itself a no-op unless
-   * `features.index.staleness_detection` is enabled).
-   */
-  stalenessDetectionFn?: typeof runStalenessDetectionPass;
   graphExtractionFn?: typeof runGraphExtractionPass;
   /**
    * #554 minNewSessions gate: injectable counter for the number of NEW (unseen,
@@ -317,8 +310,6 @@ export interface ImprovePostLoopResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
-  /** Phase 4A: result of the staleness-detection pass, when it ran. */
-  stalenessDetection?: StalenessDetectionResult;
   /** #609: result of the opt-in recombine / synthesize pass, when it ran. */
   recombination?: RecombineResult;
   /** #615: result of the opt-in procedural-compilation pass, when it ran. */
@@ -336,8 +327,6 @@ export interface ImproveMaintenanceResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
-  /** Phase 4A: result of the staleness-detection pass, when enabled. */
-  stalenessDetection?: StalenessDetectionResult;
 }
 
 export function renderSyncCommitMessage(
@@ -841,7 +830,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     let consolidation!: ConsolidateResult;
     let memoryInference: ImprovePostLoopResult["memoryInference"];
     let graphExtraction: ImprovePostLoopResult["graphExtraction"];
-    let stalenessDetection: ImprovePostLoopResult["stalenessDetection"];
     let recombination: ImprovePostLoopResult["recombination"];
     let proceduralCompilation: ImprovePostLoopResult["proceduralCompilation"];
     let cycleMetrics: ImprovePostLoopResult["cycleMetrics"];
@@ -1049,7 +1037,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // Last-wins point-in-time objects.
       memoryInference = postLoopResult.memoryInference;
       graphExtraction = postLoopResult.graphExtraction;
-      stalenessDetection = postLoopResult.stalenessDetection;
       recombination = postLoopResult.recombination;
       proceduralCompilation = postLoopResult.proceduralCompilation;
       // Keep the last QUALIFYING cycle's snapshot — a later non-qualifying
@@ -1153,7 +1140,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k / §3.
       ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
       ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
-      ...(stalenessDetection ? { stalenessDetection } : {}),
       ...(recombination ? { recombination } : {}),
       ...(proceduralCompilation ? { proceduralCompilation } : {}),
       ...(cycleMetrics ? { cycleMetrics } : {}),

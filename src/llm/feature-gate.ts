@@ -172,13 +172,10 @@ export async function tryLlmFeature<T>(
  */
 export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
   if (!config) return false;
-  // index.metadataEnhance / index.stalenessDetection are first-class new-shape entries.
+  // index.metadataEnhance is a first-class new-shape entry.
   if (section === "index") {
     if (processName === "metadata_enhance" || processName === "metadataEnhance") {
       return config.index?.metadataEnhance?.enabled ?? true;
-    }
-    if (processName === "staleness_detection" || processName === "stalenessDetection") {
-      return config.index?.stalenessDetection?.enabled ?? false;
     }
     if (processName === "memory_inference" || processName === "memoryInference") {
       return isLlmFeatureEnabled(config, "memory_inference");

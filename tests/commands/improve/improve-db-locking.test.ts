@@ -28,10 +28,10 @@ import { akmImprove, runImproveMaintenancePasses } from "../../../src/commands/i
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
+import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import { probeIndexWriterLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
-import type { StalenessDetectionResult } from "../../../src/indexer/passes/staleness-detect";
 import type { Database } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -93,12 +93,21 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
   };
 }
 
-const stubStalenessResult: StalenessDetectionResult = {
+const stubGraphExtractionResult: GraphExtractionResult = {
   considered: 0,
-  deprecated: 0,
-  confirmed: 0,
-  skipped: 0,
-  durationMs: 0,
+  extracted: 0,
+  totalEntities: 0,
+  totalRelations: 0,
+  written: false,
+  quality: {
+    consideredFiles: 0,
+    extractedFiles: 0,
+    entityCount: 0,
+    relationCount: 0,
+    extractionCoverage: 0,
+    density: 0,
+  },
+  telemetry: { cacheHits: 0, cacheMisses: 0, truncationCount: 0, failureCount: 0, retryAttempts: 0 },
   warnings: [],
 };
 
@@ -111,10 +120,10 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     let capturedInferenceDb: Database | undefined;
     let reindexCalls = 0;
     let handleOpenDuringReindex: boolean | undefined;
-    let handleOpenDuringStaleness: boolean | undefined;
+    let handleOpenDuringGraphExtraction: boolean | undefined;
     let leaseHeldDuringInference: boolean | undefined;
-    let leaseHeldDuringStaleness: boolean | undefined;
-    let stalenessDb: Database | undefined;
+    let leaseHeldDuringGraphExtraction: boolean | undefined;
+    let graphDb: Database | undefined;
 
     const result = await akmImprove({
       stashDir: stash,
@@ -157,26 +166,26 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
         // the same WAL file and a still-open sibling caused SQLITE_BUSY.
         handleOpenDuringReindex = isHandleOpen(capturedInferenceDb);
       },
-      // Staleness detection runs after the reindex sites and receives the
+      // Graph extraction runs after the reindex sites and receives the
       // maintenance handle — it must be a fresh, usable post-reindex handle.
-      stalenessDetectionFn: async (ctx) => {
-        stalenessDb = ctx.db;
-        handleOpenDuringStaleness = isHandleOpen(ctx.db);
+      graphExtractionFn: async (ctx) => {
+        graphDb = ctx.db;
+        handleOpenDuringGraphExtraction = isHandleOpen(ctx.db);
         const probe = probeIndexWriterLease();
-        leaseHeldDuringStaleness = probe.state === "held" && probe.holderPid === process.pid;
-        return stubStalenessResult;
+        leaseHeldDuringGraphExtraction = probe.state === "held" && probe.holderPid === process.pid;
+        return stubGraphExtractionResult;
       },
     });
 
     expect(result.ok).toBe(true);
     expect(reindexCalls).toBeGreaterThanOrEqual(1);
     expect(handleOpenDuringReindex).toBe(false);
-    expect(handleOpenDuringStaleness).toBe(true);
+    expect(handleOpenDuringGraphExtraction).toBe(true);
     expect(leaseHeldDuringInference).toBe(true);
-    expect(leaseHeldDuringStaleness).toBe(true);
+    expect(leaseHeldDuringGraphExtraction).toBe(true);
     // The post-reindex handle is a NEW connection, not the closed original.
-    expect(stalenessDb).toBeDefined();
-    expect(stalenessDb).not.toBe(capturedInferenceDb);
+    expect(graphDb).toBeDefined();
+    expect(graphDb).not.toBe(capturedInferenceDb);
   });
 });
 
@@ -201,7 +210,6 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
           stashDir: stash,
           config: { ...loadConfig(), improve: { eventRetentionDays: 1 } },
           memoryInferenceFn: async () => stubMemoryInferenceResult(),
-          stalenessDetectionFn: async () => stubStalenessResult,
         },
         primaryStashDir: stash,
         actionableRefs: [],
@@ -254,7 +262,6 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
         stashDir: stash,
         config: { ...loadConfig(), improve: { eventRetentionDays: 1 } },
         memoryInferenceFn: async () => stubMemoryInferenceResult(),
-        stalenessDetectionFn: async () => stubStalenessResult,
       },
       primaryStashDir: stash,
       actionableRefs: [],

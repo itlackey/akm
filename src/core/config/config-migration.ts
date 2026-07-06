@@ -399,18 +399,10 @@ export function migrateConfigShape(
         if (typeof val === "boolean") me.enabled = val;
         else if (isObj(val) && typeof val.enabled === "boolean") me.enabled = val.enabled;
       }
-      if ("staleness_detection" in findex) {
-        const index = getObj(result, "index");
-        const sd = getObj(index, "stalenessDetection");
-        const val = findex.staleness_detection;
-        if (typeof val === "boolean") sd.enabled = val;
-        else if (isObj(val)) {
-          if (typeof val.enabled === "boolean") sd.enabled = val.enabled;
-          if (isObj(val.options) && typeof val.options.thresholdDays === "number") {
-            sd.thresholdDays = val.options.thresholdDays;
-          }
-        }
-      }
+      // staleness_detection: the pass was retired (meta-review 10-Q3), so the
+      // legacy features.index.staleness_detection entry is deliberately DROPPED
+      // during migration ("staleness_detection" stays in knownIndexKeys below so
+      // the catch-all does not resurrect it under index.stalenessDetection).
       // Catch-all: unknown features.index.<key> entries land at
       // index.<keyAsCamelCase> (preserving { enabled, options } when present).
       const knownIndexKeys = new Set([
