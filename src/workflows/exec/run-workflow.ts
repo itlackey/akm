@@ -28,7 +28,8 @@ import { warn } from "../../core/warn";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { computePlanHash } from "../ir/plan-hash";
-import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
+import type { IrRouteSpec, WorkflowPlanGraph } from "../ir/schema";
+import { type ExpressionScope, resolveWholeValue } from "../program/expressions";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -101,9 +102,9 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     ? await options.loadPlan(next.run.workflowRef)
     : await loadFrozenPlan(next.run.id, next.run.workflowRef);
 
-  // Route bookkeeping (### Route): targets a completed router did NOT select
-  // are skipped when the spine reaches them; a target ANY router selected is
-  // protected (two routers may share a target).
+  // Route bookkeeping: targets a completed router did NOT select are skipped
+  // when the spine reaches them; a target ANY router selected is protected
+  // (two routers may share a target).
   const routeSelected = new Set<string>();
   const routeUnselected = new Map<string, { router: string; selected: string }>();
 
@@ -128,10 +129,12 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
       continue;
     }
 
-    // `### Depends On` is a declared ordering contract: every dependency must
-    // already be resolved before this step dispatches. Execution is sequential
-    // (spine order), so a violation means the author ordered steps
-    // inconsistently with their declared edges — fail fast, before spending.
+    // `dependsOn` edges (reserved in IR v2 — no frontend emits them today,
+    // but a frozen plan may carry them) are a declared ordering contract:
+    // every dependency must already be resolved before this step dispatches.
+    // Execution is sequential (spine order), so a violation means the plan
+    // ordered steps inconsistently with its declared edges — fail fast,
+    // before spending.
     for (const dep of stepPlan.dependsOn ?? []) {
       const depState = next.workflow.steps.find((s) => s.id === dep);
       if (!depState || (depState.status !== "completed" && depState.status !== "skipped")) {
@@ -145,16 +148,28 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     const evidence: Record<string, Record<string, unknown> | undefined> = {};
     for (const s of next.workflow.steps) evidence[s.id] = s.evidence;
 
-    const result = await executeStepPlan(stepPlan, {
-      runId: next.run.id,
-      workflowRef: next.run.workflowRef,
-      params: next.run.params ?? {},
-      evidence,
-      unitsDispatched,
-      ...(options.signal ? { signal: options.signal } : {}),
-      ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
-      ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
-    });
+    // Route-only steps (YAML `route:` — no execution subgraph) dispatch no
+    // units; they only decide the spine's path below. Everything else
+    // executes its subgraph through the native executor.
+    const result: StepExecutionResult =
+      !stepPlan.root && stepPlan.route
+        ? {
+            ok: true,
+            units: [],
+            evidence: {},
+            summary: `Step "${step.id}" is a route step — no units dispatched.`,
+            unitsDispatched,
+          }
+        : await executeStepPlan(stepPlan, {
+            runId: next.run.id,
+            workflowRef: next.run.workflowRef,
+            params: next.run.params ?? {},
+            evidence,
+            unitsDispatched,
+            ...(options.signal ? { signal: options.signal } : {}),
+            ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+            ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
+          });
     unitsDispatched = result.unitsDispatched;
 
     executed.push({
@@ -178,11 +193,17 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
       break;
     }
 
-    // Evaluate `### Route` BEFORE completing the step: an unroutable value is
+    // Evaluate the route BEFORE completing the step: an unroutable value is
     // an authoring/config failure and must fail the step deterministically
-    // rather than letting every branch run sequentially.
+    // rather than letting every branch run sequentially. The route input is
+    // an explicit `${{ … }}` reference resolved against run params and step
+    // outputs — INCLUDING the just-finished step's own evidence.
     if (stepPlan.route) {
-      const decision = evaluateRoute(stepPlan.route, result, next);
+      const scope: ExpressionScope = {
+        params: next.run.params ?? {},
+        stepOutputs: routeStepOutputs(evidence, step.id, result.evidence),
+      };
+      const decision = evaluateRoute(stepPlan.route, scope);
       if (!decision.ok) {
         const notes = `Step "${step.id}" route failed: ${decision.error}`;
         executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: notes };
@@ -202,6 +223,11 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
         }
       }
       result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
+      // A route-only step's summary IS its decision (deterministic).
+      if (!stepPlan.root) {
+        result.summary = `Step "${step.id}" routed on ${stepPlan.route.input}: value "${decision.value}" selected step "${decision.selected}".`;
+        executed[executed.length - 1] = { ...executed[executed.length - 1], summary: result.summary };
+      }
     }
 
     const completion = await completeWorkflowStep({
@@ -276,63 +302,44 @@ async function loadFrozenPlan(runId: string, workflowRef: string): Promise<Workf
 type RouteDecision = { ok: true; value: string; selected: string; targets: string[] } | { ok: false; error: string };
 
 /**
- * Resolve a route's input value and pick the branch. Look-up order: the
- * routed step's own result (vote winner, else the single unit's structured
- * result field), then run params, then prior steps' evidence — own-property
- * checks throughout. Only primitive values route; the comparison is exact
- * string equality against the declared `when:` matches.
- *
- * TODO(R1-cutover): this bare-key lookup serves the transitional P1 markdown
- * grammar only. YAML-program routes carry a `${{ … }}` expression in `input`;
- * the executor cutover task resolves those through program/expressions
- * against the journaled step artifacts.
+ * The `stepOutputs` scope a route resolves against: every prior step's
+ * recorded evidence plus the just-finished step's fresh evidence (which has
+ * not been persisted yet when the route is evaluated). TODO(R2: typed
+ * artifacts): evidence stands in for the typed step artifact until the R2
+ * engine rework.
  */
-function evaluateRoute(
-  route: NonNullable<IrStepPlan["route"]>,
-  result: StepExecutionResult,
-  next: WorkflowNextResult,
-): RouteDecision {
-  const candidates: unknown[] = [];
+function routeStepOutputs(
+  evidence: Record<string, Record<string, unknown> | undefined>,
+  currentStepId: string,
+  currentEvidence: Record<string, unknown>,
+): Record<string, unknown> {
+  const outputs: Record<string, unknown> = {};
+  for (const [stepId, stepEvidence] of Object.entries(evidence)) {
+    if (stepEvidence !== undefined) outputs[stepId] = stepEvidence;
+  }
+  outputs[currentStepId] = currentEvidence;
+  return outputs;
+}
 
-  const vote = result.evidence.vote;
-  if (vote && typeof vote === "object" && Object.hasOwn(vote, "winner")) {
-    candidates.push((vote as { winner: unknown }).winner);
-  }
-  if (result.units.length === 1 && result.units[0].result !== undefined) {
-    candidates.push(result.units[0].result);
-  }
-
-  let value: unknown;
-  for (const candidate of candidates) {
-    if (candidate && typeof candidate === "object" && Object.hasOwn(candidate, route.input)) {
-      value = (candidate as Record<string, unknown>)[route.input];
-      break;
-    }
-  }
-  if (value === undefined) {
-    const params = next.run.params ?? {};
-    if (Object.hasOwn(params, route.input)) {
-      value = params[route.input];
-    } else {
-      for (const s of next.workflow.steps) {
-        if (s.evidence && Object.hasOwn(s.evidence, route.input)) {
-          value = s.evidence[route.input];
-          break;
-        }
-      }
-    }
-  }
-
-  if (value === undefined) {
+/**
+ * Resolve a route's input (a single whole-value `${{ … }}` reference — the
+ * IR v2 shape) and pick the branch. No ambient key search: the reference
+ * names its producer explicitly. Only primitive values route; the comparison
+ * is exact string equality against the declared `when:` matches.
+ */
+function evaluateRoute(route: IrRouteSpec, scope: ExpressionScope): RouteDecision {
+  const resolved = resolveWholeValue(route.input, scope);
+  if (!resolved.ok) {
     return {
       ok: false,
-      error: `route input "${route.input}" was not found in the step result, run params, or prior evidence.`,
+      error: `route input ${route.input} failed to resolve: ${resolved.error.message}`,
     };
   }
-  if (value !== null && typeof value === "object") {
+  const value = resolved.value;
+  if (typeof value === "object" && value !== null) {
     return {
       ok: false,
-      error: `route input "${route.input}" resolved to a non-primitive value; branches match on strings/numbers/booleans.`,
+      error: `route input ${route.input} resolved to a non-primitive value; branches match on strings/numbers/booleans.`,
     };
   }
 

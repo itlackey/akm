@@ -26,7 +26,9 @@
         "tests/commands/env-set-unset.test.ts",
         "tests/workflows/program-expressions.test.ts",
         "tests/workflows/program-parser.test.ts",
-        "tests/workflows/ir-compile.test.ts"
+        "tests/workflows/ir-compile.test.ts",
+        "tests/workflows/native-executor.test.ts",
+        "tests/workflows/conformance/conformance.test.ts"
       ],
       "linter": { "rules": { "suspicious": { "noTemplateCurlyInString": "off" } } }
     }

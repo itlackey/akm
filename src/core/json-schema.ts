@@ -6,7 +6,7 @@
  * Structural JSON-Schema-subset validator (orchestration plan P1).
  *
  * The workflow engine's structured-output normalization needs to validate
- * unit results against the author-declared `### Schema` on any harness —
+ * unit results against the author-declared unit `output` schema on any harness —
  * including ones with no native schema support. Pulling in a full
  * draft-2020-12 validator is deliberately avoided (dependency surface); this
  * module implements the bounded subset that covers the schemas workflow

@@ -14,13 +14,10 @@
  *     program's `defaults` block into every unit node so the frozen plan is
  *     self-contained. Returns accumulated `WorkflowError`s rather than
  *     throwing.
- *   - {@link compileWorkflowPlan} — classic markdown workflows (`parser.ts`).
- *     Linear workflows (the stable CLI contract) compile to one `agent` node
- *     per step with `runner: inherit` and the fail-fast default, exactly as
- *     today. TODO(R1-cutover): the P1 orchestration subsections still present
- *     on `WorkflowDocument` compile through transitionally (map `over` as a
- *     bare evidence key, route on a bare input name) until the cutover task
- *     removes that grammar — after which this path is linear-only.
+ *   - {@link compileWorkflowPlan} — classic LINEAR markdown workflows
+ *     (`parser.ts`), the stable CLI contract: one `agent` node per step with
+ *     `runner: inherit` and the fail-fast default, exactly as today. The P1
+ *     markdown orchestration grammar is gone — this path is linear-only.
  *
  * Node-id convention (stable, unique within a plan):
  *   step root  → `<stepId>`          (agent) or `<stepId>.map` (map)
@@ -305,59 +302,19 @@ function compileMarkdownStep(step: WorkflowStep): IrStepPlan {
     criteria: step.completionCriteria?.map((c) => c.text) ?? [],
   };
 
-  // TODO(R1-cutover): `orchestration` (the P1 markdown grammar) is removed by
-  // the cutover task; until then its fields compile through in v2 shapes so
-  // in-flight orchestrated markdown keeps working. Note the transitional
-  // semantics: markdown `over`/`route.input` are bare evidence keys, not
-  // `${{ … }}` expressions — the engine's legacy lookup handles them.
-  const route = step.orchestration?.route;
   return {
     stepId: step.id,
     title: step.title,
     sequenceIndex: step.sequenceIndex,
-    ...(step.orchestration?.dependsOn ? { dependsOn: [...step.orchestration.dependsOn] } : {}),
-    root: compileMarkdownRoot(step),
-    ...(route
-      ? {
-          route: {
-            input: route.input,
-            when: Object.fromEntries(route.branches.map((b) => [b.match, b.stepId])),
-            ...(route.defaultStepId !== undefined ? { defaultStepId: route.defaultStepId } : {}),
-          },
-        }
-      : {}),
+    root: {
+      kind: "agent",
+      id: step.id,
+      instructions: step.instructions.text,
+      runner: "inherit",
+      // Markdown has no failure-policy surface; the fail-fast default applies.
+      onError: "fail",
+      source: step.instructions.source,
+    },
     gate,
-  };
-}
-
-function compileMarkdownRoot(step: WorkflowStep): IrExecNode {
-  const orch = step.orchestration;
-  const fanOut = orch?.fanOut;
-
-  const agent: IrAgentNode = {
-    kind: "agent",
-    id: fanOut ? `${step.id}.unit` : step.id,
-    instructions: step.instructions.text,
-    runner: orch?.runner ?? "inherit",
-    ...(orch?.profile ? { profile: orch.profile } : {}),
-    ...(orch?.model ? { model: orch.model } : {}),
-    ...(orch?.schema ? { schema: orch.schema } : {}),
-    ...(orch?.timeoutMs !== undefined ? { timeoutMs: orch.timeoutMs } : {}),
-    // Markdown has no failure-policy surface; the program default applies.
-    onError: "fail",
-    ...(orch?.env ? { env: [...orch.env] } : {}),
-    source: step.instructions.source,
-  };
-
-  if (!fanOut) return agent;
-
-  return {
-    kind: "map",
-    id: `${step.id}.map`,
-    over: fanOut.over,
-    template: agent,
-    ...(fanOut.concurrency !== undefined ? { concurrency: fanOut.concurrency } : {}),
-    reducer: fanOut.reducer ?? "collect",
-    ...(orch?.source ? { source: orch.source } : {}),
   };
 }

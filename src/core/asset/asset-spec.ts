@@ -42,7 +42,8 @@ export interface AssetSpec {
 export const WORKFLOW_EXTENSIONS = [".md", ".yaml", ".yml"] as const;
 
 const workflowSpec: Omit<AssetSpec, "stashDir" | "rendererName" | "actionBuilder"> = {
-  isRelevantFile: (fileName) => (WORKFLOW_EXTENSIONS as readonly string[]).includes(path.extname(fileName).toLowerCase()),
+  isRelevantFile: (fileName) =>
+    (WORKFLOW_EXTENSIONS as readonly string[]).includes(path.extname(fileName).toLowerCase()),
   toCanonicalName: (typeRoot, filePath) => {
     const rel = toPosix(path.relative(typeRoot, filePath));
     for (const ext of WORKFLOW_EXTENSIONS) {

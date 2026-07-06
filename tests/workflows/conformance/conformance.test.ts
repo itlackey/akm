@@ -9,18 +9,20 @@ import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
-import { compileWorkflowPlan } from "../../../src/workflows/ir/compile";
+import { compileWorkflowPlan, compileWorkflowProgram } from "../../../src/workflows/ir/compile";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
 import { parseWorkflow } from "../../../src/workflows/parser";
+import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 
 /**
- * Conformance suite (orchestration plan, §Anti-drift): golden workflows run
- * through every execution backend with mocked runners; the suite asserts an
- * identical compiled plan and an identical per-unit graph. Today the native
- * executor is the only backend — when the Claude Code emitter (P3) and cloud
- * delegate (P4) land, they plug into `BACKENDS` below and every golden
- * workflow must produce the same unit graph on each.
+ * Conformance suite (orchestration plan, §Anti-drift; conformance goldens
+ * rewritten against YAML program sources per the R1 redesign addendum):
+ * golden workflows run through every execution backend with mocked runners;
+ * the suite asserts an identical compiled plan and an identical per-unit
+ * graph. Today the native executor is the only backend — when the R3 driver
+ * protocol lands, brief/report-driven runs plug into `BACKENDS` below and
+ * every golden workflow must produce the same unit graph on each.
  *
  * The golden plans are EXPLICIT expected structures, not snapshots: a change
  * that alters the compiled IR or the executed unit graph must edit this file
@@ -48,7 +50,17 @@ afterEach(() => {
   }
 });
 
-function compile(markdown: string): WorkflowPlanGraph {
+/** Compile a golden YAML program source (the orchestrated frontend). */
+function compile(yamlText: string): WorkflowPlanGraph {
+  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/golden.yaml" });
+  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
+  const compiled = compileWorkflowProgram(parsed.program);
+  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
+  return compiled.plan;
+}
+
+/** Compile a golden classic markdown source (the stable linear contract). */
+function compileMarkdown(markdown: string): WorkflowPlanGraph {
   const result = parseWorkflow(markdown, { path: "workflows/golden.md" });
   if (!result.ok) throw new Error(result.errors.map((e) => e.message).join(" | "));
   return compileWorkflowPlan(result.document);
@@ -76,16 +88,16 @@ function seedRun(params: Record<string, unknown>, stepIds: string[]): void {
   }
 }
 
-/** Execution backends under conformance. P3/P4 backends register here. */
+/** Execution backends under conformance. R3 driver-protocol backends register here. */
 const BACKENDS = [
   {
     name: "native",
-    run: (markdown: string) =>
+    run: (plan: WorkflowPlanGraph) =>
       runWorkflowSteps({
         target: RUN_ID,
         dispatcher: async (req) =>
           req.schema ? { ok: true, text: '{"verdict": "pass"}' } : { ok: true, text: `did ${req.unitId}` },
-        loadPlan: async () => compile(markdown),
+        loadPlan: async () => plan,
       }),
   },
 ] as const;
@@ -100,9 +112,79 @@ async function unitGraph(): Promise<Array<[string, string, string | null, string
   );
 }
 
-// ── Golden 1: linear (P0 — behavior identical to the classic step loop) ─────
+const GOLDEN_SOURCE = expect.objectContaining({ path: "workflows/golden.yaml" });
 
-const LINEAR = `# Workflow: Golden
+// ── Golden 1: linear program (behavior identical to the classic step loop) ──
+
+const LINEAR = `version: 1
+name: Golden
+steps:
+  - id: build
+    title: Build
+    unit:
+      instructions: Build it.
+    gate:
+      criteria: [artifact exists]
+  - id: deploy
+    title: Deploy
+    unit:
+      instructions: Deploy it.
+`;
+
+describe("conformance — linear workflow", () => {
+  test("compiles to the golden plan", () => {
+    expect(compile(LINEAR)).toEqual({
+      irVersion: 2,
+      title: "Golden",
+      steps: [
+        {
+          stepId: "build",
+          title: "Build",
+          sequenceIndex: 0,
+          root: {
+            kind: "agent",
+            id: "build",
+            instructions: "Build it.",
+            runner: "inherit",
+            onError: "fail",
+            source: GOLDEN_SOURCE,
+          },
+          gate: { kind: "gate", id: "build.gate", stepId: "build", criteria: ["artifact exists"] },
+        },
+        {
+          stepId: "deploy",
+          title: "Deploy",
+          sequenceIndex: 1,
+          root: {
+            kind: "agent",
+            id: "deploy",
+            instructions: "Deploy it.",
+            runner: "inherit",
+            onError: "fail",
+            source: GOLDEN_SOURCE,
+          },
+          gate: { kind: "gate", id: "deploy.gate", stepId: "deploy", criteria: [] },
+        },
+      ],
+    });
+  });
+
+  for (const backend of BACKENDS) {
+    test(`${backend.name}: executes the golden unit graph`, async () => {
+      seedRun({}, ["build", "deploy"]);
+      const result = await backend.run(compile(LINEAR));
+      expect(result.done).toBe(true);
+      expect(await unitGraph()).toEqual([
+        ["build", "build", null, "completed"],
+        ["deploy", "deploy", null, "completed"],
+      ]);
+    });
+  }
+});
+
+// ── Golden 1b: classic linear markdown (the stable CLI contract) ────────────
+
+const LINEAR_MD = `# Workflow: Golden
 
 ## Step: Build
 Step ID: build
@@ -120,9 +202,9 @@ Step ID: deploy
 Deploy it.
 `;
 
-describe("conformance — linear workflow", () => {
-  test("compiles to the golden plan", () => {
-    expect(compile(LINEAR)).toEqual({
+describe("conformance — classic linear markdown (stable contract)", () => {
+  test("compiles to the same golden plan shape as the linear program", () => {
+    expect(compileMarkdown(LINEAR_MD)).toEqual({
       irVersion: 2,
       title: "Golden",
       steps: [
@@ -161,7 +243,7 @@ describe("conformance — linear workflow", () => {
   for (const backend of BACKENDS) {
     test(`${backend.name}: executes the golden unit graph`, async () => {
       seedRun({}, ["build", "deploy"]);
-      const result = await backend.run(LINEAR);
+      const result = await backend.run(compileMarkdown(LINEAR_MD));
       expect(result.done).toBe(true);
       expect(await unitGraph()).toEqual([
         ["build", "build", null, "completed"],
@@ -173,28 +255,29 @@ describe("conformance — linear workflow", () => {
 
 // ── Golden 2: fan-out + schema + vote reducer ────────────────────────────────
 
-const FAN_OUT_VOTE = `# Workflow: Golden
-
-## Step: Judge
-Step ID: judge
-
-### Fan-out
-over: attempts
-concurrency: 2
-reducer: vote
-
-### Instructions
-Judge {{item}}.
-
-### Schema
-\`\`\`json
-{ "type": "object", "properties": { "verdict": { "type": "string" } }, "required": ["verdict"] }
-\`\`\`
+const FAN_OUT_VOTE = `version: 1
+name: Golden
+params:
+  attempts: { type: array }
+steps:
+  - id: judge
+    title: Judge
+    map:
+      over: \${{ params.attempts }}
+      concurrency: 2
+      reducer: vote
+      unit:
+        instructions: Judge \${{ item }}.
+        output:
+          type: object
+          properties: { verdict: { type: string } }
+          required: [verdict]
 `;
 
 describe("conformance — fan-out + schema + vote", () => {
   test("compiles to the golden plan", () => {
     const plan = compile(FAN_OUT_VOTE);
+    expect(plan.params).toEqual(["attempts"]);
     expect(plan.steps).toHaveLength(1);
     expect(plan.steps[0]).toEqual({
       stepId: "judge",
@@ -203,19 +286,19 @@ describe("conformance — fan-out + schema + vote", () => {
       root: {
         kind: "map",
         id: "judge.map",
-        over: "attempts",
+        over: "${{ params.attempts }}",
         template: {
           kind: "agent",
           id: "judge.unit",
-          instructions: "Judge {{item}}.",
+          instructions: "Judge ${{ item }}.",
           runner: "inherit",
           onError: "fail",
           schema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
-          source: { path: "workflows/golden.md", start: 12, end: 13 },
+          source: GOLDEN_SOURCE,
         },
         concurrency: 2,
         reducer: "vote",
-        source: { path: "workflows/golden.md", start: 6, end: 10 },
+        source: GOLDEN_SOURCE,
       },
       gate: { kind: "gate", id: "judge.gate", stepId: "judge", criteria: [] },
     });
@@ -224,7 +307,7 @@ describe("conformance — fan-out + schema + vote", () => {
   for (const backend of BACKENDS) {
     test(`${backend.name}: executes the golden unit graph with vote evidence`, async () => {
       seedRun({ attempts: [1, 2, 3] }, ["judge"]);
-      const result = await backend.run(FAN_OUT_VOTE);
+      const result = await backend.run(compile(FAN_OUT_VOTE));
       expect(result.done).toBe(true);
       expect(await unitGraph()).toEqual([
         ["judge.unit[0]", "judge.unit", "judge.map", "completed"],
@@ -241,60 +324,64 @@ describe("conformance — fan-out + schema + vote", () => {
   }
 });
 
-// ── Golden 3: routed workflow ────────────────────────────────────────────────
+// ── Golden 3: routed workflow (route-only step, explicit input) ─────────────
 
-const ROUTED = `# Workflow: Golden
-
-## Step: Classify
-Step ID: classify
-
-### Route
-input: verdict
-when: pass => ship
-when: fail => rework
-
-### Instructions
-Classify.
-
-### Schema
-\`\`\`json
-{ "type": "object", "properties": { "verdict": { "type": "string" } }, "required": ["verdict"] }
-\`\`\`
-
-## Step: Ship
-Step ID: ship
-
-### Instructions
-Ship it.
-
-## Step: Rework
-Step ID: rework
-
-### Instructions
-Rework it.
+const ROUTED = `version: 1
+name: Golden
+steps:
+  - id: classify
+    title: Classify
+    unit:
+      instructions: Classify.
+      output:
+        type: object
+        properties: { verdict: { type: string } }
+        required: [verdict]
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ steps.classify.output.units[0].result.verdict }}
+      when: { pass: ship, fail: rework }
+  - id: ship
+    title: Ship
+    unit:
+      instructions: Ship it.
+  - id: rework
+    title: Rework
+    unit:
+      instructions: Rework it.
 `;
 
 describe("conformance — routed workflow", () => {
-  test("compiles the route into the step plan", () => {
+  test("compiles the route into a route-only step plan", () => {
     const plan = compile(ROUTED);
-    expect(plan.steps[0].route).toEqual({
-      input: "verdict",
-      when: { pass: "ship", fail: "rework" },
+    expect(plan.steps[1]).toEqual({
+      stepId: "triage",
+      title: "Triage",
+      sequenceIndex: 1,
+      route: {
+        input: "${{ steps.classify.output.units[0].result.verdict }}",
+        when: { pass: "ship", fail: "rework" },
+      },
+      gate: { kind: "gate", id: "triage.gate", stepId: "triage", criteria: [] },
     });
+    expect(plan.steps[1].root).toBeUndefined();
   });
 
   for (const backend of BACKENDS) {
     test(`${backend.name}: selected branch dispatches, unselected is skipped with no units`, async () => {
-      seedRun({}, ["classify", "ship", "rework"]);
-      const result = await backend.run(ROUTED);
+      seedRun({}, ["classify", "triage", "ship", "rework"]);
+      const result = await backend.run(compile(ROUTED));
       expect(result.done).toBe(true);
-      // rework must have NO unit rows at all — it never dispatched.
+      // Neither the route step nor rework may have unit rows — the route
+      // dispatches nothing, and rework never ran.
       expect(await unitGraph()).toEqual([
         ["classify", "classify", null, "completed"],
         ["ship", "ship", null, "completed"],
       ]);
       const status = await getWorkflowStatus(RUN_ID);
       const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
+      expect(byId.get("triage")).toBe("completed");
       expect(byId.get("rework")).toBe("skipped");
     });
   }

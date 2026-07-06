@@ -33,13 +33,13 @@ import {
   validateWorkflowProgramSource,
   validateWorkflowSource,
 } from "../workflows/authoring/authoring";
-import { isWorkflowProgramPath } from "../workflows/program/project";
 import {
   hasWorkflowSubcommand,
   parseWorkflowJsonObject,
   parseWorkflowStepState,
   WORKFLOW_STEP_STATES,
 } from "../workflows/cli";
+import { isWorkflowProgramPath } from "../workflows/program/project";
 import {
   abandonWorkflowRun,
   completeWorkflowStep,

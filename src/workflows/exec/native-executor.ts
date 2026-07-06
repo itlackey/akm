@@ -3,12 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Native executor — Backend B of the orchestration plan (P1).
+ * Native executor — executes ONE step's IR v2 subgraph (`IrStepPlan.root`) on
+ * the local machine: fan-out through the scheduler, schema-validated
+ * structured output through `runStructured` (core/structured.ts), per-unit
+ * persistence through the serialized writer queue, and `workflow_unit_*`
+ * events for observability.
  *
- * Executes ONE step's IR subgraph (`IrStepPlan.root`) on the local machine:
- * fan-out through the scheduler, schema-validated structured output through
- * `runStructured` (core/structured.ts), per-unit persistence through the
- * serialized writer queue, and `workflow_unit_*` events for observability.
+ * Data flow (redesign addendum, R1): all workflow-authored templates go
+ * through the deterministic `${{ … }}` expression language
+ * (`program/expressions.ts`). Instruction templates are parsed ONCE per step
+ * and resolved per unit against `{ params, stepOutputs, item, item_index }`;
+ * `map.over` resolves as a single whole-value reference. Substituted content
+ * is data, never re-scanned — the P1 `{{item}}` re-scan injection class is
+ * structurally impossible. There is NO ambient key search: a
+ * `steps.<id>.output.<path>` reference addresses INTO that step's recorded
+ * output explicitly.
+ *
+ * TODO(R2: typed artifacts): `stepOutputs` for R1 is the prior steps'
+ * EVIDENCE objects keyed by step id (the engine loop's evidence map). The R2
+ * engine rework replaces this with the typed step artifact validated against
+ * `IrStepPlan.outputSchema`.
+ *
+ * Failure policy (addendum, "explicit surface, fail-fast default"):
+ *   - `onError: "fail"` (default) fails the step on any unit failure;
+ *     `"continue"` records failures in the evidence and lets the gate decide.
+ *   - `retry: { max, on }` re-dispatches a failed unit up to `max` extra
+ *     times when its `failureReason` is in `on`. Every retry journals its OWN
+ *     row under `<unitId>~r<attempt>` so no attempt's record is clobbered.
  *
  * Layering (see the plan's *Reconciliation* section):
  *   - Dispatch goes through ONE injected {@link UnitDispatcher} seam. The
@@ -28,6 +49,13 @@ import { runStructured } from "../../core/structured";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import type { IrAgentNode, IrStepPlan } from "../ir/schema";
+import {
+  type ExpressionScope,
+  parseTemplate,
+  resolveTemplate,
+  resolveWholeValue,
+  type TemplateSegment,
+} from "../program/expressions";
 import { scheduleUnits, UnitCapExceededError } from "./scheduler";
 import { enqueueUnitWrite } from "./unit-writer";
 
@@ -35,7 +63,8 @@ import { enqueueUnitWrite } from "./unit-writer";
  * Default per-unit timeout. Deliberately NOT the 60 s agent default
  * (`DEFAULT_AGENT_TIMEOUT_MS`) — workflow units routinely run real coding
  * tasks on slow local models; 10 minutes matches the LLM-path default
- * (`tryLlmFeature`). A step's `### Timeout` overrides this; `none` disables.
+ * (`tryLlmFeature`). A unit's `timeout` declaration overrides this; `none`
+ * disables.
  */
 export const DEFAULT_UNIT_TIMEOUT_MS = 600_000;
 
@@ -133,33 +162,55 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const dispatched = ctx.unitsDispatched ?? 0;
   const root = plan.root;
 
-  // TODO(R1-cutover): YAML route-only steps carry no execution subgraph —
-  // they dispatch no units and only decide the spine's path. The executor
-  // cutover task teaches the engine loop to evaluate those routes without
-  // calling this function; until then, reaching here without a root is an
-  // error, never a silent no-op.
+  // Route-only steps (YAML `route:`) carry no execution subgraph — the engine
+  // loop (`run-workflow.ts`) evaluates them without calling this function.
+  // Reaching here without a root is an error, never a silent no-op.
   if (!root) {
     return failedStep(
       dispatched,
-      `Step "${plan.stepId}" has no execution subgraph (a route-only step); the native executor cannot dispatch it yet.`,
+      `Step "${plan.stepId}" has no execution subgraph (a route-only step); the native executor cannot dispatch it.`,
     );
   }
 
   const template = root.kind === "map" ? root.template : root;
   const reducer = root.kind === "map" ? root.reducer : "collect";
 
-  // Resolve fan-out items.
+  // The deterministic expression scope for this step: run params plus prior
+  // steps' recorded outputs. TODO(R2: typed artifacts): stepOutputs is the
+  // prior steps' EVIDENCE keyed by step id until typed step artifacts land.
+  const scope: ExpressionScope = { params: ctx.params, stepOutputs: stepOutputsFromEvidence(ctx.evidence) };
+
+  // Parse the instruction template ONCE per step (deterministic; resolution
+  // is a single pass per unit — substituted content is never re-scanned).
+  const parsedInstructions = parseTemplate(template.instructions);
+  if (!parsedInstructions.ok) {
+    return failedStep(
+      dispatched,
+      `Step "${plan.stepId}" instructions template failed to parse: ` +
+        parsedInstructions.errors.map((e) => e.message).join(" "),
+    );
+  }
+  const instructionSegments = parsedInstructions.segments;
+
+  // Resolve fan-out items: `over` is a single whole-value `${{ … }}`
+  // reference naming its producer explicitly (a run param or an earlier
+  // step's output) — no ambient key search.
   let items: unknown[];
   if (root.kind === "map") {
-    const source = resolveFanOutSource(root.over, ctx);
-    if (!Array.isArray(source)) {
+    const source = resolveWholeValue(root.over, scope);
+    if (!source.ok) {
       return failedStep(
         dispatched,
-        `Step "${plan.stepId}" fan-out key "${root.over}" did not resolve to an array in run params or prior step evidence` +
-          (source === undefined ? " (not found)." : ` (got ${typeof source}).`),
+        `Step "${plan.stepId}" fan-out "over" (${root.over}) failed to resolve: ${source.error.message}`,
       );
     }
-    items = source;
+    if (!Array.isArray(source.value)) {
+      return failedStep(
+        dispatched,
+        `Step "${plan.stepId}" fan-out "over" (${root.over}) resolved to ${typeof source.value}, not an array.`,
+      );
+    }
+    items = source.value;
   } else {
     items = [undefined];
   }
@@ -203,6 +254,8 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
         runUnit({
           plan,
           template,
+          instructionSegments,
+          scope,
           item,
           index,
           isFanOut: root.kind === "map",
@@ -235,19 +288,23 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
       },
   );
 
-  // TODO(R2): the IR v2 failure policy (`template.onError`, `template.retry`)
-  // is carried in the plan but not enforced here yet — failure policy and
-  // bounded retry land with the engine rework. Today every unit failure fails
-  // the step (the fail-fast default's behavior).
+  // Failure policy (IR v2): `onError: "fail"` (the default) fails the step on
+  // any unit failure; `"continue"` records the failures in the evidence (the
+  // summary still counts them) and lets the completion gate decide. A vote
+  // reducer with no majority fails the step under either policy — a routing
+  // decision downstream must never consume a non-result.
   const failed = units.filter((u) => !u.ok);
   const evidence = buildEvidence(units, reducer);
   const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";
-  const ok = failed.length === 0 && !evidence.voteError;
+  const tolerateFailures = template.onError === "continue";
+  const ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
   const summary =
     `Executed ${units.length} unit(s) for step "${plan.stepId}" via the native executor: ` +
     `${units.length - failed.length} succeeded, ${failed.length} failed.` +
     (failed.length > 0
-      ? ` Failures: ${failed.map((u) => `${u.unitId} (${u.failureReason ?? "error"})`).join(", ")}.`
+      ? ` Failures${tolerateFailures ? " (recorded, on_error: continue)" : ""}: ${failed
+          .map((u) => `${u.unitId} (${u.failureReason ?? "error"})`)
+          .join(", ")}.`
       : "") +
     reducerNote;
 
@@ -259,6 +316,10 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
 interface RunUnitInput {
   plan: IrStepPlan;
   template: IrAgentNode;
+  /** Instruction template segments, parsed ONCE per step by executeStepPlan. */
+  instructionSegments: TemplateSegment[];
+  /** Step-wide expression scope (params + prior step outputs); item scoping is per unit. */
+  scope: ExpressionScope;
   item: unknown;
   index: number;
   isFanOut: boolean;
@@ -272,7 +333,26 @@ interface RunUnitInput {
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   const { plan, template, item, index, isFanOut, env, ctx, dispatcher } = input;
   const unitId = unitIdFor(template, index, isFanOut);
-  const prompt = buildUnitPrompt({ plan, template, item, index, isFanOut, ctx, unitId });
+
+  // Single-pass resolution of the pre-parsed template against this unit's
+  // scope. A resolution failure (missing param, bad path) is deterministic
+  // authoring/data breakage: the unit fails WITHOUT dispatching — and without
+  // journaling a row, since no resolved input exists to hash.
+  const unitScope: ExpressionScope = isFanOut ? { ...input.scope, item, itemIndex: index } : input.scope;
+  const resolved = resolveTemplate(input.instructionSegments, unitScope);
+  if (!resolved.ok) {
+    return {
+      unitId,
+      ok: false,
+      failureReason: "expression_error",
+      error: `instructions failed to resolve: ${resolved.errors.map((e) => e.message).join(" ")}`,
+    };
+  }
+
+  // The prompt (and therefore the input hash) is built once with the BASE
+  // unit id: a retry re-dispatches the SAME input, the `~r<n>` suffix is
+  // journal bookkeeping only.
+  const prompt = buildUnitPrompt({ plan, template, ctx, unitId, instructions: resolved.text });
   const timeoutMs = template.timeoutMs === undefined ? DEFAULT_UNIT_TIMEOUT_MS : template.timeoutMs;
 
   const request: UnitDispatchRequest = {
@@ -301,19 +381,67 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     )
     .digest("hex");
 
-  // Durable-row reuse: same unit, same input, already completed → return the
-  // journaled result without touching the row, dispatching, or re-emitting
-  // events. Failed/running/stale-input rows fall through and re-dispatch.
-  const prior = input.existingUnits?.get(unitId);
-  if (prior && prior.status === "completed" && prior.input_hash === inputHash) {
-    return reuseCompletedUnit(unitId, prior, template.schema !== undefined);
+  // Bounded retry (IR v2 failure policy): attempt 0 journals under the base
+  // unit id, retry attempt N under `<unitId>~r<N>` — every attempt keeps its
+  // own row, nothing is clobbered. Retries only fire when the failure reason
+  // is in `retry.on`.
+  const retry = template.retry;
+  const maxAttempts = 1 + Math.max(0, retry?.max ?? 0);
+  const attemptIdFor = (attempt: number): string => (attempt === 0 ? unitId : `${unitId}~r${attempt}`);
+
+  // Durable-row reuse: ANY attempt of this unit that completed with the same
+  // input hash IS the result — return it without touching rows, dispatching,
+  // or re-emitting events (a crash-resume must never double-issue work).
+  // Failed/running/stale-input rows fall through and re-dispatch.
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const prior = input.existingUnits?.get(attemptIdFor(attempt));
+    if (prior && prior.status === "completed" && prior.input_hash === inputHash) {
+      return reuseCompletedUnit(attemptIdFor(attempt), prior, template.schema !== undefined);
+    }
   }
+
+  let outcome: UnitOutcome | undefined;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const attemptId = attemptIdFor(attempt);
+    outcome = await dispatchJournaledAttempt({
+      plan,
+      template,
+      ctx,
+      dispatcher,
+      request: { ...request, unitId: attemptId },
+      attemptId,
+      isFanOut,
+      inputHash,
+    });
+    if (outcome.ok) return outcome;
+    const reason = outcome.failureReason;
+    if (!retry || reason === undefined || !retry.on.includes(reason)) return outcome;
+  }
+  // maxAttempts >= 1, so outcome is always set by the loop above.
+  return outcome as UnitOutcome;
+}
+
+interface JournaledAttemptInput {
+  plan: IrStepPlan;
+  template: IrAgentNode;
+  ctx: StepExecutionContext;
+  dispatcher: UnitDispatcher;
+  request: UnitDispatchRequest;
+  /** Journal id of this attempt: `<unitId>` or `<unitId>~r<n>` for retries. */
+  attemptId: string;
+  isFanOut: boolean;
+  inputHash: string;
+}
+
+/** Journal one dispatch attempt: insert row, events, dispatch, finish row. */
+async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<UnitOutcome> {
+  const { plan, template, ctx, dispatcher, request, attemptId, isFanOut, inputHash } = input;
 
   await enqueueUnitWrite(async () => {
     await withWorkflowRunsRepo((repo) =>
       repo.insertUnit({
         runId: ctx.runId,
-        unitId,
+        unitId: attemptId,
         stepId: plan.stepId,
         nodeId: template.id,
         parentUnitId: isFanOut ? `${plan.stepId}.map` : null,
@@ -330,7 +458,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   appendEvent({
     eventType: "workflow_unit_started",
     ref: ctx.workflowRef,
-    metadata: { runId: ctx.runId, stepId: plan.stepId, unitId },
+    metadata: { runId: ctx.runId, stepId: plan.stepId, unitId: attemptId },
   });
 
   const outcome = await dispatchUnit(request, template, dispatcher);
@@ -339,7 +467,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     await withWorkflowRunsRepo((repo) =>
       repo.finishUnit({
         runId: ctx.runId,
-        unitId,
+        unitId: attemptId,
         status: outcome.ok ? "completed" : "failed",
         resultJson:
           outcome.result !== undefined
@@ -362,7 +490,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     metadata: {
       runId: ctx.runId,
       stepId: plan.stepId,
-      unitId,
+      unitId: attemptId,
       status: outcome.ok ? "completed" : "failed",
       ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
       ...(outcome.tokens !== undefined ? { tokens: outcome.tokens } : {}),
@@ -461,36 +589,28 @@ async function dispatchUnit(
 interface BuildPromptInput {
   plan: IrStepPlan;
   template: IrAgentNode;
-  item: unknown;
-  index: number;
-  isFanOut: boolean;
   ctx: StepExecutionContext;
   unitId: string;
+  /** Instructions with every `${{ … }}` reference already resolved (single pass). */
+  instructions: string;
 }
 
+/**
+ * Assemble the final prompt: engine preamble + resolved instructions
+ * (+ schema directive). Workflow-authored interpolation happened upstream via
+ * the expression module; only the ENGINE's own preamble placeholders are
+ * substituted here.
+ */
 function buildUnitPrompt(input: BuildPromptInput): string {
-  const { plan, template, item, index, isFanOut, ctx, unitId } = input;
+  const { plan, template, ctx, unitId, instructions } = input;
   // Function replacements throughout: a string replacement would interpret
-  // GetSubstitution patterns ($&, $$, $', $`) inside item/param VALUES and
-  // silently corrupt the prompt (e.g. an item named "a$&b.ts").
+  // GetSubstitution patterns ($&, $$, $', $`) inside VALUES and silently
+  // corrupt the prompt (e.g. a param value containing "$&").
   const preamble = unitPreambleTemplate
     .replaceAll("{{RUN_ID}}", () => ctx.runId)
     .replaceAll("{{STEP_ID}}", () => plan.stepId)
     .replaceAll("{{UNIT_ID}}", () => unitId)
     .replaceAll("{{PARAMS_JSON}}", () => safeJson(ctx.params));
-
-  let instructions = template.instructions;
-  if (isFanOut) {
-    const itemText = typeof item === "string" ? item : safeJson(item);
-    instructions = instructions
-      .replaceAll("{{item}}", () => itemText)
-      .replaceAll("{{item_index}}", () => String(index));
-  }
-  instructions = instructions.replace(/\{\{params\.([A-Za-z0-9_.-]+)\}\}/g, (_, name: string) => {
-    const value = ctx.params[name];
-    if (value === undefined) return "";
-    return typeof value === "string" ? value : safeJson(value);
-  });
 
   const schemaDirective = template.schema
     ? `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${safeJson(template.schema)}`
@@ -499,17 +619,20 @@ function buildUnitPrompt(input: BuildPromptInput): string {
   return `${preamble}\n${instructions}${schemaDirective}`;
 }
 
-// ── Fan-out source + reducers ────────────────────────────────────────────────
+// ── Step outputs + reducers ──────────────────────────────────────────────────
 
-function resolveFanOutSource(over: string, ctx: StepExecutionContext): unknown {
-  // Own-property checks only: `in` would also match Object.prototype keys
-  // (toString, constructor, …), letting a fan-out key resolve to a prototype
-  // member instead of actual params/evidence.
-  if (Object.hasOwn(ctx.params, over)) return ctx.params[over];
-  for (const stepEvidence of Object.values(ctx.evidence)) {
-    if (stepEvidence && Object.hasOwn(stepEvidence, over)) return stepEvidence[over];
+/**
+ * Project the engine's evidence map into the expression scope's
+ * `stepOutputs`. TODO(R2: typed artifacts): for R1 a step's "output" is its
+ * raw evidence object; the R2 rework substitutes the typed artifact validated
+ * against the step's declared `output` schema.
+ */
+function stepOutputsFromEvidence(evidence: StepExecutionContext["evidence"]): Record<string, unknown> {
+  const outputs: Record<string, unknown> = {};
+  for (const [stepId, stepEvidence] of Object.entries(evidence)) {
+    if (stepEvidence !== undefined) outputs[stepId] = stepEvidence;
   }
-  return undefined;
+  return outputs;
 }
 
 function buildEvidence(units: UnitOutcome[], reducer: "collect" | "vote" | "best-of-n"): Record<string, unknown> {
@@ -566,7 +689,7 @@ function sortKeys(value: unknown): unknown {
 // ── Env bindings ─────────────────────────────────────────────────────────────
 
 /**
- * Resolve every `### Env` ref through the extracted `akm env run` core
+ * Resolve every unit `env` ref through the extracted `akm env run` core
  * (loadEnv + secret tokens + dangerous-key policy + keys-only audit event).
  * Lazily imported so the engine has no env/secret dependency until a
  * workflow actually declares bindings.
@@ -598,7 +721,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
 
   const resolved = resolveUnitRunner(request, config);
 
-  // `### Env` bindings can only reach a spawned child process. The opencode
+  // `env` bindings can only reach a spawned child process. The opencode
   // SDK server is process-wide (no per-call env — plan open decision 1) and
   // the llm runner has no child at all. Failing loudly beats an audit event
   // that claims an injection which never reached the unit.
@@ -608,7 +731,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       text: "",
       failureReason: "env_unsupported",
       error:
-        `unit "${request.unitId}" declares "### Env" bindings, which currently require the agent (CLI) runner — ` +
+        `unit "${request.unitId}" declares env bindings, which currently require the agent (CLI) runner — ` +
         `the "${resolved.kind}" runner cannot inject a per-unit child environment.`,
     };
   }
@@ -621,7 +744,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       : resolved.connection;
     try {
       const text = await chatCompletion(connection, [{ role: "user", content: prompt }], {
-        // null = author declared "### Timeout: none" — cap at the max signed
+        // null = author declared `timeout: none` — cap at the max signed
         // 32-bit delay (setTimeout's ceiling, ~24.8 days ≈ unbounded here).
         timeoutMs: request.timeoutMs === null ? 2 ** 31 - 1 : request.timeoutMs,
         ...(request.signal ? { signal: request.signal } : {}),
@@ -742,7 +865,7 @@ function resolveUnitRunner(
   }
   throw new ConfigError(
     `Workflow unit "${request.unitId}" has no runnable backend: set defaults.agent or defaults.llm in config.json, ` +
-      `or declare a "### Runner" profile on the step.`,
+      `or declare a runner/profile on the unit.`,
     "INVALID_CONFIG_FILE",
   );
 }

@@ -17,7 +17,7 @@ import { compileWorkflowPlan, compileWorkflowProgram } from "../ir/compile";
 import type { WorkflowPlanGraph } from "../ir/schema";
 import { parseWorkflow } from "../parser";
 import { parseWorkflowProgram } from "../program/parser";
-import { isWorkflowProgramPath, projectProgramStepDefinitions, projectProgramParameters } from "../program/project";
+import { isWorkflowProgramPath, projectProgramParameters, projectProgramStepDefinitions } from "../program/project";
 import type { WorkflowProgram } from "../program/schema";
 import type { WorkflowDocument } from "../schema";
 
@@ -34,8 +34,7 @@ export type WorkflowAsset = {
   steps: WorkflowStepDefinition[];
   /**
    * The full parsed document, retained so the run engine can compile the
-   * orchestration IR (`workflows/ir/compile.ts`) — the step projection above
-   * intentionally drops orchestration subsections. Present for MARKDOWN
+   * plan-graph IR (`workflows/ir/compile.ts`). Present for MARKDOWN
    * workflows only; YAML programs carry `program` instead.
    */
   document?: WorkflowDocument;

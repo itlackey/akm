@@ -15,7 +15,6 @@
 import { parse as yamlParse } from "yaml";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
-import { collectOrchestration, ORCHESTRATION_SUBSECTIONS } from "./parser-orchestration";
 import {
   type SourceRef,
   WORKFLOW_SCHEMA_VERSION,
@@ -198,7 +197,6 @@ function extractSteps(
     const stepId = scanStepId(lines, h.line + 1, stepIdSearchEnd, stepTitle, errors);
 
     const { instructions, completionCriteria } = collectStepBody(subsections, lines, path, stepTitle, errors);
-    const orchestration = collectOrchestration(subsections, lines, path, stepTitle, errors);
 
     if (!stepId) continue; // scanStepId already pushed the missing-id error
     if (!instructions) {
@@ -215,7 +213,6 @@ function extractSteps(
       sequenceIndex: sequenceIndex++,
       instructions,
       ...(completionCriteria ? { completionCriteria } : {}),
-      ...(orchestration ? { orchestration } : {}),
       source: stepSource,
     });
   }
@@ -309,17 +306,12 @@ function collectStepBody(
       continue;
     }
 
-    // Orchestration subsections (P1 extended grammar) are parsed by
-    // collectOrchestration; skip them here so they don't trip the
-    // unknown-section error.
-    if (ORCHESTRATION_SUBSECTIONS.has(sub.name)) continue;
-
     errors.push({
       line: sub.headingLine,
       message:
         `Step "${stepTitle}" has an unknown "### ${sub.name}" section. Supported sections: ` +
-        `"### Instructions", "### Completion Criteria", "### Runner", "### Model", "### Timeout", ` +
-        `"### Fan-out", "### Schema", "### Env", "### Depends On".`,
+        `"### Instructions", "### Completion Criteria". For orchestrated workflows (runners, ` +
+        `fan-out, routing), author a YAML workflow program instead — see \`akm workflow template --yaml\`.`,
     });
   }
 

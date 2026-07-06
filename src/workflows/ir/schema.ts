@@ -57,7 +57,9 @@ export type IrOnError = "fail" | "continue";
 /**
  * Bounded retry on transient failures, keyed on the persisted
  * `failure_reason` taxonomy (`AgentFailureReason` in agent/spawn.ts).
- * TODO(R2): enforcement lands with the engine rework.
+ * Enforced by the native executor: a failed unit re-dispatches up to `max`
+ * extra times when its failure reason is in `on`, each attempt journaled
+ * under `<unitId>~r<attempt>`.
  */
 export interface IrRetry {
   max: number;
@@ -84,7 +86,7 @@ export interface IrAgentNode {
   schema?: Record<string, unknown>;
   /** Per-unit timeout in ms; null = explicitly no timeout; absent = engine default. */
   timeoutMs?: number | null;
-  /** TODO(R2): retry dispatch is engine-rework scope; carried through the IR now. */
+  /** Bounded retry on transient failures (see {@link IrRetry}). */
   retry?: IrRetry;
   /** Failure policy; compile merges the program default (fail-fast) in. */
   onError: IrOnError;
@@ -100,10 +102,6 @@ export interface IrAgentNode {
  * `over` is the RAW whole-value `${{ … }}` expression string naming the
  * producer of the list (a run param or an earlier step's output) — resolved
  * at execution, never at compile.
- *
- * TODO(R1-cutover): plans compiled from the P1 markdown grammar carry a bare
- * evidence key here (no `${{ … }}`) until that grammar is removed; the
- * engine's legacy lookup handles those.
  */
 export interface IrMapNode {
   kind: "map";
@@ -150,21 +148,18 @@ export interface IrRouteSpec {
 }
 
 /**
- * One step of the gated spine. For YAML programs exactly one of `root`
- * (execution subgraph) or `route` (spine-level routing) is present: YAML
- * `route` steps dispatch no units of their own. TODO(R1-cutover): plans from
- * the P1 markdown grammar may carry BOTH (a markdown `### Route` attaches to
- * an executing step) until that grammar is removed.
+ * One step of the gated spine. Exactly one of `root` (execution subgraph) or
+ * `route` (spine-level routing) is present: YAML `route` steps dispatch no
+ * units of their own, and linear markdown steps always carry a `root`.
  */
 export interface IrStepPlan {
   stepId: string;
   title: string;
   sequenceIndex: number;
   /**
-   * Reserved: non-linear ordering edges. Only the transitional P1 markdown
-   * `### Depends On` grammar emits them today (removed by the R1 cutover; the
-   * YAML program has no equivalent yet); the engine honors them as a declared
-   * ordering contract.
+   * Reserved: non-linear ordering edges. No frontend emits them today (the
+   * YAML program has no surface for them yet), but the engine honors them in
+   * a frozen plan as a declared ordering contract.
    */
   dependsOn?: string[];
   /** Execution subgraph; absent exactly when this is a YAML `route` step. */

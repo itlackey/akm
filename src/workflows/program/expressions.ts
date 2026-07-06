@@ -276,6 +276,37 @@ export function resolveTemplate(segments: TemplateSegment[], scope: ExpressionSc
 }
 
 /**
+ * Resolve a whole-value field (`map.over`, `route.input`) from its RAW
+ * template string: the text must be exactly one `${{ … }}` reference with no
+ * surrounding literal text (the compiler enforces this for YAML programs;
+ * frozen plans are re-checked here so a tampered/legacy plan fails loudly
+ * instead of string-splicing). The reference resolves to its RAW value —
+ * arrays stay arrays, objects stay objects.
+ */
+export function resolveWholeValue(template: string, scope: ExpressionScope): ResolveReferenceResult {
+  const parsed = parseTemplate(template);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      error: { reference: template, message: parsed.errors.map((e) => e.message).join(" ") },
+    };
+  }
+  const [first] = parsed.segments;
+  if (parsed.segments.length !== 1 || first?.kind !== "reference") {
+    return {
+      ok: false,
+      error: {
+        reference: template,
+        message:
+          `expected a single whole-value \${{ … }} reference with no surrounding text ` +
+          `(e.g. "\${{ steps.discover.output.files }}"), got ${JSON.stringify(template)}.`,
+      },
+    };
+  }
+  return resolveReference(first.expr, scope);
+}
+
+/**
  * Resolve a single reference to its RAW value for whole-value contexts
  * (`map.over`, `route.input`): arrays stay arrays, objects stay objects.
  * null/undefined values and missing paths are errors, same as in templates.

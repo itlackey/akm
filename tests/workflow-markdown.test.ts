@@ -119,6 +119,22 @@ describe("parseWorkflow", () => {
     expect(result.errors.some((e) => e.message.includes("Notes"))).toBe(true);
   });
 
+  test("rejects removed P1 orchestration subsections, pointing YAML authors at the program format", () => {
+    // The R1 cutover deleted the markdown orchestration grammar: `### Fan-out`
+    // (and Runner/Model/Timeout/Schema/Env/Depends On/Route) are unknown
+    // sections again, and the error names the YAML replacement.
+    const invalid = VALID_WORKFLOW.replace(
+      "### Instructions\nConfirm release notes, tag, and version are present.\n",
+      "### Fan-out\nover: files\n\n### Instructions\nConfirm release notes, tag, and version are present.\n",
+    );
+    const result = parse(invalid);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const error = result.errors.find((e) => e.message.includes("Fan-out"));
+    expect(error?.message).toContain('"### Instructions", "### Completion Criteria"');
+    expect(error?.message).toContain("akm workflow template --yaml");
+  });
+
   test("rejects unsupported workflow frontmatter keys", () => {
     const invalid = VALID_WORKFLOW.replace("---\n", "---\nmodel: gpt-5\n");
     const result = parse(invalid);

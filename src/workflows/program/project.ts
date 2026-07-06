@@ -15,11 +15,7 @@
  * frozen plan).
  */
 
-import type {
-  WorkflowParameter,
-  WorkflowStepDefinition,
-  WorkflowStepOrchestrationSummary,
-} from "../../sources/types";
+import type { WorkflowParameter, WorkflowStepDefinition, WorkflowStepOrchestrationSummary } from "../../sources/types";
 import type { ProgramStep, WorkflowProgram } from "./schema";
 
 /**

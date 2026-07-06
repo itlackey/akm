@@ -14,18 +14,23 @@ import {
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
-import { compileWorkflowPlan } from "../../src/workflows/ir/compile";
-import { parseWorkflow } from "../../src/workflows/parser";
+import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
+import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
 
 /**
- * Native executor (orchestration plan P1): fan-out via the scheduler,
- * schema-validated structured output with retry, per-unit persistence, and
- * the engine loop that advances the gated step spine strictly through
- * `completeWorkflowStep`.
+ * Native executor over IR v2 (redesign addendum, R1): fan-out via `${{ … }}`
+ * expressions through the scheduler, schema-validated structured output with
+ * retry, the explicit failure policy (`on_error` / `retry`), per-unit
+ * persistence, and the engine loop that advances the gated step spine
+ * strictly through `completeWorkflowStep`.
  *
  * All dispatch goes through an injected fake dispatcher — no agent binaries,
- * no LLM. The workflow DB is a sandboxed tmp dir via AKM_DATA_DIR.
+ * no LLM. The workflow DB is a sandboxed tmp dir via AKM_DATA_DIR. Plans come
+ * from YAML workflow-program sources (parseWorkflowProgram +
+ * compileWorkflowProgram), the only orchestrated frontend after the P1
+ * markdown grammar removal.
  */
 
 let tmpDir = "";
@@ -55,10 +60,12 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
   }
 }
 
-function plan(markdown: string) {
-  const result = parseWorkflow(markdown, { path: "workflows/demo.md" });
-  if (!result.ok) throw new Error(result.errors.map((e) => e.message).join(" | "));
-  return compileWorkflowPlan(result.document);
+function plan(yamlText: string): WorkflowPlanGraph {
+  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
+  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
+  const compiled = compileWorkflowProgram(parsed.program);
+  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
+  return compiled.plan;
 }
 
 beforeEach(() => {
@@ -77,21 +84,22 @@ afterEach(() => {
   }
 });
 
-const FAN_OUT_WF = `# Workflow: Review
-
-## Step: Review files
-Step ID: review
-
-### Fan-out
-over: files
-concurrency: 4
-
-### Instructions
-Review {{item}} carefully.
+const FAN_OUT_WF = `version: 1
+name: Review
+params:
+  files: { type: array }
+steps:
+  - id: review
+    title: Review files
+    map:
+      over: \${{ params.files }}
+      concurrency: 4
+      unit:
+        instructions: Review \${{ item }} carefully.
 `;
 
 describe("executeStepPlan — fan-out", () => {
-  test("dispatches one unit per item, interpolates {{item}}, persists unit rows", async () => {
+  test("dispatches one unit per item over ${{ params.files }}, resolves ${{ item }}, persists unit rows", async () => {
     seedRun({ params: { files: ["a.ts", "b.ts", "c.ts"] }, steps: [{ id: "review", title: "Review files" }] });
     const prompts: string[] = [];
     const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
@@ -112,29 +120,6 @@ describe("executeStepPlan — fan-out", () => {
     expect(result.units).toHaveLength(3);
     expect(prompts.some((p) => p.includes("Review a.ts carefully."))).toBe(true);
     expect(prompts.every((p) => p.includes(RUN_ID))).toBe(true); // preamble carries the run id
-  });
-
-  test("items containing $-substitution patterns interpolate verbatim (peer review #1)", async () => {
-    const items = ["src/a$&b.ts", "Makefile uses $$(CC)", "printf $'x'"];
-    seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
-    const prompts: string[] = [];
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
-    await executeStepPlan(stepPlan, {
-      runId: RUN_ID,
-      workflowRef: "workflow:demo",
-      params: { files: items, note: "cost is $& today" },
-      evidence: {},
-      dispatcher: async (req) => {
-        prompts.push(req.prompt);
-        return { ok: true, text: "ok" };
-      },
-    });
-    expect(prompts.some((p) => p.includes("Review src/a$&b.ts carefully."))).toBe(true);
-    expect(prompts.some((p) => p.includes("Review Makefile uses $$(CC) carefully."))).toBe(true);
-    expect(prompts.some((p) => p.includes("Review printf $'x' carefully."))).toBe(true);
-    // Preamble params JSON must also survive $-patterns un-mangled.
-    expect(prompts.every((p) => p.includes("cost is $& today"))).toBe(true);
-    expect(prompts.every((p) => !p.includes("{{item}}") && !p.includes("{{PARAMS_JSON}}"))).toBe(true);
 
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "review");
@@ -144,24 +129,70 @@ describe("executeStepPlan — fan-out", () => {
     });
   });
 
-  test("items can come from a prior step's evidence", async () => {
-    seedRun({ steps: [{ id: "review", title: "Review files" }] });
-    const dispatcher = async (): Promise<UnitDispatchResult> => ({ ok: true, text: "done" });
+  test("hostile item content is data: $-patterns and ${{ … }} in values insert verbatim, never re-scanned", async () => {
+    // Single-pass proof at the engine level: templates are parsed once into
+    // literal/reference segments; substituted CONTENT is data. An item that
+    // itself looks like an expression must appear literally, and must never
+    // resolve against params — the P1 re-scan injection class.
+    const items = ["src/a$&b.ts", "Makefile uses $$(CC)", "${{ params.secret }}"];
+    seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
+    const prompts: string[] = [];
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
+      params: { files: items, secret: "LEAKED-SECRET", note: "cost is $& today" },
+      evidence: {},
+      dispatcher: async (req) => {
+        prompts.push(req.prompt);
+        return { ok: true, text: "ok" };
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(prompts.some((p) => p.includes("Review src/a$&b.ts carefully."))).toBe(true);
+    expect(prompts.some((p) => p.includes("Review Makefile uses $$(CC) carefully."))).toBe(true);
+    // The expression-looking item is inserted literally — single pass, no re-scan.
+    expect(prompts.some((p) => p.includes("Review ${{ params.secret }} carefully."))).toBe(true);
+    expect(prompts.every((p) => !p.includes("Review LEAKED-SECRET carefully."))).toBe(true);
+    // Preamble params JSON must also survive $-patterns un-mangled.
+    expect(prompts.every((p) => p.includes("cost is $& today"))).toBe(true);
+    expect(prompts.every((p) => !p.includes("{{PARAMS_JSON}}"))).toBe(true);
+  });
+
+  test("items can come from a prior step's output via ${{ steps.discover.output.files }}", async () => {
+    seedRun({ steps: [{ id: "review", title: "Review files" }] });
+    const EVIDENCE_WF = FAN_OUT_WF.replace("${{ params.files }}", "${{ steps.discover.output.files }}").replace(
+      "steps:",
+      `steps:
+  - id: discover
+    unit:
+      instructions: Find files.`,
+    );
+    const dispatcher = async (): Promise<UnitDispatchResult> => ({ ok: true, text: "done" });
+    const stepPlan = plan(EVIDENCE_WF).steps.find((s) => s.stepId === "review");
+    if (!stepPlan) throw new Error("missing review step");
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
       params: {},
+      // TODO(R2: typed artifacts): a step's "output" is its evidence object.
       evidence: { discover: { files: ["x.ts", "y.ts"] } },
       dispatcher,
     });
     expect(result.units).toHaveLength(2);
   });
 
-  test("fan-out keys never resolve from Object.prototype (own properties only)", async () => {
+  test("step-output references never resolve from Object.prototype (own properties only)", async () => {
     seedRun({ steps: [{ id: "review", title: "Review files" }] });
-    const TOSTRING_WF = FAN_OUT_WF.replace("over: files", "over: toString");
-    const stepPlan = plan(TOSTRING_WF).steps[0];
+    const TOSTRING_WF = FAN_OUT_WF.replace("${{ params.files }}", "${{ steps.prior.output.toString }}").replace(
+      "steps:",
+      `steps:
+  - id: prior
+    unit:
+      instructions: Prior.`,
+    );
+    const stepPlan = plan(TOSTRING_WF).steps.find((s) => s.stepId === "review");
+    if (!stepPlan) throw new Error("missing review step");
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
@@ -170,7 +201,7 @@ describe("executeStepPlan — fan-out", () => {
       dispatcher: async () => ({ ok: true, text: "must not run" }),
     });
     expect(result.ok).toBe(false);
-    expect(result.summary).toContain("not found");
+    expect(result.summary).toContain("missing");
   });
 
   test("a non-array fan-out source fails the step with a clear error", async () => {
@@ -184,10 +215,11 @@ describe("executeStepPlan — fan-out", () => {
       dispatcher: async () => ({ ok: true, text: "unused" }),
     });
     expect(result.ok).toBe(false);
-    expect(result.summary).toContain("files");
+    expect(result.summary).toContain("params.files");
+    expect(result.summary).toContain("not an array");
   });
 
-  test("unit failures are recorded with their failure reason and fail the step", async () => {
+  test("unit failures are recorded with their failure reason and fail the step (fail-fast default)", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
     const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> =>
       req.prompt.includes("Review a")
@@ -212,18 +244,17 @@ describe("executeStepPlan — fan-out", () => {
   });
 });
 
-const SCHEMA_WF = `# Workflow: Extract
-
-## Step: Extract facts
-Step ID: extract
-
-### Instructions
-Extract facts.
-
-### Schema
-\`\`\`json
-{ "type": "object", "properties": { "fact": { "type": "string" } }, "required": ["fact"] }
-\`\`\`
+const SCHEMA_WF = `version: 1
+name: Extract
+steps:
+  - id: extract
+    title: Extract facts
+    unit:
+      instructions: Extract facts.
+      output:
+        type: object
+        properties: { fact: { type: string } }
+        required: [fact]
 `;
 
 describe("executeStepPlan — structured output", () => {
@@ -279,22 +310,22 @@ describe("executeStepPlan — structured output", () => {
   });
 });
 
-const VOTE_WF = `# Workflow: Vote
-
-## Step: Judge
-Step ID: judge
-
-### Fan-out
-over: attempts
-reducer: vote
-
-### Instructions
-Judge attempt {{item}}.
-
-### Schema
-\`\`\`json
-{ "type": "object", "properties": { "verdict": { "type": "string" } }, "required": ["verdict"] }
-\`\`\`
+const VOTE_WF = `version: 1
+name: Vote
+params:
+  attempts: { type: array }
+steps:
+  - id: judge
+    title: Judge
+    map:
+      over: \${{ params.attempts }}
+      reducer: vote
+      unit:
+        instructions: Judge attempt \${{ item }} (#\${{ item_index }}).
+        output:
+          type: object
+          properties: { verdict: { type: string } }
+          required: [verdict]
 `;
 
 describe("executeStepPlan — vote reducer", () => {
@@ -316,6 +347,134 @@ describe("executeStepPlan — vote reducer", () => {
     });
     expect(result.ok).toBe(true);
     expect((result.evidence.vote as { winner: unknown }).winner).toEqual({ verdict: "pass" });
+  });
+});
+
+describe("executeStepPlan — failure policy (IR v2)", () => {
+  const CONTINUE_WF = `version: 1
+name: Review
+params:
+  files: { type: array }
+steps:
+  - id: review
+    title: Review files
+    map:
+      over: \${{ params.files }}
+      unit:
+        on_error: continue
+        instructions: Review \${{ item }} carefully.
+`;
+
+  test("on_error: continue records unit failures without failing the step", async () => {
+    seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
+    const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> =>
+      req.prompt.includes("Review a")
+        ? { ok: true, text: "fine" }
+        : { ok: false, text: "", failureReason: "timeout", error: "timed out" };
+
+    const stepPlan = plan(CONTINUE_WF).steps[0];
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b"] },
+      evidence: {},
+      dispatcher,
+    });
+    expect(result.ok).toBe(true); // the step survives …
+    expect(result.units.filter((u) => !u.ok)).toHaveLength(1); // … but the failure is recorded
+    expect(result.summary).toContain("1 failed");
+    expect(result.summary).toContain("on_error: continue");
+    await withWorkflowRunsRepo((repo) => {
+      const failed = repo.getUnitsForStep(RUN_ID, "review").filter((r) => r.status === "failed");
+      expect(failed).toHaveLength(1);
+      expect(failed[0].failure_reason).toBe("timeout");
+    });
+  });
+
+  const RETRY_WF = `version: 1
+name: Flaky
+steps:
+  - id: fetch
+    title: Fetch
+    unit:
+      retry: { max: 2, on: [timeout] }
+      instructions: Fetch the thing.
+`;
+
+  test("retry-on-timeout re-dispatches up to max, journaling each attempt under <unitId>~r<n>", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    let call = 0;
+    const dispatcher = async (): Promise<UnitDispatchResult> => {
+      call++;
+      return call < 3
+        ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
+        : { ok: true, text: "finally" };
+    };
+    const stepPlan = plan(RETRY_WF).steps[0];
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      dispatcher,
+    });
+    expect(call).toBe(3);
+    expect(result.ok).toBe(true);
+    expect(result.units[0].unitId).toBe("fetch~r2");
+    // Every attempt keeps its own journal row — nothing is clobbered.
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "fetch");
+      const byId = new Map(rows.map((r) => [r.unit_id, r.status]));
+      expect(byId.get("fetch")).toBe("failed");
+      expect(byId.get("fetch~r1")).toBe("failed");
+      expect(byId.get("fetch~r2")).toBe("completed");
+    });
+  });
+
+  test("retry does NOT fire for a failure reason outside retry.on", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    let call = 0;
+    const dispatcher = async (): Promise<UnitDispatchResult> => {
+      call++;
+      return { ok: false, text: "", failureReason: "non_zero_exit", error: "exit 1" };
+    };
+    const stepPlan = plan(RETRY_WF).steps[0];
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      dispatcher,
+    });
+    expect(call).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(result.units[0].failureReason).toBe("non_zero_exit");
+  });
+
+  test("a retried unit that already completed is reused on resume, not re-dispatched", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    let call = 0;
+    const flaky = async (): Promise<UnitDispatchResult> => {
+      call++;
+      return call === 1
+        ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
+        : { ok: true, text: "finally" };
+    };
+    const stepPlan = plan(RETRY_WF).steps[0];
+    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: {}, evidence: {} };
+    const first = await executeStepPlan(stepPlan, { ...ctx, dispatcher: flaky });
+    expect(first.ok).toBe(true);
+    expect(call).toBe(2); // attempt 0 failed, ~r1 succeeded
+
+    const second = await executeStepPlan(stepPlan, {
+      ...ctx,
+      dispatcher: async () => {
+        throw new Error("must not re-dispatch");
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(second.units[0].unitId).toBe("fetch~r1");
+    expect(second.units[0].text).toBe("finally");
   });
 });
 
@@ -463,19 +622,19 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
 });
 
 describe("runWorkflowSteps — engine loop over the gated spine", () => {
-  const TWO_STEP_WF = `# Workflow: Demo
-
-## Step: First
-Step ID: first
-
-### Instructions
-Do first.
-
-## Step: Second
-Step ID: second
-
-### Instructions
-Do second with {{params.flavor}}.
+  const TWO_STEP_WF = `version: 1
+name: Demo
+params:
+  flavor: { type: string }
+steps:
+  - id: first
+    title: First
+    unit:
+      instructions: Do first.
+  - id: second
+    title: Second
+    unit:
+      instructions: Do second with \${{ params.flavor }}.
 `;
 
   test("executes every step through completeWorkflowStep until the run completes", async () => {
@@ -509,6 +668,7 @@ Do second with {{params.flavor}}.
 
   test("a failing step marks the run failed and stops the loop", async () => {
     seedRun({
+      params: { flavor: "vanilla" },
       steps: [
         { id: "first", title: "First" },
         { id: "second", title: "Second" },
@@ -552,30 +712,18 @@ Do second with {{params.flavor}}.
     expect(dispatches).toBe(0);
   });
 
-  test("asserts Depends On edges before dispatching (peer review #6)", async () => {
+  test("asserts reserved dependsOn edges before dispatching (peer review #6)", async () => {
+    // No frontend emits dependsOn today, but a frozen plan may carry the
+    // reserved edges — the engine still honors them as an ordering contract.
     seedRun({
+      params: { flavor: "vanilla" },
       steps: [
         { id: "first", title: "First" },
         { id: "second", title: "Second" },
       ],
     });
-    const OUT_OF_ORDER = `# Workflow: D
-
-## Step: First
-Step ID: first
-
-### Depends On
-- second
-
-### Instructions
-x
-
-## Step: Second
-Step ID: second
-
-### Instructions
-y
-`;
+    const outOfOrder = plan(TWO_STEP_WF);
+    outOfOrder.steps[0] = { ...outOfOrder.steps[0], dependsOn: ["second"] };
     let dispatches = 0;
     await expect(
       runWorkflowSteps({
@@ -584,14 +732,14 @@ y
           dispatches++;
           return { ok: true, text: "must not run" };
         },
-        loadPlan: async () => plan(OUT_OF_ORDER),
+        loadPlan: async () => outOfOrder,
       }),
     ).rejects.toThrow(/depends on step "second"/);
     expect(dispatches).toBe(0);
   });
 
   test("the lifetime unit cap is seeded from the run's journal (peer review #4)", async () => {
-    seedRun({ steps: [{ id: "first", title: "First" }] });
+    seedRun({ params: { flavor: "vanilla" }, steps: [{ id: "first", title: "First" }] });
     const { LIFETIME_UNIT_CAP } = await import("../../src/workflows/exec/scheduler");
     await withWorkflowRunsRepo((repo) => {
       for (let i = 0; i < LIFETIME_UNIT_CAP; i++) {
@@ -619,51 +767,46 @@ y
     expect(result.run.status).toBe("failed");
   });
 
+  const ROUTED_WF = `version: 1
+name: Router
+steps:
+  - id: classify
+    title: Classify
+    unit:
+      instructions: Classify.
+      output:
+        type: object
+        properties: { kind: { type: string } }
+        required: [kind]
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ steps.classify.output.units[0].result.kind }}
+      when: { bug: fix-bug, feature: build-feature }
+  - id: fix-bug
+    title: Fix bug
+    unit:
+      instructions: Fix it.
+  - id: build-feature
+    title: Build feature
+    unit:
+      instructions: Build it.
+  - id: wrap-up
+    title: Wrap up
+    unit:
+      instructions: Wrap up.
+`;
+
   test("routing: the selected branch runs, unselected targets are auto-skipped", async () => {
     seedRun({
       steps: [
         { id: "classify", title: "Classify" },
+        { id: "triage", title: "Triage" },
         { id: "fix-bug", title: "Fix bug" },
         { id: "build-feature", title: "Build feature" },
         { id: "wrap-up", title: "Wrap up" },
       ],
     });
-    const ROUTED_WF = `# Workflow: R
-
-## Step: Classify
-Step ID: classify
-
-### Route
-input: kind
-when: bug => fix-bug
-when: feature => build-feature
-
-### Instructions
-Classify.
-
-### Schema
-\`\`\`json
-{ "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"] }
-\`\`\`
-
-## Step: Fix bug
-Step ID: fix-bug
-
-### Instructions
-Fix it.
-
-## Step: Build feature
-Step ID: build-feature
-
-### Instructions
-Build it.
-
-## Step: Wrap up
-Step ID: wrap-up
-
-### Instructions
-Wrap up.
-`;
     const dispatchedNodes: string[] = [];
     const result = await runWorkflowSteps({
       target: RUN_ID,
@@ -675,93 +818,101 @@ Wrap up.
     });
 
     expect(result.done).toBe(true);
-    // build-feature must never dispatch; classify, fix-bug, wrap-up do.
+    // The route step dispatches nothing; build-feature must never dispatch.
     expect(dispatchedNodes).toEqual(["classify", "fix-bug", "wrap-up"]);
 
     const status = await getWorkflowStatus(RUN_ID);
     const byId = new Map(status.workflow.steps.map((s) => [s.id, s]));
     expect(byId.get("classify")?.status).toBe("completed");
+    expect(byId.get("triage")?.status).toBe("completed");
     expect(byId.get("fix-bug")?.status).toBe("completed");
     expect(byId.get("build-feature")?.status).toBe("skipped");
     expect(byId.get("wrap-up")?.status).toBe("completed");
-    // The routed step's evidence records the decision.
-    expect(byId.get("classify")?.evidence?.route).toEqual({ input: "kind", value: "bug", selected: "fix-bug" });
+    // The route step's evidence records the decision.
+    expect(byId.get("triage")?.evidence?.route).toEqual({
+      input: "${{ steps.classify.output.units[0].result.kind }}",
+      value: "bug",
+      selected: "fix-bug",
+    });
   });
 
   test("routing: falls back to default, and an unroutable value fails the step", async () => {
-    const ROUTED_WF = `# Workflow: R
-
-## Step: Classify
-Step ID: classify
-
-### Route
-input: kind
-when: bug => fix-bug
-default: triage
-
-### Instructions
-Classify.
-
-### Schema
-\`\`\`json
-{ "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"] }
-\`\`\`
-
-## Step: Fix bug
-Step ID: fix-bug
-
-### Instructions
-Fix it.
-
-## Step: Triage
-Step ID: triage
-
-### Instructions
-Triage it.
+    const DEFAULTED_WF = `version: 1
+name: Router
+steps:
+  - id: classify
+    title: Classify
+    unit:
+      instructions: Classify.
+      output:
+        type: object
+        properties: { kind: { type: string } }
+        required: [kind]
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ steps.classify.output.units[0].result.kind }}
+      when: { bug: fix-bug }
+      default: manual-triage
+  - id: fix-bug
+    title: Fix bug
+    unit:
+      instructions: Fix it.
+  - id: manual-triage
+    title: Manual triage
+    unit:
+      instructions: Triage it.
 `;
-    const NO_DEFAULT_WF = ROUTED_WF.replace("default: triage\n", "");
 
-    // Default fallback: "question" matches no branch → triage runs, fix-bug skipped.
+    // Default fallback: "question" matches no branch → manual-triage runs, fix-bug skipped.
     seedRun({
       steps: [
         { id: "classify", title: "Classify" },
-        { id: "fix-bug", title: "Fix bug" },
         { id: "triage", title: "Triage" },
+        { id: "fix-bug", title: "Fix bug" },
+        { id: "manual-triage", title: "Manual triage" },
       ],
     });
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async (req) =>
         req.nodeId === "classify" ? { ok: true, text: '{"kind": "question"}' } : { ok: true, text: "done" },
-      loadPlan: async () => plan(ROUTED_WF),
+      loadPlan: async () => plan(DEFAULTED_WF),
     });
     expect(result.done).toBe(true);
     const status = await getWorkflowStatus(RUN_ID);
     const byId = new Map(status.workflow.steps.map((s) => [s.id, s]));
     expect(byId.get("fix-bug")?.status).toBe("skipped");
-    expect(byId.get("triage")?.status).toBe("completed");
+    expect(byId.get("manual-triage")?.status).toBe("completed");
 
-    // Unroutable: no matching branch and no default → the routing step fails.
+    // Unroutable: no matching branch and no default → the route step fails.
+    const NO_DEFAULT_WF = DEFAULTED_WF.replace("      default: manual-triage\n", "").replace(
+      /^ {2}- id: manual-triage[\s\S]*$/m,
+      "",
+    );
     fs.rmSync(tmpDir, { recursive: true, force: true });
     fs.mkdirSync(tmpDir, { recursive: true });
     seedRun({
       steps: [
         { id: "classify", title: "Classify" },
+        { id: "triage", title: "Triage" },
         { id: "fix-bug", title: "Fix bug" },
       ],
     });
     const failed = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"kind": "question"}' }),
-      loadPlan: async () => plan(NO_DEFAULT_WF.replace(/## Step: Triage[\s\S]*$/, "")),
+      loadPlan: async () => plan(NO_DEFAULT_WF),
     });
-    expect(failed.executed[0].ok).toBe(false);
-    expect(failed.executed[0].summary).toContain("question");
+    const triageReport = failed.executed.find((s) => s.stepId === "triage");
+    expect(triageReport?.ok).toBe(false);
+    expect(triageReport?.summary).toContain("question");
     expect(failed.run.status).toBe("failed");
   });
 
   test("maxSteps bounds the loop", async () => {
     seedRun({
+      params: { flavor: "vanilla" },
       steps: [
         { id: "first", title: "First" },
         { id: "second", title: "Second" },

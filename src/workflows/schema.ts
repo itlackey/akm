@@ -42,78 +42,12 @@ export interface WorkflowCompletionCriterion {
   source: SourceRef;
 }
 
-/** Execution backend for a step's units. `inherit` defers to the run default. */
-export type WorkflowRunnerKind = "llm" | "agent" | "sdk" | "inherit";
-
-/** How a fan-out step's unit results are combined into the step evidence. */
-export type WorkflowFanOutReducer = "collect" | "vote";
-
-/**
- * Fan-out declaration (`### Fan-out`): run the step's instructions once per
- * item of a list named by `over` (a run param or a prior step's evidence key).
- */
-export interface WorkflowFanOut {
-  over: string;
-  /** Max concurrent units for this step; capped by the engine's global limit. */
-  concurrency?: number;
-  /** Result reducer. Default: collect. */
-  reducer?: WorkflowFanOutReducer;
-}
-
-/** One `when: <value> => <step-id>` branch of a `### Route` declaration. */
-export interface WorkflowRouteBranch {
-  match: string;
-  stepId: string;
-}
-
-/**
- * Routing declaration (`### Route`) — the *routing* orchestration pattern.
- * After the step completes, the engine reads the `input` value (from the
- * step's own structured result, run params, or prior evidence), selects the
- * matching branch (or `defaultStepId`), and auto-skips every other branch
- * target when the sequential spine reaches it.
- */
-export interface WorkflowStepRoute {
-  input: string;
-  branches: WorkflowRouteBranch[];
-  defaultStepId?: string;
-}
-
-/**
- * Optional orchestration declared on a step (P1 extended grammar). Steps that
- * declare none behave exactly as before — a single manual/agent-driven step.
- */
-export interface WorkflowStepOrchestration {
-  /** Execution backend (`### Runner`, first line). Default: inherit. */
-  runner?: WorkflowRunnerKind;
-  /** Agent/LLM profile name (`### Runner`, `profile:` line). */
-  profile?: string;
-  /** Model alias or exact id (`### Model`), resolved per-harness at dispatch. */
-  model?: string;
-  /** Per-unit timeout in ms (`### Timeout`); null = explicitly no timeout. */
-  timeoutMs?: number | null;
-  /** Fan-out declaration (`### Fan-out`). */
-  fanOut?: WorkflowFanOut;
-  /** JSON Schema each unit result must validate against (`### Schema`). */
-  schema?: Record<string, unknown>;
-  /** Env asset refs injected into the dispatched unit env (`### Env`). */
-  env?: string[];
-  /** Non-linear ordering edges (`### Depends On`), validated against step ids. */
-  dependsOn?: string[];
-  /** Branch routing after this step completes (`### Route`). */
-  route?: WorkflowStepRoute;
-  /** Anchor of the first orchestration subsection, for editor jumps. */
-  source: SourceRef;
-}
-
 export interface WorkflowStep {
   id: string;
   title: string;
   sequenceIndex: number;
   instructions: WorkflowInstructionBlock;
   completionCriteria?: WorkflowCompletionCriterion[];
-  /** Present only when the step declares orchestration subsections. */
-  orchestration?: WorkflowStepOrchestration;
   source: SourceRef;
 }
 

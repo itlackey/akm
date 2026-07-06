@@ -104,10 +104,11 @@ export interface WorkflowParameter {
 }
 
 /**
- * Read-only projection of a step's orchestration declarations for `show`
- * (P1 extended grammar). Values mirror the parsed subsections minus source
- * anchors; the full JSON Schema is reduced to a presence flag to keep show
- * output compact.
+ * Read-only projection of a YAML workflow-program step's orchestration
+ * declarations for `show` (`summarizeProgramStepOrchestration` in
+ * src/workflows/program/project.ts). `fanOut.over` and `route.input` carry
+ * raw `${{ … }}` expressions; the full JSON Schema is reduced to a presence
+ * flag to keep show output compact.
  */
 export interface WorkflowStepOrchestrationSummary {
   runner?: string;
@@ -117,7 +118,6 @@ export interface WorkflowStepOrchestrationSummary {
   fanOut?: { over: string; concurrency?: number; reducer?: string };
   hasSchema?: boolean;
   env?: string[];
-  dependsOn?: string[];
   route?: { input: string; branches: Array<{ match: string; stepId: string }>; defaultStepId?: string };
 }
 
@@ -127,7 +127,7 @@ export interface WorkflowStepDefinition {
   instructions: string;
   completionCriteria?: string[];
   sequenceIndex?: number;
-  /** Present only when the step declares orchestration subsections. */
+  /** Present only for YAML workflow-program steps that declare orchestration. */
   orchestration?: WorkflowStepOrchestrationSummary;
 }
 

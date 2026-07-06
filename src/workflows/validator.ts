@@ -24,66 +24,6 @@ export function runSemanticChecks(
   checkFrontmatterKeys(frontmatterData, frontmatterEndLine, errors);
   checkStepIdFormat(draft, errors);
   checkDuplicateStepIds(draft, errors);
-  checkDependsOnReferences(draft, errors);
-  checkRouteReferences(draft, errors);
-}
-
-/**
- * `### Route` targets must be existing, LATER steps: routing only ever skips
- * forward along the sequential spine — a backward route would target a step
- * that already ran (or will never re-run).
- */
-function checkRouteReferences(draft: WorkflowDocument, errors: WorkflowError[]): void {
-  const stepIndex = new Map(draft.steps.map((step) => [step.id, step.sequenceIndex]));
-  for (const step of draft.steps) {
-    const route = step.orchestration?.route;
-    if (!route) continue;
-    const line = step.orchestration?.source.start ?? step.source.start;
-    const targets = [...route.branches.map((b) => b.stepId), ...(route.defaultStepId ? [route.defaultStepId] : [])];
-    for (const target of targets) {
-      if (target === step.id) {
-        errors.push({ line, message: `Step "${step.id}" cannot route to itself.` });
-        continue;
-      }
-      const targetIndex = stepIndex.get(target);
-      if (targetIndex === undefined) {
-        errors.push({
-          line,
-          message: `Step "${step.id}" routes to unknown step "${target}". "### Route" targets must name existing Step IDs.`,
-        });
-        continue;
-      }
-      if (targetIndex <= step.sequenceIndex) {
-        errors.push({
-          line,
-          message: `Step "${step.id}" routes to "${target}", which comes before it. Route targets must appear after the routing step.`,
-        });
-      }
-    }
-  }
-}
-
-/** `### Depends On` edges must reference existing, other steps. */
-function checkDependsOnReferences(draft: WorkflowDocument, errors: WorkflowError[]): void {
-  const ids = new Set(draft.steps.map((step) => step.id));
-  for (const step of draft.steps) {
-    for (const dep of step.orchestration?.dependsOn ?? []) {
-      const line = step.orchestration?.source.start ?? step.source.start;
-      if (!ids.has(dep)) {
-        errors.push({
-          line,
-          message: `Step "${step.id}" depends on unknown step "${dep}". "### Depends On" bullets must name existing Step IDs.`,
-        });
-        continue;
-      }
-      if (dep === step.id) {
-        errors.push({
-          line,
-          message: `Step "${step.id}" cannot depend on itself.`,
-        });
-      }
-    }
-  }
 }
 
 function checkFrontmatterKeys(data: Record<string, unknown>, fmEndLine: number, errors: WorkflowError[]): void {
