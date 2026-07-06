@@ -181,6 +181,8 @@ interface VerdictReport {
   recommendation: string;
   thresholds: { acceptRatio: number; maxReversion: number; minRetrievalDelta: number; minDecided: number };
   cohorts: { treatmentRefs: number; controlRefs: number; treatmentSource: string; treatmentFile: string };
+  /** 06-M3: pending count across the whole audited-autonomous proposal queue. */
+  queue: { pendingProposals: number };
   metrics: {
     acceptByCohort: { proactive: AcceptStats; reactive: AcceptStats };
     retrievalQuality: { baselineRunId: string | null; currentRunId: string | null; delta: number | null; note?: string };
@@ -558,6 +560,7 @@ function main(): number {
       treatmentSource: usedFallback ? "pilot-file-fallback (eligibilitySource absent on some/all proposals)" : "eligibilitySource",
       treatmentFile,
     },
+    queue: { pendingProposals: proposals.filter((p) => p.status === "pending").length },
     metrics: {
       acceptByCohort: { proactive, reactive },
       retrievalQuality: {
@@ -627,6 +630,16 @@ function renderMarkdown(r: VerdictReport): string {
     lines.push("## Breaches");
     lines.push("");
     for (const b of r.breaches) lines.push(`- ${b}`);
+    lines.push("");
+  }
+  // 06-M3: make the audited-autonomous rung visible — nothing in this queue
+  // waits for a human, so a non-zero pending count is worth a glance, not an
+  // approval backlog.
+  if (r.queue.pendingProposals > 0) {
+    lines.push(
+      `**Pending proposals: ${r.queue.pendingProposals}** (audited-autonomous queue — auto-resolved by gates/TTL; ` +
+        "inspect with `akm proposal list` if curious)",
+    );
     lines.push("");
   }
   lines.push("## Cohorts");

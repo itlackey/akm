@@ -557,7 +557,8 @@ export async function drainProposals(
     // `auto-rejected` by a prior gate run (e.g. the improve confidence gate).
     // Overwriting an authoritative rejection with `auto-accepted` would corrupt
     // the audit trail and silently promote content the gate explicitly rejected.
-    // Such proposals remain pending for manual review (or TTL expiry).
+    // Such proposals remain pending until the TTL expires them — the queue is
+    // audited-autonomous; no manual-review rung exists (06-M3).
     if (proposal.gateDecision?.outcome === "auto-rejected") continue;
 
     const decision = classifyProposal(proposal, opts.policy, opts.maxDiffLines);
