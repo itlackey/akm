@@ -749,3 +749,42 @@ directly-affected closed issues: **#367** (M-1 contradiction pass → the mutual
 fixed by 03's one-directed-edge change), **#374** (R-5 lesson_quality_gate on reflect → hardened by 07
 P0-2 fail-CLOSED), **#499** (per-run wallTime → its test flake fixed by #707). No currently-OPEN issue is
 completed by this work (#692 R2-salience-gate remains genuinely open; the rest are unrelated features).
+
+## EXECUTION BATCH 3 (2026-07-05) — unblocked exec batch + Group B (owner-approved)
+
+Branch `meta-review-unblocked-exec` → **PR #712** (A2–A8, one gate-green commit each): 08-F3
+wrapper-fallback delete (+host uninstall of stale 0.7.4), 08 `surfaces` health advisories complete
+(secret-file-perms / binary-config-skew / orphan-stores / egress-endpoints), 08-F6 `akm workflow
+abandon` verb (staleness WHERE-clause on `--active` considered and REJECTED), 10-Q3 staleness-detect
+RETIRED (net −974 LOC; `index.stalenessDetection` stays schema-tolerated, migration drops the legacy
+key), 07-P1.3 unattended-improve reflect PINNED to the tool-less LLM runner (fail-CLOSED without
+defaults.llm; live cron unaffected — all profiles reflect mode "llm"), 06-M3 audited-autonomous
+relabel + pending>0 in the verdict post, 09's per-lane 30d GRR table in proactive-verdict
+(COALESCE lane key, origin-strip equi-join, post-G5 improve/task self-reads excluded).
+
+**Group B EXECUTED same day (owner per-path approval + "direct delete"):** A4-live = all 22 stale
+2026-05-12 Test Flow runs abandoned. Stash git: `5aa3c4e5` B1 versioned config.json copy
+(`.meta/config.json`, secret-scanned); `64de7994` B3 = 498 curated assets `/home/founder3`→`~`
+(sessions/ + tasks/ excluded on purpose); `5ee76852` B4 = 63 falsified entries deleted (47
+version/pin/sync + 4 PR-682 + 12 contradiction-gate) → 3 corrected entries + auth-roadmap marked
+HISTORICAL + `.meta/index.md` filled. B2 = gio-trashed 0-byte decoy state.db, 2.77GB
+state.db.bak-20260614T111545(+shm/wal), both orphan config-backups dirs, 18 config.json.bak-*;
+env/secrets chmod 600/700. Index reconciled + verified. **FINDING CORRECTION:** `origin/release/0.8.0`
+EXISTS (release/0.8.0–0.8.2 + hotfix/0.8.3–0.8.14 all live) — finding 04's "no release/0.8.0 branch"
+claim was wrong; the corrected truth lives in `knowledge:akm-cli-version-truth`.
+
+**Also executed by owner 2026-07-05 (closes two shutdown-batch items early):** E2 extract cron cut
+48×/day → nightly (post 0% GRR receipt); 06-M2 `update --all` cron DELETED (crontab verified clean).
+
+## RELEASE PLAN (owner, 2026-07-05 — SUPERSEDES the "no 0.9.x until Group B" gate)
+
+Group B is complete, so the stable gate moves to the metrics window:
+
+1. **Cut `0.9.0-rc.0` NOW on the `next` dist-tag** (ends the beta.N series; includes PR #712).
+2. **Increment `rc.N` on `next` for every bug fix / tuning change** through the remaining sequence:
+   clean-week GRR before-baseline (~2026-07-12, beta.58+ events) → minting-shutdown batch →
+   **+30 clean days of `improve_cycle_metrics`** → final tuning informed by real usage metrics.
+3. **`0.9.0` STABLE ships only after the 30-day collection + tuning completes**, carrying the final
+   tuning — that release (and only that release) repoints npm `latest` off 0.8.14.
+4. The 12-D2 freeze still holds: rc releases carry bug fixes and *measured* tuning from the window,
+   never new speculative salience/tuning work.
