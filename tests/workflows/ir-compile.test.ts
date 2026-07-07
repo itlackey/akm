@@ -576,7 +576,13 @@ describe("computePlanHash", () => {
 
   test("hash is key-order independent (canonical sorted-keys JSON)", () => {
     const plan = compileProgramOk(PROGRAM_YAML);
-    const reordered = { steps: plan.steps, title: plan.title, params: plan.params, irVersion: plan.irVersion };
+    const reordered = {
+      steps: plan.steps,
+      title: plan.title,
+      paramSchemas: plan.paramSchemas,
+      params: plan.params,
+      irVersion: plan.irVersion,
+    };
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(plan));
     expect(computePlanHash(reordered as WorkflowPlanGraph)).toBe(computePlanHash(plan));
   });

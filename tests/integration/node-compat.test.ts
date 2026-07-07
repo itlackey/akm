@@ -750,3 +750,115 @@ describe("workflow smoke parity", () => {
     expect(statusJson?.run?.status).toBe("active");
   });
 });
+
+// ── workflow LLM import-site parity (reviewer #9 / test ask 11) ────────────────
+//
+// Reviewer #9: bare `require(...)` in ESM modules throws
+// `ReferenceError: require is not defined` under Node. The offending sites were
+// on the workflow LLM paths — the summary-validation judge
+// (`buildDefaultSummaryJudge` → `getDefaultLlmConfig` + `await import llm/client`)
+// and the native unit dispatcher (`resolveUnitRunner`/`requireDefaultLlm` →
+// `await import` of `integrations/agent/config` and `core/config/config`). These
+// smokes drive those paths on the Node runtime with an LLM configured at a
+// closed port so the fetch fails FAST (ECONNREFUSED, no hang): the bar is that
+// the fixed import sites LOAD under Node — never a `require is not defined`.
+
+/** The exact ESM-boundary symptom the bare-`require` fix removes. */
+const REQUIRE_NOT_DEFINED = "require is not defined";
+
+/** Configure a default LLM profile pointing at a closed local port (fast ECONNREFUSED). */
+function configureDeadLlm(): void {
+  // The profile must be set atomically: `endpoint` and `model` are both required,
+  // so setting either leaf alone fails whole-config validation.
+  const set = nodeRun(
+    ["config", "set", "profiles.llm.default", '{"endpoint":"http://127.0.0.1:1","model":"smoke-model"}'],
+    nodeEnv,
+  );
+  assertNoBoundaryLeak(set, "config set llm");
+  expect(set.status).toBe(0);
+}
+
+/** Write a one-step workflow WITH completion criteria so the summary judge fires. */
+function writeJudgeWorkflow(name: string): void {
+  const file = path.join(stashDir, "workflows", `${name}.md`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    [
+      `# Workflow: ${name}`,
+      "",
+      "## Step: Only Step",
+      "Step ID: only-step",
+      "",
+      "### Instructions",
+      "Do the smoke work.",
+      "",
+      "### Completion Criteria",
+      "- the work is done",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+describe("workflow LLM import-site parity (reviewer #9)", () => {
+  afterEach(() => cleanup());
+
+  test.skipIf(!ENABLED)(
+    "the summary-judge LLM import path loads under Node (fails open, no require ReferenceError)",
+    () => {
+      setupStorage();
+      configureDeadLlm();
+      writeJudgeWorkflow("judge-smoke");
+
+      const start = nodeRun(["workflow", "start", "workflow:judge-smoke"], nodeEnv);
+      assertNoBoundaryLeak(start, "judge start");
+      expect(start.status).toBe(0);
+      const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
+      expect(typeof runId).toBe("string");
+
+      // `workflow complete` builds the DEFAULT summary judge (getDefaultLlmConfig)
+      // and — because the step has completion criteria — invokes it, hitting the
+      // `await import("../../llm/client")` site that was a bare `require`. The
+      // dead endpoint makes chatCompletion fail; the gate is fail-open, so the
+      // step completes and the command exits 0. The point is the import LOADED.
+      const done = nodeRun(
+        ["workflow", "complete", runId as string, "--step", "only-step", "--summary", "Did the smoke work fully."],
+        nodeEnv,
+      );
+      assertNoBoundaryLeak(done, "judge complete");
+      expect(done.stdout + done.stderr).not.toContain(REQUIRE_NOT_DEFINED);
+      expect(done.status).toBe(0);
+    },
+    60_000,
+  );
+
+  test.skipIf(!ENABLED)(
+    "the native unit-dispatch config imports load under Node (no require ReferenceError)",
+    () => {
+      setupStorage();
+      configureDeadLlm();
+      writeJudgeWorkflow("dispatch-smoke");
+
+      const start = nodeRun(["workflow", "start", "workflow:dispatch-smoke"], nodeEnv);
+      assertNoBoundaryLeak(start, "dispatch start");
+      expect(start.status).toBe(0);
+      const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
+      expect(typeof runId).toBe("string");
+
+      // `workflow run` drives the native engine: `defaultUnitDispatcher` →
+      // `resolveUnitRunner`/`requireDefaultLlm` reach the `await import` sites for
+      // `core/config/config` (and, for agent profiles, `integrations/agent/config`)
+      // that were bare `require`s. With the dead endpoint the unit dispatch fails
+      // (the run does not complete), but the import sites must LOAD without a
+      // `require is not defined` — that is the whole regression.
+      const run = nodeRun(["workflow", "run", runId as string], nodeEnv);
+      assertNoBoundaryLeak(run, "workflow run");
+      expect(run.stdout + run.stderr).not.toContain(REQUIRE_NOT_DEFINED);
+      // A failed unit dispatch is a normal outcome here (exit 0 with a failed run
+      // report, or a non-zero error exit) — but never an ESM boundary crash.
+      expect(run.status).not.toBe(-1);
+    },
+    60_000,
+  );
+});

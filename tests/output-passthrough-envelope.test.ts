@@ -79,6 +79,7 @@ describe("passthrough envelope stamping (#484)", () => {
     const brief = {
       ok: true,
       run: { id: "r1", status: "active" },
+      spineToken: "r1#build#l1#2026-01-01T00:00:00Z:u0",
       active: true,
       workList: { isFanOut: false, reducer: null, itemCount: 0, units: [] },
       reportGuidance: { checkin: "c", failure: "f", note: "n" },
@@ -99,6 +100,7 @@ describe("passthrough envelope stamping (#484)", () => {
         "run",
         "schemaVersion",
         "shape",
+        "spineToken",
         "staleUnits",
         "warnings",
         "workList",

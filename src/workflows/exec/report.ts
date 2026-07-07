@@ -49,8 +49,15 @@ import {
   type WorkflowRunUnitStatus,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
+import { assertRunParamsSatisfyPlan } from "../ir/params";
 import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
-import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
+import { PROGRAM_RETRY_REASONS } from "../program/schema";
+import {
+  completeWorkflowStep,
+  getNextWorkflowStep,
+  snapshotRunForDriver,
+  type WorkflowNextResult,
+} from "../runtime/runs";
 import { UNIT_STALE_MS } from "../runtime/unit-checkin";
 import type { SummaryJudge } from "../validate-summary";
 import { buildLease, resolveRunId } from "./brief";
@@ -81,6 +88,15 @@ export interface ReportUnitInput {
   /** Content-derived unit id from `brief` (the BASE id — copy it verbatim). */
   unitId: string;
   status: "completed" | "failed" | "running";
+  /**
+   * Optional spine guard (PR #714 review round 2, #14): the step id the driver
+   * BELIEVES is active (echoed from the `brief` it planned against, embedded in
+   * every brief `report` command as `--expect-step`). When the run's active step
+   * no longer matches — a concurrent report/run/manual completion moved the
+   * spine between brief and report — the report is refused with a clear message
+   * instead of silently recording against the wrong step.
+   */
+  expectStep?: string;
   /**
    * Raw result payload. For a schema unit it MUST be valid JSON matching the
    * unit's output schema; otherwise it is stored as text. Absent for `running`
@@ -176,18 +192,13 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   const nowIso = nowFn().toISOString();
 
   const runId = await resolveRunId(input.target);
-  const next = await getNextWorkflowStep(runId);
-
-  const { planJson, planHash, leaseHolder, leaseUntil, units } = await withWorkflowRunsRepo((repo) => {
-    const row = repo.getRunById(runId);
-    return {
-      planJson: row?.plan_json ?? null,
-      planHash: row?.plan_hash ?? null,
-      leaseHolder: row?.engine_lease_holder ?? null,
-      leaseUntil: row?.engine_lease_until ?? null,
-      units: repo.getUnitsForRun(runId),
-    };
-  });
+  // #14: read the spine, run row, and unit journal in ONE snapshot so the guards
+  // below see a consistent point-in-time state (same fix as `brief`).
+  const { next, run: runRow, units } = await snapshotRunForDriver(runId);
+  const planJson = runRow.plan_json;
+  const planHash = runRow.plan_hash;
+  const leaseHolder = runRow.engine_lease_holder;
+  const leaseUntil = runRow.engine_lease_until;
 
   // Refuse a non-active run: there is no work-list to report against.
   if (next.run.status !== "active" || next.done) {
@@ -212,7 +223,24 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     throw new UsageError(`Workflow run ${runId} is active but has no current step to report against.`);
   }
 
+  // #14: the optional spine guard. `brief` embeds `--expect-step <activeStep>` in
+  // every report command; if the active step has since changed, refuse rather
+  // than record against a step the driver did not plan against.
+  if (input.expectStep !== undefined && next.step.id !== input.expectStep) {
+    throw new UsageError(
+      `Workflow run ${runId} is now on step "${next.step.id}", not "${input.expectStep}" (--expect-step). The spine ` +
+        `moved since you briefed it — a concurrent report/run/manual completion advanced the run. Re-run ` +
+        `\`akm workflow brief ${runId}\` and report against the current step.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+
   const plan = loadFrozenPlan(runId, planJson, planHash);
+  // Reviewer #12: the journaled params row must still satisfy the frozen param
+  // schemas before report resolves any unit prompt from it — a violation is
+  // post-start corruption, refused loudly (mirrors the frozen-plan hash check
+  // and the tampered-params replay-divergence path).
+  assertRunParamsSatisfyPlan(runId, plan, next.run.params ?? {});
 
   // Resolve the step the driver should actually report against. If the spine is
   // parked on a NON-DISPATCHING step — a route-only step, an empty fan-out
@@ -1073,6 +1101,35 @@ function loadFrozenPlan(runId: string, planJson: string | null, planHash: string
   return parseFrozenPlan(runId, planJson, planHash);
 }
 
+/**
+ * Normalize a driver-supplied `--failure-reason` to the persisted taxonomy (PR
+ * #714 review round 2, #16). An external driver can type ANY string; storing it
+ * verbatim would let an arbitrary token masquerade as a first-class failure
+ * vocabulary and (worse) accidentally match a workflow's `retry.on`. So:
+ *
+ *   - an EMPTY/absent reason → the neutral default `reported_failure`;
+ *   - a reason IN the canonical taxonomy ({@link PROGRAM_RETRY_REASONS}, the
+ *     exact `AgentFailureReason` set `retry.on` accepts) → stored VERBATIM, so a
+ *     driver reporting e.g. `timeout` participates in retry semantics identically
+ *     to an engine-dispatched unit;
+ *   - anything ELSE → namespaced under `external:<slug>` (lowercase, `[a-z0-9_-]`,
+ *     clipped). An `external:*` value is BY CONSTRUCTION outside the taxonomy, so
+ *     `retry.on` (which only lists taxonomy reasons) can never fire on it — an
+ *     unknown external reason is recorded for observability without ever
+ *     triggering retry.
+ */
+export function normalizeFailureReason(raw: string | undefined): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return "reported_failure";
+  if ((PROGRAM_RETRY_REASONS as readonly string[]).includes(trimmed)) return trimmed;
+  const slug = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return `external:${slug || "unknown"}`;
+}
+
 /** Validate + shape the reported result into what `finishUnit` persists. */
 function prepareResult(
   input: ReportUnitInput,
@@ -1081,7 +1138,7 @@ function prepareResult(
   if (input.status === "failed") {
     return {
       resultJson: input.resultRaw !== undefined && input.resultRaw !== "" ? JSON.stringify(input.resultRaw) : null,
-      failureReason: input.failureReason ?? "reported_failure",
+      failureReason: normalizeFailureReason(input.failureReason),
     };
   }
   // completed

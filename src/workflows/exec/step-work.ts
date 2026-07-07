@@ -603,7 +603,7 @@ export function reduceStepOutcomes(
   const tolerateFailures = onError === "continue";
   let ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
   let summary =
-    `Executed ${units.length} unit(s) for step "${plan.stepId}" via the native executor: ` +
+    `Executed ${units.length} unit(s) for step "${plan.stepId}" via workflow orchestration: ` +
     `${units.length - failed.length} succeeded, ${failed.length} failed.` +
     (failed.length > 0
       ? ` Failures${tolerateFailures ? " (recorded, on_error: continue)" : ""}: ${failed

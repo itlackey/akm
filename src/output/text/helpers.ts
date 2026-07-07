@@ -743,6 +743,31 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
     }
   }
 
+  // `workflow status --units` (#22): the honest per-unit diagnostic surface —
+  // failure_reason plus any journaled result/error text. Diagnostics only; the
+  // deterministic step evidence above is unaffected.
+  const units = Array.isArray(result.units) ? (result.units as Array<Record<string, unknown>>) : undefined;
+  if (units) {
+    lines.push("");
+    lines.push(units.length > 0 ? "units:" : "units: (none journaled)");
+    for (const unit of units) {
+      const id = typeof unit.unitId === "string" ? unit.unitId : "unknown";
+      const status = typeof unit.status === "string" ? unit.status : "unknown";
+      const node = typeof unit.nodeId === "string" ? unit.nodeId : "";
+      const attempts = typeof unit.attempts === "number" ? unit.attempts : undefined;
+      const suffix = attempts !== undefined && attempts > 1 ? `, attempt ${attempts}` : "";
+      lines.push(`  - ${id} [${node}] (${status}${suffix})`);
+      if (typeof unit.failureReason === "string" && unit.failureReason.trim()) {
+        lines.push(`    failure_reason: ${unit.failureReason}`);
+      }
+      if (typeof unit.diagnostic === "string" && unit.diagnostic.trim()) {
+        const diagLines = unit.diagnostic.split("\n");
+        lines.push(`    diagnostic: ${diagLines[0]}`);
+        for (const diagLine of diagLines.slice(1)) lines.push(`      ${diagLine}`);
+      }
+    }
+  }
+
   // Review C2: the check-in `continue` directive must survive plain-text
   // rendering — JSON consumers saw `checkin` but the text path dropped it.
   const checkinLine = formatWorkflowCheckinLine(result);

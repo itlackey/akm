@@ -226,10 +226,10 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     expect(result.done).toBe(true);
     expect(judged).toHaveLength(1);
     // The judge sees the REAL artifact (canonical JSON) with a one-line unit
-    // count — never the "via the native executor" machine summary.
+    // count — never the "via workflow orchestration" machine summary.
     expect(judged[0]).toContain('Step "extract" executed 1 unit(s) (1 succeeded, 0 failed).');
     expect(judged[0]).toContain('{"fact":"bun is fast"}');
-    expect(judged[0]).not.toContain("via the native executor");
+    expect(judged[0]).not.toContain("via workflow orchestration");
     // The persisted step summary is the judged artifact summary.
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.workflow.steps[0].summary).toContain('{"fact":"bun is fast"}');
@@ -271,7 +271,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     expect(result.done).toBe(true);
     expect(judgeCalls).toBe(0);
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].summary).toContain("via the native executor");
+    expect(status.workflow.steps[0].summary).toContain("via workflow orchestration");
     // No judge ran → no gate unit rows journaled.
     await withWorkflowRunsRepo((repo) => {
       expect(repo.getUnitsForStep(RUN_ID, "extract").filter((r) => r.node_id === "extract.gate")).toHaveLength(0);
@@ -709,6 +709,6 @@ describe("classic linear markdown path (stable contract)", () => {
     // No gate feedback block on first executions, machine summaries intact.
     expect(prompts.every((p) => !p.includes("Completion-gate feedback"))).toBe(true);
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps.every((s) => (s.summary ?? "").includes("via the native executor"))).toBe(true);
+    expect(status.workflow.steps.every((s) => (s.summary ?? "").includes("via workflow orchestration"))).toBe(true);
   });
 });

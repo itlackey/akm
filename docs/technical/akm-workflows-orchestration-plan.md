@@ -1317,3 +1317,11 @@ mismatch against the producer's declared schema).
   "Driving a run from any agent (brief/report)" in
   `docs/features/workflows.md`, the extended experimental bullet in
   `STABILITY.md`, and the `[Unreleased]` CHANGELOG entry.
+- **Owner-review hardening round. ✅ LANDED 2026-07-07.** The PR #714
+  owner-review passes tightened the R1–R4 surface without changing its
+  shape: plan-hash completeness, honest `report`/brief claims, gate/route
+  fail-loud on both the engine and driver surfaces, frozen param-schema
+  re-validation on replay, event-metadata hygiene (ids/status/enums only),
+  and the `akm workflow status --units` diagnostic surface (unit-row
+  failure reasons + result/error text kept OUT of the deterministic artifact
+  graph). Migration 009 (additive) lands the unit-claim columns.

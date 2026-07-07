@@ -8,190 +8,102 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Workflow orchestration engine (P0 + P1 of the orchestration plan,
-  experimental).** Workflows can now declare per-step orchestration —
-  `### Runner`, `### Model`, `### Timeout`, `### Fan-out` (with
-  `collect`/`vote` reducers), `### Schema`, `### Env`, `### Depends On`,
-  and `### Route` (classify-and-dispatch: branch on a step's structured
-  result, auto-skip unselected targets) —
-  and be executed engine-driven with the new **`akm workflow run`**: akm
-  compiles the markdown into a backend-agnostic Workflow Plan Graph IR
-  (`src/workflows/ir/`), fans each step's units out through a
-  semaphore-bounded scheduler (concurrency defaults to 1 per the
-  local-model LLM-defaults rule, capped at `min(16, cores − 2)`; per-run
-  lifetime unit cap seeded from the unit journal; per-unit timeout default
-  10 m enforced on every runner including llm), validates `### Schema`
-  output on every
-  runner via a `runStructured` retry-with-feedback loop, resolves `### Env`
-  bindings through the existing `akm env run` machinery (secret tokens,
-  dangerous-key policy, keys-only audit events), and records every unit in
-  the new `workflow_run_units` table (migration 004) behind a serialized
-  writer queue. Every dispatched unit gets a standard akm preamble (run/unit
-  ids, knowledge + env/secret + reporting contract). Steps advance strictly
-  through `completeWorkflowStep`, so completion-criteria gates are never
-  bypassed; unit lifecycle is observable via new
-  `workflow_unit_started`/`workflow_unit_finished` events. Linear workflows
-  compile and behave exactly as before. A conformance suite
-  (`tests/workflows/conformance/`) pins the golden compiled plans and
-  executed unit graphs so future backends (Claude Code delegation, cloud
-  delegate) must reproduce them; `akm show workflow:<name>` surfaces each
-  step's orchestration summary. See "Orchestrated steps" in
-  `docs/features/workflows.md` and `STABILITY.md` (Experimental).
-- **P2 harness adapters (orchestration plan).** Seven local coding-agent
-  CLIs are now first-class dispatch targets: Codex, Copilot CLI, Pi, Gemini,
-  Aider, Amazon Q, and OpenHands each get an `AgentCommandBuilder` +
-  result extractor under `src/integrations/harnesses/<id>/`, registered in
-  `HARNESS_REGISTRY` with the new descriptor fields (`pattern`,
-  `structuredOutput`, `resume` incl. `takesSessionId`, `identityEnv` /
-  `presenceEnv`, `resultExtractor`). Agent-identity detection and the
-  session-log provider list are now DERIVED from the registry (no more
-  hand-maintained parallel lists); presence-only flags (CODEX_SANDBOX,
-  GEMINI_CLI) infer the harness but never persist as a session id.
-  Harness-native unit session ids are journaled opportunistically on
-  `workflow_run_units` (migration 005) for future session-reuse.
+- **Workflow orchestration engine (experimental).** akm can now execute
+  multi-step workflows as deterministic **YAML programs**, driven either by a
+  native engine or by any agent session. This is a new, self-contained
+  surface; classic linear **markdown workflows and the stable workflow CLI
+  contract (`start`/`next`/`complete`/`status`/`list`) are unchanged**. What
+  ships:
+  - **Authoring.** Orchestrated workflows are YAML programs
+    (`workflows/*.yaml`, `version: 1`) validated against a published JSON
+    Schema (`schemas/akm-workflow.json`) by `akm workflow validate`; scaffold
+    one with `akm workflow template --yaml` or `akm workflow create
+    <name>.yaml`. A closed `${{ … }}` expression language (exactly
+    `params.<name>`, `steps.<id>.output.<path>`, `item`, `item_index`, parsed
+    once into an AST) wires steps together.
+  - **Compilation + frozen plans.** `akm workflow start` compiles the program
+    into a backend-agnostic Workflow Plan Graph IR (`src/workflows/ir/`) and
+    freezes it on the run row (`plan_json` + `plan_hash`); a run executes the
+    plan compiled at start, and edits to the source file require a new run.
+  - **Per-step orchestration.** A step can declare a runner, model, timeout,
+    fan-out (`map`/`over` with a `concurrency` cap and a `collect` | `vote`
+    reducer), a typed `output` JSON Schema (validated via a `runStructured`
+    retry-with-feedback loop), `env` bindings (resolved through the existing
+    `akm env run` machinery — secret tokens, dangerous-key policy, keys-only
+    audit events), classify-and-dispatch `route` steps, and `depends_on`
+    ordering.
+  - **Determinism + replay.** Journaled unit identity is content-derived
+    (`<step>:<sha256(item)[:12]>`, `:solo` for a single unit), so cached
+    results survive item-list reordering; a completed unit whose recorded
+    inputs differ on replan is a hard **replay-divergence** failure naming the
+    unit, never a silent re-dispatch. Every unit is recorded in the new
+    `workflow_run_units` table behind a serialized writer queue.
+  - **Execution (`akm workflow run`).** A semaphore-bounded scheduler fans a
+    step's units out (concurrency defaults to 1 per the local-model
+    LLM-defaults rule, capped at `min(16, cores − 2)`), enforces per-unit
+    timeouts (default 10 m) and run **budget ceilings** (`budget.max_tokens` /
+    `budget.max_units`, seeded from the journal so they span resumes), and
+    advances the run **strictly through `completeWorkflowStep`** so completion
+    gates are never bypassed. Every dispatched unit gets a standard akm
+    preamble (run/unit ids, knowledge + env/secret + reporting contract).
+  - **Typed artifacts + honest gates.** A step's promoted artifact is
+    validated against its declared `output` schema before completion; a
+    criteria-bearing gate judges that **artifact** (canonical JSON, clipped)
+    rather than machine prose, and each engine-driven evaluation is journaled
+    as a gate unit row. `gate.max_loops` bounds an evaluator-optimizer retry
+    loop (feedback threaded into re-dispatched unit prompts); `gate.required`
+    (or the run-wide `--require-gates`) makes a gate with no available judge
+    **block** for a human instead of failing open.
+  - **Failure policy.** Per-unit `on_error: fail | continue` (fail-fast
+    default) plus bounded `retry: { max, on: [<failure_reason>…] }` keyed on
+    the persisted failure taxonomy.
+  - **Isolation + leases.** `isolation: worktree` runs each file-mutating unit
+    in a fresh detached git worktree (journaled path; clean trees
+    auto-removed, dirty ones retained). A run **lease** (`engine_lease_*`)
+    ensures a run is driven by exactly one engine or one external driver at a
+    time; manual `complete` is refused while a live engine lease is held.
+  - **Harness-neutral driver protocol.** An orchestrated run can be driven by
+    ANY agent session (Claude Code, opencode, Codex, a human at a shell), not
+    only the native engine. **`akm workflow brief <run>`** is read-only (takes
+    no lease, mutates nothing) and emits the active step's expected work-list —
+    per-unit content-derived id, resolved instructions + input hash
+    (byte-identical to the engine's dispatch), output schema, env binding
+    NAMES only, and the exact `report` command lines. **`akm workflow report
+    <run> --unit <id> --status completed|failed|running`** is the one mutating
+    verb, ingesting a unit's result through the SAME shared step semantics the
+    engine uses (idempotent same-hash re-report, replay-divergence on a
+    differing hash, budget enforcement, schema validation, and the
+    artifact-judged gate/`max_loops` completion path). `--status running`
+    claims/heartbeats a unit for stale-driver detection without advancing the
+    spine; `--rerun` records a fresh attempt for a failed unit. The engine and
+    the brief/report surfaces are proven to produce **identical unit graphs**
+    (`tests/workflows/conformance/driver-parity.test.ts`).
+  - **Observability.** `akm workflow watch <run>` tails the run's `workflow_*`
+    / `workflow_unit_*` events as NDJSON (`--stream` foreground-polls to a
+    terminal status, no daemon); `akm workflow status --units` lists per-unit
+    diagnostics (failure reason + result/error text) without feeding them into
+    the deterministic artifact graph; unit lifecycle emits
+    `workflow_unit_started` / `workflow_unit_finished` events carrying
+    ids/status/enums only. `akm show workflow:<name>` summarizes each step's
+    orchestration.
+  - **Harness adapters.** Seven local coding-agent CLIs are first-class
+    dispatch targets — Codex, Copilot CLI, Pi, Gemini, Aider, Amazon Q, and
+    OpenHands — each registered in `HARNESS_REGISTRY` with a command builder +
+    result extractor; agent-identity detection and the session-log provider
+    list are derived from the registry, and harness-native session ids are
+    journaled opportunistically for future session reuse.
+  - **Storage.** Additive `workflow.db` migrations 004–009 (unit journal,
+    harness session ids, frozen plans + run leases, check-in heartbeats,
+    attempt counter, unit claims); migrations 001–003 are untouched and linear
+    workflows behave exactly as before.
+
+  See "Orchestrated steps" and "Driving a run from any agent" in
+  `docs/features/workflows.md`, the redesign addendum in
+  `docs/technical/akm-workflows-orchestration-plan.md`, and `STABILITY.md`
+  (Experimental).
 - **`fable` built-in model alias** — resolves to `claude-fable-5`
   (`opencode/claude-fable-5` on opencode); recommended resolution target for
   the `deep` workflow model tier.
-
-### Changed
-
-- **Workflow orchestration is now authored as a YAML program; the P1 markdown
-  orchestration grammar was replaced before release (R1 of the redesign
-  addendum, experimental).** The per-step markdown orchestration subsections
-  listed above (`### Runner` / `### Model` / `### Timeout` / `### Fan-out` /
-  `### Schema` / `### Env` / `### Depends On` / `### Route`) are **removed** —
-  breaking only for the unreleased experimental surface; classic linear
-  markdown workflows and the stable workflow CLI contract
-  (`start`/`next`/`complete`/`status`/`list`) are untouched. Orchestrated
-  workflows are instead deterministic YAML programs (`workflows/*.yaml`,
-  `version: 1`) validated against a published JSON Schema
-  (`schemas/akm-workflow.json`) by `akm workflow validate`; scaffold one with
-  the new `akm workflow template --yaml`. R1 adds, on top of the format
-  swap: **frozen per-run plans** (`workflow start` compiles and persists
-  `plan_json` + `plan_hash` — migration 006, additive; a run executes the
-  plan compiled at start, and edits to the source file require a new run), a
-  **closed `${{ … }}` expression language** (exactly `params.<name>`,
-  `steps.<id>.output.<path>`, `item`, `item_index` — parsed once into an
-  AST and resolved in a single pass, so substituted content is never
-  re-scanned and the P1 evidence-search/interpolation-rescan data flow is
-  gone), and an **explicit failure policy** (per-unit
-  `on_error: fail | continue` with fail-fast default, plus bounded
-  `retry: { max, on: [<failure_reason>…] }` keyed on the persisted failure
-  taxonomy). Route steps now branch on an explicit `input:` expression
-  instead of an ambient evidence lookup, and route decisions are journaled
-  for replay. Migration 006 also lands the run-lease columns
-  (`engine_lease_until`/`engine_lease_holder`); lease enforcement, typed
-  step-artifact validation, artifact-judging gates + `gate.max_loops`,
-  budget/watch/worktree-isolation follow in R2. Conformance goldens are
-  rewritten against YAML sources. See "Orchestrated steps" in
-  `docs/features/workflows.md` and the redesign addendum in
-  `docs/technical/akm-workflows-orchestration-plan.md`.
-- **Workflow orchestration engine rework (R2 of the redesign addendum,
-  experimental).** On top of R1's frozen plans, the engine now delivers the
-  replay/determinism foundation the addendum specified. **Content-derived
-  unit identity**: journaled unit ids are now
-  `<step>:<sha256(canonical item)[:12]>` (`:solo` for single units), so
-  cached results survive item-list reordering/regeneration, with
-  **replay-divergence detection** — a journaled completed unit whose
-  recorded inputs differ from the replan is a hard step failure naming the
-  unit, never a silent re-dispatch (R1's positional ids were pre-release
-  experimental data: no back-compat shim, old rows simply never match and
-  are ignored). **Run-lease enforcement** (migration 006 columns go live):
-  `workflow run` acquires a 90 s lease before any dispatch, renews it
-  between steps, and releases it on exit; a second `run` on a live-leased
-  run refuses up front naming the holder + expiry, an expired lease is
-  claimable (crash recovery), and manual `workflow complete` is refused
-  while an engine holds a live lease — the engine owns the spine while it
-  drives. **Typed step artifacts**: a step's `output` schema is now
-  validated against the promoted artifact before completion; a mismatch
-  fails the step with the validation errors in the summary.
-  **Artifact-judging gates**: engine-driven gates judge the step artifact
-  (canonical JSON, clipped at 4000 chars) against the criteria instead of
-  machine prose; gate evaluations are journaled as `<stepId>.gate:l<loop>`
-  unit rows (human approvals are never cached). **Bounded `gate.max_loops`
-  execution**: a gate rejection or artifact-schema miss re-executes the
-  step's units with the judge feedback + missing criteria threaded into
-  unit prompts — the feedback changes each unit's input hash, so re-runs
-  dispatch fresh instead of replaying. **Run budget ceilings**: top-level
-  `budget: { max_tokens?, max_units? }` in the YAML schema; counters are
-  seeded from the unit journal so ceilings span resumes; hitting one aborts
-  pending dispatches and fails the step hard regardless of `on_error`. New
-  **`akm workflow watch <run-id>`**: run-scoped `workflow_*` /
-  `workflow_unit_*` NDJSON event tail; `--stream` foreground-polls from the
-  last seen event (`--interval-ms`, default 1000, no daemon) and exits at a
-  terminal run status; plus an `onEvent` observability seam on `runAgent`
-  (spawn start/exit, ids/status only). **`isolation: worktree`** on the
-  agent AND sdk runners: each unit attempt gets a fresh detached git
-  worktree under a run-scoped tmp dir, the path is journaled on the unit
-  row, a clean tree is auto-removed and a dirty one retained + logged;
-  non-git base dirs fail the step cleanly. Making worktrees + env work on
-  the DEFAULT runner resolved SDK seam decision 1: the opencode SDK server
-  is cwd-agnostic (cwd is per-call), while env bindings go through an
-  env-keyed server registry — which removed the sdk `env_unsupported`
-  hard-fail (llm units still reject `env` loudly). All experimental-surface
-  changes; linear markdown workflows and the stable workflow CLI contract
-  are untouched. See the updated "Orchestrated steps" sections in
-  `docs/features/workflows.md` and `STABILITY.md` (Experimental).
-- **Harness-neutral driver protocol (R3 + R4 of the redesign addendum,
-  experimental).** An orchestrated run can now be driven by ANY agent
-  session (Claude Code, opencode, Codex, a human at a shell), not only the
-  native `akm workflow run` engine — the addendum's replacement for
-  Claude-Code delegation. Two new commands: **`akm workflow brief
-  <run-id|workflow:ref>`** (read-only — takes no lease, dispatches nothing,
-  mutates nothing; a test proves `workflow.db` is byte-identical across a
-  brief) computes the active step's expected work-list exactly as the engine
-  would and emits, per unit, the content-derived `unitId`, `runner`/`model`/
-  `timeout`/`retry`/`onError`, the fully-resolved instructions +
-  `inputHash` (byte-identical to the engine's dispatch), the `outputSchema`,
-  env binding **NAMES only** (never resolved secret values), already-journaled
-  unit statuses, the gate/artifact contract, and the exact `report` command
-  lines — plus a loud warning when a live engine lease is held and any stale
-  claimed units; **`akm workflow report <run-id> --unit <id> --status
-  completed|failed|running [--result | --result-file | stdin] [--tokens]
-  [--session-id] [--failure-reason] [--note]`** is the ONE mutating verb,
-  ingesting a unit's result through the SAME shared step semantics the engine
-  uses. `report` refuses a non-active run and refuses while a live engine
-  lease exists; validates the unit against the recomputed work-list (unknown
-  id ⇒ usage error naming valid ids); computes the input hash identically to
-  the engine; validates a schema unit's result against its `outputSchema`;
-  treats a same-hash re-report of a COMPLETED unit as an idempotent no-op and
-  a different-hash one as a hard replay-divergence error; enforces
-  journal-seeded `budget.max_units`/`max_tokens` ceilings (hard step failure,
-  ignoring `on_error`); and when a report makes the step's work-list fully
-  terminal, runs the engine's completion path (reducer → artifact promotion
-  → schema validation → artifact-judged gate → `completeWorkflowStep`),
-  honoring `on_error` and `gate.max_loops` — a gate rejection with loop
-  budget left leaves the step active, and the next `brief` emits loop-N's
-  work-list with the judge feedback threaded into every unit prompt
-  (recovered from the journaled `<stepId>.gate:l<n>` row so loop-N unit
-  ids/hashes match the engine's). **Unit-level check-in**: `--status
-  running` claims/heartbeats a unit (`started_at` on first claim,
-  `last_checkin_at` on each heartbeat via additive **migration 007**) without
-  advancing the spine; `brief`/`status` surface a claimed-but-silent unit as
-  stale via a pure `now`-injectable timestamp evaluator
-  (`src/workflows/runtime/unit-checkin.ts`, no daemon, mirroring the
-  run-level check-in). The cardinal "no duplicated semantics" rule is
-  enforced structurally: work-list computation, prompt assembly (incl.
-  recovered gate feedback), route evaluation, reducer/artifact promotion,
-  output-schema validation, and artifact-judged gate completion were
-  extracted into ONE shared module (`src/workflows/exec/step-work.ts`) that
-  `run-workflow.ts`, `brief.ts`, and `report.ts` all call — behavior for the
-  engine is preserved (existing tests prove it). New passthrough output
-  shapes `workflow-brief` / `workflow-report`. **R4 cross-surface
-  conformance** (`tests/workflows/conformance/driver-parity.test.ts`) runs
-  every golden program twice — engine-driven, then a `brief → report` loop
-  over every pending unit — against identical fixture dispatch results and
-  judge verdicts, and asserts the two produce IDENTICAL unit graphs (down to
-  `unit_id`/`node_id`/`input_hash`/`status`/`result_json`/`failure_reason`,
-  gate-evaluation rows, journaled route decisions, per-step statuses +
-  artifacts, and final run status). This completes the redesign addendum
-  (R1–R4); the two owner-decided permanent skips (the GitHub Copilot cloud
-  delegate and the stash MCP server) were never built. All
-  experimental-surface changes; linear markdown workflows and the stable
-  workflow CLI contract are untouched. See "Driving a run from any agent
-  (brief/report)" in `docs/features/workflows.md`, `STABILITY.md`
-  (Experimental), and the redesign addendum in
-  `docs/technical/akm-workflows-orchestration-plan.md`.
 
 ### Fixed
 

@@ -37,10 +37,12 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import type { WorkflowRunUnitStatus } from "../../storage/repositories/workflow-runs-repository";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
+import { assertRunParamsSatisfyPlan } from "../ir/params";
 import type { IrMapReducer, IrOnError, IrRetry, IrRunnerKind, WorkflowPlanGraph } from "../ir/schema";
 import type { ExpressionScope } from "../program/expressions";
-import { getNextWorkflowStep } from "../runtime/runs";
+import { snapshotRunForDriver } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
+import { detectSecretShapedParams } from "./param-secrets";
 import {
   activeGateLoop,
   assertJournaledRouteSelectionsValid,
@@ -91,6 +93,23 @@ export interface WorkflowBriefJournaled {
   claimExpiresAt?: string;
 }
 
+/**
+ * The driver-facing ACTION state for one unit (PR #714 review round 2, #15).
+ * Distinct from the journaled DB status: it folds in the engine lease and the
+ * unit's resolvability so a driver reads one field to decide whether to run it.
+ *
+ *   - `pending`     — no journal row yet; execute it and report the result.
+ *   - `claimed`     — a driver holds a live `--status running` claim; another
+ *                     driver should leave it (its own holder may still finish it).
+ *   - `stale`       — claimed `running` but silent past the check-in window;
+ *                     reclaimable — re-execute and report.
+ *   - `done`        — completed terminal row; nothing to do (no report command).
+ *   - `failed`      — failed terminal row; re-run only via the `--rerun` form.
+ *   - `do_not_run`  — not executable now: a live engine lease owns the spine, or
+ *                     the unit's inputs are unresolvable (an authoring error).
+ */
+export type WorkflowBriefUnitAction = "pending" | "claimed" | "stale" | "done" | "failed" | "do_not_run";
+
 /** One unit the driver must execute, exactly as the engine would dispatch it. */
 export interface WorkflowBriefUnit {
   /** Content-derived id — the `--unit` value `report` expects. */
@@ -119,8 +138,19 @@ export interface WorkflowBriefUnit {
   resolved: { ok: true; instructions: string; inputHash: string } | { ok: false; error: string };
   /** Already-journaled state for this loop's attempt, when a row exists. */
   journaled?: WorkflowBriefJournaled;
-  /** The exact `akm workflow report` command line for a successful result. */
-  report: string;
+  /**
+   * The driver-facing action state (#15). Terminal/blocked rows are NOT
+   * `pending`, so a driver never re-executes finished work.
+   */
+  action: WorkflowBriefUnitAction;
+  /**
+   * The exact `akm workflow report` command line to run for this unit —
+   * present ONLY for actionable states (`pending`/`stale`/`claimed`, and the
+   * `--rerun` form for `failed`). A `done` or `do_not_run` unit carries NO
+   * command (#15). The command carries `--expect-step` so a stale copy fails
+   * loudly if the spine moved (#14).
+   */
+  report?: string;
 }
 
 export interface WorkflowBriefWorkList {
@@ -167,6 +197,14 @@ export interface WorkflowBriefStep {
 export interface WorkflowBrief {
   ok: true;
   run: WorkflowBriefRun;
+  /**
+   * Spine watermark (PR #714 review round 2, #14): an opaque token stamping the
+   * run id, the active step id, the gate loop, and a run-mutation watermark
+   * (`updated_at` + journal row count). A driver can compare it across polls to
+   * detect that a concurrent report/run/manual completion moved the spine, and
+   * `report --expect-step` enforces the step half server-side.
+   */
+  spineToken: string;
   engineLease?: WorkflowBriefLease;
   /** Present (true) when the run is completed — nothing left to execute. */
   done?: true;
@@ -206,19 +244,15 @@ const EMPTY_WORK_LIST: WorkflowBriefWorkList = { isFanOut: false, reducer: null,
  */
 export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief> {
   const runId = await resolveRunId(target);
-  // Read-only spine walk — a bare run id never auto-starts (only a ref with no
-  // active run does, and we resolved to a concrete id above).
-  const next = await getNextWorkflowStep(runId);
-  const { planJson, planHash, leaseHolder, leaseUntil, units } = await withWorkflowRunsRepo((repo) => {
-    const row = repo.getRunById(runId);
-    return {
-      planJson: row?.plan_json ?? null,
-      planHash: row?.plan_hash ?? null,
-      leaseHolder: row?.engine_lease_holder ?? null,
-      leaseUntil: row?.engine_lease_until ?? null,
-      units: repo.getUnitsForRun(runId),
-    };
-  });
+  // Read-only spine walk. #14: read the run row, its steps, AND its unit journal
+  // in ONE transaction so a concurrent report/run/manual completion cannot change
+  // the active step between the spine read and the unit-journal read. A bare run
+  // id never auto-starts (we resolved to a concrete id above).
+  const { next, run: runRow, units } = await snapshotRunForDriver(runId);
+  const planJson = runRow.plan_json;
+  const planHash = runRow.plan_hash;
+  const leaseHolder = runRow.engine_lease_holder;
+  const leaseUntil = runRow.engine_lease_until;
 
   const run: WorkflowBriefRun = {
     id: next.run.id,
@@ -230,6 +264,22 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
   };
 
   const warnings: string[] = [];
+
+  // #13: params are declared NON-SECRET. They are interpolated into every unit
+  // prompt AND hashed into the unit identity, so `brief` cannot redact them
+  // without breaking the byte-identical-prompt contract a driver executes
+  // against. Surface the standing advisory (whenever the run carries params) plus
+  // any best-effort secret-shaped-value hits, so an author moves credentials to
+  // an env binding (which `brief` only ever names).
+  if (Object.keys(run.params).length > 0) {
+    warnings.push(
+      "Workflow params are copied verbatim into every unit prompt shown to any driver and are hashed into the unit " +
+        "identity — they are NOT secret. Never put credentials in params; put secrets in env bindings (`env:` refs), " +
+        "which `brief` surfaces by name only and never resolves.",
+    );
+  }
+  warnings.push(...detectSecretShapedParams(run.params));
+
   const lease = buildLease(leaseHolder, leaseUntil);
   if (lease?.live) {
     warnings.push(
@@ -257,9 +307,13 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     note: "Run each unit, then report its result. A unit belongs to the active step's work-list; its unit_id is content-derived — copy it verbatim.",
   };
 
+  // Spine watermark (#14): run-mutation counter shared by every return below.
+  // The active branch re-stamps it with the real gate loop + active step id.
+  const watermark = `${runRow.updated_at}:u${units.length}`;
   const base = {
     ok: true as const,
     run,
+    spineToken: makeSpineToken(run.id, run.currentStepId, 1, watermark),
     ...(lease ? { engineLease: lease } : {}),
     reportGuidance,
     staleUnits,
@@ -305,6 +359,10 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
   // (NULL plan_json) has no plan for brief to read — point at engine-driven
   // mode, which still handles pre-006 runs by compiling from the asset.
   const plan = loadFrozenPlanForBrief(run.id, planJson, planHash);
+  // Reviewer #12: the journaled params row must still satisfy the frozen param
+  // schemas — a violation is post-start corruption, loud on the brief surface
+  // too (mirrors the frozen-plan hash check and the tampered-params divergence).
+  assertRunParamsSatisfyPlan(run.id, plan, next.run.params ?? {});
   // Reviewer #7: a completed route step whose journaled decision names a target
   // the route never declared is tampered evidence — fail loudly on the read-only
   // brief surface too, not just on the resume/report surfaces that replay it.
@@ -357,6 +415,11 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     }
   }
 
+  // #15 action derivation inputs: the stale-claim set (by unit id) and whether a
+  // live engine lease means the whole work-list is `do_not_run` right now.
+  const staleIds = new Set(staleUnits.map((u) => u.unitId));
+  const leaseLive = lease?.live === true;
+
   // The work-list — the SAME computation the engine runs (no drift).
   let workList: WorkflowBriefWorkList = EMPTY_WORK_LIST;
   if (!isRouteOnly) {
@@ -371,12 +434,29 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
       workList = { ...EMPTY_WORK_LIST, error: computed.error };
     } else {
       const list = computed.list;
+      // #21: a worktree-isolated unit runs in a throwaway git worktree that is
+      // auto-removed when clean. Files it writes to a `.gitignore`d path are
+      // treated as disposable and discarded — warn any driver so collectible
+      // artifacts go to a non-ignored path or come back as a reported result.
+      if (list.units.some((u) => u.isolation === "worktree")) {
+        warnings.push(
+          "This step runs unit(s) in an isolated git worktree (`isolation: worktree`). Outputs matched by the " +
+            "repository's `.gitignore` are treated as DISPOSABLE — a clean worktree is auto-removed, discarding them. " +
+            "Write any artifact that must survive to a NON-ignored path (a tracked or untracked-unignored file), or " +
+            "report it as the unit's result. Do not leave collectible work under `node_modules`/`dist`/build/cache paths.",
+        );
+      }
       workList = {
         isFanOut: list.isFanOut,
         reducer: list.reducer,
         ...(list.concurrency !== undefined ? { concurrency: list.concurrency } : {}),
         itemCount: list.items.length,
-        units: list.units.map((u) => toBriefUnit(run.id, u, journaledByUnit.get(u.journalBaseId))),
+        units: list.units.map((u) =>
+          toBriefUnit(run.id, u, stepState.id, journaledByUnit.get(u.journalBaseId), {
+            stale: staleIds.has(u.journalBaseId),
+            leaseLive,
+          }),
+        ),
       };
     }
   }
@@ -405,6 +485,8 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
 
   return {
     ...base,
+    // Re-stamp the spine token with the resolved active step + real gate loop.
+    spineToken: makeSpineToken(run.id, stepState.id, gateLoop, watermark),
     active: true,
     step,
     ...(gateFeedback ? { gateFeedback } : {}),
@@ -414,13 +496,27 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
   };
 }
 
+/**
+ * The spine watermark stamped on every brief (#14): run id, active step id,
+ * gate loop, and a run-mutation watermark (`updated_at` + journal row count). A
+ * driver diffs it across polls to notice the spine moved; `report --expect-step`
+ * enforces the step half server-side.
+ */
+function makeSpineToken(runId: string, stepId: string | null, gateLoop: number, watermark: string): string {
+  return `${runId}#${stepId ?? "-"}#l${gateLoop}#${watermark}`;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function toBriefUnit(
   runId: string,
   unit: import("./step-work").StepWorkUnit,
+  stepId: string,
   journaled: WorkflowRunUnitRow | undefined,
+  ctx: { stale: boolean; leaseLive: boolean },
 ): WorkflowBriefUnit {
+  const action = deriveUnitAction(unit, journaled, ctx);
+  const report = reportCommandForAction(runId, unit, stepId, action);
   return {
     unitId: unit.unitId,
     nodeId: unit.nodeId,
@@ -440,8 +536,29 @@ function toBriefUnit(
       ? { ok: true, instructions: unit.resolved.prompt, inputHash: unit.resolved.inputHash }
       : { ok: false, error: unit.resolved.error },
     ...(journaled ? { journaled: toBriefJournaled(journaled) } : {}),
-    report: reportCommand(runId, unit),
+    action,
+    ...(report ? { report } : {}),
   };
+}
+
+/**
+ * Fold the journaled row + engine lease + resolvability into ONE driver-facing
+ * action (#15). A live engine lease or an unresolvable unit is `do_not_run`; a
+ * terminal row is `done`/`failed`; a live claim is `claimed` (or `stale` once
+ * silent); no row is `pending`.
+ */
+function deriveUnitAction(
+  unit: import("./step-work").StepWorkUnit,
+  journaled: WorkflowRunUnitRow | undefined,
+  ctx: { stale: boolean; leaseLive: boolean },
+): WorkflowBriefUnitAction {
+  if (!unit.resolved.ok) return "do_not_run";
+  if (ctx.leaseLive) return "do_not_run";
+  if (!journaled) return "pending";
+  if (journaled.status === "completed") return "done";
+  if (journaled.status === "failed") return "failed";
+  if (journaled.status === "running") return ctx.stale ? "stale" : "claimed";
+  return "pending";
 }
 
 function toBriefJournaled(row: WorkflowRunUnitRow): WorkflowBriefJournaled {
@@ -465,12 +582,25 @@ function toBriefJournaled(row: WorkflowRunUnitRow): WorkflowBriefJournaled {
   };
 }
 
-/** The exact `report` command line for a successful result (schema-aware hint). */
-function reportCommand(runId: string, unit: import("./step-work").StepWorkUnit): string {
+/**
+ * The `report` command line for a unit, tailored to its action (#15). Terminal
+ * `done` and `do_not_run` units get NO command; a `failed` unit gets the
+ * `--rerun` form (records a fresh attempt, per #25); `pending`/`stale`/`claimed`
+ * get the normal completed form. Every command carries `--expect-step` (#14) so
+ * a copy-pasted command from a stale brief is refused once the spine moves on.
+ */
+function reportCommandForAction(
+  runId: string,
+  unit: import("./step-work").StepWorkUnit,
+  stepId: string,
+  action: WorkflowBriefUnitAction,
+): string | undefined {
+  if (action === "done" || action === "do_not_run") return undefined;
   const resultHint = unit.schema
     ? "--result-file <result.json>   # JSON matching the unit's outputSchema"
     : "--result-file <result.txt>    # or --result '<text>' / pipe via stdin";
-  return `akm workflow report ${runId} --unit ${unit.unitId} --status completed ${resultHint}`;
+  const rerun = action === "failed" ? " --rerun" : "";
+  return `akm workflow report ${runId} --unit ${unit.unitId} --expect-step ${stepId} --status completed${rerun} ${resultHint}`;
 }
 
 export function buildLease(holder: string | null, until: string | null): WorkflowBriefLease | undefined {

@@ -123,7 +123,8 @@ An append-only log of every mutating action you perform with AKM. Events are sto
 | `proposal_expired` | Proposal expired | `ref` |
 | `events_purged` | Old events deleted by maintenance | `purgedCount`, `retentionDays` |
 | `workflow_started` | `akm workflow start <ref>` | `ref`, `runId` |
-| `workflow_step_completed` | `akm workflow next` | `ref`, `runId`, `stepId` |
+| `workflow_step_completed` | `akm workflow next` (genuine `completed` transition only) | `ref`, `runId`, `stepId`, `status` |
+| `workflow_step_updated` | `akm workflow next` (non-`completed` transitions: `failed`/`skipped`/`blocked`) | `ref`, `runId`, `stepId`, `status` |
 | `workflow_finished` | `akm workflow complete` | `ref`, `runId` |
 | `schema_repair_invoked` | `akm lint --repair` triggered schema repair | `ref` |
 | `archive_cleanup` | Archive cleanup during consolidation | |

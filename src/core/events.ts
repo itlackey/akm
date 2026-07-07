@@ -61,7 +61,15 @@ export type EventType =
   | "propose_invoked"
   | "distill_invoked"
   | "workflow_started"
+  /** Emitted ONLY for a genuine `completed` step transition. Metadata: `{runId, stepId, status:"completed"}`. */
   | "workflow_step_completed"
+  /**
+   * #11 — every non-`completed` step transition (`failed`/`skipped`/`blocked`).
+   * Metadata: `{runId, stepId, status}` — status is always present so consumers
+   * never infer it from the event name. Raw `notes` are never journaled here
+   * (event-stream prompt-injection surface); they stay on the step row.
+   */
+  | "workflow_step_updated"
   | "workflow_finished"
   /** Emitted by `akm workflow abandon` (08-F6) — metadata carries `{runId}` only, never the title. */
   | "workflow_abandoned"

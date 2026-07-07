@@ -110,6 +110,10 @@ export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgra
       irVersion: WORKFLOW_IR_VERSION,
       title: program.name,
       ...(paramNames.length > 0 ? { params: paramNames } : {}),
+      // Reviewer #12: freeze the per-param schemas into the plan so `--params`
+      // can be validated at start and re-asserted at brief/report against the
+      // exact schemas the run was created with (the plan hash covers them).
+      ...(program.params && paramNames.length > 0 ? { paramSchemas: program.params } : {}),
       // Budget ceilings (addendum R2): frozen onto the plan so enforcement is
       // a pure function of (frozen plan, journal) — never the live asset.
       ...(program.budget

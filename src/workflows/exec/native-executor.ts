@@ -1054,7 +1054,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   const config = loadConfig();
   const prompt = feedback ? `${request.prompt}\n\n${feedback}` : request.prompt;
 
-  const resolved = resolveUnitRunner(request, config);
+  const resolved = await resolveUnitRunner(request, config);
 
   // `env` bindings can only reach a child process. The agent (CLI) runner
   // spawns one per call, and the sdk runner now injects them for real via the
@@ -1216,14 +1216,16 @@ type ResolvedUnitRunner =
   | { kind: "llm"; connection: import("../../core/config/config").LlmConnectionConfig }
   | { kind: "agent" | "sdk"; profile: import("../../integrations/agent/profiles").AgentProfile };
 
-function resolveUnitRunner(
+async function resolveUnitRunner(
   request: UnitDispatchRequest,
   config: import("../../core/config/config").AkmConfig,
-): ResolvedUnitRunner {
+): Promise<ResolvedUnitRunner> {
   const requested = request.runner;
 
   if (requested === "llm") {
-    const connection = request.profile ? config.profiles?.llm?.[request.profile] : requireDefaultLlm(config, request);
+    const connection = request.profile
+      ? config.profiles?.llm?.[request.profile]
+      : await requireDefaultLlm(config, request);
     if (!connection) {
       throw new ConfigError(
         `Workflow unit "${request.unitId}" wants llm profile "${request.profile}", which is not in profiles.llm.`,
@@ -1235,8 +1237,7 @@ function resolveUnitRunner(
 
   const profileName = request.profile ?? config.defaults?.agent;
   if (profileName) {
-    const { resolveProfileFromConfig } =
-      require("../../integrations/agent/config") as typeof import("../../integrations/agent/config");
+    const { resolveProfileFromConfig } = await import("../../integrations/agent/config");
     const profile = resolveProfileFromConfig(profileName, config);
     if (!profile) {
       throw new ConfigError(
@@ -1258,7 +1259,7 @@ function resolveUnitRunner(
   }
 
   if (requested === "inherit") {
-    const connection = requireDefaultLlm(config, request, /* soft */ true);
+    const connection = await requireDefaultLlm(config, request, /* soft */ true);
     if (connection) return { kind: "llm", connection };
   }
   throw new ConfigError(
@@ -1268,12 +1269,12 @@ function resolveUnitRunner(
   );
 }
 
-function requireDefaultLlm(
+async function requireDefaultLlm(
   config: import("../../core/config/config").AkmConfig,
   request: UnitDispatchRequest,
   soft = false,
-): import("../../core/config/config").LlmConnectionConfig | undefined {
-  const { getDefaultLlmConfig } = require("../../core/config/config") as typeof import("../../core/config/config");
+): Promise<import("../../core/config/config").LlmConnectionConfig | undefined> {
+  const { getDefaultLlmConfig } = await import("../../core/config/config");
   const connection = getDefaultLlmConfig(config);
   if (!connection && !soft) {
     throw new ConfigError(

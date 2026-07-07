@@ -223,6 +223,14 @@ export interface WorkflowPlanGraph {
   title: string;
   /** Declared run parameter names, when the workflow declares any. */
   params?: string[];
+  /**
+   * Reviewer #12 — frozen per-param JSON-Schema-subset declarations (program
+   * path only; Markdown workflows have no param schemas). Name → schema. When
+   * present these are the authority for validating supplied `--params` at
+   * {@link startWorkflowRun} and re-asserting the journaled params row at the
+   * brief/report surfaces. Part of the plan JSON, so the plan hash covers them.
+   */
+  paramSchemas?: Record<string, Record<string, unknown>>;
   budget?: IrBudget;
   steps: IrStepPlan[];
 }

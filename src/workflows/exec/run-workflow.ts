@@ -56,6 +56,7 @@ import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
+import { assertRunParamsSatisfyPlan } from "../ir/params";
 import type { WorkflowPlanGraph } from "../ir/schema";
 import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
 import { compileWorkflowAssetPlan, loadWorkflowAsset } from "../runtime/workflow-asset-loader";
@@ -421,6 +422,13 @@ async function driveRun(
   const plan = options.loadPlan
     ? await options.loadPlan(next.run.workflowRef)
     : await loadFrozenPlan(next.run.id, next.run.workflowRef);
+
+  // Reviewer #12: the journaled params row must still satisfy the frozen param
+  // schemas before the engine resolves any unit prompt from it. Applied on ALL
+  // THREE driver surfaces (engine here, brief, report) so schema-violating
+  // params — post-start corruption — fail loudly and IDENTICALLY, preserving
+  // cross-surface parity (start already validated the params it stored).
+  assertRunParamsSatisfyPlan(next.run.id, plan, next.run.params ?? {});
 
   // Route bookkeeping: targets a completed router did NOT select are skipped
   // when the spine reaches them; a target ANY router selected is protected

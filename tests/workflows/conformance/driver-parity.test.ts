@@ -155,7 +155,7 @@ function stepUnitIds(plan: WorkflowPlanGraph, stepIndex: number, params: Record<
     resolved: u.resolved.ok
       ? { ok: true, instructions: u.resolved.prompt, inputHash: u.resolved.inputHash }
       : { ok: false, error: u.resolved.error },
-    report: "",
+    action: "pending" as const,
   }));
 }
 
@@ -730,5 +730,56 @@ describe("conformance — engine/driver cross-surface parity", () => {
     const a = ["unit x status=completed", "run status=completed"];
     const b = ["unit x status=failed", "run status=failed"];
     expect(() => assertGraphsIdentical(a, b, "self-check")).toThrow(/diverge at row 0/);
+  });
+
+  // Reviewer #12 parity extension: a program's param schemas are frozen into the
+  // plan, and a journaled params row that VIOLATES them (post-start corruption)
+  // is refused IDENTICALLY on every driver surface — engine, brief, and report.
+  // Without matching guards one surface would resolve prompts from bad params
+  // while another rejected, silently diverging.
+  test("param schemas are frozen into the plan", () => {
+    const plan = compile(FAN_OUT_COLLECT.yaml);
+    expect(plan.paramSchemas).toEqual({ files: { type: "array" } });
+  });
+
+  test("schema-violating journaled params are refused on all three surfaces", async () => {
+    const plan = compile(FAN_OUT_COLLECT.yaml);
+    // `files` was declared `{ type: array }`; a hand-edited row makes it a string.
+    const bad = { files: "no-longer-an-array" };
+
+    // (a) engine surface.
+    const engineDir = path.join(rootDir, "engine");
+    fs.mkdirSync(engineDir, { recursive: true });
+    process.env.AKM_DATA_DIR = engineDir;
+    seedRun(plan, bad, FAN_OUT_COLLECT.steps);
+    await expect(
+      runWorkflowSteps({
+        target: RUN_ID,
+        dispatcher: async () => ({ ok: true, text: "must not run" }),
+        summaryJudge: null,
+      }),
+    ).rejects.toThrow(/integrity check/);
+
+    // (b) brief surface, separate database, same plan + bad params row.
+    const briefDir = path.join(rootDir, "brief");
+    fs.mkdirSync(briefDir, { recursive: true });
+    process.env.AKM_DATA_DIR = briefDir;
+    seedRun(plan, bad, FAN_OUT_COLLECT.steps);
+    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/integrity check/);
+
+    // (c) report surface, separate database, same plan + bad params row.
+    const reportDir = path.join(rootDir, "report");
+    fs.mkdirSync(reportDir, { recursive: true });
+    process.env.AKM_DATA_DIR = reportDir;
+    seedRun(plan, bad, FAN_OUT_COLLECT.steps);
+    await expect(
+      reportWorkflowUnit({
+        target: RUN_ID,
+        unitId: "review.unit:whatever",
+        status: "completed",
+        resultRaw: "x",
+        summaryJudge: null,
+      }),
+    ).rejects.toThrow(/integrity check/);
   });
 });

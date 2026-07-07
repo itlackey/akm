@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
-import { loadConfig } from "../../core/config/config";
+import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import type {
@@ -18,9 +18,13 @@ import {
   type WorkflowRunRow,
   type WorkflowRunStepRow,
   type WorkflowRunsRepository,
+  type WorkflowRunUnitRow,
+  type WorkflowRunUnitStatus,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
+import { detectSecretShapedParams } from "../exec/param-secrets";
+import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
@@ -36,6 +40,90 @@ export interface WorkflowRunDetail {
   };
   /** Present when the run looks stalled — a strong `continue` directive (#506). */
   checkin?: CheckinDirective;
+  /**
+   * Best-effort advisories about the run (PR #714 review round 2, #13). At
+   * `start` this carries secret-shaped-param warnings: params are declared
+   * non-secret (they are hashed into every unit prompt and cannot be redacted),
+   * so a credential-looking param value is flagged loudly here and in `brief`.
+   */
+  warnings?: string[];
+  /**
+   * Per-unit diagnostics for `akm workflow status --units` (PR #714 review
+   * round 2, #22). Present only when the caller opts in. See
+   * {@link WorkflowUnitDiagnostic}.
+   */
+  units?: WorkflowUnitDiagnostic[];
+}
+
+/**
+ * A per-unit diagnostic row for `akm workflow status --units` (PR #714 review
+ * round 2, #22).
+ *
+ * Step EVIDENCE stays deterministic by design: a failed unit contributes only
+ * its `failureReason` (the durable, journaled failure vocabulary) to the
+ * artifact graph the reducer promotes — the engine's raw dispatch diagnostic is
+ * never mixed into a hashed artifact (see `buildEvidence` in
+ * `exec/step-work.ts`). This is the SEPARATE, honest surface for the human-
+ * facing diagnostics that graph deliberately drops: it reads the unit journal
+ * directly and reports each row's `failure_reason` plus whatever result/error
+ * text the row itself carries (`result_json`, clipped). It never feeds back
+ * into any artifact, reducer, or input hash.
+ */
+export interface WorkflowUnitDiagnostic {
+  unitId: string;
+  nodeId: string;
+  stepId: string | null;
+  /** Non-null on gate-evaluation rows (`"gate"`), null on dispatch rows. */
+  phase: string | null;
+  status: WorkflowRunUnitStatus;
+  attempts: number;
+  tokens: number | null;
+  /** Journaled failure vocabulary for a failed unit; null otherwise. */
+  failureReason: string | null;
+  sessionId: string | null;
+  /**
+   * The row's `result_json` rendered as text (a completed unit's result, or any
+   * partial/error text a failed unit produced), clipped to
+   * {@link UNIT_DIAGNOSTIC_CLIP} chars. Null when the row journaled no result.
+   */
+  diagnostic: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/** Clip bound for a unit's `result_json` on the `--units` diagnostic surface. */
+const UNIT_DIAGNOSTIC_CLIP = 2000;
+
+function toUnitDiagnostic(row: WorkflowRunUnitRow): WorkflowUnitDiagnostic {
+  let diagnostic: string | null = null;
+  if (row.result_json !== null) {
+    // `result_json` is a JSON-encoded value: a bare JSON string for a free-text
+    // unit, an object/array for a schema unit. Render the decoded string as-is
+    // (no surrounding quotes) and other shapes as compact JSON, then clip so a
+    // large artifact can't flood the diagnostic surface.
+    let text = row.result_json;
+    try {
+      const parsed = JSON.parse(row.result_json);
+      text = typeof parsed === "string" ? parsed : JSON.stringify(parsed);
+    } catch {
+      /* leave the raw journaled text */
+    }
+    diagnostic = text.length > UNIT_DIAGNOSTIC_CLIP ? `${text.slice(0, UNIT_DIAGNOSTIC_CLIP)}…` : text;
+  }
+  return {
+    unitId: row.unit_id,
+    nodeId: row.node_id,
+    stepId: row.step_id,
+    phase: row.phase,
+    status: row.status,
+    attempts: row.attempts,
+    tokens: row.tokens,
+    failureReason: row.failure_reason,
+    sessionId: row.session_id,
+    diagnostic,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  };
 }
 
 export interface WorkflowNextResult {
@@ -103,6 +191,19 @@ export async function startWorkflowRun(
   // later invocation executes this snapshot — the asset file is never re-read
   // for an in-flight run; re-planning is an explicit new run.
   const plan = compileWorkflowAssetPlan(asset);
+  // Reviewer #12: validate supplied `--params` against the frozen param
+  // schemas BEFORE creating the run, so a type-mismatched param (e.g. a string
+  // for a `{ type: array }` param) is rejected with actionable errors instead
+  // of flowing silently into a unit prompt. Programs without declared param
+  // schemas (and every Markdown workflow) validate trivially.
+  const paramErrors = validateWorkflowParams(plan, params);
+  if (paramErrors.length > 0) {
+    throw new UsageError(
+      `Cannot start ${asset.ref}: the supplied --params do not satisfy the workflow's declared parameter schemas:\n` +
+        paramErrors.map((e) => `  - ${e}`).join("\n"),
+      "INVALID_JSON_ARGUMENT",
+    );
+  }
   const planJson = canonicalPlanJson(plan);
   const planHash = computePlanHash(plan);
   return withWorkflowRunsRepo(async (repo) => {
@@ -173,6 +274,13 @@ export async function startWorkflowRun(
     });
 
     const result = await getWorkflowStatus(runId);
+    // #13: params are declared non-secret (they are copied verbatim into every
+    // unit prompt and hashed into the unit identity, so they cannot be redacted
+    // without breaking the driver protocol). Surface a loud, best-effort warning
+    // when a param LOOKS like a credential so the author moves it to an env
+    // binding. Advisory only — never blocks the start.
+    const secretWarnings = detectSecretShapedParams(params);
+    if (secretWarnings.length > 0) result.warnings = [...(result.warnings ?? []), ...secretWarnings];
     // 07 P1-B: emit only the run id + status — NOT the raw workflowTitle (which
     // comes verbatim from the workflow asset's frontmatter and is therefore
     // attacker-influenceable). Keeping raw titles out of the events stream
@@ -187,11 +295,18 @@ export async function startWorkflowRun(
   });
 }
 
-export async function getWorkflowStatus(runId: string): Promise<WorkflowRunDetail> {
+export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: boolean }): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
     const steps = readWorkflowRunSteps(repo, run.id);
-    return buildWorkflowRunDetail(run, steps);
+    const detail = buildWorkflowRunDetail(run, steps);
+    if (opts?.includeUnits) {
+      // The honest diagnostic surface (#22): read the unit journal straight and
+      // project each row, INCLUDING failures whose diagnostic text the
+      // deterministic evidence graph drops. Read-only; never mutates the run.
+      detail.units = repo.getUnitsForRun(run.id).map(toUnitDiagnostic);
+    }
+    return detail;
   });
 }
 
@@ -228,31 +343,66 @@ export async function getNextWorkflowStep(
   return withWorkflowRunsRepo(async (repo) => {
     const { run, autoStarted } = await resolveRunSpecifier(repo, specifier, params);
     const steps = readWorkflowRunSteps(repo, run.id);
-    const currentStep = resolveCurrentStep(run, steps);
-    const done = run.status === "completed" ? (true as const) : undefined;
-    // #506: surface a check-in directive through the normal command output when
-    // the run looks stalled. Pure timestamp evaluation — no background thread.
-    const checkin =
-      evaluateCheckin({
-        status: run.status,
-        updatedAt: run.updated_at,
-        checkinArmedAt: run.checkin_armed_at,
-        agentHarness: run.agent_harness,
-        agentSessionId: run.agent_session_id,
-      }) ?? undefined;
-    return {
-      run: toWorkflowRunSummary(run),
-      workflow: {
-        ref: run.workflow_ref,
-        title: run.workflow_title,
-        steps: steps.map(toWorkflowRunStepState),
-      },
-      step: currentStep ? toWorkflowRunStepState(currentStep) : null,
-      ...(done ? { done } : {}),
-      ...(autoStarted ? { autoStarted } : {}),
-      ...(checkin ? { checkin } : {}),
-    };
+    return { ...projectNextResult(run, steps), ...(autoStarted ? { autoStarted: true as const } : {}) };
   });
+}
+
+/**
+ * Project a run row + its step rows into a {@link WorkflowNextResult}. The pure
+ * read-shaping half of {@link getNextWorkflowStep}, extracted so the driver
+ * snapshot below reproduces the exact same projection without re-running the
+ * auto-start-capable {@link resolveRunSpecifier}.
+ */
+function projectNextResult(run: WorkflowRunRow, steps: WorkflowRunStepRow[]): WorkflowNextResult {
+  const currentStep = resolveCurrentStep(run, steps);
+  const done = run.status === "completed" ? (true as const) : undefined;
+  // #506: surface a check-in directive through the normal command output when
+  // the run looks stalled. Pure timestamp evaluation — no background thread.
+  const checkin =
+    evaluateCheckin({
+      status: run.status,
+      updatedAt: run.updated_at,
+      checkinArmedAt: run.checkin_armed_at,
+      agentHarness: run.agent_harness,
+      agentSessionId: run.agent_session_id,
+    }) ?? undefined;
+  return {
+    run: toWorkflowRunSummary(run),
+    workflow: {
+      ref: run.workflow_ref,
+      title: run.workflow_title,
+      steps: steps.map(toWorkflowRunStepState),
+    },
+    step: currentStep ? toWorkflowRunStepState(currentStep) : null,
+    ...(done ? { done } : {}),
+    ...(checkin ? { checkin } : {}),
+  };
+}
+
+/**
+ * A consistent point-in-time snapshot of a run for the harness-neutral driver
+ * protocol (PR #714 review round 2, #14). `brief`/`report` previously read the
+ * spine (`getNextWorkflowStep`) and then, in a SEPARATE connection, the run row
+ * + unit journal — so a concurrent `report`/`run`/manual completion could change
+ * the active step BETWEEN the two reads, leaving the described work-list
+ * inconsistent with the run row it was stamped against. This reads the run row,
+ * its steps, AND its unit rows inside ONE transaction (one connection, one
+ * snapshot) so all three agree. It never auto-starts — `runId` must already
+ * resolve to a concrete run — because the driver protocol never mutates on read.
+ */
+export async function snapshotRunForDriver(runId: string): Promise<{
+  next: WorkflowNextResult;
+  run: WorkflowRunRow;
+  units: WorkflowRunUnitRow[];
+}> {
+  return withWorkflowRunsRepo((repo) =>
+    repo.transaction(() => {
+      const run = readWorkflowRun(repo, runId);
+      const steps = readWorkflowRunSteps(repo, run.id);
+      const units = repo.getUnitsForRun(run.id);
+      return { next: projectNextResult(run, steps), run, units };
+    }),
+  );
 }
 
 export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
@@ -440,10 +590,16 @@ export async function completeWorkflowStep(
     });
 
     const detail = buildWorkflowRunDetail(updatedRun as WorkflowRunRow, refreshedSteps);
+    // #11: emit `workflow_step_completed` ONLY for a genuine `completed`
+    // transition; every other non-pending status (failed/skipped/blocked)
+    // carries the honest `workflow_step_updated` name. The status is ALWAYS
+    // in metadata so consumers never infer it from the event name. Raw `notes`
+    // are workflow/model-authored content — an event-stream prompt-injection
+    // surface — and never enter the events log; they live on the step row only.
     appendEvent({
-      eventType: "workflow_step_completed",
+      eventType: input.status === "completed" ? "workflow_step_completed" : "workflow_step_updated",
       ref: detail.run.workflowRef,
-      metadata: { runId: input.runId, stepId: input.stepId, notes: input.notes },
+      metadata: { runId: input.runId, stepId: input.stepId, status: input.status },
     });
     if (detail.run.status === "completed") {
       appendEvent({ eventType: "workflow_finished", ref: detail.run.workflowRef, metadata: { runId: input.runId } });
@@ -625,7 +781,6 @@ export function buildDefaultSummaryJudge(): SummaryJudge | null {
   let llm: import("../../core/config/config").LlmConnectionConfig | undefined;
   try {
     const config = loadConfig();
-    const { getDefaultLlmConfig } = require("../../core/config/config") as typeof import("../../core/config/config");
     llm = getDefaultLlmConfig(config);
   } catch {
     return null;
@@ -633,7 +788,7 @@ export function buildDefaultSummaryJudge(): SummaryJudge | null {
   if (!llm) return null;
   const resolved = llm;
   return async ({ system, user }) => {
-    const { chatCompletion } = require("../../llm/client") as typeof import("../../llm/client");
+    const { chatCompletion } = await import("../../llm/client");
     return chatCompletion(resolved, [
       { role: "system", content: system },
       { role: "user", content: user },

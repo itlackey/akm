@@ -67,6 +67,23 @@ akm workflow status workflow:ship-release
 Use this to inspect where a run is after a context window break, or to verify
 all steps completed cleanly before closing a PR.
 
+**`--units` — per-unit diagnostics.** For an orchestrated run, add `--units`
+to also list the run's journaled unit rows — each unit's id, status,
+`failure_reason`, and any result/error diagnostic text the row carries:
+
+```sh
+akm workflow status <run-id> --units
+```
+
+This is a **diagnostic** surface, deliberately kept out of the deterministic
+artifact graph. A step's promoted artifact (what `${{ steps.x.output }}`
+resolves to, and what a gate judges) keeps only a failed unit's structured
+`failure_reason` — never the raw error text — so step evidence stays
+reproducible across the engine and `brief`/`report` surfaces. When you need
+the human-facing *why* behind a failure, `--units` reads the unit journal
+directly and shows it without ever feeding that text back into an artifact or
+input hash.
+
 ## akm workflow list
 
 `akm workflow list` shows workflow runs in the current scope.
@@ -295,6 +312,20 @@ the collected array of per-file verdicts (`[0].verdict` addresses the
 first). A step completed manually through `akm workflow complete` exposes
 whatever evidence was recorded for it as its output.
 
+**An empty successful free-text output is treated as no output.** When a
+schemaless unit (one that declares no `output` schema) succeeds but returns
+the empty string, akm normalizes it to *absent*: nothing is journaled for
+its result, and its contribution to the step artifact is `null` — a `null`
+slot in a `collect` array, or `output = null` for a solo step. This absence
+is deliberate and consistent across every driver surface (engine, and
+`brief`/`report`), so a live run and a resumed/reported run promote the
+identical artifact. The practical consequence: referencing an empty step's
+output downstream (`${{ steps.x.output }}`) fails **loudly** at expression
+resolution (`… resolved to null`) rather than silently substituting `""`.
+A unit that declares an `output` schema is unaffected — an empty response is
+not valid JSON, so it fails as a parse error and can never satisfy a schema
+as a silent `null`.
+
 ### Frozen plans
 
 `akm workflow start` compiles the program and freezes the resulting plan on
@@ -460,6 +491,24 @@ driver-driven run of the same plan produce **byte-identical unit graphs**.
   artifact-promotion, schema-validation, and gate path the engine runs, and
   advances the step when its work-list is fully terminal.
 
+#### Params are not secret
+
+Workflow **params** are declared **non-secret**. A run's params are
+interpolated into every unit prompt (both `${{ params.* }}` references and a
+`PARAMS_JSON` preamble line) **and** are hashed into each unit's identity. The
+driver protocol's core guarantee is that `brief` surfaces the *byte-identical*
+prompt a driver must execute — so params **cannot** be redacted without
+breaking the input-hash contract and cross-surface parity. **Never put
+credentials in params.** Put secrets in **env bindings** (`env:` refs), which
+`brief` surfaces by **name only** and never resolves.
+
+As a guardrail, both `akm workflow start` and every `brief` emit a best-effort
+**secret-shaped-value warning** (in the response `warnings` array) when a param
+value *looks* like a credential — a secret-suggesting key name, a long
+high-entropy string, or a known token prefix. It is advisory only: it **never
+blocks** a run and is intentionally heuristic (expect false positives and
+misses). It exists to nudge an author toward an env binding, not to scan.
+
 #### The protocol loop
 
 Driving a run is a loop: **brief → execute → report → repeat**, until the
@@ -477,10 +526,31 @@ brief reports the run is done.
      the unit declares one;
    - `env` — env binding asset **names only** (`brief` never resolves a
      binding, so no secret value can ever appear in its output);
-   - `report` — the exact `akm workflow report …` command line to run on
-     success;
+   - `action` — the driver-facing state: `pending` (execute it), `claimed`
+     (another driver holds a live `--status running` claim), `stale` (a claim
+     went silent past the check-in window — reclaimable), `done`/`failed`
+     (terminal), or `do_not_run` (a live engine lease owns the spine, or the
+     unit's inputs are unresolvable). A driver runs only `pending`/`stale`
+     (and its own `claimed`) units;
+   - `report` — the exact `akm workflow report …` command line to run. Present
+     **only for actionable states**: `pending`/`stale`/`claimed` get the normal
+     completed form, `failed` gets the `--rerun` form, and `done`/`do_not_run`
+     carry **no command** at all. Every command embeds `--expect-step` (see
+     below);
    - `journaled` — the unit's already-recorded status, if a row exists (so a
      resumed driver skips finished work).
+
+   The top-level brief also carries a `spineToken` — an opaque watermark over
+   the run id, active step id, gate loop, and a run-mutation counter — and a
+   `warnings` array (see *Params are not secret* below).
+
+   **The spine can move under you.** Between the `brief` you plan against and
+   the `report` you send, a concurrent `report`/`run`/manual completion can
+   advance the run to a different step. Every brief report command therefore
+   carries `--expect-step <activeStep>`: `report` refuses (with a clear message
+   pointing you back at `brief`) if the run's active step no longer matches, so
+   you never record a result against a step you did not plan against. Compare
+   `spineToken` across polls to detect the move yourself.
 2. **Execute** each pending unit however you like — in the current session,
    by spawning a subagent, or by hand. `brief` also emits the step's gate
    criteria, its output-schema contract, and (for a route step) the
@@ -557,10 +627,30 @@ are the engine's:
 - **Budget ceilings.** Journal-seeded `budget.max_units`/`max_tokens` are
   enforced on `report` exactly as on the engine — crossing a ceiling fails
   the step hard (budget ignores `on_error`), rather than leaving a stuck run.
+- **Failure-reason taxonomy.** `report --failure-reason` is normalized to the
+  persisted failure vocabulary (the same `AgentFailureReason` set `retry.on`
+  matches on). A reason **in** the taxonomy (e.g. `timeout`, `non_zero_exit`)
+  is stored **verbatim**, so a driver-reported failure participates in
+  `retry.on` identically to an engine dispatch. Anything else is namespaced
+  under `external:<slug>` (lowercase, `[a-z0-9_-]`, clipped) — recorded for
+  observability but, being outside the taxonomy, it can **never** trigger a
+  workflow's `retry.on`. An absent reason defaults to `reported_failure`.
 
 Because both surfaces share one implementation, the R4 conformance suite runs
 every golden program twice — engine-driven, then brief/report-driven — and
 asserts the two unit graphs are identical.
+
+#### Legacy runs (no frozen plan) are engine-only
+
+`brief` and `report` describe and ingest against a run's **frozen plan**
+(migration 006). A run started before frozen plans exist (`plan_json` is NULL —
+a pre-006 legacy run) has no plan for the driver protocol to read, so both
+commands **refuse it with a clear error**. Such a run is still fully drivable —
+just by the **engine**: `akm workflow run <run-id>` compiles a legacy run's
+plan from the live asset and executes it. (`akm workflow next`/`complete` also
+continue to work for manual advancement.) Use engine-driven mode for any legacy
+run; the harness-neutral brief/report protocol applies only to frozen-plan
+runs.
 
 #### Worked example
 
@@ -586,9 +676,10 @@ akm workflow brief r1
       {
         "unitId": "discover:solo",
         "runner": "sdk",
+        "action": "pending",
         "outputSchema": { "type": "object", "properties": { "files": { "type": "array" } }, "required": ["files"] },
         "resolved": { "ok": true, "instructions": "…List the files that need review…", "inputHash": "9f2c…" },
-        "report": "akm workflow report r1 --unit discover:solo --status completed --result-file <result.json>"
+        "report": "akm workflow report r1 --unit discover:solo --expect-step discover --status completed --result-file <result.json>"
       }
     ]
   }
@@ -652,15 +743,22 @@ empty) is removed automatically; a dirty one is retained and its path
 logged, so uncollected work is never destroyed. Declaring worktree isolation
 in a non-git directory fails the step cleanly before anything dispatches.
 
+> **⚠️ Warning — outputs matched by `.gitignore` are treated as disposable.**
+> A worktree-isolated unit's output survives only if it lands on a
+> **collectible path**: a tracked file, or an untracked file your repository
+> does **not** `.gitignore`. Anything a unit writes to a `.gitignore`d path —
+> build outputs, caches, logs, dependency directories like
+> `node_modules`/`dist`, or a scratch file under an ignored directory — is
+> **discarded** when its clean worktree is auto-removed. If a unit produces an
+> artifact that must survive, write it to a non-ignored path, or report it as a
+> result (a structured `output` / free-text result), before the unit returns.
+
 The clean probe deliberately does **not** pass `--ignored`, so "uncollected
 work" means tracked or untracked-*unignored* changes only. A worktree whose
-only residue is files your repository's own `.gitignore` matches — build
-outputs, caches, logs, dependency directories like `node_modules`/`dist` — is
-treated as clean and removed: those files are disposable by the repo's own
-declaration, and retaining a worktree after every package install or build
-would blow up disk under the temp root. If a unit produces an artifact that
-must survive, it has to be a tracked or untracked-unignored file (or be
-collected before the unit returns), not something the repo `.gitignore`s.
+only residue is files your repository's own `.gitignore` matches is treated as
+clean and removed: those files are disposable by the repo's own declaration,
+and retaining a worktree after every package install or build would blow up
+disk under the temp root.
 
 ### Model tiers
 

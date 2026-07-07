@@ -65,6 +65,11 @@ interface SeedUnit {
   resultJson?: string | null;
   tokens?: number | null;
   failureReason?: string | null;
+  /** Override the row's first-claim timestamp (drives stale-unit evaluation). */
+  startedAt?: string;
+  claimHolder?: string | null;
+  claimExpiresAt?: string | null;
+  lastCheckinAt?: string | null;
 }
 
 function seedRun(opts: {
@@ -123,8 +128,9 @@ function seedRun(opts: {
       db.prepare(
         `INSERT INTO workflow_run_units
            (run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model, status,
-            input_hash, result_json, tokens, failure_reason, worktree_path, started_at, finished_at)
-         VALUES (?, ?, ?, ?, NULL, ?, 'sdk', NULL, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+            input_hash, result_json, tokens, failure_reason, worktree_path, started_at, finished_at,
+            last_checkin_at, claim_holder, claim_expires_at)
+         VALUES (?, ?, ?, ?, NULL, ?, 'sdk', NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
       ).run(
         RUN_ID,
         u.unitId,
@@ -136,8 +142,11 @@ function seedRun(opts: {
         u.resultJson ?? null,
         u.tokens ?? null,
         u.failureReason ?? null,
-        now,
+        u.startedAt ?? now,
         u.status === "completed" || u.status === "failed" ? now : null,
+        u.lastCheckinAt ?? null,
+        u.claimHolder ?? null,
+        u.claimExpiresAt ?? null,
       );
     }
   } finally {
@@ -268,8 +277,13 @@ describe("workflow brief — solo step", () => {
     expect(u.runner).toBe("inherit");
     expect(u.timeoutMs).toBe(600_000);
     expect(u.onError).toBe("fail");
-    expect(u.report).toContain(`report ${RUN_ID} --unit ${u.unitId} --status completed`);
+    // #15: an un-journaled unit is `pending` with the completed report command,
+    // and #14 embeds the --expect-step spine guard in it.
+    expect(u.action).toBe("pending");
+    expect(u.report).toContain(`report ${RUN_ID} --unit ${u.unitId} --expect-step build --status completed`);
     expect(u.journaled).toBeUndefined();
+    // #14: the brief carries a spine watermark token stamping the active step.
+    expect(brief.spineToken).toContain(`${RUN_ID}#build#l1#`);
   });
 });
 
@@ -326,6 +340,18 @@ describe("workflow brief — fan-out with mixed journaled statuses", () => {
     // Every unit carries its output schema + fan-out item.
     expect(byId.get(ua.unitId)?.outputSchema).toBeDefined();
     expect(byId.get(ua.unitId)?.item).toBe("a.ts");
+
+    // #15: action derivation + report-command suppression for terminal rows.
+    // a.ts completed → `done`, no report command.
+    expect(byId.get(ua.unitId)?.action).toBe("done");
+    expect(byId.get(ua.unitId)?.report).toBeUndefined();
+    // b.ts failed → `failed`, only the `--rerun` form is offered.
+    expect(byId.get(ub.unitId)?.action).toBe("failed");
+    expect(byId.get(ub.unitId)?.report).toContain("--rerun");
+    // c.ts never dispatched → `pending`, normal completed command (no --rerun).
+    expect(byId.get(uc.unitId)?.action).toBe("pending");
+    expect(byId.get(uc.unitId)?.report).toContain("--status completed");
+    expect(byId.get(uc.unitId)?.report).not.toContain("--rerun");
   });
 });
 
@@ -455,5 +481,119 @@ describe("workflow brief — unknown run", () => {
   test("a missing run id is a not-found error", async () => {
     seedRun({ plan: plan(SOLO_WF), steps: [{ id: "build" }, { id: "wrap" }] });
     await expect(buildWorkflowBrief("nonexistent-run-id")).rejects.toThrow(/not found/i);
+  });
+});
+
+describe("workflow brief — secret-shaped params (#13)", () => {
+  test("warns loudly on a credential-looking param value and a secret-suggesting key", async () => {
+    seedRun({
+      plan: plan(SOLO_WF),
+      params: { target: "widget", apiKey: "sk-abcdEFGH1234ijklMNOP5678qrstUVWX" },
+      steps: [{ id: "build" }, { id: "wrap" }],
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    // The standing advisory (params are non-secret, part of every prompt).
+    expect(brief.warnings.some((w) => w.includes("NOT secret") && w.includes("env bindings"))).toBe(true);
+    // The best-effort secret-shaped-value hit names the offending path.
+    expect(brief.warnings.some((w) => w.includes('"apiKey"'))).toBe(true);
+  });
+
+  test("no standing advisory when a run carries no params", async () => {
+    seedRun({ plan: plan(LOOP_WF), steps: [{ id: "work", criteria: ["thorough"] }] });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.warnings.some((w) => w.includes("NOT secret"))).toBe(false);
+  });
+});
+
+describe("workflow brief — unit action states (#15)", () => {
+  test("a live-claimed running unit is `claimed`; a live engine lease makes it `do_not_run`", async () => {
+    const p = plan(LOOP_WF);
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    if (!engine.ok) throw new Error("compute failed");
+    const solo = engine.list.units[0];
+    seedRun({
+      plan: p,
+      steps: [{ id: "work", criteria: ["thorough"] }],
+      units: [
+        {
+          unitId: solo.unitId,
+          stepId: "work",
+          nodeId: solo.nodeId,
+          status: "running",
+          inputHash: solo.resolved.ok ? solo.resolved.inputHash : null,
+          claimHolder: "claim:other",
+          claimExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      ],
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units[0].action).toBe("claimed");
+    expect(brief.workList.units[0].journaled?.claimedBy).toBe("claim:other");
+  });
+
+  test("a running unit silent past the window is `stale` and reclaimable", async () => {
+    const p = plan(LOOP_WF);
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    if (!engine.ok) throw new Error("compute failed");
+    const solo = engine.list.units[0];
+    const old = new Date(Date.now() - 10 * 60_000).toISOString();
+    seedRun({
+      plan: p,
+      steps: [{ id: "work", criteria: ["thorough"] }],
+      units: [
+        {
+          unitId: solo.unitId,
+          stepId: "work",
+          nodeId: solo.nodeId,
+          status: "running",
+          inputHash: solo.resolved.ok ? solo.resolved.inputHash : null,
+          startedAt: old,
+          lastCheckinAt: old,
+        },
+      ],
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units[0].action).toBe("stale");
+    expect(brief.workList.units[0].report).toBeDefined();
+    expect(brief.staleUnits.some((s) => s.unitId === solo.unitId)).toBe(true);
+  });
+
+  test("a live engine lease flips every unit to do_not_run with no report command", async () => {
+    seedRun({
+      plan: plan(SOLO_WF),
+      params: { target: "x" },
+      steps: [{ id: "build" }, { id: "wrap" }],
+      lease: { holder: "engine-live", until: new Date(Date.now() + 60_000).toISOString() },
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units[0].action).toBe("do_not_run");
+    expect(brief.workList.units[0].report).toBeUndefined();
+  });
+});
+
+describe("workflow brief — worktree isolation warning (#21)", () => {
+  const WORKTREE_WF = `version: 1
+name: Isolated
+steps:
+  - id: build
+    title: Build
+    unit:
+      runner: agent
+      isolation: worktree
+      instructions: Build it.
+`;
+
+  test("warns that .gitignore-matched outputs are disposable when a unit is worktree-isolated", async () => {
+    seedRun({ plan: plan(WORKTREE_WF), steps: [{ id: "build" }] });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units[0].action).toBe("pending");
+    const warned = brief.warnings.some((w) => w.includes("isolated git worktree") && w.includes("DISPOSABLE"));
+    expect(warned).toBe(true);
+  });
+
+  test("no worktree warning for a step whose units are not isolated", async () => {
+    seedRun({ plan: plan(SOLO_WF), params: { target: "x" }, steps: [{ id: "build" }, { id: "wrap" }] });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.warnings.some((w) => w.includes("isolated git worktree"))).toBe(false);
   });
 });

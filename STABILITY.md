@@ -102,9 +102,12 @@ for scripted use.
   executed engine-driven by `akm workflow run`. The R2 engine rework adds
   journaled replay with content-derived unit identity (input divergence is a
   hard error), single-driver run leases, typed step artifacts,
-  artifact-judged gates with bounded `max_loops`, run budget ceilings
-  (`budget.max_tokens`/`max_units`), `akm workflow watch` (NDJSON event
-  tail, `--stream`), and `isolation: worktree`. The R3 rework adds a
+  artifact-judged gates with bounded `max_loops` and required gates
+  (`gate.required`, or the run-wide `akm workflow run --require-gates`, which
+  BLOCK for a human instead of failing open when no judge is available), run
+  budget ceilings (`budget.max_tokens`/`max_units`), `akm workflow watch`
+  (NDJSON event tail, `--stream`), and `isolation: worktree`. The R3 rework
+  adds a
   **harness-neutral driver protocol** so any agent session (Claude Code,
   opencode, Codex, a human at a shell) can drive a run instead of the native
   engine: **`akm workflow brief <run>`** (read-only; takes no lease and
@@ -115,9 +118,11 @@ for scripted use.
   ingests a unit's result through the SAME shared step semantics the engine
   uses, enforcing input-hash idempotency/replay-divergence, output-schema
   validation, budget ceilings, and the artifact-judged gate/`max_loops`
-  completion path; `--status running` claims/heartbeats a unit
-  (`last_checkin_at`, migration 007) for stale-driver detection without
-  advancing the spine. A run is driven by one engine OR one external driver
+  completion path. A same-hash re-report of a completed unit is an idempotent
+  no-op; `--rerun` records a fresh attempt for a failed unit. `--status
+  running` claims/heartbeats a unit (a claim holder + expiry, and
+  `last_checkin_at`) for stale-driver detection without advancing the spine.
+  A run is driven by one engine OR one external driver
   at a time (the run lease arbitrates; `report` is refused while a live
   engine lease exists), and the two surfaces produce identical unit graphs.
   The YAML format, its schema, the `run`/`watch`/`brief`/`report` flags, and

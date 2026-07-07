@@ -173,9 +173,17 @@ const workflowStatusCommand = defineJsonCommand({
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
+    units: {
+      type: "boolean",
+      description:
+        "Also list per-unit rows from the run journal (unit id, status, failure_reason, and any result/error " +
+        "diagnostic text). Diagnostics only — step evidence stays deterministic and is unaffected (#22).",
+      default: false,
+    },
   },
   async run({ args }) {
     const target = args.target;
+    const includeUnits = args.units === true;
     // Check if target looks like a workflow ref
     const parsed = (() => {
       try {
@@ -192,10 +200,10 @@ const workflowStatusCommand = defineJsonCommand({
       }
       const mostRecent = runs[0];
       if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
-      const result = await getWorkflowStatus(mostRecent.id);
+      const result = await getWorkflowStatus(mostRecent.id, { includeUnits });
       output("workflow-status", result);
     } else {
-      const result = await getWorkflowStatus(target);
+      const result = await getWorkflowStatus(target, { includeUnits });
       output("workflow-status", result);
     }
   },
@@ -451,6 +459,11 @@ const workflowReportCommand = defineJsonCommand({
       description: "Content-derived unit id from `akm workflow brief` (copy it verbatim)",
       required: true,
     },
+    "expect-step": {
+      type: "string",
+      description:
+        "Guard: the step id you briefed against. Refuses the report if the run's active step has since moved (from the `brief` report command line)",
+    },
     status: { type: "string", description: `Unit status: ${WORKFLOW_REPORT_STATES.join(", ")}`, required: true },
     result: { type: "string", description: "Result payload (JSON for a schema unit, else text). completed only." },
     "result-file": { type: "string", description: "Read the result payload from this file instead of --result/stdin" },
@@ -513,6 +526,7 @@ const workflowReportCommand = defineJsonCommand({
       target: args.target,
       unitId,
       status: status as WorkflowReportStatus,
+      ...(getStringArg(args, "expect-step") !== undefined ? { expectStep: getStringArg(args, "expect-step") } : {}),
       ...(resultRaw !== undefined ? { resultRaw } : {}),
       ...(tokens !== undefined ? { tokens } : {}),
       ...(args.rerun === true ? { rerun: true } : {}),

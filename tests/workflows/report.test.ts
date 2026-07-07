@@ -13,7 +13,7 @@ import type { WorkflowRunStatus } from "../../src/sources/types";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
-import { reportWorkflowUnit } from "../../src/workflows/exec/report";
+import { normalizeFailureReason, reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
@@ -1176,5 +1176,102 @@ describe("workflow report — concurrent finalization is a single spine advance"
       const dispatch = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.phase === null);
       expect(dispatch).toHaveLength(5);
     });
+  });
+});
+
+// ── #14: --expect-step spine guard ───────────────────────────────────────────
+
+describe("workflow report — --expect-step spine guard (#14)", () => {
+  test("a matching expect-step is accepted; a stale one is refused with a clear message", async () => {
+    const p = plan(LOOP_WF);
+    seedRun({ plan: p, steps: [{ id: "work", criteria: ["the work is thorough"] }] });
+    const [unit] = unitIds(p, 0, {});
+
+    // Wrong step id (the spine moved / never was here) → refused, run untouched.
+    await expect(
+      reportWorkflowUnit({
+        target: RUN_ID,
+        unitId: unit,
+        expectStep: "some-other-step",
+        status: "completed",
+        resultRaw: "done",
+        summaryJudge: acceptJudge,
+      }),
+    ).rejects.toThrow(/is now on step "work", not "some-other-step".*--expect-step/s);
+
+    // The matching step id is accepted and drives the report normally.
+    const ok = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: unit,
+      expectStep: "work",
+      status: "completed",
+      resultRaw: "done",
+      summaryJudge: acceptJudge,
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.stepId).toBe("work");
+  });
+});
+
+// ── #16: failure-reason taxonomy normalization ───────────────────────────────
+
+describe("workflow report — failure-reason normalization (#16)", () => {
+  test("a taxonomy reason is stored verbatim; an unknown one is namespaced under external:<slug>", async () => {
+    const p = plan(LOOP_WF);
+    const [unit] = unitIds(p, 0, {});
+
+    // Known taxonomy reason → verbatim (participates in retry.on identically).
+    seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
+    await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: unit,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    await withWorkflowRunsRepo(async (repo) => {
+      expect(repo.getUnit(RUN_ID, unit)?.failure_reason).toBe("timeout");
+    });
+  });
+
+  test("an arbitrary external reason is sanitized to external:<slug>", async () => {
+    const p = plan(LOOP_WF);
+    const [unit] = unitIds(p, 0, {});
+    seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
+    await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: unit,
+      status: "failed",
+      failureReason: "Copilot: PR Closed Without Merge!!",
+      summaryJudge: null,
+    });
+    await withWorkflowRunsRepo(async (repo) => {
+      const reason = repo.getUnit(RUN_ID, unit)?.failure_reason ?? "";
+      expect(reason.startsWith("external:")).toBe(true);
+      // lowercase, [a-z0-9_-] only after the namespace prefix.
+      expect(reason.slice("external:".length)).toMatch(/^[a-z0-9_-]+$/);
+    });
+  });
+
+  test("an absent reason defaults to reported_failure (not external:)", async () => {
+    const p = plan(LOOP_WF);
+    const [unit] = unitIds(p, 0, {});
+    seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
+    await reportWorkflowUnit({ target: RUN_ID, unitId: unit, status: "failed", summaryJudge: null });
+    await withWorkflowRunsRepo(async (repo) => {
+      expect(repo.getUnit(RUN_ID, unit)?.failure_reason).toBe("reported_failure");
+    });
+  });
+
+  test("normalizeFailureReason edge cases", () => {
+    expect(normalizeFailureReason(undefined)).toBe("reported_failure");
+    expect(normalizeFailureReason("   ")).toBe("reported_failure");
+    expect(normalizeFailureReason("timeout")).toBe("timeout");
+    expect(normalizeFailureReason("non_zero_exit")).toBe("non_zero_exit");
+    // Unknown → external:<slug>; a symbols-only reason still yields a stable slug.
+    expect(normalizeFailureReason("!!!")).toBe("external:unknown");
+    expect(normalizeFailureReason("Weird Reason 42")).toBe("external:weird-reason-42");
+    // external:* is outside the taxonomy, so retry.on can never match it.
+    expect(normalizeFailureReason("timeout").startsWith("external:")).toBe(false);
   });
 });

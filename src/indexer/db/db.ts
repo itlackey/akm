@@ -98,7 +98,8 @@ export function openIndexDatabase(dbPath?: string, options?: { embeddingDim?: nu
  */
 function resolveConfiguredEmbeddingDim(): number | undefined {
   try {
-    const { loadConfig } = require("../../core/config/config") as typeof import("../../core/config/config");
+    const esmRequire = createRequire(import.meta.url);
+    const { loadConfig } = esmRequire("../../core/config/config") as typeof import("../../core/config/config");
     const dim = loadConfig().embedding?.dimension;
     if (typeof dim === "number" && Number.isInteger(dim) && dim > 0 && dim <= 4096) {
       return dim;
