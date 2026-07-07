@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
+import { reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import {
   completeWorkflowStep,
@@ -279,5 +280,160 @@ describe("manual loop under the lease", () => {
     });
     const after = await getWorkflowStatus(started.run.id);
     expect(after.run.engineLease).toBeUndefined();
+  });
+});
+
+/**
+ * Lease heartbeat (P1 fix — the lease must not expire while dispatch is in
+ * flight). The between-step renewal cannot cover a single unit that runs longer
+ * than the 90s TTL (the default unit timeout is 10 minutes). A timer INSIDE the
+ * engine invocation renews the lease during long steps; a failed renewal (the
+ * lease was genuinely stolen after an expiry) aborts dispatch and fails the run
+ * loudly. The `heartbeatScheduler` seam drives ticks deterministically.
+ */
+describe("engine lease heartbeat (long-running steps)", () => {
+  test("(a) the heartbeat renews the lease across a dispatch longer than the TTL, keeping it live and unclaimable", async () => {
+    writeWorkflow("lease-heartbeat");
+    const started = await startWorkflowRun("workflow:lease-heartbeat", {});
+    const runId = started.run.id;
+
+    let fireTick: (() => Promise<void>) | undefined;
+    const result = await runWorkflowSteps({
+      target: runId,
+      heartbeatScheduler: (tick) => {
+        fireTick = tick;
+        return () => {};
+      },
+      dispatcher: async () => {
+        // Simulate a step that outlives the 90s TTL: age the lease to expiry as
+        // the wall clock would during a long unit. Without a heartbeat the run
+        // would now be claimable by a second engine.
+        const held = await readLease(runId);
+        await withWorkflowRunsRepo((repo) => repo.renewEngineLease(runId, held.holder as string, isoIn(-1_000)));
+        // The heartbeat fires and renews the lease back to a live window.
+        await fireTick?.();
+        const after = await readLease(runId);
+        expect(after.holder).toBe(held.holder);
+        expect(after.until && after.until > new Date().toISOString()).toBe(true);
+        // A competing engine cannot claim it while the heartbeat keeps it live.
+        const stolen = await withWorkflowRunsRepo((repo) =>
+          repo.acquireEngineLease(runId, "engine-B", isoIn(90_000), new Date().toISOString()),
+        );
+        expect(stolen).toBe(false);
+        return { ok: true, text: "done" };
+      },
+    });
+    expect(result.done).toBe(true);
+    // Released cleanly on exit.
+    expect(await readLease(runId)).toEqual({ holder: null, until: null });
+  });
+
+  test("(b) the heartbeat timer is stopped when the run finishes AND when it fails", async () => {
+    writeWorkflow("lease-hb-stop");
+
+    // Success path: the run completes, the finally stops the heartbeat.
+    const ok = await startWorkflowRun("workflow:lease-hb-stop", {});
+    let stopsOk = 0;
+    const okResult = await runWorkflowSteps({
+      target: ok.run.id,
+      heartbeatScheduler: () => () => {
+        stopsOk++;
+      },
+      dispatcher: async () => ({ ok: true, text: "done" }),
+    });
+    expect(okResult.done).toBe(true);
+    expect(stopsOk).toBe(1);
+
+    // Failure path: the dispatcher throw becomes a failed run, and the finally
+    // still stops the heartbeat exactly once.
+    const bad = await startWorkflowRun("workflow:lease-hb-stop", {});
+    let stopsBad = 0;
+    const badResult = await runWorkflowSteps({
+      target: bad.run.id,
+      heartbeatScheduler: () => () => {
+        stopsBad++;
+      },
+      dispatcher: async () => {
+        throw new Error("harness exploded");
+      },
+    });
+    expect(badResult.run.status).toBe("failed");
+    expect(stopsBad).toBe(1);
+  });
+
+  test("(c) a failed renewal (lease stolen mid-step) aborts dispatch and fails the run loudly", async () => {
+    writeWorkflow("lease-hb-stolen");
+    const started = await startWorkflowRun("workflow:lease-hb-stolen", {});
+    const runId = started.run.id;
+
+    let fireTick: (() => Promise<void>) | undefined;
+    let dispatches = 0;
+    let signalAborted: boolean | undefined;
+    await expect(
+      runWorkflowSteps({
+        target: runId,
+        heartbeatScheduler: (tick) => {
+          fireTick = tick;
+          return () => {};
+        },
+        dispatcher: async (request) => {
+          dispatches++;
+          // Another engine steals the lease after ours "expired" mid-step.
+          const ourHolder = (await readLease(runId)).holder as string;
+          await withWorkflowRunsRepo((repo) => {
+            repo.renewEngineLease(runId, ourHolder, isoIn(-1_000));
+            repo.acquireEngineLease(runId, "thief", isoIn(90_000), new Date().toISOString());
+          });
+          // The heartbeat tick now fails to renew → aborts this dispatch.
+          await fireTick?.();
+          signalAborted = request.signal?.aborted;
+          return { ok: true, text: "should be discarded" };
+        },
+      }),
+    ).rejects.toThrow(/lost its run lease mid-dispatch/);
+    // The unit was dispatched once; the loud stop prevents any further driving.
+    expect(dispatches).toBe(1);
+    // The dispatch signal was aborted the instant the lease was lost.
+    expect(signalAborted).toBe(true);
+    // The thief still owns the lease — the loser's holder-guarded release is a no-op.
+    expect((await readLease(runId)).holder).toBe("thief");
+  });
+
+  test("(d) `workflow report` keeps refusing while the heartbeat holds the lease live through a long step", async () => {
+    writeWorkflow("lease-hb-report");
+    const started = await startWorkflowRun("workflow:lease-hb-report", {});
+    const runId = started.run.id;
+
+    let fireTick: (() => Promise<void>) | undefined;
+    let reportRefused = false;
+    const result = await runWorkflowSteps({
+      target: runId,
+      heartbeatScheduler: (tick) => {
+        fireTick = tick;
+        return () => {};
+      },
+      dispatcher: async () => {
+        // Age the lease as a long step would, then heartbeat it live again.
+        const held = await readLease(runId);
+        await withWorkflowRunsRepo((repo) => repo.renewEngineLease(runId, held.holder as string, isoIn(-1_000)));
+        await fireTick?.();
+        // A racing `report` must STILL be refused — the lease reads live, so the
+        // report cannot race the engine's spine (the R3 refusal stays correct).
+        try {
+          await reportWorkflowUnit({
+            target: runId,
+            unitId: "only-step:solo",
+            status: "completed",
+            resultRaw: "x",
+            summaryJudge: null,
+          });
+        } catch (err) {
+          reportRefused = /is refused while the engine lease is live/.test((err as Error).message);
+        }
+        return { ok: true, text: "done" };
+      },
+    });
+    expect(result.done).toBe(true);
+    expect(reportRefused).toBe(true);
   });
 });

@@ -41,6 +41,25 @@ export interface AssetSpec {
  */
 export const WORKFLOW_EXTENSIONS = [".md", ".yaml", ".yml"] as const;
 
+/**
+ * Strip a recognized workflow extension (`.md`/`.yaml`/`.yml`) from a workflow
+ * asset *name* so `foo`, `foo.yaml`, `foo.yml`, and `foo.md` collapse to one
+ * canonical identity — the same collapse `workflowSpec.toCanonicalName`
+ * performs on a resolved file path. Callers that turn a `workflow:<name>` ref
+ * into run identity (the active-run guard, list/status filters) MUST route the
+ * name through this so an aliased spelling (`workflow:foo.yaml`) and the
+ * canonical `workflow:foo` cannot start or hide parallel runs of the same
+ * workflow. Names without a recognized workflow extension pass through
+ * unchanged.
+ */
+export function canonicalizeWorkflowName(name: string): string {
+  const lower = name.toLowerCase();
+  for (const ext of WORKFLOW_EXTENSIONS) {
+    if (lower.endsWith(ext)) return name.slice(0, -ext.length);
+  }
+  return name;
+}
+
 const workflowSpec: Omit<AssetSpec, "stashDir" | "rendererName" | "actionBuilder"> = {
   isRelevantFile: (fileName) =>
     (WORKFLOW_EXTENSIONS as readonly string[]).includes(path.extname(fileName).toLowerCase()),

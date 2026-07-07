@@ -131,16 +131,21 @@ function validateNode(value: unknown, schema: Record<string, unknown>, path: str
 
     if (properties) {
       for (const [key, propSchema] of Object.entries(properties)) {
-        if (!(key in record)) continue;
+        if (!Object.hasOwn(record, key)) continue;
         if (propSchema && typeof propSchema === "object" && !Array.isArray(propSchema)) {
           validateNode(record[key], propSchema as Record<string, unknown>, `${path}.${key}`, errors);
         }
       }
     }
 
-    if (schema.additionalProperties === false && properties) {
+    // `additionalProperties: false` closes the object to exactly its declared
+    // `properties`. This MUST run even when no `properties` object is present:
+    // `{ type: "object", additionalProperties: false }` admits only `{}`. Use
+    // `Object.hasOwn` so an inherited key name (e.g. "toString") on the empty
+    // property set is not mistaken for a declared property.
+    if (schema.additionalProperties === false) {
       for (const key of Object.keys(record)) {
-        if (!(key in properties)) {
+        if (!properties || !Object.hasOwn(properties, key)) {
           errors.push(`${path}: unexpected property "${key}" (additionalProperties: false)`);
         }
       }

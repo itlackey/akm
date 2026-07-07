@@ -267,6 +267,26 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_run_units ADD COLUMN last_checkin_at TEXT;
     `,
   },
+  // ── Migration 008 — per-unit dispatch-attempt counter (PR #714 review, P2) ───
+  //
+  // `workflow_run_units.unit_id` is CONTENT-derived and stable across
+  // crash/resume (retries/loops carry `~r<n>`/`~l<loop>` suffixes, so they are
+  // DISTINCT rows). A crash between a unit's dispatch (`insertUnit`, status
+  // `running`) and its finish leaves a stale `running` row; durable-row resume
+  // re-dispatches the SAME unit_id and `insertUnit` REPLACES that single row.
+  // Because the run's budget/lifetime seed was derived from the NUMBER of unit
+  // rows, each crash/resume of one unit erased the prior dispatch from
+  // `budget.max_units` / lifetime-cap accounting, letting a run spend past its
+  // declared ceiling. `attempts` counts how many times a row was (re)dispatched
+  // — incremented by `insertUnit` on every REPLACE of an existing row — so both
+  // budget seeds sum `attempts` instead of counting rows and crash-retried
+  // dispatches are charged. Existing rows back-fill to 1 (one dispatch each).
+  {
+    id: "008-unit-attempts",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
 ];
 
 /**

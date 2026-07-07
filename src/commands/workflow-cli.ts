@@ -219,12 +219,14 @@ const workflowListCommand = defineJsonCommand({
 const workflowCreateCommand = defineJsonCommand({
   meta: {
     name: "create",
-    description: "Create a workflow markdown document in the working stash",
+    description:
+      "Create a workflow in the working stash (markdown document by default; a .yaml/.yml name writes a YAML program)",
   },
   args: {
     name: {
       type: "positional",
-      description: "Workflow name (flat, no '/'; use --path for a subdirectory)",
+      description:
+        "Workflow name (flat, no '/'; use --path for a subdirectory). A .yaml/.yml suffix creates a YAML program.",
       required: true,
     },
     path: {
@@ -232,7 +234,10 @@ const workflowCreateCommand = defineJsonCommand({
       description:
         "Relative subdirectory under workflows/ to place the workflow in (e.g. 'release'). The filename comes from the name.",
     },
-    from: { type: "string", description: "Import and validate markdown from an existing file" },
+    from: {
+      type: "string",
+      description: "Import and validate content from an existing file (parsed per the destination extension)",
+    },
     force: {
       type: "boolean",
       description: "Overwrite an existing workflow (requires --from or --reset)",

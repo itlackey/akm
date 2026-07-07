@@ -331,6 +331,25 @@ describe("parseWorkflowProgram — step validation", () => {
     expect(joined).toContain('Duplicate step id "dup"');
   });
 
+  test("rejects step ids outside the ${{ }}-addressable grammar (leading digit, dots)", () => {
+    for (const bad of ["1build", "build.js", "a.gate", "build.step"]) {
+      const errors = parseErrors(withSteps(`  - id: ${bad}\n    unit: { instructions: x }`));
+      const joined = errors.join(" | ");
+      expect(joined).toContain(`invalid id "${bad}"`);
+      // The message must point at the addressability root cause.
+      expect(joined).toContain("cannot be referenced from ${{ }} expressions");
+    }
+  });
+
+  test("accepts step ids with underscores/dashes/digits after a valid first char", () => {
+    for (const good of ["build", "_hidden", "build_js", "build-js", "b1", "step2output"]) {
+      const program = parseOk(withSteps(`  - id: ${good}\n    unit: { instructions: x }`));
+      expect(program.steps[0]?.id).toBe(good);
+      // Every accepted id must satisfy the addressable pattern.
+      expect(PROGRAM_STEP_ID_PATTERN.test(good)).toBe(true);
+    }
+  });
+
   test("exactly one of unit | map | route", () => {
     const none = parseErrors(withSteps("  - id: a")).join(" ");
     expect(none).toContain('must declare exactly one of "unit", "map", or "route" (found none)');

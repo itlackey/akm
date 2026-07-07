@@ -306,18 +306,29 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
       // step (matching the engine's terminal state, not a stuck run).
       if (verdict.kind === "refuse") return { kind: "budget-refused", message: verdict.message };
 
-      repo.insertUnit({
-        runId,
-        unitId: journalId,
-        stepId: stepState.id,
-        nodeId: workUnit.nodeId,
-        parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
-        phase: null,
-        runner: workUnit.runner,
-        model: workUnit.model ?? null,
-        inputHash,
-        startedAt: existing?.started_at ?? nowIso,
-      });
+      // Journal the dispatch row, then finalize it. When this unit was already
+      // claimed with `--status running`, its row exists with the SAME dispatch
+      // metadata this insert would write; re-inserting would bump `attempts`
+      // (migration 008) and count the claim+report of ONE execution as two
+      // dispatches — inflating budget accounting relative to the engine, which
+      // does a single `insertUnit` per dispatch. So skip the insert for a live
+      // `running` claim (finishUnit below finalizes it, `attempts` unchanged);
+      // a fresh report with no claim, or a re-dispatch over a prior FAILED row,
+      // still (re)inserts and is charged an attempt.
+      if (existing?.status !== "running") {
+        repo.insertUnit({
+          runId,
+          unitId: journalId,
+          stepId: stepState.id,
+          nodeId: workUnit.nodeId,
+          parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
+          phase: null,
+          runner: workUnit.runner,
+          model: workUnit.model ?? null,
+          inputHash,
+          startedAt: existing?.started_at ?? nowIso,
+        });
+      }
       repo.finishUnit({
         runId,
         unitId: journalId,
@@ -1000,7 +1011,12 @@ function assessBudget(
   for (const row of rows) {
     if (row.phase !== null) continue; // gate rows excluded
     if (row.unit_id === journalId) continue; // the row being (re)written
-    dispatched++;
+    // Sum `attempts` (migration 008), not a per-row +1: a crash-retried unit
+    // occupies ONE row whose `attempts` records every re-dispatch, so this
+    // mirrors the engine seed (`run-workflow.ts`) and charges each dispatch.
+    // Driver-reported rows carry `attempts = 1` (one final outcome), so on the
+    // report surface this equals the row count — identical to the pre-008 seed.
+    dispatched += row.attempts;
     tokens += row.tokens ?? 0;
   }
   if (budget.maxUnits !== undefined && dispatched >= budget.maxUnits) {

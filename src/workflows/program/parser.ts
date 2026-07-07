@@ -337,7 +337,10 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
     } else if (!PROGRAM_STEP_ID_PATTERN.test(rawStep.id)) {
       ctx.err(
         [...path, "id"],
-        `${label} has an invalid id "${rawStep.id}". Ids must match [A-Za-z0-9][A-Za-z0-9._-]* (letters, digits, dots, underscores, dashes; starting with a letter or digit).`,
+        `${label} has an invalid id "${rawStep.id}". A step id cannot be referenced from \${{ }} expressions ` +
+          `unless it matches [A-Za-z_][A-Za-z0-9_-]* (a letter or underscore first, then letters, digits, ` +
+          `underscores, or dashes; no dots, no leading digit) — otherwise \${{ steps.${rawStep.id}.output }} ` +
+          `cannot be written.`,
       );
     } else {
       id = rawStep.id;

@@ -20,6 +20,19 @@
  *      DIRTY → it is RETAINED (the caller logs the path) so uncollected work
  *      is never destroyed.
  *
+ * What "uncollected work" means (the honest contract): the clean probe is
+ * `git status --porcelain` WITHOUT `--ignored`, so it counts tracked-file
+ * modifications and untracked *unignored* files, but NOT files the base repo's
+ * own `.gitignore` matches (build outputs, caches, logs, dependency dirs such
+ * as `node_modules`/`dist`). Those ignored files are DISPOSABLE BY DEFINITION
+ * — the repository already declares them regenerable — so a worktree whose only
+ * residue is ignored files probes clean and IS removed. This is deliberate:
+ * adding `--ignored` would retain a worktree after essentially every unit that
+ * ran a package install or a build (the ignored `node_modules`/`dist` tree),
+ * blowing up disk under the run-scoped tmp root. Work a unit needs preserved
+ * must therefore be tracked or untracked-unignored; anything the workflow
+ * repo has chosen to `.gitignore` is treated as throwaway.
+ *
  * All git invocations are `spawnSync` (the repo-wide pattern for git
  * shell-outs) with explicit timeouts; this module never throws — every
  * operation returns a result object so the executor maps failures onto its
@@ -167,6 +180,13 @@ export interface WorktreeCleanupResult {
  * it clean; retain it (dirty: true) when the unit left uncommitted work —
  * the caller logs the retained path. Any git failure retains the worktree
  * too (never destroy a tree whose state could not be verified).
+ *
+ * The probe deliberately omits `--ignored`: a worktree whose only residue is
+ * files matched by the base repo's `.gitignore` (build artifacts, caches,
+ * logs, `node_modules`) probes clean and IS removed. Those files are disposable
+ * by the repo's own declaration; retaining a worktree per build/install would
+ * blow up disk. "Uncollected work" the caller preserves is therefore
+ * tracked-or-untracked-unignored changes only (module doc).
  */
 export function cleanupUnitWorktree(baseDir: string, worktreePath: string): WorktreeCleanupResult {
   const status = git(worktreePath, ["status", "--porcelain"]);

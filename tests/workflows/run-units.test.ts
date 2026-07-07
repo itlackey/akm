@@ -88,6 +88,59 @@ describe("workflow_run_units persistence (migration 004)", () => {
     });
   });
 
+  test("attempts starts at 1 and increments on every re-dispatch (crash/resume), resetting value columns (migration 008)", async () => {
+    await withWorkflowRunsRepo((repo) => {
+      const insert = (startedAt: string) =>
+        repo.insertUnit({
+          runId: RUN_ID,
+          unitId: "review:solo",
+          stepId: "step-1",
+          nodeId: "review.unit",
+          parentUnitId: null,
+          phase: null,
+          runner: "sdk",
+          model: "deep",
+          inputHash: "hash-1",
+          startedAt,
+        });
+
+      // First dispatch: fresh row, attempts defaults to 1.
+      insert("2026-01-01T00:00:00.000Z");
+      expect(repo.getUnit(RUN_ID, "review:solo")?.attempts).toBe(1);
+
+      // The unit reaches a terminal state with usage + a session id …
+      repo.finishUnit({
+        runId: RUN_ID,
+        unitId: "review:solo",
+        status: "failed",
+        resultJson: JSON.stringify("partial"),
+        tokens: 17,
+        failureReason: "timeout",
+        sessionId: "sess-1",
+        finishedAt: "2026-01-01T00:00:05.000Z",
+      });
+
+      // … then a crash/resume re-dispatches the SAME content-derived unit_id.
+      // The single row is REPLACED: value columns reset to NULL exactly as the
+      // old INSERT OR REPLACE did, but attempts is INCREMENTED, not reset.
+      insert("2026-01-01T00:01:00.000Z");
+      const afterSecond = repo.getUnit(RUN_ID, "review:solo");
+      expect(afterSecond?.attempts).toBe(2);
+      expect(afterSecond?.status).toBe("running");
+      expect(afterSecond?.result_json).toBeNull();
+      expect(afterSecond?.tokens).toBeNull();
+      expect(afterSecond?.failure_reason).toBeNull();
+      expect(afterSecond?.session_id).toBeNull();
+      expect(afterSecond?.finished_at).toBeNull();
+      expect(afterSecond?.started_at).toBe("2026-01-01T00:01:00.000Z");
+
+      // A third re-dispatch keeps accumulating; still exactly one row.
+      insert("2026-01-01T00:02:00.000Z");
+      expect(repo.getUnit(RUN_ID, "review:solo")?.attempts).toBe(3);
+      expect(repo.getUnitsForRun(RUN_ID)).toHaveLength(1);
+    });
+  });
+
   test("failed unit records the failure reason", async () => {
     await withWorkflowRunsRepo((repo) => {
       repo.insertUnit({

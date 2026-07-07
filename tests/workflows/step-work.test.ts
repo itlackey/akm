@@ -204,6 +204,7 @@ function gateRow(stepId: string, loop: number, verdict: unknown): WorkflowRunUni
     started_at: null,
     finished_at: null,
     last_checkin_at: null,
+    attempts: 1,
   };
 }
 

@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
@@ -105,7 +106,13 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   }
 
   const resolvedSourcePath = sourcePath ?? config.stashDir ?? assetPath;
-  const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+  // Canonicalize the stored ref: `workflow:foo.yaml` and `workflow:foo`
+  // resolve to the same file, so they MUST share one run identity. The raw
+  // `parsed.name` (with any extension) is what drives file resolution above;
+  // only the persisted/queried ref is collapsed (matches the index entry key,
+  // which is keyed by the extension-stripped canonical name).
+  const canonicalName = canonicalizeWorkflowName(parsed.name);
+  const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalName}`;
 
   // Format detection by extension: `.yaml`/`.yml` is a YAML workflow program
   // (redesign addendum, R1); everything else is the markdown document format.

@@ -32,6 +32,7 @@
  */
 
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { NotFoundError, UsageError } from "../../core/errors";
 import type { WorkflowRunUnitStatus } from "../../storage/repositories/workflow-runs-repository";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
@@ -502,7 +503,7 @@ export async function resolveRunId(target: string): Promise<string> {
     if (parsed.type !== "workflow") {
       throw new UsageError(`Expected a workflow run id or workflow ref (workflow:<name>), got "${target}".`);
     }
-    const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+    const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
     const active = repo.getActiveRunRowForScope(ref, getCurrentWorkflowScopeKey());
     if (!active) {
       throw new NotFoundError(

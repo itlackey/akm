@@ -47,8 +47,8 @@
   "definitions": {
     "identifier": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "description": "Step id: letters, digits, dots, underscores, dashes; starts with a letter or digit."
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+      "description": "Step id: a letter or underscore first, then letters, digits, underscores, or dashes (no dots, no leading digit). This is exactly the ${{ steps.<id>.output }}-addressable grammar; dots are reserved for the .output path separator and the engine's internal <stepId>.gate node id."
     },
     "timeout": {
       "description": "Duration: \"<n>ms\" | \"<n>s\" | \"<n>m\" | \"none\" (bare integers are milliseconds).",

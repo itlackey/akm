@@ -85,6 +85,17 @@ export type WorkflowRunUnitRow = {
    * on never-heartbeated units.
    */
   last_checkin_at: string | null;
+  /**
+   * Dispatch-attempt counter (migration 008). Starts at 1 on the first insert
+   * and is incremented by {@link WorkflowRunsRepository.insertUnit} every time
+   * it REPLACES an existing row for the same (run_id, unit_id) — i.e. a
+   * crash/resume re-dispatch of a content-derived unit whose prior attempt
+   * never reached a terminal status. Budget/lifetime accounting sums this
+   * column (not the row count) so a re-dispatched unit is charged for every
+   * attempt. Gate-evaluation rows (`phase = "gate"`) carry it too but are
+   * excluded from budget seeding, so their value is inert.
+   */
+  attempts: number;
 };
 
 /** Input row for {@link WorkflowRunsRepository.insertUnit}. Inserted as `running`. */
@@ -461,17 +472,44 @@ export class WorkflowRunsRepository {
   /**
    * Insert a unit row in `running` state (a dispatch is starting now).
    *
-   * OR REPLACE: durable-row resume re-dispatches units whose previous attempt
-   * never reached a terminal status (a crash mid-step leaves `running` rows).
-   * The fresh dispatch replaces the stale row for the same (run, unit) key.
+   * Upsert on the (run_id, unit_id) primary key: durable-row resume
+   * re-dispatches units whose previous attempt never reached a terminal status
+   * (a crash mid-step leaves `running` rows). The fresh dispatch REPLACES the
+   * stale row — value columns (`result_json`/`tokens`/`failure_reason`/
+   * `session_id`/`finished_at`/`last_checkin_at`) are reset exactly as the old
+   * `INSERT OR REPLACE` reset them, and the dispatch metadata is overwritten —
+   * but `attempts` is INCREMENTED rather than reset (migration 008). A first
+   * insert lands `attempts = 1` (column default); each re-dispatch bumps it, so
+   * budget/lifetime seeds that sum `attempts` charge every crash-retried
+   * dispatch instead of collapsing them into one row. Using `ON CONFLICT DO
+   * UPDATE` (not `INSERT OR REPLACE`, which deletes+reinserts) is what lets the
+   * increment read the prior row's counter.
    */
   insertUnit(input: InsertUnitInput): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO workflow_run_units (
+        `INSERT INTO workflow_run_units (
           run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model,
           status, input_hash, worktree_path, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
+        ON CONFLICT(run_id, unit_id) DO UPDATE SET
+          step_id         = excluded.step_id,
+          node_id         = excluded.node_id,
+          parent_unit_id  = excluded.parent_unit_id,
+          phase           = excluded.phase,
+          runner          = excluded.runner,
+          model           = excluded.model,
+          status          = excluded.status,
+          input_hash      = excluded.input_hash,
+          worktree_path   = excluded.worktree_path,
+          started_at      = excluded.started_at,
+          result_json     = NULL,
+          tokens          = NULL,
+          failure_reason  = NULL,
+          session_id      = NULL,
+          finished_at     = NULL,
+          last_checkin_at = NULL,
+          attempts        = workflow_run_units.attempts + 1`,
       )
       .run(
         input.runId,

@@ -206,6 +206,12 @@ async function canonicalGraph(): Promise<GraphLine[]> {
     if (bucket) bucket.push(u);
     else groups.set(base, [u]);
   }
+  // `attempts` (migration 008) is deliberately NOT projected here: it counts
+  // an ENGINE-internal crash/resume re-dispatch (an `insertUnit` REPLACE of a
+  // still-`running` row), which the byte-identical fixture runs below never
+  // trigger — both surfaces journal `attempts = 1` per unit, so it would match
+  // vacuously. It is a budget-accounting field, not part of the observable unit
+  // graph; the crash/resume accumulation it drives is covered by budget.test.ts.
   for (const base of [...groups.keys()].sort()) {
     const rows = groups.get(base) ?? [];
     const rep = rows.find((r) => r.status === "completed") ?? rows[rows.length - 1];

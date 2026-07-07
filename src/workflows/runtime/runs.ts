@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -209,7 +210,7 @@ export async function listWorkflowRuns(input?: { workflowRef?: string; activeOnl
       if (parsed.type !== "workflow") {
         throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${input.workflowRef}".`);
       }
-      workflowRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+      workflowRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
     }
     const rows = repo.listRuns({
       scopeKey,
@@ -474,7 +475,7 @@ async function resolveRunSpecifier(
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref or workflow run id, got "${specifier}".`);
   }
-  const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+  const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
   const scopeKey = getCurrentWorkflowScopeKey();
   const active = repo.getActiveRunRowForScope(ref, scopeKey);
   if (active) {

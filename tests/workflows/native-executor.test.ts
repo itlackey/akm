@@ -6,9 +6,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import { codexBuilder } from "../../src/integrations/harnesses/codex/agent-builder";
+import { copilotBuilder } from "../../src/integrations/harnesses/copilot/agent-builder";
+import { geminiBuilder } from "../../src/integrations/harnesses/gemini/agent-builder";
+import { piBuilder } from "../../src/integrations/harnesses/pi/agent-builder";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import {
+  buildAgentDispatchRequest,
   executeStepPlan,
   llmFailureReasonFor,
   type UnitDispatchRequest,
@@ -318,6 +324,120 @@ describe("executeStepPlan — structured output", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.units[0].failureReason).toBe("validation_error");
+  });
+});
+
+// ── Empty free-text outputs (PR #714 comment B) ──────────────────────────────
+//
+// A SUCCESSFUL schemaless unit that returns "" is "no output": dispatchUnit
+// drops the falsy text, finishUnit journals result_json = NULL, the promoted
+// solo artifact is null, and every surface (live / resume / report) agrees
+// (the EMPTY_OUTPUT driver-parity golden pins the cross-surface identity).
+// These engine-side tests lock the three consequences the module doc states.
+
+const EMPTY_WF = `version: 1
+name: Build
+steps:
+  - id: build
+    title: Build
+    unit:
+      instructions: Build it.
+`;
+
+const EMPTY_DOWNSTREAM_WF = `version: 1
+name: Empty downstream
+steps:
+  - id: build
+    title: Build
+    unit:
+      instructions: Build it.
+  - id: consume
+    title: Consume
+    unit:
+      instructions: "Use the previous output: \${{ steps.build.output }}."
+`;
+
+describe("executeStepPlan — empty free-text output is 'no output' (PR #714 comment B)", () => {
+  test("a successful empty text output journals absence (result_json NULL) and promotes a null artifact", async () => {
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const result = await executeStepPlan(plan(EMPTY_WF).steps[0], {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => ({ ok: true, text: "" }),
+    });
+
+    expect(result.ok).toBe(true);
+    // Empty == absent: no `text` on the outcome, and the promoted solo artifact is null.
+    expect(result.units[0].ok).toBe(true);
+    expect(result.units[0].text).toBeUndefined();
+    expect((result.evidence as { output: unknown }).output).toBeNull();
+    // The journal stores NULL, not '""', so durable-reuse / report rehydrate the same absence.
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "build");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("completed");
+      expect(rows[0].result_json).toBeNull();
+    });
+  });
+
+  test("a SCHEMA unit returning an empty string fails (parse_error), never a silent null pass", async () => {
+    seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
+    const result = await executeStepPlan(plan(SCHEMA_WF).steps[0], {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => ({ ok: true, text: "" }),
+    });
+
+    // Empty is not parseable JSON — it can never satisfy a declared schema as null.
+    expect(result.ok).toBe(false);
+    expect(result.units[0].ok).toBe(false);
+    expect(result.units[0].failureReason).toBe("parse_error");
+  });
+
+  test("a downstream ${{ steps.build.output }} of an empty-output step fails deterministically (resolved to null)", async () => {
+    seedRun({
+      steps: [
+        { id: "build", title: "Build" },
+        { id: "consume", title: "Consume" },
+      ],
+    });
+    const wf = plan(EMPTY_DOWNSTREAM_WF);
+
+    const build = await executeStepPlan(wf.steps[0], {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => ({ ok: true, text: "" }),
+    });
+    expect(build.ok).toBe(true);
+    expect((build.evidence as { output: unknown }).output).toBeNull();
+
+    let dispatched = 0;
+    const consume = await executeStepPlan(wf.steps[1], {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      // The empty step's promoted artifact (null) is the downstream scope.
+      evidence: { build: build.evidence as Record<string, unknown> },
+      dispatcher: async () => {
+        dispatched++;
+        return { ok: true, text: "must not run" };
+      },
+    });
+
+    // Referencing a null artifact is a deterministic expression failure — the
+    // unit never dispatches. Same on both surfaces: the artifact (null) is
+    // surface-identical (EMPTY_OUTPUT golden) and the work-list is the one
+    // shared pure function, so this resolution error is reproduced identically.
+    expect(consume.ok).toBe(false);
+    expect(dispatched).toBe(0);
+    expect(consume.units[0].failureReason).toBe("expression_error");
+    expect(consume.units[0].error).toContain("resolved to null");
   });
 });
 
@@ -1656,5 +1776,112 @@ steps:
       expect(byId.get("fetch:solo")?.failure_reason).toBe("llm_rate_limit");
       expect(byId.get("fetch:solo~r1")?.status).toBe("completed");
     });
+  });
+});
+
+// ── Comment A: the executor threads the unit's output schema into the ────────
+// AgentDispatchRequest so each harness's native structured-output path
+// activates. Without this the builders' schema code was dead in the workflow
+// path: codex got no --output-schema and copilot/gemini/pi never switched to
+// their JSON output modes, silently downgrading schema units to plain
+// prompt-following. We build the dispatch request through the SAME exported
+// helper defaultUnitDispatcher uses, then feed it to each real harness builder
+// and assert the declared mechanism appears in the argv (harness-* convention).
+describe("buildAgentDispatchRequest — schema reaches the harness structured-output path (PR #714)", () => {
+  const SCHEMA = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+
+  function schemaRequest(): UnitDispatchRequest {
+    return {
+      runId: RUN_ID,
+      stepId: "judge",
+      unitId: "judge:solo",
+      nodeId: "judge",
+      prompt: "judge it",
+      runner: "agent",
+      timeoutMs: null,
+      schema: SCHEMA,
+    };
+  }
+
+  function agentProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
+    return {
+      name: "harness",
+      bin: "harness",
+      args: [],
+      stdio: "captured",
+      envPassthrough: ["PATH"],
+      parseOutput: "text",
+      ...overrides,
+    };
+  }
+
+  test("the dispatch request carries the unit schema (and drops it when absent)", () => {
+    const withSchema = buildAgentDispatchRequest(schemaRequest(), "judge it");
+    expect(withSchema.schema).toEqual(SCHEMA);
+    expect(withSchema.prompt).toBe("judge it");
+
+    const noSchema = buildAgentDispatchRequest({ ...schemaRequest(), schema: undefined }, "judge it");
+    expect("schema" in noSchema).toBe(false);
+  });
+
+  test("model is threaded through raw so the builder resolves it per-harness", () => {
+    const req = buildAgentDispatchRequest({ ...schemaRequest(), model: "fast" }, "judge it");
+    expect(req.model).toBe("fast");
+  });
+
+  test("codex → native --output-schema <file> (native-schema tier)", () => {
+    const dispatch = buildAgentDispatchRequest(schemaRequest(), "judge it");
+    const argv = codexBuilder.build(agentProfile({ name: "codex", bin: "codex" }), dispatch).argv as string[];
+    const idx = argv.indexOf("--output-schema");
+    expect(idx).toBeGreaterThan(-1);
+    expect(typeof argv[idx + 1]).toBe("string");
+    expect(argv[idx + 1]).toContain("output-schema.json");
+  });
+
+  test("copilot → --output-format json + schema-aware prompt directive", () => {
+    const dispatch = buildAgentDispatchRequest(schemaRequest(), "judge it");
+    const argv = copilotBuilder.build(agentProfile({ name: "copilot", bin: "copilot" }), dispatch).argv as string[];
+    const idx = argv.indexOf("--output-format");
+    expect(idx).toBeGreaterThan(-1);
+    expect(argv[idx + 1]).toBe("json");
+    expect(argv[argv.length - 1]).toContain("Respond with ONLY a JSON value matching this JSON Schema");
+  });
+
+  test("gemini → --output-format json (prompt+validate tier)", () => {
+    const dispatch = buildAgentDispatchRequest(schemaRequest(), "judge it");
+    const argv = geminiBuilder.build(agentProfile({ name: "gemini", bin: "gemini" }), dispatch).argv as string[];
+    const idx = argv.indexOf("--output-format");
+    expect(idx).toBeGreaterThan(-1);
+    expect(argv[idx + 1]).toBe("json");
+  });
+
+  test("pi → --mode json (JSONL event stream tier)", () => {
+    const dispatch = buildAgentDispatchRequest(schemaRequest(), "judge it");
+    const argv = piBuilder.build(agentProfile({ name: "pi", bin: "pi" }), dispatch).argv as string[];
+    const idx = argv.indexOf("--mode");
+    expect(idx).toBeGreaterThan(-1);
+    expect(argv[idx + 1]).toBe("json");
+  });
+
+  test("without a schema no harness enables its JSON mode (byte-identical to plain prompt)", () => {
+    const dispatch = buildAgentDispatchRequest({ ...schemaRequest(), schema: undefined }, "judge it");
+    expect(
+      (codexBuilder.build(agentProfile({ name: "codex", bin: "codex" }), dispatch).argv as string[]).includes(
+        "--output-schema",
+      ),
+    ).toBe(false);
+    expect(
+      (copilotBuilder.build(agentProfile({ name: "copilot", bin: "copilot" }), dispatch).argv as string[]).includes(
+        "--output-format",
+      ),
+    ).toBe(false);
+    expect(
+      (geminiBuilder.build(agentProfile({ name: "gemini", bin: "gemini" }), dispatch).argv as string[]).includes(
+        "--output-format",
+      ),
+    ).toBe(false);
+    expect(
+      (piBuilder.build(agentProfile({ name: "pi", bin: "pi" }), dispatch).argv as string[]).includes("--mode"),
+    ).toBe(false);
   });
 });

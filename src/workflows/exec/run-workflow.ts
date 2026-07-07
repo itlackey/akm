@@ -100,6 +100,14 @@ export interface RunWorkflowOptions {
    * fail-open, matching offline behavior). Injected primarily for tests.
    */
   summaryJudge?: SummaryJudge | null;
+  /**
+   * Test seam: schedules the lease-heartbeat's periodic renewal tick while a
+   * step dispatches. Receives the (async) tick fn, returns a stop function
+   * called in the `finally`. Defaults to a `setInterval` at
+   * {@link HEARTBEAT_INTERVAL_MS} (unref'd so it never keeps the process
+   * alive). Injected by tests to drive ticks deterministically.
+   */
+  heartbeatScheduler?: HeartbeatScheduler;
 }
 
 export interface ExecutedStepReport {
@@ -144,9 +152,25 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   if (leased) {
     await acquireRunLease(runId, leaseHolder);
   }
+  // Lease heartbeat (P1 fix): the lease TTL is renewed BETWEEN steps, but a
+  // single unit's dispatch can outlive the TTL (the default unit timeout is 10
+  // minutes, > the 90s lease). An unheartbeated lease would silently expire
+  // mid-dispatch, letting a second `akm workflow run` claim the run and
+  // re-dispatch the same units — the two engines clobber each other's journal
+  // rows and double-run side effects. A timer INSIDE this invocation renews the
+  // lease while dispatch is in flight; it is cleared in the `finally`, so it
+  // dies with the process — exactly when the lease SHOULD become claimable
+  // after TTL. A renewal that fails (the lease was genuinely stolen after an
+  // expiry, e.g. the process was suspended) aborts dispatch and fails the run
+  // loudly rather than keep double-driving.
+  const heartbeat = leased
+    ? new LeaseHeartbeat(runId, leaseHolder, options.heartbeatScheduler, options.signal)
+    : undefined;
+  heartbeat?.start();
   try {
-    return await driveRun(options, next, leaseHolder);
+    return await driveRun(options, next, leaseHolder, heartbeat);
   } finally {
+    heartbeat?.stop();
     if (leased) {
       await withWorkflowRunsRepo((repo) => {
         repo.releaseEngineLease(runId, leaseHolder);
@@ -196,13 +220,129 @@ async function renewRunLease(runId: string, holder: string): Promise<void> {
   });
 }
 
+/** Renew mid-dispatch this often. Well under the TTL so a slow/skipped tick
+ * still leaves ample margin before the lease would expire. */
+const HEARTBEAT_INTERVAL_MS = RUN_LEASE_TTL_MS / 3;
+
+/**
+ * Schedules the heartbeat's periodic renewal tick; returns a stop function.
+ * The tick is async (a repository renewal); the default wrapper fires it and
+ * ignores the returned promise (setInterval semantics).
+ */
+export type HeartbeatScheduler = (tick: () => Promise<void>) => () => void;
+
+/** Real timer: an unref'd interval so a live heartbeat never keeps the process alive. */
+function defaultHeartbeatScheduler(tick: () => Promise<void>): () => void {
+  const id = setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS);
+  (id as unknown as { unref?: () => void }).unref?.();
+  return () => clearInterval(id);
+}
+
+/**
+ * Keeps the run lease alive while a step dispatches (P1 fix — the between-step
+ * renewal cannot cover a unit that runs longer than the TTL). A timer inside
+ * the engine invocation renews the lease through the holder-guarded
+ * {@link renewEngineLease}; the heartbeat owns an {@link AbortController}
+ * (chained onto the caller's signal) that becomes the effective DISPATCH
+ * signal, so a lost lease aborts in-flight dispatch PROMPTLY. After the abort,
+ * {@link assertAlive} throws a loud UsageError, so the engine stops instead of
+ * continuing to drive a run another engine now owns. No background daemon: the
+ * timer is cleared in the caller's `finally` and dies with the process.
+ */
+class LeaseHeartbeat {
+  private readonly controller = new AbortController();
+  private readonly detachUpstream: (() => void) | undefined;
+  private readonly schedule: HeartbeatScheduler;
+  private cancel: (() => void) | undefined;
+  private renewing = false;
+  /** Set once a renewal failed — the lease was stolen after a genuine expiry. */
+  private lost = false;
+  /** The holder that stole the lease, captured for the loud error. */
+  private stolenBy: string | null = null;
+
+  constructor(
+    private readonly runId: string,
+    private readonly holder: string,
+    scheduler: HeartbeatScheduler | undefined,
+    upstream: AbortSignal | undefined,
+  ) {
+    this.schedule = scheduler ?? defaultHeartbeatScheduler;
+    // A caller abort (Ctrl-C, budget) must abort dispatch too; chain it into
+    // the effective signal. Distinct from a lost lease: a caller abort does
+    // NOT set `lost`, so `assertAlive` stays quiet and the existing graceful
+    // break on `options.signal` handles it.
+    if (upstream) {
+      if (upstream.aborted) {
+        this.controller.abort();
+      } else {
+        const onAbort = () => this.controller.abort();
+        upstream.addEventListener("abort", onAbort, { once: true });
+        this.detachUpstream = () => upstream.removeEventListener("abort", onAbort);
+      }
+    }
+  }
+
+  /** The effective dispatch signal: aborts on a lost lease OR a caller abort. */
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  start(): void {
+    this.cancel ??= this.schedule(() => this.tick());
+  }
+
+  /** One renewal attempt. A failure marks the lease lost and aborts dispatch. */
+  private async tick(): Promise<void> {
+    if (this.lost || this.renewing || this.controller.signal.aborted) return;
+    this.renewing = true;
+    try {
+      const renewed = await withWorkflowRunsRepo((repo) =>
+        repo.renewEngineLease(this.runId, this.holder, leaseExpiry()),
+      );
+      if (!renewed) {
+        this.lost = true;
+        this.stolenBy = await withWorkflowRunsRepo((repo) => repo.getRunById(this.runId)?.engine_lease_holder ?? null);
+        this.stop();
+        // Abort in-flight dispatch promptly — the new owner drives the spine now.
+        this.controller.abort();
+      }
+    } finally {
+      this.renewing = false;
+    }
+  }
+
+  /**
+   * Throw loudly if a heartbeat renewal failed. Called at dispatch boundaries:
+   * a lost lease means another engine claimed the run mid-step, so continuing
+   * (completing steps, dispatching more units) would double-drive it.
+   */
+  assertAlive(): void {
+    if (!this.lost) return;
+    throw new UsageError(
+      `Workflow run ${this.runId} lost its run lease mid-dispatch (heartbeat renewal failed; lease now held by ` +
+        `${this.stolenBy ?? "(nobody)"}). Another engine invocation claimed the run after this one's lease expired — ` +
+        `aborting to avoid double-driving it.`,
+    );
+  }
+
+  stop(): void {
+    this.cancel?.();
+    this.cancel = undefined;
+    this.detachUpstream?.();
+  }
+}
+
 /** The engine loop proper — runs under the lease held by `runWorkflowSteps`. */
 async function driveRun(
   options: RunWorkflowOptions,
   initial: WorkflowNextResult,
   leaseHolder: string,
+  heartbeat: LeaseHeartbeat | undefined,
 ): Promise<RunWorkflowResult> {
   let next = initial;
+  // The effective dispatch signal: the heartbeat's controller (a lost lease or
+  // a caller abort aborts it) while leased, else the raw caller signal.
+  const dispatchSignal = heartbeat?.signal ?? options.signal;
   const executed: ExecutedStepReport[] = [];
   let gateRejection: RunWorkflowResult["gateRejection"];
   const maxSteps = options.maxSteps ?? Number.POSITIVE_INFINITY;
@@ -223,9 +363,17 @@ async function driveRun(
   // earlier than the identical uninterrupted run — a spurious hard failure
   // that `on_error` cannot soften. The seed must reproduce exactly what live
   // accounting would have accumulated.
+  //
+  // The seed sums each dispatch row's `attempts` (migration 008), NOT the row
+  // COUNT: a crash between a unit's dispatch and its finish leaves a `running`
+  // row that resume re-dispatches under the SAME content-derived unit_id, and
+  // `insertUnit` REPLACES that one row while bumping `attempts`. Counting rows
+  // would erase every prior crash-retried dispatch from budget/lifetime
+  // accounting, letting the run spend past its declared ceiling; summing
+  // `attempts` charges each dispatch exactly once.
   const journaledUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id));
   const journaledDispatches = journaledUnits.filter((row) => row.phase !== GATE_EVALUATION_PHASE);
-  let unitsDispatched = journaledDispatches.length;
+  let unitsDispatched = journaledDispatches.reduce((sum, row) => sum + row.attempts, 0);
   let tokensUsed = journaledDispatches.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
 
   // One plan per invocation: the test seam receives the workflow ref; the
@@ -254,6 +402,10 @@ async function driveRun(
   }
 
   while (!next.done && next.step && next.run.status === "active" && executed.length < maxSteps) {
+    // A LOST lease (the heartbeat's renewal failed mid-step) is a loud stop —
+    // another engine owns the spine now. A caller abort (options.signal) is a
+    // graceful break, distinct from a lost lease.
+    heartbeat?.assertAlive();
     if (options.signal?.aborted) break;
     // Renew the run lease between steps (a fresh 90s window per iteration).
     // Losing it (expired mid-step + claimed by another engine) throws — the
@@ -347,10 +499,16 @@ async function driveRun(
               ...(plan.budget ? { budget: plan.budget } : {}),
               gateLoop,
               ...(gateFeedback ? { gateFeedback } : {}),
-              ...(options.signal ? { signal: options.signal } : {}),
+              // The heartbeat's signal is the effective dispatch signal: a lost
+              // lease (or a caller abort) aborts in-flight units promptly.
+              ...(dispatchSignal ? { signal: dispatchSignal } : {}),
               ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
               ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
             });
+      // If the heartbeat lost the lease WHILE this step dispatched, another
+      // engine now owns the run — stop loudly BEFORE finalizing the step
+      // (completeWorkflowStep would race the new owner's spine).
+      heartbeat?.assertAlive();
       unitsDispatched = result.unitsDispatched;
       if (result.tokensUsed !== undefined) tokensUsed = result.tokensUsed;
 

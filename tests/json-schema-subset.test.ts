@@ -61,6 +61,22 @@ describe("validateJsonSchemaSubset", () => {
     expect(validateJsonSchemaSubset({ a: "x", b: 1 }, schema)).not.toEqual([]);
   });
 
+  test("additionalProperties: false with no properties accepts only the empty object", () => {
+    const schema = { type: "object", additionalProperties: false };
+    expect(validateJsonSchemaSubset({}, schema)).toEqual([]);
+    const errors = validateJsonSchemaSubset({ a: 1 }, schema);
+    expect(errors.some((e) => e.includes("a") && e.includes("additionalProperties"))).toBe(true);
+  });
+
+  test("additionalProperties: false does not treat inherited Object keys as declared", () => {
+    // `toString`/`constructor` live on Object.prototype; a `key in properties`
+    // test would wrongly accept them. They must be reported as unexpected.
+    const schema = { type: "object", properties: { a: { type: "string" } }, additionalProperties: false };
+    expect(validateJsonSchemaSubset({ a: "x", toString: "oops" }, schema)).not.toEqual([]);
+    const closed = { type: "object", additionalProperties: false };
+    expect(validateJsonSchemaSubset({ constructor: 1 }, closed)).not.toEqual([]);
+  });
+
   test("union type arrays are supported", () => {
     const schema = { type: ["string", "null"] };
     expect(validateJsonSchemaSubset(null, schema)).toEqual([]);

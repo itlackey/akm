@@ -32,6 +32,25 @@
  * manually (no `output` key in their evidence) expose their recorded evidence
  * object as-is.
  *
+ * Empty free-text outputs (peer review): a SUCCESSFUL schemaless unit that
+ * returns the empty string is normalized to "no output" — {@link dispatchUnit}
+ * drops the falsy `text`, `finishUnit` journals `result_json = NULL`, and both
+ * durable-row reuse and the R3 report surface rehydrate the same absence
+ * (`unitOutcomeFromRow`). This is the ONLY empty-output resolution: `''` never
+ * survives on any surface, so the live artifact cannot diverge from the
+ * resume/report artifact (the cross-surface parity cardinal rule; the
+ * `EMPTY_OUTPUT` driver-parity golden pins it). Consequences that follow from
+ * "empty == absent", not special-cased anywhere:
+ *   - a SOLO empty step promotes `output = null` (the unit's absent text ??
+ *     null); a `collect` fan-out promotes `null` in that item's slot.
+ *   - A downstream `${{ steps.x.output }}` of an empty solo step therefore
+ *     resolves against `null` and fails LOUDLY at expression resolution
+ *     (`… resolved to null`) — a deterministic `expression_error` on BOTH
+ *     surfaces, never a silent empty string.
+ *   - A SCHEMA unit is unaffected by this normalization: an empty response is
+ *     not parseable JSON, so `runStructured` fails it (`parse_error`) — an
+ *     empty output can never satisfy a declared schema as a silent `null`.
+ *
  * Typed artifacts (addendum, R2): when the step declares an `output` schema
  * (`IrStepPlan.outputSchema`), the promoted artifact is validated with the
  * JSON-schema-subset validator BEFORE the step can complete. A mismatch fails
@@ -85,9 +104,14 @@
  * minted under a run-scoped tmp dir (`worktree.ts`) and passed to dispatch as
  * the child's cwd. The path is journaled on the unit row (`worktree_path`);
  * after the unit finishes, a clean worktree is removed and a dirty one is
- * retained + logged (uncollected work is never destroyed). A non-git base
- * directory fails the step cleanly before any dispatch, and llm units reject
- * isolation loudly — there is no child process to isolate.
+ * retained + logged (uncollected work is never destroyed). "Clean" is
+ * `git status --porcelain` WITHOUT `--ignored`, so a worktree whose only
+ * residue is `.gitignore`-matched files (build outputs, `node_modules`) counts
+ * as clean and IS removed — those files are disposable by the repo's own
+ * declaration, and retaining a worktree per build would blow up disk
+ * (`worktree.ts` contract). A non-git base directory fails the step cleanly
+ * before any dispatch, and llm units reject isolation loudly — there is no
+ * child process to isolate.
  *
  * Budget ceilings (addendum, R2): a frozen plan's `budget` block
  * (`max_units` / `max_tokens`) is enforced per RUN. The engine seeds
@@ -913,6 +937,38 @@ async function resolveEnvBindings(refs: string[]): Promise<Record<string, string
  * `inherit` resolves against config: the node/step profile, else
  * `defaults.agent` (sdk when the profile is opencode-sdk), else `defaults.llm`.
  */
+/**
+ * Build the platform-agnostic {@link import("../../integrations/agent/builder-shared").AgentDispatchRequest}
+ * for an agent (CLI) unit from the resolved dispatch request and its final
+ * (feedback-augmented) prompt.
+ *
+ * Threading the unit's output `schema` here is what activates each harness's
+ * native structured-output path (plan §"Structured-output normalization"):
+ *   - Codex (native-schema tier) writes it to a temp file and passes
+ *     `--output-schema <file>`.
+ *   - Copilot / Gemini switch stdout to their documented JSON envelope
+ *     (`--output-format json`) and append their schema-aware prompt directive.
+ *   - Pi switches to its JSONL event stream (`--mode json`) and appends its
+ *     directive.
+ * Without the schema the argv is byte-identical to the pre-fix plain-prompt
+ * shape. The engine's post-hoc `runStructured` validation runs regardless — the
+ * harness path constrains/hints, the engine still verifies (constrained output
+ * is trusted but verified). The `model` is passed raw so the builder resolves
+ * aliases per-harness. Only `prompt` (with any gate feedback already folded in),
+ * `model`, and `schema` are engine-derived; `systemPrompt`/`tools`/`cwd` come
+ * from the profile/asset, not the workflow unit.
+ */
+export function buildAgentDispatchRequest(
+  request: UnitDispatchRequest,
+  prompt: string,
+): import("../../integrations/agent/builder-shared").AgentDispatchRequest {
+  return {
+    prompt,
+    ...(request.model ? { model: request.model } : {}),
+    ...(request.schema ? { schema: request.schema } : {}),
+  };
+}
+
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
   const { loadConfig } = await import("../../core/config/config.js");
   const config = loadConfig();
@@ -991,8 +1047,10 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
     ...(request.cwd ? { cwd: request.cwd } : {}),
     ...(request.signal ? { signal: request.signal } : {}),
     // Route CLI dispatch through the platform AgentCommandBuilder so model
-    // aliases resolve per-harness (P0.5 model routing).
-    ...(resolved.kind === "agent" ? { dispatch: { prompt, ...(request.model ? { model: request.model } : {}) } } : {}),
+    // aliases resolve per-harness (P0.5 model routing) AND the unit's output
+    // schema reaches the harness's structured-output path (see
+    // buildAgentDispatchRequest).
+    ...(resolved.kind === "agent" ? { dispatch: buildAgentDispatchRequest(request, prompt) } : {}),
   });
 
   // Harness result extraction (P2, plan §"The adapter contract" step 3):

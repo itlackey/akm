@@ -64,8 +64,22 @@ const RETRY_REASON_SET = {
 
 export const PROGRAM_RETRY_REASONS = Object.keys(RETRY_REASON_SET) as readonly AgentFailureReason[];
 
-/** Step ids: `[A-Za-z0-9][A-Za-z0-9._-]*` (also pinned in the JSON Schema). */
-export const PROGRAM_STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * Step ids: `[A-Za-z_][A-Za-z0-9_-]*` (also pinned in the JSON Schema).
+ *
+ * This is EXACTLY the `<ident>` grammar `readIdent` accepts in
+ * `program/expressions.ts` for `${{ steps.<id>.output }}` references: a
+ * letter/underscore first char, then letters/digits/underscores/dashes, and
+ * NO dots (the expression parser treats `.` as the `.output` path separator,
+ * so a dotted id could never be addressed). Keeping step ids inside the
+ * addressable grammar guarantees every step can be referenced from map
+ * inputs, routes, and unit templates without renaming.
+ *
+ * Forbidding dots additionally keeps the engine's internal gate-row node id
+ * `<stepId>.gate` collision-free: no user step id can contain a dot, so it can
+ * never equal another step's `<stepId>.gate` synthetic id.
+ */
+export const PROGRAM_STEP_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /**
  * Param names must be `${{ params.<ident> }}`-addressable, so they are plain

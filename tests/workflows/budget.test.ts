@@ -11,7 +11,7 @@ import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { startWorkflowRun } from "../../src/workflows/runtime/runs";
+import { resumeWorkflowRun, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 /**
@@ -174,6 +174,85 @@ steps:
     expect(second.done).toBe(true);
     expect(second.run.status).toBe("completed");
     expect(second.executed).toEqual([expect.objectContaining({ stepId: "two", ok: true })]);
+  });
+
+  test("crash/resume re-dispatches of ONE unit accumulate against max_units and are refused at the ceiling", async () => {
+    // PR #714 review (P2): a crash between a unit's dispatch (`running` row)
+    // and its finish leaves a stale row that resume re-dispatches under the
+    // SAME content-derived unit_id — `insertUnit` REPLACES the single row. The
+    // budget seed used to count ROWS, so each crash/resume erased the prior
+    // dispatch from `max_units` accounting and the run could spend past its
+    // ceiling. Migration 008's `attempts` counter, summed by the seed, charges
+    // every re-dispatch. Here max_units:2 with two crashed attempts already at
+    // the ceiling: the third invocation must be REFUSED before dispatching.
+    writeProgram(
+      "crash-budget",
+      `version: 1
+name: crash-budget
+budget: { max_units: 2 }
+steps:
+  - id: build
+    unit:
+      instructions: Build it.
+`,
+    );
+    const started = await startWorkflowRun("workflow:crash-budget", {});
+    const runId = started.run.id;
+
+    // Invocation 1: the dispatch crashes → one FAILED attempt journaled (attempts=1).
+    const first = await runWorkflowSteps({
+      target: runId,
+      summaryJudge: null,
+      dispatcher: async () => {
+        throw new Error("boom-1");
+      },
+    });
+    expect(first.run.status).toBe("failed");
+
+    await resumeWorkflowRun(runId);
+
+    // Invocation 2: crashes again → the SAME unit_id row is REPLACED, attempts=2.
+    const second = await runWorkflowSteps({
+      target: runId,
+      summaryJudge: null,
+      dispatcher: async () => {
+        throw new Error("boom-2");
+      },
+    });
+    expect(second.run.status).toBe("failed");
+
+    // Exactly ONE dispatch row survives, but it records TWO attempts.
+    const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
+    const dispatchRows = units.filter((u) => u.phase !== "gate");
+    expect(dispatchRows).toHaveLength(1);
+    expect(dispatchRows[0].attempts).toBe(2);
+
+    await resumeWorkflowRun(runId);
+
+    // Invocation 3: the seed is SUM(attempts) = 2 = the ceiling, so the
+    // re-dispatch is REFUSED before running — no third attempt is spent. Pre-008
+    // the seed counted the single row (1) and this dispatched again (over-spend).
+    let dispatches = 0;
+    const third = await runWorkflowSteps({
+      target: runId,
+      summaryJudge: null,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "built" };
+      },
+    });
+    expect(dispatches).toBe(0);
+    expect(third.run.status).toBe("failed");
+    expect(third.executed[0]?.ok).toBe(false);
+    expect(third.executed[0]?.summary).toContain("budget exceeded (max_units ceiling)");
+
+    // The journal still holds ONE dispatch row with two accumulated attempts —
+    // the refused invocation wrote no new row.
+    const finalRows = (await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId))).filter(
+      (u) => u.phase !== "gate",
+    );
+    expect(finalRows).toHaveLength(1);
+    expect(finalRows[0].attempts).toBe(2);
   });
 
   test("seeding: journaled dispatches from a prior invocation count against max_units", async () => {
@@ -350,9 +429,11 @@ describe("budget interactions", () => {
     expect(result.done).toBe(true);
     expect(result.run.status).toBe("completed");
     expect(signals).toHaveLength(3);
-    // No budget → no chained AbortController: the units see no signal at all
-    // (none was passed into this invocation).
-    expect(signals.every((s) => s === undefined)).toBe(true);
+    // No budget → no budget-chained AbortController, but a leased engine run
+    // ALWAYS threads the lease-heartbeat's signal into dispatch so a lost lease
+    // can abort in-flight units (P1 fix). It stays UNaborted through a healthy
+    // run — the units simply never observe an abort.
+    expect(signals.every((s) => s !== undefined && !s.aborted)).toBe(true);
   });
 
   test("budget + on_error: continue still fails the step hard, naming the ceiling", async () => {

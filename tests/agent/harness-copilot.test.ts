@@ -298,9 +298,11 @@ describe("copilotResultExtractor — plain text and fallbacks", () => {
     expect(extraction).toEqual({ text: "" });
   });
 
-  test("result.sessionId is the fallback when the output carries none", () => {
+  test("result.sessionId is the fallback when a genuine envelope carries none", () => {
+    // A `type`-marked result envelope with no in-band session id still unwraps;
+    // the raw run result's sessionId is the fallback.
     const extraction = copilotResultExtractor(
-      makeRunResult({ stdout: JSON.stringify({ result: "ok" }), sessionId: "raw-sess" }),
+      makeRunResult({ stdout: JSON.stringify({ type: "result", result: "ok" }), sessionId: "raw-sess" }),
     );
     expect(extraction).toEqual({ text: "ok", sessionId: "raw-sess" });
   });
@@ -316,5 +318,60 @@ describe("copilotResultExtractor — plain text and fallbacks", () => {
     const stdout = '{"result": "trunca';
     const extraction = copilotResultExtractor(makeRunResult({ stdout }));
     expect(extraction).toEqual({ text: stdout });
+  });
+});
+
+// ── Extractor — bare JSON answers must NOT be unwrapped (PR #714 review) ──────
+//
+// When copilot runs without its JSON envelope, a schema unit's own JSON answer
+// can legitimately use the envelope's common keys (result/response/text). Such
+// an answer carries NO transport marker (no `type`, no session id), so it must
+// reach the engine's schema validator raw instead of being unwrapped to a bare
+// field value (which made runStructured report a false parse/validation failure
+// on otherwise valid JSON).
+describe("copilotResultExtractor — bare JSON answers pass through raw (no transport marker)", () => {
+  test('{"result":"ok"} with no marker is returned raw, not unwrapped to "ok"', () => {
+    const stdout = JSON.stringify({ result: "ok" });
+    const extraction = copilotResultExtractor(makeRunResult({ stdout }));
+    expect(extraction).toEqual({ text: stdout });
+  });
+
+  test("a schema answer using `response`/`text` keys is not unwrapped without a marker", () => {
+    const stdout = JSON.stringify({ response: "the answer", text: "ignored", score: 3 });
+    const extraction = copilotResultExtractor(makeRunResult({ stdout }));
+    expect(extraction.text).toBe(stdout);
+    expect(extraction.sessionId).toBeUndefined();
+  });
+
+  test("the raw run sessionId is still attached to a bare answer as a fallback", () => {
+    const stdout = JSON.stringify({ result: "ok" });
+    const extraction = copilotResultExtractor(makeRunResult({ stdout, sessionId: "raw-sess" }));
+    expect(extraction).toEqual({ text: stdout, sessionId: "raw-sess" });
+  });
+
+  test("a session-id marker still identifies a genuine envelope and unwraps it", () => {
+    const stdout = JSON.stringify({ result: "ok", session_id: "s-env" });
+    const extraction = copilotResultExtractor(makeRunResult({ stdout }));
+    expect(extraction).toEqual({ text: "ok", sessionId: "s-env" });
+  });
+
+  test("a discriminated-union answer with an unrecognized `type` is not unwrapped", () => {
+    // A schema answer may itself be a discriminated union — `type` alone is not
+    // a transport marker unless it is one of Copilot's documented envelope
+    // discriminators (peer review of the PR #714 fix).
+    const stdout = JSON.stringify({ type: "success", output: "data" });
+    const extraction = copilotResultExtractor(makeRunResult({ stdout }));
+    expect(extraction).toEqual({ text: stdout });
+  });
+
+  test("documented envelope discriminators still unwrap (result, session.*)", () => {
+    const result = copilotResultExtractor(
+      makeRunResult({ stdout: JSON.stringify({ type: "result", result: "final" }) }),
+    );
+    expect(result.text).toBe("final");
+    const sessionEvent = copilotResultExtractor(
+      makeRunResult({ stdout: JSON.stringify({ type: "session.start", session_id: "s1", message: "hello" }) }),
+    );
+    expect(sessionEvent).toEqual({ text: "hello", sessionId: "s1" });
   });
 });

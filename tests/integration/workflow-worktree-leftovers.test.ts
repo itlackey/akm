@@ -24,7 +24,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createUnitWorktree, isGitAvailable, runWorktreeRoot } from "../../src/workflows/exec/worktree";
+import {
+  cleanupUnitWorktree,
+  createUnitWorktree,
+  isGitAvailable,
+  runWorktreeRoot,
+} from "../../src/workflows/exec/worktree";
 
 const GIT = isGitAvailable();
 
@@ -63,6 +68,15 @@ function makeGitRepo(): string {
   fs.writeFileSync(path.join(dir, "README.md"), "# fixture\n");
   git(dir, ["add", "README.md"]);
   git(dir, ["commit", "-q", "-m", "fixture"]);
+  return dir;
+}
+
+/** Init a temp git repo whose committed `.gitignore` ignores `build/` and `*.log`. */
+function makeGitRepoWithGitignore(): string {
+  const dir = makeGitRepo();
+  fs.writeFileSync(path.join(dir, ".gitignore"), "build/\n*.log\n");
+  git(dir, ["add", ".gitignore"]);
+  git(dir, ["commit", "-q", "-m", "gitignore"]);
   return dir;
 }
 
@@ -145,3 +159,41 @@ describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy d
     expect(fs.readFileSync(path.join(preservedSecond, "gen-2.txt"), "utf8")).toBe("two\n");
   });
 });
+
+describe.skipIf(!GIT)(
+  "cleanupUnitWorktree — the honest 'uncollected work' contract (ignored files are disposable)",
+  () => {
+    test("a worktree whose ONLY residue is .gitignore-matched files probes clean and IS removed", () => {
+      const repo = makeGitRepoWithGitignore();
+      const wt = mustCreate(repo, "build:solo").path;
+
+      // The unit produced ONLY files the repo's own .gitignore declares
+      // disposable (a build dir + a log). `git status --porcelain` (no
+      // --ignored) reports these as clean, matching the documented contract:
+      // ignored files are throwaway, so the worktree is removed, not retained.
+      fs.mkdirSync(path.join(wt, "build"), { recursive: true });
+      fs.writeFileSync(path.join(wt, "build", "out.o"), "artifact\n");
+      fs.writeFileSync(path.join(wt, "debug.log"), "noise\n");
+
+      const cleanup = cleanupUnitWorktree(repo, wt);
+      expect(cleanup.removed).toBe(true);
+      expect(cleanup.dirty).toBe(false);
+      expect(cleanup.error).toBeUndefined();
+      expect(fs.existsSync(wt)).toBe(false);
+    });
+
+    test("an untracked UNIGNORED file is real uncollected work → dirty, retained (the contract boundary)", () => {
+      const repo = makeGitRepoWithGitignore();
+      const wt = mustCreate(repo, "build:solo").path;
+
+      // A file the .gitignore does NOT match is genuine uncollected work.
+      fs.writeFileSync(path.join(wt, "result.txt"), "keep me\n");
+
+      const cleanup = cleanupUnitWorktree(repo, wt);
+      expect(cleanup.dirty).toBe(true);
+      expect(cleanup.removed).toBe(false);
+      // Retained intact — the caller logs the path.
+      expect(fs.readFileSync(path.join(wt, "result.txt"), "utf8")).toBe("keep me\n");
+    });
+  },
+);

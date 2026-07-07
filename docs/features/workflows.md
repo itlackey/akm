@@ -613,6 +613,16 @@ empty) is removed automatically; a dirty one is retained and its path
 logged, so uncollected work is never destroyed. Declaring worktree isolation
 in a non-git directory fails the step cleanly before anything dispatches.
 
+The clean probe deliberately does **not** pass `--ignored`, so "uncollected
+work" means tracked or untracked-*unignored* changes only. A worktree whose
+only residue is files your repository's own `.gitignore` matches — build
+outputs, caches, logs, dependency directories like `node_modules`/`dist` — is
+treated as clean and removed: those files are disposable by the repo's own
+declaration, and retaining a worktree after every package install or build
+would blow up disk under the temp root. If a unit produces an artifact that
+must survive, it has to be a tracked or untracked-unignored file (or be
+collected before the unit returns), not something the repo `.gitignore`s.
+
 ### Model tiers
 
 Reference semantic aliases in `model:` fields instead of exact model ids so a

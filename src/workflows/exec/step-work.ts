@@ -691,10 +691,12 @@ function sortKeys(value: unknown): unknown {
 // asserts the round-trip identity.
 
 /**
- * `phase` marker stamped on gate-evaluation unit rows. Node ids may legally
- * contain dots (a step could be NAMED `x.gate`), so the phase column — not a
- * `node_id` suffix match — is the unambiguous discriminator. Dispatch rows
- * always journal `phase: null`.
+ * `phase` marker stamped on gate-evaluation unit rows. Step ids cannot contain
+ * dots (`PROGRAM_STEP_ID_PATTERN`), so a step can never be NAMED `x.gate` and
+ * the synthetic `<stepId>.gate` node id is collision-free against user step
+ * ids. The phase column is nonetheless the discriminator we key on — an
+ * explicit marker, not a `node_id` suffix match, so recovery stays robust even
+ * if the id scheme evolves. Dispatch rows always journal `phase: null`.
  */
 export const GATE_EVALUATION_PHASE = "gate";
 
