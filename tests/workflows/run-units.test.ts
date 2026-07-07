@@ -141,6 +141,62 @@ describe("workflow_run_units persistence (migration 004)", () => {
     });
   });
 
+  test("finishUnit fails loudly when no row matches (a finish against a missing unit is never a silent no-op)", async () => {
+    await withWorkflowRunsRepo((repo) => {
+      // No unit was ever inserted for this (run_id, unit_id): the UPDATE matches
+      // zero rows. finishUnit must THROW rather than silently no-op — a lost
+      // finish would leave the unit stuck `running` and wedge resume.
+      expect(() =>
+        repo.finishUnit({
+          runId: RUN_ID,
+          unitId: "ghost:solo",
+          status: "completed",
+          resultJson: JSON.stringify("done"),
+          tokens: null,
+          failureReason: null,
+          finishedAt: new Date().toISOString(),
+        }),
+      ).toThrow(/finishUnit updated no row.*ghost:solo/s);
+
+      // A mismatched RUN id is caught the same way (row exists under a different run).
+      repo.insertUnit({
+        runId: RUN_ID,
+        unitId: "real:solo",
+        stepId: "step-1",
+        nodeId: "n1",
+        parentUnitId: null,
+        phase: null,
+        runner: "sdk",
+        model: null,
+        inputHash: "h",
+        startedAt: new Date().toISOString(),
+      });
+      expect(() =>
+        repo.finishUnit({
+          runId: "00000000-0000-4000-8000-000000000000",
+          unitId: "real:solo",
+          status: "completed",
+          resultJson: null,
+          tokens: null,
+          failureReason: null,
+          finishedAt: new Date().toISOString(),
+        }),
+      ).toThrow(/finishUnit updated no row/);
+
+      // The happy path (row present) still finishes exactly one row.
+      repo.finishUnit({
+        runId: RUN_ID,
+        unitId: "real:solo",
+        status: "completed",
+        resultJson: null,
+        tokens: null,
+        failureReason: null,
+        finishedAt: new Date().toISOString(),
+      });
+      expect(repo.getUnit(RUN_ID, "real:solo")?.status).toBe("completed");
+    });
+  });
+
   test("failed unit records the failure reason", async () => {
     await withWorkflowRunsRepo((repo) => {
       repo.insertUnit({

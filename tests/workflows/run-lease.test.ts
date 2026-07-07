@@ -5,9 +5,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStorageLocations } from "../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
+import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
+import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -75,6 +78,16 @@ async function plantLease(runId: string, holder: string, until: string): Promise
   await withWorkflowRunsRepo((repo) => {
     expect(repo.acquireEngineLease(runId, holder, until, new Date().toISOString())).toBe(true);
   });
+}
+
+/** Direct-SQL escape hatch — tamper the frozen plan / run state a run row. */
+function execOnWorkflowDb(sql: string, ...params: Array<string | number | null>): void {
+  const db = openWorkflowDatabase(resolveStorageLocations().workflowDb);
+  try {
+    db.prepare(sql).run(...params);
+  } finally {
+    closeWorkflowDatabase(db);
+  }
 }
 
 describe("repository lease primitives", () => {
@@ -280,6 +293,105 @@ describe("manual loop under the lease", () => {
     });
     const after = await getWorkflowStatus(started.run.id);
     expect(after.run.engineLease).toBeUndefined();
+  });
+});
+
+/**
+ * Terminal-run no-op (engine early-exit contract): `workflow run` on a run that
+ * is already completed or failed must refuse/return WITHOUT acquiring a lease
+ * AND without loading or integrity-checking the frozen plan — nothing will ever
+ * dispatch, so touching either would be a pure liability (a since-corrupted
+ * plan_json throwing on an already-finished run, or a spurious lease write).
+ */
+describe("terminal run no-op (no lease, no plan load, no dispatch)", () => {
+  test("a COMPLETED run is a clean no-op even with a since-corrupted frozen plan, and leaves engine_lease_* untouched", async () => {
+    writeWorkflow("term-completed");
+    const started = await startWorkflowRun("workflow:term-completed", {});
+    const runId = started.run.id;
+
+    // Drive it to completion normally.
+    const done = await runWorkflowSteps({
+      target: runId,
+      summaryJudge: null,
+      dispatcher: async () => ({ ok: true, text: "done" }),
+    });
+    expect(done.done).toBe(true);
+    expect(done.run.status).toBe("completed");
+
+    // Plant a lease directly (as if a stale row lingered) and CORRUPT the frozen
+    // plan_json. A no-op run must not read the plan (loadFrozenPlan would throw
+    // "corrupt frozen plan") and must not disturb the planted lease columns.
+    const until = isoIn(90_000);
+    await plantLease(runId, "planted-holder", until);
+    execOnWorkflowDb("UPDATE workflow_runs SET plan_json = ? WHERE id = ?", "{ this is not valid json", runId);
+
+    let dispatches = 0;
+    let planLoads = 0;
+    const noop = await runWorkflowSteps({
+      target: runId,
+      summaryJudge: null,
+      // A loadPlan seam proves the plan is not loaded even via the injectable
+      // path — the guard returns BEFORE the loader is consulted.
+      loadPlan: async () => {
+        planLoads++;
+        return {} as WorkflowPlanGraph;
+      },
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not run" };
+      },
+    });
+
+    expect(noop.done).toBe(true);
+    expect(noop.run.status).toBe("completed");
+    expect(dispatches).toBe(0);
+    expect(planLoads).toBe(0);
+    // The planted lease columns are byte-identical — the no-op never wrote them.
+    expect(await readLease(runId)).toEqual({ holder: "planted-holder", until });
+  });
+
+  test("a FAILED run refuses up front WITHOUT loading the plan or touching the lease, dispatching nothing", async () => {
+    writeWorkflow("term-failed");
+    const started = await startWorkflowRun("workflow:term-failed", {});
+    const runId = started.run.id;
+
+    // Crash the run: the dispatcher throw → failed unit → failed step → failed run.
+    const crashed = await runWorkflowSteps({
+      target: runId,
+      summaryJudge: null,
+      dispatcher: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(crashed.run.status).toBe("failed");
+    // The crash path released the lease.
+    expect(await readLease(runId)).toEqual({ holder: null, until: null });
+
+    // Plant a lease so we can prove the refused re-invocation leaves it untouched.
+    const until = isoIn(90_000);
+    await plantLease(runId, "planted-holder", until);
+
+    let dispatches = 0;
+    let planLoads = 0;
+    await expect(
+      runWorkflowSteps({
+        target: runId,
+        summaryJudge: null,
+        loadPlan: async () => {
+          planLoads++;
+          return {} as WorkflowPlanGraph;
+        },
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true, text: "must not run" };
+        },
+      }),
+    ).rejects.toThrow(/is failed and cannot be executed/);
+
+    expect(dispatches).toBe(0);
+    expect(planLoads).toBe(0);
+    // The refusal happened before any lease write — the planted lease is intact.
+    expect(await readLease(runId)).toEqual({ holder: "planted-holder", until });
   });
 });
 

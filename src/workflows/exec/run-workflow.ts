@@ -340,6 +340,24 @@ async function driveRun(
   heartbeat: LeaseHeartbeat | undefined,
 ): Promise<RunWorkflowResult> {
   let next = initial;
+
+  // A terminal (completed) run is a PURE no-op. `runWorkflowSteps` already
+  // skipped lease acquisition for a done run (`leased = !next.done`), and this
+  // path must ALSO refuse to read the journal or load/integrity-check the
+  // frozen plan: a run that finished cleanly, then had its `plan_json` corrupted
+  // or tampered afterwards, must still report `done` here rather than throwing a
+  // frozen-plan integrity error (loadFrozenPlan would). Nothing will dispatch
+  // and the engine_lease_* columns stay exactly as they were, so return the
+  // fresh run state immediately.
+  if (initial.done) {
+    const doneState = await getNextWorkflowStep(initial.run.id);
+    return {
+      run: doneState.run,
+      executed: [],
+      ...(doneState.run.status === "completed" ? { done: true as const } : {}),
+    };
+  }
+
   // The effective dispatch signal: the heartbeat's controller (a lost lease or
   // a caller abort aborts it) while leased, else the raw caller signal.
   const dispatchSignal = heartbeat?.signal ?? options.signal;

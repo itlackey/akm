@@ -458,3 +458,116 @@ describe("budget interactions", () => {
     expect(result.executed[0]?.summary).toContain("budget exceeded (max_units ceiling)");
   });
 });
+
+/**
+ * Budget × gate loops (attempts accounting across the bounded loop): a gate
+ * rejection re-executes the step subgraph, and every loop's re-dispatch is a
+ * REAL dispatch that must count against `budget.max_units` / `budget.max_tokens`
+ * (the engine threads `unitsDispatched` / `tokensUsed` across loops). A ceiling
+ * reached DURING a gate loop fails the step HARD — it must not silently spend
+ * another loop, and the budget backstop overrides both `gate.max_loops` and
+ * `on_error`.
+ */
+describe("budget × gate loops", () => {
+  const GATE_LOOP_WF = (budgetLine: string, unitExtra = ""): string => `version: 1
+name: gate-budget
+${budgetLine}
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+${unitExtra}    gate:
+      criteria: [the work is thorough]
+      max_loops: 3
+`;
+
+  const rejectJudge = async () =>
+    JSON.stringify({ complete: false, missing: ["the work is thorough"], feedback: "Go deeper." });
+
+  test("loop re-dispatches count against max_units; a ceiling hit DURING a gate loop fails hard, not another loop", async () => {
+    writeProgram("gate-units-capped", GATE_LOOP_WF("budget: { max_units: 2 }"));
+    const started = await startWorkflowRun("workflow:gate-units-capped", {});
+
+    let dispatches = 0;
+    let judgeCalls = 0;
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async (): Promise<UnitDispatchResult> => {
+        dispatches++;
+        return { ok: true, text: "meh" };
+      },
+      summaryJudge: async () => {
+        judgeCalls++;
+        return rejectJudge();
+      },
+    });
+
+    // loop 1 dispatches (used 1), loop 2 re-dispatches (used 2 = the ceiling),
+    // loop 3's re-dispatch is REFUSED before running — the step fails hard.
+    expect(dispatches).toBe(2);
+    expect(judgeCalls).toBe(2); // loop 3 never reached the judge
+    expect(result.run.status).toBe("failed");
+    // Failed via the BUDGET backstop, not gate exhaustion — no gateRejection.
+    expect(result.gateRejection).toBeUndefined();
+    const last = result.executed[result.executed.length - 1];
+    expect(last?.ok).toBe(false);
+    expect(last?.summary).toContain("budget exceeded (max_units ceiling)");
+
+    // Only the two real dispatch rows exist (loop 1's base + loop 2's ~l2); the
+    // refused loop-3 attempt journaled nothing.
+    const dispatchRows = (await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id))).filter(
+      (u) => u.phase !== "gate",
+    );
+    expect(dispatchRows).toHaveLength(2);
+  });
+
+  test("budget + on_error: continue during a gate loop STILL fails hard, naming the ceiling", async () => {
+    writeProgram("gate-continue-capped", GATE_LOOP_WF("budget: { max_units: 2 }", "      on_error: continue\n"));
+    const started = await startWorkflowRun("workflow:gate-continue-capped", {});
+
+    let dispatches = 0;
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async (): Promise<UnitDispatchResult> => {
+        dispatches++;
+        return { ok: true, text: "meh" };
+      },
+      summaryJudge: rejectJudge,
+    });
+
+    expect(dispatches).toBe(2);
+    expect(result.run.status).toBe("failed");
+    // on_error: continue softens UNIT failures — a budget ceiling is a hard
+    // STEP failure regardless, even mid-gate-loop.
+    expect(result.executed[result.executed.length - 1]?.summary).toContain("budget exceeded (max_units ceiling)");
+  });
+
+  test("loop re-dispatch tokens count against max_tokens; crossing the ceiling DURING a gate loop fails hard", async () => {
+    writeProgram("gate-tokens-capped", GATE_LOOP_WF("budget: { max_tokens: 100 }"));
+    const started = await startWorkflowRun("workflow:gate-tokens-capped", {});
+
+    let dispatches = 0;
+    let judgeCalls = 0;
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async (): Promise<UnitDispatchResult> => {
+        dispatches++;
+        return { ok: true, text: "meh", usage: { inputTokens: 60 } };
+      },
+      summaryJudge: async () => {
+        judgeCalls++;
+        return rejectJudge();
+      },
+    });
+
+    // loop 1: 60 tokens (< 100) → gate reject → loop 2. loop 2's dispatch pushes
+    // the run total to 120, crossing max_tokens: the step fails hard before its
+    // gate is even judged.
+    expect(dispatches).toBe(2);
+    expect(judgeCalls).toBe(1);
+    expect(result.run.status).toBe("failed");
+    expect(result.gateRejection).toBeUndefined();
+    expect(result.executed[result.executed.length - 1]?.summary).toContain("budget exceeded (max_tokens ceiling)");
+  });
+});

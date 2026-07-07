@@ -526,9 +526,24 @@ export class WorkflowRunsRepository {
       );
   }
 
-  /** Record a unit's terminal state (completed / failed / skipped). */
+  /**
+   * Record a unit's terminal state (completed / failed / skipped).
+   *
+   * ## Loud contract (must update exactly one row)
+   *
+   * A finish ALWAYS targets a row a prior dispatch/claim inserted: every caller
+   * ({@link insertUnit} in the executor and the report path,
+   * {@link journalGateEvaluationStart} for gate rows) writes the `running` row
+   * before finishing it, inside the same writer-queue task or SQLite
+   * transaction. If the UPDATE matches NO `(run_id, unit_id)` row the journal is
+   * inconsistent — a finish against a missing or mismatched unit id — and the
+   * unit's terminal state would silently vanish (the row stays `running`, or no
+   * row exists at all). That is a journaling BUG, so we throw loudly at the
+   * source instead of no-oping: a stuck-`running` unit would wedge resume
+   * (durable-row reuse never matches it) or corrupt budget/gate accounting.
+   */
   finishUnit(input: FinishUnitInput): void {
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE workflow_run_units
            SET status = ?, result_json = ?, tokens = ?, failure_reason = ?, session_id = ?, finished_at = ?
@@ -544,6 +559,14 @@ export class WorkflowRunsRepository {
         input.runId,
         input.unitId,
       );
+    if (Number(result.changes) === 0) {
+      throw new Error(
+        `finishUnit updated no row: no unit "${input.unitId}" exists for run "${input.runId}". ` +
+          `A unit must be inserted (dispatched or claimed) before it can be finished — a finish that ` +
+          `matches no row indicates a journaling bug (mismatched unit id or a lost dispatch row), not a ` +
+          `recoverable state.`,
+      );
+    }
   }
 }
 
