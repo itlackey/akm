@@ -1275,3 +1275,196 @@ describe("workflow report — failure-reason normalization (#16)", () => {
     expect(normalizeFailureReason("timeout").startsWith("external:")).toBe(false);
   });
 });
+
+// ── Codex round-3 finding A: run-lifetime token accounting across --rerun ─────
+
+describe("workflow report — a --rerun's tokens accumulate onto the failed attempt's spend (finding A)", () => {
+  const TOKENS_WF = `version: 1
+name: TokenBudget
+budget:
+  max_tokens: 100
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+        on_error: continue
+`;
+
+  test("80 tokens on a failed report + a 30-token --rerun crosses max_tokens: 100 (prior spend stays charged)", async () => {
+    // The exact Codex scenario: a budgeted run spends 80 tokens failing a unit,
+    // then reruns it for 30 more under max_tokens: 100. `finishUnit` overwrites
+    // the row's tokens, so the pre-fix path retained only 30 and the run slipped
+    // under the ceiling. With the fix the row carries the CUMULATIVE 110, so the
+    // rerun crosses the ceiling and the step fails hard (budget ignores on_error).
+    const p = plan(TOKENS_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    const failed = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "failed",
+      failureReason: "timeout",
+      tokens: 80,
+      summaryJudge: null,
+    });
+    // on_error: continue + a sibling outstanding → the step stays active.
+    expect(failed.runStatus).toBe("active");
+
+    const rerun = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "recovered",
+      tokens: 30,
+      rerun: true,
+      summaryJudge: null,
+    });
+    expect(rerun.stepOutcome?.kind).toBe("failed");
+    expect(rerun.stepOutcome?.summary).toMatch(/budget exceeded \(max_tokens ceiling\)/);
+    expect(rerun.stepOutcome?.summary).toContain("110 token(s)");
+    expect(rerun.runStatus).toBe("failed");
+
+    // The row carries the cumulative 110 tokens (80 prior + 30 rerun), so any
+    // future budget seed sums the full run-lifetime spend, not just the last try.
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, ua);
+      expect(row?.tokens).toBe(110);
+      expect(row?.attempts).toBe(2);
+    });
+  });
+
+  test("a --rerun whose cumulative tokens stay under the ceiling is admitted and journals the running total", async () => {
+    // 40 failed + 30 rerun = 70 < 100 → admitted; the row still carries the sum.
+    const p = plan(TOKENS_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "failed",
+      failureReason: "timeout",
+      tokens: 40,
+      summaryJudge: null,
+    });
+    const rerun = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "recovered",
+      tokens: 30,
+      rerun: true,
+      summaryJudge: null,
+    });
+    expect(rerun.recorded).toBe("written");
+    expect(rerun.runStatus).toBe("active");
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnit(RUN_ID, ua)?.tokens).toBe(70);
+    });
+  });
+});
+
+// ── Codex round-3 finding B: fail-fast on a failed unit under on_error: fail ──
+
+describe("workflow report — a failed unit fails the step immediately under on_error: fail (finding B)", () => {
+  test("reporting one failure FIRST (siblings outstanding) fails the step now, not on the last sibling", async () => {
+    // The pre-fix path returned as long as ANY sibling was unreported, so a driver
+    // that stopped after its first failure left the run active forever. Under the
+    // default on_error: fail the failure already fixes the verdict, so the step is
+    // finalized as failed immediately.
+    const p = plan(ONERROR_WF("fail"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua, ub] = unitIds(p, 0, params);
+
+    // Report the FAILURE first — ua is never reported.
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ub,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("failed");
+    expect(r.runStatus).toBe("failed");
+    void ua;
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("failed");
+  });
+
+  test("a RETRY-ELIGIBLE failure (retry.on match, budget left) does NOT fail-fast — the unit may still be re-run", async () => {
+    // A failure whose reason is in retry.on with attempt budget remaining is not
+    // yet terminal (the engine would re-dispatch `~r1`; the driver `--rerun`s), so
+    // the step stays active and waits — consistent with what brief advertises.
+    const RETRY_WF = `version: 1
+name: RetryFail
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+        on_error: fail
+        retry: { max: 1, on: [timeout] }
+`;
+    const p = plan(RETRY_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua, ub] = unitIds(p, 0, params);
+
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ub,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    // Retry budget remains (attempts 1 < 1 + max 1) → NOT terminal → no fail-fast.
+    expect(r.stepOutcome).toBeUndefined();
+    expect(r.runStatus).toBe("active");
+    expect(r.remainingUnits).toBe(1);
+    void ua;
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("pending");
+  });
+
+  test("a failure whose reason is OUTSIDE retry.on fails-fast even when retry is declared", async () => {
+    const RETRY_WF = `version: 1
+name: RetryFail
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+        on_error: fail
+        retry: { max: 1, on: [llm_rate_limit] }
+`;
+    const p = plan(RETRY_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [, ub] = unitIds(p, 0, params);
+
+    // `timeout` is not in retry.on: [llm_rate_limit] → terminal → fail-fast.
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ub,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("failed");
+    expect(r.runStatus).toBe("failed");
+  });
+});

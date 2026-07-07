@@ -52,6 +52,7 @@ import {
   type GateFeedback,
   parseFrozenPlan,
   recoverGateFeedback,
+  selectUnitAttemptRow,
   stepOutputsFromEvidence,
 } from "./step-work";
 
@@ -452,7 +453,14 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
         ...(list.concurrency !== undefined ? { concurrency: list.concurrency } : {}),
         itemCount: list.items.length,
         units: list.units.map((u) =>
-          toBriefUnit(run.id, u, stepState.id, journaledByUnit.get(u.journalBaseId), {
+          // Resolve the unit's journaled state by its BEST terminal attempt
+          // (base + `~r<n>` retries), the SAME reuse the engine and report
+          // surfaces apply (shared selectUnitAttemptRow, finding C): a unit whose
+          // base attempt failed but whose retry completed surfaces as `done`, not
+          // `failed`, so brief never advertises re-running work a prior retry
+          // already finished — keeping the read-only surface consistent with what
+          // report/resume would reduce.
+          toBriefUnit(run.id, u, stepState.id, selectUnitAttemptRow(u, journaledByUnit), {
             stale: staleIds.has(u.journalBaseId),
             leaseLive,
           }),

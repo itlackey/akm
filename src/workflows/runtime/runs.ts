@@ -29,6 +29,7 @@ import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
+import { evaluateStaleUnits, type StaleUnit } from "./unit-checkin";
 import { compileWorkflowAssetPlan, loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
@@ -89,12 +90,25 @@ export interface WorkflowUnitDiagnostic {
   diagnostic: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /**
+   * True when this is a `running` claim that has gone silent past the check-in
+   * window — a driver that claimed the unit with `report --status running` and
+   * then died (Codex round-3 finding B). `status --units` runs the SAME pure
+   * {@link evaluateStaleUnits} pass `brief` uses so the two surfaces agree.
+   */
+  stale: boolean;
+  /** Idle ms since the last heartbeat / first claim when the row is stale; null otherwise. */
+  staleIdleMs: number | null;
+  /** The driver holding a `running` claim (migration 009); null when unclaimed. */
+  claimHolder: string | null;
+  /** When the `running` claim expires; null when unclaimed. */
+  claimExpiresAt: string | null;
 }
 
 /** Clip bound for a unit's `result_json` on the `--units` diagnostic surface. */
 const UNIT_DIAGNOSTIC_CLIP = 2000;
 
-function toUnitDiagnostic(row: WorkflowRunUnitRow): WorkflowUnitDiagnostic {
+function toUnitDiagnostic(row: WorkflowRunUnitRow, stale?: StaleUnit): WorkflowUnitDiagnostic {
   let diagnostic: string | null = null;
   if (row.result_json !== null) {
     // `result_json` is a JSON-encoded value: a bare JSON string for a free-text
@@ -123,6 +137,10 @@ function toUnitDiagnostic(row: WorkflowRunUnitRow): WorkflowUnitDiagnostic {
     diagnostic,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    stale: stale !== undefined,
+    staleIdleMs: stale ? (Number.isFinite(stale.idleMs) ? stale.idleMs : null) : null,
+    claimHolder: row.claim_holder,
+    claimExpiresAt: row.claim_expires_at,
   };
 }
 
@@ -166,6 +184,16 @@ export interface CompleteWorkflowStepInput {
    * until the lease is released or expires (R2 single-driver enforcement).
    */
   leaseHolder?: string;
+  /**
+   * Engine/report finalize only (Codex round-3 finding A): this completion's gate
+   * is REQUIRED. A required gate whose judge cannot produce a verdict (throws /
+   * unreachable / unparseable) must NOT fail open — {@link validateStepSummary}
+   * flags it `errored` and the returned {@link SummaryValidationFailure} carries
+   * `errored: true`, so `finalizeExecutedStep` BLOCKS the step instead of
+   * advancing. The manual `akm workflow complete` path never sets this, so its
+   * fail-open behavior is unchanged.
+   */
+  requireGate?: boolean;
 }
 
 /**
@@ -178,6 +206,13 @@ export interface SummaryValidationFailure {
   stepId: string;
   missing: string[];
   feedback: string;
+  /**
+   * Set when a REQUIRED gate could not be judged (Codex round-3 finding A): the
+   * judge threw / was unreachable / returned an unparseable verdict. The caller
+   * (`finalizeExecutedStep`) BLOCKS the step rather than treating this as a
+   * normal (retryable) gate rejection.
+   */
+  errored?: true;
 }
 
 export async function startWorkflowRun(
@@ -295,7 +330,10 @@ export async function startWorkflowRun(
   });
 }
 
-export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: boolean }): Promise<WorkflowRunDetail> {
+export async function getWorkflowStatus(
+  runId: string,
+  opts?: { includeUnits?: boolean; now?: number },
+): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
     const steps = readWorkflowRunSteps(repo, run.id);
@@ -304,7 +342,12 @@ export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: b
       // The honest diagnostic surface (#22): read the unit journal straight and
       // project each row, INCLUDING failures whose diagnostic text the
       // deterministic evidence graph drops. Read-only; never mutates the run.
-      detail.units = repo.getUnitsForRun(run.id).map(toUnitDiagnostic);
+      const rows = repo.getUnitsForRun(run.id);
+      // Codex round-3 finding B: run the SAME pure stale-claim evaluator `brief`
+      // uses (`now` injected for deterministic tests) so a dead driver's claimed
+      // `running` unit surfaces as stale here too, not just as raw `running`.
+      const staleById = new Map(evaluateStaleUnits(rows, opts.now ?? Date.now()).map((u) => [u.unitId, u]));
+      detail.units = rows.map((row) => toUnitDiagnostic(row, staleById.get(row.unit_id)));
     }
     return detail;
   });
@@ -512,6 +555,7 @@ export async function completeWorkflowStep(
     const verdict = await validateStepSummary(
       { stepTitle: preflight.existing.step_title, completionCriteria: criteria, summary },
       judge ?? undefined,
+      { required: input.requireGate === true },
     );
     if (!verdict.complete) {
       // Re-arm the check-in so a subsequent stall is still nudged, but leave the
@@ -525,6 +569,9 @@ export async function completeWorkflowStep(
         stepId: input.stepId,
         missing: verdict.missing,
         feedback: verdict.feedback ?? "The summary does not satisfy the step's completion criteria.",
+        // A REQUIRED gate that could not be judged (finding A): the caller BLOCKS
+        // rather than treating this as a normal, retryable gate rejection.
+        ...(verdict.errored ? { errored: true as const } : {}),
       };
     }
   }

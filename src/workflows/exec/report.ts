@@ -75,6 +75,7 @@ import {
   type StepWorkList,
   type StepWorkUnit,
   seedJournaledRouteDecisions,
+  selectUnitAttemptRow,
   stepOutputsFromEvidence,
   type UnitOutcome,
   unitOutcomeFromRow,
@@ -441,12 +442,27 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           startedAt: existing?.started_at ?? nowIso,
         });
       }
+      // Run-lifetime token accounting (Codex round-3 finding A). `finishUnit`
+      // OVERWRITES the row's `tokens` column, so a `--rerun` over a prior FAILED
+      // attempt would otherwise ERASE that attempt's already-spent tokens from
+      // the run total — a budgeted run could spend 80 tokens on a failed report,
+      // rerun for 30 more under `max_tokens: 100`, and pass because only 30 were
+      // retained. The engine never hits this (its retries journal SEPARATE `~r`
+      // rows, each keeping its own tokens). To match, the `tokens` column on a
+      // re-dispatched row carries the CUMULATIVE spend across the row's attempts,
+      // mirroring how `attempts` accumulates: budget seeds that sum this column
+      // then see ALL tokens ever spent on the unit. A fresh write or a live
+      // `running`-claim finish (no prior tokens on the row) keeps the plain
+      // per-attempt value — and NULL when no tokens were reported — so the engine
+      // parity graph (which journals NULL for a usage-less unit) is unchanged.
+      const priorTokens = existing?.tokens ?? 0;
+      const carriedTokens = priorTokens > 0 ? priorTokens + thisTokens : (input.tokens ?? null);
       repo.finishUnit({
         runId,
         unitId: journalId,
         status,
         resultJson,
-        tokens: input.tokens ?? null,
+        tokens: carriedTokens,
         failureReason,
         sessionId: input.sessionId ?? null,
         finishedAt: nowIso,
@@ -503,6 +519,40 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   const remaining = remainingReportableUnits(workList, byUnit);
 
   if (remaining > 0) {
+    // Fail-fast (Codex round-3 finding B). Under the default `on_error: fail` a
+    // single TERMINAL unit failure already fixes the step's verdict: the shared
+    // reducer maps ANY unit failure to a failed step, so the outstanding siblings
+    // cannot change the outcome. Waiting for them (the pre-fix behavior) only
+    // strands the run forever when a driver stops after its first failure. So a
+    // failed report finalizes the step NOW — through the SAME completion path +
+    // finalize CAS as a fully-terminal work-list — instead of returning as
+    // outstanding. Exceptions kept identical to the engine: `on_error: continue`
+    // always waits for the full work-list; a RETRY-ELIGIBLE failure is not yet
+    // terminal (the unit may still be re-run under its retry budget — the
+    // `--rerun` form brief advertises, mirroring the engine's `~r<n>` retry), so
+    // it too keeps waiting; and an idempotent re-report changed nothing to act on.
+    if (
+      status === "failed" &&
+      !idempotent &&
+      workList.template.onError === "fail" &&
+      !isRetryEligibleFailure(workUnit, byUnit.get(journalId), failureReason)
+    ) {
+      return finalizeStep({
+        runId,
+        next: state,
+        plan,
+        stepPlan,
+        stepState,
+        workList,
+        byUnit,
+        gateLoop,
+        priorEvidence,
+        summaryJudge: input.summaryJudge,
+        now: nowFn,
+        written: { unitId: journalId, status },
+        recorded: "written",
+      });
+    }
     // Not fully terminal → nothing to finalize. A written report advanced the
     // work-list by one; an idempotent re-report changed nothing.
     return {
@@ -677,13 +727,25 @@ function reduceWorkListOutcomes(
   if (workList.units.length === 0) {
     return reduceEmptyStep(stepPlan, workList.reducer);
   }
-  const outcomes: UnitOutcome[] = workList.units.map((u) => {
+  const outcomes: UnitOutcome[] = [];
+  for (const u of workList.units) {
     if (!u.resolved.ok) {
-      return { unitId: u.unitId, ok: false, failureReason: "expression_error", error: u.resolved.error };
+      outcomes.push({ unitId: u.unitId, ok: false, failureReason: "expression_error", error: u.resolved.error });
+      continue;
     }
-    const row = byUnit.get(u.journalBaseId);
-    return unitOutcomeFromRow(u.unitId, row as WorkflowRunUnitRow, u.schema !== undefined);
-  });
+    // Reduce each unit by its BEST terminal attempt (base + `~r<n>` retries), the
+    // SAME reuse the engine applies (shared {@link selectUnitAttemptRow}). A unit
+    // whose base attempt failed but whose retry completed reduces as COMPLETED,
+    // exactly like engine resume (finding C). A still-outstanding sibling with no
+    // terminal row is excluded rather than reduced against a missing row — this
+    // only arises on the fail-fast path (a single failed unit under
+    // `on_error: fail` already fixes the step's verdict; unreported siblings play
+    // no part in it). On the normal finalize path every resolvable unit is
+    // terminal, so nothing is excluded and the reduction is unchanged.
+    const row = selectUnitAttemptRow(u, byUnit);
+    if (!row || (row.status !== "completed" && row.status !== "failed")) continue;
+    outcomes.push(unitOutcomeFromRow(u.unitId, row, u.schema !== undefined));
+  }
   return reduceStepOutcomes(stepPlan, workList.reducer, workList.isFanOut, workList.template.onError, outcomes);
 }
 
@@ -1130,6 +1192,30 @@ export function normalizeFailureReason(raw: string | undefined): string {
   return `external:${slug || "unknown"}`;
 }
 
+/**
+ * Is a just-written FAILED unit still RETRY-ELIGIBLE — i.e. NOT terminal for the
+ * fail-fast decision (finding B)? A unit whose declared `retry.on` matches the
+ * recorded failure reason AND whose attempt budget (`1 + retry.max`) is not yet
+ * spent can still be re-run — the `--rerun` form brief advertises, which
+ * re-dispatches under the same budget the engine's automatic `~r<n>` retry
+ * would. Under `on_error: fail` the step must therefore NOT fail-fast on such a
+ * failure (the retry may still succeed). No `retry`, an off-list reason, or an
+ * exhausted attempt budget ⇒ the failure IS terminal and fail-fast applies. The
+ * normalized failure reason is compared against `retry.on` directly: a canonical
+ * taxonomy reason is stored verbatim (`normalizeFailureReason`), and an
+ * `external:*` reason is by construction outside the taxonomy `retry.on` lists.
+ */
+function isRetryEligibleFailure(
+  workUnit: StepWorkUnit,
+  row: WorkflowRunUnitRow | undefined,
+  failureReason: string | null,
+): boolean {
+  const retry = workUnit.retry;
+  if (!retry || failureReason === null || !retry.on.includes(failureReason)) return false;
+  const attempts = row?.attempts ?? 1;
+  return attempts < 1 + Math.max(0, retry.max);
+}
+
 /** Validate + shape the reported result into what `finishUnit` persists. */
 function prepareResult(
   input: ReportUnitInput,
@@ -1220,6 +1306,11 @@ function assessBudget(
 ): BudgetVerdict {
   const budget = plan.budget;
   if (!budget || (budget.maxUnits === undefined && budget.maxTokens === undefined)) return { kind: "ok" };
+  // The row being (re)written carries CUMULATIVE tokens across its attempts
+  // (finding A): `finishUnit` will preserve them (prior spend + this write), so
+  // they are part of the run's committed token total and count against
+  // `max_tokens` here just like every other row's tokens. NULL ⇒ 0.
+  const existingTokens = existing?.tokens ?? 0;
   let othersDispatched = 0;
   let othersTokens = 0;
   let existingAttempts = 0;
@@ -1228,8 +1319,9 @@ function assessBudget(
     if (row.unit_id === journalId) {
       // The row being (re)written. Its ALREADY-SPENT attempts must be counted
       // before admission (#4): excluding them let a re-report of a non-terminal
-      // or failed unit erase the prior attempt from the ceiling. Its OLD tokens
-      // are NOT counted — the finish overwrites them with `thisTokens`.
+      // or failed unit erase the prior attempt from the ceiling. Its tokens are
+      // accounted via `existingTokens` (the finish carries them forward, not
+      // overwrites), so a rerun never drops a failed attempt's spend (finding A).
       existingAttempts = row.attempts;
       continue;
     }
@@ -1255,19 +1347,20 @@ function assessBudget(
         `ceilings ignore on_error).`,
     };
   }
-  if (budget.maxTokens !== undefined && othersTokens >= budget.maxTokens) {
+  const committedTokens = othersTokens + existingTokens;
+  if (budget.maxTokens !== undefined && committedTokens >= budget.maxTokens) {
     return {
       kind: "refuse",
       message:
-        `budget exceeded (max_tokens ceiling): ${othersTokens} token(s) already spent for this run against the ` +
+        `budget exceeded (max_tokens ceiling): ${committedTokens} token(s) already spent for this run against the ` +
         `workflow's declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
     };
   }
-  if (budget.maxTokens !== undefined && othersTokens + thisTokens >= budget.maxTokens) {
+  if (budget.maxTokens !== undefined && committedTokens + thisTokens >= budget.maxTokens) {
     return {
       kind: "tokens-cross",
       message:
-        `budget exceeded (max_tokens ceiling): ${othersTokens + thisTokens} token(s) spent for this run, reaching the ` +
+        `budget exceeded (max_tokens ceiling): ${committedTokens + thisTokens} token(s) spent for this run, reaching the ` +
         `workflow's declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
     };
   }
@@ -1427,7 +1520,10 @@ function settledTerminalResult(input: ReportUnitInput, settled: WorkflowNextResu
 function remainingReportableUnits(workList: StepWorkList, byUnit: Map<string, WorkflowRunUnitRow>): number {
   return workList.units.filter((u) => {
     if (!u.resolved.ok) return false;
-    const row = byUnit.get(u.journalBaseId);
+    // A unit is terminal when its best attempt (base OR a completed `~r<n>`
+    // retry) is terminal — the SAME reuse the reducer applies (finding C), so a
+    // base-failed unit rescued by a completed retry is NOT counted outstanding.
+    const row = selectUnitAttemptRow(u, byUnit);
     return !(row && (row.status === "completed" || row.status === "failed"));
   }).length;
 }
@@ -1454,7 +1550,8 @@ function countRemaining(
     // Unresolvable units are never reportable (the engine's expression_error), so
     // they never count as outstanding.
     if (!u.resolved.ok) return false;
-    const row = byUnit.get(u.journalBaseId);
+    // Best terminal attempt (base + `~r<n>` retries), the shared reuse (finding C).
+    const row = selectUnitAttemptRow(u, byUnit);
     return !(row && (row.status === "completed" || row.status === "failed"));
   }).length;
 }

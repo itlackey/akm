@@ -757,6 +757,14 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
       const attempts = typeof unit.attempts === "number" ? unit.attempts : undefined;
       const suffix = attempts !== undefined && attempts > 1 ? `, attempt ${attempts}` : "";
       lines.push(`  - ${id} [${node}] (${status}${suffix})`);
+      // Codex round-3 finding B: a `running` claim gone silent past the check-in
+      // window — the driver likely died. Surface it (with the claim holder) so a
+      // human can reclaim/re-run the unit, matching what `brief` reports.
+      if (unit.stale === true) {
+        const holder =
+          typeof unit.claimHolder === "string" && unit.claimHolder.trim() ? ` claimed by ${unit.claimHolder}` : "";
+        lines.push(`    stale: claim went silent past the check-in window${holder} — its driver may have died`);
+      }
       if (typeof unit.failureReason === "string" && unit.failureReason.trim()) {
         lines.push(`    failure_reason: ${unit.failureReason}`);
       }

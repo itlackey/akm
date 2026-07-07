@@ -692,6 +692,40 @@ export function unitOutcomeFromRow(unitId: string, row: WorkflowRunUnitRow, hasS
   };
 }
 
+/**
+ * Select the journaled attempt row that determines a unit's TERMINAL outcome on
+ * a REPLAY surface — the engine's durable-row reuse AND the harness-neutral
+ * brief/report driver protocol — given the run's dispatch rows indexed by
+ * unit_id. This is the ONE place all surfaces resolve "which journaled row IS
+ * this unit's outcome," so they cannot drift from each other or from the engine.
+ *
+ * It mirrors the executor's {@link classifyUnitReuse} attempt scan
+ * (native-executor.ts): among the base attempt and its `~r<n>` retries — all
+ * stacked on `journalBaseId`, which already carries the active `~l<loop>` gate
+ * suffix — the FIRST completed attempt is the effective result. So a unit whose
+ * base attempt FAILED but whose later retry COMPLETED reduces as COMPLETED,
+ * exactly like an engine resume reusing the `~r1` row (Codex round-3 finding C);
+ * reading only the base row would reduce it as failed and diverge the two
+ * surfaces. With no completed attempt the HIGHEST journaled attempt stands (a
+ * terminal failure, or a still-running row); no attempt row at all ⇒ `undefined`
+ * (the unit is still outstanding).
+ */
+export function selectUnitAttemptRow(
+  workUnit: StepWorkUnit,
+  dispatchRows: Map<string, WorkflowRunUnitRow>,
+): WorkflowRunUnitRow | undefined {
+  const base = workUnit.journalBaseId;
+  const maxAttempts = 1 + Math.max(0, workUnit.retry?.max ?? 0);
+  let fallback: WorkflowRunUnitRow | undefined;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const row = dispatchRows.get(attempt === 0 ? base : `${base}~r${attempt}`);
+    if (!row) continue;
+    if (row.status === "completed") return row;
+    fallback = row; // remember the highest journaled (non-completed) attempt
+  }
+  return fallback;
+}
+
 /** Stable stringify (sorted object keys, recursively) so equal values vote together. */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value));
@@ -887,8 +921,10 @@ export async function journalGateEvaluationStart(gate: GateUnitRef): Promise<voi
  * Finish the gate-evaluation unit row with the verdict as observed from the
  * completion outcome: a rejection journals `{ complete: false, missing,
  * feedback }`; a pass journals `{ complete: true, missing: [] }`; a judge that
- * threw journals a failed row (the gate then failed open inside
- * `validateStepSummary`).
+ * threw (or, on a required gate, returned an unparseable verdict) journals a
+ * failed row with a NULL verdict. A NON-required errored gate then fails OPEN
+ * inside `validateStepSummary`; a REQUIRED errored gate BLOCKS the step
+ * (`finalizeExecutedStep`, Codex round-3 finding A).
  */
 export async function journalGateEvaluationFinish(
   gate: GateUnitRef,
@@ -1294,8 +1330,9 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
 
   // Reviewer #6: once the judge is invoked, its gate row is journaled `running`
   // (journalGateEvaluationStart) and MUST be finished on every exit. The
-  // already-fixed window is the judge itself throwing (caught + failed-open
-  // inside validateStepSummary; `judgeState.errored` records it). The remaining
+  // already-fixed window is the judge itself throwing (caught inside
+  // validateStepSummary — `judgeState.errored` records it; a non-required gate
+  // fails open, a required gate blocks below). The remaining
   // window is `completeWorkflowStep` throwing AFTER the judge ran — a stolen
   // lease, a concurrent state change, a DB error — which would otherwise skip the
   // finish and strand the gate row in `running`. Finish it as an errored row (the
@@ -1309,6 +1346,10 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       summary,
       evidence: result.evidence,
       summaryJudge,
+      // Codex round-3 finding A: mark this completion's gate REQUIRED so
+      // `validateStepSummary` does NOT fail open when the judge throws / is
+      // unreachable / returns garbage — it flags `errored` and we block below.
+      ...(gateRequired ? { requireGate: true } : {}),
       ...lease,
     });
   } catch (err) {
@@ -1318,8 +1359,27 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   const rejection =
     "ok" in completion && completion.ok === false ? (completion as SummaryValidationFailure) : undefined;
 
+  // A required gate whose judge could not be evaluated is an errored gate, not a
+  // real rejection: journal the gate row as errored (verdict null) so the
+  // observed outcome is honest, driven by EITHER the wrapper catching a throw OR
+  // validateStepSummary flagging an unparseable verdict.
+  const gateErrored = judgeState.errored || rejection?.errored === true;
   if (judgeState.invoked) {
-    await journalGateEvaluationFinish(gateUnit, judgeState.errored, rejection);
+    await journalGateEvaluationFinish(gateUnit, gateErrored, rejection);
+  }
+
+  // Codex round-3 finding A: a REQUIRED gate that could not be judged (the judge
+  // threw, was unreachable, or returned an unparseable verdict) must NOT fail
+  // open and advance. The gate row is journaled errored above; BLOCK the step (a
+  // human resolves it) instead of silently passing an unjudged required gate.
+  if (rejection?.errored) {
+    const notes =
+      `Step "${stepId}" has a REQUIRED completion gate but its summary-validation judge failed to return a verdict ` +
+      `(the LLM threw, was unreachable, or returned an unparseable response). A required gate must be judged — refusing ` +
+      `to fail open and silently pass it. The step is BLOCKED: fix the LLM/connection, then \`akm workflow resume ${runId}\` ` +
+      `to re-evaluate the gate, or advance the step manually with \`akm workflow complete\`.`;
+    await completeWorkflowStep({ runId, stepId, status: "blocked", notes, evidence: result.evidence, ...lease });
+    return { kind: "blocked", summary: notes };
   }
 
   if (!rejection) {

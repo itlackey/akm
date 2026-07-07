@@ -750,6 +750,43 @@ steps:
   },
 };
 
+// required gate + a judge that ERRORS → BLOCKED (Codex round-3 finding A). Unlike
+// the no-judge golden above, a judge IS configured — it just THROWS (a transient
+// LLM outage). A required gate must not fail open on that: both surfaces INVOKE
+// the judge (so the `<step>.gate:l1` row IS journaled), finish it as an errored
+// evaluation (status=failed, NULL verdict), and BLOCK the step identically — the
+// same unit graph. This is the exact bypass finding A flagged.
+const REQUIRED_GATE_JUDGE_ERRORS: Golden = {
+  name: "required gate, judge errors → blocked (offline parity)",
+  yaml: `version: 1
+name: Golden
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      required: true
+`,
+  params: {},
+  steps: [{ id: "work", criteria: ["the work is thorough"] }],
+  outcome: () => ({ ok: true, text: "did the work" }),
+  // A configured judge that throws (unreachable LLM) — NOT the no-judge case.
+  judge: () => async () => {
+    throw new Error("LLM unreachable");
+  },
+  verify: (g) => {
+    expect(lineFor(g, "unit work:solo")).toContain("status=completed");
+    // The judge WAS invoked, so an errored gate row exists on both surfaces.
+    expect(countLines(g, "gate ")).toBe(1);
+    expect(lineFor(g, "gate work.gate:l1")).toContain("status=failed");
+    expect(lineFor(g, "gate work.gate:l1")).toContain("verdict=-");
+    expect(lineFor(g, "step work")).toContain("status=blocked");
+    expect(g).toContain("run status=blocked");
+  },
+};
+
 const GOLDENS: Golden[] = [
   SOLO,
   FAN_OUT_COLLECT,
@@ -761,6 +798,7 @@ const GOLDENS: Golden[] = [
   EMPTY_OUTPUT,
   PROFILE_TIMEOUT,
   REQUIRED_GATE_NO_JUDGE,
+  REQUIRED_GATE_JUDGE_ERRORS,
 ];
 
 // ── The parity suite ─────────────────────────────────────────────────────────
@@ -864,6 +902,114 @@ steps:
     expect(h1).toBeTruthy();
     expect(h2).toBeTruthy();
     expect(h1).not.toBe(h2);
+    expect(engineGraph).toContain("run status=completed");
+  });
+
+  // Codex round-3 finding C parity extension: an engine crash AFTER a unit's
+  // retry succeeded leaves the journal with a FAILED base attempt AND a COMPLETED
+  // `~r1` retry. Engine resume reuses the `~r1` row (classifyUnitReuse), so the
+  // unit reduces as COMPLETED. The brief/report surfaces must reduce it by the
+  // SAME best terminal attempt (shared selectUnitAttemptRow) — reading only the
+  // base row would reduce it as FAILED and, under on_error: fail, wrongly fail
+  // the whole step. Both surfaces resume from the identical seeded pre-state (one
+  // unit crashed-then-retried, its sibling never run) and must reach byte-
+  // identical completed graphs.
+  test("crash-after-retry resume: a base-failed unit rescued by a completed ~r1 reduces as COMPLETED on both surfaces", async () => {
+    const yaml = `version: 1
+name: Golden
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+        retry: { max: 1, on: [timeout] }
+`;
+    const plan = compile(yaml);
+    const params = { files: ["a.ts", "b.ts"] };
+    const steps: SeedStep[] = [{ id: "review" }];
+    const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params, stepOutputs: {} });
+    if (!computed.ok) throw new Error(computed.error);
+    const [ua, ub] = computed.list.units;
+    if (!ua.resolved.ok || !ub.resolved.ok) throw new Error("fixture: units did not resolve");
+
+    // The crashed pre-state: unit A's base attempt FAILED (timeout) but its ~r1
+    // retry COMPLETED with the matching input hash — exactly what an engine crash
+    // after a successful retry journals. Unit B never ran. Seeded identically in
+    // both databases so the A group is byte-identical up front; the surfaces only
+    // differ in how they REDUCE it.
+    const seedCrashedRetry = async (): Promise<void> => {
+      await withWorkflowRunsRepo((repo) => {
+        const now = new Date().toISOString();
+        const attempt = (
+          unitId: string,
+          status: "completed" | "failed",
+          result: string | null,
+          reason: string | null,
+        ) => {
+          repo.insertUnit({
+            runId: RUN_ID,
+            unitId,
+            stepId: "review",
+            nodeId: ua.nodeId,
+            parentUnitId: "review.map",
+            phase: null,
+            runner: "agent",
+            model: null,
+            inputHash: ua.resolved.ok ? ua.resolved.inputHash : null,
+            startedAt: now,
+          });
+          repo.finishUnit({
+            runId: RUN_ID,
+            unitId,
+            status,
+            resultJson: result,
+            tokens: null,
+            failureReason: reason,
+            finishedAt: now,
+          });
+        };
+        attempt(ua.unitId, "failed", null, "timeout");
+        attempt(`${ua.unitId}~r1`, "completed", JSON.stringify("retried a.ts"), null);
+      });
+    };
+
+    // (a) engine surface: resume — A is reused from ~r1, B is dispatched.
+    const engineDir = path.join(rootDir, "engine");
+    fs.mkdirSync(engineDir, { recursive: true });
+    process.env.AKM_DATA_DIR = engineDir;
+    seedRun(plan, params, steps);
+    await seedCrashedRetry();
+    await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => ({ ok: true, text: `reviewed ${contentBaseId(req.unitId)}` }),
+      summaryJudge: null,
+    });
+    const engineGraph = await canonicalGraph();
+
+    // (b) brief/report surface: same pre-state, driven through the driver loop.
+    const driverDir = path.join(rootDir, "driver");
+    fs.mkdirSync(driverDir, { recursive: true });
+    process.env.AKM_DATA_DIR = driverDir;
+    seedRun(plan, params, steps);
+    await seedCrashedRetry();
+    const golden: Golden = {
+      name: "crash-retry",
+      yaml,
+      params,
+      steps,
+      outcome: (base) => ({ ok: true, text: `reviewed ${base}` }),
+    };
+    await runDriverSurface(golden);
+    const driverGraph = await canonicalGraph();
+
+    assertGraphsIdentical(engineGraph, driverGraph, "crash-retry");
+    // The crashed unit reduced as COMPLETED (via its ~r1 retry), NOT failed, so
+    // on_error: fail did not fail the step — the run completed on both surfaces.
+    expect(lineFor(engineGraph, `unit ${ua.unitId} `)).toContain("status=completed");
+    expect(lineFor(engineGraph, "step review")).toContain("status=completed");
     expect(engineGraph).toContain("run status=completed");
   });
 

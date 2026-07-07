@@ -928,6 +928,49 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
     expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("completed");
   });
 
+  // ── Codex round-3 finding A — a required gate whose judge ERRORS must BLOCK,
+  //    never fail open (the offline/misconfigured-judge bypass required gates exist
+  //    to prevent). A CONFIGURED judge that throws is NOT the no-judge case above.
+  test("finding A: required gate + a judge that THROWS blocks the step (does not fail open)", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const judge: SummaryJudge = async () => {
+      throw new Error("LLM unreachable");
+    };
+    const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: judge }));
+    expect(fin.kind).toBe("blocked");
+    if (fin.kind === "blocked") expect(fin.summary).toContain("REQUIRED completion gate");
+
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
+    expect(status.run.status).toBe("blocked");
+    // The judge WAS invoked, so the gate row exists — but finished ERRORED
+    // (status failed, NULL verdict), not passed.
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+    const gate = rows.find((r) => r.unit_id === "work.gate:l1");
+    expect(gate?.status).toBe("failed");
+    expect(gate?.result_json).toBeNull();
+  });
+
+  test("finding A: required gate + a judge that returns an UNPARSEABLE verdict blocks the step", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const judge: SummaryJudge = async () => "not json at all";
+    const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: judge }));
+    expect(fin.kind).toBe("blocked");
+    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+    expect(rows.find((r) => r.unit_id === "work.gate:l1")?.status).toBe("failed");
+  });
+
+  test("finding A: a NON-required gate whose judge throws still fails OPEN (documented offline behavior)", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const judge: SummaryJudge = async () => {
+      throw new Error("LLM unreachable");
+    };
+    const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(false), summaryJudge: judge }));
+    expect(fin.kind).toBe("advanced");
+    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("completed");
+  });
+
   test("engine --require-gates blocks a NON-required criteria gate with no judge (run-wide override)", async () => {
     seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
     const result = await runWorkflowSteps({

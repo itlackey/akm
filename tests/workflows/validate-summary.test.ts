@@ -70,4 +70,40 @@ describe("validateStepSummary (#506 — completion-criteria gate)", () => {
     expect(typeof result.feedback).toBe("string");
     expect(result.feedback?.length).toBeGreaterThan(0);
   });
+
+  // ── Codex round-3 finding A — a REQUIRED gate must NOT fail open when it cannot
+  //    obtain a verdict; it flags `errored` so the caller blocks the step.
+  test("required gate: a judge that throws yields errored (not fail-open pass)", async () => {
+    const judge: SummaryJudge = async () => {
+      throw new Error("network down");
+    };
+    const result = await validateStepSummary(input, judge, { required: true });
+    expect(result.complete).toBe(false);
+    expect(result.errored).toBe(true);
+    expect(result.skipped).toBeUndefined();
+    expect(typeof result.feedback).toBe("string");
+  });
+
+  test("required gate: an unparseable verdict yields errored (not fail-open pass)", async () => {
+    const judge: SummaryJudge = async () => "totally not json";
+    const result = await validateStepSummary(input, judge, { required: true });
+    expect(result.complete).toBe(false);
+    expect(result.errored).toBe(true);
+  });
+
+  test("required gate: a well-formed complete:true still passes", async () => {
+    const judge: SummaryJudge = async () => '{"complete": true, "missing": []}';
+    const result = await validateStepSummary(input, judge, { required: true });
+    expect(result.complete).toBe(true);
+    expect(result.errored).toBeUndefined();
+  });
+
+  test("required gate: a well-formed complete:false is a normal rejection, NOT errored", async () => {
+    const judge: SummaryJudge = async () =>
+      '{"complete": false, "missing": ["Version matches tag"], "feedback": "Confirm the tag."}';
+    const result = await validateStepSummary(input, judge, { required: true });
+    expect(result.complete).toBe(false);
+    expect(result.errored).toBeUndefined();
+    expect(result.missing).toEqual(["Version matches tag"]);
+  });
 });
