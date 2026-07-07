@@ -1,6 +1,0 @@
-{
-  "ok": false,
-  "error": "Workflow run \"\" not found.",
-  "code": "WORKFLOW_NOT_FOUND",
-  "hint": "Run `akm workflow list --active` to see runs."
-}
