@@ -28,6 +28,7 @@ const UNIT_SESSION_MIGRATION_ID = "005-unit-session-id";
 const FROZEN_PLAN_MIGRATION_ID = "006-frozen-plan-and-lease";
 const UNIT_CHECKIN_MIGRATION_ID = "007-unit-last-checkin";
 const UNIT_ATTEMPTS_MIGRATION_ID = "008-unit-attempts";
+const UNIT_CLAIM_MIGRATION_ID = "009-unit-claim";
 
 /** Every migration in application order — keep in sync with db.ts MIGRATIONS. */
 const ALL_MIGRATION_IDS = [
@@ -39,6 +40,7 @@ const ALL_MIGRATION_IDS = [
   FROZEN_PLAN_MIGRATION_ID,
   UNIT_CHECKIN_MIGRATION_ID,
   UNIT_ATTEMPTS_MIGRATION_ID,
+  UNIT_CLAIM_MIGRATION_ID,
 ];
 
 let tmpDir = "";
@@ -105,6 +107,10 @@ describe("workflow.db migrations", () => {
 
       // per-unit dispatch-attempt counter was created (migration 008, PR #714)
       expect(hasColumn(db, "workflow_run_units", "attempts")).toBe(true);
+
+      // per-unit claim ownership columns were created (migration 009, PR #714 r2)
+      expect(hasColumn(db, "workflow_run_units", "claim_holder")).toBe(true);
+      expect(hasColumn(db, "workflow_run_units", "claim_expires_at")).toBe(true);
 
       // All migrations recorded, in order
       const applied = listAppliedMigrations(db);

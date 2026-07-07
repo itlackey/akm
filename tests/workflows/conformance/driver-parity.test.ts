@@ -212,6 +212,12 @@ async function canonicalGraph(): Promise<GraphLine[]> {
   // trigger — both surfaces journal `attempts = 1` per unit, so it would match
   // vacuously. It is a budget-accounting field, not part of the observable unit
   // graph; the crash/resume accumulation it drives is covered by budget.test.ts.
+  //
+  // `claim_holder` / `claim_expires_at` (migration 009) are likewise EXCLUDED:
+  // they are report-surface bookkeeping for `report --status running` claims. The
+  // engine never claims (it dispatches synchronously) and this parity driver
+  // reports terminal outcomes directly (never `--status running`), so both
+  // surfaces leave them NULL — they are not part of the cross-surface unit graph.
   for (const base of [...groups.keys()].sort()) {
     const rows = groups.get(base) ?? [];
     const rep = rows.find((r) => r.status === "completed") ?? rows[rows.length - 1];
@@ -608,6 +614,38 @@ steps:
   },
 };
 
+// profile + timeout in the hashed dispatch envelope (reviewer finding #1). The
+// unit declares a profile and a per-unit timeout — both now part of the input
+// hash (step-work.ts). Because the hash is computed in ONE shared place, the
+// engine and brief/report surfaces MUST journal a byte-identical `input_hash`
+// here; a future refactor that recomputed the hash per-surface from a subset of
+// fields would diverge the `hash=` column and this golden would fail. (The
+// fake dispatcher ignores profile/timeout, so no real backend is needed.)
+const PROFILE_TIMEOUT: Golden = {
+  name: "profile + timeout in the input hash",
+  yaml: `version: 1
+name: Golden
+steps:
+  - id: build
+    title: Build
+    unit:
+      runner: agent
+      profile: reviewer
+      timeout: 5m
+      instructions: Build it.
+`,
+  params: {},
+  steps: [{ id: "build" }],
+  outcome: (base) => ({ ok: true, text: `did ${base}` }),
+  verify: (g) => {
+    // A real 64-hex hash is journaled identically on both surfaces (the parity
+    // assertion already compared the whole `hash=` token byte-for-byte).
+    expect(lineFor(g, "unit build:solo")).toMatch(/hash=[0-9a-f]{64}/);
+    expect(lineFor(g, "unit build:solo")).toContain("status=completed");
+    expect(g).toContain("run status=completed");
+  },
+};
+
 const GOLDENS: Golden[] = [
   SOLO,
   FAN_OUT_COLLECT,
@@ -617,6 +655,7 @@ const GOLDENS: Golden[] = [
   onErrorContinueGolden(),
   RETRY,
   EMPTY_OUTPUT,
+  PROFILE_TIMEOUT,
 ];
 
 // ── The parity suite ─────────────────────────────────────────────────────────

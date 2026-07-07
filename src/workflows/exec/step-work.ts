@@ -302,13 +302,42 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
         ...(template.schema ? { schema: template.schema } : {}),
         instructions: resolvedInstr.text,
       });
+      // Canonical dispatch-input envelope (reviewer finding #1). Every field
+      // here is a PLAN-FROZEN input that changes what the backend is actually
+      // asked to do, so a completed unit is reused ONLY when all of them match;
+      // a change to any of them re-dispatches. Key order is FIXED — it is the
+      // hash preimage (JSON.stringify preserves insertion order) — and shared
+      // by ALL surfaces, since this is the ONE place a unit's inputHash is
+      // computed (engine, brief, and report all call computeStepWorkList), so
+      // the byte-identical hash across surfaces is structural, not coincidental.
+      //
+      // Included beyond the R4 baseline (prompt/runner/model/schema): profile,
+      // resolved timeoutMs, the env asset ref NAMES, and isolation — each
+      // reaches dispatch (native-executor's UnitDispatchRequest) and a changed
+      // one yields a materially different call. `env` carries NAMES ONLY, never
+      // resolved values: hashing a resolved secret would leak it into a
+      // durable hash oracle and would spuriously re-dispatch on every secret
+      // rotation. `retry`/`onError` are DELIBERATELY excluded — they govern
+      // failed-unit re-dispatch and step-level failure reduction, not a
+      // COMPLETED unit's inputs/output, so a completed row stays valid across
+      // policy changes.
+      //
+      // Ambient config is DELIBERATELY excluded — the model-alias table, the
+      // resolved backend/connection, and the working directory (`ctx.workDir` /
+      // process.cwd()) are NOT plan-frozen. The frozen plan is the identity
+      // boundary (redesign addendum determinism bar #2): config drift under an
+      // in-flight run is out of scope by design.
       const inputHash = createHash("sha256")
         .update(
           JSON.stringify({
             prompt,
             runner: template.runner,
+            profile: template.profile ?? null,
             model: template.model ?? null,
             schema: template.schema ?? null,
+            timeoutMs,
+            env: template.env ?? null,
+            isolation: template.isolation ?? null,
           }),
         )
         .digest("hex");

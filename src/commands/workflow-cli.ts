@@ -449,6 +449,12 @@ const workflowReportCommand = defineJsonCommand({
     "session-id": { type: "string", description: "Harness-native session id revealed while executing the unit" },
     "failure-reason": { type: "string", description: "Structured failure vocabulary for a --status failed report" },
     note: { type: "string", description: "Short progress note for a --status running heartbeat (not persisted)" },
+    rerun: {
+      type: "boolean",
+      description:
+        "Re-run an already-FAILED unit: record a NEW attempt (re-applies budget) instead of refusing a differing re-report",
+      default: false,
+    },
   },
   async run({ args }) {
     const status = args.status as string;
@@ -500,6 +506,7 @@ const workflowReportCommand = defineJsonCommand({
       status: status as WorkflowReportStatus,
       ...(resultRaw !== undefined ? { resultRaw } : {}),
       ...(tokens !== undefined ? { tokens } : {}),
+      ...(args.rerun === true ? { rerun: true } : {}),
       ...(getStringArg(args, "session-id") !== undefined ? { sessionId: getStringArg(args, "session-id") } : {}),
       ...(getStringArg(args, "failure-reason") !== undefined
         ? { failureReason: getStringArg(args, "failure-reason") }

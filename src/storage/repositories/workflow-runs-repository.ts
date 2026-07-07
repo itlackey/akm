@@ -96,6 +96,18 @@ export type WorkflowRunUnitRow = {
    * excluded from budget seeding, so their value is inert.
    */
   attempts: number;
+  /**
+   * Claim owner of a `running` unit (migration 009, PR #714 review round 2): the
+   * `--session-id` a driver passed to `akm workflow report --status running`, or
+   * a token `report` minted and returned. Heartbeating or finishing a
+   * live-claimed running row requires this holder; an expired claim
+   * ({@link claim_expires_at} in the past) is reclaimable by a new holder. NULL
+   * on engine-dispatched rows and on claimless (simple-driver) reports.
+   */
+  claim_holder: string | null;
+  /** Claim expiry (ISO-8601 UTC; migration 009). NULL when unclaimed. A claim is
+   * LIVE only while this is set and `>= now`; past that it is reclaimable. */
+  claim_expires_at: string | null;
 };
 
 /** Input row for {@link WorkflowRunsRepository.insertUnit}. Inserted as `running`. */
@@ -116,6 +128,14 @@ export interface InsertUnitInput {
    */
   worktreePath?: string | null;
   startedAt: string;
+  /**
+   * Claim owner + expiry for a `--status running` claim (migration 009). Set
+   * only by the report path's running-claim branch; the engine and gate-row
+   * journaling omit them (⇒ NULL). On a re-insert (crash/resume REPLACE) they
+   * are overwritten exactly like the other dispatch-metadata columns.
+   */
+  claimHolder?: string | null;
+  claimExpiresAt?: string | null;
 }
 
 /** Input for {@link WorkflowRunsRepository.finishUnit}. */
@@ -490,26 +510,28 @@ export class WorkflowRunsRepository {
       .prepare(
         `INSERT INTO workflow_run_units (
           run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model,
-          status, input_hash, worktree_path, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
+          status, input_hash, worktree_path, started_at, claim_holder, claim_expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, unit_id) DO UPDATE SET
-          step_id         = excluded.step_id,
-          node_id         = excluded.node_id,
-          parent_unit_id  = excluded.parent_unit_id,
-          phase           = excluded.phase,
-          runner          = excluded.runner,
-          model           = excluded.model,
-          status          = excluded.status,
-          input_hash      = excluded.input_hash,
-          worktree_path   = excluded.worktree_path,
-          started_at      = excluded.started_at,
-          result_json     = NULL,
-          tokens          = NULL,
-          failure_reason  = NULL,
-          session_id      = NULL,
-          finished_at     = NULL,
-          last_checkin_at = NULL,
-          attempts        = workflow_run_units.attempts + 1`,
+          step_id          = excluded.step_id,
+          node_id          = excluded.node_id,
+          parent_unit_id   = excluded.parent_unit_id,
+          phase            = excluded.phase,
+          runner           = excluded.runner,
+          model            = excluded.model,
+          status           = excluded.status,
+          input_hash       = excluded.input_hash,
+          worktree_path    = excluded.worktree_path,
+          started_at       = excluded.started_at,
+          claim_holder     = excluded.claim_holder,
+          claim_expires_at = excluded.claim_expires_at,
+          result_json      = NULL,
+          tokens           = NULL,
+          failure_reason   = NULL,
+          session_id       = NULL,
+          finished_at      = NULL,
+          last_checkin_at  = NULL,
+          attempts         = workflow_run_units.attempts + 1`,
       )
       .run(
         input.runId,
@@ -523,7 +545,28 @@ export class WorkflowRunsRepository {
         input.inputHash,
         input.worktreePath ?? null,
         input.startedAt,
+        input.claimHolder ?? null,
+        input.claimExpiresAt ?? null,
       );
+  }
+
+  /**
+   * Stamp a `--status running` claim + heartbeat on a unit row (migration 009,
+   * PR #714 review round 2). Sets `status = 'running'`, refreshes the heartbeat
+   * (`last_checkin_at`), and (re)writes the claim owner + expiry. Called inside
+   * the report path's running-claim transaction AFTER it has validated that the
+   * claim is free / expired / already held by this holder, so the write is the
+   * final step of a checked reclaim. Never touches `started_at` (the first-claim
+   * marker set by {@link insertUnit}).
+   */
+  updateUnitClaim(runId: string, unitId: string, holder: string, expiresAt: string, lastCheckinAt: string): void {
+    this.db
+      .prepare(
+        `UPDATE workflow_run_units
+           SET status = 'running', last_checkin_at = ?, claim_holder = ?, claim_expires_at = ?
+           WHERE run_id = ? AND unit_id = ?`,
+      )
+      .run(lastCheckinAt, holder, expiresAt, runId, unitId);
   }
 
   /**

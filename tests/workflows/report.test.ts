@@ -68,8 +68,12 @@ interface SeedUnit {
   inputHash?: string | null;
   resultJson?: string | null;
   tokens?: number | null;
+  failureReason?: string | null;
   startedAt?: string | null;
   lastCheckinAt?: string | null;
+  claimHolder?: string | null;
+  claimExpiresAt?: string | null;
+  attempts?: number;
 }
 
 function seedRun(opts: {
@@ -127,8 +131,9 @@ function seedRun(opts: {
       db.prepare(
         `INSERT INTO workflow_run_units
            (run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model, status,
-            input_hash, result_json, tokens, failure_reason, worktree_path, started_at, finished_at, last_checkin_at)
-         VALUES (?, ?, ?, ?, NULL, ?, 'sdk', NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+            input_hash, result_json, tokens, failure_reason, worktree_path, started_at, finished_at, last_checkin_at,
+            attempts, claim_holder, claim_expires_at)
+         VALUES (?, ?, ?, ?, NULL, ?, 'sdk', NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
       ).run(
         RUN_ID,
         u.unitId,
@@ -139,9 +144,13 @@ function seedRun(opts: {
         u.inputHash ?? null,
         u.resultJson ?? null,
         u.tokens ?? null,
+        u.failureReason ?? null,
         u.startedAt ?? now,
         u.status === "completed" || u.status === "failed" ? now : null,
         u.lastCheckinAt ?? null,
+        u.attempts ?? 1,
+        u.claimHolder ?? null,
+        u.claimExpiresAt ?? null,
       );
     }
   } finally {
@@ -846,6 +855,326 @@ describe("workflow report — concurrent reports for the same unit", () => {
       const rows = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.unit_id === ua);
       expect(rows).toHaveLength(1);
       expect(rows[0].status).toBe("completed");
+    });
+  });
+});
+
+// ── Claim ownership + stale-hash guard (review round 2, #3) ──────────────────
+
+describe("workflow report — claim ownership (--status running compare-and-set)", () => {
+  test("a running claim mints + returns a holder token; a DIFFERENT holder cannot heartbeat while it is live", async () => {
+    const p = plan(ONERROR_WF("fail"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    // No --session-id ⇒ report mints a token and returns it.
+    const first = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" });
+    expect(first.claim?.holder).toMatch(/^claim:/);
+    const holder = first.claim?.holder as string;
+
+    // The SAME holder heartbeats fine (idempotent claim refresh).
+    const again = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running", sessionId: holder });
+    expect(again.claim?.holder).toBe(holder);
+
+    // A DIFFERENT holder is refused while the claim is live.
+    await expect(
+      reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running", sessionId: "someone-else" }),
+    ).rejects.toThrow(/claimed by .* only that holder can heartbeat/);
+  });
+
+  test("finishing a live-claimed unit requires the matching holder; the wrong session is refused, the right one wins", async () => {
+    const p = plan(ONERROR_WF("continue"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    const claim = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running", sessionId: "driver-A" });
+    expect(claim.claim?.holder).toBe("driver-A");
+
+    // A different session cannot finish the live-claimed unit.
+    await expect(
+      reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", sessionId: "driver-B" }),
+    ).rejects.toThrow(/claimed by driver-A .* only that holder can finish/);
+
+    // The claim owner finishes it (running-claim finalize: attempts stays 1).
+    const done = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "ok",
+      sessionId: "driver-A",
+      summaryJudge: null,
+    });
+    expect(done.recorded).toBe("written");
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, ua);
+      expect(row?.status).toBe("completed");
+      expect(row?.attempts).toBe(1); // claim + finish is ONE dispatch
+    });
+  });
+
+  test("an EXPIRED claim is reclaimable/finishable by a new holder (crash recovery)", async () => {
+    const p = plan(ONERROR_WF("continue"));
+    const params = { files: ["a.ts", "b.ts"] };
+    const past = new Date(Date.now() - 5 * 60_000).toISOString();
+    seedRun({
+      plan: p,
+      params,
+      steps: [{ id: "review" }],
+      // A running row whose claim has EXPIRED (input_hash null ⇒ no hash guard).
+      units: [
+        {
+          unitId: unitIds(p, 0, params)[0],
+          stepId: "review",
+          nodeId: "review",
+          status: "running",
+          claimHolder: "dead-driver",
+          claimExpiresAt: past,
+          startedAt: past,
+        },
+      ],
+    });
+    const [ua] = unitIds(p, 0, params);
+
+    // A fresh holder reclaims via heartbeat…
+    const reclaim = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "running",
+      sessionId: "new-driver",
+    });
+    expect(reclaim.claim?.holder).toBe("new-driver");
+    // …and finishes it.
+    const done = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "ok",
+      sessionId: "new-driver",
+      summaryJudge: null,
+    });
+    expect(done.recorded).toBe("written");
+  });
+
+  test("finishing a running row whose journaled input hash diverges is a hard replay-divergence error (#3)", async () => {
+    const p = plan(ONERROR_WF("continue"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({
+      plan: p,
+      params,
+      // A stale/tampered running row with an OLD input hash.
+      steps: [{ id: "review" }],
+      units: [
+        {
+          unitId: unitIds(p, 0, params)[0],
+          stepId: "review",
+          nodeId: "review",
+          status: "running",
+          inputHash: "deadbeef",
+        },
+      ],
+    });
+    const [ua] = unitIds(p, 0, params);
+    await expect(
+      reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", summaryJudge: null }),
+    ).rejects.toThrow(/[Rr]eplay divergence/);
+    // …and heartbeating it is refused the same way.
+    await expect(reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" })).rejects.toThrow(
+      /[Rr]eplay divergence/,
+    );
+  });
+});
+
+// ── Failed-row idempotence + --rerun (review round 2, #25) ───────────────────
+
+describe("workflow report — a FAILED row is idempotence-protected (--rerun for a new attempt)", () => {
+  test("a differing re-report of a failed row is REFUSED without --rerun; same content is an idempotent no-op", async () => {
+    const p = plan(ONERROR_WF("continue"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    const failed = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    expect(failed.recorded).toBe("written");
+    expect(failed.remainingUnits).toBe(1); // ub still outstanding (on_error: continue)
+
+    // Same-content re-report ⇒ idempotent no-op.
+    const same = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    expect(same.recorded).toBe("idempotent");
+
+    // Differing re-report (now "completed") WITHOUT --rerun ⇒ refused.
+    await expect(
+      reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", summaryJudge: null }),
+    ).rejects.toThrow(/already recorded FAILED.*--rerun/s);
+
+    // Still exactly one row, still failed, one attempt.
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, ua);
+      expect(row?.status).toBe("failed");
+      expect(row?.attempts).toBe(1);
+    });
+  });
+
+  test("--rerun records a NEW attempt over a failed row (attempts increment, budget re-applies)", async () => {
+    const p = plan(ONERROR_WF("continue"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "failed",
+      failureReason: "timeout",
+      summaryJudge: null,
+    });
+    const rerun = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "recovered",
+      rerun: true,
+      summaryJudge: null,
+    });
+    expect(rerun.recorded).toBe("written");
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, ua);
+      expect(row?.status).toBe("completed");
+      expect(row?.attempts).toBe(2); // the re-dispatch bumped the counter
+    });
+  });
+});
+
+// ── Budget admission counts the overwritten row's attempts (review round 2, #4) ─
+
+describe("workflow report — budget admission counts a re-dispatched unit's prior attempts", () => {
+  const BUDGET_WF = `version: 1
+name: Budget
+budget:
+  max_units: 2
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+        on_error: continue
+`;
+
+  test("a --rerun over a FAILED row that would push total attempts past max_units FAILS the step (not silently admitted)", async () => {
+    // #4: excluding the row being written let a re-dispatch erase its prior
+    // attempt from the ceiling. With ub already dispatched (1) and ua failed (1),
+    // a --rerun of ua is the 3rd charged dispatch under max_units:2 → hard fail.
+    const p = plan(BUDGET_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    const [ua, ub] = unitIds(p, 0, params);
+    seedRun({
+      plan: p,
+      params,
+      steps: [{ id: "review" }],
+      units: [
+        { unitId: ua, stepId: "review", nodeId: "review", status: "failed", failureReason: "timeout" },
+        { unitId: ub, stepId: "review", nodeId: "review", status: "completed", resultJson: JSON.stringify("ok") },
+      ],
+    });
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "recovered",
+      rerun: true,
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("failed");
+    expect(r.stepOutcome?.summary).toMatch(/budget exceeded \(max_units ceiling\)/);
+    expect(r.runStatus).toBe("failed");
+    // The prior FAILED row is untouched — the refused re-dispatch wrote nothing.
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, ua);
+      expect(row?.status).toBe("failed");
+      expect(row?.attempts).toBe(1);
+    });
+  });
+});
+
+// ── Concurrent finalizers race the last sibling units (review round 2, #5) ───
+
+describe("workflow report — concurrent finalization is a single spine advance", () => {
+  test("two reporters racing the last two sibling units advance the step ONCE with no duplicate gate rows", async () => {
+    // A 5-unit fan-out with a criteria gate; three units already completed. Two
+    // drivers report the last two units simultaneously — both observe the
+    // work-list terminal and both try to finalize. The finalization CAS (#5) lets
+    // exactly one run completion; both callers succeed (one written/advanced, one
+    // idempotent), the gate is judged once, and the spine advances once.
+    const p = plan(TWO_STEP_WF);
+    const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"] };
+    const ids = unitIds(p, 0, params);
+    const done = ids.slice(0, 3);
+    const [ud, ue] = ids.slice(3);
+    seedRun({
+      plan: p,
+      params,
+      steps: [{ id: "review", criteria: ["every file was reviewed"] }, { id: "summarize" }],
+      units: done.map((unitId) => ({
+        unitId,
+        stepId: "review",
+        nodeId: "review",
+        status: "completed" as const,
+        resultJson: JSON.stringify({ verdict: "ok" }),
+      })),
+    });
+
+    const results = await Promise.allSettled([
+      reportWorkflowUnit({
+        target: RUN_ID,
+        unitId: ud,
+        status: "completed",
+        resultRaw: JSON.stringify({ verdict: "d" }),
+        summaryJudge: acceptJudge,
+      }),
+      reportWorkflowUnit({
+        target: RUN_ID,
+        unitId: ue,
+        status: "completed",
+        resultRaw: JSON.stringify({ verdict: "e" }),
+        summaryJudge: acceptJudge,
+      }),
+    ]);
+
+    // Both callers succeed — the loser of the finalization CAS returns idempotent
+    // success, never a raw throw after journaling its unit row.
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+
+    const status = await getWorkflowStatus(RUN_ID);
+    // The step advanced EXACTLY once and the run moved to the next step.
+    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.run.status).toBe("active");
+    expect(status.run.currentStepId).toBe("summarize");
+
+    await withWorkflowRunsRepo((repo) => {
+      // Exactly one gate-evaluation row, completed once (no duplicate journaling).
+      const gates = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.node_id === "review.gate");
+      expect(gates).toHaveLength(1);
+      expect(gates[0].unit_id).toBe("review.gate:l1");
+      expect(gates[0].status).toBe("completed");
+      // Exactly five dispatch rows — no unit was double-journaled.
+      const dispatch = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.phase === null);
+      expect(dispatch).toHaveLength(5);
     });
   });
 });

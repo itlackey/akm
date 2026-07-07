@@ -437,6 +437,7 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
     "006-frozen-plan-and-lease",
     "007-unit-last-checkin",
     "008-unit-attempts",
+    "009-unit-claim",
   ],
   "schema": [
     {
@@ -530,7 +531,7 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
         failure_reason TEXT,
         worktree_path  TEXT,
         started_at     TEXT,
-        finished_at    TEXT, session_id TEXT, last_checkin_at TEXT, attempts INTEGER NOT NULL DEFAULT 1,
+        finished_at    TEXT, session_id TEXT, last_checkin_at TEXT, attempts INTEGER NOT NULL DEFAULT 1, claim_holder TEXT, claim_expires_at TEXT,
         PRIMARY KEY (run_id, unit_id),
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
       )"

@@ -261,6 +261,20 @@ export interface StepExecutionContext {
    * by tests so no chdir is needed.
    */
   workDir?: string;
+  /**
+   * Env-binding resolver seam (defaults to {@link resolveEnvBindings}). Only
+   * invoked when a unit will ACTUALLY dispatch (reviewer finding #2), so a
+   * fully-journaled step never touches it. Injected by tests to simulate a
+   * deleted env asset / unavailable secret without a real asset store.
+   */
+  resolveEnv?: (refs: string[]) => Promise<Record<string, string>>;
+  /**
+   * Worktree-isolation preflight seam (defaults to {@link assertGitWorkTree}).
+   * Only invoked when a unit will ACTUALLY dispatch, so a fully-journaled step
+   * resumes even when its cwd is no longer a git worktree or git is missing.
+   * Injected by tests to simulate those conditions deterministically.
+   */
+  preflightWorktree?: (dir: string) => string | undefined;
 }
 
 export interface StepExecutionResult {
@@ -367,6 +381,64 @@ class DispatchBudget {
   }
 }
 
+/**
+ * Per-unit durable-row reuse decision. Shared by {@link runUnit} (which ACTS on
+ * it) and {@link stepWillDispatch} (executeStepPlan's pre-dispatch gate, which
+ * asks "will ANY unit dispatch?" to decide whether env resolution + worktree
+ * preflight are needed at all — reviewer finding #2). Both go through this one
+ * function so the preflight gate can never disagree with what runUnit does:
+ *   - `reuse`    — a completed row with the matching input hash IS the result;
+ *   - `diverge`  — a completed loop-1 row with a DIFFERENT hash is replay
+ *                  divergence (a hard step failure, NOT a dispatch — needs no
+ *                  env/worktree);
+ *   - `dispatch` — no reusable row (or a stale gate-loop row that re-dispatches
+ *                  live): this unit will actually issue work.
+ * The caller guarantees `workUnit.resolved.ok` (an unresolved unit fails as an
+ * `expression_error` before reaching here and never dispatches).
+ */
+type UnitReuseDecision =
+  | { kind: "reuse"; row: WorkflowRunUnitRow }
+  | { kind: "diverge"; attemptId: string }
+  | { kind: "dispatch" };
+
+function classifyUnitReuse(
+  workUnit: StepWorkUnit,
+  existingUnits: Map<string, WorkflowRunUnitRow> | undefined,
+  gateLoop: number,
+): UnitReuseDecision {
+  if (!workUnit.resolved.ok) return { kind: "dispatch" };
+  const inputHash = workUnit.resolved.inputHash;
+  const maxAttempts = 1 + Math.max(0, workUnit.retry?.max ?? 0);
+  const base = workUnit.journalBaseId;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const attemptId = attempt === 0 ? base : `${base}~r${attempt}`;
+    const prior = existingUnits?.get(attemptId);
+    if (!prior || prior.status !== "completed") continue;
+    if (prior.input_hash === inputHash) return { kind: "reuse", row: prior };
+    // Gate-loop rows are NOT replay-deterministic (the prompt embeds a fresh
+    // judge output): a stale loop-N row with a different hash re-dispatches
+    // live. Divergence only guards loop-1 rows, whose inputs ARE a pure
+    // function of (frozen plan, params, journaled results).
+    if (gateLoop > 1) return { kind: "dispatch" };
+    return { kind: "diverge", attemptId };
+  }
+  return { kind: "dispatch" };
+}
+
+/**
+ * Does the step have at least one unit that will ACTUALLY dispatch? Env
+ * resolution and worktree preflight are dispatch prerequisites, so a step whose
+ * units are all reused / unresolved / diverged must skip them (reviewer finding
+ * #2). Mirrors runUnit's reuse decision exactly (shared {@link classifyUnitReuse}).
+ */
+function stepWillDispatch(
+  workUnits: StepWorkUnit[],
+  existingUnits: Map<string, WorkflowRunUnitRow>,
+  gateLoop: number,
+): boolean {
+  return workUnits.some((u) => u.resolved.ok && classifyUnitReuse(u, existingUnits, gateLoop).kind === "dispatch");
+}
+
 /** Execute one step plan natively. Never throws for unit-level failures. */
 export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
   const dispatched = ctx.unitsDispatched ?? 0;
@@ -398,24 +470,50 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     return { ...reduceEmptyStep(plan, reducer), unitsDispatched: dispatched };
   }
 
+  const dispatcher = ctx.dispatcher ?? defaultUnitDispatcher;
+
+  // Durable-row resume: load the step's journaled unit rows FIRST — before
+  // resolving env or preflighting worktrees. A unit whose previous attempt
+  // completed with the SAME input hash (the canonical envelope in step-work.ts)
+  // is reused, not re-dispatched — a crash-resume must never double-issue
+  // side-effecting work. Loading the rows up front is what lets us skip the
+  // dispatch prerequisites below when nothing will actually dispatch.
+  const existingUnits = new Map<string, WorkflowRunUnitRow>();
+  for (const row of await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(ctx.runId, plan.stepId))) {
+    existingUnits.set(row.unit_id, row);
+  }
+
+  // Reviewer finding #2: env resolution and worktree preflight are DISPATCH
+  // prerequisites, so they must run only when a unit will actually dispatch. A
+  // fully-journaled step whose units all reuse completed rows must resume to
+  // completion even if an env asset was deleted, a secret is unavailable, the
+  // cwd is no longer a git worktree, or git is missing — none of that is needed
+  // to hand back a cached result. The predicate mirrors runUnit's reuse
+  // decision exactly (shared classifyUnitReuse).
+  const gateLoop = ctx.gateLoop ?? 1;
+  const willDispatch = stepWillDispatch(workUnits, existingUnits, gateLoop);
+
   // Env bindings resolve once per step, before any dispatch; a binding error
-  // fails the whole step cleanly rather than N units racing into it.
+  // fails the whole step cleanly rather than N units racing into it. Skipped
+  // entirely when nothing will dispatch.
   let env: Record<string, string> | undefined;
-  if (template.env && template.env.length > 0) {
+  if (willDispatch && template.env && template.env.length > 0) {
+    const resolveEnv = ctx.resolveEnv ?? resolveEnvBindings;
     try {
-      env = await resolveEnvBindings(template.env);
+      env = await resolveEnv(template.env);
     } catch (err) {
       return failedStep(dispatched, `Step "${plan.stepId}" env binding failed: ${message(err)}`);
     }
   }
 
   // Worktree isolation preflight (addendum R2), once per step, before any
-  // dispatch: llm units have no working directory to isolate (fail loudly),
-  // and a non-git base directory fails the step cleanly instead of N units
-  // racing into identical git errors. The actual worktrees are minted per
-  // journaled attempt in dispatchJournaledAttempt.
+  // dispatch — and ONLY when a unit will dispatch: llm units have no working
+  // directory to isolate (fail loudly), and a non-git base directory (or a
+  // missing git binary) fails the step cleanly instead of N units racing into
+  // identical git errors. The actual worktrees are minted per journaled
+  // attempt in dispatchJournaledAttempt.
   let worktreeBase: string | undefined;
-  if (template.isolation === "worktree") {
+  if (willDispatch && template.isolation === "worktree") {
     if (template.runner === "llm") {
       return failedStep(
         dispatched,
@@ -424,21 +522,12 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
       );
     }
     const base = ctx.workDir ?? process.cwd();
-    const gitError = assertGitWorkTree(base);
+    const preflightWorktree = ctx.preflightWorktree ?? assertGitWorkTree;
+    const gitError = preflightWorktree(base);
     if (gitError !== undefined) {
       return failedStep(dispatched, `Step "${plan.stepId}" cannot use isolation: worktree: ${gitError}`);
     }
     worktreeBase = base;
-  }
-
-  const dispatcher = ctx.dispatcher ?? defaultUnitDispatcher;
-
-  // Durable-row resume: a unit whose previous attempt completed with the
-  // SAME input (prompt/runner/model/schema hash) is reused, not re-dispatched
-  // — a crash-resume must never double-issue side-effecting work.
-  const existingUnits = new Map<string, WorkflowRunUnitRow>();
-  for (const row of await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(ctx.runId, plan.stepId))) {
-    existingUnits.set(row.unit_id, row);
   }
 
   // Budget ceilings (addendum R2): when the frozen plan declares a budget,
@@ -619,39 +708,30 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   const journalBaseId = workUnit.journalBaseId;
   const attemptIdFor = (attempt: number): string => (attempt === 0 ? journalBaseId : `${journalBaseId}~r${attempt}`);
 
-  // Durable-row reuse: the FIRST completed attempt of this unit decides.
-  // Matching input hash → it IS the result: return it without touching rows,
-  // dispatching, or re-emitting events (a crash-resume must never
-  // double-issue work). A DIFFERENT hash → replay divergence: under a frozen
-  // plan the same content-derived identity must reproduce the same inputs,
-  // so the journal was tampered with — fail loudly (executeStepPlan promotes
-  // this to a hard step failure regardless of on_error), never silently
-  // re-dispatch. Failed/running/missing rows fall through and dispatch live;
-  // pre-release R1 positional ids (`node.unit[3]`) never match and are
-  // ignored (module doc).
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const attemptId = attemptIdFor(attempt);
-    const prior = input.existingUnits?.get(attemptId);
-    if (!prior || prior.status !== "completed") continue;
-    if (prior.input_hash === inputHash) {
-      // Identity in the durable step evidence is the CONTENT-derived base id, not
-      // the `~r<n>` attempt row it was reused from — the report surface reduces
-      // from the base id too, so both surfaces' evidence.units[].unitId agree.
-      return reuseCompletedUnit(unitId, prior, workUnit.schema !== undefined);
-    }
-    if (gateLoop > 1) {
-      // Gate-loop rows are NOT replay-deterministic: the prompt embeds the
-      // judge's feedback, a fresh LLM output per invocation. A stale loop row
-      // with a different hash re-dispatches live (INSERT OR REPLACE takes the
-      // row over) — divergence only guards loop-1 rows (module doc).
-      break;
-    }
+  // Durable-row reuse (shared classifyUnitReuse — the SAME decision
+  // executeStepPlan's preflight gate uses, so the gate can never disagree with
+  // what happens here). A completed row with the matching input hash IS the
+  // result: return it without touching rows, dispatching, or re-emitting events
+  // (a crash-resume must never double-issue work). A completed loop-1 row with
+  // a DIFFERENT hash is replay divergence (under a frozen plan the same
+  // content-derived identity must reproduce the same inputs — the journal was
+  // tampered with; executeStepPlan promotes this to a hard step failure
+  // regardless of on_error). Stale gate-loop rows, failed/running/missing rows,
+  // and pre-release R1 positional ids all fall through and dispatch live.
+  const reuse = classifyUnitReuse(workUnit, input.existingUnits, gateLoop);
+  if (reuse.kind === "reuse") {
+    // Identity in the durable step evidence is the CONTENT-derived base id, not
+    // the `~r<n>` attempt row it was reused from — the report surface reduces
+    // from the base id too, so both surfaces' evidence.units[].unitId agree.
+    return reuseCompletedUnit(unitId, reuse.row, workUnit.schema !== undefined);
+  }
+  if (reuse.kind === "diverge") {
     return {
       unitId,
       ok: false,
       failureReason: "replay_divergence",
       error:
-        `replay divergence: unit "${attemptId}" was journaled with different inputs ` +
+        `replay divergence: unit "${reuse.attemptId}" was journaled with different inputs ` +
         `(journaled input_hash does not match this invocation's) — refusing to re-dispatch.`,
     };
   }

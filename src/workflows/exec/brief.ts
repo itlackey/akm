@@ -79,6 +79,15 @@ export interface WorkflowBriefJournaled {
   tokens?: number;
   startedAt?: string;
   finishedAt?: string;
+  /**
+   * Claim owner of a still-`running` unit (migration 009): the driver that holds
+   * it via `report --status running`, surfaced so another driver sees whether the
+   * unit is spoken for. Only present while the unit is `running` (a terminal unit
+   * is no longer claimable).
+   */
+  claimedBy?: string;
+  /** Claim expiry (ISO-8601 UTC). Past this the claim is reclaimable (crash recovery). */
+  claimExpiresAt?: string;
 }
 
 /** One unit the driver must execute, exactly as the engine would dispatch it. */
@@ -428,6 +437,15 @@ function toBriefUnit(
 }
 
 function toBriefJournaled(row: WorkflowRunUnitRow): WorkflowBriefJournaled {
+  // Claim state is meaningful only while the unit is still running; a terminal
+  // row keeps its claim columns but they are no longer actionable.
+  const claim =
+    row.status === "running"
+      ? {
+          ...(row.claim_holder ? { claimedBy: row.claim_holder } : {}),
+          ...(row.claim_expires_at ? { claimExpiresAt: row.claim_expires_at } : {}),
+        }
+      : {};
   return {
     unitId: row.unit_id,
     status: row.status,
@@ -435,6 +453,7 @@ function toBriefJournaled(row: WorkflowRunUnitRow): WorkflowBriefJournaled {
     ...(row.tokens !== null ? { tokens: row.tokens } : {}),
     ...(row.started_at ? { startedAt: row.started_at } : {}),
     ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
+    ...claim,
   };
 }
 

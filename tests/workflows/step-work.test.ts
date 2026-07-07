@@ -25,7 +25,7 @@ import {
   unitOutcomeFromRow,
 } from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
-import type { IrRouteSpec, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import type { IrAgentNode, IrRouteSpec, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import type { ExpressionScope } from "../../src/workflows/program/expressions";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
@@ -77,6 +77,73 @@ function mapStep(instructions: string, over = "${{ params.files }}"): IrStepPlan
     gate: { kind: "gate", id: "review.gate", stepId: "review", criteria: [] },
   };
 }
+
+describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding #1)", () => {
+  // A verbatim solo step so the prompt is fixed and only the varied field moves
+  // the hash. Every field below reaches dispatch (native-executor's
+  // UnitDispatchRequest), so a change to any of them must re-dispatch.
+  const base: IrStepPlan = {
+    stepId: "s1",
+    title: "S1",
+    sequenceIndex: 0,
+    root: {
+      kind: "agent",
+      id: "s1",
+      instructions: "Build it.",
+      templating: "verbatim",
+      runner: "sdk",
+      onError: "fail",
+    },
+    gate: { kind: "gate", id: "s1.gate", stepId: "s1", criteria: [] },
+  };
+  const input = { runId: "run-1", params: {}, stepOutputs: {} };
+
+  function hashOf(root: Partial<IrAgentNode>): string {
+    const step: IrStepPlan = { ...base, root: { ...(base.root as IrAgentNode), ...root } };
+    const wl = computeStepWorkList(step, input);
+    if (!wl.ok) throw new Error(wl.error);
+    const u = wl.list.units[0];
+    if (!u.resolved.ok) throw new Error(u.resolved.error);
+    return u.resolved.inputHash;
+  }
+
+  const baseline = hashOf({});
+
+  test("profile is part of the hash", () => {
+    expect(hashOf({ profile: "reviewer" })).not.toBe(baseline);
+  });
+
+  test("resolved timeout is part of the hash (a unit override AND `timeout: none` both move it)", () => {
+    expect(hashOf({ timeoutMs: 5_000 })).not.toBe(baseline);
+    // null = author's `timeout: none`, distinct from the engine default.
+    expect(hashOf({ timeoutMs: null })).not.toBe(baseline);
+    expect(hashOf({ timeoutMs: 5_000 })).not.toBe(hashOf({ timeoutMs: 9_000 }));
+  });
+
+  test("env ref NAMES are part of the hash (order-sensitive), never resolved values", () => {
+    expect(hashOf({ env: ["env:ci"] })).not.toBe(baseline);
+    // Distinct name lists ⇒ distinct hashes; identical names ⇒ identical hash
+    // (the hash carries NAMES, so it cannot leak or depend on secret values).
+    expect(hashOf({ env: ["env:a", "env:b"] })).not.toBe(hashOf({ env: ["env:b", "env:a"] }));
+    expect(hashOf({ env: ["env:ci"] })).toBe(hashOf({ env: ["env:ci"] }));
+  });
+
+  test("isolation is part of the hash", () => {
+    expect(hashOf({ isolation: "worktree" })).not.toBe(baseline);
+  });
+
+  test("runner and model remain part of the hash", () => {
+    expect(hashOf({ runner: "agent" })).not.toBe(baseline);
+    expect(hashOf({ model: "deep" })).not.toBe(baseline);
+  });
+
+  test("retry and on_error are DELIBERATELY excluded — a completed unit stays reusable across policy changes", () => {
+    // These govern failed-unit re-dispatch and step-level failure reduction, not
+    // a COMPLETED unit's inputs/output, so they must not invalidate a cached row.
+    expect(hashOf({ retry: { max: 2, on: ["timeout"] } })).toBe(baseline);
+    expect(hashOf({ onError: "continue" })).toBe(baseline);
+  });
+});
 
 describe("computeStepWorkList — purity + content-derived identity", () => {
   test("same inputs ⇒ byte-identical unit ids, input hashes, and prompts", () => {
@@ -207,6 +274,8 @@ function gateRow(stepId: string, loop: number, verdict: unknown): WorkflowRunUni
     finished_at: null,
     last_checkin_at: null,
     attempts: 1,
+    claim_holder: null,
+    claim_expires_at: null,
   };
 }
 

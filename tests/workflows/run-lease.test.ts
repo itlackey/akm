@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStorageLocations } from "../../src/storage/locations";
-import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
+import { WorkflowRunsRepository, withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
@@ -619,6 +619,67 @@ describe("engine lease heartbeat (long-running steps)", () => {
     expect(signalAborted).toBe(true);
     // The thief still owns the lease — the loser's holder-guarded release is a no-op.
     expect((await readLease(runId)).holder).toBe("thief");
+  });
+
+  test("(e) a renewal that THROWS inside the heartbeat aborts dispatch cleanly, with no unhandled rejection", async () => {
+    // Review round 2, test ask #2: `renewEngineLease` throwing inside the
+    // heartbeat tick (a DB/connection error, not a clean lost-lease `false`) must
+    // be treated exactly like a stolen lease — abort the in-flight dispatch and
+    // stop the engine loudly — WITHOUT leaking an unhandled promise rejection out
+    // of the fire-and-forget timer tick.
+    writeWorkflow("lease-hb-throw");
+    const started = await startWorkflowRun("workflow:lease-hb-throw", {});
+    const runId = started.run.id;
+
+    // Only the IN-DISPATCH heartbeat renewal throws; the between-step
+    // renewRunLease (which fires BEFORE the dispatcher) still uses the real impl.
+    const realRenew = WorkflowRunsRepository.prototype.renewEngineLease;
+    let inDispatch = false;
+    const spy = spyOn(WorkflowRunsRepository.prototype, "renewEngineLease").mockImplementation(function (
+      this: WorkflowRunsRepository,
+      ...renewArgs: Parameters<typeof realRenew>
+    ) {
+      if (inDispatch) throw new Error("db exploded during heartbeat renewal");
+      return realRenew.apply(this, renewArgs);
+    });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    let fireTick: (() => Promise<void>) | undefined;
+    let signalAborted: boolean | undefined;
+    try {
+      await expect(
+        runWorkflowSteps({
+          target: runId,
+          heartbeatScheduler: (tick) => {
+            fireTick = tick;
+            return () => {};
+          },
+          dispatcher: async (request) => {
+            inDispatch = true;
+            // The heartbeat tick renews → throws → caught inside the tick →
+            // marks the lease lost and aborts dispatch (no rejection escapes).
+            await fireTick?.();
+            inDispatch = false;
+            signalAborted = request.signal?.aborted;
+            return { ok: true, text: "should be discarded" };
+          },
+        }),
+      ).rejects.toThrow(/lost its run lease mid-dispatch/);
+    } finally {
+      spy.mockRestore();
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    // The throwing renewal aborted the dispatch signal the instant it failed…
+    expect(signalAborted).toBe(true);
+    // …and nothing leaked as an unhandled rejection (let any stray microtask run).
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(unhandled).toEqual([]);
   });
 
   test("(d) `workflow report` keeps refusing while the heartbeat holds the lease live through a long step", async () => {

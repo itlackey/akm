@@ -39,6 +39,7 @@
  * `on_error` and `gate.max_loops`.
  */
 
+import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
@@ -50,6 +51,7 @@ import {
 } from "../../storage/repositories/workflow-runs-repository";
 import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
 import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
+import { UNIT_STALE_MS } from "../runtime/unit-checkin";
 import type { SummaryJudge } from "../validate-summary";
 import { buildLease, resolveRunId } from "./brief";
 import {
@@ -89,6 +91,14 @@ export interface ReportUnitInput {
   sessionId?: string;
   /** Structured failure vocabulary for a `failed` report. */
   failureReason?: string;
+  /**
+   * Re-run an already-FAILED unit (review round 2, #25). A FAILED terminal row
+   * is idempotence-protected: a re-report with a DIFFERING result is refused
+   * unless `rerun` is set, which journals a NEW attempt (attempts increment,
+   * budget admission re-applies). A same-content re-report of a failed row stays
+   * an idempotent no-op regardless.
+   */
+  rerun?: boolean;
   /** Short progress note for a `running` heartbeat — intentionally NOT persisted. */
   note?: string;
   /**
@@ -131,8 +141,33 @@ export interface WorkflowReportResult {
   stepOutcome?: ReportStepOutcome;
   /** Run status after the report. */
   runStatus: WorkflowRunStatus;
+  /**
+   * The claim minted/refreshed by a `--status running` report (review round 2,
+   * #3). `holder` is the driver's `--session-id` or a token report generated;
+   * the driver reuses it as `--session-id` on subsequent heartbeats and the
+   * final `completed`/`failed` report so the claim's compare-and-set matches.
+   */
+  claim?: { holder: string; expiresAt: string };
   message: string;
 }
+
+/**
+ * Claim time-to-live. Equal to the unit-checkin stale window
+ * ({@link UNIT_STALE_MS}) so a claim expires at exactly the moment
+ * `workflow brief` starts surfacing the unit as stale — an expired claim is,
+ * by construction, a stale-driver claim another driver may reclaim.
+ */
+const CLAIM_TTL_MS = UNIT_STALE_MS;
+
+/**
+ * Finalization-lock TTL (review round 2, #5). The finalize path claims the run's
+ * engine lease as a short-lived lock so exactly ONE reporter runs a step's
+ * completion. Sized like the run lease; the loser never runs the judge (it
+ * returns idempotent success on a failed acquire), so the TTL only bounds crash
+ * recovery — and `completeWorkflowStep`'s own transactional CAS remains the true
+ * arbiter of the single spine advance regardless.
+ */
+const FINALIZE_LOCK_TTL_MS = 90_000;
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
@@ -227,8 +262,13 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
 
   // ── running: claim / heartbeat, never advances the spine ───────────────────
   if (input.status === "running") {
+    // The claim holder: the driver's --session-id, else a token we mint and
+    // return so the driver can reuse it (as --session-id) to heartbeat and
+    // finish the SAME claim. First unexpired claim wins.
+    const holder = input.sessionId ?? `claim:${randomUUID()}`;
+    const claimExpiresAt = new Date(nowFn().getTime() + CLAIM_TTL_MS).toISOString();
     const claimed = await withWorkflowRunsRepo((repo) =>
-      repo.transaction(() => {
+      repo.transaction((): "claim" | "heartbeat" => {
         const existing = repo.getUnit(runId, journalId);
         if (existing && (existing.status === "completed" || existing.status === "failed")) {
           throw new UsageError(
@@ -236,22 +276,34 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
               `running. Report a fresh result with --status completed|failed, or start a new run to redo it.`,
           );
         }
-        if (!existing) {
-          repo.insertUnit({
-            runId,
-            unitId: journalId,
-            stepId: stepState.id,
-            nodeId: workUnit.nodeId,
-            parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
-            phase: null,
-            runner: workUnit.runner,
-            model: workUnit.model ?? null,
-            inputHash,
-            startedAt: nowIso,
-          });
+        if (existing) {
+          // Stale-hash guard (#3): a running row whose recorded input_hash no
+          // longer matches the recomputed one is a replay divergence (a
+          // tampered/stale claim under a frozen plan) — refuse to heartbeat it.
+          assertNoHashDivergence(existing, inputHash, runId, journalId);
+          // Compare-and-set the claim owner: a LIVE claim held by a DIFFERENT
+          // holder blocks reclaim; an expired one (or a claim already ours) is
+          // (re)claimable. First unexpired claim wins (crash recovery on expiry).
+          assertClaimHeldByOrFree(existing, holder, nowIso, runId, journalId, "heartbeat");
+          repo.updateUnitClaim(runId, journalId, holder, claimExpiresAt, nowIso);
+          return "heartbeat";
         }
-        repo.updateUnitCheckin(runId, journalId, nowIso);
-        return existing ? "heartbeat" : "claim";
+        repo.insertUnit({
+          runId,
+          unitId: journalId,
+          stepId: stepState.id,
+          nodeId: workUnit.nodeId,
+          parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
+          phase: null,
+          runner: workUnit.runner,
+          model: workUnit.model ?? null,
+          inputHash,
+          startedAt: nowIso,
+          claimHolder: holder,
+          claimExpiresAt,
+        });
+        repo.updateUnitClaim(runId, journalId, holder, claimExpiresAt, nowIso);
+        return "claim";
       }),
     );
     appendEvent({
@@ -270,10 +322,12 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
       recorded: "heartbeat",
       remainingUnits: remaining,
       runStatus: state.run.status,
+      claim: { holder, expiresAt: claimExpiresAt },
       message:
         claimed === "claim"
-          ? `Claimed unit "${journalId}" of step "${stepState.id}". Heartbeat again with --status running, then report the result.`
-          : `Heartbeat recorded for unit "${journalId}" of step "${stepState.id}".`,
+          ? `Claimed unit "${journalId}" of step "${stepState.id}" as ${holder} (until ${claimExpiresAt}). ` +
+            `Reuse --session-id ${holder} to heartbeat, then report the result.`
+          : `Heartbeat recorded for unit "${journalId}" of step "${stepState.id}" (claim ${holder} extended to ${claimExpiresAt}).`,
     };
   }
 
@@ -287,6 +341,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   // one budgeted step) serialize on the write lock — each sees the other's row
   // and the row is always internally consistent.
   const status: Exclude<WorkflowRunUnitStatus, "pending" | "running"> = input.status;
+  const holder = input.sessionId ?? null;
   const writeResult = await withWorkflowRunsRepo((repo) =>
     repo.transaction((): UnitWriteOutcome => {
       const existing = repo.getUnit(runId, journalId);
@@ -298,9 +353,38 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
             `inputs — refusing to overwrite. Start a new run to re-execute this work.`,
         );
       }
+      // A FAILED terminal row is idempotence-protected (#25): the same content
+      // re-reported is a no-op; a DIFFERING re-report is refused unless --rerun
+      // is set, which records a NEW attempt (insertUnit REPLACE bumps attempts,
+      // budget admission re-applies below). A frozen-plan hash mismatch is a hard
+      // replay divergence regardless of --rerun.
+      if (existing?.status === "failed") {
+        assertNoHashDivergence(existing, inputHash, runId, journalId);
+        if (!input.rerun) {
+          const sameOutcome =
+            status === "failed" && existing.result_json === resultJson && existing.failure_reason === failureReason;
+          if (sameOutcome) return { kind: "idempotent" };
+          throw new UsageError(
+            `Unit "${journalId}" of run ${runId} is already recorded FAILED. Re-reporting it with a different result ` +
+              `requires an explicit --rerun (which records a NEW attempt and re-applies the declared budget). Without ` +
+              `--rerun a differing re-report is refused; a same-content re-report is an idempotent no-op.`,
+          );
+        }
+      }
+      // A `running` row being finalized: the stale-hash guard (#3) refuses a
+      // tampered/stale claim whose input_hash diverges, and the claim
+      // compare-and-set requires the matching holder while the claim is live (a
+      // claimless row, or an expired claim, finishes freely — simple drivers).
+      if (existing?.status === "running") {
+        assertNoHashDivergence(existing, inputHash, runId, journalId);
+        assertClaimHeldByOrFree(existing, holder, nowIso, runId, journalId, "finish");
+      }
       // Budget ceilings, journal-seeded exactly as the engine seeds
-      // `DispatchBudget` (dispatch rows only — gate rows excluded).
-      const verdict = assessBudget(plan, repo.getUnitsForRun(runId), journalId, thisTokens);
+      // `DispatchBudget` (dispatch rows only — gate rows excluded). The existing
+      // row's already-spent attempts are counted before admission (#4), then this
+      // write's own increment is added, so overwriting a prior attempt never
+      // erases it from the ceiling.
+      const verdict = assessBudget(plan, repo.getUnitsForRun(runId), journalId, thisTokens, existing);
       // A `refuse` verdict crosses a ceiling on ADMISSION: the engine would fail
       // this dispatch WITHOUT journaling it. Write nothing; the caller fails the
       // step (matching the engine's terminal state, not a stuck run).
@@ -597,8 +681,16 @@ async function runStepCompletion(args: {
   routeSelected: Set<string>;
   routeUnselected: Map<string, RouteSkipInfo>;
   summaryJudge: SummaryJudge | null | undefined;
+  /**
+   * Finalization-lock holder (#5). When the finalize path holds the run's engine
+   * lease as its completion lock, every `completeWorkflowStep` this attempt makes
+   * must pass the SAME holder or the lease's own single-driver guard would refuse
+   * it. Absent on the non-locked settle path (route-only / empty steps).
+   */
+  leaseHolder?: string;
 }): Promise<StepCompletion> {
   const maxLoops = Math.max(1, args.stepPlan.gate.maxLoops ?? 1);
+  const lease = args.leaseHolder !== undefined ? { leaseHolder: args.leaseHolder } : {};
   const finalize = await finalizeExecutedStep({
     runId: args.runId,
     workflowRef: args.workflowRef,
@@ -613,6 +705,7 @@ async function runStepCompletion(args: {
     routeSelected: args.routeSelected,
     routeUnselected: args.routeUnselected,
     summaryJudge: args.summaryJudge,
+    ...lease,
   });
 
   if (finalize.kind === "retry") {
@@ -624,6 +717,7 @@ async function runStepCompletion(args: {
         status: "failed",
         notes: args.reduced.summary,
         evidence: args.reduced.evidence,
+        ...lease,
       });
       return { kind: "failed", summary: args.reduced.summary };
     }
@@ -665,29 +759,68 @@ async function finalizeStep(args: {
   recorded: "written" | "idempotent";
 }): Promise<WorkflowReportResult> {
   const { runId, next, plan, stepPlan, stepState, workList, byUnit, gateLoop, recorded } = args;
-  const reduced = reduceWorkListOutcomes(stepPlan, workList, byUnit);
 
-  // Route/skip bookkeeping seeded from the journal so cascaded skips survive
-  // (identical to the engine's resume seeding).
-  const routeSelected = new Set<string>();
-  const routeUnselected = new Map<string, RouteSkipInfo>();
-  seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
+  // ── Finalization CAS (#5) ──────────────────────────────────────────────────
+  // Two reporters that both observe the work-list fully terminal would otherwise
+  // BOTH run the completion path — double-judging the gate, journaling duplicate
+  // gate rows, racing `completeWorkflowStep`. Claim the run's engine lease as a
+  // short-lived finalize lock (the same atomic single-UPDATE primitive the engine
+  // uses): exactly one reporter wins. The loser (failed acquire) never runs the
+  // judge; it re-reads the spine and returns the winner's outcome as idempotent
+  // success — never a raw throw after useful work. `completeWorkflowStep`'s own
+  // transactional CAS remains the ultimate arbiter of the single spine advance.
+  const finalizeHolder = `report-finalize:${randomUUID()}`;
+  const nowIso = args.now().toISOString();
+  const lockExpiry = new Date(args.now().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
+  const acquired = await withWorkflowRunsRepo((repo) =>
+    repo.acquireEngineLease(runId, finalizeHolder, lockExpiry, nowIso),
+  );
+  if (!acquired) {
+    // A concurrent finalizer holds the lock; it will advance the step exactly
+    // once. Return idempotent success reflecting the freshest spine state.
+    return contendedFinalizeResult(runId, stepState, args.written, gateLoop, recorded);
+  }
 
-  const completion = await runStepCompletion({
-    runId,
-    workflowRef: next.run.workflowRef,
-    stepPlan,
-    stepId: stepState.id,
-    completionCriteria: stepState.completionCriteria ?? [],
-    gateLoop,
-    reduced,
-    priorEvidence: args.priorEvidence,
-    params: next.run.params ?? {},
-    routeSelected,
-    routeUnselected,
-    summaryJudge: args.summaryJudge,
-  });
+  let completion: StepCompletion;
   const maxLoops = Math.max(1, stepPlan.gate.maxLoops ?? 1);
+  try {
+    // Under the lock, re-read the spine: a PRIOR finalizer may have already
+    // advanced this step (a sequential race — both reporters saw the work-list
+    // terminal, the first finished before this one acquired). If so, skip
+    // re-completion and report idempotent success — the step is done.
+    const fresh = await getNextWorkflowStep(runId);
+    if (fresh.run.status !== "active" || fresh.step?.id !== stepState.id) {
+      return contendedFinalizeResult(runId, stepState, args.written, gateLoop, recorded, fresh);
+    }
+
+    const reduced = reduceWorkListOutcomes(stepPlan, workList, byUnit);
+    // Route/skip bookkeeping seeded from the journal so cascaded skips survive
+    // (identical to the engine's resume seeding).
+    const routeSelected = new Set<string>();
+    const routeUnselected = new Map<string, RouteSkipInfo>();
+    seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
+
+    completion = await runStepCompletion({
+      runId,
+      workflowRef: next.run.workflowRef,
+      stepPlan,
+      stepId: stepState.id,
+      completionCriteria: stepState.completionCriteria ?? [],
+      gateLoop,
+      reduced,
+      priorEvidence: args.priorEvidence,
+      params: next.run.params ?? {},
+      routeSelected,
+      routeUnselected,
+      summaryJudge: args.summaryJudge,
+      leaseHolder: finalizeHolder,
+    });
+  } finally {
+    // Release the finalize lock before the trailing settle/messaging below runs
+    // its own (unlocked) `completeWorkflowStep` calls for downstream
+    // non-dispatching steps.
+    await withWorkflowRunsRepo((repo) => repo.releaseEngineLease(runId, finalizeHolder));
+  }
 
   if (completion.kind === "failed") {
     const state = await getNextWorkflowStep(runId);
@@ -1003,47 +1136,110 @@ function assessBudget(
   rows: WorkflowRunUnitRow[],
   journalId: string,
   thisTokens: number,
+  existing: WorkflowRunUnitRow | undefined,
 ): BudgetVerdict {
   const budget = plan.budget;
   if (!budget || (budget.maxUnits === undefined && budget.maxTokens === undefined)) return { kind: "ok" };
-  let dispatched = 0;
-  let tokens = 0;
+  let othersDispatched = 0;
+  let othersTokens = 0;
+  let existingAttempts = 0;
   for (const row of rows) {
     if (row.phase !== null) continue; // gate rows excluded
-    if (row.unit_id === journalId) continue; // the row being (re)written
+    if (row.unit_id === journalId) {
+      // The row being (re)written. Its ALREADY-SPENT attempts must be counted
+      // before admission (#4): excluding them let a re-report of a non-terminal
+      // or failed unit erase the prior attempt from the ceiling. Its OLD tokens
+      // are NOT counted — the finish overwrites them with `thisTokens`.
+      existingAttempts = row.attempts;
+      continue;
+    }
     // Sum `attempts` (migration 008), not a per-row +1: a crash-retried unit
     // occupies ONE row whose `attempts` records every re-dispatch, so this
     // mirrors the engine seed (`run-workflow.ts`) and charges each dispatch.
-    // Driver-reported rows carry `attempts = 1` (one final outcome), so on the
-    // report surface this equals the row count — identical to the pre-008 seed.
-    dispatched += row.attempts;
-    tokens += row.tokens ?? 0;
+    othersDispatched += row.attempts;
+    othersTokens += row.tokens ?? 0;
   }
-  if (budget.maxUnits !== undefined && dispatched >= budget.maxUnits) {
+  // The attempts this write adds: a live `running` claim being finalized reuses
+  // the claim's already-charged attempt (finishUnit, no insert ⇒ +0); every
+  // other write (fresh, or a FAILED --rerun re-dispatch) inserts and bumps
+  // `attempts` by one, mirroring the engine's charge-before-dispatch. The
+  // projected total after this write must not exceed `max_units`.
+  const increment = existing?.status === "running" ? 0 : 1;
+  const projectedUnits = othersDispatched + existingAttempts + increment;
+  if (budget.maxUnits !== undefined && projectedUnits > budget.maxUnits) {
     return {
       kind: "refuse",
       message:
-        `budget exceeded (max_units ceiling): ${dispatched} unit(s) already dispatched for this run against the ` +
-        `workflow's declared budget.max_units of ${budget.maxUnits} — the step fails hard (budget ceilings ignore on_error).`,
+        `budget exceeded (max_units ceiling): ${projectedUnits} unit dispatch(es) would be charged for this run ` +
+        `against the workflow's declared budget.max_units of ${budget.maxUnits} — the step fails hard (budget ` +
+        `ceilings ignore on_error).`,
     };
   }
-  if (budget.maxTokens !== undefined && tokens >= budget.maxTokens) {
+  if (budget.maxTokens !== undefined && othersTokens >= budget.maxTokens) {
     return {
       kind: "refuse",
       message:
-        `budget exceeded (max_tokens ceiling): ${tokens} token(s) already spent for this run against the workflow's ` +
-        `declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
+        `budget exceeded (max_tokens ceiling): ${othersTokens} token(s) already spent for this run against the ` +
+        `workflow's declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
     };
   }
-  if (budget.maxTokens !== undefined && tokens + thisTokens >= budget.maxTokens) {
+  if (budget.maxTokens !== undefined && othersTokens + thisTokens >= budget.maxTokens) {
     return {
       kind: "tokens-cross",
       message:
-        `budget exceeded (max_tokens ceiling): ${tokens + thisTokens} token(s) spent for this run, reaching the ` +
+        `budget exceeded (max_tokens ceiling): ${othersTokens + thisTokens} token(s) spent for this run, reaching the ` +
         `workflow's declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
     };
   }
   return { kind: "ok" };
+}
+
+// ── Claim + hash guards (shared by the running + finish transactions) ─────────
+
+/**
+ * Stale-hash guard (review round 2, #3): under a frozen plan the same unit
+ * identity must reproduce the same input hash, so an existing row whose recorded
+ * `input_hash` differs from the recomputed one is a hard replay divergence — a
+ * stale or tampered row. A NULL recorded hash (never seen in practice for a
+ * report-claimed row) is treated as non-divergent.
+ */
+function assertNoHashDivergence(
+  existing: WorkflowRunUnitRow,
+  inputHash: string,
+  runId: string,
+  journalId: string,
+): void {
+  if (existing.input_hash !== null && existing.input_hash !== inputHash) {
+    throw new UsageError(
+      `Replay divergence: unit "${journalId}" of run ${runId} has a journaled ${existing.status} row whose input ` +
+        `hash differs from this report's. Under a frozen plan the same unit identity must reproduce the same inputs ` +
+        `— refusing to heartbeat or finalize a stale/tampered row. Start a new run to re-execute this work.`,
+    );
+  }
+}
+
+/**
+ * Claim compare-and-set (review round 2, #3): a LIVE claim (holder set, expiry
+ * in the future) held by a DIFFERENT holder blocks a reclaim/heartbeat/finish;
+ * a free row, an EXPIRED claim (crash recovery), or a claim already ours passes.
+ * A claimless row always passes — simple drivers skip claims entirely.
+ */
+function assertClaimHeldByOrFree(
+  existing: WorkflowRunUnitRow,
+  holder: string | null,
+  nowIso: string,
+  runId: string,
+  journalId: string,
+  action: "heartbeat" | "finish",
+): void {
+  const claimLive = existing.claim_expires_at !== null && existing.claim_expires_at >= nowIso;
+  if (existing.claim_holder !== null && claimLive && existing.claim_holder !== holder) {
+    throw new UsageError(
+      `Unit "${journalId}" of run ${runId} is claimed by ${existing.claim_holder} until ${existing.claim_expires_at}; ` +
+        `only that holder can ${action} it while the claim is live. Pass --session-id ${existing.claim_holder} if you ` +
+        `own the claim, or wait for it to expire (then it is reclaimable — crash recovery).`,
+    );
+  }
 }
 
 /**
@@ -1076,6 +1272,43 @@ async function failStepOnBudget(
     stepOutcome: { kind: "failed", summary: message },
     runStatus: state.run.status,
     message: `Step "${stepId}" failed: ${message}`,
+  };
+}
+
+/**
+ * The result surfaced to the LOSER of the finalization CAS (#5): a concurrent
+ * reporter holds (or already finished) the step's finalization. This report's
+ * unit row IS durably journaled; the step advance is (being) done exactly once
+ * by the winner, so this is idempotent success — never a raw throw. Re-reads the
+ * freshest spine so the surfaced run status / advance is accurate.
+ */
+async function contendedFinalizeResult(
+  runId: string,
+  stepState: NonNullable<WorkflowNextResult["step"]>,
+  written: { unitId: string; status: WorkflowRunUnitStatus },
+  gateLoop: number,
+  recorded: "written" | "idempotent",
+  fresh?: WorkflowNextResult,
+): Promise<WorkflowReportResult> {
+  const state = fresh ?? (await getNextWorkflowStep(runId));
+  const advancedPast = state.run.status !== "active" || state.step?.id !== stepState.id;
+  return {
+    ok: true,
+    runId,
+    stepId: stepState.id,
+    unitId: written.unitId,
+    status: written.status,
+    gateLoop,
+    // The UNIT write resolved as `recorded` (a real write, or an idempotent
+    // re-report); only the STEP finalization was contended (a concurrent
+    // reporter owns it), which the message conveys.
+    recorded,
+    remainingUnits: 0,
+    ...(advancedPast ? { stepOutcome: { kind: "advanced" as const } } : {}),
+    runStatus: state.run.status,
+    message: advancedPast
+      ? `Unit "${written.unitId}" recorded; step "${stepState.id}" was finalized by a concurrent reporter (idempotent success).`
+      : `Unit "${written.unitId}" recorded; step "${stepState.id}" is being finalized by a concurrent reporter (idempotent success).`,
   };
 }
 

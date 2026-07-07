@@ -300,15 +300,29 @@ class LeaseHeartbeat {
         repo.renewEngineLease(this.runId, this.holder, leaseExpiry()),
       );
       if (!renewed) {
-        this.lost = true;
         this.stolenBy = await withWorkflowRunsRepo((repo) => repo.getRunById(this.runId)?.engine_lease_holder ?? null);
-        this.stop();
-        // Abort in-flight dispatch promptly — the new owner drives the spine now.
-        this.controller.abort();
+        this.loseLease();
       }
+    } catch {
+      // A renewal that THREW (a DB error / connection failure, or the follow-up
+      // getRunById itself throwing) is treated exactly like a stolen lease: we
+      // can no longer PROVE we still hold it, so abort in-flight dispatch and let
+      // `assertAlive` stop the engine loudly. Swallowing the error here is what
+      // keeps the fire-and-forget `void tick()` in the default scheduler from
+      // leaking an unhandled promise rejection.
+      this.loseLease();
     } finally {
       this.renewing = false;
     }
+  }
+
+  /** Mark the lease lost, stop the timer, and abort in-flight dispatch — the new
+   * owner drives the spine now (or, on a renewal error, we can no longer prove we
+   * do). Idempotent: repeated calls are harmless. */
+  private loseLease(): void {
+    this.lost = true;
+    this.stop();
+    this.controller.abort();
   }
 
   /**

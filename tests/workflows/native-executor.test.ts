@@ -21,8 +21,9 @@ import {
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
+import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
-import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import type { IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { PROGRAM_RETRY_REASONS } from "../../src/workflows/program/schema";
 import { completeWorkflowStep, getWorkflowStatus } from "../../src/workflows/runtime/runs";
@@ -2056,5 +2057,225 @@ describe("buildAgentDispatchRequest — schema reaches the harness structured-ou
     expect(
       (piBuilder.build(agentProfile({ name: "pi", bin: "pi" }), dispatch).argv as string[]).includes("--mode"),
     ).toBe(false);
+  });
+});
+
+// ── Dispatch prerequisites gated on actual dispatch (reviewer finding #2) ────
+//
+// Env resolution and worktree preflight are DISPATCH prerequisites: they must
+// run only when a unit will actually issue work. A fully-journaled step whose
+// units all reuse completed rows must resume to completion even when an env
+// asset was deleted, a secret is unavailable, the cwd is no longer a git
+// worktree, or git is missing from PATH — none of that is needed to hand back
+// a cached result. A partially-journaled step still fails cleanly on the same
+// conditions for the units that MUST dispatch. Both surfaces use injectable
+// seams (`resolveEnv` / `preflightWorktree`) so the conditions are simulated
+// deterministically, git-independently.
+describe("executeStepPlan — dispatch prerequisites gated on actual dispatch (reviewer finding #2)", () => {
+  const ENV_SOLO_WF = `version: 1
+name: Env
+steps:
+  - id: build
+    title: Build
+    unit:
+      runner: agent
+      env: [env:secrets]
+      instructions: Build it.
+`;
+  const ENV_FANOUT_WF = `version: 1
+name: Env fan-out
+params:
+  files: { type: array }
+steps:
+  - id: build
+    title: Build
+    map:
+      over: \${{ params.files }}
+      unit:
+        runner: agent
+        env: [env:secrets]
+        instructions: Build \${{ item }}.
+`;
+  const ISO_SOLO_WF = `version: 1
+name: Iso
+steps:
+  - id: build
+    title: Build
+    unit:
+      runner: agent
+      isolation: worktree
+      instructions: Build it.
+`;
+  const ISO_FANOUT_WF = `version: 1
+name: Iso fan-out
+params:
+  files: { type: array }
+steps:
+  - id: build
+    title: Build
+    map:
+      over: \${{ params.files }}
+      unit:
+        runner: agent
+        isolation: worktree
+        instructions: Build \${{ item }}.
+`;
+
+  /** Seed a COMPLETED row (matching the canonical input hash) for `count` of the
+   * step's work units — `Infinity` fully journals the step. */
+  async function seedCompleted(
+    stepPlan: IrStepPlan,
+    params: Record<string, unknown>,
+    count = Number.POSITIVE_INFINITY,
+  ): Promise<void> {
+    const wl = computeStepWorkList(stepPlan, { runId: RUN_ID, params, stepOutputs: {} });
+    if (!wl.ok) throw new Error(wl.error);
+    const now = new Date().toISOString();
+    await withWorkflowRunsRepo((repo) => {
+      let seeded = 0;
+      for (const u of wl.list.units) {
+        if (seeded >= count) break;
+        if (!u.resolved.ok) continue;
+        repo.insertUnit({
+          runId: RUN_ID,
+          unitId: u.unitId,
+          stepId: stepPlan.stepId,
+          nodeId: u.nodeId,
+          parentUnitId: u.isFanOut ? `${stepPlan.stepId}.map` : null,
+          phase: null,
+          runner: u.runner,
+          model: u.model ?? null,
+          inputHash: u.resolved.inputHash,
+          startedAt: now,
+        });
+        repo.finishUnit({
+          runId: RUN_ID,
+          unitId: u.unitId,
+          status: "completed",
+          resultJson: JSON.stringify(`did ${u.unitId}`),
+          tokens: null,
+          failureReason: null,
+          finishedAt: now,
+        });
+        seeded++;
+      }
+    });
+  }
+
+  test("a fully-journaled step resumes to completion with a DELETED env asset — the env resolver is never invoked", async () => {
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+    await seedCompleted(stepPlan, {});
+
+    let resolveEnvCalls = 0;
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      resolveEnv: async () => {
+        resolveEnvCalls++;
+        throw new Error("env asset was deleted");
+      },
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not dispatch" };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(resolveEnvCalls).toBe(0);
+    expect(dispatches).toBe(0);
+    expect(result.units.map((u) => u.text)).toEqual(["did build:solo"]);
+  });
+
+  test("a fully-journaled isolated step resumes in a NON-git cwd with git absent — worktree preflight is never invoked", async () => {
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ISO_SOLO_WF).steps[0];
+    await seedCompleted(stepPlan, {});
+
+    let preflightCalls = 0;
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      // A non-git base dir + a preflight that reports git missing: neither must
+      // be consulted, because nothing dispatches.
+      workDir: "/definitely/not/a/git/repo",
+      preflightWorktree: (_dir) => {
+        preflightCalls++;
+        return `"${_dir}" is not a git repository (isolation: worktree requires one): git failed to spawn`;
+      },
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not dispatch" };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(preflightCalls).toBe(0);
+    expect(dispatches).toBe(0);
+  });
+
+  test("a PARTIALLY-journaled step still fails cleanly when the env asset is unavailable for the units that must dispatch", async () => {
+    seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ENV_FANOUT_WF).steps[0];
+    // Only ONE of the two units is journaled — the other must dispatch, so env
+    // resolution is required and its failure fails the whole step.
+    await seedCompleted(stepPlan, { files: ["a", "b"] }, 1);
+
+    let resolveEnvCalls = 0;
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b"] },
+      evidence: {},
+      resolveEnv: async () => {
+        resolveEnvCalls++;
+        throw new Error("env asset was deleted");
+      },
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not dispatch" };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain("env binding failed");
+    expect(resolveEnvCalls).toBe(1);
+    expect(dispatches).toBe(0);
+  });
+
+  test("a PARTIALLY-journaled isolated step still fails cleanly on a non-git cwd for the units that must dispatch", async () => {
+    seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ISO_FANOUT_WF).steps[0];
+    await seedCompleted(stepPlan, { files: ["a", "b"] }, 1);
+
+    let preflightCalls = 0;
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b"] },
+      evidence: {},
+      workDir: "/definitely/not/a/git/repo",
+      preflightWorktree: (dir) => {
+        preflightCalls++;
+        return `"${dir}" is not inside a git work tree (isolation: worktree requires one).`;
+      },
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not dispatch" };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain("isolation: worktree");
+    expect(preflightCalls).toBe(1);
+    expect(dispatches).toBe(0);
   });
 });

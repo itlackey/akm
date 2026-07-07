@@ -34,6 +34,8 @@ function unitRow(over: Partial<WorkflowRunUnitRow>): WorkflowRunUnitRow {
     finished_at: null,
     last_checkin_at: null,
     attempts: 1,
+    claim_holder: null,
+    claim_expires_at: null,
     ...over,
   };
 }

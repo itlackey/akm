@@ -287,6 +287,29 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_run_units ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
     `,
   },
+  // ── Migration 009 — per-unit claim ownership (PR #714 review round 2) ─────────
+  //
+  // `akm workflow report --status running` claims a unit before executing it.
+  // Round-2 review (#3): a running row had no claim owner, no compare-and-set,
+  // and no stale-hash guard, so a stale/tampered `running` row could be
+  // finalized by anyone with a fresh result while keeping an old input_hash.
+  // These columns record who holds the claim (`claim_holder` — the driver's
+  // `--session-id` or a token report mints and returns) and until when
+  // (`claim_expires_at`, ISO-8601 UTC). Heartbeating or finishing a live-claimed
+  // running row requires the matching holder; an EXPIRED claim is reclaimable by
+  // a new holder (crash recovery). The TTL equals the unit-checkin stale window
+  // (`runtime/unit-checkin.UNIT_STALE_MS`), so an expired claim is exactly a unit
+  // that `workflow brief` already surfaces as stale. Both columns are nullable
+  // and additive: engine-dispatched rows and simple claimless drivers leave them
+  // NULL, and finishing a never-claimed unit stays allowed (input_hash is still
+  // validated always).
+  {
+    id: "009-unit-claim",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN claim_holder TEXT;
+      ALTER TABLE workflow_run_units ADD COLUMN claim_expires_at TEXT;
+    `,
+  },
 ];
 
 /**
