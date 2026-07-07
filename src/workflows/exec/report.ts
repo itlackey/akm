@@ -363,28 +363,13 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     },
   });
 
-  // An idempotent re-report changes nothing else — the step's completion (if any)
-  // already happened on the first report.
-  if (writeResult.kind === "idempotent") {
-    return {
-      ok: true,
-      runId,
-      stepId: stepState.id,
-      unitId: journalId,
-      status,
-      gateLoop,
-      recorded: "idempotent",
-      remainingUnits: 0,
-      runStatus: state.run.status,
-      message: `Unit "${journalId}" was already recorded — no change (idempotent re-report).`,
-    };
-  }
-
   // Budget TOKEN crossing: the row is written; fail the step hard naming the
   // ceiling (same terminal state as the engine's addTokens abort).
   if (writeResult.kind === "budget-tokens") {
     return failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, true);
   }
+
+  const idempotent = writeResult.kind === "idempotent";
 
   // Is the step's work-list now fully terminal? Re-read the journal so a
   // concurrent report of a sibling unit is observed. Unresolvable units are
@@ -395,6 +380,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   const remaining = remainingReportableUnits(workList, byUnit);
 
   if (remaining > 0) {
+    // Not fully terminal → nothing to finalize. A written report advanced the
+    // work-list by one; an idempotent re-report changed nothing.
     return {
       ok: true,
       runId,
@@ -402,14 +389,46 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
       unitId: journalId,
       status,
       gateLoop,
-      recorded: "written",
+      recorded: idempotent ? "idempotent" : "written",
       remainingUnits: remaining,
       runStatus: state.run.status,
-      message: `Recorded unit "${journalId}" (${status}). ${remaining} unit(s) still outstanding for step "${stepState.id}".`,
+      message: idempotent
+        ? `Unit "${journalId}" was already recorded — no change (idempotent re-report). ${remaining} unit(s) still outstanding for step "${stepState.id}".`
+        : `Recorded unit "${journalId}" (${status}). ${remaining} unit(s) still outstanding for step "${stepState.id}".`,
     };
   }
 
-  // The work-list is fully terminal → run the SHARED completion path.
+  // The work-list is fully terminal. For an idempotent re-report this is EITHER
+  // the common case (the step's completion already ran on the first report and
+  // the spine has since moved off this step) OR crash recovery: the process died
+  // between the last unit write and `completeWorkflowStep`, so every unit is
+  // journaled-terminal but the step never advanced. Re-read the spine: only when
+  // this step is STILL the active, pending step is there completion left to run —
+  // and then ANY driver (not just the engine) must be able to finalize it, or the
+  // step is permanently un-advanceable through brief/report (peer review R3,
+  // engine/driver crash-recovery symmetry). If the spine already moved past this
+  // step, a concurrent report finalized it first and this is a true no-op.
+  if (idempotent) {
+    const fresh = await getNextWorkflowStep(runId);
+    if (fresh.run.status !== "active" || fresh.step?.id !== stepState.id) {
+      return {
+        ok: true,
+        runId,
+        stepId: stepState.id,
+        unitId: journalId,
+        status,
+        gateLoop,
+        recorded: "idempotent",
+        remainingUnits: 0,
+        runStatus: fresh.run.status,
+        message: `Unit "${journalId}" was already recorded — no change (idempotent re-report).`,
+      };
+    }
+  }
+
+  // Fully terminal AND this step still needs completion → run the SHARED
+  // completion path (identical for a first report and a crash-recovering
+  // idempotent re-report).
   return finalizeStep({
     runId,
     next: state,
@@ -423,6 +442,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     summaryJudge: input.summaryJudge,
     now: nowFn,
     written: { unitId: journalId, status },
+    recorded: idempotent ? "idempotent" : "written",
   });
 }
 
@@ -630,8 +650,10 @@ async function finalizeStep(args: {
   summaryJudge: SummaryJudge | null | undefined;
   now: () => Date;
   written: { unitId: string; status: WorkflowRunUnitStatus };
+  /** How the triggering unit write resolved — surfaced verbatim on the result. */
+  recorded: "written" | "idempotent";
 }): Promise<WorkflowReportResult> {
-  const { runId, next, plan, stepPlan, stepState, workList, byUnit, gateLoop } = args;
+  const { runId, next, plan, stepPlan, stepState, workList, byUnit, gateLoop, recorded } = args;
   const reduced = reduceWorkListOutcomes(stepPlan, workList, byUnit);
 
   // Route/skip bookkeeping seeded from the journal so cascaded skips survive
@@ -666,6 +688,7 @@ async function finalizeStep(args: {
       state.run.status,
       { kind: "failed", summary: completion.summary },
       `Step "${stepState.id}" failed: ${completion.summary}`,
+      recorded,
     );
   }
 
@@ -686,6 +709,7 @@ async function finalizeStep(args: {
           summary: completion.feedback,
         },
         `Step "${stepState.id}" was rejected — run \`akm workflow brief ${runId}\` for loop ${nextLoop}'s work-list (feedback threaded in).`,
+        recorded,
       );
     }
     return reportResult(
@@ -702,6 +726,7 @@ async function finalizeStep(args: {
         summary: completion.feedback,
       },
       `Step "${stepState.id}" was rejected and its ${maxLoops}-loop gate budget is exhausted. Resolve it manually (\`akm workflow complete\`/\`resume\`/\`abandon\`).`,
+      recorded,
     );
   }
 
@@ -715,7 +740,16 @@ async function finalizeStep(args: {
       : state.step
         ? `Step "${stepState.id}" completed. Next: run \`akm workflow brief ${runId}\` for step "${state.step.id}".`
         : `Step "${stepState.id}" completed; run is ${state.run.status}.`;
-  return reportResult(runId, stepState.id, args.written, gateLoop, state.run.status, { kind: "advanced" }, message);
+  return reportResult(
+    runId,
+    stepState.id,
+    args.written,
+    gateLoop,
+    state.run.status,
+    { kind: "advanced" },
+    message,
+    recorded,
+  );
 }
 
 /**
@@ -913,8 +947,13 @@ function prepareResult(
     }
     return { resultJson: JSON.stringify(parsed), failureReason: null };
   }
-  // Free-text unit: journal the text as a JSON string (as the executor does).
-  return { resultJson: JSON.stringify(input.resultRaw ?? ""), failureReason: null };
+  // Free-text unit: journal the text as a JSON string EXACTLY as the executor
+  // does — `native-executor.ts` finishUnit uses `outcome.text ? JSON.stringify… :
+  // null`, so an empty (or absent) output journals result_json = NULL, not '""'.
+  // Matching that keeps the promoted artifact and the dispatch row byte-identical
+  // across the engine and report surfaces (the cardinal graph-parity rule), and
+  // stays consistent with the FAILED branch above which also maps ""→null.
+  return { resultJson: input.resultRaw ? JSON.stringify(input.resultRaw) : null, failureReason: null };
 }
 
 /** How the guarded unit write resolved inside the SQLite transaction. */
@@ -1099,6 +1138,7 @@ function reportResult(
   runStatus: WorkflowRunStatus,
   stepOutcome: ReportStepOutcome,
   message: string,
+  recorded: "written" | "idempotent" = "written",
 ): WorkflowReportResult {
   return {
     ok: true,
@@ -1107,7 +1147,7 @@ function reportResult(
     unitId: written.unitId,
     status: written.status,
     gateLoop,
-    recorded: "written",
+    recorded,
     remainingUnits: 0,
     stepOutcome,
     runStatus,

@@ -397,7 +397,192 @@ wedges a run — wait out the expiry and re-run. While the lease is live the
 engine owns the step spine: manual `akm workflow complete` is refused with
 the same holder/expiry message until the engine finishes or the lease
 lapses. `workflow next`/`status` remain read-only and always work; run
-detail surfaces a live lease as `engineLease` (holder + expiry).
+detail surfaces a live lease as `engineLease` (holder + expiry). An
+orchestrated run can also be driven by an external agent instead of the
+engine — see *Driving a run from any agent (brief/report)* below.
+
+### Driving a run from any agent (brief/report)
+
+`akm workflow run` is the engine driving a run itself. But an orchestrated
+run does not require akm to spawn the agents — **any** agent session (Claude
+Code, opencode, Codex, or a human at a shell) can drive the same frozen plan
+by executing its units and reporting the results back. Two commands make this
+work, and neither duplicates any orchestration logic: both call the exact
+same shared step semantics the engine uses, so an engine-driven run and a
+driver-driven run of the same plan produce **byte-identical unit graphs**.
+
+- **`akm workflow brief <run-id|workflow:ref>`** — read-only. It finds the
+  run's active step, computes the work-list the engine *would* dispatch, and
+  tells you exactly what to run and how to report it. It **takes no lease,
+  dispatches nothing, and mutates nothing** — it is safe to call as often as
+  you like.
+- **`akm workflow report <run-id> --unit <unit_id> --status …`** — the only
+  mutating verb. It ingests one unit's result through the same reducer,
+  artifact-promotion, schema-validation, and gate path the engine runs, and
+  advances the step when its work-list is fully terminal.
+
+#### The protocol loop
+
+Driving a run is a loop: **brief → execute → report → repeat**, until the
+brief reports the run is done.
+
+1. **`brief`** the run. The output lists the active step and, for each unit
+   the step expects, a `WorkflowBriefUnit` with:
+   - `unitId` — the content-derived id you pass back verbatim to `report`;
+   - `nodeId`, `runner`, `profile`, `model`, `timeoutMs`, `retry`, `onError`;
+   - `resolved.instructions` — the fully-assembled prompt (engine preamble +
+     interpolated instructions + any gate feedback + schema directive),
+     **byte-identical** to what the engine would dispatch — and
+     `resolved.inputHash`;
+   - `outputSchema` — the JSON Schema your result must validate against, when
+     the unit declares one;
+   - `env` — env binding asset **names only** (`brief` never resolves a
+     binding, so no secret value can ever appear in its output);
+   - `report` — the exact `akm workflow report …` command line to run on
+     success;
+   - `journaled` — the unit's already-recorded status, if a row exists (so a
+     resumed driver skips finished work).
+2. **Execute** each pending unit however you like — in the current session,
+   by spawning a subagent, or by hand. `brief` also emits the step's gate
+   criteria, its output-schema contract, and (for a route step) the
+   deterministic branch decision.
+3. **`report`** each result. For a schema unit, pass JSON matching
+   `outputSchema` via `--result '<json>'`, `--result-file <path>`, or stdin;
+   for a free-text unit, any text (or none). Add `--tokens N` so the result
+   counts against a declared budget, and `--session-id S` to record the
+   harness-native session id.
+4. When your `report` makes the step's work-list fully terminal, akm runs the
+   **same completion path the engine runs** — reduce the unit outputs, promote
+   and validate the typed step artifact, and judge the artifact against the
+   gate criteria — then either advances the spine or, on a gate rejection with
+   loop budget left, leaves the step active. Re-run `brief`: if the gate
+   looped, the next brief emits **loop-N's work-list with the judge feedback
+   already threaded into every unit prompt** (recovered from the journaled
+   `<stepId>.gate:l<n>` row, so the loop-N unit ids and hashes match what the
+   engine would compute).
+
+Repeat until `brief` reports `done: true`.
+
+#### Unit check-in and heartbeat
+
+Executing a long unit? Claim it and heartbeat so other drivers know it is in
+progress:
+
+```sh
+akm workflow report <run> --unit <unit_id> --status running --note "cloning repo"
+```
+
+`--status running` records `started_at` on first claim and updates
+`last_checkin_at` on every subsequent call (migration 007's additive
+column). It **never advances the spine** — it is a liveness signal only, and
+the `--note` is intentionally not persisted. `brief` and `status` surface any
+unit that was claimed `running` but has gone silent past the check-in window
+(90 s) as a **stale unit**, so a second driver can reclaim work whose driver
+died. Staleness is a pure timestamp evaluation (no daemon, no background
+thread — the same design as the run-level check-in), deterministic in the
+injected clock.
+
+#### Lease interplay: one engine _or_ one external driver
+
+The run lease arbitrates: a run is driven by **one engine or one external
+driver at a time**, never both.
+
+- While `akm workflow run` holds a **live** lease, `report` is **refused**
+  (naming the holder and expiry) — the engine owns the spine while it drives.
+  `brief` still works (it is read-only) but prints a loud warning telling you
+  not to execute its units, because the engine is dispatching them right now.
+- An **expired** lease is claimable, so a crashed engine never wedges a run:
+  wait out the 90 s expiry, then drive it with brief/report.
+- The external driver protocol itself takes **no** lease — the guard is that
+  `report` refuses while a *live engine* lease exists. Coordinate concurrent
+  human drivers with the unit check-in above.
+
+#### Replay and idempotency guarantees
+
+`report` ingests through the frozen plan's journal, so its safety properties
+are the engine's:
+
+- **Idempotent re-report.** Re-reporting a COMPLETED unit with the **same**
+  input hash is a no-op (exit 0, "already recorded") — safe to retry a
+  `report` whose network died mid-write.
+- **Replay divergence.** Re-reporting a COMPLETED unit with a **different**
+  input hash is a hard error naming the unit: under a frozen plan the same
+  unit identity must reproduce the same inputs, so akm refuses to silently
+  overwrite it. Start a new run to re-execute the work.
+- **Unknown unit.** A `--unit` id that does not belong to the active step's
+  recomputed work-list is a usage error that lists the valid ids — you
+  cannot report a unit the plan does not expect.
+- **Schema-checked results.** A schema unit's `--result` is validated against
+  its `outputSchema` before it is stored, with the same subset validator the
+  engine uses.
+- **Budget ceilings.** Journal-seeded `budget.max_units`/`max_tokens` are
+  enforced on `report` exactly as on the engine — crossing a ceiling fails
+  the step hard (budget ignores `on_error`), rather than leaving a stuck run.
+
+Because both surfaces share one implementation, the R4 conformance suite runs
+every golden program twice — engine-driven, then brief/report-driven — and
+asserts the two unit graphs are identical.
+
+#### Worked example
+
+Drive a two-step review workflow by hand. Start a run without dispatching,
+then loop brief → execute → report:
+
+```sh
+# Start the run (freezes the plan; does not dispatch).
+akm workflow start workflow:review-changes --params '{"changed_files":["a.ts"]}'
+# → {"run":{"id":"r1","status":"active","currentStepId":"discover",...}}
+
+akm workflow brief r1
+```
+
+```jsonc
+{
+  "ok": true,
+  "active": true,
+  "step": { "stepId": "discover", "gate": { "criteria": ["every target is listed"], "currentLoop": 1 } },
+  "workList": {
+    "isFanOut": false,
+    "units": [
+      {
+        "unitId": "discover:solo",
+        "runner": "sdk",
+        "outputSchema": { "type": "object", "properties": { "files": { "type": "array" } }, "required": ["files"] },
+        "resolved": { "ok": true, "instructions": "…List the files that need review…", "inputHash": "9f2c…" },
+        "report": "akm workflow report r1 --unit discover:solo --status completed --result-file <result.json>"
+      }
+    ]
+  }
+}
+```
+
+Execute that unit, then report its structured result:
+
+```sh
+akm workflow report r1 --unit discover:solo --status completed \
+  --result '{"files":["a.ts"]}' --tokens 1200
+# → step "discover" gate passes on its artifact; the spine advances.
+#   {"stepOutcome":{"kind":"advanced"},"runStatus":"active",
+#    "message":"Step \"discover\" completed. Next: run `akm workflow brief r1` for step \"review\"."}
+
+akm workflow brief r1
+# → active step "review" is a fan-out (map over ["a.ts"]): one unit
+#   "review:<hash>" with the reviewer profile and the per-file schema.
+
+# Claim it while you work, then report:
+akm workflow report r1 --unit review:1f3a… --status running --note "reviewing a.ts"
+akm workflow report r1 --unit review:1f3a… --status completed \
+  --result '{"file":"a.ts","verdict":"pass"}'
+# → the review step's collect reducer promotes the array, the gate judges it.
+
+akm workflow brief r1
+# → {"done": true, "message": "Workflow run is completed — no work remains."}
+```
+
+If a gate had rejected the `review` step (with `max_loops` budget left), the
+next `brief r1` would show `step.gate.currentLoop: 2`, a `gateFeedback`
+object, and a fresh work-list whose unit prompts already carry the judge's
+missing-criteria feedback — you re-execute and re-report exactly as in loop 1.
 
 ### akm workflow watch
 

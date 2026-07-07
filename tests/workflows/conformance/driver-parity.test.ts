@@ -573,7 +573,45 @@ steps:
   },
 };
 
-const GOLDENS: Golden[] = [SOLO, FAN_OUT_COLLECT, VOTE, ROUTE, GATE_MAX_LOOPS, onErrorContinueGolden(), RETRY];
+// empty free-text output — a schemaless unit that legitimately produces the
+// EMPTY string. The engine's `finishUnit` stores result_json = NULL for a falsy
+// `outcome.text`; the report path must map ""→NULL identically, or the dispatch
+// row (result column) AND the promoted solo artifact diverge across surfaces.
+// This is the exact blind spot peer review flagged: no prior golden reports an
+// empty completed result.
+const EMPTY_OUTPUT: Golden = {
+  name: "empty free-text output",
+  yaml: `version: 1
+name: Golden
+steps:
+  - id: build
+    title: Build
+    unit:
+      instructions: Build it.
+`,
+  params: {},
+  steps: [{ id: "build" }],
+  outcome: () => ({ ok: true, text: "" }),
+  verify: (g) => {
+    // Empty output journals NULL (`result=-`), not '""', on BOTH surfaces; the
+    // promoted solo artifact is null on both.
+    expect(lineFor(g, "unit build:solo")).toContain("status=completed");
+    expect(lineFor(g, "unit build:solo")).toContain("result=-");
+    expect(lineFor(g, "step build")).toContain("artifact=null");
+    expect(g).toContain("run status=completed");
+  },
+};
+
+const GOLDENS: Golden[] = [
+  SOLO,
+  FAN_OUT_COLLECT,
+  VOTE,
+  ROUTE,
+  GATE_MAX_LOOPS,
+  onErrorContinueGolden(),
+  RETRY,
+  EMPTY_OUTPUT,
+];
 
 // ── The parity suite ─────────────────────────────────────────────────────────
 

@@ -856,7 +856,14 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
     }
 
     const text = await dispatchOnce();
-    return { unitId: request.unitId, ok: true, text, ...captured() };
+    // Normalize an EMPTY successful output to "no text". `finishUnit` journals
+    // result_json = NULL for a falsy text, so durable-reuse and the R3 report
+    // surface both rehydrate NO text from the row (unitOutcomeFromRow). Preserving
+    // `text: ""` only in this live outcome would make the LIVE step artifact ("")
+    // diverge from the resume/report artifact (null) — the exact byte-identical-
+    // graph violation the cardinal rule forbids. Treating empty as absent keeps
+    // the live engine, engine resume, and report surfaces identical.
+    return { unitId: request.unitId, ok: true, ...(text ? { text } : {}), ...captured() };
   } catch (err) {
     if (err instanceof UnitTransportError) {
       return {

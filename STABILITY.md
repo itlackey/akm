@@ -104,12 +104,28 @@ for scripted use.
   hard error), single-driver run leases, typed step artifacts,
   artifact-judged gates with bounded `max_loops`, run budget ceilings
   (`budget.max_tokens`/`max_units`), `akm workflow watch` (NDJSON event
-  tail, `--stream`), and `isolation: worktree`. The YAML format, its schema,
-  and the `run`/`watch` flags and JSON output shapes may all change while
-  the orchestration engine matures. (This format replaced the never-released
-  P1 markdown orchestration subsections.) Classic **linear markdown
-  workflows are unchanged and stable**, as is the workflow CLI contract
-  (`start`/`next`/`complete`/`status`/`list`).
+  tail, `--stream`), and `isolation: worktree`. The R3 rework adds a
+  **harness-neutral driver protocol** so any agent session (Claude Code,
+  opencode, Codex, a human at a shell) can drive a run instead of the native
+  engine: **`akm workflow brief <run>`** (read-only; takes no lease and
+  mutates nothing) emits the active step's expected work-list — per-unit
+  resolved instructions, output schema, env binding NAMES only, timeout,
+  and the exact report command lines — and **`akm workflow report <run>
+  --unit <id> --status completed|failed|running`** (the one mutating verb)
+  ingests a unit's result through the SAME shared step semantics the engine
+  uses, enforcing input-hash idempotency/replay-divergence, output-schema
+  validation, budget ceilings, and the artifact-judged gate/`max_loops`
+  completion path; `--status running` claims/heartbeats a unit
+  (`last_checkin_at`, migration 007) for stale-driver detection without
+  advancing the spine. A run is driven by one engine OR one external driver
+  at a time (the run lease arbitrates; `report` is refused while a live
+  engine lease exists), and the two surfaces produce identical unit graphs.
+  The YAML format, its schema, the `run`/`watch`/`brief`/`report` flags, and
+  all JSON output shapes (including `workflow-brief`/`workflow-report`) may
+  all change while the orchestration engine matures. (This format replaced
+  the never-released P1 markdown orchestration subsections.) Classic
+  **linear markdown workflows are unchanged and stable**, as is the workflow
+  CLI contract (`start`/`next`/`complete`/`status`/`list`).
 
 ## On the horizon
 

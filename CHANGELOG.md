@@ -132,6 +132,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   changes; linear markdown workflows and the stable workflow CLI contract
   are untouched. See the updated "Orchestrated steps" sections in
   `docs/features/workflows.md` and `STABILITY.md` (Experimental).
+- **Harness-neutral driver protocol (R3 + R4 of the redesign addendum,
+  experimental).** An orchestrated run can now be driven by ANY agent
+  session (Claude Code, opencode, Codex, a human at a shell), not only the
+  native `akm workflow run` engine — the addendum's replacement for
+  Claude-Code delegation. Two new commands: **`akm workflow brief
+  <run-id|workflow:ref>`** (read-only — takes no lease, dispatches nothing,
+  mutates nothing; a test proves `workflow.db` is byte-identical across a
+  brief) computes the active step's expected work-list exactly as the engine
+  would and emits, per unit, the content-derived `unitId`, `runner`/`model`/
+  `timeout`/`retry`/`onError`, the fully-resolved instructions +
+  `inputHash` (byte-identical to the engine's dispatch), the `outputSchema`,
+  env binding **NAMES only** (never resolved secret values), already-journaled
+  unit statuses, the gate/artifact contract, and the exact `report` command
+  lines — plus a loud warning when a live engine lease is held and any stale
+  claimed units; **`akm workflow report <run-id> --unit <id> --status
+  completed|failed|running [--result | --result-file | stdin] [--tokens]
+  [--session-id] [--failure-reason] [--note]`** is the ONE mutating verb,
+  ingesting a unit's result through the SAME shared step semantics the engine
+  uses. `report` refuses a non-active run and refuses while a live engine
+  lease exists; validates the unit against the recomputed work-list (unknown
+  id ⇒ usage error naming valid ids); computes the input hash identically to
+  the engine; validates a schema unit's result against its `outputSchema`;
+  treats a same-hash re-report of a COMPLETED unit as an idempotent no-op and
+  a different-hash one as a hard replay-divergence error; enforces
+  journal-seeded `budget.max_units`/`max_tokens` ceilings (hard step failure,
+  ignoring `on_error`); and when a report makes the step's work-list fully
+  terminal, runs the engine's completion path (reducer → artifact promotion
+  → schema validation → artifact-judged gate → `completeWorkflowStep`),
+  honoring `on_error` and `gate.max_loops` — a gate rejection with loop
+  budget left leaves the step active, and the next `brief` emits loop-N's
+  work-list with the judge feedback threaded into every unit prompt
+  (recovered from the journaled `<stepId>.gate:l<n>` row so loop-N unit
+  ids/hashes match the engine's). **Unit-level check-in**: `--status
+  running` claims/heartbeats a unit (`started_at` on first claim,
+  `last_checkin_at` on each heartbeat via additive **migration 007**) without
+  advancing the spine; `brief`/`status` surface a claimed-but-silent unit as
+  stale via a pure `now`-injectable timestamp evaluator
+  (`src/workflows/runtime/unit-checkin.ts`, no daemon, mirroring the
+  run-level check-in). The cardinal "no duplicated semantics" rule is
+  enforced structurally: work-list computation, prompt assembly (incl.
+  recovered gate feedback), route evaluation, reducer/artifact promotion,
+  output-schema validation, and artifact-judged gate completion were
+  extracted into ONE shared module (`src/workflows/exec/step-work.ts`) that
+  `run-workflow.ts`, `brief.ts`, and `report.ts` all call — behavior for the
+  engine is preserved (existing tests prove it). New passthrough output
+  shapes `workflow-brief` / `workflow-report`. **R4 cross-surface
+  conformance** (`tests/workflows/conformance/driver-parity.test.ts`) runs
+  every golden program twice — engine-driven, then a `brief → report` loop
+  over every pending unit — against identical fixture dispatch results and
+  judge verdicts, and asserts the two produce IDENTICAL unit graphs (down to
+  `unit_id`/`node_id`/`input_hash`/`status`/`result_json`/`failure_reason`,
+  gate-evaluation rows, journaled route decisions, per-step statuses +
+  artifacts, and final run status). This completes the redesign addendum
+  (R1–R4); the two owner-decided permanent skips (the GitHub Copilot cloud
+  delegate and the stash MCP server) were never built. All
+  experimental-surface changes; linear markdown workflows and the stable
+  workflow CLI contract are untouched. See "Driving a run from any agent
+  (brief/report)" in `docs/features/workflows.md`, `STABILITY.md`
+  (Experimental), and the redesign addendum in
+  `docs/technical/akm-workflows-orchestration-plan.md`.
 
 ### Fixed
 

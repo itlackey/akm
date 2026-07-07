@@ -285,6 +285,53 @@ describe("chaos: crash INSIDE the completion path", () => {
     expect(status.workflow.steps[0].evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
   });
 
+  test("units done + no gate row: a driver's idempotent re-report finalizes the step (engine/driver crash-recovery symmetry)", async () => {
+    // Same durable crash state as the engine test above, but recovered through
+    // the R3 DRIVER protocol instead of `workflow run`: an idempotent re-report
+    // of an already-completed unit must still run the SHARED completion path when
+    // the whole work-list is terminal but the step never advanced. Otherwise the
+    // step is permanently un-advanceable through brief/report (peer review R3).
+    writeProgram("crash-completion", FANOUT_GATE_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    const started = await startWorkflowRun("workflow:crash-completion", params);
+    const runId = started.run.id;
+    const plan = await frozenPlan(runId);
+
+    const workUnits = workListFor(plan, 0, runId, params);
+    for (const u of workUnits) {
+      seedUnitRow({
+        runId,
+        unitId: u.unitId,
+        stepId: "review",
+        nodeId: "review.unit",
+        status: "completed",
+        inputHash: u.inputHash,
+        resultJson: JSON.stringify({ verdict: "ok" }),
+      });
+    }
+
+    // Re-report an already-completed unit with its journaled (matching) input
+    // hash → the guarded write is idempotent, but the step still finalizes.
+    const result = await reportWorkflowUnit({
+      target: runId,
+      unitId: workUnits[0].unitId,
+      status: "completed",
+      resultRaw: JSON.stringify({ verdict: "ok" }),
+      summaryJudge: acceptJudge,
+    });
+    expect(result.recorded).toBe("idempotent");
+    expect(result.stepOutcome?.kind).toBe("advanced");
+    expect(result.runStatus).toBe("completed");
+
+    // Converged exactly as the engine path does: one gate row, artifact promoted
+    // exactly once (2 verdicts, not 4), step + run completed.
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "review"));
+    expect(rows.filter((u) => u.node_id === "review.gate")).toHaveLength(1);
+    const status = await getWorkflowStatus(runId);
+    expect(status.run.status).toBe("completed");
+    expect(status.workflow.steps[0].evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
+  });
+
   test("a DANGLING running gate row (crash mid-judge): resume replaces it — no duplicate row, no double promotion", async () => {
     writeProgram("crash-completion", FANOUT_GATE_WF);
     const params = { files: ["a.ts", "b.ts"] };
