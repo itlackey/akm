@@ -868,6 +868,14 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     if (!created.ok) {
       return { unitId: request.unitId, ok: false, failureReason: "worktree_failed", error: created.error };
     }
+    if (created.preservedLeftover !== undefined) {
+      // Never destroy a dirty (or unverifiable) leftover from a prior
+      // invocation of the same attempt — it was moved aside instead.
+      warn(
+        `Workflow unit ${attemptId}: a previous attempt left uncollected work in its isolation worktree; ` +
+          `preserved at ${created.preservedLeftover}`,
+      );
+    }
     worktreePath = created.path;
     request = { ...request, cwd: worktreePath };
   }

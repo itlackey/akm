@@ -434,4 +434,60 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     expect(b.ok).toBe(true);
     expect(calls).toHaveLength(1);
   });
+
+  // Peer-review regression: closeServer() is wired to `process.once('exit')`,
+  // and Bun does NOT drain microtasks scheduled inside 'exit' handlers — a
+  // `.then()`-based close never ran there, orphaning every `opencode serve`
+  // child (leaked process + port still bound for the next invocation).
+  test("closeServer closes started servers SYNCHRONOUSLY (exit-hook safety, no microtask)", async () => {
+    let closed = 0;
+    const capture: PromptCapture = {};
+    __setServerFactory(((_options: { config?: Record<string, unknown> }) => {
+      const fake = makeFakeServer(capture).server as { client: unknown; server: { close(): void } };
+      return Promise.resolve({
+        client: fake.client,
+        server: {
+          close() {
+            closed++;
+          },
+        },
+      });
+    }) as never);
+
+    await runOpencodeSdk(baseProfile, "p", { timeoutMs: null }); // default server
+    await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "v" }, timeoutMs: null }); // env-keyed server
+
+    closeServer();
+    // No await between closeServer() and this assertion: both servers must
+    // already be closed when the call returns, exactly as the 'exit' hook
+    // requires.
+    expect(closed).toBe(2);
+  });
+
+  // Peer-review regression: createOpencodeServer defaults to a FIXED port
+  // (4096), so coexisting registry entries (default + env-keyed — e.g. an
+  // improve run's AKM_EVENT_SOURCE binding alongside env-free sdk calls)
+  // contended for the same bind and the second start failed spawn_failed.
+  test("env-keyed servers each get their own free port; the default server keeps the SDK default", async () => {
+    const ports: (number | undefined)[] = [];
+    const capture: PromptCapture = {};
+    __setServerFactory(((options: { port?: number }) => {
+      ports.push(options.port);
+      return Promise.resolve(makeFakeServer(capture).server as never);
+    }) as never);
+
+    await runOpencodeSdk(baseProfile, "p", { timeoutMs: null }); // default key
+    await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "a" }, timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "b" }, timeoutMs: null });
+
+    // Default key: no port override — byte-identical to the pre-R2 singleton.
+    expect(ports[0]).toBeUndefined();
+    // Env-keyed entries: OS-assigned free ports, never the SDK default and
+    // never shared with a coexisting entry.
+    expect(typeof ports[1]).toBe("number");
+    expect(typeof ports[2]).toBe("number");
+    expect(ports[1]).not.toBe(4096);
+    expect(ports[2]).not.toBe(4096);
+    expect(ports[1]).not.toBe(ports[2]);
+  });
 });

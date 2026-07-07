@@ -86,6 +86,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rewritten against YAML sources. See "Orchestrated steps" in
   `docs/features/workflows.md` and the redesign addendum in
   `docs/technical/akm-workflows-orchestration-plan.md`.
+- **Workflow orchestration engine rework (R2 of the redesign addendum,
+  experimental).** On top of R1's frozen plans, the engine now delivers the
+  replay/determinism foundation the addendum specified. **Content-derived
+  unit identity**: journaled unit ids are now
+  `<step>:<sha256(canonical item)[:12]>` (`:solo` for single units), so
+  cached results survive item-list reordering/regeneration, with
+  **replay-divergence detection** — a journaled completed unit whose
+  recorded inputs differ from the replan is a hard step failure naming the
+  unit, never a silent re-dispatch (R1's positional ids were pre-release
+  experimental data: no back-compat shim, old rows simply never match and
+  are ignored). **Run-lease enforcement** (migration 006 columns go live):
+  `workflow run` acquires a 90 s lease before any dispatch, renews it
+  between steps, and releases it on exit; a second `run` on a live-leased
+  run refuses up front naming the holder + expiry, an expired lease is
+  claimable (crash recovery), and manual `workflow complete` is refused
+  while an engine holds a live lease — the engine owns the spine while it
+  drives. **Typed step artifacts**: a step's `output` schema is now
+  validated against the promoted artifact before completion; a mismatch
+  fails the step with the validation errors in the summary.
+  **Artifact-judging gates**: engine-driven gates judge the step artifact
+  (canonical JSON, clipped at 4000 chars) against the criteria instead of
+  machine prose; gate evaluations are journaled as `<stepId>.gate:l<loop>`
+  unit rows (human approvals are never cached). **Bounded `gate.max_loops`
+  execution**: a gate rejection or artifact-schema miss re-executes the
+  step's units with the judge feedback + missing criteria threaded into
+  unit prompts — the feedback changes each unit's input hash, so re-runs
+  dispatch fresh instead of replaying. **Run budget ceilings**: top-level
+  `budget: { max_tokens?, max_units? }` in the YAML schema; counters are
+  seeded from the unit journal so ceilings span resumes; hitting one aborts
+  pending dispatches and fails the step hard regardless of `on_error`. New
+  **`akm workflow watch <run-id>`**: run-scoped `workflow_*` /
+  `workflow_unit_*` NDJSON event tail; `--stream` foreground-polls from the
+  last seen event (`--interval-ms`, default 1000, no daemon) and exits at a
+  terminal run status; plus an `onEvent` observability seam on `runAgent`
+  (spawn start/exit, ids/status only). **`isolation: worktree`** on the
+  agent AND sdk runners: each unit attempt gets a fresh detached git
+  worktree under a run-scoped tmp dir, the path is journaled on the unit
+  row, a clean tree is auto-removed and a dirty one retained + logged;
+  non-git base dirs fail the step cleanly. Making worktrees + env work on
+  the DEFAULT runner resolved SDK seam decision 1: the opencode SDK server
+  is cwd-agnostic (cwd is per-call), while env bindings go through an
+  env-keyed server registry — which removed the sdk `env_unsupported`
+  hard-fail (llm units still reject `env` loudly). All experimental-surface
+  changes; linear markdown workflows and the stable workflow CLI contract
+  are untouched. See the updated "Orchestrated steps" sections in
+  `docs/features/workflows.md` and `STABILITY.md` (Experimental).
 
 ### Fixed
 

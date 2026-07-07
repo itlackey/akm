@@ -79,7 +79,18 @@ export function assertGitWorkTree(dir: string): string | undefined {
   return undefined;
 }
 
-export type WorktreeCreateResult = { ok: true; path: string } | { ok: false; error: string };
+export type WorktreeCreateResult =
+  | {
+      ok: true;
+      path: string;
+      /**
+       * Set when a leftover directory at the attempt path was DIRTY (or its
+       * state could not be verified) and was moved aside instead of deleted —
+       * the caller logs where the previous attempt's work was preserved.
+       */
+      preservedLeftover?: string;
+    }
+  | { ok: false; error: string };
 
 /** Journal-safe directory name for a unit attempt id (ids carry `:` / `~`). */
 function sanitizeAttemptId(attemptId: string): string {
@@ -92,17 +103,43 @@ export function runWorktreeRoot(runId: string): string {
 }
 
 /**
+ * Move a leftover attempt directory aside to `<dest>.retained-<ts>[-n]`
+ * (never overwriting an earlier retained copy). Throws on fs errors — the
+ * caller maps them onto its result object.
+ */
+function moveLeftoverAside(dest: string): string {
+  const base = `${dest}.retained-${Date.now()}`;
+  let aside = base;
+  for (let n = 1; fs.existsSync(aside); n++) aside = `${base}-${n}`;
+  fs.renameSync(dest, aside);
+  return aside;
+}
+
+/**
  * Create a fresh DETACHED worktree of `baseDir`'s repository at
  * `<tmp>/akm-worktrees/<runId>/<attemptId>` (detached HEAD — no branch is
- * minted, so parallel units cannot collide on branch names). A leftover
- * directory from a crashed prior attempt at the same path is removed (and
- * `git worktree prune` clears its stale registration) before re-creating.
+ * minted, so parallel units cannot collide on branch names).
+ *
+ * A leftover directory at the attempt path (a RETAINED dirty worktree from a
+ * prior invocation, or a crashed attempt's partial state) is handled with the
+ * same never-destroy-unverified-work rule as {@link cleanupUnitWorktree}:
+ * `git status --porcelain` CLEAN → removed; DIRTY or unverifiable (the probe
+ * fails — e.g. a half-created directory that is no longer a valid worktree)
+ * → moved aside to `<dest>.retained-<ts>` and reported via
+ * `preservedLeftover` so the caller can log where the work went. Either way
+ * `git worktree prune` clears the stale registration before re-creating.
  */
 export function createUnitWorktree(baseDir: string, runId: string, attemptId: string): WorktreeCreateResult {
   const dest = path.join(runWorktreeRoot(runId), sanitizeAttemptId(attemptId));
+  let preservedLeftover: string | undefined;
   try {
     if (fs.existsSync(dest)) {
-      fs.rmSync(dest, { recursive: true, force: true });
+      const status = git(dest, ["status", "--porcelain"]);
+      if (status.ok && status.stdout.trim() === "") {
+        fs.rmSync(dest, { recursive: true, force: true });
+      } else {
+        preservedLeftover = moveLeftoverAside(dest);
+      }
       git(baseDir, ["worktree", "prune"]);
     }
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -113,7 +150,7 @@ export function createUnitWorktree(baseDir: string, runId: string, attemptId: st
   if (!added.ok) {
     return { ok: false, error: `could not create isolation worktree at ${dest}: ${added.error}` };
   }
-  return { ok: true, path: dest };
+  return { ok: true, path: dest, ...(preservedLeftover !== undefined ? { preservedLeftover } : {}) };
 }
 
 export interface WorktreeCleanupResult {

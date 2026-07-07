@@ -1204,13 +1204,41 @@ mismatch against the producer's declared schema).
   identity/replay divergence, typed step-artifact validation +
   artifact-judging gates, `gate.max_loops` execution, budget/watch/worktree
   (all carried through the IR with `TODO(R2)` markers).
-- **R2 — engine rework.** Content-derived unit identity, replay journal
-  semantics + divergence detection, run lease enforcement, typed step
-  artifacts + artifact-judging gates, failure policy (`on_error`/`retry`),
-  route-on-explicit-input. Re-land the P4 features on this foundation:
-  budget ceilings, `workflow watch`, `isolation: worktree` (resolving SDK
-  seam decision 1 properly — server keyed by cwd — so isolation and env
-  bindings work on the DEFAULT runner), bounded gate loops.
+- **R2 — engine rework. ✅ SHIPPED 2026-07-07.** Content-derived unit
+  identity, replay journal semantics + divergence detection, run lease
+  enforcement, typed step artifacts + artifact-judging gates, failure
+  policy (`on_error`/`retry`), route-on-explicit-input. Re-land the P4
+  features on this foundation: budget ceilings, `workflow watch`,
+  `isolation: worktree` (resolving SDK seam decision 1 properly — server
+  keyed by cwd — so isolation and env bindings work on the DEFAULT runner),
+  bounded gate loops.
+  Delivered: all of the above (failure policy + route-on-explicit-input had
+  already shipped early in R1). Unit ids are
+  `<node_id>:<sha256(canonicalJson(item))[:12]>` / `:solo` (+`~r<n>` retry
+  suffix); a journaled COMPLETED unit with matching identity but different
+  `input_hash` is a hard "replay divergence" step failure — R1's positional
+  ids get no back-compat shim (pre-release data; they never match and are
+  ignored). Lease: 90 s TTL acquired before any dispatch, renewed between
+  steps, released in a `finally`; second `run` refuses naming holder +
+  expiry, expired lease claimable, manual `complete` refused under a live
+  engine lease (`workflow next`/`status` stay read-only and surface
+  `engineLease`). Gates judge the step artifact (canonical JSON, 4000-char
+  clip) via an explicit summary into the unchanged `completeWorkflowStep`
+  spine; gate evaluations journal as `<stepId>.gate:l<loop>` unit rows;
+  `max_loops` re-executes the subgraph with gateFeedback threaded into
+  prompts (feedback changes `input_hash` ⇒ natural re-dispatch); a typed
+  step-artifact schema miss feeds the same loop. Budget
+  (`budget.max_tokens`/`max_units`) is journal-seeded, aborts pending
+  dispatches via an AbortController, and fails the step hard regardless of
+  `on_error`. `workflow watch` is a foreground NDJSON tail (`--stream`,
+  `--interval-ms`), plus the `RunAgentOptions.onEvent` seam.
+  `isolation: worktree` works on agent AND sdk; SDK seam decision 1
+  resolved as a SPLIT rather than a cwd-keyed server: cwd is per-call in
+  the opencode SDK, env goes through an env-keyed server registry (see the
+  `opencode-sdk` module doc), which removed the sdk `env_unsupported`
+  hard-fail (llm still rejects env). Deferred: nothing from this bullet —
+  R3 (driver protocol) and R4 (hardening, incl. the status sweep of this
+  document) remain.
 - **R3 — driver protocol.** `workflow brief` + `workflow report` ingest +
   unit-level check-in; the harness-neutral replacement for CC delegation.
 - **R4 — hardening.** Cross-surface conformance (engine-driven vs

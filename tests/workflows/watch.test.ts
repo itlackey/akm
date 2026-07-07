@@ -174,7 +174,7 @@ describe("workflow watch — --stream", () => {
     expect(result.eventCount).toBe(lines.length);
   });
 
-  test("a run that is already terminal prints the backlog and exits without a single sleep", async () => {
+  test("a run that is already terminal prints the backlog and exits after a single idle grace poll", async () => {
     writeWorkflow("watch-terminal");
     const started = await startWorkflowRun("workflow:watch-terminal", {});
     const runId = started.run.id;
@@ -191,7 +191,57 @@ describe("workflow watch — --stream", () => {
       },
     });
 
-    expect(sleeps).toBe(0);
+    // No poll loop iterations — just the one grace poll that confirms no
+    // terminal events are still in flight (commit-before-append window).
+    expect(sleeps).toBe(1);
+    expect(result.status).toBe("completed");
+    const types = parseLines(lines).map((e) => e.eventType);
+    expect(types).toEqual(["workflow_started", "workflow_step_completed", "workflow_finished"]);
+  });
+
+  test("terminal events appended AFTER the status commit are still drained (grace poll regression)", async () => {
+    // Peer-review regression: completeWorkflowStep commits the run-status
+    // flip (workflow.db) BEFORE appending workflow_step_completed /
+    // workflow_finished to state.db. A watch poll landing in that window
+    // observes status='completed' while the terminal events are not yet in
+    // the events table; without the grace polls the stream exited and
+    // silently dropped them. Simulated here with seams: the fake engine
+    // appends the terminal events only DURING the sleep that follows the
+    // terminal status read.
+    const runId = "race-run";
+    const events: EventEnvelope[] = [];
+    let nextId = 1;
+    const push = (eventType: string): void => {
+      events.push({ schemaVersion: 1, id: nextId++, ts: new Date().toISOString(), eventType, metadata: { runId } });
+    };
+    push("workflow_started");
+
+    let statusCalls = 0;
+    const lines: string[] = [];
+    const result = await watchWorkflowRun({
+      runId,
+      stream: true,
+      emit: (line) => lines.push(line),
+      readEventsFn: ({ sinceOffset }) => {
+        const batch = events.filter((e) => e.id > (sinceOffset ?? 0));
+        return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1].id : (sinceOffset ?? 0) };
+      },
+      getRunStatus: async () => {
+        statusCalls++;
+        // Call 1 is the existence check (active); call 2 is the poll that
+        // observes the committed status flip — terminal events NOT yet appended.
+        return statusCalls >= 2 ? "completed" : "active";
+      },
+      sleep: async () => {
+        // The engine's appendEvent calls land between the terminal status
+        // read and the next drain — i.e. during a sleep.
+        if (statusCalls >= 2 && !events.some((e) => e.eventType === "workflow_finished")) {
+          push("workflow_step_completed");
+          push("workflow_finished");
+        }
+      },
+    });
+
     expect(result.status).toBe("completed");
     const types = parseLines(lines).map((e) => e.eventType);
     expect(types).toEqual(["workflow_started", "workflow_step_completed", "workflow_finished"]);

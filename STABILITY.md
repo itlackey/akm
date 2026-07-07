@@ -99,11 +99,16 @@ for scripted use.
   are written as YAML programs (`workflows/*.yaml`, `version: 1`, validated
   against `schemas/akm-workflow.json`) with `${{ … }}` expressions, per-step
   fan-out, routing, frozen per-run plans, and an explicit failure policy,
-  executed engine-driven by `akm workflow run`. The YAML format, its schema,
-  and `run`'s flags and JSON output shape may all change while the
-  orchestration engine matures. (This format replaced the never-released P1
-  markdown orchestration subsections.) Classic **linear markdown workflows
-  are unchanged and stable**, as is the workflow CLI contract
+  executed engine-driven by `akm workflow run`. The R2 engine rework adds
+  journaled replay with content-derived unit identity (input divergence is a
+  hard error), single-driver run leases, typed step artifacts,
+  artifact-judged gates with bounded `max_loops`, run budget ceilings
+  (`budget.max_tokens`/`max_units`), `akm workflow watch` (NDJSON event
+  tail, `--stream`), and `isolation: worktree`. The YAML format, its schema,
+  and the `run`/`watch` flags and JSON output shapes may all change while
+  the orchestration engine matures. (This format replaced the never-released
+  P1 markdown orchestration subsections.) Classic **linear markdown
+  workflows are unchanged and stable**, as is the workflow CLI contract
   (`start`/`next`/`complete`/`status`/`list`).
 
 ## On the horizon

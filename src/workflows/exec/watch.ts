@@ -21,7 +21,13 @@
  *     `blocked`): in all three the engine has stopped driving, so no further
  *     events arrive until a human resumes the run. The status is read BEFORE
  *     each drain, so events written before the status flip are always
- *     emitted before the loop exits.
+ *     emitted before the loop exits. The engine commits the status flip
+ *     (workflow.db transaction) BEFORE it appends the terminal
+ *     `workflow_step_completed` / `workflow_finished` events to state.db, so
+ *     after first observing a terminal status the loop keeps performing
+ *     grace polls (sleep + drain) until one drains nothing new — the
+ *     terminal events landing in that commit→append window are never
+ *     dropped.
  *   - Event lines are the raw envelopes (ids/status metadata only — event
  *     emitters never journal workflow-authored content, 07 P1-B rule).
  */
@@ -123,13 +129,25 @@ export async function watchWorkflowRun(options: WatchWorkflowRunOptions): Promis
 
   if (options.stream === true) {
     // Foreground poll loop (NO daemon). Status is re-read BEFORE each drain
-    // so events written before a terminal flip are emitted before exit; a
-    // run that is already terminal never sleeps at all.
+    // so events written before a terminal flip are emitted before exit.
     while (status === "active") {
       await sleep(intervalMs);
       status = await getRunStatus(options.runId);
       drain();
     }
+    // Terminal grace polls: completeWorkflowStep commits the run-status flip
+    // (workflow.db) BEFORE appending workflow_step_completed /
+    // workflow_finished to state.db, so the drain that first observed the
+    // terminal status can predate those events. Keep sleeping + draining
+    // until an idle poll (a drain that emits nothing new for this run) —
+    // the engine has stopped driving, so this converges after the terminal
+    // events land (already-terminal runs pay exactly one idle poll).
+    let emittedBefore: number;
+    do {
+      emittedBefore = eventCount;
+      await sleep(intervalMs);
+      drain();
+    } while (eventCount > emittedBefore);
   }
 
   return {

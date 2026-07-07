@@ -165,6 +165,9 @@ defaults:            # run-level defaults, overridable per unit
   model: balanced
   timeout: 10m
   on_error: fail
+budget:              # run-lifetime ceilings, seeded from the unit journal
+  max_units: 40
+  max_tokens: 200000
 
 steps:
   - id: discover
@@ -192,6 +195,7 @@ steps:
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
         on_error: continue
+        isolation: worktree      # fresh detached git worktree per unit
         instructions: |
           Review ${{ item }} for correctness bugs.
         output: { type: object, properties: { file: { type: string }, verdict: { type: string } }, required: [file, verdict] }
@@ -231,14 +235,16 @@ steps:
 
 **Format rules.** Top-level keys: `version: 1` (required), `name`,
 `description?`, `params?` (name → JSON-Schema declaration), `defaults?`
-(`runner`, `model`, `timeout`, `on_error`), and `steps`. Each step has an
-`id`, an optional `title`, and **exactly one of** `unit` (single dispatch),
-`map` (fan a unit template out over `over:` with optional `concurrency` and a
-`collect` | `vote` reducer), or `route`. A unit carries `instructions`
-(required) plus optional `runner`, `profile`, `model`, `timeout`, `retry`,
-`on_error`, `output` (JSON Schema for the unit's structured result), and
-`env` (env asset refs injected via the `akm env run` machinery — requires the
-agent runner; sdk/llm units fail loudly). Timeouts are
+(`runner`, `model`, `timeout`, `on_error`), `budget?` (`max_tokens`,
+`max_units` — run-lifetime ceilings, see below), and `steps`. Each step has
+an `id`, an optional `title`, and **exactly one of** `unit` (single
+dispatch), `map` (fan a unit template out over `over:` with optional
+`concurrency` and a `collect` | `vote` reducer), or `route`. A unit carries
+`instructions` (required) plus optional `runner`, `profile`, `model`,
+`timeout`, `retry`, `on_error`, `output` (JSON Schema for the unit's
+structured result), `env` (env asset refs injected via the `akm env run`
+machinery — works on the agent and sdk runners; llm units fail loudly), and
+`isolation` (`none` | `worktree`, see below). Timeouts are
 `"<n>ms" | "<n>s" | "<n>m" | "none"`. Steps may also declare `output` (the
 step-artifact schema) and `gate` (`criteria`, `max_loops`).
 
@@ -289,6 +295,18 @@ re-read for an in-flight run, so `run`, `next`, and `resume` all see the same
 program no matter what has changed on disk. Orchestration decisions are pure
 functions of the frozen plan, the run params, and journaled unit results.
 
+**Resume is journaled replay.** Every dispatched unit is journaled with a
+content-derived identity — the step id plus a hash of the unit's input item
+(so identity survives item-list reordering and regeneration) — and its input
+hash. On re-run, a journaled completed unit with the same identity and the
+same inputs is **reused**, never re-dispatched; a failed or missing unit is
+dispatched live. If a journaled completed unit matches by identity but its
+recorded inputs differ, the engine fails the step with a **replay
+divergence** error naming the unit — it never silently re-runs work whose
+inputs changed under it. (Divergence means the program produced different
+data for the "same" unit across invocations — a nondeterminism bug worth
+surfacing, not papering over.)
+
 ### Failure policy
 
 Fail-fast is the default. Per unit (or via `defaults.on_error`):
@@ -321,19 +339,85 @@ never decided selects nothing. Routing (like fan-out) is an engine feature:
 it applies under `akm workflow run` — the manual `next`/`complete` loop does
 not auto-skip.
 
-### Not yet enforced (planned for R2)
+### Typed step artifacts
 
-The format carries several declarations the engine does not act on yet:
+When a step declares `output`, the promoted step artifact (the unit's
+structured result, the collected array, or the vote winner — see *What a
+step's output is* above) is validated against that schema **before** the
+step can complete. A mismatch fails the step with the validation errors in
+its summary. This is fail-fast on purpose: a bounded gate loop (next
+section) can re-run the step with those errors as corrective feedback.
 
-- **Typed step-artifact validation** — a step's `output` schema is parsed
-  and carried, but the reducer result is not yet validated against it (unit
-  `output` schemas *are* enforced).
-- **Artifact-judging gates and `gate.max_loops`** — gates evaluate
-  completion criteria as today; judging the typed artifact and bounded
-  evaluator-optimizer loops come with the engine rework.
-- **Run-lease enforcement** — the lease columns exist, but a second
-  concurrent `workflow run` is not yet refused.
-- **Budget ceilings, `workflow watch`, and `isolation: worktree`.**
+### Gates judge the artifact; `max_loops` bounds the retry
+
+Under `akm workflow run`, a step with completion criteria is gated on its
+**artifact**, not on engine prose: the judge receives the step's artifact as
+canonical JSON (clipped at 4000 characters) alongside the criteria, so the
+gate evaluates real results rather than a machine summary like "Executed 3
+units". Each engine-driven gate evaluation is itself an LLM call and is
+journaled as a unit row (`<step-id>.gate:l<loop>`); human approvals are
+never cached — a blocked gate stays blocked until a human acts.
+
+`gate.max_loops: <n>` turns the gate into a bounded evaluator-optimizer
+loop: on a rejection (or a typed-artifact schema mismatch) with loop budget
+left, the engine re-executes the step's units with the gate feedback and the
+missing-criteria list appended to every unit prompt. The feedback changes
+each unit's inputs, so the re-run naturally dispatches fresh units instead
+of replaying journaled results. When the loop budget is spent, the rejection
+stands exactly as in the one-shot case.
+
+### Budget ceilings
+
+The top-level `budget:` key declares run-lifetime ceilings: `max_units`
+(total dispatched units) and `max_tokens` (total reported token usage). Both
+counters are seeded from the unit journal, so they measure the **whole run
+across resumes**, not just the current invocation. Hitting a ceiling aborts
+the step's still-pending dispatches and fails the step with a
+`budget exceeded (<which> ceiling)` summary — budget exhaustion is a hard
+stop that ignores `on_error: continue`. Because the plan is frozen, raising
+a budget means starting a new run.
+
+### One engine drives a run (the run lease)
+
+`akm workflow run` takes a **run lease** before dispatching anything: a
+random holder id with a 90-second expiry recorded on the run row, renewed
+between steps, and released when the invocation exits. A second
+`workflow run` against a live-leased run refuses up front, naming the holder
+and the expiry. An *expired* lease is claimable, so a crashed engine never
+wedges a run — wait out the expiry and re-run. While the lease is live the
+engine owns the step spine: manual `akm workflow complete` is refused with
+the same holder/expiry message until the engine finishes or the lease
+lapses. `workflow next`/`status` remain read-only and always work; run
+detail surfaces a live lease as `engineLease` (holder + expiry).
+
+### akm workflow watch
+
+`akm workflow watch <run-id>` prints the run's `workflow_*` /
+`workflow_unit_*` events as NDJSON — one event envelope per line — and
+exits. With `--stream` it keeps polling from the last seen event
+(`--interval-ms`, default 1000) in the foreground — no daemon — and exits
+when the run reaches a terminal status (`completed`, `failed`, or
+`blocked`).
+
+```sh
+akm workflow run <run-id> &            # engine in one shell
+akm workflow watch <run-id> --stream   # live NDJSON tail in another
+```
+
+Event metadata is ids/status/enums only — never workflow-authored content —
+so a watch stream is safe to pipe into logs or dashboards.
+
+### Worktree isolation
+
+A file-mutating unit can declare `isolation: worktree` (agent and sdk
+runners). Each unit attempt gets a fresh **detached git worktree** of the
+run's base repository under a run-scoped temp directory; the worktree path
+is journaled on the unit row and passed to the harness as its working
+directory, so parallel fan-out units can never trample each other's working
+tree. After the unit finishes, a clean worktree (`git status --porcelain`
+empty) is removed automatically; a dirty one is retained and its path
+logged, so uncollected work is never destroyed. Declaring worktree isolation
+in a non-git directory fails the step cleanly before anything dispatches.
 
 ### Model tiers
 
@@ -358,8 +442,8 @@ platform with no config. Point `deep` work (review, verification, judging) at
 
 Trust note: a workflow that fans out is authorizing **N parallel agents**, not
 one — the security section below applies with multiplied blast radius. The
-engine enforces a concurrency cap, a lifetime unit cap per run, and per-unit
-timeouts.
+engine enforces a concurrency cap, a lifetime unit cap per run, per-unit
+timeouts, and (when the program declares them) run budget ceilings.
 
 ## Security: workflow sources are executed code
 

@@ -47,6 +47,17 @@
  * This is what removed the workflow engine's `env_unsupported` hard-fail for
  * the sdk runner: injection genuinely reaches the child, because tool
  * subprocesses (bash etc.) inherit the server process environment.
+ *
+ * Registry hygiene (peer-review fixes):
+ *
+ *   - **Ports.** `createOpencodeServer` binds a FIXED default port (4096),
+ *     so coexisting registry entries would contend for the same bind. The
+ *     default key keeps the SDK default; every env-keyed entry is started on
+ *     its own OS-assigned free port (see {@link startServer}).
+ *   - **Shutdown.** {@link closeServer} closes resolved servers
+ *     SYNCHRONOUSLY — it runs from `process.once('exit')`, where Bun never
+ *     drains microtasks, so a `.then()`-based close would orphan every
+ *     `opencode serve` child.
  */
 
 import { createHash } from "node:crypto";
@@ -97,12 +108,27 @@ interface SdkServer {
 }
 
 /** The `createOpencode` surface this runner needs (real SDK or test fake). */
-type SdkServerFactory = (options: { config?: Record<string, unknown> }) => Promise<SdkServer>;
+type SdkServerFactory = (options: { config?: Record<string, unknown>; port?: number }) => Promise<SdkServer>;
 
 // Server registry — one server per env-binding signature, started lazily and
 // reused across calls. The default (no env bindings) key is "" and behaves
 // exactly like the pre-R2 process-wide singleton.
 const _servers = new Map<string, Promise<SdkServer>>();
+
+// Resolved servers by registry key, mirrored from `_servers` as each start
+// promise settles. This exists so closeServer() can close started servers
+// SYNCHRONOUSLY: it is wired to `process.once('exit')`, and Bun does not
+// drain microtasks scheduled inside 'exit' handlers, so a `.then()`-based
+// close never runs there and would orphan every `opencode serve` child.
+const _resolvedServers = new Map<string, SdkServer>();
+
+// Listen ports handed to non-default registry entries (see startServer) —
+// tracked so two coexisting servers in this process can never be assigned
+// the same port.
+const _serverPorts = new Map<string, number>();
+
+/** The port `createOpencodeServer` binds when none is passed (SDK 1.2.20). */
+const DEFAULT_SDK_PORT = 4096;
 
 // Test override: when set, every call uses this server (all keys) and no real
 // server is ever started.
@@ -139,22 +165,41 @@ export function __setServerFactory(factory: SdkServerFactory | null): void {
 
 /**
  * Close every started OpenCode SDK server and reset the registry (and any
- * injected test server). Primarily for use in tests to ensure clean teardown
- * between test runs; also wired to process exit.
+ * injected test server). Used by tests for clean teardown between runs and
+ * wired to `process.once('exit')` — which is why resolved servers MUST be
+ * closed synchronously here: Bun never drains microtasks scheduled inside
+ * 'exit' handlers, so a promise-based close would silently orphan the
+ * `opencode serve` children (leaking processes AND keeping their ports
+ * bound for the next invocation).
  */
 export function closeServer(): void {
-  for (const pending of _servers.values()) {
-    pending
-      .then((s) => {
-        try {
-          s.server.close();
-        } catch {
-          /* ignore */
-        }
-      })
-      .catch(() => {});
+  for (const [key, pending] of _servers) {
+    const resolved = _resolvedServers.get(key);
+    if (resolved) {
+      // Synchronous close — safe from the 'exit' hook.
+      try {
+        resolved.server.close();
+      } catch {
+        /* ignore */
+      }
+    } else {
+      // Still starting: close on arrival. This branch can never complete
+      // inside the 'exit' hook (no microtasks there), but it keeps
+      // mid-start test teardown leak-free.
+      pending
+        .then((s) => {
+          try {
+            s.server.close();
+          } catch {
+            /* ignore */
+          }
+        })
+        .catch(() => {});
+    }
   }
   _servers.clear();
+  _resolvedServers.clear();
+  _serverPorts.clear();
   try {
     _testServer?.server.close();
   } catch {
@@ -274,10 +319,40 @@ function overlayProcessEnv(env: Record<string, string>): () => void {
   };
 }
 
+/**
+ * Ask the OS for a currently-free localhost port (bind :0, read the assigned
+ * port, release it). Skips the SDK's fixed default port and any port already
+ * handed to another registry entry in this process, so coexisting servers
+ * never contend. The probe-then-use gap is the standard free-port race —
+ * acceptable here because the failure mode is a clean `spawn_failed` on the
+ * next dispatch, not corruption.
+ */
+async function allocateFreePort(): Promise<number> {
+  const { createServer } = await import("node:net");
+  const taken = new Set(_serverPorts.values());
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createServer();
+      probe.unref();
+      probe.on("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const address = probe.address();
+        probe.close(() => {
+          if (address && typeof address === "object") resolve(address.port);
+          else reject(new Error("could not read the probe socket's port"));
+        });
+      });
+    });
+    if (port !== DEFAULT_SDK_PORT && !taken.has(port)) return port;
+  }
+  throw new Error("could not allocate a free port for the OpenCode SDK server");
+}
+
 async function startServer(
   profile: AgentProfile,
   llmConfig: LlmConnectionConfig | undefined,
   env: Record<string, string> | undefined,
+  registryKey: string,
 ): Promise<SdkServer> {
   const factory: SdkServerFactory =
     _serverFactory ??
@@ -288,7 +363,20 @@ async function startServer(
     ).createOpencode;
 
   const sdkConfig = buildSdkConfig(profile, llmConfig);
-  const options = Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {};
+  const options: { config?: Record<string, unknown>; port?: number } =
+    Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {};
+
+  // Port discipline: `createOpencodeServer` defaults to a FIXED port (4096),
+  // so two coexisting servers — the default one plus any env-keyed one —
+  // would contend for the same bind and the second start would fail. The
+  // default key keeps the SDK default (byte-identical to the pre-R2
+  // singleton); every other registry entry gets its own OS-assigned free
+  // port, allocated BEFORE the env overlay below (allocation awaits).
+  if (registryKey !== "") {
+    const port = await allocateFreePort();
+    _serverPorts.set(registryKey, port);
+    options.port = port;
+  }
 
   // Env injection (module doc): the SDK's createOpencodeServer snapshots
   // process.env synchronously (its spawn precedes its first await), so the
@@ -333,11 +421,22 @@ async function getOrStartServer(
   const key = envServerKey(env);
   let pending = _servers.get(key);
   if (!pending) {
-    pending = startServer(profile, llmConfig, env);
+    pending = startServer(profile, llmConfig, env, key);
     _servers.set(key, pending);
-    pending.catch(() => {
-      if (_servers.get(key) === pending) _servers.delete(key);
-    });
+    pending.then(
+      (server) => {
+        // Mirror into the synchronously-closable registry (see closeServer)
+        // — but only while this start is still the live entry (closeServer
+        // may have cleared the registry mid-start).
+        if (_servers.get(key) === pending) _resolvedServers.set(key, server);
+      },
+      () => {
+        if (_servers.get(key) === pending) {
+          _servers.delete(key);
+          _serverPorts.delete(key);
+        }
+      },
+    );
   }
   return pending;
 }
