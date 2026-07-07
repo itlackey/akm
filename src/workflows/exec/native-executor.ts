@@ -125,12 +125,12 @@ import {
   DEFAULT_UNIT_TIMEOUT_MS,
   type GateFeedback,
   projectStepOutput,
+  reduceEmptyStep,
   reduceStepOutcomes,
   type StepWorkUnit,
   stepOutputsFromEvidence,
   type UnitOutcome,
   unitOutcomeFromRow,
-  validateStepArtifact,
 } from "./step-work";
 import { enqueueUnitWrite } from "./unit-writer";
 import { assertGitWorkTree, cleanupUnitWorktree, createUnitWorktree } from "./worktree";
@@ -366,21 +366,12 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const { template, reducer, isFanOut, items, units: workUnits } = workList.list;
 
   if (items.length === 0) {
-    // The promoted step artifact of an empty collect is the empty array; an
-    // empty vote has no winner, so its artifact is null (references into it
-    // fail loudly at resolution instead of falling back to the envelope).
-    const emptyEvidence = { units: [], itemCount: 0, output: reducer === "collect" ? [] : null };
-    // Typed artifacts (R2): even the degenerate empty artifact must honor the
-    // step's declared output schema before it can complete.
-    const schemaFailure = validateStepArtifact(plan, emptyEvidence);
-    return {
-      ok: schemaFailure === undefined,
-      units: [],
-      evidence: emptyEvidence,
-      summary: schemaFailure ?? `Step "${plan.stepId}" fan-out list was empty — no units dispatched.`,
-      unitsDispatched: dispatched,
-      ...(schemaFailure !== undefined ? { artifactSchemaFailure: true as const } : {}),
-    };
+    // Empty fan-out: the promoted artifact is the degenerate empty value, honored
+    // against the step's declared output schema. `reduceEmptyStep` is the SHARED
+    // decision (step-work.ts) the R3 report surface also uses to auto-complete an
+    // empty step the spine reaches, so both surfaces promote the identical
+    // artifact + schema verdict.
+    return { ...reduceEmptyStep(plan, reducer), unitsDispatched: dispatched };
   }
 
   // Env bindings resolve once per step, before any dispatch; a binding error

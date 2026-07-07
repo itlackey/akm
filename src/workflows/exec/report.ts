@@ -56,15 +56,18 @@ import {
   activeGateLoop,
   cascadeSkippedRouter,
   computeStepWorkList,
+  type ExecutedStepOutcome,
   finalizeExecutedStep,
   parseFrozenPlan,
   type RouteSkipInfo,
   recoverGateFeedback,
+  reduceEmptyStep,
   reduceStepOutcomes,
   type StepWorkList,
   type StepWorkUnit,
   seedJournaledRouteDecisions,
   stepOutputsFromEvidence,
+  type UnitOutcome,
   unitOutcomeFromRow,
 } from "./step-work";
 
@@ -116,8 +119,12 @@ export interface WorkflowReportResult {
   status: WorkflowRunUnitStatus;
   /** The gate loop this report was recorded under. */
   gateLoop: number;
-  /** How the write resolved. */
-  recorded: "written" | "idempotent" | "heartbeat";
+  /**
+   * How the write resolved. `not-recorded` = no unit row was written because a
+   * declared budget ceiling refused the unit (the step was failed instead) or
+   * the spine settled past all work before this unit could be recorded.
+   */
+  recorded: "written" | "idempotent" | "heartbeat" | "not-recorded";
   /** Non-terminal units still outstanding in the step's work-list after this report. */
   remainingUnits: number;
   /** Present when this report drove the active step to a completion decision. */
@@ -166,48 +173,39 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     );
   }
 
-  const stepState = next.step;
-  if (!stepState) {
+  if (!next.step) {
     throw new UsageError(`Workflow run ${runId} is active but has no current step to report against.`);
   }
 
   const plan = loadFrozenPlan(runId, planJson, planHash);
-  const stepPlan = plan.steps.find((s) => s.stepId === stepState.id);
-  if (!stepPlan) {
-    throw new UsageError(
-      `Step "${stepState.id}" of run ${runId} is not present in the run's frozen plan — cannot report against it.`,
-    );
-  }
-  // Route-only steps carry no execution subgraph and dispatch no units; a driver
-  // has nothing to report for them (the engine advances them deterministically).
-  if (!stepPlan.root) {
-    throw new UsageError(
-      `Step "${stepState.id}" of run ${runId} is a route step — it dispatches no units, so there is nothing to ` +
-        `report. It advances deterministically once the prior executing step completes.`,
-    );
+
+  // Resolve the step the driver should actually report against. If the spine is
+  // parked on a NON-DISPATCHING step — a route-only step, an empty fan-out
+  // (`over: []`), a step whose every unit is an unresolvable expression, or a
+  // whole-list resolution failure — the engine auto-completes or fails it: there
+  // is no `report --unit` that could ever advance it. So `report` first settles
+  // the spine past such steps (mutating exactly as the engine would, through the
+  // SAME shared completion path), then resolves the reported unit against the
+  // resting step. This is a no-op when the active step already has real
+  // reportable work (the common case) — no settle runs, nothing mutates.
+  let ctx = buildStepContext(runId, plan, next, units);
+  if (!ctx.dispatching) {
+    const settled = await settleSpine({ plan, runId, summaryJudge: input.summaryJudge });
+    if (settled.done || settled.run.status !== "active" || !settled.step) {
+      return settledTerminalResult(input, settled);
+    }
+    const freshUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
+    ctx = buildStepContext(runId, plan, settled, freshUnits);
   }
 
-  // Recompute the SHARED work-list at the active gate loop — the same ids,
-  // hashes, and prompts the engine (and `brief`) compute.
-  const priorEvidence: Record<string, Record<string, unknown> | undefined> = {};
-  for (const s of next.workflow.steps) priorEvidence[s.id] = s.evidence;
-  const stepOutputs = stepOutputsFromEvidence(priorEvidence);
-  const gateLoop = activeGateLoop(units, stepState.id);
-  const gateFeedback = recoverGateFeedback(units, stepState.id, gateLoop);
-
-  const computed = computeStepWorkList(stepPlan, {
-    runId,
-    params: next.run.params ?? {},
-    stepOutputs,
-    gateLoop,
-    ...(gateFeedback ? { gateFeedback } : {}),
-  });
-  if (!computed.ok) {
+  const { next: state, stepState, stepPlan, workList, gateLoop, priorEvidence, units: unitRows } = ctx;
+  if (!workList) {
     throw new UsageError(
-      `Step "${stepState.id}" of run ${runId} could not compute a work-list to report against: ${computed.error}`,
+      `Active step "${stepState.id}" of run ${runId} dispatches no reportable units` +
+        `${ctx.computeError ? ` (${ctx.computeError})` : " (route-only or empty)"}. There is nothing to ` +
+        `\`report --unit\` for it; run \`akm workflow brief ${runId}\` to see the current state.`,
     );
   }
-  const workList = computed.list;
 
   const workUnit = workList.units.find((u) => u.unitId === input.unitId);
   if (!workUnit) {
@@ -258,10 +256,10 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     );
     appendEvent({
       eventType: "workflow_unit_started",
-      ref: next.run.workflowRef,
+      ref: state.run.workflowRef,
       metadata: { runId, stepId: stepState.id, unitId: journalId, status: "running" },
     });
-    const remaining = countRemaining(workList.units, units, journalId, "running");
+    const remaining = countRemaining(workList.units, unitRows, journalId, "running");
     return {
       ok: true,
       runId,
@@ -271,7 +269,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
       gateLoop,
       recorded: "heartbeat",
       remainingUnits: remaining,
-      runStatus: next.run.status,
+      runStatus: state.run.status,
       message:
         claimed === "claim"
           ? `Claimed unit "${journalId}" of step "${stepState.id}". Heartbeat again with --status running, then report the result.`
@@ -281,28 +279,32 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
 
   // ── completed / failed: validate, guard, write, maybe finalize ─────────────
   const { resultJson, failureReason } = prepareResult(input, workUnit);
+  const thisTokens = input.tokens ?? 0;
 
-  // Guarded write: an idempotent re-report / replay-divergence check and the
-  // budget ceiling are enforced INSIDE the same SQLite transaction as the
-  // insert+finish, so two concurrent reports for the same unit serialize on the
-  // write lock and cannot corrupt the row (the row is always internally
-  // consistent; the first COMPLETED write wins, and a same-hash re-report is an
-  // idempotent no-op).
+  // Guarded write: the idempotent re-report / replay-divergence check and the
+  // budget ceiling are evaluated INSIDE the same SQLite transaction as the
+  // insert+finish, so two concurrent reports (same unit, or different units of
+  // one budgeted step) serialize on the write lock — each sees the other's row
+  // and the row is always internally consistent.
   const status: Exclude<WorkflowRunUnitStatus, "pending" | "running"> = input.status;
   const writeResult = await withWorkflowRunsRepo((repo) =>
-    repo.transaction((): "written" | "idempotent" => {
+    repo.transaction((): UnitWriteOutcome => {
       const existing = repo.getUnit(runId, journalId);
       if (existing?.status === "completed") {
-        if (existing.input_hash === inputHash) return "idempotent";
+        if (existing.input_hash === inputHash) return { kind: "idempotent" };
         throw new UsageError(
           `Replay divergence: unit "${journalId}" of run ${runId} is already recorded COMPLETED with a different ` +
             `input hash than this report's. Under a frozen plan the same unit identity must reproduce the same ` +
             `inputs — refusing to overwrite. Start a new run to re-execute this work.`,
         );
       }
-      // Budget ceilings (journal-seeded, same rule as the engine): count
-      // journaled DISPATCH rows other than this one; gate rows are excluded.
-      assertBudget(plan, repo.getUnitsForRun(runId), journalId);
+      // Budget ceilings, journal-seeded exactly as the engine seeds
+      // `DispatchBudget` (dispatch rows only — gate rows excluded).
+      const verdict = assessBudget(plan, repo.getUnitsForRun(runId), journalId, thisTokens);
+      // A `refuse` verdict crosses a ceiling on ADMISSION: the engine would fail
+      // this dispatch WITHOUT journaling it. Write nothing; the caller fails the
+      // step (matching the engine's terminal state, not a stuck run).
+      if (verdict.kind === "refuse") return { kind: "budget-refused", message: verdict.message };
 
       repo.insertUnit({
         runId,
@@ -326,19 +328,31 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
         sessionId: input.sessionId ?? null,
         finishedAt: nowIso,
       });
-      return "written";
+      // A `tokens-cross` verdict: this unit's OWN tokens push the run total over
+      // `max_tokens`. The engine journals the unit (it dispatched), then aborts
+      // and fails the step. The row is written above; the caller fails the step.
+      if (verdict.kind === "tokens-cross") return { kind: "budget-tokens", message: verdict.message };
+      return { kind: "written" };
     }),
   );
 
-  // Events carry ids/status only — never workflow-authored content.
+  // Budget REFUSAL: no row written — fail the step hard, naming the ceiling
+  // (budget ceilings ignore on_error), so the run reaches the engine's terminal
+  // FAILED state rather than getting permanently stuck (peer review R3).
+  if (writeResult.kind === "budget-refused") {
+    return failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, false);
+  }
+
+  // Events carry ids/status only — never workflow-authored content. Emitted only
+  // when a row was actually written (idempotent/normal/token-crossing).
   appendEvent({
     eventType: "workflow_unit_started",
-    ref: next.run.workflowRef,
+    ref: state.run.workflowRef,
     metadata: { runId, stepId: stepState.id, unitId: journalId, status: "running" },
   });
   appendEvent({
     eventType: "workflow_unit_finished",
-    ref: next.run.workflowRef,
+    ref: state.run.workflowRef,
     metadata: {
       runId,
       stepId: stepState.id,
@@ -351,7 +365,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
 
   // An idempotent re-report changes nothing else — the step's completion (if any)
   // already happened on the first report.
-  if (writeResult === "idempotent") {
+  if (writeResult.kind === "idempotent") {
     return {
       ok: true,
       runId,
@@ -361,19 +375,24 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
       gateLoop,
       recorded: "idempotent",
       remainingUnits: 0,
-      runStatus: next.run.status,
+      runStatus: state.run.status,
       message: `Unit "${journalId}" was already recorded — no change (idempotent re-report).`,
     };
   }
 
+  // Budget TOKEN crossing: the row is written; fail the step hard naming the
+  // ceiling (same terminal state as the engine's addTokens abort).
+  if (writeResult.kind === "budget-tokens") {
+    return failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, true);
+  }
+
   // Is the step's work-list now fully terminal? Re-read the journal so a
-  // concurrent report of a sibling unit is observed.
+  // concurrent report of a sibling unit is observed. Unresolvable units are
+  // never reportable and count as terminally failed (the engine's
+  // expression_error), so they never keep a step outstanding.
   const rowsAfter = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
   const byUnit = indexDispatchRows(rowsAfter);
-  const remaining = workList.units.filter((u) => {
-    const row = byUnit.get(u.journalBaseId);
-    return !(row && (row.status === "completed" || row.status === "failed"));
-  }).length;
+  const remaining = remainingReportableUnits(workList, byUnit);
 
   if (remaining > 0) {
     return {
@@ -385,7 +404,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
       gateLoop,
       recorded: "written",
       remainingUnits: remaining,
-      runStatus: next.run.status,
+      runStatus: state.run.status,
       message: `Recorded unit "${journalId}" (${status}). ${remaining} unit(s) still outstanding for step "${stepState.id}".`,
     };
   }
@@ -393,7 +412,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   // The work-list is fully terminal → run the SHARED completion path.
   return finalizeStep({
     runId,
-    next,
+    next: state,
     plan,
     stepPlan,
     stepState,
@@ -407,7 +426,196 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   });
 }
 
+// ── Active-step resolution (shared) ──────────────────────────────────────────
+
+/** The resolved report target: the active step, its frozen plan, and its work-list. */
+interface StepContext {
+  next: WorkflowNextResult;
+  stepState: NonNullable<WorkflowNextResult["step"]>;
+  stepPlan: IrStepPlan;
+  /** The computed work-list, or `null` for a non-dispatching step (route-only / whole-list failure). */
+  workList: StepWorkList | null;
+  /** Set when `workList` is null because the fan-out list itself failed to resolve. */
+  computeError?: string;
+  gateLoop: number;
+  priorEvidence: Record<string, Record<string, unknown> | undefined>;
+  units: WorkflowRunUnitRow[];
+  /** True when the step has ≥1 reportable (resolvable) unit — a driver can report it. */
+  dispatching: boolean;
+}
+
+/**
+ * Compute the report context for a run's active step: find the frozen step plan,
+ * project prior evidence, recover the gate loop + feedback, and compute the
+ * SHARED work-list (same ids/hashes/prompts the engine and `brief` compute).
+ * `dispatching` is false for the non-dispatching steps the engine auto-advances
+ * (route-only, empty fan-out, all-unresolvable, whole-list failure) — the report
+ * path settles past those rather than getting stuck at a step no `report --unit`
+ * can complete.
+ */
+function buildStepContext(
+  runId: string,
+  plan: WorkflowPlanGraph,
+  next: WorkflowNextResult,
+  units: WorkflowRunUnitRow[],
+): StepContext {
+  const stepState = next.step;
+  if (!stepState) {
+    throw new UsageError(`Workflow run ${runId} is active but has no current step to report against.`);
+  }
+  const stepPlan = plan.steps.find((s) => s.stepId === stepState.id);
+  if (!stepPlan) {
+    throw new UsageError(
+      `Step "${stepState.id}" of run ${runId} is not present in the run's frozen plan — cannot report against it.`,
+    );
+  }
+  const priorEvidence: Record<string, Record<string, unknown> | undefined> = {};
+  for (const s of next.workflow.steps) priorEvidence[s.id] = s.evidence;
+  const stepOutputs = stepOutputsFromEvidence(priorEvidence);
+  const gateLoop = activeGateLoop(units, stepState.id);
+  const gateFeedback = recoverGateFeedback(units, stepState.id, gateLoop);
+
+  // Route-only steps carry no execution subgraph — nothing to report.
+  if (!stepPlan.root) {
+    return { next, stepState, stepPlan, workList: null, gateLoop, priorEvidence, units, dispatching: false };
+  }
+
+  const computed = computeStepWorkList(stepPlan, {
+    runId,
+    params: next.run.params ?? {},
+    stepOutputs,
+    gateLoop,
+    ...(gateFeedback ? { gateFeedback } : {}),
+  });
+  if (!computed.ok) {
+    return {
+      next,
+      stepState,
+      stepPlan,
+      workList: null,
+      computeError: computed.error,
+      gateLoop,
+      priorEvidence,
+      units,
+      dispatching: false,
+    };
+  }
+  const workList = computed.list;
+  // A step is dispatching only if a driver can actually report ≥1 unit: an empty
+  // fan-out or an all-unresolvable work-list has nothing to report.
+  const dispatching = workList.units.some((u) => u.resolved.ok);
+  return { next, stepState, stepPlan, workList, gateLoop, priorEvidence, units, dispatching };
+}
+
 // ── Step finalization (shared path) ──────────────────────────────────────────
+
+/** The normalized decision of ONE step-completion attempt (engine parity). */
+type StepCompletion =
+  | { kind: "advanced" }
+  | { kind: "failed"; summary: string }
+  | { kind: "gate-rejected"; loopsRemaining: boolean; missing: string[]; feedback: string };
+
+/**
+ * Rebuild a step's unit outcomes from the journal and reduce them through the
+ * SAME functions the executor uses. An EMPTY work-list promotes the degenerate
+ * empty artifact ({@link reduceEmptyStep}); otherwise each unit is rehydrated
+ * from its journal row, and an UNRESOLVABLE unit (a bad `item.<path>` reference)
+ * is treated as the engine's immediate `expression_error` failure — never
+ * journaled, always reduced as a failed outcome — so a partially- or fully-
+ * unresolvable step reduces identically on both surfaces.
+ */
+function reduceWorkListOutcomes(
+  stepPlan: IrStepPlan,
+  workList: StepWorkList,
+  byUnit: Map<string, WorkflowRunUnitRow>,
+): ExecutedStepOutcome {
+  if (workList.units.length === 0) {
+    return reduceEmptyStep(stepPlan, workList.reducer);
+  }
+  const outcomes: UnitOutcome[] = workList.units.map((u) => {
+    if (!u.resolved.ok) {
+      return { unitId: u.unitId, ok: false, failureReason: "expression_error", error: u.resolved.error };
+    }
+    const row = byUnit.get(u.journalBaseId);
+    return unitOutcomeFromRow(u.unitId, row as WorkflowRunUnitRow, u.schema !== undefined);
+  });
+  return reduceStepOutcomes(stepPlan, workList.reducer, workList.isFanOut, workList.template.onError, outcomes);
+}
+
+/**
+ * Run ONE completion attempt for a reduced step outcome through the SHARED
+ * {@link finalizeExecutedStep} (route eval → artifact-judged gate → gate-row
+ * journaling → `completeWorkflowStep`), normalizing its result. A typed-artifact
+ * schema mismatch is a HARD failure on the report surface (documented call:
+ * the ENGINE recovers it from in-invocation memory, but no gate row is
+ * journaled, so the stateless report path cannot recover the feedback across
+ * invocations — and synthesizing a gate row would break engine/report unit-graph
+ * parity). A GATE rejection journals its `<stepId>.gate:l<loop>` row, so its
+ * feedback IS recoverable and stays a real bounded loop.
+ */
+async function runStepCompletion(args: {
+  runId: string;
+  workflowRef: string;
+  stepPlan: IrStepPlan;
+  stepId: string;
+  completionCriteria: string[];
+  gateLoop: number;
+  reduced: ExecutedStepOutcome;
+  priorEvidence: Record<string, Record<string, unknown> | undefined>;
+  params: Record<string, unknown>;
+  routeSelected: Set<string>;
+  routeUnselected: Map<string, RouteSkipInfo>;
+  summaryJudge: SummaryJudge | null | undefined;
+}): Promise<StepCompletion> {
+  const maxLoops = Math.max(1, args.stepPlan.gate.maxLoops ?? 1);
+  const finalize = await finalizeExecutedStep({
+    runId: args.runId,
+    workflowRef: args.workflowRef,
+    stepId: args.stepId,
+    stepPlan: args.stepPlan,
+    completionCriteria: args.completionCriteria,
+    gateLoop: args.gateLoop,
+    loopsRemaining: args.gateLoop < maxLoops,
+    result: args.reduced,
+    priorEvidence: args.priorEvidence,
+    params: args.params,
+    routeSelected: args.routeSelected,
+    routeUnselected: args.routeUnselected,
+    summaryJudge: args.summaryJudge,
+  });
+
+  if (finalize.kind === "retry") {
+    if (!args.reduced.ok) {
+      // Typed-artifact schema mismatch → hard failure on the report surface.
+      await completeWorkflowStep({
+        runId: args.runId,
+        stepId: args.stepId,
+        status: "failed",
+        notes: args.reduced.summary,
+        evidence: args.reduced.evidence,
+      });
+      return { kind: "failed", summary: args.reduced.summary };
+    }
+    return {
+      kind: "gate-rejected",
+      loopsRemaining: true,
+      missing: finalize.gateFeedback.missing,
+      feedback: finalize.gateFeedback.feedback,
+    };
+  }
+  if (finalize.kind === "gate-exhausted") {
+    return {
+      kind: "gate-rejected",
+      loopsRemaining: false,
+      missing: finalize.gateRejection.missing,
+      feedback: finalize.gateRejection.feedback,
+    };
+  }
+  if (finalize.kind === "failed") {
+    return { kind: "failed", summary: finalize.summary };
+  }
+  return { kind: "advanced" };
+}
 
 async function finalizeStep(args: {
   runId: string;
@@ -424,22 +632,7 @@ async function finalizeStep(args: {
   written: { unitId: string; status: WorkflowRunUnitStatus };
 }): Promise<WorkflowReportResult> {
   const { runId, next, plan, stepPlan, stepState, workList, byUnit, gateLoop } = args;
-
-  // Rebuild the unit outcomes from the journal and reduce them through the SAME
-  // function the executor uses (reducer + on_error + artifact schema).
-  const outcomes = workList.units.map((u) => {
-    const row = byUnit.get(u.journalBaseId);
-    // Every unit is terminal here (checked by the caller); the non-null row is
-    // guaranteed.
-    return unitOutcomeFromRow(u.unitId, row as WorkflowRunUnitRow, u.schema !== undefined);
-  });
-  const reduced = reduceStepOutcomes(
-    stepPlan,
-    workList.reducer,
-    workList.isFanOut,
-    workList.template.onError,
-    outcomes,
-  );
+  const reduced = reduceWorkListOutcomes(stepPlan, workList, byUnit);
 
   // Route/skip bookkeeping seeded from the journal so cascaded skips survive
   // (identical to the engine's resume seeding).
@@ -447,77 +640,54 @@ async function finalizeStep(args: {
   const routeUnselected = new Map<string, RouteSkipInfo>();
   seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
 
-  const maxLoops = Math.max(1, stepPlan.gate.maxLoops ?? 1);
-  const finalize = await finalizeExecutedStep({
+  const completion = await runStepCompletion({
     runId,
     workflowRef: next.run.workflowRef,
-    stepId: stepState.id,
     stepPlan,
+    stepId: stepState.id,
     completionCriteria: stepState.completionCriteria ?? [],
     gateLoop,
-    loopsRemaining: gateLoop < maxLoops,
-    result: reduced,
+    reduced,
     priorEvidence: args.priorEvidence,
     params: next.run.params ?? {},
     routeSelected,
     routeUnselected,
     summaryJudge: args.summaryJudge,
   });
+  const maxLoops = Math.max(1, stepPlan.gate.maxLoops ?? 1);
 
-  if (finalize.kind === "retry") {
-    // A typed-artifact schema mismatch (`reduced.ok === false`) yields a retry
-    // that the ENGINE recovers from in-invocation memory — but no gate row is
-    // journaled for it, so the stateless report path's next `brief` could not
-    // recover the feedback (and journaling a synthetic gate row would break
-    // engine/report unit-graph parity). Documented call: on the report surface
-    // a schema mismatch is a HARD step failure. A driver fixes the workflow's
-    // schema/unit contract and starts a new run. (A GATE rejection —
-    // `reduced.ok === true` — journals its `<stepId>.gate:l<loop>` row, so its
-    // feedback IS recoverable; that path stays a real bounded loop below.)
-    if (!reduced.ok) {
-      await completeWorkflowStep({
-        runId,
-        stepId: stepState.id,
-        status: "failed",
-        notes: reduced.summary,
-        evidence: reduced.evidence,
-      });
-      const state = await getNextWorkflowStep(runId);
-      return reportResult(
-        runId,
-        stepState.id,
-        args.written,
-        gateLoop,
-        state.run.status,
-        {
-          kind: "failed",
-          summary: reduced.summary,
-        },
-        `Step "${stepState.id}" failed: ${reduced.summary}`,
-      );
-    }
-    // Gate rejected with loop budget left — the step stays active; the next
-    // `brief` emits the loop-N work-list with the feedback recovered from the
-    // journaled gate row.
-    const nextLoop = gateLoop + 1;
+  if (completion.kind === "failed") {
+    const state = await getNextWorkflowStep(runId);
     return reportResult(
       runId,
       stepState.id,
       args.written,
       gateLoop,
-      "active",
-      {
-        kind: "gate-rejected",
-        loopsRemaining: true,
-        missing: finalize.gateFeedback.missing,
-        feedback: finalize.gateFeedback.feedback,
-        summary: finalize.gateFeedback.feedback,
-      },
-      `Step "${stepState.id}" was rejected — run \`akm workflow brief ${runId}\` for loop ${nextLoop}'s work-list (feedback threaded in).`,
+      state.run.status,
+      { kind: "failed", summary: completion.summary },
+      `Step "${stepState.id}" failed: ${completion.summary}`,
     );
   }
 
-  if (finalize.kind === "gate-exhausted") {
+  if (completion.kind === "gate-rejected") {
+    if (completion.loopsRemaining) {
+      const nextLoop = gateLoop + 1;
+      return reportResult(
+        runId,
+        stepState.id,
+        args.written,
+        gateLoop,
+        "active",
+        {
+          kind: "gate-rejected",
+          loopsRemaining: true,
+          missing: completion.missing,
+          feedback: completion.feedback,
+          summary: completion.feedback,
+        },
+        `Step "${stepState.id}" was rejected — run \`akm workflow brief ${runId}\` for loop ${nextLoop}'s work-list (feedback threaded in).`,
+      );
+    }
     return reportResult(
       runId,
       stepState.id,
@@ -527,34 +697,18 @@ async function finalizeStep(args: {
       {
         kind: "gate-rejected",
         loopsRemaining: false,
-        missing: finalize.gateRejection.missing,
-        feedback: finalize.gateRejection.feedback,
-        summary: finalize.gateRejection.feedback,
+        missing: completion.missing,
+        feedback: completion.feedback,
+        summary: completion.feedback,
       },
       `Step "${stepState.id}" was rejected and its ${maxLoops}-loop gate budget is exhausted. Resolve it manually (\`akm workflow complete\`/\`resume\`/\`abandon\`).`,
     );
   }
 
-  if (finalize.kind === "failed") {
-    const state = await getNextWorkflowStep(runId);
-    return reportResult(
-      runId,
-      stepState.id,
-      args.written,
-      gateLoop,
-      state.run.status,
-      {
-        kind: "failed",
-        summary: finalize.summary,
-      },
-      `Step "${stepState.id}" failed: ${finalize.summary}`,
-    );
-  }
-
-  // advanced — the spine moved. Walk forward over any route-only / skipped steps
-  // (they dispatch no units, so no driver could report them) using the SAME
-  // shared decision helpers, then surface the resting state.
-  const state = await advanceNonExecutableSteps(plan, runId, routeSelected, routeUnselected, args.summaryJudge);
+  // advanced — the spine moved. Settle forward over any non-dispatching steps
+  // (route-only / skipped / empty fan-out / all-unresolvable) so the run never
+  // gets stuck at a step no driver could report, then surface the resting state.
+  const state = await settleSpine({ plan, runId, summaryJudge: args.summaryJudge });
   const message =
     state.run.status === "completed"
       ? `Step "${stepState.id}" completed — the workflow run is now DONE.`
@@ -565,26 +719,36 @@ async function finalizeStep(args: {
 }
 
 /**
- * Advance the spine over steps a driver cannot report (route-only + route-skipped
- * steps), using the shared route/skip helpers — identical semantics to the
- * engine loop, so the run does not get stuck at a route step no `report` can
- * touch. Stops at the first executable pending step, or when the run leaves
- * `active`.
+ * Settle the spine forward over every NON-DISPATCHING step the engine would
+ * auto-advance but no `report --unit` could ever complete: a route-skipped
+ * target, a route-only step, an empty fan-out (`over: []`), a step whose every
+ * unit is unresolvable, and a whole-list resolution failure. Each is completed
+ * (or failed) through the SAME shared helpers the engine uses, so the run does
+ * not get stuck — the exact gap peer review R3 flagged. Stops at the first step
+ * with real reportable work, or when the run leaves `active`.
  */
-async function advanceNonExecutableSteps(
-  plan: WorkflowPlanGraph,
-  runId: string,
-  routeSelected: Set<string>,
-  routeUnselected: Map<string, RouteSkipInfo>,
-  summaryJudge: SummaryJudge | null | undefined,
-): Promise<WorkflowNextResult> {
+async function settleSpine(args: {
+  plan: WorkflowPlanGraph;
+  runId: string;
+  summaryJudge: SummaryJudge | null | undefined;
+}): Promise<WorkflowNextResult> {
+  const { plan, runId, summaryJudge } = args;
   let state = await getNextWorkflowStep(runId);
-  // Bounded by the step count — every iteration completes/skips one step.
-  for (let guard = 0; guard <= plan.steps.length && state.run.status === "active" && state.step; guard++) {
+  const routeSelected = new Set<string>();
+  const routeUnselected = new Map<string, RouteSkipInfo>();
+  seedJournaledRouteDecisions(plan, state, routeSelected, routeUnselected);
+
+  // Bounded: each iteration advances the spine by one step OR advances one gate
+  // loop of a stuck gated step (which journals a gate row and is capped by that
+  // step's max_loops). The sum-of-loops bound cannot be exceeded.
+  const cap = plan.steps.reduce((n, s) => n + Math.max(1, s.gate.maxLoops ?? 1) + 2, 1);
+  for (let guard = 0; guard < cap && state.run.status === "active" && state.step; guard++) {
     const step = state.step;
     const sp = plan.steps.find((s) => s.stepId === step.id);
     if (!sp) break;
 
+    // A route-skipped target: complete it as skipped, cascading if it is itself
+    // a router (identical to the engine loop's skip handling).
     const skipInfo = routeUnselected.get(step.id);
     if (skipInfo && !routeSelected.has(step.id)) {
       if (sp.route) cascadeSkippedRouter(sp.route, step.id, routeUnselected);
@@ -597,7 +761,7 @@ async function advanceNonExecutableSteps(
       continue;
     }
 
-    // A route-only step: no units to report — evaluate + complete it here.
+    // A route-only step (no execution subgraph): evaluate + complete it here.
     if (!sp.root && sp.route) {
       const priorEvidence: Record<string, Record<string, unknown> | undefined> = {};
       for (const s of state.workflow.steps) priorEvidence[s.id] = s.evidence;
@@ -626,10 +790,74 @@ async function advanceNonExecutableSteps(
       continue;
     }
 
-    // An executable step — the driver briefs and reports it next.
+    // An executing step. Settle it ONLY when it dispatches no reportable units
+    // (empty fan-out, all-unresolvable, or a whole-list failure); otherwise the
+    // driver briefs and reports it, so stop here.
+    if (sp.root) {
+      const freshUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
+      const priorEvidence: Record<string, Record<string, unknown> | undefined> = {};
+      for (const s of state.workflow.steps) priorEvidence[s.id] = s.evidence;
+      const stepOutputs = stepOutputsFromEvidence(priorEvidence);
+      const gateLoop = activeGateLoop(freshUnits, step.id);
+      const gateFeedback = recoverGateFeedback(freshUnits, step.id, gateLoop);
+      const computed = computeStepWorkList(sp, {
+        runId,
+        params: state.run.params ?? {},
+        stepOutputs,
+        gateLoop,
+        ...(gateFeedback ? { gateFeedback } : {}),
+      });
+      if (!computed.ok) {
+        // Whole-list resolution failure → the engine fails the step (failedStep).
+        await completeWorkflowStep({
+          runId,
+          stepId: step.id,
+          status: "failed",
+          notes: computed.error,
+          evidence: { error: computed.error },
+        });
+        break; // run failed
+      }
+      const list = computed.list;
+      if (list.units.some((u) => u.resolved.ok)) break; // real reportable work — stop.
+
+      // No reportable units (empty fan-out OR all-unresolvable). Auto-complete
+      // it exactly as the engine would, through the SAME completion path.
+      const byUnit = indexDispatchRows(freshUnits);
+      const reduced = reduceWorkListOutcomes(sp, list, byUnit);
+      const completion = await runStepCompletion({
+        runId,
+        workflowRef: state.run.workflowRef,
+        stepPlan: sp,
+        stepId: step.id,
+        completionCriteria: step.completionCriteria ?? [],
+        gateLoop,
+        reduced,
+        priorEvidence,
+        params: state.run.params ?? {},
+        routeSelected,
+        routeUnselected,
+        summaryJudge,
+      });
+      if (completion.kind === "advanced") {
+        state = await getNextWorkflowStep(runId);
+        continue;
+      }
+      // A gate rejection on a zero-unit step re-runs the (unchanged) empty
+      // artifact, but the journaled gate row advances the loop, so the next
+      // iteration re-evaluates at gateLoop+1, bounded by max_loops. Loop the
+      // SAME step WITHOUT advancing the spine.
+      if (completion.kind === "gate-rejected" && completion.loopsRemaining) continue;
+      // failed / gate-exhausted → nothing more to auto-advance.
+      break;
+    }
+
     break;
   }
-  return state;
+  // Re-read the freshest run state: a terminal-break path (a failed step, an
+  // exhausted gate) left `state` reflecting the pre-completion snapshot from the
+  // top of the loop iteration, but the DB now holds the true resting state.
+  return getNextWorkflowStep(runId);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -689,16 +917,45 @@ function prepareResult(
   return { resultJson: JSON.stringify(input.resultRaw ?? ""), failureReason: null };
 }
 
+/** How the guarded unit write resolved inside the SQLite transaction. */
+type UnitWriteOutcome =
+  | { kind: "written" }
+  | { kind: "idempotent" }
+  /** A ceiling was crossed on ADMISSION — no row written; the caller fails the step. */
+  | { kind: "budget-refused"; message: string }
+  /** This unit's own tokens crossed `max_tokens` — the row IS written; the caller fails the step. */
+  | { kind: "budget-tokens"; message: string };
+
+/** A declared-budget verdict for a single report, seeded from the journal. */
+type BudgetVerdict = { kind: "ok" } | { kind: "refuse"; message: string } | { kind: "tokens-cross"; message: string };
+
 /**
- * Enforce the frozen plan's declared budget ceilings on the report path, seeded
- * from the journal exactly as the engine seeds `DispatchBudget`: dispatch rows
- * (phase != gate) OTHER than the one being written count against `max_units`,
- * and their token sum against `max_tokens`. A ceiling already reached refuses
- * the new unit — the same hard rule as the engine (regardless of on_error).
+ * Assess the frozen plan's declared budget ceilings for ONE report, seeded from
+ * the journal exactly as the engine seeds `DispatchBudget`: dispatch rows
+ * (phase = null) OTHER than the one being written count against `max_units`, and
+ * their token sum against `max_tokens`. Unlike a simple admission check, this
+ * mirrors the engine's TWO enforcement points so the report path reaches the
+ * engine's terminal state (a HARD step failure naming the ceiling) instead of
+ * throwing and leaving the run stuck (peer review R3, finding 1):
+ *
+ *   - `refuse` — the engine's `tryConsume` refuses the (maxUnits+1)-th dispatch,
+ *     or a dispatch whose run token total is already at/over `max_tokens`,
+ *     WITHOUT journaling it. The report writes no row and fails the step.
+ *   - `tokens-cross` — the engine's `addTokens` crosses `max_tokens` AFTER a
+ *     dispatch: the unit IS journaled, then pending dispatches abort and the
+ *     step fails. The report writes the row, then fails the step.
+ *
+ * Budget ceilings fail the step regardless of `on_error` — a capped run must
+ * never quietly pass its gate.
  */
-function assertBudget(plan: WorkflowPlanGraph, rows: WorkflowRunUnitRow[], journalId: string): void {
+function assessBudget(
+  plan: WorkflowPlanGraph,
+  rows: WorkflowRunUnitRow[],
+  journalId: string,
+  thisTokens: number,
+): BudgetVerdict {
   const budget = plan.budget;
-  if (!budget || (budget.maxUnits === undefined && budget.maxTokens === undefined)) return;
+  if (!budget || (budget.maxUnits === undefined && budget.maxTokens === undefined)) return { kind: "ok" };
   let dispatched = 0;
   let tokens = 0;
   for (const row of rows) {
@@ -708,17 +965,103 @@ function assertBudget(plan: WorkflowPlanGraph, rows: WorkflowRunUnitRow[], journ
     tokens += row.tokens ?? 0;
   }
   if (budget.maxUnits !== undefined && dispatched >= budget.maxUnits) {
-    throw new UsageError(
-      `budget exceeded (max_units ceiling): ${dispatched} unit(s) already dispatched for this run against the ` +
-        `workflow's declared budget.max_units of ${budget.maxUnits} — refusing to record further units.`,
-    );
+    return {
+      kind: "refuse",
+      message:
+        `budget exceeded (max_units ceiling): ${dispatched} unit(s) already dispatched for this run against the ` +
+        `workflow's declared budget.max_units of ${budget.maxUnits} — the step fails hard (budget ceilings ignore on_error).`,
+    };
   }
   if (budget.maxTokens !== undefined && tokens >= budget.maxTokens) {
-    throw new UsageError(
-      `budget exceeded (max_tokens ceiling): ${tokens} token(s) already spent for this run against the workflow's ` +
-        `declared budget.max_tokens of ${budget.maxTokens} — refusing to record further units.`,
-    );
+    return {
+      kind: "refuse",
+      message:
+        `budget exceeded (max_tokens ceiling): ${tokens} token(s) already spent for this run against the workflow's ` +
+        `declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
+    };
   }
+  if (budget.maxTokens !== undefined && tokens + thisTokens >= budget.maxTokens) {
+    return {
+      kind: "tokens-cross",
+      message:
+        `budget exceeded (max_tokens ceiling): ${tokens + thisTokens} token(s) spent for this run, reaching the ` +
+        `workflow's declared budget.max_tokens of ${budget.maxTokens} — the step fails hard (budget ceilings ignore on_error).`,
+    };
+  }
+  return { kind: "ok" };
+}
+
+/**
+ * Fail the active step because a declared budget ceiling was crossed — the same
+ * terminal state the engine reaches (`failedStep` → a FAILED step and run). The
+ * failure goes through `completeWorkflowStep` (the gate spine is never bypassed)
+ * with the ceiling-naming message as notes/evidence. `wroteRow` reflects whether
+ * the crossing unit's row was journaled (a `tokens-cross`) or not (a `refuse`).
+ */
+async function failStepOnBudget(
+  runId: string,
+  stepId: string,
+  journalId: string,
+  status: WorkflowRunUnitStatus,
+  gateLoop: number,
+  message: string,
+  wroteRow: boolean,
+): Promise<WorkflowReportResult> {
+  await completeWorkflowStep({ runId, stepId, status: "failed", notes: message, evidence: { error: message } });
+  const state = await getNextWorkflowStep(runId);
+  return {
+    ok: true,
+    runId,
+    stepId,
+    unitId: journalId,
+    status,
+    gateLoop,
+    recorded: wroteRow ? "written" : "not-recorded",
+    remainingUnits: 0,
+    stepOutcome: { kind: "failed", summary: message },
+    runStatus: state.run.status,
+    message: `Step "${stepId}" failed: ${message}`,
+  };
+}
+
+/**
+ * The result surfaced when settling non-dispatching steps drove the run to a
+ * terminal (or step-less) state before the reported unit could be recorded —
+ * the run advanced/failed on its own, so there is nothing left to journal.
+ */
+function settledTerminalResult(input: ReportUnitInput, settled: WorkflowNextResult): WorkflowReportResult {
+  const runStatus = settled.run.status;
+  const message =
+    runStatus === "completed"
+      ? `The run advanced to completion while settling steps with no reportable work; unit "${input.unitId}" needed no report.`
+      : `The run is ${runStatus} after settling steps with no reportable work; unit "${input.unitId}" could not be recorded.`;
+  return {
+    ok: true,
+    runId: settled.run.id,
+    stepId: settled.run.currentStepId ?? "(none)",
+    unitId: input.unitId,
+    status: input.status,
+    gateLoop: 1,
+    recorded: "not-recorded",
+    remainingUnits: 0,
+    stepOutcome: runStatus === "completed" ? { kind: "advanced" } : { kind: "failed", summary: message },
+    runStatus,
+    message,
+  };
+}
+
+/**
+ * Count the step's units that are still OUTSTANDING: resolvable units without a
+ * terminal journal row. Unresolvable units are never reportable (the engine's
+ * immediate `expression_error`), so they never keep a step outstanding — the
+ * caller's reduction treats them as failed outcomes.
+ */
+function remainingReportableUnits(workList: StepWorkList, byUnit: Map<string, WorkflowRunUnitRow>): number {
+  return workList.units.filter((u) => {
+    if (!u.resolved.ok) return false;
+    const row = byUnit.get(u.journalBaseId);
+    return !(row && (row.status === "completed" || row.status === "failed"));
+  }).length;
 }
 
 /** Index the run's DISPATCH unit rows (phase != gate) by unit id. */
@@ -740,6 +1083,9 @@ function countRemaining(
   const byUnit = indexDispatchRows(rows);
   return workUnits.filter((u) => {
     if (u.journalBaseId === justClaimed) return claimedStatus !== "completed" && claimedStatus !== "failed";
+    // Unresolvable units are never reportable (the engine's expression_error), so
+    // they never count as outstanding.
+    if (!u.resolved.ok) return false;
     const row = byUnit.get(u.journalBaseId);
     return !(row && (row.status === "completed" || row.status === "failed"));
   }).length;

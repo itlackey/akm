@@ -517,8 +517,7 @@ describe("workflow report — refusals", () => {
     ).rejects.toThrow(/failed validation against its declared output schema/);
   });
 
-  test("a budget max_units ceiling refuses recording a further unit", async () => {
-    const BUDGET_WF = `version: 1
+  const BUDGET_MAX_UNITS_WF = `version: 1
 name: Budget
 budget:
   max_units: 2
@@ -531,7 +530,13 @@ steps:
       unit:
         instructions: Review \${{ item }}.
 `;
-    const p = plan(BUDGET_WF);
+
+  test("a budget max_units ceiling FAILS the step (engine parity), not a stuck run, when a prior report crosses it", async () => {
+    // Peer review R3, finding 1: the engine's `tryConsume` refuses the
+    // (maxUnits+1)-th dispatch and fails the STEP (and run) hard. The report path
+    // must reach the SAME terminal state — a failed step naming the ceiling — not
+    // throw and leave the run permanently stuck.
+    const p = plan(BUDGET_MAX_UNITS_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts"] };
     const [ua, ub, uc] = unitIds(p, 0, params);
     // Two units already dispatched (journaled) → the ceiling is reached.
@@ -544,9 +549,99 @@ steps:
         { unitId: ub, stepId: "review", nodeId: "review", status: "completed", resultJson: JSON.stringify("ok") },
       ],
     });
-    await expect(
-      reportWorkflowUnit({ target: RUN_ID, unitId: uc, status: "completed", resultRaw: "ok", summaryJudge: null }),
-    ).rejects.toThrow(/budget exceeded \(max_units ceiling\)/);
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: uc,
+      status: "completed",
+      resultRaw: "ok",
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("failed");
+    expect(r.stepOutcome?.summary).toMatch(/budget exceeded \(max_units ceiling\)/);
+    expect(r.runStatus).toBe("failed");
+    // The crossing unit was NOT journaled (the engine never dispatched it).
+    expect(r.recorded).toBe("not-recorded");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("failed");
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.unit_id === uc)).toHaveLength(0);
+    });
+  });
+
+  test("a 3-unit fan-out reported fresh under max_units:2 fails the step on the crossing report (not stuck)", async () => {
+    // The exact finding scenario driven end to end: report all three units in
+    // order; the third crosses the ceiling and fails the run.
+    const p = plan(BUDGET_MAX_UNITS_WF);
+    const params = { files: ["a.ts", "b.ts", "c.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua, ub, uc] = unitIds(p, 0, params);
+
+    const r1 = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ua,
+      status: "completed",
+      resultRaw: "ok",
+      summaryJudge: null,
+    });
+    expect(r1.recorded).toBe("written");
+    const r2 = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: ub,
+      status: "completed",
+      resultRaw: "ok",
+      summaryJudge: null,
+    });
+    expect(r2.recorded).toBe("written");
+    const r3 = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: uc,
+      status: "completed",
+      resultRaw: "ok",
+      summaryJudge: null,
+    });
+    expect(r3.stepOutcome?.kind).toBe("failed");
+    expect(r3.runStatus).toBe("failed");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("failed");
+  });
+
+  test("a single unit whose own tokens cross max_tokens FAILS the step (engine addTokens parity)", async () => {
+    // Peer review R3, finding 1: a unit's OWN reported tokens crossing the
+    // ceiling fails the step on the engine (DispatchBudget.addTokens). The report
+    // path journaled the unit then silently completed the step — it must fail it.
+    const BUDGET_TOKENS_WF = `version: 1
+name: BudgetTokens
+budget:
+  max_tokens: 100
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+`;
+    const p = plan(BUDGET_TOKENS_WF);
+    seedRun({ plan: p, steps: [{ id: "work" }] });
+    const unit = unitIds(p, 0, {})[0];
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: unit,
+      status: "completed",
+      resultRaw: "done",
+      tokens: 150,
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("failed");
+    expect(r.stepOutcome?.summary).toMatch(/budget exceeded \(max_tokens ceiling\)/);
+    expect(r.runStatus).toBe("failed");
+    // The unit's row WAS journaled (the engine dispatched it, then aborted).
+    expect(r.recorded).toBe("written");
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, unit);
+      expect(row?.status).toBe("completed");
+      expect(row?.tokens).toBe(150);
+    });
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("failed");
   });
 
   test("a typed-artifact schema mismatch is a hard step failure on the report path (even with max_loops)", async () => {
@@ -601,6 +696,126 @@ steps:
         summaryJudge: null,
       }),
     ).rejects.toThrow(/is completed/);
+  });
+});
+
+// ── Non-dispatching steps auto-advance (no stuck runs) ───────────────────────
+
+describe("workflow report — steps with no reportable units auto-advance (engine parity)", () => {
+  const EMPTY_DOWNSTREAM_WF = `version: 1
+name: EmptyDownstream
+steps:
+  - id: discover
+    title: Discover
+    unit:
+      instructions: Find files.
+      output:
+        type: array
+        items: { type: string }
+  - id: review
+    title: Review
+    map:
+      over: \${{ steps.discover.output }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+  - id: summarize
+    title: Summarize
+    unit:
+      instructions: Summarize.
+`;
+
+  test("a downstream empty fan-out (over: []) auto-completes when the prior report reaches it", async () => {
+    // Peer review R3, finding 2: reporting `discover` makes `review` fan out over
+    // an EMPTY array. The engine auto-promotes the empty-collect artifact and
+    // advances; the report path must too, or the run gets stuck at a step no
+    // `report --unit` can ever complete.
+    const p = plan(EMPTY_DOWNSTREAM_WF);
+    seedRun({ plan: p, steps: [{ id: "discover" }, { id: "review" }, { id: "summarize" }] });
+    const discoverUnit = unitIds(p, 0, {})[0];
+
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: discoverUnit,
+      status: "completed",
+      resultRaw: JSON.stringify([]),
+      summaryJudge: null,
+    });
+    // discover completed → review (empty) auto-completed → the spine rests on
+    // summarize, not stuck on the empty review step.
+    expect(r.stepOutcome?.kind).toBe("advanced");
+    expect(r.runStatus).toBe("active");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[1].status).toBe("completed");
+    expect(status.workflow.steps[1].evidence?.output).toEqual([]);
+    // The next brief points at summarize with real work.
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.step?.stepId).toBe("summarize");
+    expect(brief.workList.units).toHaveLength(1);
+  });
+
+  test("an empty fan-out that is already the ACTIVE step auto-advances on the next report", async () => {
+    // The resumption variant: the spine is parked ON the empty `review` step
+    // (discover already done). A driver reporting summarize's unit must settle
+    // past the zero-unit review step first, then record summarize.
+    const p = plan(EMPTY_DOWNSTREAM_WF);
+    seedRun({
+      plan: p,
+      steps: [{ id: "discover", status: "completed", evidence: { output: [] } }, { id: "review" }, { id: "summarize" }],
+    });
+    const summarizeUnit = unitIds(p, 2, {})[0];
+
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: summarizeUnit,
+      status: "completed",
+      resultRaw: "All done.",
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("advanced");
+    expect(r.runStatus).toBe("completed");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[1].status).toBe("completed"); // review auto-completed
+    expect(status.workflow.steps[2].status).toBe("completed"); // summarize recorded
+  });
+
+  test("a step whose every unit is unresolvable FAILS the run (engine expression_error + on_error: fail)", async () => {
+    // A unit that references a param absent at runtime resolves for none of the
+    // fan-out items: the engine fails each unit with expression_error and
+    // (on_error: fail) fails the step. No `report --unit` can advance such units,
+    // so the report path settles it to the SAME failed terminal state instead of
+    // leaving the run stuck.
+    const ALL_UNRESOLVABLE_WF = `version: 1
+name: AllUnresolvable
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ params.absent }} for \${{ item }}.
+`;
+    const p = plan(ALL_UNRESOLVABLE_WF);
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    // brief surfaces the units as unresolvable; a driver reporting one of them
+    // triggers the settle, which fails the run.
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units.every((u) => u.resolved.ok === false)).toBe(true);
+
+    const r = await reportWorkflowUnit({
+      target: RUN_ID,
+      unitId: brief.workList.units[0].unitId,
+      status: "completed",
+      resultRaw: "ignored",
+      summaryJudge: null,
+    });
+    expect(r.stepOutcome?.kind).toBe("failed");
+    expect(r.runStatus).toBe("failed");
+    expect(r.recorded).toBe("not-recorded");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("failed");
   });
 });
 

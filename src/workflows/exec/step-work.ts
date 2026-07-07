@@ -579,6 +579,34 @@ export function reduceStepOutcomes(
 }
 
 /**
+ * The reduced outcome of a step whose fan-out list resolved to EMPTY (`over: []`
+ * or a producer that yielded `[]`): no units are dispatched, so the promoted
+ * artifact is the degenerate empty value — the empty array for a `collect`
+ * reducer, `null` for `vote` (references into a missing winner fail loudly at
+ * resolution rather than silently reading the envelope). Even the degenerate
+ * artifact must honor the step's declared `outputSchema` before it can complete.
+ *
+ * Shared by native dispatch (`executeStepPlan`'s `items.length === 0` branch)
+ * and the R3 driver protocol (`report` auto-completes an empty step the spine
+ * reaches, since no `report --unit` can ever advance a zero-unit step) so both
+ * surfaces promote the SAME artifact and apply the SAME schema verdict — the
+ * anti-drift guarantee. Deliberately does NOT run the reducer/vote-tie logic:
+ * an empty step has no successful results to count, and a vote-tie "failure"
+ * would diverge from the engine's long-standing empty-list semantics.
+ */
+export function reduceEmptyStep(plan: IrStepPlan, reducer: "collect" | "vote" | "best-of-n"): ExecutedStepOutcome {
+  const evidence: Record<string, unknown> = { units: [], itemCount: 0, output: reducer === "collect" ? [] : null };
+  const schemaFailure = validateStepArtifact(plan, evidence);
+  return {
+    ok: schemaFailure === undefined,
+    units: [],
+    evidence,
+    summary: schemaFailure ?? `Step "${plan.stepId}" fan-out list was empty — no units dispatched.`,
+    ...(schemaFailure !== undefined ? { artifactSchemaFailure: true as const } : {}),
+  };
+}
+
+/**
  * Rehydrate a journaled unit row into a {@link UnitOutcome}. Shared by the
  * executor's durable-row reuse (`native-executor.ts`, completed rows only) and
  * the R3 report path (which reduces completed AND failed rows replayed from the
