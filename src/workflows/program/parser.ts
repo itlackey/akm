@@ -35,6 +35,7 @@ import {
   PROGRAM_RETRY_REASONS,
   PROGRAM_RUNNER_KINDS,
   PROGRAM_STEP_ID_PATTERN,
+  type ProgramBudget,
   type ProgramDefaults,
   type ProgramGate,
   type ProgramIsolation,
@@ -50,8 +51,9 @@ import {
   type WorkflowProgramParseResult,
 } from "./schema";
 
-const TOP_LEVEL_KEYS = ["version", "name", "description", "params", "defaults", "steps"];
+const TOP_LEVEL_KEYS = ["version", "name", "description", "params", "defaults", "budget", "steps"];
 const DEFAULTS_KEYS = ["runner", "model", "timeout", "on_error"];
+const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "title", "unit", "map", "route", "output", "gate"];
 const UNIT_KEYS = [
   "runner",
@@ -204,6 +206,7 @@ export function parseWorkflowProgram(yamlText: string, source: { path: string })
 
   const params = parseParams(ctx, root.params);
   const defaults = parseDefaults(ctx, root.defaults);
+  const budget = parseBudget(ctx, root.budget);
   const steps = parseSteps(ctx, root.steps);
 
   if (errors.length > 0) return { ok: false, errors };
@@ -214,6 +217,7 @@ export function parseWorkflowProgram(yamlText: string, source: { path: string })
     ...(description !== undefined ? { description } : {}),
     ...(params !== undefined ? { params } : {}),
     ...(defaults !== undefined ? { defaults } : {}),
+    ...(budget !== undefined ? { budget } : {}),
     steps,
     source: { path: source.path },
   };
@@ -271,6 +275,32 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   const onError = parseEnumField(ctx, raw.on_error, [...path, "on_error"], `"defaults.on_error"`, PROGRAM_ON_ERROR);
   if (onError !== undefined) defaults.onError = onError as ProgramOnError;
   return Object.keys(defaults).length > 0 ? defaults : undefined;
+}
+
+function parseBudget(ctx: Ctx, raw: unknown): ProgramBudget | undefined {
+  if (raw === undefined) return undefined;
+  const path: Path = ["budget"];
+  if (!isPlainRecord(raw)) {
+    ctx.err(path, `"budget" must be a mapping with any of: ${BUDGET_KEYS.join(", ")}.`);
+    return undefined;
+  }
+  checkUnknownKeys(ctx, raw, path, BUDGET_KEYS, `"budget"`);
+  const budget: ProgramBudget = {};
+  if (raw.max_tokens !== undefined) {
+    if (typeof raw.max_tokens === "number" && Number.isInteger(raw.max_tokens) && raw.max_tokens >= 1) {
+      budget.maxTokens = raw.max_tokens;
+    } else {
+      ctx.err([...path, "max_tokens"], `"budget.max_tokens" must be an integer >= 1.`);
+    }
+  }
+  if (raw.max_units !== undefined) {
+    if (typeof raw.max_units === "number" && Number.isInteger(raw.max_units) && raw.max_units >= 1) {
+      budget.maxUnits = raw.max_units;
+    } else {
+      ctx.err([...path, "max_units"], `"budget.max_units" must be an integer >= 1.`);
+    }
+  }
+  return Object.keys(budget).length > 0 ? budget : undefined;
 }
 
 function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {

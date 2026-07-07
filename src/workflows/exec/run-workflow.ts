@@ -30,7 +30,9 @@
  * StepExecutionContext) — the feedback changes each unit's input hash, so the
  * loop re-dispatches naturally instead of reusing the rejected rows. After
  * maxLoops rejections the engine stops with the gate feedback, exactly like
- * the one-shot case.
+ * the one-shot case. A typed-artifact schema mismatch feeds the same loop
+ * (the validation errors are the feedback; no judge ran, so no gate unit is
+ * journaled for that attempt) — only the FINAL loop's mismatch fails the run.
  *
  * Frozen plan (redesign addendum, R1): the plan graph is read from the run
  * row (`plan_json`, persisted by `startWorkflowRun` under migration 006) with
@@ -209,12 +211,17 @@ async function driveRun(
   let gateRejection: RunWorkflowResult["gateRejection"];
   const maxSteps = options.maxSteps ?? Number.POSITIVE_INFINITY;
 
-  // Seed the lifetime unit cap from the journal so it is truly per-RUN: a
-  // resumed or re-invoked run must not restart the runaway backstop at zero.
-  // Journal rows = past dispatch ATTEMPTS; the executor consumes the cap only
-  // on new dispatches (durable-row reuses are free), so a large partially-
-  // completed fan-out stays resumable.
-  let unitsDispatched = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id).length);
+  // Seed the lifetime unit cap AND the budget ceilings from the journal so
+  // both are truly per-RUN: a resumed or re-invoked run must not restart the
+  // runaway backstop — or a declared `budget` — at zero. Journal rows = past
+  // dispatch ATTEMPTS (counted against `budget.max_units`); their summed
+  // `tokens` column is the run's spend so far (counted against
+  // `budget.max_tokens`). The executor consumes both only on new dispatches
+  // (durable-row reuses are free), so a large partially-completed fan-out
+  // stays resumable.
+  const journaledUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id));
+  let unitsDispatched = journaledUnits.length;
+  let tokensUsed = journaledUnits.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
 
   // One plan per invocation: the test seam receives the workflow ref; the
   // default reads the run's frozen plan and never touches the asset file.
@@ -329,6 +336,10 @@ async function driveRun(
               params: next.run.params ?? {},
               evidence,
               unitsDispatched,
+              tokensUsed,
+              // Budget ceilings ride the FROZEN plan (addendum R2): a mid-run
+              // asset edit can never loosen or tighten a run's budget.
+              ...(plan.budget ? { budget: plan.budget } : {}),
               gateLoop,
               ...(gateFeedback ? { gateFeedback } : {}),
               ...(options.signal ? { signal: options.signal } : {}),
@@ -336,6 +347,7 @@ async function driveRun(
               ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
             });
       unitsDispatched = result.unitsDispatched;
+      if (result.tokensUsed !== undefined) tokensUsed = result.tokensUsed;
 
       executed.push({
         stepId: step.id,
@@ -346,6 +358,19 @@ async function driveRun(
       });
 
       if (!result.ok) {
+        // Typed-artifact schema mismatch (addendum R2): the ONE retryable
+        // failure class — "fail-fast; gate loops can re-run it". With loop
+        // budget left, the validation errors become gate feedback for the
+        // next attempt (regenerate-with-errors, exactly what max_loops is
+        // for) instead of failing the run. No judge ran, so no gate unit is
+        // journaled for this attempt; the re-execution journals under
+        // ~l<loop> as usual. Everything else (dispatch failures, replay
+        // divergence, cap) — and the FINAL loop's mismatch — stays a hard
+        // stop through completeWorkflowStep below.
+        if (result.artifactSchemaFailure && gateLoop < maxLoops) {
+          gateFeedback = { feedback: result.summary, missing: [] };
+          continue;
+        }
         // Gate spine: record the failure through completeWorkflowStep so the
         // run flips to failed via the normal state derivation.
         await completeWorkflowStep({

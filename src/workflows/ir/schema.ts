@@ -191,7 +191,14 @@ export interface IrStepPlan {
   gate: IrGateNode;
 }
 
-/** Run-level budget ceilings. TODO(R2): enforcement is engine-rework scope. */
+/**
+ * Run-level budget ceilings (YAML `budget:` block), enforced by the engine
+ * per RUN: totals are seeded from the journal (`workflow_run_units` row count
+ * for `maxUnits`, summed `tokens` for `maxTokens`) and accumulated across this
+ * invocation's dispatches. Hitting a ceiling aborts pending dispatches and
+ * fails the step hard ("budget exceeded (<which> ceiling)"), regardless of
+ * `on_error` — a budget-capped run must never quietly pass its gate.
+ */
 export interface IrBudget {
   maxTokens?: number;
   maxUnits?: number;

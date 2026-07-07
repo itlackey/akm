@@ -110,6 +110,16 @@ export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgra
       irVersion: WORKFLOW_IR_VERSION,
       title: program.name,
       ...(paramNames.length > 0 ? { params: paramNames } : {}),
+      // Budget ceilings (addendum R2): frozen onto the plan so enforcement is
+      // a pure function of (frozen plan, journal) — never the live asset.
+      ...(program.budget
+        ? {
+            budget: {
+              ...(program.budget.maxTokens !== undefined ? { maxTokens: program.budget.maxTokens } : {}),
+              ...(program.budget.maxUnits !== undefined ? { maxUnits: program.budget.maxUnits } : {}),
+            },
+          }
+        : {}),
       steps,
     },
   };

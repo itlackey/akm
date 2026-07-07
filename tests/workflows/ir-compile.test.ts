@@ -318,6 +318,30 @@ steps:
     }
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  test("a budget block is carried onto the plan (and absent otherwise)", () => {
+    const withBudget = compileProgramOk(`version: 1
+name: t
+budget:
+  max_tokens: 5000
+  max_units: 7
+steps:
+  - id: a
+    unit:
+      instructions: Do the thing.
+`);
+    expect(withBudget.budget).toEqual({ maxTokens: 5000, maxUnits: 7 });
+    // The budget is part of the frozen plan, so it participates in the hash.
+    const withoutBudget = compileProgramOk(`version: 1
+name: t
+steps:
+  - id: a
+    unit:
+      instructions: Do the thing.
+`);
+    expect(withoutBudget.budget).toBeUndefined();
+    expect(computePlanHash(withBudget)).not.toBe(computePlanHash(withoutBudget));
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

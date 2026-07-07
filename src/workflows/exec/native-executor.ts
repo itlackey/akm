@@ -37,7 +37,10 @@
  * JSON-schema-subset validator BEFORE the step can complete. A mismatch fails
  * the step (fail-fast) with the validation errors in the summary — a
  * downstream consumer must never receive an artifact the author's contract
- * says cannot exist.
+ * says cannot exist. The failure is flagged (`artifactSchemaFailure` on the
+ * result) so the engine's bounded gate loop can re-run the step with the
+ * validation errors as feedback ("gate loops can re-run it") — a step with
+ * loop budget left regenerates instead of killing the run.
  *
  * Unit identity (addendum, R2): CONTENT-DERIVED, never positional. A fan-out
  * unit's id is `<node_id>:<sha256(canonicalJson(item))[:12]>`; a solo unit's
@@ -76,6 +79,15 @@
  *     times when its `failureReason` is in `on`. Every retry journals its OWN
  *     row under `<unitId>~r<attempt>` so no attempt's record is clobbered.
  *
+ * Budget ceilings (addendum, R2): a frozen plan's `budget` block
+ * (`max_units` / `max_tokens`) is enforced per RUN. The engine seeds
+ * `ctx.unitsDispatched` (journal row count) and `ctx.tokensUsed` (journaled
+ * token sum) and threads the running totals across steps; this executor
+ * consumes both per ACTUAL dispatch. Hitting a ceiling aborts pending and
+ * in-flight dispatches through an AbortController chained onto `ctx.signal`
+ * and fails the step with a "budget exceeded (<which> ceiling)" summary —
+ * hard, regardless of `on_error`, exactly like the lifetime cap.
+ *
  * Layering (see the plan's *Reconciliation* section):
  *   - Dispatch goes through ONE injected {@link UnitDispatcher} seam. The
  *     default dispatcher composes the EXISTING substrate — `executeRunner`
@@ -93,7 +105,7 @@ import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { runStructured } from "../../core/structured";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
-import type { IrAgentNode, IrStepPlan } from "../ir/schema";
+import type { IrAgentNode, IrBudget, IrStepPlan } from "../ir/schema";
 import {
   type ExpressionScope,
   parseTemplate,
@@ -210,6 +222,20 @@ export interface StepExecutionContext {
    * are free, so a partially-completed fan-out stays resumable.
    */
   unitsDispatched?: number;
+  /**
+   * Declared run-level budget ceilings from the frozen plan
+   * (`WorkflowPlanGraph.budget`, addendum R2). When present, `unitsDispatched`
+   * counts against `maxUnits` and `tokensUsed` against `maxTokens`; hitting a
+   * ceiling aborts pending dispatches (an AbortController chained onto
+   * `signal`) and fails the step hard, regardless of `on_error`.
+   */
+  budget?: IrBudget;
+  /**
+   * Run-total tokens already spent BEFORE this step: the journal-seeded sum
+   * of `workflow_run_units.tokens` plus this invocation's earlier steps'
+   * dispatch usage (threaded via {@link StepExecutionResult.tokensUsed}).
+   */
+  tokensUsed?: number;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
 }
@@ -226,32 +252,95 @@ export interface StepExecutionResult {
    * dispatched (durable-row reuses are not dispatches and are not counted).
    */
   unitsDispatched: number;
+  /**
+   * Cumulative run-total token count: `ctx.tokensUsed` + the usage this
+   * step's actual dispatches reported (reuses contribute nothing — their
+   * tokens are already in the journal-seeded input). Absent on failure paths
+   * that never reached dispatch, where the input total is unchanged.
+   */
+  tokensUsed?: number;
+  /**
+   * Set when `ok` is false BECAUSE the promoted artifact failed the step's
+   * declared output schema (typed artifacts, R2). This is the one failure the
+   * engine may retry through the bounded gate loop (`gate.max_loops`): the
+   * validation errors become gate feedback and the subgraph re-executes —
+   * the pinned decision's "fail-fast — gate loops can re-run it". Every other
+   * failure (dispatch errors, replay divergence, cap) stays a hard stop.
+   */
+  artifactSchemaFailure?: true;
 }
 
 /**
- * Mutable per-step dispatch budget for the lifetime unit cap. Consumed once
- * per journaled dispatch attempt (including retries); durable-row reuses
- * never touch it — the peer-review fix that keeps large partially-completed
- * fan-outs resumable instead of tripping the cap on `journaled + items`.
- * Check-and-increment is synchronous, so concurrent units cannot race it.
+ * Mutable per-step dispatch budget: the lifetime unit cap PLUS the declared
+ * run-level budget ceilings (`budget.max_units` / `budget.max_tokens`,
+ * addendum R2). Consumed once per journaled dispatch attempt (including
+ * retries); durable-row reuses never touch it — the peer-review fix that
+ * keeps large partially-completed fan-outs resumable instead of tripping the
+ * cap on `journaled + items`. Token usage accumulates per actual dispatch on
+ * top of the journal-seeded run total (reused rows' tokens are already in the
+ * seed). Check-and-increment is synchronous, so concurrent units cannot race
+ * it; crossing a declared ceiling fires `onExceeded` ONCE (the executor's
+ * chained AbortController), aborting pending and in-flight dispatches.
  */
 class DispatchBudget {
   used: number;
+  /** Run-total tokens: journal-seeded input + this step's dispatch usage. */
+  tokens: number;
   /** Set (once) when a dispatch was refused; the step fails with this message. */
   capMessage: string | undefined;
+  /** Set (once) when a declared budget ceiling was hit; the step fails hard with it. */
+  budgetMessage: string | undefined;
+  private readonly maxUnits: number | undefined;
+  private readonly maxTokens: number | undefined;
+  private readonly onExceeded: (() => void) | undefined;
 
-  constructor(alreadyDispatched: number) {
+  constructor(alreadyDispatched: number, opts?: { tokensUsed?: number; budget?: IrBudget; onExceeded?: () => void }) {
     this.used = alreadyDispatched;
+    this.tokens = opts?.tokensUsed ?? 0;
+    this.maxUnits = opts?.budget?.maxUnits;
+    this.maxTokens = opts?.budget?.maxTokens;
+    this.onExceeded = opts?.onExceeded;
   }
 
-  /** Consume one dispatch slot; false (and a sticky capMessage) when the cap is hit. */
+  /** Consume one dispatch slot; false (and a sticky message) when a ceiling or the cap is hit. */
   tryConsume(): boolean {
+    if (this.budgetMessage !== undefined) return false;
+    if (this.maxUnits !== undefined && this.used >= this.maxUnits) {
+      this.exceed(
+        `budget exceeded (max_units ceiling): ${this.used} unit(s) already dispatched for this run ` +
+          `against the workflow's declared budget.max_units of ${this.maxUnits} — refusing further dispatch.`,
+      );
+      return false;
+    }
+    if (this.maxTokens !== undefined && this.tokens >= this.maxTokens) {
+      this.exceed(
+        `budget exceeded (max_tokens ceiling): ${this.tokens} token(s) already spent for this run ` +
+          `against the workflow's declared budget.max_tokens of ${this.maxTokens} — refusing further dispatch.`,
+      );
+      return false;
+    }
     if (this.used >= LIFETIME_UNIT_CAP) {
       this.capMessage ??= new UnitCapExceededError(LIFETIME_UNIT_CAP).message;
       return false;
     }
     this.used++;
     return true;
+  }
+
+  /** Record one dispatch's reported usage; crossing `maxTokens` trips the ceiling. */
+  addTokens(tokens: number): void {
+    this.tokens += tokens;
+    if (this.budgetMessage === undefined && this.maxTokens !== undefined && this.tokens >= this.maxTokens) {
+      this.exceed(
+        `budget exceeded (max_tokens ceiling): ${this.tokens} token(s) spent for this run, ` +
+          `reaching the workflow's declared budget.max_tokens of ${this.maxTokens} — aborting pending dispatches.`,
+      );
+    }
+  }
+
+  private exceed(message: string): void {
+    this.budgetMessage = message;
+    this.onExceeded?.();
   }
 }
 
@@ -358,6 +447,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
       evidence: emptyEvidence,
       summary: schemaFailure ?? `Step "${plan.stepId}" fan-out list was empty — no units dispatched.`,
       unitsDispatched: dispatched,
+      ...(schemaFailure !== undefined ? { artifactSchemaFailure: true as const } : {}),
     };
   }
 
@@ -382,40 +472,81 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     existingUnits.set(row.unit_id, row);
   }
 
-  // Lifetime-cap budget: seeded with the run's journaled dispatch count and
-  // consumed per ACTUAL dispatch inside runUnit — never for durable-row
-  // reuses, so resuming a large partially-completed fan-out works.
-  const budget = new DispatchBudget(dispatched);
+  // Budget ceilings (addendum R2): when the frozen plan declares a budget,
+  // dispatch runs under an AbortController CHAINED onto ctx.signal — hitting
+  // a ceiling aborts pending and in-flight dispatches, and the step fails
+  // hard below. Without a budget the context signal passes through untouched
+  // (the no-budget path is byte-identical to pre-R2 behavior).
+  const declaredBudget =
+    ctx.budget && (ctx.budget.maxUnits !== undefined || ctx.budget.maxTokens !== undefined) ? ctx.budget : undefined;
+  let signal = ctx.signal;
+  let onExceeded: (() => void) | undefined;
+  let unchainSignal: (() => void) | undefined;
+  if (declaredBudget) {
+    const controller = new AbortController();
+    const upstream = ctx.signal;
+    if (upstream) {
+      if (upstream.aborted) {
+        controller.abort();
+      } else {
+        const onUpstreamAbort = () => controller.abort();
+        upstream.addEventListener("abort", onUpstreamAbort, { once: true });
+        unchainSignal = () => upstream.removeEventListener("abort", onUpstreamAbort);
+      }
+    }
+    signal = controller.signal;
+    onExceeded = () => controller.abort();
+  }
 
-  const outcomes: Array<UnitOutcome | undefined> = await scheduleUnits(
-    items,
-    (item, index) =>
-      runUnit({
-        plan,
-        template,
-        instructionSegments,
-        scope,
-        item,
-        index,
-        unitId: unitIds[index],
-        isFanOut,
-        env,
-        ctx,
-        dispatcher,
-        existingUnits,
-        budget,
-      }),
-    {
-      concurrency: root.kind === "map" ? root.concurrency : 1,
-      signal: ctx.signal,
-      maxConcurrency: ctx.maxConcurrency,
-    },
-  );
+  // Lifetime-cap + declared-budget accounting: seeded with the run's
+  // journaled dispatch count and token total, consumed per ACTUAL dispatch
+  // inside runUnit — never for durable-row reuses, so resuming a large
+  // partially-completed fan-out works.
+  const budget = new DispatchBudget(dispatched, {
+    tokensUsed: ctx.tokensUsed ?? 0,
+    ...(declaredBudget ? { budget: declaredBudget } : {}),
+    ...(onExceeded ? { onExceeded } : {}),
+  });
 
-  // The cap is a hard backstop: a step that hit it FAILS regardless of
-  // on_error policy (a capped run must never quietly pass its gate).
+  let outcomes: Array<UnitOutcome | undefined>;
+  try {
+    outcomes = await scheduleUnits(
+      items,
+      (item, index) =>
+        runUnit({
+          plan,
+          template,
+          instructionSegments,
+          scope,
+          item,
+          index,
+          unitId: unitIds[index],
+          isFanOut,
+          env,
+          ctx,
+          signal,
+          dispatcher,
+          existingUnits,
+          budget,
+        }),
+      {
+        concurrency: root.kind === "map" ? root.concurrency : 1,
+        signal,
+        maxConcurrency: ctx.maxConcurrency,
+      },
+    );
+  } finally {
+    unchainSignal?.();
+  }
+
+  // Declared budget ceilings and the lifetime cap are hard backstops: a step
+  // that hit one FAILS regardless of on_error policy (a capped run must never
+  // quietly pass its gate). The budget message names WHICH ceiling tripped.
+  if (budget.budgetMessage) {
+    return { ...failedStep(budget.used, budget.budgetMessage), tokensUsed: budget.tokens };
+  }
   if (budget.capMessage) {
-    return failedStep(budget.used, budget.capMessage);
+    return { ...failedStep(budget.used, budget.capMessage), tokensUsed: budget.tokens };
   }
 
   const units = outcomes.map(
@@ -464,16 +595,28 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   // Typed artifacts (R2): validate the promoted artifact against the step's
   // declared output schema BEFORE completion. A mismatch fails the step —
   // fail-fast, with the validation errors in the summary — never lets a
-  // schema-violating artifact reach downstream references or the gate.
+  // schema-violating artifact reach downstream references or the gate. The
+  // `artifactSchemaFailure` marker lets the engine's bounded gate loop retry
+  // this ONE failure class with the errors as feedback (module doc).
+  let artifactSchemaFailure = false;
   if (ok) {
     const schemaFailure = validateStepArtifact(plan, evidence);
     if (schemaFailure !== undefined) {
       ok = false;
       summary = schemaFailure;
+      artifactSchemaFailure = true;
     }
   }
 
-  return { ok, units, evidence, summary, unitsDispatched: budget.used };
+  return {
+    ok,
+    units,
+    evidence,
+    summary,
+    unitsDispatched: budget.used,
+    tokensUsed: budget.tokens,
+    ...(artifactSchemaFailure ? { artifactSchemaFailure: true as const } : {}),
+  };
 }
 
 // ── One unit ─────────────────────────────────────────────────────────────────
@@ -492,6 +635,11 @@ interface RunUnitInput {
   isFanOut: boolean;
   env?: Record<string, string>;
   ctx: StepExecutionContext;
+  /**
+   * Effective dispatch signal: `ctx.signal`, or the budget-chained
+   * AbortController's signal when the plan declares budget ceilings.
+   */
+  signal?: AbortSignal;
   dispatcher: UnitDispatcher;
   /** Prior unit rows for this step, for durable-row reuse. */
   existingUnits?: Map<string, WorkflowRunUnitRow>;
@@ -535,7 +683,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     timeoutMs,
     ...(template.schema ? { schema: template.schema } : {}),
     ...(env ? { env } : {}),
-    ...(ctx.signal ? { signal: ctx.signal } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
   };
 
   const inputHash = createHash("sha256")
@@ -600,16 +748,18 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   let outcome: UnitOutcome | undefined;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const attemptId = attemptIdFor(attempt);
-    // Lifetime cap, consumed per ACTUAL dispatch (reuses above returned before
-    // reaching here). Refusal fails this unit without journaling a row —
-    // nothing was dispatched — and the sticky capMessage fails the step.
+    // Lifetime cap + declared budget ceilings, consumed per ACTUAL dispatch
+    // (reuses above returned before reaching here). Refusal fails this unit
+    // without journaling a row — nothing was dispatched — and the sticky
+    // capMessage/budgetMessage fails the step.
     if (!input.budget.tryConsume()) {
+      const budgetHit = input.budget.budgetMessage !== undefined;
       return (
         outcome ?? {
           unitId,
           ok: false,
-          failureReason: "unit_cap_exceeded",
-          error: input.budget.capMessage ?? "lifetime unit cap exceeded",
+          failureReason: budgetHit ? "budget_exceeded" : "unit_cap_exceeded",
+          error: input.budget.budgetMessage ?? input.budget.capMessage ?? "lifetime unit cap exceeded",
         }
       );
     }
@@ -623,6 +773,11 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
       isFanOut,
       inputHash,
     });
+    // Budget token accounting (addendum R2): every actual dispatch's reported
+    // usage counts against the run's max_tokens ceiling; crossing it aborts
+    // pending dispatches via the chained controller. Reuses never reach here
+    // (their tokens are already in the journal-seeded total).
+    if (outcome.tokens !== undefined) input.budget.addTokens(outcome.tokens);
     if (outcome.ok) return outcome;
     const reason = outcome.failureReason;
     if (!retry || reason === undefined || !retry.on.includes(reason)) return outcome;

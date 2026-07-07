@@ -503,6 +503,123 @@ steps:
   });
 });
 
+// ── Typed artifacts × gate loops (peer-review regression) ────────────────────
+//
+// Pinned R2 decision: a typed-artifact schema mismatch "fails the step
+// (fail-fast — gate loops can re-run it)". The engine must feed the mismatch
+// into the bounded gate loop when attempts remain — regenerate with the
+// validation errors as feedback — and only kill the run when the FINAL loop's
+// artifact still violates the schema.
+
+const TYPED_LOOP_WF = `version: 1
+name: TypedLoop
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+      output:
+        type: object
+    output:
+      type: object
+      properties: { files: { type: array, items: { type: string } } }
+      required: [files]
+    gate:
+      criteria: [the work is thorough]
+      max_loops: 2
+`;
+
+describe("typed artifacts + gate max_loops — schema mismatches are retryable by the bounded loop", () => {
+  test("regression: a loop-1 schema mismatch re-executes with the validation errors as feedback instead of failing the run", async () => {
+    seedRun({ steps: [{ id: "work", criteria: ["the work is thorough"] }] });
+    const prompts: string[] = [];
+    const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
+      prompts.push(req.prompt);
+      // Loop 1: valid per the UNIT schema (an object) but violates the STEP's
+      // output schema (missing required `files`). Loop 2: satisfies both.
+      return prompts.length === 1
+        ? { ok: true, text: '{"notes": "wrong shape"}' }
+        : { ok: true, text: '{"files": ["a.ts"]}' };
+    };
+    let judgeCalls = 0;
+    const judge: SummaryJudge = async () => {
+      judgeCalls++;
+      return '{"complete": true, "missing": []}';
+    };
+
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher,
+      loadPlan: async () => plan(TYPED_LOOP_WF),
+      summaryJudge: judge,
+    });
+
+    // The run COMPLETED: the mismatch was retried, not terminal.
+    expect(result.done).toBe(true);
+    expect(result.gateRejection).toBeUndefined();
+
+    // Loop 2 re-dispatched with the schema errors threaded in as feedback.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("Completion-gate feedback");
+    expect(prompts[1]).toContain("Completion-gate feedback");
+    expect(prompts[1]).toContain('Step "work" artifact failed validation');
+
+    // Both attempts recorded: the schema-failed first, the clean second.
+    expect(result.executed.map((s) => s.ok)).toEqual([false, true]);
+    expect(result.executed[0].summary).toContain("artifact failed validation");
+
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.workflow.steps[0].evidence?.output).toEqual({ files: ["a.ts"] });
+
+    await withWorkflowRunsRepo((repo) => {
+      const byId = new Map(repo.getUnitsForStep(RUN_ID, "work").map((r) => [r.unit_id, r]));
+      // Loop 2 journals under ~l2 with a DIFFERENT input hash (the feedback
+      // changed the prompt) — loop 1's row is never clobbered.
+      const first = byId.get("work:solo");
+      const second = byId.get("work:solo~l2");
+      expect(first?.status).toBe("completed");
+      expect(second?.status).toBe("completed");
+      expect(first?.input_hash).toBeTruthy();
+      expect(second?.input_hash).toBeTruthy();
+      expect(second?.input_hash).not.toBe(first?.input_hash);
+      // No judge ran on the schema-failed loop — the ONLY gate unit row is
+      // loop 2's, where the artifact finally reached the judge.
+      const gateIds = [...byId.keys()].filter((id) => id.startsWith("work.gate:")).sort();
+      expect(gateIds).toEqual(["work.gate:l2"]);
+      expect(judgeCalls).toBe(1);
+    });
+  });
+
+  test("the loop bound still holds: a persistently schema-violating artifact fails the run after maxLoops attempts", async () => {
+    seedRun({ steps: [{ id: "work", criteria: ["the work is thorough"] }] });
+    let dispatches = 0;
+    let judgeCalls = 0;
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: '{"notes": "never the contract"}' };
+      },
+      loadPlan: async () => plan(TYPED_LOOP_WF),
+      summaryJudge: async () => {
+        judgeCalls++;
+        return '{"complete": true, "missing": []}';
+      },
+    });
+
+    expect(dispatches).toBe(2); // maxLoops attempts, never a third
+    expect(judgeCalls).toBe(0); // the artifact never got past the schema to a judge
+    expect(result.done).toBeUndefined();
+    expect(result.executed.map((s) => s.ok)).toEqual([false, false]);
+    expect(result.executed[1].summary).toContain('Step "work" artifact failed validation');
+    // The FINAL loop's mismatch is terminal: step failed, run failed.
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("failed");
+    expect(status.workflow.steps[0].status).toBe("failed");
+  });
+});
+
 // ── Verbatim linear markdown stays untouched ─────────────────────────────────
 
 const LINEAR_MD = `# Workflow: Classic
@@ -540,6 +657,7 @@ describe("classic linear markdown path (stable contract)", () => {
     expect(result.done).toBe(true);
     // Markdown instructions are opaque data: the `${{ … }}` text is content,
     // never grammar — no expression resolution, no param substitution.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal expression syntax under test (verbatim markdown contract)
     expect(prompts[0]).toContain("Literal ${{ params.secret }} is content here.");
     expect(prompts[0]).not.toContain("LEAKED — resolved");
     // No gate feedback block on first executions, machine summaries intact.

@@ -151,6 +151,18 @@ export interface ProgramStep {
   source: SourceRef;
 }
 
+/**
+ * Run-level budget ceilings (YAML `budget:` block). Enforced by the engine
+ * per run: `maxUnits` caps total dispatched units (journal-seeded), and
+ * `maxTokens` caps total reported token usage (journal-seeded from
+ * `workflow_run_units.tokens`). Hitting a ceiling fails the step hard,
+ * regardless of `on_error`.
+ */
+export interface ProgramBudget {
+  maxTokens?: number;
+  maxUnits?: number;
+}
+
 /** Run-level defaults, overridable per unit. */
 export interface ProgramDefaults {
   runner?: ProgramRunnerKind;
@@ -167,6 +179,8 @@ export interface WorkflowProgram {
   /** Param name → JSON-Schema-ish declaration (validated as a schema in R1 compile). */
   params?: Record<string, Record<string, unknown>>;
   defaults?: ProgramDefaults;
+  /** Run-level budget ceilings (see {@link ProgramBudget}). */
+  budget?: ProgramBudget;
   steps: ProgramStep[];
   source: { path: string };
 }

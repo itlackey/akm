@@ -243,8 +243,8 @@ describe("parseWorkflowProgram — top-level validation", () => {
   });
 
   test("unknown top-level keys are rejected", () => {
-    const errors = parseErrors(`version: 1\nname: t\nbudget: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`);
-    expect(errors.join(" ")).toContain('Unknown top-level key "budget"');
+    const errors = parseErrors(`version: 1\nname: t\nbogus: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`);
+    expect(errors.join(" ")).toContain('Unknown top-level key "bogus"');
   });
 
   test("params must map identifier names to schema objects", () => {
@@ -272,6 +272,42 @@ describe("parseWorkflowProgram — top-level validation", () => {
     expect(joined).toContain('invalid timeout "10h"');
     expect(joined).toContain('"defaults.on_error" must be one of: fail | continue');
     expect(joined).toContain('Unknown "defaults" key "concurrency"');
+  });
+
+  test("budget: max_tokens/max_units parse into camelCase ceilings", () => {
+    const program = parseOk(
+      `version: 1\nname: t\nbudget:\n  max_tokens: 50000\n  max_units: 20\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+    );
+    expect(program.budget).toEqual({ maxTokens: 50000, maxUnits: 20 });
+
+    const only = parseOk(
+      `version: 1\nname: t\nbudget: { max_units: 3 }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+    );
+    expect(only.budget).toEqual({ maxUnits: 3 });
+
+    // An empty budget block declares no ceilings — same treatment as an
+    // empty defaults block (omitted from the parsed program).
+    const empty = parseOk(`version: 1\nname: t\nbudget: {}\nsteps:\n  - id: a\n    unit: { instructions: x }`);
+    expect(empty.budget).toBeUndefined();
+  });
+
+  test("budget is validated (mapping shape, integer >= 1 ceilings, unknown keys)", () => {
+    expect(
+      parseErrors(`version: 1\nname: t\nbudget: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" "),
+    ).toContain('"budget" must be a mapping with any of: max_tokens, max_units');
+
+    const joined = parseErrors(
+      `version: 1\nname: t\nbudget:\n  max_tokens: 0\n  max_units: 1.5\n  max_dollars: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+    ).join(" | ");
+    expect(joined).toContain('"budget.max_tokens" must be an integer >= 1');
+    expect(joined).toContain('"budget.max_units" must be an integer >= 1');
+    expect(joined).toContain('Unknown "budget" key "max_dollars"');
+
+    expect(
+      parseErrors(
+        `version: 1\nname: t\nbudget: { max_tokens: many }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      ).join(" "),
+    ).toContain('"budget.max_tokens" must be an integer >= 1');
   });
 });
 
@@ -634,7 +670,7 @@ describe("looksLikeWorkflowProgram", () => {
 describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () => {
   const schemaPath = path.resolve(import.meta.dir, "../../schemas/akm-workflow.json");
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8")) as {
-    definitions: Record<string, { enum?: string[]; pattern?: string }>;
+    definitions: Record<string, { enum?: string[]; pattern?: string; properties?: Record<string, unknown> }>;
     properties: Record<string, { propertyNames?: { pattern?: string } }>;
   };
 
@@ -649,5 +685,10 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   test("id and param-name patterns match", () => {
     expect(schema.definitions.identifier.pattern).toBe(PROGRAM_STEP_ID_PATTERN.source);
     expect(schema.properties.params.propertyNames?.pattern).toBe(PROGRAM_PARAM_NAME_PATTERN.source);
+  });
+
+  test("budget block keys match the parser's vocabulary", () => {
+    expect(Object.keys(schema.definitions.budget.properties ?? {}).sort()).toEqual(["max_tokens", "max_units"]);
+    expect("budget" in schema.properties).toBe(true);
   });
 });
