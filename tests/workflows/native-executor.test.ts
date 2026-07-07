@@ -431,9 +431,12 @@ steps:
     });
     expect(call).toBe(3);
     expect(result.ok).toBe(true);
-    // Retry suffix stacks on top of the content-derived solo id.
-    expect(result.units[0].unitId).toBe("fetch:solo~r2");
-    // Every attempt keeps its own journal row — nothing is clobbered.
+    // The reduced outcome carries the CONTENT-derived base id — the `~r<n>` suffix
+    // is journal-row bookkeeping only, kept off the durable step evidence so an
+    // engine-driven and a report-driven run agree on evidence.units[].unitId (R4).
+    expect(result.units[0].unitId).toBe("fetch:solo");
+    // Every attempt still keeps its own journal ROW under the suffixed id —
+    // nothing is clobbered, and attempt granularity is observable there.
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "fetch");
       const byId = new Map(rows.map((r) => [r.unit_id, r.status]));
@@ -485,7 +488,8 @@ steps:
       },
     });
     expect(second.ok).toBe(true);
-    expect(second.units[0].unitId).toBe("fetch:solo~r1");
+    // Base id in the reduced outcome even though it was reused from the `~r1` row.
+    expect(second.units[0].unitId).toBe("fetch:solo");
     expect(second.units[0].text).toBe("finally");
   });
 });
@@ -1626,7 +1630,9 @@ steps:
             });
             expect(result.ok).toBe(true);
             expect(calls).toBe(2); // 429, then success — the retry actually fired
-            expect(result.units[0].unitId).toBe("fetch:solo~r1");
+            // Reduced outcome carries the content-derived base id; the retry
+            // attempt's `~r1` suffix stays on the journal row (R4 evidence parity).
+            expect(result.units[0].unitId).toBe("fetch:solo");
           },
           () => {
             calls++;

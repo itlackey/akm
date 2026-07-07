@@ -472,14 +472,32 @@ export function buildEvidence(
   reducer: "collect" | "vote" | "best-of-n",
   isFanOut: boolean,
 ): Record<string, unknown> {
-  const collected = units.map((u) => ({
-    unitId: u.unitId,
-    ok: u.ok,
-    ...(u.result !== undefined ? { result: u.result } : {}),
-    ...(u.text !== undefined ? { text: clip(u.text, EVIDENCE_TEXT_CLIP) } : {}),
-    ...(u.failureReason ? { failureReason: u.failureReason } : {}),
-    ...(u.error ? { error: clip(u.error, 500) } : {}),
-  }));
+  // Per-unit evidence is the DURABLE, surface-independent projection the two
+  // driver surfaces (engine + brief/report) must agree on byte-for-byte (R4
+  // conformance, "identical unit graph"). It therefore carries ONLY fields both
+  // surfaces can reproduce from the journal:
+  //   - a SUCCESS keeps its promoted contribution (structured `result` or clipped
+  //     `text`) — the report path rehydrates exactly these from the unit row;
+  //   - a FAILURE keeps only its `failureReason` (the durable, journaled failure
+  //     vocabulary). The engine's in-memory dispatch diagnostic (`error`) and any
+  //     residual `text` on a failed unit are NOT persisted here: a driver-reported
+  //     failure carries neither, so persisting them on the engine surface alone
+  //     would diverge the durable graph. The full raw text/reason still lives on
+  //     the unit row for engine-side diagnostics; this is the shared graph.
+  const collected = units.map((u) =>
+    u.ok
+      ? {
+          unitId: u.unitId,
+          ok: true as const,
+          ...(u.result !== undefined ? { result: u.result } : {}),
+          ...(u.text !== undefined ? { text: clip(u.text, EVIDENCE_TEXT_CLIP) } : {}),
+        }
+      : {
+          unitId: u.unitId,
+          ok: false as const,
+          ...(u.failureReason ? { failureReason: u.failureReason } : {}),
+        },
+  );
   const evidence: Record<string, unknown> = { units: collected, itemCount: units.length };
 
   // Promoted step artifact (`evidence.output`) — what `${{ steps.<id>.output }}`

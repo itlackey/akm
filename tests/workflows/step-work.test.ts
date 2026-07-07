@@ -14,7 +14,15 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
-import { activeGateLoop, computeStepWorkList, recoverGateFeedback } from "../../src/workflows/exec/step-work";
+import {
+  activeGateLoop,
+  buildEvidence,
+  canonicalJson,
+  computeStepWorkList,
+  recoverGateFeedback,
+  type UnitOutcome,
+  unitOutcomeFromRow,
+} from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import type { IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
@@ -354,5 +362,80 @@ describe("anti-drift — recomputing loop 2 from the journal reproduces the engi
       const journaled = rows.find((r) => r.unit_id === "work:solo~l2");
       expect(journaled?.input_hash).toBe(u.resolved.inputHash);
     }
+  });
+});
+
+/**
+ * Regression (R4 conformance, peer-review finding): the DURABLE per-unit
+ * projection `buildEvidence` writes must be surface-INDEPENDENT — the exact byte
+ * identity the conformance suite compares. The engine reduces from an in-memory
+ * dispatch outcome (a failed unit carries a residual `text` and an internal
+ * `error` diagnostic); the report surface reduces from a journal row (a
+ * driver-reported failure carries neither). If `buildEvidence` copied those
+ * engine-only fields through, `evidence.units` — hence the durable unit graph —
+ * would diverge between the two surfaces even though every other row matched.
+ */
+describe("buildEvidence — surface-independent unit projection (R4 anti-drift)", () => {
+  /** Shape a journal row the report surface would rehydrate from. */
+  function row(overrides: Partial<WorkflowRunUnitRow>): WorkflowRunUnitRow {
+    return {
+      run_id: RUN_ID,
+      unit_id: "u",
+      step_id: "s1",
+      node_id: "s1",
+      parent_unit_id: null,
+      phase: null,
+      runner: "sdk",
+      model: null,
+      input_hash: "h",
+      result_json: null,
+      status: "failed",
+      failure_reason: null,
+      tokens: null,
+      session_id: null,
+      worktree_path: null,
+      started_at: null,
+      finished_at: null,
+      last_checkin_at: null,
+      ...overrides,
+    } as WorkflowRunUnitRow;
+  }
+
+  test("a failed unit's evidence is identical whether the engine or a driver produced it", () => {
+    // Engine-shaped: dispatchUnit's UnitTransportError path fills text + error.
+    const engineOutcome: UnitOutcome = {
+      unitId: "s1:solo",
+      ok: false,
+      failureReason: "timeout",
+      text: "",
+      error: "unit dispatch failed",
+    };
+    // Report-shaped: rehydrated from a driver-reported failed row (no text/error).
+    const reportOutcome = unitOutcomeFromRow(
+      "s1:solo",
+      row({ unit_id: "s1:solo", status: "failed", failure_reason: "timeout" }),
+      false,
+    );
+
+    const engineEvidence = buildEvidence([engineOutcome], "collect", false);
+    const reportEvidence = buildEvidence([reportOutcome], "collect", false);
+
+    // Byte-identical durable projection — the load-bearing R4 invariant.
+    expect(canonicalJson(engineEvidence.units)).toBe(canonicalJson(reportEvidence.units));
+    // And it carries ONLY the surface-independent fields (no engine-only leakage).
+    expect(engineEvidence.units).toEqual([{ unitId: "s1:solo", ok: false, failureReason: "timeout" }]);
+  });
+
+  test("a successful unit keeps its promoted contribution on BOTH surfaces", () => {
+    const engineOutcome: UnitOutcome = { unitId: "s1:solo", ok: true, text: "did the work", tokens: 42 };
+    const reportOutcome = unitOutcomeFromRow(
+      "s1:solo",
+      row({ unit_id: "s1:solo", status: "completed", result_json: JSON.stringify("did the work"), tokens: 42 }),
+      false,
+    );
+    const engineEvidence = buildEvidence([engineOutcome], "collect", false);
+    const reportEvidence = buildEvidence([reportOutcome], "collect", false);
+    expect(canonicalJson(engineEvidence.units)).toBe(canonicalJson(reportEvidence.units));
+    expect(engineEvidence.units).toEqual([{ unitId: "s1:solo", ok: true, text: "did the work" }]);
   });
 });

@@ -12,6 +12,16 @@ at the end of this document records the owner decisions (YAML program
 format, full replay semantics) and **supersedes** the P1 markdown
 orchestration grammar, the P3 CC-delegation backend, and the P5 replay
 design below. Phases R1–R4 in the addendum replace P3–P5.
+**ADDENDUM FULLY DELIVERED (R1–R4) 2026-07-07** on the PR #714 branch:
+R1 (YAML format + frozen plan) and R2 (engine rework) shipped 2026-07-06;
+R3 (harness-neutral driver protocol — `akm workflow brief`/`report` +
+unit-level check-in) and R4 (cross-surface conformance hardening + this
+status sweep) shipped 2026-07-07. Only **two owner-decided items are
+permanently out of scope** and were never built: the GitHub Copilot
+cloud-delegate backend and the stash MCP server. Everything below that
+predates the addendum (the P3–P5 CC-delegation/cloud/replay designs) is
+retained as historical context and is superseded by the addendum — read
+the *Redesign addendum* as the governing record of what shipped.
 
 ## Goal
 
@@ -1237,11 +1247,73 @@ mismatch against the producer's declared schema).
   the opencode SDK, env goes through an env-keyed server registry (see the
   `opencode-sdk` module doc), which removed the sdk `env_unsupported`
   hard-fail (llm still rejects env). Deferred: nothing from this bullet —
-  R3 (driver protocol) and R4 (hardening, incl. the status sweep of this
-  document) remain.
-- **R3 — driver protocol.** `workflow brief` + `workflow report` ingest +
-  unit-level check-in; the harness-neutral replacement for CC delegation.
-- **R4 — hardening.** Cross-surface conformance (engine-driven vs
-  brief/report-driven runs must produce identical unit graphs), chaos
-  tests (crash/resume, lease contention, hostile content), docs, and the
-  status sweep of this document.
+  R3 (driver protocol) and R4 (hardening + this document's status sweep),
+  both now shipped 2026-07-07 (below).
+- **R3 — driver protocol. ✅ SHIPPED 2026-07-07.** The harness-neutral
+  replacement for CC delegation: `akm workflow brief <run>` +
+  `akm workflow report <run>` + unit-level check-in. Delivered exactly per
+  the addendum's "no duplicated semantics" cardinal rule — work-list
+  computation (item resolution, content-derived unit ids, input hashes,
+  prompt assembly with recovered gate feedback), route evaluation,
+  reducer/artifact promotion, output-schema validation, and artifact-judged
+  gate completion were extracted into ONE shared module
+  (`src/workflows/exec/step-work.ts`) that `run-workflow.ts`,
+  `brief.ts`, and `report.ts` all call, so the engine behavior is
+  preserved (existing tests prove it). **`brief`** (`src/workflows/exec/brief.ts`,
+  passthrough shape `workflow-brief`) is read-only — takes no lease,
+  dispatches nothing, mutates nothing (a test proves the db file is
+  byte-identical across a brief) — and emits the active step's expected
+  work-list with per-unit `{unitId, nodeId, runner, model, resolved
+  instructions + inputHash, outputSchema, env binding NAMES only, timeout,
+  retry/onError}`, already-journaled unit statuses, the gate/artifact
+  contract, the exact `report` command lines, a loud warning when the
+  engine lease is live, and surfaced stale claimed units. Gate feedback is
+  recovered from the latest journaled `<stepId>.gate:l<n>` row so a loop-N
+  brief predicts the engine's loop-N unit ids/hashes. **`report`**
+  (`src/workflows/exec/report.ts`, shape `workflow-report`) is the ONE
+  mutating verb: `--unit <id> --status completed|failed|running
+  [--result | --result-file | stdin] [--tokens] [--session-id]
+  [--failure-reason]`. It refuses a non-active run and refuses while a live
+  engine lease exists; validates the unit against the recomputed work-list
+  (unknown id ⇒ UsageError naming the valid ids); computes the input hash
+  identically to the engine; validates `--result` against the unit's output
+  schema; writes through the same repository path; treats a same-hash
+  re-report of a COMPLETED unit as an idempotent no-op and a different-hash
+  one as replay divergence; enforces journal-seeded budget ceilings; and
+  when a report makes the step's work-list fully terminal, runs the SAME
+  completion path as the engine (reducer → artifact promotion → schema
+  validation → artifact-judged gate → `completeWorkflowStep`), honoring
+  `on_error` and `gate.max_loops` (a rejection with loops left leaves the
+  step active so the next brief emits the loop-N work-list). **Unit-level
+  check-in** (`--status running`, migration 007's additive `last_checkin_at`
+  column, `src/workflows/runtime/unit-checkin.ts`) claims/heartbeats a unit
+  without touching the spine; `brief`/`status` surface stale claims via a
+  pure, `now`-injectable timestamp evaluator in the style of
+  `runtime/checkin.ts`. The gate judge on the report path is the same lazy
+  `llm/client` call with the same fail-open/blocked semantics as the engine.
+  Two documented small calls: `report` **settles the spine** past
+  non-dispatching steps (route-only, empty fan-out, all-unresolvable) through
+  the same shared helpers so a driver never gets stuck at a step no
+  `report --unit` can complete; and a typed-artifact schema mismatch is a
+  HARD failure on the report surface (no gate row is journaled for it, so the
+  stateless report path cannot recover its feedback across invocations — a
+  GATE rejection, which DOES journal a row, stays a real bounded loop).
+- **R4 — hardening. ✅ SHIPPED 2026-07-07.** Cross-surface conformance:
+  `tests/workflows/conformance/driver-parity.test.ts` runs every golden
+  program twice against identical fixture dispatch results and judge
+  verdicts — (a) engine-driven `runWorkflowSteps`, (b) a
+  `brief → report` loop over every pending unit — and asserts the two
+  produce IDENTICAL unit graphs (same dispatch-unit rows down to
+  `unit_id`/`node_id`/`input_hash`/`status`/`result_json`/`failure_reason`,
+  same gate-evaluation rows, same journaled route decisions, same per-step
+  statuses + promoted artifacts, same final run status). `retry` is
+  deliberately collapsed: it is an engine-internal `<baseId>~r<n>`
+  re-dispatch mechanic, and the driver protocol delegates retries to the
+  driver, which reports only a unit's FINAL outcome. This status sweep of
+  the present document is the remaining R4 deliverable. Chaos tests
+  (crash/resume, lease contention, hostile content) are covered by the
+  existing R1/R2 replay-divergence, lease-enforcement, and event-metadata
+  test suites; no separate chaos harness was added. Docs delivered:
+  "Driving a run from any agent (brief/report)" in
+  `docs/features/workflows.md`, the extended experimental bullet in
+  `STABILITY.md`, and the `[Unreleased]` CHANGELOG entry.

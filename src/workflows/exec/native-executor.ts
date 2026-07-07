@@ -610,7 +610,10 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     const prior = input.existingUnits?.get(attemptId);
     if (!prior || prior.status !== "completed") continue;
     if (prior.input_hash === inputHash) {
-      return reuseCompletedUnit(attemptId, prior, workUnit.schema !== undefined);
+      // Identity in the durable step evidence is the CONTENT-derived base id, not
+      // the `~r<n>` attempt row it was reused from — the report surface reduces
+      // from the base id too, so both surfaces' evidence.units[].unitId agree.
+      return reuseCompletedUnit(unitId, prior, workUnit.schema !== undefined);
     }
     if (gateLoop > 1) {
       // Gate-loop rows are NOT replay-deterministic: the prompt embeds the
@@ -657,6 +660,12 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
       inputHash,
       ...(input.worktreeBase !== undefined ? { worktreeBase: input.worktreeBase } : {}),
     });
+    // The journal ROW keeps the `~r<n>`/`~l<loop>` attempt id (dispatchJournaledAttempt
+    // wrote it), but the returned outcome's identity in the DURABLE step evidence is
+    // the content-derived BASE id — the suffix is journal bookkeeping the report
+    // surface never sees, so leaking it into evidence.units would diverge the two
+    // surfaces (R4 parity, exposed once the conformance graph compares evidence.units).
+    outcome.unitId = unitId;
     // Budget token accounting (addendum R2): every actual dispatch's reported
     // usage counts against the run's max_tokens ceiling; crossing it aborts
     // pending dispatches via the chained controller. Reuses never reach here
