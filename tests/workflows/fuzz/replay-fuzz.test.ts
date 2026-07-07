@@ -184,90 +184,99 @@ function distinctScalars(rng: Rng, count: number): unknown[] {
 
 describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", () => {
   const seeds = fuzzSeeds(8);
-  test("same-hash rows reuse (0 re-dispatch), tampered hash diverges, dups dispatch nothing", async () => {
-    for (const seed of seeds) {
-      let storage: IsolatedAkmStorage | undefined;
-      try {
-        storage = withIsolatedAkmStorage();
-        await withSeedAsync(seed, async () => {
-          const rng = new Rng(seed);
-          const items = distinctScalars(rng, rng.range(1, 4));
-          const runId = `run-reuse-${seed}`;
-          seedRun(runId, { items });
+  // Each seed runs several async executeStepPlan passes against isolated
+  // storage, so the wall-clock cost scales with the seed count. Give the
+  // heavy test a timeout that grows with `AKM_FUZZ_SEEDS` deep runs; the
+  // default 8-seed fast tier stays well under the 5s floor.
+  const heavyTimeoutMs = Math.max(5_000, seeds.length * 300);
+  test(
+    "same-hash rows reuse (0 re-dispatch), tampered hash diverges, dups dispatch nothing",
+    async () => {
+      for (const seed of seeds) {
+        let storage: IsolatedAkmStorage | undefined;
+        try {
+          storage = withIsolatedAkmStorage();
+          await withSeedAsync(seed, async () => {
+            const rng = new Rng(seed);
+            const items = distinctScalars(rng, rng.range(1, 4));
+            const runId = `run-reuse-${seed}`;
+            seedRun(runId, { items });
 
-          let dispatches = 0;
-          const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
-            dispatches++;
-            return { ok: true, text: `did ${req.unitId}` };
-          };
-
-          // 1) First execution dispatches exactly one unit per item.
-          const first = await executeStepPlan(STEP, {
-            runId,
-            workflowRef: "workflow:f",
-            params: { items },
-            evidence: {},
-            dispatcher,
-          });
-          expect(first.ok).toBe(true);
-          expect(dispatches).toBe(items.length);
-
-          // 2) Re-execution with identical inputs reuses every journaled row.
-          const second = await executeStepPlan(STEP, {
-            runId,
-            workflowRef: "workflow:f",
-            params: { items },
-            evidence: {},
-            dispatcher: async () => {
+            let dispatches = 0;
+            const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
               dispatches++;
-              return { ok: true, text: "must-not-run" };
-            },
-          });
-          expect(second.ok).toBe(true);
-          expect(dispatches).toBe(items.length); // zero re-dispatch
+              return { ok: true, text: `did ${req.unitId}` };
+            };
 
-          // 3) Same items, tampered params ⇒ same ids / different hash ⇒ hard
-          //    replay divergence, even though the unit is on_error: continue.
-          const diverged = await executeStepPlan(STEP, {
-            runId,
-            workflowRef: "workflow:f",
-            params: { items, tamper: `v-${seed}` },
-            evidence: {},
-            dispatcher,
-          });
-          expect(diverged.ok).toBe(false);
-          expect(diverged.summary).toContain("replay divergence");
-          expect(dispatches).toBe(items.length); // still no re-dispatch
-        });
+            // 1) First execution dispatches exactly one unit per item.
+            const first = await executeStepPlan(STEP, {
+              runId,
+              workflowRef: "workflow:f",
+              params: { items },
+              evidence: {},
+              dispatcher,
+            });
+            expect(first.ok).toBe(true);
+            expect(dispatches).toBe(items.length);
 
-        // 4) Duplicate items dispatch nothing at all (separate run).
-        await withSeedAsync(seed, async () => {
-          const rng = new Rng(seed * 7 + 1);
-          const scalars = distinctScalars(rng, rng.range(1, 3));
-          const withDup = [...scalars, scalars[0]];
-          const dupRunId = `run-dup-${seed}`;
-          seedRun(dupRunId, { items: withDup });
-          let dupDispatches = 0;
-          const dupResult = await executeStepPlan(STEP, {
-            runId: dupRunId,
-            workflowRef: "workflow:f",
-            params: { items: withDup },
-            evidence: {},
-            dispatcher: async () => {
-              dupDispatches++;
-              return { ok: true, text: "must-not-run" };
-            },
+            // 2) Re-execution with identical inputs reuses every journaled row.
+            const second = await executeStepPlan(STEP, {
+              runId,
+              workflowRef: "workflow:f",
+              params: { items },
+              evidence: {},
+              dispatcher: async () => {
+                dispatches++;
+                return { ok: true, text: "must-not-run" };
+              },
+            });
+            expect(second.ok).toBe(true);
+            expect(dispatches).toBe(items.length); // zero re-dispatch
+
+            // 3) Same items, tampered params ⇒ same ids / different hash ⇒ hard
+            //    replay divergence, even though the unit is on_error: continue.
+            const diverged = await executeStepPlan(STEP, {
+              runId,
+              workflowRef: "workflow:f",
+              params: { items, tamper: `v-${seed}` },
+              evidence: {},
+              dispatcher,
+            });
+            expect(diverged.ok).toBe(false);
+            expect(diverged.summary).toContain("replay divergence");
+            expect(dispatches).toBe(items.length); // still no re-dispatch
           });
-          expect(dupResult.ok).toBe(false);
-          expect(dupDispatches).toBe(0);
-          expect(dupResult.summary).toContain("duplicate items");
-        });
-      } finally {
-        storage?.cleanup();
+
+          // 4) Duplicate items dispatch nothing at all (separate run).
+          await withSeedAsync(seed, async () => {
+            const rng = new Rng(seed * 7 + 1);
+            const scalars = distinctScalars(rng, rng.range(1, 3));
+            const withDup = [...scalars, scalars[0]];
+            const dupRunId = `run-dup-${seed}`;
+            seedRun(dupRunId, { items: withDup });
+            let dupDispatches = 0;
+            const dupResult = await executeStepPlan(STEP, {
+              runId: dupRunId,
+              workflowRef: "workflow:f",
+              params: { items: withDup },
+              evidence: {},
+              dispatcher: async () => {
+                dupDispatches++;
+                return { ok: true, text: "must-not-run" };
+              },
+            });
+            expect(dupResult.ok).toBe(false);
+            expect(dupDispatches).toBe(0);
+            expect(dupResult.summary).toContain("duplicate items");
+          });
+        } finally {
+          storage?.cleanup();
+        }
       }
-    }
-    expect(seeds.length).toBeGreaterThan(0);
-  });
+      expect(seeds.length).toBeGreaterThan(0);
+    },
+    heavyTimeoutMs,
+  );
 });
 
 /** Async twin of `withSeed` — tags any rejection with its seed. */
