@@ -30,8 +30,44 @@
  * (`steps.discover.output.files`) therefore resolves against real step
  * results, never the raw evidence envelope (peer review R1). Steps completed
  * manually (no `output` key in their evidence) expose their recorded evidence
- * object as-is. TODO(R2: typed artifacts): the artifact becomes the reducer
- * result VALIDATED against `IrStepPlan.outputSchema`.
+ * object as-is.
+ *
+ * Typed artifacts (addendum, R2): when the step declares an `output` schema
+ * (`IrStepPlan.outputSchema`), the promoted artifact is validated with the
+ * JSON-schema-subset validator BEFORE the step can complete. A mismatch fails
+ * the step (fail-fast) with the validation errors in the summary — a
+ * downstream consumer must never receive an artifact the author's contract
+ * says cannot exist.
+ *
+ * Unit identity (addendum, R2): CONTENT-DERIVED, never positional. A fan-out
+ * unit's id is `<node_id>:<sha256(canonicalJson(item))[:12]>`; a solo unit's
+ * is `<node_id>:solo`. Identity therefore survives item-list regeneration and
+ * reordering — resuming a run whose producer re-emitted the same items in a
+ * different order reuses every journaled result. Consequences:
+ *   - DUPLICATE items in one fan-out list collide on identity. That is an
+ *     authoring error (the same work dispatched twice under one id): the step
+ *     fails deterministically after resolving the item list, naming the
+ *     duplicate, before anything dispatches.
+ *   - REPLAY DIVERGENCE: a journaled COMPLETED row whose unit_id matches but
+ *     whose `input_hash` differs is a hard step failure ("replay divergence"),
+ *     never a silent re-dispatch — under a frozen plan the same identity must
+ *     reproduce the same inputs, so a mismatch means the journal (or params
+ *     row) was tampered with. Failed/running/missing rows dispatch live.
+ *   - Pre-release R1 journals used positional ids (`node.unit[3]`). There is
+ *     no back-compat shim: those rows simply never match a content-derived id
+ *     and are ignored (the step re-runs cleanly on top of them).
+ *
+ * Gate loops (addendum, R2 `gate.max_loops`): when the engine re-executes a
+ * step subgraph after a gate rejection, it threads the judge's feedback in as
+ * `ctx.gateFeedback` (appended to every unit prompt — the input hash changes,
+ * so re-dispatch is natural) and marks the attempt with `ctx.gateLoop` (>= 2).
+ * Loop attempts journal under `<unitId>~l<loop>` — like `~r<n>` retries, pure
+ * journal bookkeeping on top of the content-derived identity, so loop 1's
+ * rows are never clobbered. Because gate feedback is JUDGE-authored (a fresh
+ * LLM output per invocation, not a pure function of the frozen plan), a
+ * journaled loop row whose hash no longer matches re-dispatches live instead
+ * of raising replay divergence — the divergence guarantee applies to loop-1
+ * rows, whose inputs ARE pure functions of (plan, params, journaled results).
  *
  * Failure policy (addendum, "explicit surface, fail-fast default"):
  *   - `onError: "fail"` (default) fails the step on any unit failure;
@@ -140,12 +176,31 @@ export interface UnitOutcome {
   sessionId?: string;
 }
 
+/**
+ * Corrective feedback from a rejected completion gate, threaded into the next
+ * gate-loop execution of the step subgraph (`gate.max_loops`, addendum R2).
+ * Appended to every unit prompt, so the input hash changes and the loop's
+ * units re-dispatch naturally instead of reusing the rejected attempt's rows.
+ */
+export interface GateFeedback {
+  feedback: string;
+  missing: string[];
+}
+
 export interface StepExecutionContext {
   runId: string;
   workflowRef: string;
   params: Record<string, unknown>;
   /** Evidence of prior steps, keyed by step id — fan-out `over:` sources. */
   evidence: Record<string, Record<string, unknown> | undefined>;
+  /**
+   * Gate-loop attempt number, 1-based (absent = 1, the first execution).
+   * Attempts >= 2 journal their units under `<unitId>~l<loop>` so loop 1's
+   * rows are never clobbered (module doc, *Gate loops*).
+   */
+  gateLoop?: number;
+  /** Judge feedback from the previous (rejected) gate loop; appended to every unit prompt. */
+  gateFeedback?: GateFeedback;
   signal?: AbortSignal;
   /** Test seam / backend override; defaults to the runner-substrate dispatcher. */
   dispatcher?: UnitDispatcher;
@@ -219,8 +274,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const reducer = root.kind === "map" ? root.reducer : "collect";
 
   // The deterministic expression scope for this step: run params plus prior
-  // steps' recorded outputs. TODO(R2: typed artifacts): stepOutputs is the
-  // prior steps' EVIDENCE keyed by step id until typed step artifacts land.
+  // steps' promoted artifacts (projectStepOutput over their journaled evidence).
   const scope: ExpressionScope = { params: ctx.params, stepOutputs: stepOutputsFromEvidence(ctx.evidence) };
 
   // Parse the instruction template ONCE per step (deterministic; resolution
@@ -268,15 +322,41 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     items = [undefined];
   }
 
+  // Content-derived unit identity (module doc): compute every unit id up
+  // front from the resolved items. Duplicate items collide on identity — an
+  // authoring error caught HERE, deterministically, before any dispatch.
+  const isFanOut = root.kind === "map";
+  const unitIds = items.map((item) => unitIdFor(template.id, item, isFanOut));
+  if (isFanOut) {
+    const firstIndexByCanonical = new Map<string, number>();
+    for (let i = 0; i < items.length; i++) {
+      const canonical = canonicalJson(items[i]) ?? "null";
+      const firstIndex = firstIndexByCanonical.get(canonical);
+      if (firstIndex !== undefined) {
+        return failedStep(
+          dispatched,
+          `Step "${plan.stepId}" fan-out list contains duplicate items (indices ${firstIndex} and ${i}: ` +
+            `${clip(canonical, 200)}). Content-derived unit identity requires distinct items — ` +
+            `deduplicate the list this workflow fans out over.`,
+        );
+      }
+      firstIndexByCanonical.set(canonical, i);
+    }
+  }
+
   if (items.length === 0) {
+    // The promoted step artifact of an empty collect is the empty array; an
+    // empty vote has no winner, so its artifact is null (references into it
+    // fail loudly at resolution instead of falling back to the envelope).
+    const emptyEvidence = { units: [], itemCount: 0, output: reducer === "collect" ? [] : null };
+    // Typed artifacts (R2): even the degenerate empty artifact must honor the
+    // step's declared output schema before it can complete.
+    const schemaFailure = validateStepArtifact(plan, emptyEvidence);
     return {
-      ok: true,
+      ok: schemaFailure === undefined,
       units: [],
-      // The promoted step artifact of an empty collect is the empty array; an
-      // empty vote has no winner, so its artifact is null (references into it
-      // fail loudly at resolution instead of falling back to the envelope).
-      evidence: { units: [], itemCount: 0, output: reducer === "collect" ? [] : null },
-      summary: `Step "${plan.stepId}" fan-out list was empty — no units dispatched.`,
+      evidence: emptyEvidence,
+      summary: schemaFailure ?? `Step "${plan.stepId}" fan-out list was empty — no units dispatched.`,
       unitsDispatched: dispatched,
     };
   }
@@ -317,7 +397,8 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
         scope,
         item,
         index,
-        isFanOut: root.kind === "map",
+        unitId: unitIds[index],
+        isFanOut,
         env,
         ctx,
         dispatcher,
@@ -340,12 +421,25 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const units = outcomes.map(
     (outcome, index) =>
       outcome ?? {
-        unitId: unitIdFor(template, index, root.kind === "map"),
+        unitId: unitIds[index],
         ok: false,
         failureReason: "aborted",
         error: "unit was not dispatched (aborted or scheduler failure)",
       },
   );
+
+  // Replay divergence is a HARD failure regardless of on_error: a journal
+  // whose completed row disagrees with the frozen plan's inputs must stop the
+  // run loudly (module doc), never be tolerated as "just a failed unit".
+  const diverged = units.filter((u) => u.failureReason === "replay_divergence");
+  if (diverged.length > 0) {
+    return failedStep(
+      budget.used,
+      diverged
+        .map((u) => u.error ?? `replay divergence: unit "${u.unitId}" was journaled with different inputs`)
+        .join(" "),
+    );
+  }
 
   // Failure policy (IR v2): `onError: "fail"` (the default) fails the step on
   // any unit failure; `"continue"` records the failures in the evidence (the
@@ -356,8 +450,8 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const evidence = buildEvidence(units, reducer, root.kind === "map");
   const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";
   const tolerateFailures = template.onError === "continue";
-  const ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
-  const summary =
+  let ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
+  let summary =
     `Executed ${units.length} unit(s) for step "${plan.stepId}" via the native executor: ` +
     `${units.length - failed.length} succeeded, ${failed.length} failed.` +
     (failed.length > 0
@@ -366,6 +460,18 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
           .join(", ")}.`
       : "") +
     reducerNote;
+
+  // Typed artifacts (R2): validate the promoted artifact against the step's
+  // declared output schema BEFORE completion. A mismatch fails the step —
+  // fail-fast, with the validation errors in the summary — never lets a
+  // schema-violating artifact reach downstream references or the gate.
+  if (ok) {
+    const schemaFailure = validateStepArtifact(plan, evidence);
+    if (schemaFailure !== undefined) {
+      ok = false;
+      summary = schemaFailure;
+    }
+  }
 
   return { ok, units, evidence, summary, unitsDispatched: budget.used };
 }
@@ -381,6 +487,8 @@ interface RunUnitInput {
   scope: ExpressionScope;
   item: unknown;
   index: number;
+  /** Content-derived unit id (`<node_id>:<hash12>` / `<node_id>:solo`), computed by executeStepPlan. */
+  unitId: string;
   isFanOut: boolean;
   env?: Record<string, string>;
   ctx: StepExecutionContext;
@@ -392,8 +500,7 @@ interface RunUnitInput {
 }
 
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
-  const { plan, template, item, index, isFanOut, env, ctx, dispatcher } = input;
-  const unitId = unitIdFor(template, index, isFanOut);
+  const { plan, template, item, index, unitId, isFanOut, env, ctx, dispatcher } = input;
 
   // Single-pass resolution of the pre-parsed template against this unit's
   // scope. A resolution failure (missing param, bad path) is deterministic
@@ -448,17 +555,46 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   // is in `retry.on`.
   const retry = template.retry;
   const maxAttempts = 1 + Math.max(0, retry?.max ?? 0);
-  const attemptIdFor = (attempt: number): string => (attempt === 0 ? unitId : `${unitId}~r${attempt}`);
+  // Gate loops (module doc): attempts of loop >= 2 journal under
+  // `<unitId>~l<loop>` so loop 1's rows are never clobbered; `~r<n>` retry
+  // suffixes stack on top. Both suffixes are journal bookkeeping — the
+  // content-derived identity (and the prompt's {{UNIT_ID}}) stays the base id.
+  const gateLoop = ctx.gateLoop ?? 1;
+  const journalBaseId = gateLoop > 1 ? `${unitId}~l${gateLoop}` : unitId;
+  const attemptIdFor = (attempt: number): string => (attempt === 0 ? journalBaseId : `${journalBaseId}~r${attempt}`);
 
-  // Durable-row reuse: ANY attempt of this unit that completed with the same
-  // input hash IS the result — return it without touching rows, dispatching,
-  // or re-emitting events (a crash-resume must never double-issue work).
-  // Failed/running/stale-input rows fall through and re-dispatch.
+  // Durable-row reuse: the FIRST completed attempt of this unit decides.
+  // Matching input hash → it IS the result: return it without touching rows,
+  // dispatching, or re-emitting events (a crash-resume must never
+  // double-issue work). A DIFFERENT hash → replay divergence: under a frozen
+  // plan the same content-derived identity must reproduce the same inputs,
+  // so the journal was tampered with — fail loudly (executeStepPlan promotes
+  // this to a hard step failure regardless of on_error), never silently
+  // re-dispatch. Failed/running/missing rows fall through and dispatch live;
+  // pre-release R1 positional ids (`node.unit[3]`) never match and are
+  // ignored (module doc).
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const prior = input.existingUnits?.get(attemptIdFor(attempt));
-    if (prior && prior.status === "completed" && prior.input_hash === inputHash) {
-      return reuseCompletedUnit(attemptIdFor(attempt), prior, template.schema !== undefined);
+    const attemptId = attemptIdFor(attempt);
+    const prior = input.existingUnits?.get(attemptId);
+    if (!prior || prior.status !== "completed") continue;
+    if (prior.input_hash === inputHash) {
+      return reuseCompletedUnit(attemptId, prior, template.schema !== undefined);
     }
+    if (gateLoop > 1) {
+      // Gate-loop rows are NOT replay-deterministic: the prompt embeds the
+      // judge's feedback, a fresh LLM output per invocation. A stale loop row
+      // with a different hash re-dispatches live (INSERT OR REPLACE takes the
+      // row over) — divergence only guards loop-1 rows (module doc).
+      break;
+    }
+    return {
+      unitId,
+      ok: false,
+      failureReason: "replay_divergence",
+      error:
+        `replay divergence: unit "${attemptId}" was journaled with different inputs ` +
+        `(journaled input_hash does not match this invocation's) — refusing to re-dispatch.`,
+    };
   }
 
   let outcome: UnitOutcome | undefined;
@@ -671,9 +807,9 @@ interface BuildPromptInput {
 
 /**
  * Assemble the final prompt: engine preamble + resolved instructions
- * (+ schema directive). Workflow-authored interpolation happened upstream via
- * the expression module; only the ENGINE's own preamble placeholders are
- * substituted here.
+ * (+ gate feedback on loop re-executions, + schema directive). Workflow-
+ * authored interpolation happened upstream via the expression module; only
+ * the ENGINE's own preamble placeholders are substituted here.
  */
 function buildUnitPrompt(input: BuildPromptInput): string {
   const { plan, template, ctx, unitId, instructions } = input;
@@ -686,11 +822,23 @@ function buildUnitPrompt(input: BuildPromptInput): string {
     .replaceAll("{{UNIT_ID}}", () => unitId)
     .replaceAll("{{PARAMS_JSON}}", () => safeJson(ctx.params));
 
+  // Gate-loop feedback (R2 max_loops): the judge's rejection is appended so
+  // the re-executed unit can address it — and so the input hash changes,
+  // making the loop's re-dispatch natural instead of a durable-row reuse.
+  const gateBlock = ctx.gateFeedback
+    ? `\n\n## Completion-gate feedback (previous attempt rejected)\n` +
+      `A completion-criteria judge rejected this step's previous results. Address this feedback:\n` +
+      ctx.gateFeedback.feedback +
+      (ctx.gateFeedback.missing.length > 0
+        ? `\nUnmet criteria:\n${ctx.gateFeedback.missing.map((m) => `- ${m}`).join("\n")}`
+        : "")
+    : "";
+
   const schemaDirective = template.schema
     ? `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${safeJson(template.schema)}`
     : "";
 
-  return `${preamble}\n${instructions}${schemaDirective}`;
+  return `${preamble}\n${instructions}${gateBlock}${schemaDirective}`;
 }
 
 // ── Step outputs + reducers ──────────────────────────────────────────────────
@@ -706,12 +854,51 @@ function buildUnitPrompt(input: BuildPromptInput): string {
  *   - evidence without an `output` key (manually-completed steps, pre-R1
  *     rows) is exposed as-is — whatever the author recorded is the output.
  *
- * TODO(R2: typed artifacts): the artifact becomes the reducer result
- * validated against the step's declared `output` schema; this projection is
- * the single seam the R2 rework replaces.
+ * Typed artifacts (R2): when the step declares an output schema, the artifact
+ * this projection exposes has already been validated against it — a
+ * schema-violating artifact fails the step before completion
+ * ({@link validateStepArtifact}), so it never reaches a reference.
  */
 export function projectStepOutput(evidence: Record<string, unknown>): unknown {
   return Object.hasOwn(evidence, "output") ? evidence.output : evidence;
+}
+
+/**
+ * Typed artifacts (addendum, R2): validate the promoted step artifact against
+ * `IrStepPlan.outputSchema`. Returns the step-failure summary (validation
+ * errors included) on mismatch, undefined when valid or when no schema is
+ * declared. Runs BEFORE completion so a schema-violating artifact never
+ * reaches the gate or downstream `${{ steps.<id>.output }}` references.
+ */
+function validateStepArtifact(plan: IrStepPlan, evidence: Record<string, unknown>): string | undefined {
+  if (!plan.outputSchema) return undefined;
+  const errors = validateJsonSchemaSubset(projectStepOutput(evidence), plan.outputSchema);
+  if (errors.length === 0) return undefined;
+  return (
+    `Step "${plan.stepId}" artifact failed validation against the step's declared output schema: ` +
+    `${errors.join("; ")}.`
+  );
+}
+
+/** How much artifact JSON the completion-criteria judge receives (addendum R2, artifact-judging gates). */
+const GATE_ARTIFACT_CLIP = 4_000;
+
+/**
+ * Build the summary the completion-criteria gate judges for an ENGINE-driven
+ * step (addendum R2, "typed artifacts, honest gates"): a one-line unit count
+ * followed by the promoted step artifact as canonical JSON, clipped at
+ * {@link GATE_ARTIFACT_CLIP} chars. This replaces the machine-prose
+ * "Executed N unit(s)…" summary as the judged content, so the gate evaluates
+ * real results instead of engine bookkeeping.
+ */
+export function buildArtifactSummary(stepId: string, units: UnitOutcome[], evidence: Record<string, unknown>): string {
+  const failedCount = units.filter((u) => !u.ok).length;
+  const json = canonicalJson(projectStepOutput(evidence)) ?? "null";
+  return (
+    `Step "${stepId}" executed ${units.length} unit(s) (${units.length - failedCount} succeeded, ${failedCount} failed). ` +
+    `Step artifact (canonical JSON${json.length > GATE_ARTIFACT_CLIP ? `, clipped at ${GATE_ARTIFACT_CLIP} chars` : ""}):\n` +
+    clip(json, GATE_ARTIFACT_CLIP)
+  );
 }
 
 /** Project the engine's evidence map into the expression scope's `stepOutputs`. */
@@ -1045,8 +1232,17 @@ function requireDefaultLlm(
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 
-function unitIdFor(template: IrAgentNode, index: number, isFanOut: boolean): string {
-  return isFanOut ? `${template.id}[${index}]` : template.id;
+/**
+ * Content-derived unit identity (module doc): `<node_id>:<hash12>` for a
+ * fan-out item, `<node_id>:solo` otherwise. The hash is over the item's
+ * canonical JSON (sorted keys — same canonicalization the vote reducer
+ * counts with), so identity survives list reordering/regeneration and is
+ * independent of item position. Retry attempts stack `~r<n>` on top.
+ */
+function unitIdFor(nodeId: string, item: unknown, isFanOut: boolean): string {
+  if (!isFanOut) return `${nodeId}:solo`;
+  const canonical = canonicalJson(item) ?? "null";
+  return `${nodeId}:${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`;
 }
 
 /** Rehydrate a journaled completed unit row into a UnitOutcome (durable-row reuse). */

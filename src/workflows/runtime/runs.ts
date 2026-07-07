@@ -69,6 +69,14 @@ export interface CompleteWorkflowStepInput {
    * Injected primarily for tests.
    */
   summaryJudge?: SummaryJudge | null;
+  /**
+   * Internal (engine only): the run-lease holder id of the `akm workflow run`
+   * invocation making this call. While a LIVE lease is held, only its holder
+   * may advance the spine — the engine owns the run while driving it. The
+   * manual CLI path never sets this, so `akm workflow complete` is refused
+   * until the lease is released or expires (R2 single-driver enforcement).
+   */
+  leaseHolder?: string;
 }
 
 /**
@@ -318,6 +326,7 @@ export async function completeWorkflowStep(
     if (run.status !== "active") {
       throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
     }
+    assertLeaseAllowsSpineAdvance(run, input.leaseHolder);
     const existing = repo.getStep(run.id, input.stepId);
     if (!existing) {
       throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
@@ -378,6 +387,10 @@ export async function completeWorkflowStep(
       if (run.status !== "active") {
         throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
       }
+      // Re-checked inside the write transaction (like every other preflight
+      // condition): an engine may have claimed the run while the summary gate
+      // above was awaiting its LLM judge.
+      assertLeaseAllowsSpineAdvance(run, input.leaseHolder);
       const existing = repo.getStep(run.id, input.stepId);
       if (!existing) {
         throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
@@ -524,7 +537,30 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
     params: parseJsonObject(run.params_json),
     agentHarness: run.agent_harness ?? null,
     agentSessionId: run.agent_session_id ?? null,
+    // Surface the engine lease (holder id + expiry — never workflow-authored
+    // content) so `workflow next`/`status` show who is driving the run.
+    ...(run.engine_lease_holder && run.engine_lease_until
+      ? { engineLease: { holder: run.engine_lease_holder, until: run.engine_lease_until } }
+      : {}),
   };
+}
+
+/**
+ * Single-driver enforcement (R2 run lease): while a LIVE (unexpired) engine
+ * lease is held, only the holding engine may advance the gate spine. Manual
+ * `akm workflow complete` (no `leaseHolder`) — or a stale engine invocation
+ * whose lease was claimed by another — is refused with the holder + expiry.
+ * An EXPIRED lease never blocks: the engine that held it is presumed dead.
+ */
+function assertLeaseAllowsSpineAdvance(run: WorkflowRunRow, leaseHolder: string | undefined): void {
+  if (!run.engine_lease_holder || !run.engine_lease_until) return;
+  if (leaseHolder === run.engine_lease_holder) return;
+  if (run.engine_lease_until < new Date().toISOString()) return; // expired ⇒ claimable, not live
+  throw new UsageError(
+    `Workflow run ${run.id} is being driven by engine ${run.engine_lease_holder} ` +
+      `(run lease expires ${run.engine_lease_until}). The engine owns the step spine while it runs — ` +
+      `wait for it to finish or for the lease to expire before advancing steps manually.`,
+  );
 }
 
 function toWorkflowRunStepState(step: WorkflowRunStepRow): WorkflowRunStepState {
@@ -577,12 +613,14 @@ function deriveRunState(steps: WorkflowRunStepRow[]): {
 }
 
 /**
-/**
  * Build the default summary-validation judge from the configured LLM, or return
  * `null` when no LLM is configured (gate is then skipped — fail-open). Lazily
  * imports the client/config so the workflow engine has no hard LLM dependency.
+ *
+ * Exported for the engine loop (`exec/run-workflow.ts`), which wraps the judge
+ * to journal engine-driven gate evaluations as unit rows (addendum R2).
  */
-function buildDefaultSummaryJudge(): SummaryJudge | null {
+export function buildDefaultSummaryJudge(): SummaryJudge | null {
   let llm: import("../../core/config/config").LlmConnectionConfig | undefined;
   try {
     const config = loadConfig();

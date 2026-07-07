@@ -14,6 +14,24 @@
  * rejection (SummaryValidationFailure) STOPS the engine and surfaces the
  * corrective feedback — a gate is a gate, even for the engine.
  *
+ * Artifact-judging gates (redesign addendum, R2): when a step declares
+ * completion criteria, the engine hands the gate a summary BUILT FROM the
+ * step's promoted artifact (canonical JSON, clipped, prefixed with a one-line
+ * unit count — `buildArtifactSummary`) instead of the machine-prose execution
+ * summary, so the judge evaluates real results. Each engine-driven judge call
+ * is journaled as a unit row (`node_id "<stepId>.gate"`, `unit_id
+ * "<stepId>.gate:l<loop>"`, runner "llm", result_json = the verdict) through
+ * the writer queue — it is an LLM call like any other. Human approvals are
+ * never cached: a blocked gate stays blocked.
+ *
+ * Bounded gate loops (`gate.max_loops`, addendum R2): a rejection on a step
+ * with maxLoops > 1 re-executes the step subgraph with the judge's feedback +
+ * missing[] threaded into every unit prompt (`gateFeedback` on
+ * StepExecutionContext) — the feedback changes each unit's input hash, so the
+ * loop re-dispatches naturally instead of reusing the rejected rows. After
+ * maxLoops rejections the engine stops with the gate feedback, exactly like
+ * the one-shot case.
+ *
  * Frozen plan (redesign addendum, R1): the plan graph is read from the run
  * row (`plan_json`, persisted by `startWorkflowRun` under migration 006) with
  * a `plan_hash` integrity check — the workflow asset file is NEVER re-read
@@ -21,9 +39,19 @@
  * Legacy runs (created before migration 006, NULL plan_json) fall back to
  * compile-from-asset with a warning. Durable-row resume: re-invoking a
  * partially-executed run re-dispatches only work that never completed.
+ *
+ * Run lease (redesign addendum, R2): exactly one engine invocation drives a
+ * run at a time. The lease (random holder id + 90s expiry on the run row) is
+ * acquired before any dispatch, renewed between steps, and released in a
+ * `finally`; a second `workflow run` on a live-leased run refuses up front,
+ * and an expired lease is claimable (crash recovery). While the lease is
+ * live, manual `workflow complete` is refused too — the engine owns the
+ * spine while driving (enforced inside `completeWorkflowStep`).
  */
 
+import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
@@ -31,13 +59,23 @@ import { computePlanHash } from "../ir/plan-hash";
 import type { IrRouteSpec, WorkflowPlanGraph } from "../ir/schema";
 import { type ExpressionScope, resolveWholeValue } from "../program/expressions";
 import {
+  buildDefaultSummaryJudge,
   completeWorkflowStep,
   getNextWorkflowStep,
   type SummaryValidationFailure,
   type WorkflowNextResult,
 } from "../runtime/runs";
 import { compileWorkflowAssetPlan, loadWorkflowAsset } from "../runtime/workflow-asset-loader";
-import { executeStepPlan, projectStepOutput, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
+import type { SummaryJudge } from "../validate-summary";
+import {
+  buildArtifactSummary,
+  executeStepPlan,
+  type GateFeedback,
+  projectStepOutput,
+  type StepExecutionResult,
+  type UnitDispatcher,
+} from "./native-executor";
+import { enqueueUnitWrite } from "./unit-writer";
 
 export interface RunWorkflowOptions {
   /** Workflow run id or workflow ref (auto-starts a run, like `workflow next`). */
@@ -57,6 +95,13 @@ export interface RunWorkflowOptions {
   loadPlan?: (workflowRef: string) => Promise<WorkflowPlanGraph>;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
+  /**
+   * Completion-criteria judge override, threaded into `completeWorkflowStep`
+   * for every engine-driven completion. `undefined` (absent) = build the
+   * default judge from the configured LLM; `null` = no judge (the gate is
+   * fail-open, matching offline behavior). Injected primarily for tests.
+   */
+  summaryJudge?: SummaryJudge | null;
 }
 
 export interface ExecutedStepReport {
@@ -77,10 +122,7 @@ export interface RunWorkflowResult {
 }
 
 export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<RunWorkflowResult> {
-  let next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params);
-  const executed: ExecutedStepReport[] = [];
-  let gateRejection: RunWorkflowResult["gateRejection"];
-  const maxSteps = options.maxSteps ?? Number.POSITIVE_INFINITY;
+  const next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params);
 
   // Refuse non-active runs BEFORE any dispatch — completeWorkflowStep would
   // reject the completion anyway, but only after the units already ran (and
@@ -91,6 +133,81 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
         `Use \`akm workflow resume ${next.run.id}\` to reopen it first.`,
     );
   }
+
+  // Run lease (R2 single-driver enforcement): claim the run BEFORE any
+  // dispatch — a second `akm workflow run` on a live-leased run refuses up
+  // front instead of racing the first engine's spine. An expired lease is
+  // claimable (crash recovery). Released in the finally below; renewed
+  // between steps inside the loop. A done run takes no lease: nothing will
+  // dispatch, and the status re-read below must stay a pure no-op.
+  const runId = next.run.id;
+  const leaseHolder = randomUUID();
+  const leased = !next.done;
+  if (leased) {
+    await acquireRunLease(runId, leaseHolder);
+  }
+  try {
+    return await driveRun(options, next, leaseHolder);
+  } finally {
+    if (leased) {
+      await withWorkflowRunsRepo((repo) => {
+        repo.releaseEngineLease(runId, leaseHolder);
+      });
+    }
+  }
+}
+
+/** Lease lifetime: long enough to survive slow steps between renewals, short
+ * enough that a crashed engine frees the run quickly. Renewed per step. */
+const RUN_LEASE_TTL_MS = 90_000;
+
+function leaseExpiry(): string {
+  return new Date(Date.now() + RUN_LEASE_TTL_MS).toISOString();
+}
+
+/**
+ * Atomically claim the run lease or refuse with a UsageError naming the
+ * current holder + expiry. The single-UPDATE claim in the repository is the
+ * arbiter — two racing invocations cannot both win.
+ */
+async function acquireRunLease(runId: string, holder: string): Promise<void> {
+  await withWorkflowRunsRepo((repo) => {
+    if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
+    const row = repo.getRunById(runId);
+    throw new UsageError(
+      `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
+        `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
+        `wait for that invocation to finish or for the lease to expire.`,
+    );
+  });
+}
+
+/**
+ * Renew the lease between steps. Losing the lease mid-run (it expired during
+ * a long step and another engine claimed it) is a hard stop: the new owner
+ * drives the spine now, and continuing would race it.
+ */
+async function renewRunLease(runId: string, holder: string): Promise<void> {
+  await withWorkflowRunsRepo((repo) => {
+    if (repo.renewEngineLease(runId, holder, leaseExpiry())) return;
+    const row = repo.getRunById(runId);
+    throw new UsageError(
+      `Workflow run ${runId} lost its run lease (now held by ${row?.engine_lease_holder ?? "(nobody)"}). ` +
+        `Another engine invocation claimed the run after this one's lease expired — stopping to avoid racing it.`,
+    );
+  });
+}
+
+/** The engine loop proper — runs under the lease held by `runWorkflowSteps`. */
+async function driveRun(
+  options: RunWorkflowOptions,
+  initial: WorkflowNextResult,
+  leaseHolder: string,
+): Promise<RunWorkflowResult> {
+  let next = initial;
+  const executed: ExecutedStepReport[] = [];
+  let gateRejection: RunWorkflowResult["gateRejection"];
+  const maxSteps = options.maxSteps ?? Number.POSITIVE_INFINITY;
 
   // Seed the lifetime unit cap from the journal so it is truly per-RUN: a
   // resumed or re-invoked run must not restart the runaway backstop at zero.
@@ -126,6 +243,10 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
 
   while (!next.done && next.step && next.run.status === "active" && executed.length < maxSteps) {
     if (options.signal?.aborted) break;
+    // Renew the run lease between steps (a fresh 90s window per iteration).
+    // Losing it (expired mid-step + claimed by another engine) throws — the
+    // new owner drives the spine now.
+    await renewRunLease(next.run.id, leaseHolder);
     const step = next.step;
     const stepPlan = plan.steps.find((s) => s.stepId === step.id);
     if (!stepPlan) {
@@ -151,7 +272,7 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
           ? `Skipped by route: step "${skipInfo.router}" was itself skipped, so none of its branch targets run.`
           : `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
       executed.push({ stepId: step.id, ok: true, unitCount: 0, failedUnits: 0, summary: notes });
-      await completeWorkflowStep({ runId: next.run.id, stepId: step.id, status: "skipped", notes });
+      await completeWorkflowStep({ runId: next.run.id, stepId: step.id, status: "skipped", notes, leaseHolder });
       next = await getNextWorkflowStep(next.run.id);
       continue;
     }
@@ -175,97 +296,173 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     const evidence: Record<string, Record<string, unknown> | undefined> = {};
     for (const s of next.workflow.steps) evidence[s.id] = s.evidence;
 
-    // Route-only steps (YAML `route:` — no execution subgraph) dispatch no
-    // units; they only decide the spine's path below. Everything else
-    // executes its subgraph through the native executor.
-    const result: StepExecutionResult =
-      !stepPlan.root && stepPlan.route
-        ? {
-            ok: true,
-            units: [],
-            evidence: {},
-            summary: `Step "${step.id}" is a route step — no units dispatched.`,
-            unitsDispatched,
-          }
-        : await executeStepPlan(stepPlan, {
-            runId: next.run.id,
-            workflowRef: next.run.workflowRef,
-            params: next.run.params ?? {},
-            evidence,
-            unitsDispatched,
-            ...(options.signal ? { signal: options.signal } : {}),
-            ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
-            ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
-          });
-    unitsDispatched = result.unitsDispatched;
+    // Bounded gate loop (addendum R2, `gate.max_loops`): loop 1 is the normal
+    // execution; a gate rejection with attempts left re-executes the subgraph
+    // with the judge's feedback threaded into unit prompts. `advanced` = the
+    // step completed and the spine may move on; `stopEngine` = failure or
+    // final rejection — this invocation is done.
+    const maxLoops = Math.max(1, stepPlan.gate.maxLoops ?? 1);
+    let gateFeedback: GateFeedback | undefined;
+    let advanced = false;
+    let stopEngine = false;
 
-    executed.push({
-      stepId: step.id,
-      ok: result.ok,
-      unitCount: result.units.length,
-      failedUnits: result.units.filter((u) => !u.ok).length,
-      summary: result.summary,
-    });
+    for (let gateLoop = 1; gateLoop <= maxLoops; gateLoop++) {
+      // A loop re-execution dispatches a fresh round of units — renew the
+      // lease so a long evaluator-optimizer cycle cannot outlive the TTL.
+      if (gateLoop > 1) await renewRunLease(next.run.id, leaseHolder);
 
-    if (!result.ok) {
-      // Gate spine: record the failure through completeWorkflowStep so the
-      // run flips to failed via the normal state derivation.
-      await completeWorkflowStep({
-        runId: next.run.id,
+      // Route-only steps (YAML `route:` — no execution subgraph) dispatch no
+      // units; they only decide the spine's path below. Everything else
+      // executes its subgraph through the native executor.
+      const result: StepExecutionResult =
+        !stepPlan.root && stepPlan.route
+          ? {
+              ok: true,
+              units: [],
+              evidence: {},
+              summary: `Step "${step.id}" is a route step — no units dispatched.`,
+              unitsDispatched,
+            }
+          : await executeStepPlan(stepPlan, {
+              runId: next.run.id,
+              workflowRef: next.run.workflowRef,
+              params: next.run.params ?? {},
+              evidence,
+              unitsDispatched,
+              gateLoop,
+              ...(gateFeedback ? { gateFeedback } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+              ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+              ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
+            });
+      unitsDispatched = result.unitsDispatched;
+
+      executed.push({
         stepId: step.id,
-        status: "failed",
-        notes: result.summary,
-        evidence: result.evidence,
+        ok: result.ok,
+        unitCount: result.units.length,
+        failedUnits: result.units.filter((u) => !u.ok).length,
+        summary: result.summary,
       });
-      break;
-    }
 
-    // Evaluate the route BEFORE completing the step: an unroutable value is
-    // an authoring/config failure and must fail the step deterministically
-    // rather than letting every branch run sequentially. The route input is
-    // an explicit `${{ … }}` reference resolved against run params and step
-    // outputs — INCLUDING the just-finished step's own evidence.
-    if (stepPlan.route) {
-      const scope: ExpressionScope = {
-        params: next.run.params ?? {},
-        stepOutputs: routeStepOutputs(evidence, step.id, result.evidence),
-      };
-      const decision = evaluateRoute(stepPlan.route, scope);
-      if (!decision.ok) {
-        const notes = `Step "${step.id}" route failed: ${decision.error}`;
-        executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: notes };
+      if (!result.ok) {
+        // Gate spine: record the failure through completeWorkflowStep so the
+        // run flips to failed via the normal state derivation.
         await completeWorkflowStep({
           runId: next.run.id,
           stepId: step.id,
           status: "failed",
-          notes,
+          notes: result.summary,
           evidence: result.evidence,
+          leaseHolder,
         });
+        stopEngine = true;
         break;
       }
-      applyRouteDecision(stepPlan.route, step.id, decision.selected, routeSelected, routeUnselected);
-      // Journal the decision on the step evidence: resume replays it via
-      // seedJournaledRouteDecisions, so the skip set survives re-invocation.
-      result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
-      // A route-only step's summary IS its decision (deterministic).
-      if (!stepPlan.root) {
-        result.summary = `Step "${step.id}" routed on ${stepPlan.route.input}: value "${decision.value}" selected step "${decision.selected}".`;
-        executed[executed.length - 1] = { ...executed[executed.length - 1], summary: result.summary };
+
+      // Evaluate the route BEFORE completing the step: an unroutable value is
+      // an authoring/config failure and must fail the step deterministically
+      // rather than letting every branch run sequentially. The route input is
+      // an explicit `${{ … }}` reference resolved against run params and step
+      // outputs — INCLUDING the just-finished step's own evidence.
+      if (stepPlan.route) {
+        const scope: ExpressionScope = {
+          params: next.run.params ?? {},
+          stepOutputs: routeStepOutputs(evidence, step.id, result.evidence),
+        };
+        const decision = evaluateRoute(stepPlan.route, scope);
+        if (!decision.ok) {
+          const notes = `Step "${step.id}" route failed: ${decision.error}`;
+          executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: notes };
+          await completeWorkflowStep({
+            runId: next.run.id,
+            stepId: step.id,
+            status: "failed",
+            notes,
+            evidence: result.evidence,
+            leaseHolder,
+          });
+          stopEngine = true;
+          break;
+        }
+        applyRouteDecision(stepPlan.route, step.id, decision.selected, routeSelected, routeUnselected);
+        // Journal the decision on the step evidence: resume replays it via
+        // seedJournaledRouteDecisions, so the skip set survives re-invocation.
+        result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
+        // A route-only step's summary IS its decision (deterministic).
+        if (!stepPlan.root) {
+          result.summary = `Step "${step.id}" routed on ${stepPlan.route.input}: value "${decision.value}" selected step "${decision.selected}".`;
+          executed[executed.length - 1] = { ...executed[executed.length - 1], summary: result.summary };
+        }
       }
+
+      // Artifact-judging gate (addendum R2): when the step declares
+      // completion criteria, the judged summary is BUILT FROM the promoted
+      // step artifact — real results, not engine prose. Steps without
+      // criteria keep the machine summary (no judge runs on them anyway).
+      const criteria = step.completionCriteria ?? [];
+      const summary =
+        stepPlan.root && criteria.length > 0
+          ? buildArtifactSummary(step.id, result.units, result.evidence)
+          : result.summary;
+
+      // Wrap the judge so engine-driven gate evaluations are journaled as
+      // unit rows (they are LLM calls). `invoked` stays false when the gate
+      // is fail-open (no criteria / no judge) — nothing is journaled then,
+      // and human approvals are never cached.
+      const gateUnit: GateUnitRef = {
+        runId: next.run.id,
+        workflowRef: next.run.workflowRef,
+        stepId: step.id,
+        loop: gateLoop,
+      };
+      const judgeState = { invoked: false, errored: false };
+      const innerJudge = options.summaryJudge === undefined ? buildDefaultSummaryJudge() : options.summaryJudge;
+      const summaryJudge: SummaryJudge | null = innerJudge
+        ? async (prompt) => {
+            judgeState.invoked = true;
+            await journalGateEvaluationStart(gateUnit);
+            try {
+              return await innerJudge(prompt);
+            } catch (err) {
+              judgeState.errored = true;
+              throw err;
+            }
+          }
+        : null;
+
+      const completion = await completeWorkflowStep({
+        runId: next.run.id,
+        stepId: step.id,
+        status: "completed",
+        summary,
+        evidence: result.evidence,
+        summaryJudge,
+        leaseHolder,
+      });
+      const rejection =
+        "ok" in completion && completion.ok === false ? (completion as SummaryValidationFailure) : undefined;
+
+      if (judgeState.invoked) {
+        await journalGateEvaluationFinish(gateUnit, judgeState.errored, rejection);
+      }
+
+      if (!rejection) {
+        advanced = true;
+        break;
+      }
+      if (gateLoop < maxLoops) {
+        // Feed the rejection back into the next loop's unit prompts — the
+        // changed prompt changes each unit's input hash, so the re-run
+        // dispatches fresh work instead of reusing the rejected rows.
+        gateFeedback = { feedback: rejection.feedback, missing: rejection.missing };
+        continue;
+      }
+      gateRejection = { stepId: step.id, missing: rejection.missing, feedback: rejection.feedback };
+      stopEngine = true;
     }
 
-    const completion = await completeWorkflowStep({
-      runId: next.run.id,
-      stepId: step.id,
-      status: "completed",
-      summary: result.summary,
-      evidence: result.evidence,
-    });
-    if ("ok" in completion && completion.ok === false) {
-      const rejection = completion as SummaryValidationFailure;
-      gateRejection = { stepId: step.id, missing: rejection.missing, feedback: rejection.feedback };
-      break;
-    }
+    if (stopEngine || !advanced) break;
 
     next = await getNextWorkflowStep(next.run.id);
   }
@@ -321,6 +518,90 @@ async function loadFrozenPlan(runId: string, workflowRef: string): Promise<Workf
       `compiling the plan from the live asset ${workflowRef}. New runs freeze their plan at start.`,
   );
   return compileWorkflowAssetPlan(await loadWorkflowAsset(workflowRef));
+}
+
+// ── Gate-evaluation journaling (addendum R2) ─────────────────────────────────
+//
+// An engine-driven completion-criteria judge call is an LLM call and is
+// journaled like a unit: node_id `<stepId>.gate`, unit_id `<stepId>.gate:l<loop>`,
+// runner "llm", result_json = the verdict. Rows are observability + audit —
+// they are never REUSED (a re-judged loop overwrites its row via INSERT OR
+// REPLACE; a blocked human gate stays blocked). Events carry ids/status only.
+
+interface GateUnitRef {
+  runId: string;
+  workflowRef: string;
+  stepId: string;
+  /** Gate-loop attempt, 1-based. */
+  loop: number;
+}
+
+function gateUnitId(gate: GateUnitRef): string {
+  return `${gate.stepId}.gate:l${gate.loop}`;
+}
+
+/** Insert the gate-evaluation unit row (running) just before the judge runs. */
+async function journalGateEvaluationStart(gate: GateUnitRef): Promise<void> {
+  await enqueueUnitWrite(() =>
+    withWorkflowRunsRepo((repo) =>
+      repo.insertUnit({
+        runId: gate.runId,
+        unitId: gateUnitId(gate),
+        stepId: gate.stepId,
+        nodeId: `${gate.stepId}.gate`,
+        parentUnitId: null,
+        phase: null,
+        runner: "llm",
+        model: null,
+        inputHash: null,
+        startedAt: new Date().toISOString(),
+      }),
+    ),
+  );
+  appendEvent({
+    eventType: "workflow_unit_started",
+    ref: gate.workflowRef,
+    metadata: { runId: gate.runId, stepId: gate.stepId, unitId: gateUnitId(gate) },
+  });
+}
+
+/**
+ * Finish the gate-evaluation unit row with the verdict as observed from the
+ * completion outcome: a rejection journals `{ complete: false, missing,
+ * feedback }`; a pass journals `{ complete: true }` (this includes fail-open
+ * passes where the judge returned an unparseable verdict — the gate DID
+ * pass); a judge that threw journals a failed row (the gate then failed open
+ * inside `validateStepSummary`).
+ */
+async function journalGateEvaluationFinish(
+  gate: GateUnitRef,
+  errored: boolean,
+  rejection: SummaryValidationFailure | undefined,
+): Promise<void> {
+  const verdict = errored
+    ? null
+    : rejection
+      ? { complete: false, missing: rejection.missing, feedback: rejection.feedback }
+      : { complete: true, missing: [] };
+  const status = errored ? ("failed" as const) : ("completed" as const);
+  await enqueueUnitWrite(() =>
+    withWorkflowRunsRepo((repo) =>
+      repo.finishUnit({
+        runId: gate.runId,
+        unitId: gateUnitId(gate),
+        status,
+        resultJson: verdict ? JSON.stringify(verdict) : null,
+        tokens: null,
+        failureReason: errored ? "dispatch_error" : null,
+        finishedAt: new Date().toISOString(),
+      }),
+    ),
+  );
+  appendEvent({
+    eventType: "workflow_unit_finished",
+    ref: gate.workflowRef,
+    metadata: { runId: gate.runId, stepId: gate.stepId, unitId: gateUnitId(gate), status },
+  });
 }
 
 type RouteDecision = { ok: true; value: string; selected: string } | { ok: false; error: string };

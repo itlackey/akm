@@ -33,9 +33,9 @@ export type WorkflowRunRow = {
   plan_json: string | null;
   /** sha256 (hex) of the canonical plan JSON; integrity-checked on every load. */
   plan_hash: string | null;
-  /** TODO(R2): run-lease enforcement is engine-rework scope — columns land in migration 006, row fields only. */
+  /** Run-lease expiry (ISO-8601 UTC; migration 006, enforced since R2). NULL when no engine holds the run. */
   engine_lease_until: string | null;
-  /** TODO(R2): see engine_lease_until. */
+  /** Random holder id of the engine invocation driving the run. NULL when unleased. */
   engine_lease_holder: string | null;
 };
 
@@ -349,6 +349,56 @@ export class WorkflowRunsRepository {
     this.db
       .prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ? WHERE id = ?")
       .run(planJson, planHash, runId);
+  }
+
+  // ── engine run lease (migration 006 columns, R2 enforcement) ──────────────
+  //
+  // Single-driver invariant: at most one `akm workflow run` invocation drives
+  // a run at a time. The lease is (holder id, expiry); all timestamps are
+  // ISO-8601 UTC strings, which compare correctly with SQL `<` (lexicographic
+  // order matches chronological order for a fixed-format UTC ISO string).
+
+  /**
+   * Atomically claim the run lease: succeeds when the run is unleased OR the
+   * existing lease has expired (`engine_lease_until < now` — crash recovery).
+   * A live lease held by anyone (including a stale copy of the same holder)
+   * is NOT reclaimable through this method; the single UPDATE is the whole
+   * claim, so two racing invocations cannot both win.
+   */
+  acquireEngineLease(runId: string, holder: string, until: string, now: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE workflow_runs
+           SET engine_lease_holder = ?, engine_lease_until = ?
+           WHERE id = ? AND (engine_lease_holder IS NULL OR engine_lease_until IS NULL OR engine_lease_until < ?)`,
+      )
+      .run(holder, until, runId, now);
+    return Number(result.changes) > 0;
+  }
+
+  /**
+   * Extend the lease expiry — only while `holder` still owns it. Returns
+   * false when the lease was lost (expired and claimed by another engine),
+   * so the caller can stop driving instead of racing the new owner.
+   */
+  renewEngineLease(runId: string, holder: string, until: string): boolean {
+    const result = this.db
+      .prepare("UPDATE workflow_runs SET engine_lease_until = ? WHERE id = ? AND engine_lease_holder = ?")
+      .run(until, runId, holder);
+    return Number(result.changes) > 0;
+  }
+
+  /**
+   * Clear the lease — only while `holder` still owns it, so a crashed-then-
+   * recovered invocation can never release a lease another engine has since
+   * claimed. Releasing an already-lost lease is a harmless no-op.
+   */
+  releaseEngineLease(runId: string, holder: string): void {
+    this.db
+      .prepare(
+        "UPDATE workflow_runs SET engine_lease_holder = NULL, engine_lease_until = NULL WHERE id = ? AND engine_lease_holder = ?",
+      )
+      .run(runId, holder);
   }
 
   // ── unit rows (migration 004) ──────────────────────────────────────────────

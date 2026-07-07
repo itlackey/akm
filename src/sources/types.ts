@@ -159,6 +159,12 @@ export interface WorkflowRunSummary {
   agentHarness?: string | null;
   /** Platform-native session id that owns the run, if known. */
   agentSessionId?: string | null;
+  /**
+   * Engine run lease (R2 single-driver enforcement): present while an
+   * `akm workflow run` invocation holds the run. `until` is the ISO-8601
+   * expiry; an expired lease may still be surfaced here (claimable, not live).
+   */
+  engineLease?: { holder: string; until: string };
 }
 
 export interface AddResponse {

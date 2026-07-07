@@ -129,6 +129,13 @@ describe("executeStepPlan — fan-out", () => {
       expect(rows).toHaveLength(3);
       expect(rows.every((r) => r.status === "completed")).toBe(true);
       expect(rows.every((r) => r.node_id === "review.unit")).toBe(true);
+      // Content-derived identity (R2): <node_id>:<sha256(canonicalJson(item))[:12]>,
+      // pinned as literals so a scheme drift breaks this golden knowingly.
+      expect(rows.map((r) => r.unit_id).sort()).toEqual([
+        "review.unit:630647ca5751", // "b.ts"
+        "review.unit:8b3148685648", // "a.ts"
+        "review.unit:f31d8e9f8cb8", // "c.ts"
+      ]);
     });
   });
 
@@ -424,14 +431,15 @@ steps:
     });
     expect(call).toBe(3);
     expect(result.ok).toBe(true);
-    expect(result.units[0].unitId).toBe("fetch~r2");
+    // Retry suffix stacks on top of the content-derived solo id.
+    expect(result.units[0].unitId).toBe("fetch:solo~r2");
     // Every attempt keeps its own journal row — nothing is clobbered.
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "fetch");
       const byId = new Map(rows.map((r) => [r.unit_id, r.status]));
-      expect(byId.get("fetch")).toBe("failed");
-      expect(byId.get("fetch~r1")).toBe("failed");
-      expect(byId.get("fetch~r2")).toBe("completed");
+      expect(byId.get("fetch:solo")).toBe("failed");
+      expect(byId.get("fetch:solo~r1")).toBe("failed");
+      expect(byId.get("fetch:solo~r2")).toBe("completed");
     });
   });
 
@@ -477,7 +485,7 @@ steps:
       },
     });
     expect(second.ok).toBe(true);
-    expect(second.units[0].unitId).toBe("fetch~r1");
+    expect(second.units[0].unitId).toBe("fetch:solo~r1");
     expect(second.units[0].text).toBe("finally");
   });
 });
@@ -586,7 +594,10 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
     });
     expect(dispatches).toBe(2); // no re-dispatch
     expect(second.ok).toBe(true);
-    expect(second.units.map((u) => u.text)).toEqual(["run1 review.unit[0]", "run1 review.unit[1]"]);
+    expect(second.units.map((u) => u.text)).toEqual([
+      "run1 review.unit:ac8d8342bbb2", // "a"
+      "run1 review.unit:c100f95c1913", // "b"
+    ]);
     expect(second.units.every((u) => u.tokens === 7)).toBe(true);
 
     // Journaled rows keep their original results (no OR REPLACE clobber).
@@ -598,7 +609,7 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
     });
   });
 
-  test("a changed input hash re-dispatches instead of reusing", async () => {
+  test("a changed item is a NEW unit identity and dispatches live", async () => {
     seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     let dispatches = 0;
@@ -613,7 +624,9 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
       evidence: {},
       dispatcher,
     });
-    // Same unit id (index 0) but a different item → different prompt hash.
+    // Content-derived identity: a different item is a different unit id — it
+    // never matches the journaled row, so it dispatches live (no divergence:
+    // divergence is same-id-different-hash, covered in the R2 identity suite).
     await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
@@ -622,6 +635,201 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
       dispatcher,
     });
     expect(dispatches).toBe(2);
+  });
+});
+
+describe("executeStepPlan — content-derived unit identity (R2)", () => {
+  // Fan-out over a PRIOR STEP's output so the item list can be reordered
+  // between invocations without touching params (params are frozen per run
+  // and appear in the unit preamble — changing them changes every input
+  // hash, which is the replay-divergence case below, not the reorder case).
+  const REORDER_WF = `version: 1
+name: Review
+steps:
+  - id: discover
+    unit:
+      instructions: Find files.
+  - id: review
+    title: Review files
+    map:
+      over: \${{ steps.discover.output.files }}
+      unit:
+        instructions: Review \${{ item }} carefully.
+`;
+
+  test("identity survives item-list reordering: a reshuffled producer output reuses every journaled result", async () => {
+    seedRun({ steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(REORDER_WF).steps.find((s) => s.stepId === "review");
+    if (!stepPlan) throw new Error("missing review step");
+    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: {} };
+
+    let dispatches = 0;
+    const first = await executeStepPlan(stepPlan, {
+      ...ctx,
+      evidence: { discover: { files: ["a", "b"] } },
+      dispatcher: async (req) => {
+        dispatches++;
+        return { ok: true, text: `did ${req.unitId}` };
+      },
+    });
+    expect(first.ok).toBe(true);
+    expect(dispatches).toBe(2);
+
+    // Same items, different order (the producer regenerated its list): the
+    // positional scheme would re-dispatch BOTH units; content identity
+    // reuses both, and the outcomes follow the NEW item order.
+    const second = await executeStepPlan(stepPlan, {
+      ...ctx,
+      evidence: { discover: { files: ["b", "a"] } },
+      dispatcher: async () => {
+        throw new Error("must not re-dispatch");
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(second.units.map((u) => u.text)).toEqual([
+      "did review.unit:c100f95c1913", // "b"
+      "did review.unit:ac8d8342bbb2", // "a"
+    ]);
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnitsForStep(RUN_ID, "review")).toHaveLength(2); // no extra rows
+    });
+  });
+
+  test("duplicate fan-out items fail the step before any dispatch, naming the duplicate", async () => {
+    // Duplicates collide on content-derived identity — an authoring error
+    // (the module doc documents it as such), caught deterministically.
+    seedRun({ params: { files: ["a", "b", "a"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b", "a"] },
+      evidence: {},
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not run" };
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(dispatches).toBe(0);
+    expect(result.summary).toContain("duplicate items");
+    expect(result.summary).toContain("indices 0 and 2");
+    expect(result.summary).toContain('"a"');
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnitsForStep(RUN_ID, "review")).toHaveLength(0); // nothing journaled
+    });
+  });
+
+  const DIVERGENCE_WF = `version: 1
+name: Review
+params:
+  files: { type: array }
+steps:
+  - id: review
+    title: Review files
+    map:
+      over: \${{ params.files }}
+      unit:
+        on_error: continue
+        instructions: Review \${{ item }} carefully.
+`;
+
+  test("replay divergence: a journaled COMPLETED row with matching id but different input_hash fails the step hard — even under on_error: continue", async () => {
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(DIVERGENCE_WF).steps[0];
+    let dispatches = 0;
+    const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
+      dispatches++;
+      return { ok: true, text: `did ${req.unitId}` };
+    };
+
+    const first = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"], note: "v1" },
+      evidence: {},
+      dispatcher,
+    });
+    expect(first.ok).toBe(true);
+    expect(dispatches).toBe(1);
+
+    // Same item ⇒ same content-derived unit id, but a different params blob
+    // changes the unit preamble ⇒ different input hash. Under a frozen plan
+    // this cannot happen legitimately (params are frozen with the run), so
+    // it must fail LOUDLY — never silently re-dispatch — and on_error:
+    // continue must NOT downgrade it to a tolerated unit failure.
+    const second = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"], note: "v2-tampered" },
+      evidence: {},
+      dispatcher,
+    });
+    expect(second.ok).toBe(false);
+    expect(dispatches).toBe(1); // no re-dispatch
+    expect(second.summary).toContain(
+      'replay divergence: unit "review.unit:ac8d8342bbb2" was journaled with different inputs',
+    );
+
+    // The journaled row is untouched — the divergent invocation wrote nothing.
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "review");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("completed");
+    });
+  });
+
+  test("pre-release R1 positional-id rows never match and are ignored: the step re-runs cleanly on top of them", async () => {
+    // R1 journals used positional ids (`review.unit[0]`). No back-compat
+    // shim: the row never matches a content-derived id, never diverges, and
+    // never crashes resume — the unit simply dispatches fresh.
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    await withWorkflowRunsRepo((repo) => {
+      repo.insertUnit({
+        runId: RUN_ID,
+        unitId: "review.unit[0]",
+        stepId: "review",
+        nodeId: "review.unit",
+        parentUnitId: "review.map",
+        phase: null,
+        runner: "llm",
+        model: null,
+        inputHash: "r1-era-hash",
+        startedAt: new Date().toISOString(),
+      });
+      repo.finishUnit({
+        runId: RUN_ID,
+        unitId: "review.unit[0]",
+        status: "completed",
+        resultJson: JSON.stringify("r1 result"),
+        tokens: null,
+        failureReason: null,
+        finishedAt: new Date().toISOString(),
+      });
+    });
+
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "fresh" };
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(dispatches).toBe(1);
+    expect(result.units[0].unitId).toBe("review.unit:ac8d8342bbb2");
+    expect(result.units[0].text).toBe("fresh");
+    await withWorkflowRunsRepo((repo) => {
+      const byId = new Map(repo.getUnitsForStep(RUN_ID, "review").map((r) => [r.unit_id, r.status]));
+      expect(byId.get("review.unit[0]")).toBe("completed"); // the old row is left alone
+      expect(byId.get("review.unit:ac8d8342bbb2")).toBe("completed");
+    });
   });
 });
 
@@ -743,8 +951,8 @@ steps:
     // The collect artifact is the per-item value array (canonical JSON in
     // templates); [0] addresses the first item's result.
     const summarizePrompt = prompts[prompts.length - 1];
-    expect(summarizePrompt).toContain('All: ["verdict:review.unit[0]","verdict:review.unit[1]"]');
-    expect(summarizePrompt).toContain("First: verdict:review.unit[0]");
+    expect(summarizePrompt).toContain('All: ["verdict:review.unit:8b3148685648","verdict:review.unit:630647ca5751"]');
+    expect(summarizePrompt).toContain("First: verdict:review.unit:8b3148685648");
   });
 
   const VOTE_ROUTE_WF = `version: 1
@@ -1418,7 +1626,7 @@ steps:
             });
             expect(result.ok).toBe(true);
             expect(calls).toBe(2); // 429, then success — the retry actually fired
-            expect(result.units[0].unitId).toBe("fetch~r1");
+            expect(result.units[0].unitId).toBe("fetch:solo~r1");
           },
           () => {
             calls++;
@@ -1438,9 +1646,9 @@ steps:
     // The journal speaks the persisted failure_reason taxonomy, not "llm_error".
     await withWorkflowRunsRepo((repo) => {
       const byId = new Map(repo.getUnitsForStep(RUN_ID, "fetch").map((r) => [r.unit_id, r]));
-      expect(byId.get("fetch")?.status).toBe("failed");
-      expect(byId.get("fetch")?.failure_reason).toBe("llm_rate_limit");
-      expect(byId.get("fetch~r1")?.status).toBe("completed");
+      expect(byId.get("fetch:solo")?.status).toBe("failed");
+      expect(byId.get("fetch:solo")?.failure_reason).toBe("llm_rate_limit");
+      expect(byId.get("fetch:solo~r1")?.status).toBe("completed");
     });
   });
 });

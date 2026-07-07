@@ -176,9 +176,10 @@ describe("conformance — linear workflow", () => {
       seedRun({}, ["build", "deploy"]);
       const result = await backend.run(compile(LINEAR));
       expect(result.done).toBe(true);
+      // Content-derived unit identity (R2): solo units are `<node_id>:solo`.
       expect(await unitGraph()).toEqual([
-        ["build", "build", null, "completed"],
-        ["deploy", "deploy", null, "completed"],
+        ["build:solo", "build", null, "completed"],
+        ["deploy:solo", "deploy", null, "completed"],
       ]);
     });
   }
@@ -250,8 +251,8 @@ describe("conformance — classic linear markdown (stable contract)", () => {
       const result = await backend.run(compileMarkdown(LINEAR_MD));
       expect(result.done).toBe(true);
       expect(await unitGraph()).toEqual([
-        ["build", "build", null, "completed"],
-        ["deploy", "deploy", null, "completed"],
+        ["build:solo", "build", null, "completed"],
+        ["deploy:solo", "deploy", null, "completed"],
       ]);
     });
   }
@@ -314,10 +315,12 @@ describe("conformance — fan-out + schema + vote", () => {
       seedRun({ attempts: [1, 2, 3] }, ["judge"]);
       const result = await backend.run(compile(FAN_OUT_VOTE));
       expect(result.done).toBe(true);
+      // Content-derived fan-out identity: `<node_id>:<sha256(canonicalJson(item))[:12]>`
+      // for items 1, 2, 3 — position-independent, sorted by unit_id here.
       expect(await unitGraph()).toEqual([
-        ["judge.unit[0]", "judge.unit", "judge.map", "completed"],
-        ["judge.unit[1]", "judge.unit", "judge.map", "completed"],
-        ["judge.unit[2]", "judge.unit", "judge.map", "completed"],
+        ["judge.unit:4e07408562be", "judge.unit", "judge.map", "completed"], // item 3
+        ["judge.unit:6b86b273ff34", "judge.unit", "judge.map", "completed"], // item 1
+        ["judge.unit:d4735e3a265e", "judge.unit", "judge.map", "completed"], // item 2
       ]);
       const status = await getWorkflowStatus(RUN_ID);
       expect(status.workflow.steps[0].evidence?.vote).toEqual({
@@ -384,8 +387,8 @@ describe("conformance — routed workflow", () => {
       // Neither the route step nor rework may have unit rows — the route
       // dispatches nothing, and rework never ran.
       expect(await unitGraph()).toEqual([
-        ["classify", "classify", null, "completed"],
-        ["ship", "ship", null, "completed"],
+        ["classify:solo", "classify", null, "completed"],
+        ["ship:solo", "ship", null, "completed"],
       ]);
       const status = await getWorkflowStatus(RUN_ID);
       const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
