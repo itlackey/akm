@@ -13,6 +13,7 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
+import { computeStepWorkList, type GateFeedback } from "../../src/workflows/exec/step-work";
 import { compileWorkflowPlan, compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflow } from "../../src/workflows/parser";
@@ -546,6 +547,299 @@ steps:
         "review.unit:c100f95c1913", // "b"
         "review.unit:c100f95c1913~l2",
       ]);
+    });
+  });
+});
+
+// ── Crash-resume seeds the gate loop from the journal (Codex round-3 P1) ──────
+//
+// The engine loop must SEED its per-step gate state from the journal exactly as
+// the brief/report surfaces do (`activeGateLoop` / `recoverGateFeedback`): a run
+// interrupted after a rejected gate was journaled (`<step>.gate:l<n>`,
+// complete:false) resumes at loop n+1 with the stored corrective feedback — it
+// must NOT restart at loop 1, reuse the rejected loop-1 rows, overwrite the l1
+// gate row, and re-judge the stale artifact. These tests seed a specific crashed
+// pre-state directly, then drive one RESUME invocation and assert loop-2
+// semantics + that the l1 rows are byte-identical afterwards.
+
+const RESUME_WF = `version: 1
+name: Looped
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      max_loops: 3
+  - id: wrap-up
+    title: Wrap up
+    unit:
+      instructions: Wrap up.
+`;
+
+const RESUME_STEPS = [{ id: "work", criteria: ["the work is thorough"] }, { id: "wrap-up" }];
+
+/** Journal ONE terminal unit row directly — a test seam for a specific crashed pre-state. */
+async function journalRow(row: {
+  unitId: string;
+  nodeId: string;
+  phase: string | null;
+  inputHash: string | null;
+  status: "completed" | "failed";
+  resultJson: string | null;
+  stepId?: string;
+}): Promise<void> {
+  await withWorkflowRunsRepo((repo) => {
+    repo.insertUnit({
+      runId: RUN_ID,
+      unitId: row.unitId,
+      stepId: row.stepId ?? "work",
+      nodeId: row.nodeId,
+      parentUnitId: null,
+      phase: row.phase,
+      runner: row.phase === "gate" ? "llm" : "agent",
+      model: null,
+      inputHash: row.inputHash,
+      startedAt: new Date().toISOString(),
+    });
+    repo.finishUnit({
+      runId: RUN_ID,
+      unitId: row.unitId,
+      status: row.status,
+      resultJson: row.resultJson,
+      tokens: null,
+      failureReason: row.status === "failed" ? "reported_failure" : null,
+      finishedAt: new Date().toISOString(),
+    });
+  });
+}
+
+/** The loop-1 solo unit's content-derived input hash (what the engine journals). */
+function loop1Hash(p: WorkflowPlanGraph): string {
+  const c = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+  if (!c.ok) throw new Error(c.error);
+  const r = c.list.units[0].resolved;
+  if (!r.ok) throw new Error(r.error);
+  return r.inputHash;
+}
+
+/** The loop-2 solo unit id + hash brief/report would compute for the recovered feedback. */
+function loop2Unit(p: WorkflowPlanGraph, gateFeedback: GateFeedback): { unitId: string; inputHash: string } {
+  const c = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 2, gateFeedback });
+  if (!c.ok) throw new Error(c.error);
+  const u = c.list.units[0];
+  if (!u.resolved.ok) throw new Error(u.resolved.error);
+  return { unitId: u.journalBaseId, inputHash: u.resolved.inputHash };
+}
+
+describe("gate max_loops — crash-resume seeds the loop from the journal", () => {
+  test("resume after a journaled loop-1 rejection dispatches loop 2 with the stored feedback; l1 rows untouched", async () => {
+    const p = plan(RESUME_WF);
+    seedRun({ steps: RESUME_STEPS });
+    const feedback: GateFeedback = { feedback: "Add the frobnicator analysis.", missing: ["the work is thorough"] };
+
+    // Crashed pre-state: loop-1 unit completed + gate:l1 REJECTED, step still active.
+    await journalRow({
+      unitId: "work:solo",
+      nodeId: "work",
+      phase: null,
+      inputHash: loop1Hash(p),
+      status: "completed",
+      resultJson: JSON.stringify("did the work (loop 1)"),
+    });
+    await journalRow({
+      unitId: "work.gate:l1",
+      nodeId: "work.gate",
+      phase: "gate",
+      inputHash: null,
+      status: "completed",
+      resultJson: JSON.stringify({ complete: false, missing: feedback.missing, feedback: feedback.feedback }),
+    });
+
+    // Capture the l1 rows BEFORE resume to prove resume does not clobber them.
+    const before = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+    const beforeUnit = before.find((r) => r.unit_id === "work:solo");
+    const beforeGate = before.find((r) => r.unit_id === "work.gate:l1");
+
+    const prompts: string[] = [];
+    let judgeCalls = 0;
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        if (req.nodeId === "work") prompts.push(req.prompt);
+        return { ok: true, text: `did ${req.unitId}` };
+      },
+      loadPlan: async () => p,
+      summaryJudge: async () => {
+        judgeCalls++;
+        return '{"complete": true, "missing": []}';
+      },
+    });
+
+    expect(result.done).toBe(true);
+    expect(result.gateRejection).toBeUndefined();
+
+    // Exactly ONE work dispatch during resume — loop 2. Loop 1 was NOT re-run.
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Completion-gate feedback");
+    expect(prompts[0]).toContain("Add the frobnicator analysis.");
+    expect(prompts[0]).toContain("- the work is thorough");
+
+    // The judge ran ONCE on resume — for loop 2 only. The buggy engine restarted
+    // at loop 1 and re-judged the stale artifact (a spurious extra judge call).
+    expect(judgeCalls).toBe(1);
+
+    await withWorkflowRunsRepo((repo) => {
+      const byId = new Map(repo.getUnitsForStep(RUN_ID, "work").map((r) => [r.unit_id, r]));
+
+      // Loop-1 unit row byte-identical — never reused/re-dispatched.
+      const afterUnit = byId.get("work:solo");
+      expect(afterUnit?.input_hash).toBe(beforeUnit?.input_hash);
+      expect(afterUnit?.status).toBe("completed");
+      expect(afterUnit?.result_json).toBe(beforeUnit?.result_json);
+      expect(afterUnit?.finished_at).toBe(beforeUnit?.finished_at);
+
+      // gate:l1 row byte-identical — NOT overwritten (same verdict + finished_at).
+      const afterGate = byId.get("work.gate:l1");
+      expect(afterGate?.finished_at).toBe(beforeGate?.finished_at);
+      expect(JSON.parse(afterGate?.result_json ?? "null")).toEqual({
+        complete: false,
+        missing: feedback.missing,
+        feedback: feedback.feedback,
+      });
+
+      // Loop-2 unit re-dispatched under ~l2 with the EXACT id + hash brief/report
+      // would compute for the same run (recovered feedback) — cross-surface parity.
+      const expected = loop2Unit(p, feedback);
+      expect(expected.unitId).toBe("work:solo~l2");
+      const l2 = byId.get("work:solo~l2");
+      expect(l2?.status).toBe("completed");
+      expect(l2?.input_hash).toBe(expected.inputHash);
+      expect(l2?.input_hash).not.toBe(beforeUnit?.input_hash);
+
+      // gate:l2 journaled complete.
+      expect(JSON.parse(byId.get("work.gate:l2")?.result_json ?? "null")).toEqual({ complete: true, missing: [] });
+    });
+
+    // The spine advanced past the gate through wrap-up and the run completed.
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.run.status).toBe("completed");
+  });
+
+  test("resume after the FINAL rejection reproduces the gateRejection outcome — no fresh loop, no re-judge", async () => {
+    const EXHAUSTED_WF = RESUME_WF.replace("      max_loops: 3\n", "      max_loops: 2\n");
+    const p = plan(EXHAUSTED_WF);
+    seedRun({ steps: RESUME_STEPS });
+    const finalFeedback: GateFeedback = { feedback: "Still not thorough.", missing: ["the work is thorough"] };
+
+    // Both loops journaled + both rejected (gate exhausted), step still active.
+    await journalRow({
+      unitId: "work:solo",
+      nodeId: "work",
+      phase: null,
+      inputHash: loop1Hash(p),
+      status: "completed",
+      resultJson: JSON.stringify("loop 1"),
+    });
+    await journalRow({
+      unitId: "work.gate:l1",
+      nodeId: "work.gate",
+      phase: "gate",
+      inputHash: null,
+      status: "completed",
+      resultJson: JSON.stringify({ complete: false, missing: finalFeedback.missing, feedback: "first rejection" }),
+    });
+    await journalRow({
+      unitId: "work:solo~l2",
+      nodeId: "work",
+      phase: null,
+      inputHash: "deadbeefdeadbeef",
+      status: "completed",
+      resultJson: JSON.stringify("loop 2"),
+    });
+    await journalRow({
+      unitId: "work.gate:l2",
+      nodeId: "work.gate",
+      phase: "gate",
+      inputHash: null,
+      status: "completed",
+      resultJson: JSON.stringify({ complete: false, missing: finalFeedback.missing, feedback: finalFeedback.feedback }),
+    });
+
+    const before = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+
+    let dispatches = 0;
+    let judgeCalls = 0;
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "x" };
+      },
+      loadPlan: async () => p,
+      summaryJudge: async () => {
+        judgeCalls++;
+        return '{"complete": true, "missing": []}';
+      },
+    });
+
+    // No fresh loop: nothing dispatched, no judge re-invoked.
+    expect(dispatches).toBe(0);
+    expect(judgeCalls).toBe(0);
+    // The documented exhausted-gate outcome, recovered from the FINAL rejection.
+    expect(result.done).toBeUndefined();
+    expect(result.gateRejection).toEqual({
+      stepId: "work",
+      missing: finalFeedback.missing,
+      feedback: finalFeedback.feedback,
+    });
+    // The run stays active, the step pending — the gate spine is authoritative.
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("active");
+    expect(status.workflow.steps[0].status).toBe("pending");
+    // Every journaled row is byte-identical — resume touched nothing.
+    await withWorkflowRunsRepo((repo) => {
+      const after = repo.getUnitsForStep(RUN_ID, "work");
+      const key = (r: (typeof after)[number]) => `${r.unit_id}:${r.finished_at}:${r.result_json}`;
+      expect(after.map(key).sort()).toEqual(before.map(key).sort());
+    });
+  });
+
+  test("no regression: a FRESH run (empty journal) starts at loop 1 with no recovered feedback", async () => {
+    const p = plan(RESUME_WF);
+    seedRun({ steps: RESUME_STEPS });
+    const prompts: string[] = [];
+    let judgeCalls = 0;
+    // Reject loop 1 once, accept loop 2 — the same evaluator-optimizer path, but
+    // from a clean journal, so the loop MUST begin at 1 (no seeded feedback).
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async (req) => {
+        if (req.nodeId === "work") prompts.push(req.prompt);
+        return { ok: true, text: `did ${req.unitId}` };
+      },
+      loadPlan: async () => p,
+      summaryJudge: async () => {
+        judgeCalls++;
+        return judgeCalls === 1
+          ? '{"complete": false, "missing": ["the work is thorough"], "feedback": "Deeper."}'
+          : '{"complete": true, "missing": []}';
+      },
+    });
+    expect(result.done).toBe(true);
+    // Loop 1 ran WITHOUT a feedback block (fresh run), loop 2 carried it.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("Completion-gate feedback");
+    expect(prompts[1]).toContain("Completion-gate feedback");
+    await withWorkflowRunsRepo((repo) => {
+      const ids = repo
+        .getUnitsForStep(RUN_ID, "work")
+        .map((r) => r.unit_id)
+        .sort();
+      // Loop 1 journaled under the base id (not ~l2), loop 2 under ~l2.
+      expect(ids).toEqual(["work.gate:l1", "work.gate:l2", "work:solo", "work:solo~l2"]);
     });
   });
 });

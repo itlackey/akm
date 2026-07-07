@@ -299,6 +299,78 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>, steps
   }
 }
 
+/** Read one journaled unit row by id (crash-resume assertions). */
+async function unitRow(unitId: string): Promise<WorkflowRunUnitRow | undefined> {
+  const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(RUN_ID));
+  return rows.find((r) => r.unit_id === unitId);
+}
+
+/**
+ * Seed a crashed-after-loop-1-rejection pre-state for the single-step "work"
+ * golden: the loop-1 solo unit completed (with the engine's content-derived
+ * input hash) + a rejected `work.gate:l1` row. The step is left active. Both
+ * surfaces resume from this identical journal.
+ */
+async function seedCrashedLoop1(
+  plan: WorkflowPlanGraph,
+  feedback: { feedback: string; missing: string[] },
+): Promise<void> {
+  const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+  if (!computed.ok) throw new Error(computed.error);
+  const unit = computed.list.units[0];
+  if (!unit.resolved.ok) throw new Error(unit.resolved.error);
+  const inputHash = unit.resolved.inputHash;
+  const unitId = unit.unitId;
+  const nodeId = unit.nodeId;
+  await withWorkflowRunsRepo((repo) => {
+    const now = new Date().toISOString();
+    repo.insertUnit({
+      runId: RUN_ID,
+      unitId,
+      stepId: "work",
+      nodeId,
+      parentUnitId: null,
+      phase: null,
+      runner: "agent",
+      model: null,
+      inputHash,
+      startedAt: now,
+    });
+    // Match the uniform dispatcher's fixture text so both surfaces' loop-1 row is
+    // byte-identical to what a real dispatch would have journaled.
+    repo.finishUnit({
+      runId: RUN_ID,
+      unitId,
+      status: "completed",
+      resultJson: JSON.stringify(`did ${unitId}`),
+      tokens: null,
+      failureReason: null,
+      finishedAt: now,
+    });
+    repo.insertUnit({
+      runId: RUN_ID,
+      unitId: "work.gate:l1",
+      stepId: "work",
+      nodeId: "work.gate",
+      parentUnitId: null,
+      phase: "gate",
+      runner: "llm",
+      model: null,
+      inputHash: null,
+      startedAt: now,
+    });
+    repo.finishUnit({
+      runId: RUN_ID,
+      unitId: "work.gate:l1",
+      status: "completed",
+      resultJson: JSON.stringify({ complete: false, missing: feedback.missing, feedback: feedback.feedback }),
+      tokens: null,
+      failureReason: null,
+      finishedAt: now,
+    });
+  });
+}
+
 /** The uniform engine dispatcher: look up the shared fixture by content-derived base id. */
 function uniformDispatcher(golden: Golden): UnitDispatcher {
   return async (req) => toDispatchResult(golden.outcome(contentBaseId(req.unitId), req.nodeId));
@@ -725,6 +797,75 @@ describe("conformance — engine/driver cross-surface parity", () => {
       if (golden.verify) golden.verify(engineGraph);
     });
   }
+
+  // Codex round-3 P1 parity extension: a run interrupted AFTER a rejected gate
+  // was journaled must resume identically on both surfaces. The engine seeds its
+  // starting gate loop from the journal (`activeGateLoop`/`recoverGateFeedback`)
+  // exactly as brief/report already do; without that it restarts at loop 1,
+  // reuses the rejected loop-1 rows, overwrites `<step>.gate:l1`, and re-judges
+  // the stale artifact — diverging from the driver surface. Both surfaces resume
+  // from the SAME seeded crashed pre-state (loop-1 unit + gate:l1 rejected) and
+  // must reach byte-identical loop-2 graphs, WITHOUT clobbering the l1 gate row.
+  test("crash-after-rejection resume: engine and brief/report reach identical loop-2 graphs, l1 gate row untouched", async () => {
+    const yaml = `version: 1
+name: Golden
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      max_loops: 3
+`;
+    const plan = compile(yaml);
+    const steps: SeedStep[] = [{ id: "work", criteria: ["the work is thorough"] }];
+    const feedback = { feedback: "Add the missing analysis section.", missing: ["the work is thorough"] };
+    // The judge ACCEPTS — loop 2 (the resumed loop) passes on both surfaces.
+    const golden: Golden = {
+      name: "crash-resume",
+      yaml,
+      params: {},
+      steps,
+      outcome: (base) => ({ ok: true, text: `did ${base}` }),
+      judge: () => async () => '{"complete": true, "missing": []}',
+    };
+
+    // (a) engine surface: seed the crashed pre-state, then resume once.
+    const engineDir = path.join(rootDir, "engine");
+    fs.mkdirSync(engineDir, { recursive: true });
+    process.env.AKM_DATA_DIR = engineDir;
+    seedRun(plan, {}, steps);
+    await seedCrashedLoop1(plan, feedback);
+    const engineGateBefore = await unitRow("work.gate:l1");
+    await runWorkflowSteps({ target: RUN_ID, dispatcher: uniformDispatcher(golden), summaryJudge: golden.judge?.() });
+    const engineGraph = await canonicalGraph();
+    // The l1 gate row was NOT overwritten (same finished_at) — the buggy engine
+    // re-judged loop 1 on resume, re-stamping this row.
+    expect((await unitRow("work.gate:l1"))?.finished_at).toBe(engineGateBefore?.finished_at);
+
+    // (b) brief/report surface: same crashed pre-state, resume via the driver loop.
+    const driverDir = path.join(rootDir, "driver");
+    fs.mkdirSync(driverDir, { recursive: true });
+    process.env.AKM_DATA_DIR = driverDir;
+    seedRun(plan, {}, steps);
+    await seedCrashedLoop1(plan, feedback);
+    await runDriverSurface(golden);
+    const driverGraph = await canonicalGraph();
+
+    assertGraphsIdentical(engineGraph, driverGraph, "crash-resume");
+
+    // Structural expectations over the identical graph: l1 rejected + l2 accepted,
+    // with DISTINCT input hashes (loop 2 carried the recovered feedback).
+    expect(lineFor(engineGraph, "gate work.gate:l1")).toContain('"complete":false');
+    expect(lineFor(engineGraph, "gate work.gate:l2")).toContain('"complete":true');
+    const h1 = /hash=(\w+)/.exec(lineFor(engineGraph, "unit work:solo "))?.[1];
+    const h2 = /hash=(\w+)/.exec(lineFor(engineGraph, "unit work:solo~l2 "))?.[1];
+    expect(h1).toBeTruthy();
+    expect(h2).toBeTruthy();
+    expect(h1).not.toBe(h2);
+    expect(engineGraph).toContain("run status=completed");
+  });
 
   test("the parity assertion actually catches a divergence (harness self-check)", () => {
     const a = ["unit x status=completed", "run status=completed"];

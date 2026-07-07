@@ -67,12 +67,14 @@ import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "
 // (`finalizeExecutedStep`) live in step-work.ts so the engine loop and the R3
 // brief/report driver protocol share ONE implementation (no drift).
 import {
+  activeGateLoop,
   cascadeSkippedRouter,
   finalizeExecutedStep,
   GATE_EVALUATION_PHASE,
   type GateFeedback,
   parseFrozenPlan,
   type RouteSkipInfo,
+  recoverGateFeedback,
   seedJournaledRouteDecisions,
 } from "./step-work";
 
@@ -514,11 +516,41 @@ async function driveRun(
     // step completed and the spine may move on; `stopEngine` = failure or
     // final rejection — this invocation is done.
     const maxLoops = Math.max(1, stepPlan.gate.maxLoops ?? 1);
-    let gateFeedback: GateFeedback | undefined;
+
+    // Crash-resume gate state (Codex P1): SEED the starting gate loop from the
+    // journal exactly as the brief/report surfaces do — the SAME shared helpers,
+    // no fork. A run interrupted after a rejected gate was journaled
+    // (`<step>.gate:l<n>`, complete:false) must resume at loop n+1 with the
+    // stored corrective feedback threaded into the unit prompts; without this
+    // the engine restarts at loop 1, reuses the rejected loop-1 rows, overwrites
+    // `<step>.gate:l1`, and re-judges the stale artifact — breaking journaled
+    // replay and diverging from what brief computes for the same run. The rows
+    // are re-read here (NOT the once-at-start `journaledUnits` budget seed) so a
+    // step reached later within THIS same invocation still starts fresh at loop 1.
+    const stepJournal = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id));
+    const startLoop = activeGateLoop(stepJournal, step.id);
+    const seededFeedback = recoverGateFeedback(stepJournal, step.id, startLoop);
+
+    // Resume AFTER the FINAL rejection (`startLoop` past the loop bound): the
+    // gate was already exhausted before the crash, so there is NO fresh loop to
+    // run — reproduce the documented gateRejection outcome from the stored
+    // final-loop feedback instead of re-dispatching a spurious extra loop. The
+    // l1..l<maxLoops> rows stay untouched and the step stays active, exactly as
+    // when the engine first exhausted the gate.
+    if (startLoop > maxLoops) {
+      gateRejection = {
+        stepId: step.id,
+        missing: seededFeedback?.missing ?? [],
+        feedback: seededFeedback?.feedback ?? "",
+      };
+      break;
+    }
+
+    let gateFeedback: GateFeedback | undefined = seededFeedback;
     let advanced = false;
     let stopEngine = false;
 
-    for (let gateLoop = 1; gateLoop <= maxLoops; gateLoop++) {
+    for (let gateLoop = startLoop; gateLoop <= maxLoops; gateLoop++) {
       // A loop re-execution dispatches a fresh round of units — renew the
       // lease so a long evaluator-optimizer cycle cannot outlive the TTL.
       if (gateLoop > 1) await renewRunLease(next.run.id, leaseHolder);
