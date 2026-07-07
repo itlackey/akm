@@ -983,6 +983,14 @@ export function formatWorkflowBriefPlain(result: Record<string, unknown>): strin
     }
   }
 
+  // Finding D: a non-dispatching step (route-only / empty / all-unresolvable)
+  // advances via the `--settle` verb, surfaced so a driver can advance the spine.
+  if (typeof result.settleCommand === "string") {
+    lines.push("");
+    lines.push("## Advance (no reportable units)");
+    lines.push(`settle: ${result.settleCommand}`);
+  }
+
   const guidance =
     typeof result.reportGuidance === "object" && result.reportGuidance !== null
       ? (result.reportGuidance as Record<string, unknown>)

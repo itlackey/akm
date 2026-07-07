@@ -216,6 +216,16 @@ export interface WorkflowBrief {
   gateFeedback?: GateFeedback;
   workList: WorkflowBriefWorkList;
   route?: WorkflowBriefRoute;
+  /**
+   * The exact `akm workflow report --settle` command line to advance a run
+   * whose active step dispatches NO reportable units (Codex round-3 finding D):
+   * a route-only step, an empty fan-out, an all-unresolvable work-list, or a
+   * whole-list resolution failure. Present ONLY for such steps (a step with real
+   * reportable work carries per-unit `report` commands instead) and only when no
+   * live engine lease owns the spine. Carries `--expect-step` so a stale copy
+   * fails loudly once the spine moves.
+   */
+  settleCommand?: string;
   /** Report-command guidance (heartbeat + failure forms) shared by all units. */
   reportGuidance: {
     checkin: string;
@@ -489,7 +499,19 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     }
   }
 
-  const message = buildMessage(step, workList, route, gateLoop);
+  // Finding D: a step that dispatches NO reportable units — a route-only step,
+  // an empty fan-out, an all-unresolvable work-list, or a whole-list failure —
+  // has no per-unit `report --unit` a driver can run. Emit the `--settle` verb
+  // so the driver can still advance the spine (never while a live engine lease
+  // owns it — a report/settle is refused then anyway). `--expect-step` guards a
+  // stale copy once the spine moves.
+  const hasReportableWork = !isRouteOnly && !workList.error && workList.units.some((u) => u.resolved.ok);
+  const settleCommand =
+    !leaseLive && !hasReportableWork
+      ? `akm workflow report ${run.id} --settle --expect-step ${stepState.id}`
+      : undefined;
+
+  const message = buildMessage(step, workList, route, gateLoop, settleCommand !== undefined);
 
   return {
     ...base,
@@ -500,6 +522,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     ...(gateFeedback ? { gateFeedback } : {}),
     workList,
     ...(route ? { route } : {}),
+    ...(settleCommand ? { settleCommand } : {}),
     message,
   };
 }
@@ -621,16 +644,21 @@ function buildMessage(
   workList: WorkflowBriefWorkList,
   route: WorkflowBriefRoute | undefined,
   gateLoop: number,
+  settleable: boolean,
 ): string {
   const loopNote = gateLoop > 1 ? ` (gate loop ${gateLoop}, addressing prior rejection feedback)` : "";
+  const settleNote = settleable ? " Advance it with `akm workflow report --settle` (see settleCommand)." : "";
   if (step.kind === "route") {
     const decided = route?.decision ? ` → selects step "${route.decision.selected}"` : "";
-    return `Active step "${step.stepId}" is a route step — no units to execute${decided}. Advances deterministically.`;
+    return `Active step "${step.stepId}" is a route step — no units to execute${decided}.${settleNote || " Advances deterministically."}`;
   }
   if (workList.error) {
-    return `Active step "${step.stepId}" could not compute a work-list: ${workList.error}`;
+    return `Active step "${step.stepId}" could not compute a work-list: ${workList.error}${settleNote}`;
   }
   const n = workList.units.length;
+  if (settleable) {
+    return `Active step "${step.stepId}" dispatches no reportable units${loopNote}.${settleNote}`;
+  }
   return `Active step "${step.stepId}" expects ${n} unit(s)${loopNote}. Execute them, then report each result.`;
 }
 

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import workflowTemplate from "../../assets/workflows/workflow-template.md" with { type: "text" };
-import { canonicalizeWorkflowName, resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
@@ -97,12 +97,38 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const isProgram = programSuffix !== undefined;
 
   const normalizedName = normalizeWorkflowName(input.name);
-  // Force the requested program suffix onto the resolved path; markdown names
-  // probe/fall back to `.md` as before.
-  const nameForPath = isProgram ? `${normalizedName}${programSuffix}` : normalizedName;
-  const assetPath = resolveAssetPathFromName("workflow", typeRoot, nameForPath);
+  // The write target is DEFINITIVE — the canonical name plus the chosen format's
+  // extension (`.yaml`/`.yml` for a program, `.md` for markdown). We deliberately
+  // do NOT go through `resolveAssetPathFromName`, which PROBES existing files and
+  // would redirect a markdown create onto an existing `foo.yaml` (writing
+  // markdown into a `.yaml`). Computing the target directly makes a markdown
+  // create always write `.md`, so the finding-C cross-extension check below sees
+  // the real collision instead of a self-match.
+  const targetSuffix = isProgram ? (programSuffix as string) : ".md";
+  const assetPath = path.join(typeRoot, `${normalizedName}${targetSuffix}`);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved workflow path escapes the stash: "${normalizedName}"`, "PATH_ESCAPE_VIOLATION");
+  }
+  // Codex round-3 finding C: a `workflow:<name>` ref is canonical across every
+  // recognized extension (`.md`/`.yaml`/`.yml`) and resolves `.md` BEFORE
+  // `.yaml`. So creating `foo.yaml` while `foo.md` exists would return the ref
+  // `workflow:foo` that still starts the OLD markdown workflow — a silently
+  // shadowed asset. Reject creation when ANY recognized extension already holds
+  // the same canonical name, naming the existing file. A same-extension collision
+  // (the target path itself exists) keeps the classic `--force` overwrite escape;
+  // a DIFFERENT-extension collision cannot be force-overwritten (writing a new
+  // file would leave the old one shadowing it) — remove the existing file first.
+  const existingPaths = WORKFLOW_EXTENSIONS.map((ext) => path.join(typeRoot, `${normalizedName}${ext}`)).filter(
+    (candidate) => fs.existsSync(candidate),
+  );
+  const conflicting = existingPaths.find((p) => p !== assetPath);
+  if (conflicting !== undefined) {
+    throw new UsageError(
+      `Workflow "${normalizedName}" already exists as ${path.relative(stashDir, conflicting)} — the ` +
+        `\`workflow:${normalizedName}\` ref resolves to that file, so creating this one would shadow it. ` +
+        `Remove or rename the existing file first, or create the workflow under a different name.`,
+      "RESOURCE_ALREADY_EXISTS",
+    );
   }
   if (fs.existsSync(assetPath) && !input.force) {
     throw new UsageError(

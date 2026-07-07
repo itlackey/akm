@@ -286,11 +286,20 @@ function checkReference(ref: ExpressionAst, check: ExpressionCheck, inMapUnit: b
       }
       return;
     }
-    case "param":
-      // Param presence is a run-scope concern (params may be supplied at
-      // start time beyond the declared block); resolution errors surface at
-      // execution with the reference named.
+    case "param": {
+      // Param presence is a RUN-SCOPE concern, never a compile-time one. A
+      // declared `params:` block is NOT a closed set of legal references: the
+      // runtime resolves any param SUPPLIED at start (`resolveReference`), and
+      // `validateWorkflowParams` documents that undeclared params are permitted
+      // — so `${{ params.mode }}` with `mode` passed via `--params` runs fine
+      // even when only `files` is declared. At compile time an undeclared
+      // reference is indistinguishable from that legitimate start-supplied
+      // extra, so treating the block as closed would reject a runtime-supported
+      // authoring pattern and put the two layers in disagreement. A genuine typo
+      // (`params.changed_file` for `changed_files`) surfaces at run time with a
+      // precise "is not defined in the run's params" error instead.
       return;
+    }
   }
 }
 

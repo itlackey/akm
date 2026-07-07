@@ -1720,6 +1720,7 @@ steps:
 name: Cascade
 params:
   pick: { type: string }
+  branch: { type: string }
 steps:
   - id: classify
     title: Classify

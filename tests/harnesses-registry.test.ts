@@ -114,11 +114,15 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     }
   });
 
-  it("claude: in-harness, native-schema (tool schema), --resume, CLAUDE_SESSION_ID", () => {
+  it("claude: in-harness, native-json (`claude -p --output-format json` envelope), --resume, CLAUDE_SESSION_ID", () => {
     const claude = getHarness("claude");
     if (!claude) throw new Error("claude harness not registered");
     expect(claude.pattern).toBe("in-harness");
-    expect(claude.structuredOutput).toBe("native-schema");
+    // The headless `claude -p` dispatch path is native-JSON (result envelope +
+    // validate), NOT native-schema — the CLI has no output-schema flag (Codex
+    // round-3 finding A). It carries a result extractor to unwrap that envelope.
+    expect(claude.structuredOutput).toBe("native-json");
+    expect(claude.resultExtractor).toBeDefined();
     expect(claude.resume).toEqual({ flag: "--resume", takesSessionId: true });
     expect([...(claude.identityEnv ?? [])]).toEqual(["CLAUDE_SESSION_ID"]);
   });

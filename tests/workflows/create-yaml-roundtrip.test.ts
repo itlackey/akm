@@ -124,3 +124,50 @@ describe("workflow_ref canonicalization collapses foo.yaml and foo", () => {
     for (const run of byCanonical.runs) expect(run.workflowRef).toBe("workflow:listed");
   });
 });
+
+// ── COMMENT C (Codex round-3 finding C): reject cross-extension shadows ───────
+
+describe("workflow create rejects a canonical-name collision across extensions", () => {
+  test("creating foo.yaml is refused when foo.md already exists (would shadow it)", () => {
+    const md = createWorkflowAsset({ name: "dup" });
+    expect(md.path).toBe(path.join(storage.stashDir, "workflows", "dup.md"));
+
+    // The `.md` resolves BEFORE `.yaml`, so a `dup.yaml` would be shadowed by
+    // `dup.md` under the canonical `workflow:dup` ref — refuse and name the file.
+    let err: unknown;
+    try {
+      createWorkflowAsset({ name: "dup.yaml" });
+    } catch (e) {
+      err = e;
+    }
+    expect(String((err as Error).message)).toContain("already exists as");
+    expect(String((err as Error).message)).toContain("dup.md");
+    // No shadowing file was written.
+    expect(fs.existsSync(path.join(storage.stashDir, "workflows", "dup.yaml"))).toBe(false);
+  });
+
+  test("creating foo.md is refused when foo.yaml already exists (the other direction)", () => {
+    createWorkflowAsset({ name: "dup2.yaml" });
+
+    let err: unknown;
+    try {
+      createWorkflowAsset({ name: "dup2" }); // no extension ⇒ resolves to dup2.md
+    } catch (e) {
+      err = e;
+    }
+    expect(String((err as Error).message)).toContain("already exists as");
+    expect(String((err as Error).message)).toContain("dup2.yaml");
+    expect(fs.existsSync(path.join(storage.stashDir, "workflows", "dup2.md"))).toBe(false);
+  });
+
+  test("--force does NOT punch through a different-extension shadow", () => {
+    createWorkflowAsset({ name: "dup3.md" });
+    expect(() => createWorkflowAsset({ name: "dup3.yaml", force: true })).toThrow(/already exists as/);
+  });
+
+  test("--force still overwrites the SAME extension (classic behavior preserved)", () => {
+    createWorkflowAsset({ name: "same.yaml" });
+    // Same target extension: force is allowed to overwrite.
+    expect(() => createWorkflowAsset({ name: "same.yaml", force: true })).not.toThrow();
+  });
+});

@@ -29,10 +29,12 @@
 import type { SessionLogHarness } from "../../session-logs/types";
 import { BaseHarness, type HarnessCapabilities } from "../types";
 import { claudeBuilder } from "./agent-builder";
+import { claudeResultExtractor } from "./result-extractor";
 import { ClaudeCodeProvider } from "./session-log";
 
 export { claudeBuilder } from "./agent-builder";
 export { claudeCodeImporter } from "./config-import";
+export { claudeResultExtractor } from "./result-extractor";
 export { ClaudeCodeProvider } from "./session-log";
 
 function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
@@ -62,15 +64,22 @@ export class ClaudeHarness extends BaseHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".claude";
   readonly agentBuilder = claudeBuilder;
+  readonly resultExtractor = claudeResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Claude Code is the in-harness pattern: the orchestrating session itself
   // drives units via the `akm workflow` gate spine (`claude -p` headless
   // dispatch also exists via `agentBuilder`, but the pattern classification
   // follows the matrix row).
   readonly pattern = "in-harness" as const;
-  // Structured output via tool-call input schemas (forced StructuredOutput) —
-  // the matrix's "via tool schema" ⇒ native-schema tier.
-  readonly structuredOutput = "native-schema" as const;
+  // Structured output tier for the AGENT-DISPATCH (`claude -p`) path akm's
+  // local runner uses (Codex round-3 finding A). The headless CLI has NO
+  // output-schema flag — its documented structured path is `--output-format
+  // json`, a RESULT ENVELOPE akm parses (`./result-extractor.ts`) and then
+  // validates against the node schema ⇒ the "native-json" tier. (Claude Code's
+  // in-harness `Workflow`/`agent()` tool-input-schema path IS native-schema,
+  // but that is a different surface than the dispatch builder — the descriptor
+  // is aligned to what the builder honestly does.)
+  readonly structuredOutput = "native-json" as const;
   // `claude --resume <sessionId>` replays a previous session in headless mode.
   readonly resume = { flag: "--resume", takesSessionId: true } as const;
   // Session-id env marker: presence of a concrete session id (not the bare

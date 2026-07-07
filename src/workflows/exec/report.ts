@@ -619,6 +619,128 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   });
 }
 
+// ── The settle verb (finding D) ──────────────────────────────────────────────
+
+/**
+ * `akm workflow report <run> --settle` — the mutating verb that advances a run
+ * parked on a NON-DISPATCHING step (Codex round-3 finding D).
+ *
+ * A driver following the documented `brief → execute → report` loop has no
+ * `report --unit` it can run when the active step dispatches nothing: a
+ * params-based route step, an empty fan-out (`over: []`), or a step whose every
+ * unit is unresolvable. The engine auto-advances such steps, but a pure
+ * brief/report driver — one whose FIRST step is a params-routed route, with no
+ * preceding unit report to trigger the internal `settleSpine` — would get stuck.
+ *
+ * `--settle` runs the EXISTING deterministic settle path ({@link settleSpine} —
+ * route decision journaled, cascaded skips, spine advance) under the SAME guards
+ * as `report --unit`: it refuses a non-active run, refuses while a LIVE engine
+ * lease is held, honors `--expect-step`, and REFUSES when the active step has
+ * reportable units (a driver must `report --unit` those, not settle them). The
+ * settle runs under a short-lived engine-lease finalize lock (the same CAS
+ * `finalizeStep` uses) so two concurrent settles/reports cannot double-journal.
+ */
+export async function settleWorkflowSpine(input: {
+  target: string;
+  /** The step id the driver briefed against (from `brief`'s settle command). */
+  expectStep?: string;
+  summaryJudge?: SummaryJudge | null;
+  now?: () => Date;
+}): Promise<WorkflowReportResult> {
+  const nowFn = input.now ?? (() => new Date());
+  const runId = await resolveRunId(input.target);
+  const { next, run: runRow, units } = await snapshotRunForDriver(runId);
+
+  if (next.run.status !== "active" || next.done) {
+    throw new UsageError(
+      `Workflow run ${runId} is ${next.run.status} — \`akm workflow report --settle\` only advances an ACTIVE run. ` +
+        `${next.run.status === "completed" ? "The run is already done." : `Reopen it first: \`akm workflow resume ${runId}\`.`}`,
+    );
+  }
+
+  const lease = buildLease(runRow.engine_lease_holder, runRow.engine_lease_until);
+  if (lease?.live) {
+    throw new UsageError(
+      `Workflow run ${runId} is being driven by engine ${lease.holder} (run lease expires ${lease.until}). ` +
+        `\`akm workflow report --settle\` is refused while the engine lease is live — the engine settles its own ` +
+        `non-dispatching steps.`,
+    );
+  }
+
+  if (!next.step) {
+    throw new UsageError(`Workflow run ${runId} is active but has no current step to settle.`);
+  }
+
+  if (input.expectStep !== undefined && next.step.id !== input.expectStep) {
+    throw new UsageError(
+      `Workflow run ${runId} is now on step "${next.step.id}", not "${input.expectStep}" (--expect-step). The spine ` +
+        `moved since you briefed it — re-run \`akm workflow brief ${runId}\` and settle against the current step.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+
+  const plan = loadFrozenPlan(runId, runRow.plan_json, runRow.plan_hash);
+  assertRunParamsSatisfyPlan(runId, plan, next.run.params ?? {});
+
+  // Refuse when the active step HAS reportable units — those advance via
+  // `report --unit`, not `--settle`.
+  const ctx = buildStepContext(runId, plan, next, units);
+  if (ctx.dispatching) {
+    const valid = ctx.workList?.units.filter((u) => u.resolved.ok).map((u) => u.unitId) ?? [];
+    throw new UsageError(
+      `Active step "${ctx.stepState.id}" of run ${runId} has reportable units — advance it with ` +
+        `\`akm workflow report ${runId} --unit <id> ...\`, not --settle. Unit ids: ${valid.join(", ") || "(none)"}.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+
+  // Finalize CAS: claim the engine lease as a short-lived settle lock, thread the
+  // holder through the settle so its `completeWorkflowStep` calls pass the
+  // single-driver guard, and release it in `finally`.
+  const holder = `report-settle:${randomUUID()}`;
+  const nowIso = nowFn().toISOString();
+  const lockExpiry = new Date(nowFn().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
+  const acquired = await withWorkflowRunsRepo((repo) => repo.acquireEngineLease(runId, holder, lockExpiry, nowIso));
+  if (!acquired) {
+    // A concurrent finalizer/settler holds the lock; report the fresh spine state
+    // as idempotent success rather than racing it.
+    const fresh = await getNextWorkflowStep(runId);
+    return settleVerbResult(runId, fresh, `A concurrent driver is settling run ${runId}`);
+  }
+  let settled: WorkflowNextResult;
+  try {
+    settled = await settleSpine({ plan, runId, summaryJudge: input.summaryJudge, leaseHolder: holder });
+  } finally {
+    await withWorkflowRunsRepo((repo) => repo.releaseEngineLease(runId, holder));
+  }
+  return settleVerbResult(runId, settled);
+}
+
+/** Shape a `--settle` outcome as a (unit-less) report result. */
+function settleVerbResult(runId: string, state: WorkflowNextResult, contendedNote?: string): WorkflowReportResult {
+  const runStatus = state.run.status;
+  const message =
+    runStatus === "completed"
+      ? `Settled non-dispatching steps — the workflow run is now DONE.`
+      : state.step
+        ? `Settled non-dispatching steps. Next: run \`akm workflow brief ${runId}\` for step "${state.step.id}".`
+        : `Run ${runId} is ${runStatus} after settling.`;
+  return {
+    ok: true,
+    runId,
+    stepId: state.run.currentStepId ?? "(none)",
+    // No unit was reported — the settle verb advances the deterministic spine.
+    unitId: "(settle)",
+    status: "skipped",
+    gateLoop: 1,
+    recorded: "not-recorded",
+    remainingUnits: 0,
+    ...(runStatus === "completed" ? { stepOutcome: { kind: "advanced" as const } } : {}),
+    runStatus,
+    message: contendedNote ? `${contendedNote} (idempotent success). ${message}` : message,
+  };
+}
+
 // ── Active-step resolution (shared) ──────────────────────────────────────────
 
 /** The resolved report target: the active step, its frozen plan, and its work-list. */
@@ -1022,8 +1144,18 @@ async function settleSpine(args: {
   plan: WorkflowPlanGraph;
   runId: string;
   summaryJudge: SummaryJudge | null | undefined;
+  /**
+   * Finalization-lock holder (finding D). When the standalone `--settle` verb
+   * runs the settle under a short-lived engine-lease lock, every
+   * `completeWorkflowStep` / `finalizeExecutedStep` it performs must pass the
+   * SAME holder or the lease's own single-driver guard would refuse it. Absent
+   * on the report-path settle (line 257) and the post-advance settle (line 993),
+   * which run UNLOCKED exactly as before — behavior preserved.
+   */
+  leaseHolder?: string;
 }): Promise<WorkflowNextResult> {
-  const { plan, runId, summaryJudge } = args;
+  const { plan, runId, summaryJudge, leaseHolder } = args;
+  const leaseArg = leaseHolder !== undefined ? { leaseHolder } : {};
   let state = await getNextWorkflowStep(runId);
   const routeSelected = new Set<string>();
   const routeUnselected = new Map<string, RouteSkipInfo>();
@@ -1047,7 +1179,7 @@ async function settleSpine(args: {
         skipInfo.selected === null
           ? `Skipped by route: step "${skipInfo.router}" was itself skipped, so none of its branch targets run.`
           : `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
-      await completeWorkflowStep({ runId, stepId: step.id, status: "skipped", notes });
+      await completeWorkflowStep({ runId, stepId: step.id, status: "skipped", notes, ...leaseArg });
       state = await getNextWorkflowStep(runId);
       continue;
     }
@@ -1075,6 +1207,7 @@ async function settleSpine(args: {
         routeSelected,
         routeUnselected,
         summaryJudge,
+        ...leaseArg,
       });
       if (fin.kind !== "advanced") break; // a route failure stops the walk
       state = await getNextWorkflowStep(runId);
@@ -1106,6 +1239,7 @@ async function settleSpine(args: {
           status: "failed",
           notes: computed.error,
           evidence: { error: computed.error },
+          ...leaseArg,
         });
         break; // run failed
       }
@@ -1129,6 +1263,7 @@ async function settleSpine(args: {
         routeSelected,
         routeUnselected,
         summaryJudge,
+        ...leaseArg,
       });
       if (completion.kind === "advanced") {
         state = await getNextWorkflowStep(runId);

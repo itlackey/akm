@@ -16,7 +16,7 @@ import {
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { buildWorkflowBrief, type WorkflowBriefUnit } from "../../../src/workflows/exec/brief";
 import type { UnitDispatcher } from "../../../src/workflows/exec/native-executor";
-import { reportWorkflowUnit } from "../../../src/workflows/exec/report";
+import { reportWorkflowUnit, settleWorkflowSpine } from "../../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
@@ -395,7 +395,20 @@ async function runDriverSurface(golden: Golden): Promise<void> {
     const brief = await buildWorkflowBrief(RUN_ID);
     if (brief.done || !brief.active) return;
     const pending = brief.workList.units.filter(needsReport);
-    if (pending.length === 0) return; // nothing left the driver can advance
+    if (pending.length === 0) {
+      // Finding D: a non-dispatching step (route-only / empty / all-unresolvable)
+      // has no `report --unit`. brief emits the `--settle` verb; a pure driver
+      // uses it to advance the deterministic spine, exactly as the engine does.
+      if (brief.settleCommand) {
+        await settleWorkflowSpine({
+          target: RUN_ID,
+          ...(brief.step ? { expectStep: brief.step.stepId } : {}),
+          summaryJudge: judge,
+        });
+        continue;
+      }
+      return; // nothing left the driver can advance
+    }
     for (const u of pending) {
       const fx = golden.outcome(contentBaseId(u.unitId), u.nodeId);
       await reportWorkflowUnit({
@@ -787,6 +800,48 @@ steps:
   },
 };
 
+// Codex round-3 finding D: a program whose FIRST step is a params-based ROUTE.
+// There is no preceding unit report to trigger the engine's internal settle, so
+// a pure brief/report driver must use the `--settle` verb (which brief emits) to
+// advance past the route-only step. Both surfaces must reach identical graphs:
+// the route decision journaled, the unselected branch skipped, the selected
+// branch dispatched.
+const PARAMS_ROUTE_FIRST: Golden = {
+  name: "params-routed route as the FIRST step (settle verb)",
+  yaml: `version: 1
+name: Golden
+params:
+  mode: { type: string }
+steps:
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ params.mode }}
+      when: { ship: ship, rework: rework }
+  - id: ship
+    title: Ship
+    unit:
+      instructions: Ship it.
+  - id: rework
+    title: Rework
+    unit:
+      instructions: Rework it.
+`,
+  params: { mode: "ship" },
+  steps: [{ id: "triage" }, { id: "ship" }, { id: "rework" }],
+  outcome: (base) => ({ ok: true, text: `did ${base}` }),
+  verify: (g) => {
+    // No unit rows for the route step; the decision selected `ship`; the
+    // unselected `rework` branch is skipped with NO unit rows; ship dispatched.
+    expect(countLines(g, "unit triage")).toBe(0);
+    expect(lineFor(g, "step triage")).toContain("route=ship");
+    expect(lineFor(g, "unit ship:solo")).toContain("status=completed");
+    expect(countLines(g, "unit rework")).toBe(0);
+    expect(lineFor(g, "step rework")).toContain("status=skipped");
+    expect(g).toContain("run status=completed");
+  },
+};
+
 const GOLDENS: Golden[] = [
   SOLO,
   FAN_OUT_COLLECT,
@@ -799,6 +854,7 @@ const GOLDENS: Golden[] = [
   PROFILE_TIMEOUT,
   REQUIRED_GATE_NO_JUDGE,
   REQUIRED_GATE_JUDGE_ERRORS,
+  PARAMS_ROUTE_FIRST,
 ];
 
 // ── The parity suite ─────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ import type { WorkflowRunStatus } from "../../src/sources/types";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
-import { normalizeFailureReason, reportWorkflowUnit } from "../../src/workflows/exec/report";
+import { normalizeFailureReason, reportWorkflowUnit, settleWorkflowSpine } from "../../src/workflows/exec/report";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
@@ -1466,5 +1466,98 @@ steps:
     });
     expect(r.stepOutcome?.kind).toBe("failed");
     expect(r.runStatus).toBe("failed");
+  });
+});
+
+// ── The --settle verb (Codex round-3 finding D) ──────────────────────────────
+
+const ROUTE_FIRST_WF = `version: 1
+name: RouteFirst
+params:
+  mode: { type: string }
+steps:
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ params.mode }}
+      when: { ship: ship, rework: rework }
+  - id: ship
+    title: Ship
+    unit:
+      instructions: Ship it.
+  - id: rework
+    title: Rework
+    unit:
+      instructions: Rework it.
+`;
+
+describe("report --settle advances a run parked on a non-dispatching step", () => {
+  test("settles a params-routed FIRST step: route journaled, spine advances to the selected branch", async () => {
+    const p = plan(ROUTE_FIRST_WF);
+    seedRun({
+      plan: p,
+      params: { mode: "ship" },
+      currentStepId: "triage",
+      steps: [{ id: "triage" }, { id: "ship" }, { id: "rework" }],
+    });
+
+    // brief on the route-only first step surfaces a settle command, no units.
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units).toHaveLength(0);
+    expect(brief.settleCommand).toContain("--settle");
+    expect(brief.settleCommand).toContain("--expect-step triage");
+
+    const settled = await settleWorkflowSpine({ target: RUN_ID, expectStep: "triage", summaryJudge: null });
+    expect(settled.runStatus).toBe("active");
+
+    // The settle advanced the spine past the route-only triage step to the
+    // selected `ship` branch (settle stops at the first step with real work).
+    const status = await getWorkflowStatus(RUN_ID);
+    const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
+    expect(byId.get("triage")).toBe("completed");
+    expect(status.run.currentStepId).toBe("ship");
+    // The route decision was journaled onto triage (selecting `ship`); `rework`
+    // is skipped later when the spine reaches it (after `ship`).
+    const triage = status.workflow.steps.find((s) => s.id === "triage");
+    const route = triage?.evidence?.route as { selected?: string } | undefined;
+    expect(route?.selected).toBe("ship");
+  });
+
+  test("refuses --settle when the active step HAS reportable units", async () => {
+    const p = plan(ROUTE_FIRST_WF);
+    // Advance the run so `ship` (an executing step) is active.
+    seedRun({
+      plan: p,
+      params: { mode: "ship" },
+      currentStepId: "ship",
+      steps: [{ id: "triage", status: "completed" }, { id: "ship" }, { id: "rework", status: "skipped" }],
+    });
+    await expect(settleWorkflowSpine({ target: RUN_ID, summaryJudge: null })).rejects.toThrow(/has reportable units/);
+  });
+
+  test("refuses --settle while a live engine lease is held", async () => {
+    const p = plan(ROUTE_FIRST_WF);
+    const until = new Date(Date.now() + 60_000).toISOString();
+    seedRun({
+      plan: p,
+      params: { mode: "ship" },
+      currentStepId: "triage",
+      steps: [{ id: "triage" }, { id: "ship" }, { id: "rework" }],
+      lease: { holder: "engine:x", until },
+    });
+    await expect(settleWorkflowSpine({ target: RUN_ID, summaryJudge: null })).rejects.toThrow(/engine lease is live/);
+  });
+
+  test("--expect-step mismatch is refused (the spine moved since brief)", async () => {
+    const p = plan(ROUTE_FIRST_WF);
+    seedRun({
+      plan: p,
+      params: { mode: "ship" },
+      currentStepId: "triage",
+      steps: [{ id: "triage" }, { id: "ship" }, { id: "rework" }],
+    });
+    await expect(settleWorkflowSpine({ target: RUN_ID, expectStep: "ship", summaryJudge: null })).rejects.toThrow(
+      /--expect-step/,
+    );
   });
 });

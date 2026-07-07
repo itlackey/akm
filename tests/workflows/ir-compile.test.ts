@@ -389,6 +389,75 @@ steps:
     expect(errors[0].message).toContain(`"ghost" is not a step in this workflow`);
   });
 
+  // Codex round-3 (later finding): param presence is a RUN-SCOPE concern, not a
+  // compile-time one. A declared `params:` block is NOT a closed set — the
+  // runtime resolves any param SUPPLIED at start and `validateWorkflowParams`
+  // permits undeclared params, so a workflow that declares a SUBSET of its
+  // params and references start-supplied extras must COMPILE (it runs fine).
+  // Compiling would otherwise disagree with the runtime contract. A genuine typo
+  // surfaces at run time ("is not defined in the run's params"), never here.
+  test("params.<name> outside the declared block compiles — presence is a run-scope concern (instructions)", () => {
+    const plan = compileProgramOk(`version: 1
+name: t
+params:
+  changed_files: { type: array }
+steps:
+  - id: a
+    unit:
+      instructions: "Review \${{ params.changed_file }} in \${{ params.mode }} mode"
+`);
+    // Only the declared name is frozen onto the plan; the references themselves
+    // are accepted regardless (they resolve against start-supplied params).
+    expect(plan.params).toEqual(["changed_files"]);
+  });
+
+  test("undeclared params.<name> in map.over and route.input compiles too (run-scope)", () => {
+    const plan = compileProgramOk(`version: 1
+name: t
+params:
+  files: { type: array }
+steps:
+  - id: route
+    route:
+      input: \${{ params.mode }}
+      when: { a: fan }
+  - id: fan
+    map:
+      over: \${{ params.filez }}
+      unit:
+        instructions: Review \${{ item }}.
+`);
+    expect(plan.params).toEqual(["files"]);
+  });
+
+  test("a declared param reference compiles cleanly", () => {
+    const plan = compileProgramOk(`version: 1
+name: t
+params:
+  files: { type: array }
+steps:
+  - id: fan
+    map:
+      over: \${{ params.files }}
+      unit:
+        instructions: Review \${{ item }}.
+`);
+    expect(plan.params).toEqual(["files"]);
+  });
+
+  test("with NO params block, any params.<name> reference is accepted (run-scope concern)", () => {
+    // Documented: a program that declares no params block keeps the prior
+    // behavior — presence is validated at run/start, not compile.
+    const plan = compileProgramOk(`version: 1
+name: t
+steps:
+  - id: a
+    unit:
+      instructions: "Use \${{ params.anything }}"
+`);
+    expect(plan.params).toBeUndefined();
+  });
+
   test("item / item_index are invalid outside a map unit", () => {
     const errors = compileProgramErrors(`version: 1
 name: t

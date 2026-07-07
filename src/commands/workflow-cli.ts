@@ -446,7 +446,8 @@ const workflowReportCommand = defineJsonCommand({
       "EXPERIMENTAL: report a unit's result back into a run (the mutating half of the harness-neutral driver " +
       "protocol) — ingested through the SAME shared step semantics the engine uses. --status running claims/" +
       "heartbeats a unit; completed/failed records it and, when the step's work-list is fully terminal, runs the " +
-      "engine's completion path (reducer, artifact + schema validation, gate). Refused while a live engine lease exists",
+      "engine's completion path (reducer, artifact + schema validation, gate). --settle (no --unit) advances a run " +
+      "parked on a route-only/empty step. Refused while a live engine lease exists",
   },
   args: {
     target: {
@@ -456,15 +457,20 @@ const workflowReportCommand = defineJsonCommand({
     },
     unit: {
       type: "string",
-      description: "Content-derived unit id from `akm workflow brief` (copy it verbatim)",
-      required: true,
+      description: "Content-derived unit id from `akm workflow brief` (copy it verbatim). Omit with --settle.",
+    },
+    settle: {
+      type: "boolean",
+      description:
+        "Advance a run whose active step dispatches NO reportable units (a params-based route, empty fan-out, or all-unresolvable step) through the deterministic settle path. Mutually exclusive with --unit; refused when the step has reportable units",
+      default: false,
     },
     "expect-step": {
       type: "string",
       description:
-        "Guard: the step id you briefed against. Refuses the report if the run's active step has since moved (from the `brief` report command line)",
+        "Guard: the step id you briefed against. Refuses the report if the run's active step has since moved (from the `brief` report/settle command line)",
     },
-    status: { type: "string", description: `Unit status: ${WORKFLOW_REPORT_STATES.join(", ")}`, required: true },
+    status: { type: "string", description: `Unit status: ${WORKFLOW_REPORT_STATES.join(", ")}` },
     result: { type: "string", description: "Result payload (JSON for a schema unit, else text). completed only." },
     "result-file": { type: "string", description: "Read the result payload from this file instead of --result/stdin" },
     tokens: { type: "string", description: "Tokens spent on this unit (counts against a declared budget)" },
@@ -479,7 +485,32 @@ const workflowReportCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
+    // --settle: the unit-less verb that advances a run parked on a
+    // non-dispatching step. Mutually exclusive with the per-unit report flags.
+    if (args.settle === true) {
+      if (getStringArg(args, "unit") !== undefined || getStringArg(args, "status") !== undefined) {
+        throw new UsageError(
+          "--settle advances a route-only/empty step and takes no --unit or --status. Drop them, or report a " +
+            "specific unit with `--unit <id> --status <state>` instead.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const { settleWorkflowSpine } = await import("../workflows/exec/report.js");
+      const result = await settleWorkflowSpine({
+        target: args.target,
+        ...(getStringArg(args, "expect-step") !== undefined ? { expectStep: getStringArg(args, "expect-step") } : {}),
+      });
+      output("workflow-report", result);
+      return;
+    }
+
     const status = args.status as string;
+    if (!status) {
+      throw new UsageError(
+        "--status is required (completed | failed | running), or pass --settle to advance a non-dispatching step.",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
     if (!WORKFLOW_REPORT_STATES.includes(status as WorkflowReportStatus)) {
       throw new UsageError(
         `Invalid --status "${status}". Expected one of: ${WORKFLOW_REPORT_STATES.join(", ")}.`,
@@ -489,7 +520,7 @@ const workflowReportCommand = defineJsonCommand({
     const unitId = getStringArg(args, "unit");
     if (!unitId) {
       throw new UsageError(
-        "--unit is required (the content-derived unit id from `akm workflow brief`).",
+        "--unit is required (the content-derived unit id from `akm workflow brief`), or pass --settle for a route-only/empty step.",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
