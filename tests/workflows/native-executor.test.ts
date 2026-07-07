@@ -261,6 +261,179 @@ describe("executeStepPlan — fan-out", () => {
   });
 });
 
+describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
+  test("a single-item fan-out dispatches exactly one unit and the collect artifact is a one-element array", async () => {
+    seedRun({ params: { files: ["only"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["only"] },
+      evidence: {},
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "done" };
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(dispatches).toBe(1);
+    expect(result.units).toHaveLength(1);
+    // A single item still reduces through `collect` — the artifact is a
+    // one-element array, not the bare value.
+    expect(result.evidence.output).toEqual(["done"]);
+    expect(result.evidence.itemCount).toBe(1);
+  });
+
+  test("items of every JSON type each become their own unit; objects/arrays render as canonical JSON", async () => {
+    // Numbers/booleans stringify, strings pass through, objects/arrays render as
+    // canonical JSON in the `${{ item }}` prompt — one distinct content-derived
+    // unit per item.
+    const items = [1, true, "str", { b: 2, a: 1 }, [3, 4]];
+    seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
+    const prompts: string[] = [];
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: items },
+      evidence: {},
+      dispatcher: async (req) => {
+        prompts.push(req.prompt);
+        return { ok: true, text: "ok" };
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.units).toHaveLength(5);
+    expect(prompts.some((p) => p.includes("Review 1 carefully."))).toBe(true);
+    expect(prompts.some((p) => p.includes("Review true carefully."))).toBe(true);
+    expect(prompts.some((p) => p.includes("Review str carefully."))).toBe(true);
+    expect(prompts.some((p) => p.includes('Review {"a":1,"b":2} carefully.'))).toBe(true);
+    expect(prompts.some((p) => p.includes("Review [3,4] carefully."))).toBe(true);
+    await withWorkflowRunsRepo((repo) => {
+      // Five distinct content-derived unit ids — one per item.
+      expect(new Set(repo.getUnitsForStep(RUN_ID, "review").map((r) => r.unit_id)).size).toBe(5);
+    });
+  });
+
+  test("a null item resolves `${{ item }}` to null → an expression_error unit that fails the step under the default policy", async () => {
+    seedRun({ params: { files: [null] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: [null] },
+      evidence: {},
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not run" };
+      },
+    });
+    // `${{ item }}` over a null item is a deterministic resolution failure — the
+    // unit never dispatches, and fail-fast fails the step.
+    expect(dispatches).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.units[0].failureReason).toBe("expression_error");
+  });
+});
+
+describe("executeStepPlan — persistence edge cases (corrupt / missing journal fields)", () => {
+  test("a completed row with a NULL input_hash is a replay divergence, never a silent reuse", async () => {
+    // A missing input_hash is indistinguishable from a tampered one under a
+    // frozen plan (the same content-derived id must reproduce the same inputs),
+    // so it must fail loudly rather than reuse or re-dispatch.
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    await withWorkflowRunsRepo((repo) => {
+      repo.insertUnit({
+        runId: RUN_ID,
+        unitId: "review.unit:ac8d8342bbb2", // content-derived id for "a"
+        stepId: "review",
+        nodeId: "review.unit",
+        parentUnitId: "review.map",
+        phase: null,
+        runner: "llm",
+        model: null,
+        inputHash: null, // the missing field under test
+        startedAt: new Date().toISOString(),
+      });
+      repo.finishUnit({
+        runId: RUN_ID,
+        unitId: "review.unit:ac8d8342bbb2",
+        status: "completed",
+        resultJson: JSON.stringify("stale"),
+        tokens: null,
+        failureReason: null,
+        finishedAt: new Date().toISOString(),
+      });
+    });
+
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let dispatches = 0;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not run" };
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(dispatches).toBe(0);
+    expect(result.summary).toContain("replay divergence");
+    expect(result.summary).toContain("review.unit:ac8d8342bbb2");
+  });
+
+  test("a reused completed row whose result_json is corrupt degrades to no output — never a crash", async () => {
+    // Run once to journal a real matching-hash row, corrupt its result_json in
+    // place, then re-run: the reuse path must rehydrate absence (undefined),
+    // not throw on the malformed JSON.
+    seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const first = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher: async () => ({ ok: true, text: "done" }),
+    });
+    expect(first.ok).toBe(true);
+
+    // Corrupt the journaled result_json directly (a truncated / hand-edited row).
+    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    try {
+      db.prepare("UPDATE workflow_run_units SET result_json = ? WHERE run_id = ? AND unit_id = ?").run(
+        "{ this is not json",
+        RUN_ID,
+        "review.unit:ac8d8342bbb2",
+      );
+    } finally {
+      closeWorkflowDatabase(db);
+    }
+
+    let dispatches = 0;
+    const second = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a"] },
+      evidence: {},
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "must not run" };
+      },
+    });
+    // The matching-hash row is reused (no re-dispatch); the corrupt JSON is
+    // swallowed into absence rather than crashing the step.
+    expect(dispatches).toBe(0);
+    expect(second.ok).toBe(true);
+    expect(second.units[0].ok).toBe(true);
+    expect(second.units[0].text).toBeUndefined();
+    expect(second.units[0].result).toBeUndefined();
+  });
+});
+
 const SCHEMA_WF = `version: 1
 name: Extract
 steps:

@@ -19,12 +19,14 @@ import {
   buildEvidence,
   canonicalJson,
   computeStepWorkList,
+  evaluateRoute,
   recoverGateFeedback,
   type UnitOutcome,
   unitOutcomeFromRow,
 } from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
-import type { IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import type { IrRouteSpec, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import type { ExpressionScope } from "../../src/workflows/program/expressions";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
 
@@ -237,6 +239,120 @@ describe("recoverGateFeedback / activeGateLoop — pure journal derivation", () 
       { ...gateRow("work", 1, reject), phase: null }, // a (hypothetical) non-gate row
     ];
     expect(activeGateLoop(rows, "work")).toBe(1);
+  });
+
+  test("non-string entries in a journaled `missing[]` are dropped (only strings are threaded as feedback)", () => {
+    // A judge that returns a malformed `missing` (numbers, null, objects) must
+    // not crash recovery or leak non-strings into the next loop's prompt — the
+    // recovery filters to strings, keeping `feedback` intact.
+    const rows = [
+      gateRow("work", 1, { complete: false, missing: ["ok", 42, null, { a: 1 }, "also"], feedback: "fix it" }),
+    ];
+    expect(recoverGateFeedback(rows, "work", 2)).toEqual({ feedback: "fix it", missing: ["ok", "also"] });
+  });
+
+  test("a non-array `missing` and a non-string `feedback` degrade to empty defaults, never a throw", () => {
+    const rows = [gateRow("work", 1, { complete: false, missing: "not-a-list", feedback: 7 })];
+    expect(recoverGateFeedback(rows, "work", 2)).toEqual({ feedback: "", missing: [] });
+  });
+});
+
+// ── evaluateRoute — routing on an explicit input, own-property when-map ───────
+
+describe("evaluateRoute — explicit-input routing, prototype-safe when map", () => {
+  function route(input: string, when: Record<string, string>, defaultStepId?: string): IrRouteSpec {
+    return { input, when, ...(defaultStepId !== undefined ? { defaultStepId } : {}) };
+  }
+  function scope(stepOutputs: Record<string, unknown>, params: Record<string, unknown> = {}): ExpressionScope {
+    return { params, stepOutputs };
+  }
+
+  test("selects the matching branch by exact string equality", () => {
+    const r = route("${{ steps.review.output.verdict }}", { pass: "ship", fail: "rework" });
+    const decision = evaluateRoute(r, scope({ review: { verdict: "pass" } }));
+    expect(decision).toEqual({ ok: true, value: "pass", selected: "ship" });
+  });
+
+  test("boolean and number route inputs are stringified deterministically before matching", () => {
+    // `String(value)` — true→"true", false→"false", 0→"0", 42→"42" — is the
+    // pinned key form the `when:` map is matched against.
+    const boolRoute = route("${{ steps.s.output.flag }}", { true: "yes", false: "no" });
+    expect(evaluateRoute(boolRoute, scope({ s: { flag: true } }))).toEqual({
+      ok: true,
+      value: "true",
+      selected: "yes",
+    });
+    expect(evaluateRoute(boolRoute, scope({ s: { flag: false } }))).toEqual({
+      ok: true,
+      value: "false",
+      selected: "no",
+    });
+
+    const numRoute = route("${{ steps.s.output.n }}", { "0": "zero", "42": "life" });
+    expect(evaluateRoute(numRoute, scope({ s: { n: 0 } }))).toEqual({ ok: true, value: "0", selected: "zero" });
+    expect(evaluateRoute(numRoute, scope({ s: { n: 42 } }))).toEqual({ ok: true, value: "42", selected: "life" });
+  });
+
+  test("a route-input value of `constructor` / `__proto__` / `toString` never matches through Object.prototype", () => {
+    // The when map is author-controlled; a resolved value that happens to spell a
+    // prototype member must be looked up with Object.hasOwn, so it falls to the
+    // default (or fails) rather than resolving to `Object.prototype.toString`.
+    for (const hostile of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      const withDefault = route("${{ steps.s.output.kind }}", { real: "a" }, "fallback");
+      expect(evaluateRoute(withDefault, scope({ s: { kind: hostile } }))).toEqual({
+        ok: true,
+        value: hostile,
+        selected: "fallback",
+      });
+      const noDefault = route("${{ steps.s.output.kind }}", { real: "a" });
+      const decision = evaluateRoute(noDefault, scope({ s: { kind: hostile } }));
+      expect(decision.ok).toBe(false);
+      if (!decision.ok) expect(decision.error).toContain(hostile);
+    }
+  });
+
+  test("an OWN when-branch literally named `constructor` still routes (own-property, not a name blocklist)", () => {
+    const r = route("${{ steps.s.output.kind }}", { constructor: "handled" });
+    expect(evaluateRoute(r, scope({ s: { kind: "constructor" } }))).toEqual({
+      ok: true,
+      value: "constructor",
+      selected: "handled",
+    });
+  });
+
+  test("no matching branch and no default fails loudly; a default catches the miss", () => {
+    const noDefault = route("${{ steps.s.output.v }}", { a: "x" });
+    const missed = evaluateRoute(noDefault, scope({ s: { v: "z" } }));
+    expect(missed.ok).toBe(false);
+    if (!missed.ok) expect(missed.error).toContain('"z"');
+
+    const withDefault = route("${{ steps.s.output.v }}", { a: "x" }, "catch-all");
+    expect(evaluateRoute(withDefault, scope({ s: { v: "z" } }))).toEqual({
+      ok: true,
+      value: "z",
+      selected: "catch-all",
+    });
+  });
+
+  test("a default value shared with an explicit branch is legal — both spellings pick that step", () => {
+    const r = route("${{ steps.s.output.v }}", { a: "shared", b: "other" }, "shared");
+    expect(evaluateRoute(r, scope({ s: { v: "a" } }))).toEqual({ ok: true, value: "a", selected: "shared" }); // explicit
+    expect(evaluateRoute(r, scope({ s: { v: "zzz" } }))).toEqual({ ok: true, value: "zzz", selected: "shared" }); // default
+  });
+
+  test("a non-primitive (object/array) route input is rejected — branches match primitives only", () => {
+    const r = route("${{ steps.s.output }}", { a: "x" }, "d");
+    expect(evaluateRoute(r, scope({ s: { nested: true } })).ok).toBe(false);
+    expect(evaluateRoute(route("${{ steps.s.output.list }}", { a: "x" }, "d"), scope({ s: { list: [1, 2] } })).ok).toBe(
+      false,
+    );
+  });
+
+  test("an unresolvable route input fails with the reference in the message", () => {
+    const r = route("${{ steps.missing.output.v }}", { a: "x" }, "d");
+    const decision = evaluateRoute(r, scope({}));
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.error).toContain("steps.missing.output");
   });
 });
 

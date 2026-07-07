@@ -364,6 +364,46 @@ describe("resolveReference", () => {
   });
 });
 
+// ── prototype safety: inherited properties never resolve ─────────────────────
+
+describe("inherited properties never resolve (own-property lookups only)", () => {
+  // The grammar's <ident> accepts `constructor`, `__proto__`, `toString`, etc.
+  // Resolution must use Object.hasOwn so a path segment can NEVER reach through
+  // Object.prototype — a value is either an OWN property or a resolution error.
+  const INHERITED = ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf"];
+
+  test("a step-output path naming an inherited property is a resolution error, not the prototype member", () => {
+    const s = scope({ stepOutputs: { d: { real: 1 } } });
+    for (const key of INHERITED) {
+      const errors = resolutionErrors(`\${{ steps.d.output.${key} }}`, s);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].reference).toBe(`steps.d.output.${key}`);
+    }
+  });
+
+  test("a param named after an inherited property is a resolution error, not the prototype member", () => {
+    const s = scope({ params: { real: 1 } });
+    for (const key of INHERITED) {
+      const errors = resolutionErrors(`\${{ params.${key} }}`, s);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].reference).toBe(`params.${key}`);
+    }
+  });
+
+  test("resolveReference (whole-value) is equally guarded", () => {
+    const [expr] = refs("${{ steps.d.output.constructor }}");
+    const result = resolveReference(expr, scope({ stepOutputs: { d: { real: 1 } } }));
+    expect(result.ok).toBe(false);
+  });
+
+  test("an OWN property that happens to be named `constructor` DOES resolve — the guard is own-property, not a name blocklist", () => {
+    // Proof the check is Object.hasOwn, not a denylist of magic names: real data
+    // whose key is literally "constructor" resolves to its value.
+    const s = scope({ stepOutputs: { d: { constructor: "my-own-value" } } });
+    expect(resolvedText("${{ steps.d.output.constructor }}", s)).toBe("my-own-value");
+  });
+});
+
 // ── listReferences + formatReference ─────────────────────────────────────────
 
 describe("listReferences", () => {

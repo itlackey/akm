@@ -700,3 +700,53 @@ describe("registry parity", () => {
     expect(nodeJson?.shape).toBe(bunJson?.shape);
   });
 });
+
+// ── workflow smoke (better-sqlite3 workflow.db + markdown/YAML round-trip) ──────
+//
+// A minimal workflow smoke on Node: `workflow template --yaml | validate` proves
+// the YAML program path parses on the Node runtime, and `workflow create + start
+// + status` exercises the workflow-runs repository (workflow.db) through the
+// better-sqlite3 driver — the run-state boundary the other families never touch.
+// Both stay within the dist-artifact skip gate (AKM_NODE_COMPAT_TESTS=1).
+
+describe("workflow smoke parity", () => {
+  afterEach(() => cleanup());
+
+  test.skipIf(!ENABLED)("workflow template --yaml round-trips through validate on Node", () => {
+    setupStorage();
+    // `workflow template --yaml` prints a YAML program straight to stdout (no
+    // envelope). Persist it and validate the file on Node — a clean round-trip.
+    const tpl = nodeRun(["workflow", "template", "--yaml"], nodeEnv);
+    assertNoBoundaryLeak(tpl, "workflow template --yaml");
+    expect(tpl.status).toBe(0);
+    expect(tpl.stdout).toContain("version:");
+
+    const file = path.join(stashDir, "smoke-program.yaml");
+    fs.writeFileSync(file, tpl.stdout, "utf8");
+    const val = nodeRun(["workflow", "validate", file], nodeEnv);
+    assertNoBoundaryLeak(val, "workflow validate yaml");
+    expect(val.status).toBe(0);
+    const json = parseJson(val.stdout) as { ok?: boolean; format?: string } | undefined;
+    expect(json?.ok).toBe(true);
+    expect(json?.format).toBe("program");
+  });
+
+  test.skipIf(!ENABLED)("workflow create + start + status round-trips through workflow.db on Node", () => {
+    setupStorage();
+    const created = nodeRun(["workflow", "create", "smoke-flow"], nodeEnv);
+    assertNoBoundaryLeak(created, "workflow create");
+    expect(created.status).toBe(0);
+
+    const start = nodeRun(["workflow", "start", "workflow:smoke-flow"], nodeEnv);
+    assertNoBoundaryLeak(start, "workflow start");
+    expect(start.status).toBe(0);
+    const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
+    expect(typeof runId).toBe("string");
+
+    const status = nodeRun(["workflow", "status", runId as string], nodeEnv);
+    assertNoBoundaryLeak(status, "workflow status");
+    expect(status.status).toBe(0);
+    const statusJson = parseJson(status.stdout) as { run?: { status?: string } } | undefined;
+    expect(statusJson?.run?.status).toBe("active");
+  });
+});

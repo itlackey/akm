@@ -51,6 +51,15 @@ describe("scheduleUnits", () => {
     expect(probe.peak()).toBe(2);
   });
 
+  test("concurrency wider than the item list never over-schedules — peak is capped at the item count", async () => {
+    // A declared/cap concurrency far above the number of items must not spin up
+    // more in-flight dispatches than there are items to dispatch.
+    const probe = concurrencyProbe();
+    const results = await scheduleUnits([1, 2, 3], probe.dispatch, { concurrency: 32, maxConcurrency: 16 });
+    expect(results).toEqual([2, 4, 6]);
+    expect(probe.peak()).toBe(3);
+  });
+
   test("maxUnitConcurrency is min(16, cores − 2), floored at 1", () => {
     expect(maxUnitConcurrency(32)).toBe(16);
     expect(maxUnitConcurrency(8)).toBe(6);

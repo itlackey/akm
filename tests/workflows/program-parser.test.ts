@@ -199,6 +199,32 @@ describe("parseWorkflowProgram — happy paths", () => {
     expect(program.steps.map((s) => s.unit?.timeoutMs)).toEqual([500, 5_000, 600_000, null, 300]);
   });
 
+  test("timeout formats: unit lower bounds, uppercase units, and surrounding whitespace are accepted", () => {
+    // The shipped parser lower-cases and trims before matching (`raw.trim().toLowerCase()`),
+    // so "5S"/"10M" are the same as "5s"/"10m" and a padded '" 5s "' is 5000.
+    const program = parseOk(
+      withSteps(
+        [
+          "  - id: a",
+          "    unit: { instructions: x, timeout: 1ms }",
+          "  - id: b",
+          "    unit: { instructions: x, timeout: 1s }",
+          "  - id: c",
+          "    unit: { instructions: x, timeout: 1m }",
+          "  - id: d",
+          "    unit: { instructions: x, timeout: 5S }",
+          "  - id: e",
+          "    unit: { instructions: x, timeout: 10M }",
+          "  - id: f",
+          '    unit: { instructions: x, timeout: " 5s " }',
+          "  - id: g",
+          "    unit: { instructions: x, timeout: NONE }",
+        ].join("\n"),
+      ),
+    );
+    expect(program.steps.map((s) => s.unit?.timeoutMs)).toEqual([1, 1_000, 60_000, 5_000, 600_000, 5_000, null]);
+  });
+
   test("step source refs carry best-effort line anchors", () => {
     const program = parseOk(LINEAR);
     expect(program.steps[0].source.path).toBe("workflows/test.yaml");
@@ -426,6 +452,27 @@ describe("parseWorkflowProgram — step validation", () => {
     expect(joined).toContain('non-positive timeout "0s"');
     expect(joined).toContain("must be a duration string");
     expect(joined).toContain("non-positive timeout -5");
+  });
+
+  test("timeout format errors: bare zero, unknown units, non-numeric, and empty strings are all rejected", () => {
+    const joined = parseErrors(
+      withSteps(
+        [
+          "  - id: a",
+          "    unit: { instructions: x, timeout: 0 }", // bare zero → non-positive
+          "  - id: b",
+          "    unit: { instructions: x, timeout: 1h }", // hours are not a unit
+          "  - id: c",
+          "    unit: { instructions: x, timeout: abc }", // not a duration at all
+          "  - id: d",
+          '    unit: { instructions: x, timeout: "" }', // empty string
+        ].join("\n"),
+      ),
+    ).join(" | ");
+    expect(joined).toContain("non-positive timeout 0");
+    expect(joined).toContain('invalid timeout "1h"');
+    expect(joined).toContain('invalid timeout "abc"');
+    expect(joined).toContain('invalid timeout ""');
   });
 
   test("retry: shape, max, and the failure-reason vocabulary", () => {

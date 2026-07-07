@@ -126,6 +126,58 @@ describe("repository lease primitives", () => {
   });
 });
 
+/**
+ * Half-set lease columns (holder without expiry, or expiry without holder) are
+ * defined as NOT live in every direction — a lease is only live when BOTH
+ * columns are set and unexpired. A partially-written row (a crash between the two
+ * column writes, a hand-edited journal) must never wedge a run: it is claimable
+ * by acquire, never surfaced as `engineLease`, and never blocks the manual loop.
+ */
+describe("half-set lease columns (defined non-live semantics, both directions)", () => {
+  test("holder WITHOUT expiry: claimable, not surfaced, and the manual loop is not blocked", async () => {
+    writeWorkflow("lease-holder-only");
+    const started = await startWorkflowRun("workflow:lease-holder-only", {});
+    const runId = started.run.id;
+    execOnWorkflowDb(
+      "UPDATE workflow_runs SET engine_lease_holder = ?, engine_lease_until = NULL WHERE id = ?",
+      "ghost",
+      runId,
+    );
+
+    // Not surfaced — engineLease requires BOTH columns.
+    expect((await getWorkflowStatus(runId)).run.engineLease).toBeUndefined();
+    // Claimable — the acquire predicate treats a NULL expiry as free.
+    const claimed = await withWorkflowRunsRepo((repo) =>
+      repo.acquireEngineLease(runId, "engine-A", isoIn(90_000), new Date().toISOString()),
+    );
+    expect(claimed).toBe(true);
+    expect((await readLease(runId)).holder).toBe("engine-A");
+  });
+
+  test("expiry WITHOUT holder: claimable, not surfaced, and manual complete succeeds", async () => {
+    writeWorkflow("lease-expiry-only");
+    const started = await startWorkflowRun("workflow:lease-expiry-only", {});
+    const runId = started.run.id;
+    execOnWorkflowDb(
+      "UPDATE workflow_runs SET engine_lease_holder = NULL, engine_lease_until = ? WHERE id = ?",
+      isoIn(90_000),
+      runId,
+    );
+
+    // Not surfaced, and the manual path is NOT refused (a holderless lease binds
+    // nobody, so `assertNotLeasedByOther` treats it as absent).
+    expect((await getWorkflowStatus(runId)).run.engineLease).toBeUndefined();
+    const detail = await completeWorkflowStep({
+      runId,
+      stepId: "only-step",
+      status: "completed",
+      summary: "Completed by hand — the holderless lease binds no one.",
+      summaryJudge: null,
+    });
+    expect("run" in detail && detail.run.status).toBe("completed");
+  });
+});
+
 describe("engine run lease (single driver)", () => {
   test("a successful run holds the lease while driving and releases it on exit", async () => {
     writeWorkflow("lease-happy");
@@ -148,6 +200,64 @@ describe("engine run lease (single driver)", () => {
     // through completeWorkflowStep — a live lease refuses everyone else).
     expect((await readLease(started.run.id)).holder).toBeNull();
     expect((await readLease(started.run.id)).until).toBeNull();
+  });
+
+  test("exiting early on --max-steps stops after one step AND releases the lease (run still active)", async () => {
+    // The CLI `akm workflow run --max-steps 1` bounds the engine loop; there is
+    // no fake-dispatcher seam at the CLI boundary, so the faithful, isolated
+    // realization of that contract is here at the engine boundary. A two-step
+    // workflow makes maxSteps:1 exit with the run STILL active (not done) — the
+    // path the between-steps/success/throw lease tests above do not cover.
+    const file = path.join(storage.stashDir, "workflows", "lease-maxsteps.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      [
+        "---",
+        "description: Max-steps lease test workflow",
+        "---",
+        "",
+        "# Workflow: lease-maxsteps",
+        "",
+        "## Step: First Step",
+        "Step ID: first",
+        "",
+        "### Instructions",
+        "Do the first thing.",
+        "",
+        "## Step: Second Step",
+        "Step ID: second",
+        "",
+        "### Instructions",
+        "Do the second thing.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const started = await startWorkflowRun("workflow:lease-maxsteps", {});
+    const runId = started.run.id;
+
+    let holderDuringDispatch: string | null = null;
+    const result = await runWorkflowSteps({
+      target: runId,
+      maxSteps: 1,
+      summaryJudge: null,
+      dispatcher: async () => {
+        holderDuringDispatch = (await readLease(runId)).holder;
+        return { ok: true, text: "done" };
+      },
+    });
+
+    // Exactly one step executed; the run did NOT finish (second step pending)…
+    expect(result.executed).toHaveLength(1);
+    expect(result.done).toBeUndefined();
+    expect(result.run.status).toBe("active");
+    expect(result.run.currentStepId).toBe("second");
+    // …the lease was held while driving…
+    expect(holderDuringDispatch).toBeTruthy();
+    // …and the finally released it on the early (maxSteps) exit, so a follow-up
+    // engine invocation or a manual driver can reclaim the still-active run.
+    expect(await readLease(runId)).toEqual({ holder: null, until: null });
   });
 
   test("a second run invocation on a live-leased run refuses up front, naming holder + expiry, dispatching nothing", async () => {

@@ -248,6 +248,102 @@ describe("workflow watch — --stream", () => {
   });
 });
 
+describe("workflow watch — exits on every terminal status (completed/failed/blocked)", () => {
+  // The `--stream` loop exits as soon as the run leaves `active`. "Terminal"
+  // means ANY non-active status: the engine has stopped driving in all three,
+  // so no more events arrive until a human resumes. Events written just before
+  // the flip are still drained. `completed` is proven above via the gate spine;
+  // `failed` and `blocked` are proven here through the status seam so all three
+  // exits are pinned.
+  for (const terminal of ["failed", "blocked"] as const) {
+    test(`--stream drains the pre-flip event then exits when the run reaches ${terminal}`, async () => {
+      const runId = `run-${terminal}`;
+      const events: EventEnvelope[] = [];
+      let nextId = 1;
+      const push = (eventType: string): void => {
+        events.push({ schemaVersion: 1, id: nextId++, ts: new Date().toISOString(), eventType, metadata: { runId } });
+      };
+      push("workflow_started");
+
+      let statusCalls = 0;
+      const lines: string[] = [];
+      const result = await watchWorkflowRun({
+        runId,
+        stream: true,
+        emit: (line) => lines.push(line),
+        readEventsFn: ({ sinceOffset }) => {
+          const batch = events.filter((e) => e.id > (sinceOffset ?? 0));
+          return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1].id : (sinceOffset ?? 0) };
+        },
+        getRunStatus: async () => {
+          statusCalls++;
+          // Call 1 is the existence check (active). Call 2 appends a final event
+          // AND flips terminal — proving an event written just before the status
+          // commit is still emitted before the loop exits.
+          if (statusCalls === 2) push("workflow_unit_finished");
+          return statusCalls >= 2 ? terminal : "active";
+        },
+        sleep: async () => {},
+      });
+
+      expect(result.status).toBe(terminal);
+      expect(result.streamed).toBe(true);
+      const types = parseLines(lines).map((e) => e.eventType);
+      expect(types).toEqual(["workflow_started", "workflow_unit_finished"]);
+    });
+  }
+
+  test("--stream advances the cursor monotonically and emits each event exactly once across poll batches", async () => {
+    // Regression net for the monotonic rowid cursor: every drain reads strictly
+    // after the previous `nextOffset`, so an event appended by one batch is
+    // never re-emitted by a later batch (no duplicate NDJSON lines), and the
+    // read cursor never regresses even as fresh events land between polls.
+    const runId = "cursor-run";
+    const events: EventEnvelope[] = [];
+    let nextId = 1;
+    const push = (eventType: string): void => {
+      events.push({ schemaVersion: 1, id: nextId++, ts: new Date().toISOString(), eventType, metadata: { runId } });
+    };
+    push("workflow_started");
+
+    const cursorsRead: number[] = [];
+    let statusCalls = 0;
+    const lines: string[] = [];
+    const result = await watchWorkflowRun({
+      runId,
+      stream: true,
+      emit: (line) => lines.push(line),
+      readEventsFn: ({ sinceOffset }) => {
+        cursorsRead.push(sinceOffset ?? 0);
+        const batch = events.filter((e) => e.id > (sinceOffset ?? 0));
+        return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1].id : (sinceOffset ?? 0) };
+      },
+      getRunStatus: async () => {
+        statusCalls++;
+        // Two active polls each land a fresh event in a distinct batch, then the
+        // run completes — so emission spans three separate drains.
+        if (statusCalls === 2) push("workflow_unit_started");
+        if (statusCalls === 3) push("workflow_unit_finished");
+        return statusCalls >= 4 ? "completed" : "active";
+      },
+      sleep: async () => {},
+    });
+
+    expect(result.status).toBe("completed");
+    const ids = parseLines(lines).map((e) => e.id);
+    // Each event emitted exactly once — deduped array equals the raw array.
+    expect(ids).toEqual([...new Set(ids)]);
+    expect(ids).toEqual([1, 2, 3]);
+    // The read cursor is non-decreasing across every poll batch (including the
+    // backlog read at 0 and the trailing idle grace poll).
+    for (let i = 1; i < cursorsRead.length; i++) {
+      expect(cursorsRead[i]).toBeGreaterThanOrEqual(cursorsRead[i - 1] ?? 0);
+    }
+    expect(result.lastEventId).toBe(3);
+    expect(result.eventCount).toBe(3);
+  });
+});
+
 describe("workflow watch — registration + filter unit surface", () => {
   test("subcommand, passthrough shape, and default interval are registered", () => {
     expect(WORKFLOW_SUBCOMMANDS.has("watch")).toBe(true);

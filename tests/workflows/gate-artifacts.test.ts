@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${{ … }}` is the
+// workflow expression grammar under test, not a JS template literal.
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -392,6 +395,50 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
     });
   });
 
+  test("gate feedback containing ${{ … }} is appended as DATA — never re-parsed, but it still changes the input hash", async () => {
+    // The judge's feedback is threaded into loop 2's prompt as literal text
+    // (after upstream expression resolution). A feedback value that itself spells
+    // an expression must appear VERBATIM and must never resolve against params —
+    // proving the re-scan injection class is closed even on the gate-loop path —
+    // while STILL changing the prompt (hence the input hash), so loop 2 re-dispatches.
+    seedRun({ steps: LOOPED_STEPS });
+    const prompts: string[] = [];
+    const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
+      if (req.nodeId === "work") prompts.push(req.prompt);
+      return { ok: true, text: `did ${req.unitId}` };
+    };
+    let judgeCalls = 0;
+    const judge: SummaryJudge = async () => {
+      judgeCalls++;
+      return judgeCalls === 1
+        ? '{"complete": false, "missing": ["reference ${{ params.secret }} directly"], "feedback": "Now handle ${{ params.secret }} and ${{ steps.nope.output }}."}'
+        : '{"complete": true, "missing": []}';
+    };
+
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher,
+      loadPlan: async () => plan(LOOPED_WF),
+      summaryJudge: judge,
+    });
+
+    // The run completed — a `${{ … }}` in feedback did NOT raise an expression
+    // resolution error (it was never parsed); the loop simply ran twice.
+    expect(result.done).toBe(true);
+    expect(prompts).toHaveLength(2);
+    // Loop 2's prompt carries the feedback bytes VERBATIM, including the literal
+    // `${{ … }}` — no re-resolution, no leak of a resolved value.
+    expect(prompts[1]).toContain("Now handle ${{ params.secret }} and ${{ steps.nope.output }}.");
+    expect(prompts[1]).toContain("- reference ${{ params.secret }} directly");
+    // Hash-driven re-dispatch: the appended feedback changed loop 2's input hash.
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "work");
+      const byId = new Map(rows.map((r) => [r.unit_id, r]));
+      expect(byId.get("work:solo~l2")?.input_hash).toBeTruthy();
+      expect(byId.get("work:solo~l2")?.input_hash).not.toBe(byId.get("work:solo")?.input_hash);
+    });
+  });
+
   test("the loop bound is respected: an always-rejecting judge yields gateRejection after maxLoops attempts", async () => {
     seedRun({ steps: LOOPED_STEPS });
     let dispatches = 0;
@@ -657,7 +704,6 @@ describe("classic linear markdown path (stable contract)", () => {
     expect(result.done).toBe(true);
     // Markdown instructions are opaque data: the `${{ … }}` text is content,
     // never grammar — no expression resolution, no param substitution.
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal expression syntax under test (verbatim markdown contract)
     expect(prompts[0]).toContain("Literal ${{ params.secret }} is content here.");
     expect(prompts[0]).not.toContain("LEAKED — resolved");
     // No gate feedback block on first executions, machine summaries intact.

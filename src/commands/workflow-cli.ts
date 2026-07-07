@@ -340,7 +340,15 @@ const workflowValidateCommand = defineJsonCommand({
 });
 
 async function resolveWorkflowFilePath(target: string): Promise<string> {
-  if (!target.startsWith("workflow:")) return target;
+  // A bare (`workflow:<name>`) OR origin-qualified (`<origin>//workflow:<name>`)
+  // ref resolves through the source search, exactly like `workflow start` /
+  // `status` / `next`. Anything else is treated as a filesystem path. Detecting
+  // the origin-qualified form here (not just the bare prefix) keeps `validate`'s
+  // ref contract in lockstep with the rest of the workflow command family — an
+  // `extra//workflow:foo` ref validates the file that `extra//workflow:foo`
+  // starts, rather than being mistaken for a relative path that does not exist.
+  const looksLikeWorkflowRef = target.startsWith("workflow:") || target.includes("//workflow:");
+  if (!looksLikeWorkflowRef) return target;
   const parsed = parseAssetRef(target);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
