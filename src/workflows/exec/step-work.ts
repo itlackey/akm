@@ -65,7 +65,13 @@ import {
   resolveWholeValue,
   type TemplateSegment,
 } from "../program/expressions";
-import type { SummaryValidationFailure, WorkflowNextResult } from "../runtime/runs";
+import {
+  buildDefaultSummaryJudge,
+  completeWorkflowStep,
+  type SummaryValidationFailure,
+  type WorkflowNextResult,
+} from "../runtime/runs";
+import type { SummaryJudge } from "../validate-summary";
 import { enqueueUnitWrite } from "./unit-writer";
 
 /**
@@ -508,6 +514,109 @@ export function buildEvidence(
   return evidence;
 }
 
+/**
+ * The reduced outcome of a step's executed units — the shared post-dispatch
+ * decision. `executeStepPlan` (native dispatch) and the R3 report path (units
+ * replayed from the journal) both feed their {@link UnitOutcome}[] through
+ * {@link reduceStepOutcomes} to produce this, so an engine-driven step and a
+ * report-driven step of the same frozen plan promote the SAME artifact, apply
+ * the SAME `on_error` policy, and validate against the SAME output schema. The
+ * dispatch-only accounting (`unitsDispatched` / `tokensUsed`) lives on the
+ * executor's richer result, not here.
+ */
+export interface ExecutedStepOutcome {
+  ok: boolean;
+  units: UnitOutcome[];
+  evidence: Record<string, unknown>;
+  summary: string;
+  /** Set when `ok` is false BECAUSE the promoted artifact failed the step's
+   * declared output schema (the one failure a gate loop may re-run). */
+  artifactSchemaFailure?: true;
+}
+
+/**
+ * Reduce a step's terminal unit outcomes into the promoted artifact + step
+ * verdict — the shared semantics between native dispatch and the report path.
+ * Applies the `on_error` policy (`fail` vs `continue`), the reducer (via
+ * {@link buildEvidence}), the vote-tie failure, and the typed-artifact schema
+ * validation (fail-fast, errors in the summary, `artifactSchemaFailure` marker).
+ * Callers own dispatch-specific concerns (replay-divergence, budget) BEFORE
+ * calling this; those never occur on the report path (units are journaled).
+ */
+export function reduceStepOutcomes(
+  plan: IrStepPlan,
+  reducer: "collect" | "vote" | "best-of-n",
+  isFanOut: boolean,
+  onError: IrOnError,
+  units: UnitOutcome[],
+): ExecutedStepOutcome {
+  const failed = units.filter((u) => !u.ok);
+  const evidence = buildEvidence(units, reducer, isFanOut);
+  const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";
+  const tolerateFailures = onError === "continue";
+  let ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
+  let summary =
+    `Executed ${units.length} unit(s) for step "${plan.stepId}" via the native executor: ` +
+    `${units.length - failed.length} succeeded, ${failed.length} failed.` +
+    (failed.length > 0
+      ? ` Failures${tolerateFailures ? " (recorded, on_error: continue)" : ""}: ${failed
+          .map((u) => `${u.unitId} (${u.failureReason ?? "error"})`)
+          .join(", ")}.`
+      : "") +
+    reducerNote;
+
+  let artifactSchemaFailure = false;
+  if (ok) {
+    const schemaFailure = validateStepArtifact(plan, evidence);
+    if (schemaFailure !== undefined) {
+      ok = false;
+      summary = schemaFailure;
+      artifactSchemaFailure = true;
+    }
+  }
+
+  return { ok, units, evidence, summary, ...(artifactSchemaFailure ? { artifactSchemaFailure: true as const } : {}) };
+}
+
+/**
+ * Rehydrate a journaled unit row into a {@link UnitOutcome}. Shared by the
+ * executor's durable-row reuse (`native-executor.ts`, completed rows only) and
+ * the R3 report path (which reduces completed AND failed rows replayed from the
+ * journal). A completed row's text unit journals its output as a JSON string; a
+ * schema unit journals the validated structure. A failed row carries its
+ * `failure_reason`; any journaled text is surfaced too.
+ */
+export function unitOutcomeFromRow(unitId: string, row: WorkflowRunUnitRow, hasSchema: boolean): UnitOutcome {
+  let parsed: unknown;
+  try {
+    parsed = row.result_json === null ? undefined : JSON.parse(row.result_json);
+  } catch {
+    parsed = undefined;
+  }
+  if (row.status === "completed") {
+    return {
+      unitId,
+      ok: true,
+      ...(hasSchema
+        ? { result: parsed }
+        : typeof parsed === "string"
+          ? { text: parsed }
+          : parsed !== undefined
+            ? { result: parsed }
+            : {}),
+      ...(row.tokens !== null ? { tokens: row.tokens } : {}),
+      ...(row.session_id !== null && row.session_id !== undefined ? { sessionId: row.session_id } : {}),
+    };
+  }
+  return {
+    unitId,
+    ok: false,
+    failureReason: row.failure_reason ?? "reported_failure",
+    ...(typeof parsed === "string" ? { text: parsed } : {}),
+    ...(row.tokens !== null ? { tokens: row.tokens } : {}),
+  };
+}
+
 /** Stable stringify (sorted object keys, recursively) so equal values vote together. */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value));
@@ -845,6 +954,169 @@ export function seedJournaledRouteDecisions(
     }
     applyRouteDecision(stepPlan.route, stepPlan.stepId, selected, routeSelected, routeUnselected);
   }
+}
+
+// ── Step finalization (IO) — the shared completion path ──────────────────────
+//
+// ONE implementation of "given a step's executed outcome at a gate loop,
+// evaluate the route, judge the completion gate, and advance (or not) the
+// spine." The engine loop (`run-workflow.ts`) and the R3 report path both call
+// it, so route evaluation, artifact-judged gates, gate-row journaling, and the
+// bounded-loop rejection contract cannot drift between the two surfaces. The
+// caller owns the SPINE-WALKING glue (which loop to run next, skip cascades,
+// lease renewal); this function performs exactly ONE completion attempt.
+
+export interface FinalizeStepInput {
+  runId: string;
+  workflowRef: string;
+  stepId: string;
+  stepPlan: IrStepPlan;
+  /** The step's declared completion criteria (empty ⇒ no artifact-judging gate). */
+  completionCriteria: string[];
+  /** 1-based gate-loop attempt being completed. */
+  gateLoop: number;
+  /** True when a rejection may re-run the subgraph (`gateLoop < gate.max_loops`). */
+  loopsRemaining: boolean;
+  /** The reduced outcome of this loop's units (native dispatch or journal replay). */
+  result: ExecutedStepOutcome;
+  /** Prior steps' recorded evidence, keyed by step id (route scope; current step excluded). */
+  priorEvidence: Record<string, Record<string, unknown> | undefined>;
+  params: Record<string, unknown>;
+  /** Route bookkeeping — mutated in place when this step carries a route decision. */
+  routeSelected: Set<string>;
+  routeUnselected: Map<string, RouteSkipInfo>;
+  /**
+   * Completion-criteria judge: `undefined` ⇒ build the default from config;
+   * `null` ⇒ no judge (fail-open); a function ⇒ the injected judge (tests).
+   */
+  summaryJudge: SummaryJudge | null | undefined;
+  /** Engine run-lease holder (engine path only); absent on the manual/report path. */
+  leaseHolder?: string;
+}
+
+export type FinalizeStepResult =
+  | { kind: "advanced"; summaryOverride?: string }
+  | { kind: "failed"; summary: string; routeFailure?: true }
+  | { kind: "retry"; gateFeedback: GateFeedback }
+  | { kind: "gate-exhausted"; gateRejection: { stepId: string; missing: string[]; feedback: string } };
+
+/**
+ * Perform ONE completion attempt for an executed step:
+ *
+ *  - a hard unit failure completes the step `failed` (a retryable typed-artifact
+ *    mismatch with loops remaining returns `retry` WITHOUT journaling a gate row
+ *    — no judge ran, exactly like the engine);
+ *  - a route decision is evaluated against params + prior/fresh step outputs; an
+ *    unroutable value fails the step; a valid decision is journaled on the
+ *    step evidence and applied to the skip bookkeeping;
+ *  - the completion gate judges a summary BUILT FROM the promoted artifact (when
+ *    the step declares criteria), journaled as a `<stepId>.gate:l<loop>` unit
+ *    row; a rejection with loops remaining returns `retry` (feedback threaded
+ *    into the next loop), a rejection with none returns `gate-exhausted`, a pass
+ *    returns `advanced`.
+ *
+ * Every DB advance goes through {@link completeWorkflowStep} — the gate spine is
+ * never bypassed. Behavior is byte-identical to the engine's former inline loop
+ * body (its tests prove it).
+ */
+export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<FinalizeStepResult> {
+  const { runId, workflowRef, stepId, stepPlan, completionCriteria, gateLoop, loopsRemaining, result } = input;
+  const lease = input.leaseHolder !== undefined ? { leaseHolder: input.leaseHolder } : {};
+
+  if (!result.ok) {
+    // Typed-artifact mismatch with loop budget left: regenerate-with-errors
+    // (the validation errors become the next loop's feedback). No judge ran, so
+    // no gate row is journaled for this attempt.
+    if (result.artifactSchemaFailure && loopsRemaining) {
+      return { kind: "retry", gateFeedback: { feedback: result.summary, missing: [] } };
+    }
+    await completeWorkflowStep({
+      runId,
+      stepId,
+      status: "failed",
+      notes: result.summary,
+      evidence: result.evidence,
+      ...lease,
+    });
+    return { kind: "failed", summary: result.summary };
+  }
+
+  // Route evaluation BEFORE completion: an unroutable value is an
+  // authoring/config failure that must fail the step deterministically.
+  let summaryOverride: string | undefined;
+  if (stepPlan.route) {
+    const scope: ExpressionScope = {
+      params: input.params,
+      stepOutputs: routeStepOutputs(input.priorEvidence, stepId, result.evidence),
+    };
+    const decision = evaluateRoute(stepPlan.route, scope);
+    if (!decision.ok) {
+      const notes = `Step "${stepId}" route failed: ${decision.error}`;
+      await completeWorkflowStep({ runId, stepId, status: "failed", notes, evidence: result.evidence, ...lease });
+      return { kind: "failed", summary: notes, routeFailure: true };
+    }
+    applyRouteDecision(stepPlan.route, stepId, decision.selected, input.routeSelected, input.routeUnselected);
+    // Journal the decision on the evidence: resume replays it via
+    // seedJournaledRouteDecisions, so the skip set survives re-invocation.
+    result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
+    if (!stepPlan.root) {
+      summaryOverride = `Step "${stepId}" routed on ${stepPlan.route.input}: value "${decision.value}" selected step "${decision.selected}".`;
+    }
+  }
+
+  // Artifact-judging gate: a criteria-bearing executing step is judged on a
+  // summary BUILT FROM the promoted artifact; everything else keeps the machine
+  // summary (a route-only step's summary IS its decision).
+  const summary =
+    stepPlan.root && completionCriteria.length > 0
+      ? buildArtifactSummary(stepId, result.units, result.evidence)
+      : (summaryOverride ?? result.summary);
+
+  // Journal engine-driven judge calls as unit rows (they are LLM calls). The
+  // wrapper's `invoked` stays false when the gate is fail-open (no criteria / no
+  // judge) — nothing is journaled, and human approvals are never cached.
+  const gateUnit: GateUnitRef = { runId, workflowRef, stepId, loop: gateLoop };
+  const judgeState = { invoked: false, errored: false };
+  const innerJudge = input.summaryJudge === undefined ? buildDefaultSummaryJudge() : input.summaryJudge;
+  const summaryJudge: SummaryJudge | null = innerJudge
+    ? async (prompt) => {
+        judgeState.invoked = true;
+        await journalGateEvaluationStart(gateUnit);
+        try {
+          return await innerJudge(prompt);
+        } catch (err) {
+          judgeState.errored = true;
+          throw err;
+        }
+      }
+    : null;
+
+  const completion = await completeWorkflowStep({
+    runId,
+    stepId,
+    status: "completed",
+    summary,
+    evidence: result.evidence,
+    summaryJudge,
+    ...lease,
+  });
+  const rejection =
+    "ok" in completion && completion.ok === false ? (completion as SummaryValidationFailure) : undefined;
+
+  if (judgeState.invoked) {
+    await journalGateEvaluationFinish(gateUnit, judgeState.errored, rejection);
+  }
+
+  if (!rejection) {
+    return { kind: "advanced", ...(summaryOverride !== undefined ? { summaryOverride } : {}) };
+  }
+  if (loopsRemaining) {
+    return { kind: "retry", gateFeedback: { feedback: rejection.feedback, missing: rejection.missing } };
+  }
+  return {
+    kind: "gate-exhausted",
+    gateRejection: { stepId, missing: rejection.missing, feedback: rejection.feedback },
+  };
 }
 
 // ── Frozen plan parse + integrity check (shared) ─────────────────────────────

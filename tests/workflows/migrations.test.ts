@@ -26,6 +26,7 @@ const CHECKIN_SUMMARY_MIGRATION_ID = "003-checkin-and-step-summary";
 const RUN_UNITS_MIGRATION_ID = "004-workflow-run-units";
 const UNIT_SESSION_MIGRATION_ID = "005-unit-session-id";
 const FROZEN_PLAN_MIGRATION_ID = "006-frozen-plan-and-lease";
+const UNIT_CHECKIN_MIGRATION_ID = "007-unit-last-checkin";
 
 /** Every migration in application order — keep in sync with db.ts MIGRATIONS. */
 const ALL_MIGRATION_IDS = [
@@ -35,6 +36,7 @@ const ALL_MIGRATION_IDS = [
   RUN_UNITS_MIGRATION_ID,
   UNIT_SESSION_MIGRATION_ID,
   FROZEN_PLAN_MIGRATION_ID,
+  UNIT_CHECKIN_MIGRATION_ID,
 ];
 
 let tmpDir = "";
@@ -95,6 +97,9 @@ describe("workflow.db migrations", () => {
       expect(hasColumn(db, "workflow_runs", "plan_hash")).toBe(true);
       expect(hasColumn(db, "workflow_runs", "engine_lease_until")).toBe(true);
       expect(hasColumn(db, "workflow_runs", "engine_lease_holder")).toBe(true);
+
+      // unit-level check-in heartbeat column was created (migration 007, R3)
+      expect(hasColumn(db, "workflow_run_units", "last_checkin_at")).toBe(true);
 
       // All migrations recorded, in order
       const applied = listAppliedMigrations(db);

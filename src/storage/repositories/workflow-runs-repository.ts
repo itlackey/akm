@@ -76,6 +76,15 @@ export type WorkflowRunUnitRow = {
   worktree_path: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /**
+   * Most recent unit-level check-in heartbeat (migration 007, R3 driver
+   * protocol): a driver claiming/heartbeating a `running` unit via
+   * `akm workflow report --status running` stamps this. Distinct from
+   * `started_at` (the first claim); the stale-unit evaluator
+   * (`runtime/unit-checkin.ts`) reads it. NULL on engine-dispatched rows and
+   * on never-heartbeated units.
+   */
+  last_checkin_at: string | null;
 };
 
 /** Input row for {@link WorkflowRunsRepository.insertUnit}. Inserted as `running`. */
@@ -424,6 +433,29 @@ export class WorkflowRunsRepository {
     return this.db
       .prepare("SELECT * FROM workflow_run_units WHERE run_id = ? AND step_id = ? ORDER BY started_at ASC, unit_id ASC")
       .all(runId, stepId) as WorkflowRunUnitRow[];
+  }
+
+  /** One unit row by primary key, or undefined. Used by the R3 report path's
+   * guarded read-then-write (idempotency / replay-divergence / claim checks). */
+  getUnit(runId: string, unitId: string): WorkflowRunUnitRow | undefined {
+    return this.db.prepare("SELECT * FROM workflow_run_units WHERE run_id = ? AND unit_id = ?").get(runId, unitId) as
+      | WorkflowRunUnitRow
+      | undefined;
+  }
+
+  /**
+   * Stamp a unit-level check-in heartbeat (migration 007, R3 driver protocol):
+   * a driver executing a unit calls `report --status running` to claim (first
+   * call) or heartbeat (subsequent) it. Sets `status = 'running'` and
+   * `last_checkin_at`; NEVER touches `started_at` (the first-claim marker set by
+   * {@link insertUnit}) so the heartbeat window advances without resetting the
+   * claim time. The caller guards against re-claiming a terminal unit inside its
+   * transaction.
+   */
+  updateUnitCheckin(runId: string, unitId: string, lastCheckinAt: string): void {
+    this.db
+      .prepare("UPDATE workflow_run_units SET status = 'running', last_checkin_at = ? WHERE run_id = ? AND unit_id = ?")
+      .run(lastCheckinAt, runId, unitId);
   }
 
   /**

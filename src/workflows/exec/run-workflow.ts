@@ -57,33 +57,21 @@ import { warn } from "../../core/warn";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import type { WorkflowPlanGraph } from "../ir/schema";
-import type { ExpressionScope } from "../program/expressions";
-import {
-  buildDefaultSummaryJudge,
-  completeWorkflowStep,
-  getNextWorkflowStep,
-  type SummaryValidationFailure,
-  type WorkflowNextResult,
-} from "../runtime/runs";
+import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
 import { compileWorkflowAssetPlan, loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
 import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
-// Shared step semantics — route evaluation + cascaded-skip bookkeeping and
-// gate-evaluation journaling live in step-work.ts so the engine loop and the
-// R3 brief/report driver protocol share ONE implementation (no drift).
+// Shared step semantics — route evaluation + cascaded-skip bookkeeping,
+// gate-evaluation journaling, and the whole step-completion path
+// (`finalizeExecutedStep`) live in step-work.ts so the engine loop and the R3
+// brief/report driver protocol share ONE implementation (no drift).
 import {
-  applyRouteDecision,
-  buildArtifactSummary,
   cascadeSkippedRouter,
-  evaluateRoute,
+  finalizeExecutedStep,
   GATE_EVALUATION_PHASE,
   type GateFeedback,
-  type GateUnitRef,
-  journalGateEvaluationFinish,
-  journalGateEvaluationStart,
   parseFrozenPlan,
   type RouteSkipInfo,
-  routeStepOutputs,
   seedJournaledRouteDecisions,
 } from "./step-work";
 
@@ -374,133 +362,57 @@ async function driveRun(
         summary: result.summary,
       });
 
-      if (!result.ok) {
-        // Typed-artifact schema mismatch (addendum R2): the ONE retryable
-        // failure class — "fail-fast; gate loops can re-run it". With loop
-        // budget left, the validation errors become gate feedback for the
-        // next attempt (regenerate-with-errors, exactly what max_loops is
-        // for) instead of failing the run. No judge ran, so no gate unit is
-        // journaled for this attempt; the re-execution journals under
-        // ~l<loop> as usual. Everything else (dispatch failures, replay
-        // divergence, cap) — and the FINAL loop's mismatch — stays a hard
-        // stop through completeWorkflowStep below.
-        if (result.artifactSchemaFailure && gateLoop < maxLoops) {
-          gateFeedback = { feedback: result.summary, missing: [] };
-          continue;
-        }
-        // Gate spine: record the failure through completeWorkflowStep so the
-        // run flips to failed via the normal state derivation.
-        await completeWorkflowStep({
-          runId: next.run.id,
-          stepId: step.id,
-          status: "failed",
-          notes: result.summary,
-          evidence: result.evidence,
-          leaseHolder,
-        });
-        stopEngine = true;
-        break;
-      }
-
-      // Evaluate the route BEFORE completing the step: an unroutable value is
-      // an authoring/config failure and must fail the step deterministically
-      // rather than letting every branch run sequentially. The route input is
-      // an explicit `${{ … }}` reference resolved against run params and step
-      // outputs — INCLUDING the just-finished step's own evidence.
-      if (stepPlan.route) {
-        const scope: ExpressionScope = {
-          params: next.run.params ?? {},
-          stepOutputs: routeStepOutputs(evidence, step.id, result.evidence),
-        };
-        const decision = evaluateRoute(stepPlan.route, scope);
-        if (!decision.ok) {
-          const notes = `Step "${step.id}" route failed: ${decision.error}`;
-          executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: notes };
-          await completeWorkflowStep({
-            runId: next.run.id,
-            stepId: step.id,
-            status: "failed",
-            notes,
-            evidence: result.evidence,
-            leaseHolder,
-          });
-          stopEngine = true;
-          break;
-        }
-        applyRouteDecision(stepPlan.route, step.id, decision.selected, routeSelected, routeUnselected);
-        // Journal the decision on the step evidence: resume replays it via
-        // seedJournaledRouteDecisions, so the skip set survives re-invocation.
-        result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
-        // A route-only step's summary IS its decision (deterministic).
-        if (!stepPlan.root) {
-          result.summary = `Step "${step.id}" routed on ${stepPlan.route.input}: value "${decision.value}" selected step "${decision.selected}".`;
-          executed[executed.length - 1] = { ...executed[executed.length - 1], summary: result.summary };
-        }
-      }
-
-      // Artifact-judging gate (addendum R2): when the step declares
-      // completion criteria, the judged summary is BUILT FROM the promoted
-      // step artifact — real results, not engine prose. Steps without
-      // criteria keep the machine summary (no judge runs on them anyway).
-      const criteria = step.completionCriteria ?? [];
-      const summary =
-        stepPlan.root && criteria.length > 0
-          ? buildArtifactSummary(step.id, result.units, result.evidence)
-          : result.summary;
-
-      // Wrap the judge so engine-driven gate evaluations are journaled as
-      // unit rows (they are LLM calls). `invoked` stays false when the gate
-      // is fail-open (no criteria / no judge) — nothing is journaled then,
-      // and human approvals are never cached.
-      const gateUnit: GateUnitRef = {
+      // Route evaluation + artifact-judged completion gate + gate-row
+      // journaling + the bounded-loop rejection contract are the SHARED
+      // completion path (`finalizeExecutedStep`): the R3 report surface drives
+      // the identical sequence, so an engine-driven and a report-driven run of
+      // the same frozen plan promote the same artifact and advance (or reject)
+      // the spine identically. The engine owns only the loop control the result
+      // maps onto (retry re-executes; advanced moves on; failure/exhaustion
+      // stops this invocation).
+      const finalize = await finalizeExecutedStep({
         runId: next.run.id,
         workflowRef: next.run.workflowRef,
         stepId: step.id,
-        loop: gateLoop,
-      };
-      const judgeState = { invoked: false, errored: false };
-      const innerJudge = options.summaryJudge === undefined ? buildDefaultSummaryJudge() : options.summaryJudge;
-      const summaryJudge: SummaryJudge | null = innerJudge
-        ? async (prompt) => {
-            judgeState.invoked = true;
-            await journalGateEvaluationStart(gateUnit);
-            try {
-              return await innerJudge(prompt);
-            } catch (err) {
-              judgeState.errored = true;
-              throw err;
-            }
-          }
-        : null;
-
-      const completion = await completeWorkflowStep({
-        runId: next.run.id,
-        stepId: step.id,
-        status: "completed",
-        summary,
-        evidence: result.evidence,
-        summaryJudge,
+        stepPlan,
+        completionCriteria: step.completionCriteria ?? [],
+        gateLoop,
+        loopsRemaining: gateLoop < maxLoops,
+        result,
+        priorEvidence: evidence,
+        params: next.run.params ?? {},
+        routeSelected,
+        routeUnselected,
+        summaryJudge: options.summaryJudge,
         leaseHolder,
       });
-      const rejection =
-        "ok" in completion && completion.ok === false ? (completion as SummaryValidationFailure) : undefined;
 
-      if (judgeState.invoked) {
-        await journalGateEvaluationFinish(gateUnit, judgeState.errored, rejection);
+      if (finalize.kind === "retry") {
+        // Re-execute the subgraph with the judge/validation feedback threaded
+        // into unit prompts — the changed prompt changes each unit's input
+        // hash, so the re-run dispatches fresh work instead of reusing rows.
+        gateFeedback = finalize.gateFeedback;
+        continue;
       }
-
-      if (!rejection) {
+      if (finalize.kind === "advanced") {
+        // A route-only step's summary IS its decision (finalize surfaces it).
+        if (finalize.summaryOverride !== undefined) {
+          executed[executed.length - 1] = { ...executed[executed.length - 1], summary: finalize.summaryOverride };
+        }
         advanced = true;
         break;
       }
-      if (gateLoop < maxLoops) {
-        // Feed the rejection back into the next loop's unit prompts — the
-        // changed prompt changes each unit's input hash, so the re-run
-        // dispatches fresh work instead of reusing the rejected rows.
-        gateFeedback = { feedback: rejection.feedback, missing: rejection.missing };
-        continue;
+      if (finalize.kind === "failed") {
+        // A route-failure was pushed as ok:true (the units succeeded); reflect
+        // the deterministic route failure in the executed report.
+        if (finalize.routeFailure) {
+          executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: finalize.summary };
+        }
+        stopEngine = true;
+        break;
       }
-      gateRejection = { stepId: step.id, missing: rejection.missing, feedback: rejection.feedback };
+      // gate-exhausted: rejected with no loop budget left — stop with feedback.
+      gateRejection = finalize.gateRejection;
       stopEngine = true;
     }
 

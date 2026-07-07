@@ -39,6 +39,7 @@ import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import type { IrMapReducer, IrOnError, IrRetry, IrRunnerKind, WorkflowPlanGraph } from "../ir/schema";
 import type { ExpressionScope } from "../program/expressions";
 import { getNextWorkflowStep } from "../runtime/runs";
+import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
 import {
   activeGateLoop,
   computeStepWorkList,
@@ -169,6 +170,12 @@ export interface WorkflowBrief {
     failure: string;
     note: string;
   };
+  /**
+   * Units another driver claimed (`report --status running`) but has not
+   * heartbeated within the staleness window — surfaced so a driver can reclaim
+   * abandoned work. Pure timestamp evaluation (`runtime/unit-checkin.ts`).
+   */
+  staleUnits: StaleUnit[];
   warnings: string[];
   /** Human-oriented one-liner about the run's overall state. */
   message: string;
@@ -219,6 +226,18 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     );
   }
 
+  // Stale claimed units (pure timestamp evaluation): a driver claimed these via
+  // `report --status running` but has not heartbeated within the window — flag
+  // them so another driver can reclaim the abandoned work.
+  const staleUnits = evaluateStaleUnits(units);
+  if (staleUnits.length > 0) {
+    warnings.push(
+      `${staleUnits.length} unit(s) were claimed with \`report --status running\` but have gone silent past the ` +
+        `check-in window (${staleUnits.map((u) => u.unitId).join(", ")}). Their driver may have died — you can ` +
+        `reclaim and re-execute them.`,
+    );
+  }
+
   const reportGuidance = {
     checkin: `akm workflow report ${run.id} --unit <unit_id> --status running --note "<short progress note>"`,
     failure: `akm workflow report ${run.id} --unit <unit_id> --status failed --failure-reason <vocab>`,
@@ -230,6 +249,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     run,
     ...(lease ? { engineLease: lease } : {}),
     reportGuidance,
+    staleUnits,
     warnings,
   };
 
@@ -425,7 +445,7 @@ function reportCommand(runId: string, unit: import("./step-work").StepWorkUnit):
   return `akm workflow report ${runId} --unit ${unit.unitId} --status completed ${resultHint}`;
 }
 
-function buildLease(holder: string | null, until: string | null): WorkflowBriefLease | undefined {
+export function buildLease(holder: string | null, until: string | null): WorkflowBriefLease | undefined {
   if (!holder || !until) return undefined;
   return { holder, until, live: until >= new Date().toISOString() };
 }
@@ -470,7 +490,7 @@ function loadFrozenPlanForBrief(runId: string, planJson: string | null, planHash
  * scope, and NO active run is a NotFoundError (brief never auto-starts — that
  * would mutate).
  */
-async function resolveRunId(target: string): Promise<string> {
+export async function resolveRunId(target: string): Promise<string> {
   return withWorkflowRunsRepo((repo) => {
     const byId = repo.getRunById(target);
     if (byId) return byId.id;

@@ -406,6 +406,103 @@ const workflowBriefCommand = defineJsonCommand({
   },
 });
 
+const WORKFLOW_REPORT_STATES = ["completed", "failed", "running"] as const;
+type WorkflowReportStatus = (typeof WORKFLOW_REPORT_STATES)[number];
+
+const workflowReportCommand = defineJsonCommand({
+  meta: {
+    name: "report",
+    description:
+      "EXPERIMENTAL: report a unit's result back into a run (the mutating half of the harness-neutral driver " +
+      "protocol) — ingested through the SAME shared step semantics the engine uses. --status running claims/" +
+      "heartbeats a unit; completed/failed records it and, when the step's work-list is fully terminal, runs the " +
+      "engine's completion path (reducer, artifact + schema validation, gate). Refused while a live engine lease exists",
+  },
+  args: {
+    target: {
+      type: "positional",
+      description: "Workflow run id (or a workflow ref with an active run)",
+      required: true,
+    },
+    unit: {
+      type: "string",
+      description: "Content-derived unit id from `akm workflow brief` (copy it verbatim)",
+      required: true,
+    },
+    status: { type: "string", description: `Unit status: ${WORKFLOW_REPORT_STATES.join(", ")}`, required: true },
+    result: { type: "string", description: "Result payload (JSON for a schema unit, else text). completed only." },
+    "result-file": { type: "string", description: "Read the result payload from this file instead of --result/stdin" },
+    tokens: { type: "string", description: "Tokens spent on this unit (counts against a declared budget)" },
+    "session-id": { type: "string", description: "Harness-native session id revealed while executing the unit" },
+    "failure-reason": { type: "string", description: "Structured failure vocabulary for a --status failed report" },
+    note: { type: "string", description: "Short progress note for a --status running heartbeat (not persisted)" },
+  },
+  async run({ args }) {
+    const status = args.status as string;
+    if (!WORKFLOW_REPORT_STATES.includes(status as WorkflowReportStatus)) {
+      throw new UsageError(
+        `Invalid --status "${status}". Expected one of: ${WORKFLOW_REPORT_STATES.join(", ")}.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const unitId = getStringArg(args, "unit");
+    if (!unitId) {
+      throw new UsageError(
+        "--unit is required (the content-derived unit id from `akm workflow brief`).",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
+
+    let tokens: number | undefined;
+    const rawTokens = getStringArg(args, "tokens");
+    if (rawTokens !== undefined) {
+      tokens = Number.parseInt(rawTokens, 10);
+      if (!/^\d+$/.test(rawTokens)) {
+        throw new UsageError(`--tokens must be a non-negative integer, got "${rawTokens}".`, "INVALID_FLAG_VALUE");
+      }
+    }
+
+    // Result payload precedence: --result, then --result-file, then stdin
+    // (completed/failed only; a running heartbeat carries no result).
+    let resultRaw: string | undefined;
+    if (status !== "running") {
+      const resultFile = getStringArg(args, "result-file");
+      if (args.result !== undefined && resultFile !== undefined) {
+        throw new UsageError("Pass at most one of --result or --result-file.", "INVALID_FLAG_VALUE");
+      }
+      if (args.result !== undefined) {
+        resultRaw = String(args.result);
+      } else if (resultFile !== undefined) {
+        const fs = await import("node:fs");
+        resultRaw = fs.readFileSync(resultFile, "utf8");
+      } else if (!process.stdin.isTTY) {
+        resultRaw = await readStdin();
+      }
+    }
+
+    const { reportWorkflowUnit } = await import("../workflows/exec/report.js");
+    const result = await reportWorkflowUnit({
+      target: args.target,
+      unitId,
+      status: status as WorkflowReportStatus,
+      ...(resultRaw !== undefined ? { resultRaw } : {}),
+      ...(tokens !== undefined ? { tokens } : {}),
+      ...(getStringArg(args, "session-id") !== undefined ? { sessionId: getStringArg(args, "session-id") } : {}),
+      ...(getStringArg(args, "failure-reason") !== undefined
+        ? { failureReason: getStringArg(args, "failure-reason") }
+        : {}),
+      ...(getStringArg(args, "note") !== undefined ? { note: getStringArg(args, "note") } : {}),
+    });
+    output("workflow-report", result);
+  },
+});
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 const workflowWatchCommand = defineJsonCommand({
   meta: {
     name: "watch",
@@ -489,6 +586,7 @@ export const workflowCommand = defineCommand({
     validate: workflowValidateCommand,
     run: workflowRunCommand,
     brief: workflowBriefCommand,
+    report: workflowReportCommand,
     watch: workflowWatchCommand,
   },
   run({ args }) {

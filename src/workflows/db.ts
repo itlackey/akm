@@ -250,6 +250,23 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_runs ADD COLUMN engine_lease_holder TEXT;
     `,
   },
+  // ── Migration 007 — unit-level check-in heartbeat (redesign addendum, R3) ────
+  //
+  // The harness-neutral driver protocol lets ANY agent session claim and
+  // heartbeat a unit it is executing via `akm workflow report --status running`.
+  // `last_checkin_at` records the most recent heartbeat (distinct from
+  // `started_at`, the first claim) so a pure timestamp evaluator
+  // (`runtime/unit-checkin.ts`) can surface a claimed-but-silent unit as stale
+  // in `workflow brief` without any background thread. Nullable and additive;
+  // engine-dispatched rows never set it (they finish before a heartbeat window
+  // could elapse), so their transient `running` state is judged from
+  // `started_at`.
+  {
+    id: "007-unit-last-checkin",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN last_checkin_at TEXT;
+    `,
+  },
 ];
 
 /**

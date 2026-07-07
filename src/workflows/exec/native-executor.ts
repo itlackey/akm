@@ -121,14 +121,15 @@ import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./schedu
 // protocol. This module dispatches; step-work.ts owns the pure decisions.
 import {
   buildArtifactSummary,
-  buildEvidence,
   computeStepWorkList,
   DEFAULT_UNIT_TIMEOUT_MS,
   type GateFeedback,
   projectStepOutput,
+  reduceStepOutcomes,
   type StepWorkUnit,
   stepOutputsFromEvidence,
   type UnitOutcome,
+  unitOutcomeFromRow,
   validateStepArtifact,
 } from "./step-work";
 import { enqueueUnitWrite } from "./unit-writer";
@@ -520,50 +521,21 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     );
   }
 
-  // Failure policy (IR v2): `onError: "fail"` (the default) fails the step on
-  // any unit failure; `"continue"` records the failures in the evidence (the
-  // summary still counts them) and lets the completion gate decide. A vote
-  // reducer with no majority fails the step under either policy — a routing
-  // decision downstream must never consume a non-result.
-  const failed = units.filter((u) => !u.ok);
-  const evidence = buildEvidence(units, reducer, isFanOut);
-  const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";
-  const tolerateFailures = template.onError === "continue";
-  let ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
-  let summary =
-    `Executed ${units.length} unit(s) for step "${plan.stepId}" via the native executor: ` +
-    `${units.length - failed.length} succeeded, ${failed.length} failed.` +
-    (failed.length > 0
-      ? ` Failures${tolerateFailures ? " (recorded, on_error: continue)" : ""}: ${failed
-          .map((u) => `${u.unitId} (${u.failureReason ?? "error"})`)
-          .join(", ")}.`
-      : "") +
-    reducerNote;
-
-  // Typed artifacts (R2): validate the promoted artifact against the step's
-  // declared output schema BEFORE completion. A mismatch fails the step —
-  // fail-fast, with the validation errors in the summary — never lets a
-  // schema-violating artifact reach downstream references or the gate. The
-  // `artifactSchemaFailure` marker lets the engine's bounded gate loop retry
-  // this ONE failure class with the errors as feedback (module doc).
-  let artifactSchemaFailure = false;
-  if (ok) {
-    const schemaFailure = validateStepArtifact(plan, evidence);
-    if (schemaFailure !== undefined) {
-      ok = false;
-      summary = schemaFailure;
-      artifactSchemaFailure = true;
-    }
-  }
+  // Failure policy + reducer + typed-artifact validation are the SHARED
+  // post-dispatch decision (`reduceStepOutcomes`): `onError: "fail"` (default)
+  // fails the step on any unit failure, `"continue"` records failures and lets
+  // the gate decide, a vote reducer with no majority fails under either policy,
+  // and the promoted artifact is validated against the step's declared output
+  // schema (fail-fast; the `artifactSchemaFailure` marker lets the bounded gate
+  // loop retry that ONE failure class with the errors as feedback). The report
+  // path (R3) reduces journal-replayed outcomes through the same function, so a
+  // step promotes the SAME artifact whichever surface drove it.
+  const reduced = reduceStepOutcomes(plan, reducer, isFanOut, template.onError, units);
 
   return {
-    ok,
-    units,
-    evidence,
-    summary,
+    ...reduced,
     unitsDispatched: budget.used,
     tokensUsed: budget.tokens,
-    ...(artifactSchemaFailure ? { artifactSchemaFailure: true as const } : {}),
   };
 }
 
@@ -1169,31 +1141,15 @@ function requireDefaultLlm(
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 
-/** Rehydrate a journaled completed unit row into a UnitOutcome (durable-row reuse). */
+/**
+ * Rehydrate a journaled completed unit row into a UnitOutcome (durable-row
+ * reuse). Delegates to the shared {@link unitOutcomeFromRow} — the reuse path
+ * only reaches here for completed rows (the caller guards `status ===
+ * "completed"`), so the mapping is identical to what the R3 report path applies
+ * when it replays the same journal.
+ */
 function reuseCompletedUnit(unitId: string, row: WorkflowRunUnitRow, hasSchema: boolean): UnitOutcome {
-  let parsed: unknown;
-  try {
-    parsed = row.result_json === null ? undefined : JSON.parse(row.result_json);
-  } catch {
-    parsed = undefined;
-  }
-  return {
-    unitId,
-    ok: true,
-    // Text units journal their output as a JSON string; schema units journal
-    // the validated structure.
-    ...(hasSchema
-      ? { result: parsed }
-      : typeof parsed === "string"
-        ? { text: parsed }
-        : parsed !== undefined
-          ? { result: parsed }
-          : {}),
-    ...(row.tokens !== null ? { tokens: row.tokens } : {}),
-    // Rehydrate the journaled harness session id so resume-with-native-context
-    // consumers see it on reuse exactly as on a fresh dispatch.
-    ...(row.session_id !== null && row.session_id !== undefined ? { sessionId: row.session_id } : {}),
-  };
+  return unitOutcomeFromRow(unitId, row, hasSchema);
 }
 
 function failedStep(dispatched: number, reason: string): StepExecutionResult {

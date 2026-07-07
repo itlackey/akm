@@ -25,6 +25,7 @@ export const WORKFLOW_SUBCOMMANDS = new Set([
   "validate",
   "run",
   "brief",
+  "report",
   "watch",
 ]);
 

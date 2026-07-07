@@ -128,6 +128,7 @@ describe("SQLite migration runner characterization", () => {
         "004-workflow-run-units",
         "005-unit-session-id",
         "006-frozen-plan-and-lease",
+        "007-unit-last-checkin",
       ]);
 
       const names = snap.schema.map((o) => `${o.type}:${o.name}`);
@@ -190,6 +191,7 @@ describe("SQLite migration runner characterization", () => {
         "004-workflow-run-units",
         "005-unit-session-id",
         "006-frozen-plan-and-lease",
+        "007-unit-last-checkin",
       ]);
       // The scope_key column must exist exactly once (bootstrap did not re-ALTER).
       const cols = db.prepare<{ name: string }>("PRAGMA table_info(workflow_runs)").all();

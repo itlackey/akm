@@ -262,6 +262,12 @@ describe("workflow brief — solo step", () => {
     }
     // Env is surfaced as REF NAMES, never resolved values.
     expect(u.env).toEqual(["env:ci-secrets"]);
+    // The rest of the required per-unit contract (node id, runner, timeout,
+    // on_error) is carried too — a driver needs every one to dispatch.
+    expect(u.nodeId).toBe("build");
+    expect(u.runner).toBe("inherit");
+    expect(u.timeoutMs).toBe(600_000);
+    expect(u.onError).toBe("fail");
     expect(u.report).toContain(`report ${RUN_ID} --unit ${u.unitId} --status completed`);
     expect(u.journaled).toBeUndefined();
   });
