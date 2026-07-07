@@ -255,7 +255,7 @@ structured result), `env` (env asset refs injected via the `akm env run`
 machinery — works on the agent and sdk runners; llm units fail loudly), and
 `isolation` (`none` | `worktree`, see below). Timeouts are
 `"<n>ms" | "<n>s" | "<n>m" | "none"`. Steps may also declare `output` (the
-step-artifact schema) and `gate` (`criteria`, `max_loops`).
+step-artifact schema) and `gate` (`criteria`, `max_loops`, `required`).
 
 ### The expression language
 
@@ -374,6 +374,45 @@ missing-criteria list appended to every unit prompt. The feedback changes
 each unit's inputs, so the re-run naturally dispatches fresh units instead
 of replaying journaled results. When the loop budget is spent, the rejection
 stands exactly as in the one-shot case.
+
+### Required gates (never silently bypassed)
+
+By default a completion gate is **fail-open**: with no completion criteria,
+or when no LLM judge is available (offline, or the default LLM cannot be
+resolved), the step completes without judging. That keeps offline use
+working, but it means a workflow that relies on a gate can be silently
+bypassed in a misconfigured environment.
+
+`gate.required: true` closes that hole for a specific step:
+
+```yaml
+- id: ship
+  title: Ship
+  unit:
+    instructions: Ship the release.
+  gate:
+    criteria: [the changelog is updated, the version is bumped]
+    required: true
+```
+
+When a **required** gate carries criteria but no judge is available, the step
+does **not** fail open — it is **BLOCKED** (the run goes to `blocked`) with a
+message telling you to configure an LLM. Nothing is silently passed. A human
+resolves it via the documented manual path: `akm workflow resume <run-id>`
+(re-evaluate the gate once an LLM is configured) or
+`akm workflow complete`/`abandon`. A required gate that *does* have a judge
+behaves exactly like a normal gate — it only diverges when a judge is missing.
+
+`gate.required` rides the frozen plan, so **both** surfaces enforce it
+identically: `akm workflow run` (the engine) and `akm workflow report` (any
+external driver) block the step the same way.
+
+`akm workflow run --require-gates` is the run-wide override: it treats
+**every** criteria-bearing gate in the run as required for that invocation,
+without editing the workflow. Use it in CI or any environment where an
+unjudged gate must never pass. (The flag applies to the engine invocation; a
+per-step `gate.required: true` is the portable form that also governs the
+`report` driver path.)
 
 ### Budget ceilings
 

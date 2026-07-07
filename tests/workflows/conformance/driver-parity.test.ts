@@ -646,6 +646,38 @@ steps:
   },
 };
 
+// required gate + no judge → BLOCKED (reviewer #18). A criteria-bearing gate
+// marked `required: true` must be JUDGED; with no judge available (the parity
+// harness omits the judge ⇒ null on both surfaces), the engine and the report
+// path must BLOCK the step identically instead of failing open. The unit still
+// completes, no gate row is journaled (the judge was never invoked), and the
+// run lands `blocked` on BOTH surfaces — the same unit graph.
+const REQUIRED_GATE_NO_JUDGE: Golden = {
+  name: "required gate, no judge → blocked (offline parity)",
+  yaml: `version: 1
+name: Golden
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      required: true
+`,
+  params: {},
+  steps: [{ id: "work", criteria: ["the work is thorough"] }],
+  outcome: () => ({ ok: true, text: "did the work" }),
+  // judge omitted ⇒ null on both surfaces ⇒ the required gate blocks.
+  verify: (g) => {
+    expect(lineFor(g, "unit work:solo")).toContain("status=completed");
+    // The judge is never invoked, so no `<step>.gate:l<n>` row exists on either surface.
+    expect(countLines(g, "gate ")).toBe(0);
+    expect(lineFor(g, "step work")).toContain("status=blocked");
+    expect(g).toContain("run status=blocked");
+  },
+};
+
 const GOLDENS: Golden[] = [
   SOLO,
   FAN_OUT_COLLECT,
@@ -656,6 +688,7 @@ const GOLDENS: Golden[] = [
   RETRY,
   EMPTY_OUTPUT,
   PROFILE_TIMEOUT,
+  REQUIRED_GATE_NO_JUDGE,
 ];
 
 // ── The parity suite ─────────────────────────────────────────────────────────

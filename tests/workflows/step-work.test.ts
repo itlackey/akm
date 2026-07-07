@@ -12,22 +12,31 @@ import path from "node:path";
 import type { WorkflowRunUnitRow } from "../../src/storage/repositories/workflow-runs-repository";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
+import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../src/workflows/exec/native-executor";
+import { reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import {
   activeGateLoop,
+  assertJournaledRouteSelectionsValid,
   buildEvidence,
   canonicalJson,
   computeStepWorkList,
+  type ExecutedStepOutcome,
   evaluateRoute,
+  finalizeExecutedStep,
+  type RouteSkipInfo,
   recoverGateFeedback,
+  seedJournaledRouteDecisions,
   type UnitOutcome,
   unitOutcomeFromRow,
 } from "../../src/workflows/exec/step-work";
 import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
+import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { IrAgentNode, IrRouteSpec, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import type { ExpressionScope } from "../../src/workflows/program/expressions";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+import { getWorkflowStatus, type WorkflowNextResult } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
 
 /**
@@ -323,6 +332,37 @@ describe("recoverGateFeedback / activeGateLoop — pure journal derivation", () 
   test("a non-array `missing` and a non-string `feedback` degrade to empty defaults, never a throw", () => {
     const rows = [gateRow("work", 1, { complete: false, missing: "not-a-list", feedback: 7 })];
     expect(recoverGateFeedback(rows, "work", 2)).toEqual({ feedback: "", missing: [] });
+  });
+
+  // ── Reviewer #17 (test ask 8): a corrupt gate row must NOT silently look like
+  //    loop 1. A present-but-unparseable / invalid-shape verdict fails loudly.
+  test("a corrupt gate-rejection row (unparseable JSON) fails LOUDLY — never silently loop 1", () => {
+    const corrupt: WorkflowRunUnitRow = { ...gateRow("work", 1, {}), result_json: "{not valid json" };
+    // Old behavior swallowed the parse error, dropping the step back to loop 1
+    // and re-dispatching work whose gate outcome is unknown. Both readers refuse.
+    expect(() => activeGateLoop([corrupt], "work")).toThrow(/corrupt gate-evaluation row/);
+    expect(() => recoverGateFeedback([corrupt], "work", 2)).toThrow(/corrupt gate-evaluation row/);
+  });
+
+  test("a gate row with an invalid verdict shape (no boolean `complete`) fails loudly", () => {
+    const badShape = gateRow("work", 1, { complete: "yes", missing: [] });
+    expect(() => activeGateLoop([badShape], "work")).toThrow(/complete/);
+    // A non-object verdict (a bare array/number) is corruption too.
+    const bareArray: WorkflowRunUnitRow = { ...gateRow("work", 1, {}), result_json: "[1,2,3]" };
+    expect(() => activeGateLoop([bareArray], "work")).toThrow(/not a JSON object/);
+  });
+
+  test("a NULL-verdict gate row (errored judge / in-flight) is treated as empty, not corrupt", () => {
+    // journalGateEvaluationFinish writes result_json = NULL for an errored judge,
+    // and a `running` row has no verdict yet — both are legitimate, not corruption.
+    const errored: WorkflowRunUnitRow = {
+      ...gateRow("work", 1, {}),
+      result_json: null,
+      status: "failed",
+      failure_reason: "dispatch_error",
+    };
+    expect(activeGateLoop([errored], "work")).toBe(1); // no rejection ⇒ loop 1, no throw
+    expect(recoverGateFeedback([errored], "work", 2)).toBeUndefined();
   });
 });
 
@@ -623,5 +663,294 @@ describe("buildEvidence — surface-independent unit projection (R4 anti-drift)"
     const reportEvidence = buildEvidence([reportOutcome], "collect", false);
     expect(canonicalJson(engineEvidence.units)).toBe(canonicalJson(reportEvidence.units));
     expect(engineEvidence.units).toEqual([{ unitId: "s1:solo", ok: true, text: "did the work" }]);
+  });
+});
+
+// ── Reviewer #7 — tampered route selection fails loudly (test ask 9) ──────────
+
+const ROUTE_WF = `version: 1
+name: Routed
+steps:
+  - id: classify
+    title: Classify
+    unit:
+      instructions: Classify.
+      output:
+        type: object
+        properties: { verdict: { type: string } }
+        required: [verdict]
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ steps.classify.output.verdict }}
+      when: { pass: ship, fail: rework }
+  - id: ship
+    title: Ship
+    unit:
+      instructions: Ship.
+  - id: rework
+    title: Rework
+    unit:
+      instructions: Rework.
+`;
+
+/** A resting WorkflowNextResult with `triage` completed and its route decision journaled. */
+function routeState(selected: string): WorkflowNextResult {
+  return {
+    run: { id: RUN_ID, params: {} },
+    workflow: {
+      ref: "workflow:routed",
+      title: "Routed",
+      steps: [
+        {
+          id: "classify",
+          title: "Classify",
+          instructions: "",
+          status: "completed",
+          evidence: { output: { verdict: "pass" } },
+        },
+        {
+          id: "triage",
+          title: "Triage",
+          instructions: "",
+          status: "completed",
+          evidence: { route: { input: "${{ steps.classify.output.verdict }}", value: "pass", selected } },
+        },
+        { id: "ship", title: "Ship", instructions: "", status: "pending" },
+        { id: "rework", title: "Rework", instructions: "", status: "pending" },
+      ],
+    },
+    step: null,
+  } as unknown as WorkflowNextResult;
+}
+
+/** Seed a DB run parked after a completed (route) `triage` with a tampered selection. */
+function seedRouteRunDb(routePlan: WorkflowPlanGraph, selected: string): void {
+  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  try {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO workflow_runs
+         (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
+          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash)
+       VALUES (?, 'workflow:routed', 'dir:v1:routed', NULL, 'Routed', 'active', '{}', 'ship', ?, ?, ?, ?)`,
+    ).run(RUN_ID, now, now, canonicalPlanJson(routePlan), computePlanHash(routePlan));
+    const rows = [
+      { id: "classify", status: "completed", evidence: { output: { verdict: "pass" } } },
+      { id: "triage", status: "completed", evidence: { route: { input: "x", value: "pass", selected } } },
+      { id: "ship", status: "pending", evidence: null as Record<string, unknown> | null },
+      { id: "rework", status: "pending", evidence: null as Record<string, unknown> | null },
+    ];
+    rows.forEach((s, i) => {
+      db.prepare(
+        `INSERT INTO workflow_run_steps
+           (run_id, step_id, step_title, instructions, completion_json, sequence_index, status, evidence_json)
+         VALUES (?, ?, ?, 'i', NULL, ?, ?, ?)`,
+      ).run(RUN_ID, s.id, s.id, i, s.status, s.evidence ? JSON.stringify(s.evidence) : null);
+    });
+  } finally {
+    closeWorkflowDatabase(db);
+  }
+}
+
+describe("reviewer #7 — a tampered route selection fails loudly on every surface", () => {
+  test("seedJournaledRouteDecisions refuses a selection naming a non-declared target (pure replay)", () => {
+    const routePlan = plan(ROUTE_WF);
+    const routeSelected = new Set<string>();
+    const routeUnselected = new Map<string, RouteSkipInfo>();
+    expect(() => seedJournaledRouteDecisions(routePlan, routeState("ghost"), routeSelected, routeUnselected)).toThrow(
+      /not a declared branch or default target/,
+    );
+  });
+
+  test("assertJournaledRouteSelectionsValid throws on a bogus selection, passes on a valid one", () => {
+    const routePlan = plan(ROUTE_WF);
+    expect(() => assertJournaledRouteSelectionsValid(routePlan, routeState("ghost"))).toThrow(
+      /not a declared branch or default target/,
+    );
+    expect(() => assertJournaledRouteSelectionsValid(routePlan, routeState("ship"))).not.toThrow();
+  });
+
+  test("a VALID journaled selection is applied to the skip bookkeeping without throwing", () => {
+    const routePlan = plan(ROUTE_WF);
+    const routeSelected = new Set<string>();
+    const routeUnselected = new Map<string, RouteSkipInfo>();
+    seedJournaledRouteDecisions(routePlan, routeState("ship"), routeSelected, routeUnselected);
+    expect(routeSelected.has("ship")).toBe(true);
+    // The unselected branch is marked skip-on-reach.
+    expect(routeUnselected.get("rework")?.selected).toBe("ship");
+  });
+
+  test("brief fails loudly (read-only surface) on tampered route evidence", async () => {
+    seedRouteRunDb(plan(ROUTE_WF), "ghost");
+    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/not a declared branch or default target/);
+  });
+
+  test("engine run (resume) fails loudly on tampered route evidence", async () => {
+    seedRouteRunDb(plan(ROUTE_WF), "ghost");
+    await expect(
+      runWorkflowSteps({
+        target: RUN_ID,
+        loadPlan: async () => plan(ROUTE_WF),
+        dispatcher: async () => ({ ok: true, text: "x" }),
+        summaryJudge: null,
+      }),
+    ).rejects.toThrow(/not a declared branch or default target/);
+  });
+
+  test("report fails loudly on tampered route evidence when it finalizes the active step", async () => {
+    seedRouteRunDb(plan(ROUTE_WF), "ghost");
+    const shipStep = plan(ROUTE_WF).steps.find((s) => s.stepId === "ship");
+    if (!shipStep) throw new Error("fixture: ship step missing");
+    const wl = computeStepWorkList(shipStep, { runId: RUN_ID, params: {}, stepOutputs: {} });
+    if (!wl.ok) throw new Error(wl.error);
+    await expect(
+      reportWorkflowUnit({
+        target: RUN_ID,
+        unitId: wl.list.units[0].unitId,
+        status: "completed",
+        resultRaw: "done",
+        summaryJudge: null,
+      }),
+    ).rejects.toThrow(/not a declared branch or default target/);
+  });
+});
+
+// ── Reviewer #6 — the gate row is finalized when completeWorkflowStep throws ───
+
+/** A solo executing step plan whose gate carries criteria (so the judge runs). */
+function gatedStep(required = false): IrStepPlan {
+  return {
+    stepId: "work",
+    title: "Work",
+    sequenceIndex: 0,
+    root: {
+      kind: "agent",
+      id: "work",
+      instructions: "Do the work.",
+      templating: "expressions",
+      runner: "sdk",
+      onError: "fail",
+    },
+    gate: {
+      kind: "gate",
+      id: "work.gate",
+      stepId: "work",
+      criteria: ["the work is thorough"],
+      ...(required ? { required: true } : {}),
+    },
+  };
+}
+
+function passingResult(): ExecutedStepOutcome {
+  const unit: UnitOutcome = { unitId: "work:solo", ok: true, text: "did the work" };
+  return { ok: true, units: [unit], evidence: buildEvidence([unit], "collect", false), summary: "Executed 1 unit." };
+}
+
+function finalizeArgs(overrides: Record<string, unknown>) {
+  return {
+    runId: RUN_ID,
+    workflowRef: "workflow:demo",
+    stepId: "work",
+    stepPlan: gatedStep(),
+    completionCriteria: ["the work is thorough"],
+    gateLoop: 1,
+    loopsRemaining: false,
+    result: passingResult(),
+    priorEvidence: {},
+    params: {},
+    routeSelected: new Set<string>(),
+    routeUnselected: new Map<string, RouteSkipInfo>(),
+    summaryJudge: null as SummaryJudge | null,
+    ...overrides,
+  };
+}
+
+describe("reviewer #6 — the gate-evaluation row is finalized even when completeWorkflowStep throws", () => {
+  test("a lease stolen DURING the judge finishes the gate row (failed), never strands it in running", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    // The judge steals the run lease as a side effect, so completeWorkflowStep's
+    // write transaction throws AFTER the judge ran (the exact reviewer-#6 window).
+    const judge: SummaryJudge = async () => {
+      await withWorkflowRunsRepo((repo) =>
+        repo.acquireEngineLease(
+          RUN_ID,
+          "other-engine",
+          new Date(Date.now() + 90_000).toISOString(),
+          new Date().toISOString(),
+        ),
+      );
+      return '{"complete": true, "missing": []}';
+    };
+    await expect(finalizeExecutedStep(finalizeArgs({ summaryJudge: judge }))).rejects.toThrow();
+
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+    const gate = rows.find((r) => r.unit_id === "work.gate:l1");
+    expect(gate).toBeDefined();
+    // The try/finally in finalizeExecutedStep finished it as an errored row —
+    // without the fix it would still be "running" (stranded).
+    expect(gate?.status).toBe("failed");
+  });
+});
+
+// ── Reviewer #18 — a required gate with no judge blocks the step ──────────────
+
+const REQ_WF = `version: 1
+name: Req
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+`;
+
+describe("reviewer #18 — a required gate with no judge available blocks the step", () => {
+  test("finalizeExecutedStep BLOCKS (not fail-open) when gate.required and no judge is available", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: null }));
+    expect(fin.kind).toBe("blocked");
+
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
+    expect(status.run.status).toBe("blocked");
+    // The judge was never invoked, so no gate row was journaled.
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+    expect(rows.some((r) => r.unit_id === "work.gate:l1")).toBe(false);
+  });
+
+  test("a required gate WITH a judge available completes normally (no block)", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const judge: SummaryJudge = async () => '{"complete": true, "missing": []}';
+    const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: judge }));
+    expect(fin.kind).toBe("advanced");
+    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("completed");
+  });
+
+  test("engine --require-gates blocks a NON-required criteria gate with no judge (run-wide override)", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      loadPlan: async () => plan(REQ_WF),
+      dispatcher: async () => ({ ok: true, text: "did the work" }),
+      summaryJudge: null,
+      requireGates: true,
+    });
+    expect(result.run.status).toBe("blocked");
+    expect(result.done).toBeUndefined();
+    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
+  });
+
+  test("without --require-gates, a non-required gate with no judge still fails OPEN (offline behavior unchanged)", async () => {
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      loadPlan: async () => plan(REQ_WF),
+      dispatcher: async () => ({ ok: true, text: "did the work" }),
+      summaryJudge: null,
+    });
+    expect(result.done).toBe(true);
+    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("completed");
   });
 });
