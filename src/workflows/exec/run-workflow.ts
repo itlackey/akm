@@ -219,9 +219,18 @@ async function driveRun(
   // `budget.max_tokens`). The executor consumes both only on new dispatches
   // (durable-row reuses are free), so a large partially-completed fan-out
   // stays resumable.
+  //
+  // Gate-evaluation rows (`phase = "gate"`, journaled by the completion-gate
+  // judge below) are EXCLUDED from the seed: the live path never consumes
+  // DispatchBudget for a judge call, so counting its journal row on resume
+  // would make an interrupted run hit `max_units` (and the lifetime cap)
+  // earlier than the identical uninterrupted run — a spurious hard failure
+  // that `on_error` cannot soften. The seed must reproduce exactly what live
+  // accounting would have accumulated.
   const journaledUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(next.run.id));
-  let unitsDispatched = journaledUnits.length;
-  let tokensUsed = journaledUnits.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
+  const journaledDispatches = journaledUnits.filter((row) => row.phase !== GATE_EVALUATION_PHASE);
+  let unitsDispatched = journaledDispatches.length;
+  let tokensUsed = journaledDispatches.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
 
   // One plan per invocation: the test seam receives the workflow ref; the
   // default reads the run's frozen plan and never touches the asset file.
@@ -553,6 +562,15 @@ async function loadFrozenPlan(runId: string, workflowRef: string): Promise<Workf
 // they are never REUSED (a re-judged loop overwrites its row via INSERT OR
 // REPLACE; a blocked human gate stays blocked). Events carry ids/status only.
 
+/**
+ * `phase` marker stamped on gate-evaluation unit rows. It is the seed
+ * filter's discriminator: node ids may legally contain dots (a step could be
+ * NAMED `x.gate`), so a suffix match on `node_id` could misclassify real
+ * dispatch rows — the phase column is unambiguous. Dispatch rows always
+ * journal `phase: null`.
+ */
+const GATE_EVALUATION_PHASE = "gate";
+
 interface GateUnitRef {
   runId: string;
   workflowRef: string;
@@ -575,7 +593,9 @@ async function journalGateEvaluationStart(gate: GateUnitRef): Promise<void> {
         stepId: gate.stepId,
         nodeId: `${gate.stepId}.gate`,
         parentUnitId: null,
-        phase: null,
+        // Marks the row as a judge call, NOT a dispatch: the budget/lifetime
+        // seed in `driveRun` skips these so resume accounting matches live.
+        phase: GATE_EVALUATION_PHASE,
         runner: "llm",
         model: null,
         inputHash: null,

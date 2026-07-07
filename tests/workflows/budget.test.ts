@@ -116,6 +116,66 @@ describe("budget.max_units", () => {
     expect(units).toHaveLength(2);
   });
 
+  test("seeding: gate-evaluation journal rows are NOT counted as dispatches on resume", async () => {
+    // Step one carries a completion gate: the engine journals the judge call
+    // as a unit row (`one.gate:l1`, phase "gate"). That row is NOT a dispatch
+    // — the live path never consumes DispatchBudget for it — so a resumed
+    // run must not count it either. Pre-fix, the seed counted every journal
+    // row: with max_units: 2 the resume below spuriously failed step two
+    // with "budget exceeded" while the identical uninterrupted run passed.
+    writeProgram(
+      "gate-seeded",
+      `version: 1
+name: gate-seeded
+budget: { max_units: 2 }
+steps:
+  - id: one
+    unit:
+      instructions: Do step one.
+    gate:
+      criteria: [step one produced output]
+  - id: two
+    unit:
+      instructions: Do step two.
+`,
+    );
+    const started = await startWorkflowRun("workflow:gate-seeded", {});
+
+    // Invocation 1: step one dispatches (used = 1) and its gate judge passes,
+    // journaling the extra `one.gate:l1` row. maxSteps stops the engine here
+    // — the interrupted-run half of the repro.
+    const first = await runWorkflowSteps({
+      target: started.run.id,
+      maxSteps: 1,
+      summaryJudge: async () => '{"complete": true, "missing": []}',
+      dispatcher: async () => ({ ok: true, text: "one done" }),
+    });
+    expect(first.executed).toEqual([expect.objectContaining({ stepId: "one", ok: true })]);
+
+    // The journal really does hold TWO rows for step one: the dispatch and
+    // the gate evaluation (phase "gate") — the row the seed must skip.
+    const afterFirst = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id));
+    expect(afterFirst.map((u) => u.unit_id).sort()).toEqual(["one.gate:l1", "one:solo"]);
+    expect(afterFirst.find((u) => u.unit_id === "one.gate:l1")?.phase).toBe("gate");
+
+    // Invocation 2 must seed unitsDispatched = 1 (dispatches only): step two
+    // dispatches (used = 2, exactly the ceiling) and the run completes —
+    // identical to the uninterrupted run.
+    let dispatches = 0;
+    const second = await runWorkflowSteps({
+      target: started.run.id,
+      summaryJudge: null,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "two done" };
+      },
+    });
+    expect(dispatches).toBe(1);
+    expect(second.done).toBe(true);
+    expect(second.run.status).toBe("completed");
+    expect(second.executed).toEqual([expect.objectContaining({ stepId: "two", ok: true })]);
+  });
+
   test("seeding: journaled dispatches from a prior invocation count against max_units", async () => {
     writeProgram("units-seeded", TWO_STEPS("budget: { max_units: 1 }"));
     const started = await startWorkflowRun("workflow:units-seeded", {});
