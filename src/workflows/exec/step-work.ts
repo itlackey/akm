@@ -740,6 +740,12 @@ export function gateUnitId(stepId: string, loop: number): string {
  * (`complete: false`). No rejected gate rows ⇒ loop 1 (the first execution).
  * A passed gate would have advanced the spine, so an active step never has a
  * `complete: true` row as its latest gate evaluation.
+ *
+ * Reviewer #17: a gate row that EXISTS but cannot be parsed (or carries an
+ * invalid verdict shape) is CORRUPTION — {@link parseGateVerdict} throws loudly
+ * rather than letting `gateRowRejected` swallow the parse error, which would
+ * silently drop the loop back to 1 and re-dispatch work whose gate outcome is
+ * unknown.
  */
 export function activeGateLoop(rows: WorkflowRunUnitRow[], stepId: string): number {
   let maxRejectedLoop = 0;
@@ -747,7 +753,8 @@ export function activeGateLoop(rows: WorkflowRunUnitRow[], stepId: string): numb
     if (row.phase !== GATE_EVALUATION_PHASE || row.step_id !== stepId) continue;
     const loop = gateLoopOf(row.unit_id, stepId);
     if (loop === undefined) continue;
-    if (gateRowRejected(row) && loop > maxRejectedLoop) maxRejectedLoop = loop;
+    // Throws loudly on a corrupt/malformed gate row — never treated as absent.
+    if (parseGateVerdict(row).kind === "rejected" && loop > maxRejectedLoop) maxRejectedLoop = loop;
   }
   return maxRejectedLoop + 1;
 }
@@ -755,8 +762,12 @@ export function activeGateLoop(rows: WorkflowRunUnitRow[], stepId: string): numb
 /**
  * Recover the gate feedback the engine threads into `loop`'s unit prompts: the
  * `{ feedback, missing }` journaled by the previous loop's rejection
- * (`<stepId>.gate:l<loop-1>`). Loop 1 (or a missing/passed previous row) has
- * no feedback. Pure — the journal rows are passed in.
+ * (`<stepId>.gate:l<loop-1>`). Loop 1 (or a missing/passed/errored previous row)
+ * has no feedback. Pure — the journal rows are passed in.
+ *
+ * Reviewer #17: a PRESENT previous gate row that cannot be parsed fails LOUDLY
+ * (via {@link parseGateVerdict}) instead of returning undefined — a corrupt row
+ * must not make an in-loop step look like loop 1 with no recovered feedback.
  */
 export function recoverGateFeedback(
   rows: WorkflowRunUnitRow[],
@@ -766,19 +777,9 @@ export function recoverGateFeedback(
   if (loop <= 1) return undefined;
   const prevId = gateUnitId(stepId, loop - 1);
   const prev = rows.find((r) => r.unit_id === prevId && r.phase === GATE_EVALUATION_PHASE);
-  if (!prev || prev.result_json === null) return undefined;
-  let verdict: unknown;
-  try {
-    verdict = JSON.parse(prev.result_json);
-  } catch {
-    return undefined;
-  }
-  if (typeof verdict !== "object" || verdict === null) return undefined;
-  const v = verdict as Record<string, unknown>;
-  if (v.complete !== false) return undefined;
-  const feedback = typeof v.feedback === "string" ? v.feedback : "";
-  const missing = Array.isArray(v.missing) ? v.missing.filter((m): m is string => typeof m === "string") : [];
-  return { feedback, missing };
+  if (!prev) return undefined;
+  const verdict = parseGateVerdict(prev);
+  return verdict.kind === "rejected" ? { feedback: verdict.feedback, missing: verdict.missing } : undefined;
 }
 
 /** The 1-based loop encoded in a `<stepId>.gate:l<n>` unit id, if well-formed. */
@@ -789,15 +790,54 @@ function gateLoopOf(unitId: string, stepId: string): number | undefined {
   return Number.isInteger(n) && n >= 1 ? n : undefined;
 }
 
-/** True when a gate-evaluation row journaled a rejection (`complete: false`). */
-function gateRowRejected(row: WorkflowRunUnitRow): boolean {
-  if (row.result_json === null) return false;
+/** A gate-evaluation row's classified verdict (see {@link parseGateVerdict}). */
+type GateVerdict =
+  | { kind: "rejected"; missing: string[]; feedback: string }
+  | { kind: "passed" }
+  /** NULL result_json: an errored judge (fail-open) or an in-flight/running row. */
+  | { kind: "empty" };
+
+/**
+ * Classify a gate-evaluation row's journaled verdict, failing LOUDLY on a
+ * corrupt one (reviewer #17). A NULL `result_json` is the LEGITIMATE
+ * errored-judge / in-flight shape (`journalGateEvaluationFinish` writes null for
+ * an errored judge, and a `running` row has no verdict yet) and classifies as
+ * `empty`. But a PRESENT `result_json` that does not parse as JSON, or parses to
+ * anything other than an object with a boolean `complete` field, is corruption —
+ * a truncated or hand-edited row — and MUST NOT be silently treated as absent
+ * (which would reset an active step's gate loop to 1 and re-dispatch work whose
+ * completion outcome is unknown). We refuse to guess.
+ */
+function parseGateVerdict(row: WorkflowRunUnitRow): GateVerdict {
+  if (row.result_json === null) return { kind: "empty" };
+  let verdict: unknown;
   try {
-    const v = JSON.parse(row.result_json) as Record<string, unknown>;
-    return v.complete === false;
+    verdict = JSON.parse(row.result_json);
   } catch {
-    return false;
+    throw new UsageError(gateCorruptionMessage(row, "its result_json is not valid JSON"));
   }
+  if (typeof verdict !== "object" || verdict === null || Array.isArray(verdict)) {
+    throw new UsageError(gateCorruptionMessage(row, "its result_json is not a JSON object"));
+  }
+  const v = verdict as Record<string, unknown>;
+  if (typeof v.complete !== "boolean") {
+    throw new UsageError(gateCorruptionMessage(row, 'its verdict has no boolean "complete" field'));
+  }
+  if (v.complete === false) {
+    const feedback = typeof v.feedback === "string" ? v.feedback : "";
+    const missing = Array.isArray(v.missing) ? v.missing.filter((m): m is string => typeof m === "string") : [];
+    return { kind: "rejected", missing, feedback };
+  }
+  return { kind: "passed" };
+}
+
+function gateCorruptionMessage(row: WorkflowRunUnitRow, why: string): string {
+  return (
+    `Workflow run ${row.run_id} has a corrupt gate-evaluation row "${row.unit_id}" for step "${row.step_id}" — ${why}. ` +
+    `A gate verdict must be {"complete": true|false, …}; refusing to treat a malformed gate row as absent, which would ` +
+    `silently restart the step's gate loop and re-dispatch work whose completion outcome is unknown. Fix or remove the ` +
+    `journaled row, then resume the run.`
+  );
 }
 
 // ── Gate-evaluation journaling (IO) ──────────────────────────────────────────
@@ -987,6 +1027,51 @@ function journaledRouteSelection(evidence: Record<string, unknown> | undefined):
   return typeof selected === "string" && selected !== "" ? selected : undefined;
 }
 
+/** The set of steps a route may legally select: its `when` branches + default. */
+function routeTargets(route: IrRouteSpec): Set<string> {
+  return new Set([...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])]);
+}
+
+/**
+ * Reviewer #7: a journaled route decision must name a target the route actually
+ * DECLARES (`when` branch or `default`). Corrupted or hand-edited evidence can
+ * otherwise mark a non-existent step as `selected` — which unselects and skips
+ * every REAL branch target, silently steering the run down a phantom branch.
+ * `evaluateRoute` can only ever produce a declared target, so a stored value
+ * outside that set is provably tampered evidence: fail loudly rather than seed a
+ * bogus skip set.
+ */
+function assertRouteTargetDeclared(route: IrRouteSpec, stepId: string, selected: string, runId: string): void {
+  const targets = routeTargets(route);
+  if (!targets.has(selected)) {
+    throw new UsageError(
+      `Workflow run ${runId} has a completed route step "${stepId}" whose journaled route decision selected ` +
+        `"${selected}", which is not a declared branch or default target of the route (valid targets: ` +
+        `${[...targets].join(", ") || "(none)"}). The route evidence was corrupted or manually edited — refusing to ` +
+        `apply a bogus route decision that would skip the real branch targets. Start a new run.`,
+    );
+  }
+}
+
+/**
+ * Validate every COMPLETED route step's journaled selection against its declared
+ * targets (reviewer #7). Read-only: it throws on a PRESENT-but-invalid selection
+ * and is silent on an absent one, so it never false-positives on a healthy run —
+ * making it safe to call from the read-only `brief` surface as well as the
+ * resume/report surfaces that already re-apply the decisions.
+ */
+export function assertJournaledRouteSelectionsValid(plan: WorkflowPlanGraph, state: WorkflowNextResult): void {
+  for (const stepPlan of plan.steps) {
+    if (!stepPlan.route) continue;
+    const stepState = state.workflow.steps.find((s) => s.id === stepPlan.stepId);
+    if (!stepState || stepState.status !== "completed") continue;
+    const selected = journaledRouteSelection(stepState.evidence);
+    if (selected !== undefined) {
+      assertRouteTargetDeclared(stepPlan.route, stepPlan.stepId, selected, state.run.id);
+    }
+  }
+}
+
 /**
  * Replay journaled route decisions into the skip bookkeeping (resume path).
  * For every COMPLETED route step of the frozen plan, in spine order: the
@@ -1014,6 +1099,12 @@ export function seedJournaledRouteDecisions(
     if (stepState.status !== "completed") continue;
 
     let selected = journaledRouteSelection(stepState.evidence);
+    if (selected !== undefined) {
+      // Reviewer #7: a stored decision must name a declared target — a bogus one
+      // (tampered/hand-edited evidence) fails loudly rather than seeding a skip
+      // set that buries the real branches.
+      assertRouteTargetDeclared(stepPlan.route, stepPlan.stepId, selected, state.run.id);
+    }
     if (selected === undefined) {
       const scope: ExpressionScope = {
         params: state.run.params ?? {},
@@ -1067,6 +1158,13 @@ export interface FinalizeStepInput {
    * `null` ⇒ no judge (fail-open); a function ⇒ the injected judge (tests).
    */
   summaryJudge: SummaryJudge | null | undefined;
+  /**
+   * Reviewer #18: treat EVERY criteria-bearing gate as required for this
+   * completion (the engine's `--require-gates` run-wide override). A per-step
+   * `gate.required: true` in the frozen plan has the same effect and rides both
+   * surfaces; this flag is the engine-invocation-scoped override on top of it.
+   */
+  requireGates?: boolean;
   /** Engine run-lease holder (engine path only); absent on the manual/report path. */
   leaseHolder?: string;
 }
@@ -1075,7 +1173,9 @@ export type FinalizeStepResult =
   | { kind: "advanced"; summaryOverride?: string }
   | { kind: "failed"; summary: string; routeFailure?: true }
   | { kind: "retry"; gateFeedback: GateFeedback }
-  | { kind: "gate-exhausted"; gateRejection: { stepId: string; missing: string[]; feedback: string } };
+  | { kind: "gate-exhausted"; gateRejection: { stepId: string; missing: string[]; feedback: string } }
+  /** Reviewer #18: a required gate with no judge available — the step is BLOCKED for a human. */
+  | { kind: "blocked"; summary: string };
 
 /**
  * Perform ONE completion attempt for an executed step:
@@ -1118,6 +1218,31 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
     return { kind: "failed", summary: result.summary };
   }
 
+  // Resolve the completion-criteria judge ONCE (reused by the gate below). A
+  // `null` result means NO judge is available: `undefined` builds the default
+  // from config (null when offline / misconfigured), and an explicit `null`
+  // caller override is offline by construction.
+  const innerJudge = input.summaryJudge === undefined ? buildDefaultSummaryJudge() : input.summaryJudge;
+
+  // Reviewer #18: a REQUIRED completion gate must actually be judged. When the
+  // gate carries criteria but no judge is available, `validateStepSummary` would
+  // fail OPEN and silently pass the gate — exactly the offline/misconfigured
+  // bypass a required gate exists to prevent. BLOCK the step instead (a human
+  // resolves it via the documented manual path), rather than advance the spine
+  // on an unjudged gate. `gate.required` rides the frozen plan (both surfaces);
+  // `requireGates` is the engine's run-wide `--require-gates` override. Checked
+  // BEFORE route evaluation so a blocked step journals no route decision.
+  const gateRequired = stepPlan.gate.required === true || input.requireGates === true;
+  if (gateRequired && completionCriteria.length > 0 && innerJudge === null) {
+    const notes =
+      `Step "${stepId}" has a REQUIRED completion gate but no summary-validation judge is available ` +
+      `(no LLM is configured, or default LLM resolution failed). A required gate must be judged — refusing to fail ` +
+      `open and silently pass it. The step is BLOCKED: configure an LLM, then \`akm workflow resume ${runId}\` to ` +
+      `re-evaluate the gate, or advance the step manually with \`akm workflow complete\`.`;
+    await completeWorkflowStep({ runId, stepId, status: "blocked", notes, evidence: result.evidence, ...lease });
+    return { kind: "blocked", summary: notes };
+  }
+
   // Route evaluation BEFORE completion: an unroutable value is an
   // authoring/config failure that must fail the step deterministically.
   let summaryOverride: string | undefined;
@@ -1154,7 +1279,6 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   // judge) — nothing is journaled, and human approvals are never cached.
   const gateUnit: GateUnitRef = { runId, workflowRef, stepId, loop: gateLoop };
   const judgeState = { invoked: false, errored: false };
-  const innerJudge = input.summaryJudge === undefined ? buildDefaultSummaryJudge() : input.summaryJudge;
   const summaryJudge: SummaryJudge | null = innerJudge
     ? async (prompt) => {
         judgeState.invoked = true;
@@ -1168,15 +1292,29 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       }
     : null;
 
-  const completion = await completeWorkflowStep({
-    runId,
-    stepId,
-    status: "completed",
-    summary,
-    evidence: result.evidence,
-    summaryJudge,
-    ...lease,
-  });
+  // Reviewer #6: once the judge is invoked, its gate row is journaled `running`
+  // (journalGateEvaluationStart) and MUST be finished on every exit. The
+  // already-fixed window is the judge itself throwing (caught + failed-open
+  // inside validateStepSummary; `judgeState.errored` records it). The remaining
+  // window is `completeWorkflowStep` throwing AFTER the judge ran — a stolen
+  // lease, a concurrent state change, a DB error — which would otherwise skip the
+  // finish and strand the gate row in `running`. Finish it as an errored row (the
+  // observed outcome: the completion did not succeed), then re-propagate.
+  let completion: Awaited<ReturnType<typeof completeWorkflowStep>>;
+  try {
+    completion = await completeWorkflowStep({
+      runId,
+      stepId,
+      status: "completed",
+      summary,
+      evidence: result.evidence,
+      summaryJudge,
+      ...lease,
+    });
+  } catch (err) {
+    if (judgeState.invoked) await journalGateEvaluationFinish(gateUnit, true, undefined);
+    throw err;
+  }
   const rejection =
     "ok" in completion && completion.ok === false ? (completion as SummaryValidationFailure) : undefined;
 

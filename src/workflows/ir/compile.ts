@@ -134,6 +134,9 @@ function compileProgramStep(step: ProgramStep, index: number, defaults: ProgramD
     // TODO(R2): maxLoops execution (bounded evaluator-optimizer) is engine
     // rework scope; carried through the frozen plan now.
     ...(step.gate?.maxLoops !== undefined ? { maxLoops: step.gate.maxLoops } : {}),
+    // Reviewer #18: a required gate rides the frozen plan so BOTH surfaces
+    // (engine + report) enforce it identically.
+    ...(step.gate?.required !== undefined ? { required: step.gate.required } : {}),
   };
 
   let root: IrExecNode | undefined;

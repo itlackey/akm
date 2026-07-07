@@ -70,7 +70,7 @@ const UNIT_KEYS = [
 const MAP_KEYS = ["over", "concurrency", "reducer", "unit"];
 const ROUTE_KEYS = ["input", "when", "default"];
 const RETRY_KEYS = ["max", "on"];
-const GATE_KEYS = ["criteria", "max_loops"];
+const GATE_KEYS = ["criteria", "max_loops", "required"];
 const STEP_KINDS = ["unit", "map", "route"] as const;
 
 const TIMEOUT_VALUE = /^(\d+)(ms|s|m)?$/;
@@ -651,6 +651,15 @@ function parseGate(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
       gate.maxLoops = raw.max_loops;
     } else {
       ctx.err([...path, "max_loops"], `${stepLabel} "gate.max_loops" must be an integer >= 1.`);
+    }
+  }
+  if (raw.required !== undefined) {
+    // Reviewer #18: a required gate must be judged; with no judge available the
+    // engine/report BLOCK the step instead of failing open.
+    if (typeof raw.required === "boolean") {
+      gate.required = raw.required;
+    } else {
+      ctx.err([...path, "required"], `${stepLabel} "gate.required" must be a boolean (true or false).`);
     }
   }
   return gate;

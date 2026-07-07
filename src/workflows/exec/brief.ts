@@ -43,6 +43,7 @@ import { getNextWorkflowStep } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
 import {
   activeGateLoop,
+  assertJournaledRouteSelectionsValid,
   computeStepWorkList,
   evaluateRoute,
   GATE_EVALUATION_PHASE,
@@ -157,6 +158,8 @@ export interface WorkflowBriefStep {
     currentLoop: number;
     /** True when the gate judges the promoted artifact (criteria declared on an executing step). */
     judgesArtifact: boolean;
+    /** Reviewer #18: `gate.required` — with no judge available the step BLOCKS instead of failing open. */
+    required: boolean;
   };
   outputSchema?: Record<string, unknown>;
 }
@@ -302,6 +305,10 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
   // (NULL plan_json) has no plan for brief to read — point at engine-driven
   // mode, which still handles pre-006 runs by compiling from the asset.
   const plan = loadFrozenPlanForBrief(run.id, planJson, planHash);
+  // Reviewer #7: a completed route step whose journaled decision names a target
+  // the route never declared is tampered evidence — fail loudly on the read-only
+  // brief surface too, not just on the resume/report surfaces that replay it.
+  assertJournaledRouteSelectionsValid(plan, next);
   const stepPlan = plan.steps.find((s) => s.stepId === stepState.id);
   if (!stepPlan) {
     throw new UsageError(
@@ -337,6 +344,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
       maxLoops: Math.max(1, stepPlan.gate.maxLoops ?? 1),
       currentLoop: gateLoop,
       judgesArtifact: !isRouteOnly && criteria.length > 0,
+      required: stepPlan.gate.required === true,
     },
     ...(stepPlan.outputSchema ? { outputSchema: stepPlan.outputSchema } : {}),
   };

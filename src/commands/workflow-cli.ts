@@ -377,6 +377,14 @@ const workflowRunCommand = defineJsonCommand({
     target: { type: "positional", description: "Workflow run id or workflow ref (auto-starts a run)", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
+    "require-gates": {
+      type: "boolean",
+      description:
+        "Treat every criteria-bearing completion gate as required: if no LLM judge is available, BLOCK the step " +
+        "(for a human to resolve via `akm workflow resume`) instead of failing open. A per-step `gate.required: true` " +
+        "in the workflow does the same on every surface; this is the run-wide override (#18).",
+      default: false,
+    },
   },
   async run({ args }) {
     const { runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
@@ -392,6 +400,7 @@ const workflowRunCommand = defineJsonCommand({
       target: args.target,
       ...(args.params ? { params: parseWorkflowJsonObject(args.params, "--params") } : {}),
       ...(maxSteps !== undefined ? { maxSteps } : {}),
+      ...(args["require-gates"] === true ? { requireGates: true } : {}),
     });
     output("workflow-run", result);
   },

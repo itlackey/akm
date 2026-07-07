@@ -147,6 +147,12 @@ export interface ProgramRoute {
 export interface ProgramGate {
   criteria: string[];
   maxLoops?: number;
+  /**
+   * Reviewer #18: `gate.required: true` — the gate must be judged. With no judge
+   * available (offline / misconfigured LLM) the step BLOCKS for a human rather
+   * than failing open. Absent = fail-open default.
+   */
+  required?: boolean;
 }
 
 /** One step of the gated spine. Exactly one of unit | map | route is set. */

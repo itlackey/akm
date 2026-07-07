@@ -154,6 +154,14 @@ export interface IrGateNode {
   criteria: string[];
   /** Evaluator-feedback loop bound; absent/1 = one-shot gate. */
   maxLoops?: number;
+  /**
+   * Reviewer #18: when true, the gate MUST be judged. If no summary-validation
+   * judge is available (offline / misconfigured LLM), the step BLOCKS for a
+   * human instead of failing open and silently passing — so a workflow that
+   * relies on a gate cannot be bypassed by a misconfigured environment. Absent =
+   * the fail-open default (backward-compatible).
+   */
+  required?: boolean;
 }
 
 /**

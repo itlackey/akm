@@ -272,6 +272,10 @@
           "type": "integer",
           "minimum": 1,
           "description": "Evaluator-optimizer loop bound (execution lands in R2)."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "When true, the gate must be judged: if no summary-validation judge is available (offline / misconfigured LLM), the step BLOCKS for a human instead of failing open and silently passing. Absent = fail-open default. The engine's --require-gates flag applies this to every criteria-bearing gate for one invocation."
         }
       }
     },

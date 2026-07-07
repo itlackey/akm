@@ -101,6 +101,14 @@ export interface RunWorkflowOptions {
    */
   summaryJudge?: SummaryJudge | null;
   /**
+   * Reviewer #18: `--require-gates` — treat every criteria-bearing completion
+   * gate as required for this invocation, so a gate with no judge available
+   * BLOCKS the step (for a human) instead of failing open. A per-step
+   * `gate.required: true` in the frozen plan does the same on both surfaces; this
+   * flag is the run-wide engine override on top of it.
+   */
+  requireGates?: boolean;
+  /**
    * Test seam: schedules the lease-heartbeat's periodic renewal tick while a
    * step dispatches. Receives the (async) tick fn, returns a stop function
    * called in the `finally`. Defaults to a `setInterval` at
@@ -574,6 +582,7 @@ async function driveRun(
         routeSelected,
         routeUnselected,
         summaryJudge: options.summaryJudge,
+        ...(options.requireGates ? { requireGates: true } : {}),
         leaseHolder,
       });
 
@@ -598,6 +607,14 @@ async function driveRun(
         if (finalize.routeFailure) {
           executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: finalize.summary };
         }
+        stopEngine = true;
+        break;
+      }
+      if (finalize.kind === "blocked") {
+        // Reviewer #18: a required gate with no judge available — the step is
+        // BLOCKED (not failed) for a human. The units succeeded, so overwrite the
+        // report's ok/summary to reflect the block, then stop this invocation.
+        executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: finalize.summary };
         stopEngine = true;
         break;
       }

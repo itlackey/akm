@@ -112,7 +112,7 @@ export interface ReportUnitInput {
 
 /** The outcome of the step's completion attempt, when this report triggered one. */
 export interface ReportStepOutcome {
-  kind: "advanced" | "failed" | "gate-rejected";
+  kind: "advanced" | "failed" | "gate-rejected" | "blocked";
   /** For `gate-rejected`: true when the driver may retry (loop budget remains). */
   loopsRemaining?: boolean;
   missing?: string[];
@@ -628,7 +628,9 @@ function buildStepContext(
 type StepCompletion =
   | { kind: "advanced" }
   | { kind: "failed"; summary: string }
-  | { kind: "gate-rejected"; loopsRemaining: boolean; missing: string[]; feedback: string };
+  | { kind: "gate-rejected"; loopsRemaining: boolean; missing: string[]; feedback: string }
+  /** Reviewer #18: a required gate with no judge available — the step is BLOCKED for a human. */
+  | { kind: "blocked"; summary: string };
 
 /**
  * Rebuild a step's unit outcomes from the journal and reduce them through the
@@ -739,6 +741,11 @@ async function runStepCompletion(args: {
   if (finalize.kind === "failed") {
     return { kind: "failed", summary: finalize.summary };
   }
+  if (finalize.kind === "blocked") {
+    // Reviewer #18: a required gate with no judge available. The frozen plan's
+    // `gate.required` rides both surfaces, so the report path blocks identically.
+    return { kind: "blocked", summary: finalize.summary };
+  }
   return { kind: "advanced" };
 }
 
@@ -832,6 +839,22 @@ async function finalizeStep(args: {
       state.run.status,
       { kind: "failed", summary: completion.summary },
       `Step "${stepState.id}" failed: ${completion.summary}`,
+      recorded,
+    );
+  }
+
+  if (completion.kind === "blocked") {
+    // Reviewer #18: a required gate with no judge available blocked the step.
+    // The run is now `blocked`; a human resolves it via `akm workflow resume`.
+    const state = await getNextWorkflowStep(runId);
+    return reportResult(
+      runId,
+      stepState.id,
+      args.written,
+      gateLoop,
+      state.run.status,
+      { kind: "blocked", summary: completion.summary },
+      `Step "${stepState.id}" is BLOCKED: ${completion.summary}`,
       recorded,
     );
   }
