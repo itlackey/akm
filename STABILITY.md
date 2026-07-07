@@ -105,7 +105,10 @@ for scripted use.
   artifact-judged gates with bounded `max_loops` and required gates
   (`gate.required`, or the run-wide `akm workflow run --require-gates`, which
   BLOCK for a human instead of failing open when no judge is available), run
-  budget ceilings (`budget.max_tokens`/`max_units`), `akm workflow watch`
+  budget ceilings (`budget.max_tokens`/`max_units`), the engine concurrency
+  cap knob (`workflow.maxConcurrency` config; unset =
+  `min(16, max(1, cores − 2))`, explicit values clamped to `[1, 64]`),
+  `akm workflow watch`
   (NDJSON event tail, `--stream`), and `isolation: worktree`. The R3 rework
   adds a
   **harness-neutral driver protocol** so any agent session (Claude Code,
@@ -122,6 +125,10 @@ for scripted use.
   no-op; `--rerun` records a fresh attempt for a failed unit. `--status
   running` claims/heartbeats a unit (a claim holder + expiry, and
   `last_checkin_at`) for stale-driver detection without advancing the spine.
+  Every report command carries `--expect-step` (refused if the spine has
+  moved), and `report --settle` (no `--unit`) advances a step that dispatches
+  no reportable units — a params-only route, an empty fan-out, or an
+  all-unresolvable work-list — so a driver never wedges.
   A run is driven by one engine OR one external driver
   at a time (the run lease arbitrates; `report` is refused while a live
   engine lease exists), and the two surfaces produce identical unit graphs.

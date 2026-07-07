@@ -4770,6 +4770,16 @@
       },
       "additionalProperties": true
     },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "maxConcurrency": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
     "setup": {
       "type": "object",
       "properties": {
@@ -9557,6 +9567,16 @@
                 }
               },
               "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "workflow": {
+          "type": "object",
+          "properties": {
+            "maxConcurrency": {
+              "type": "integer",
+              "exclusiveMinimum": 0
             }
           },
           "additionalProperties": true

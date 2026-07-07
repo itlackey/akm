@@ -85,6 +85,31 @@ describe("configSet — number coercion + range validation", () => {
   });
 });
 
+describe("configSet — workflow.maxConcurrency", () => {
+  test("a positive integer is accepted and coerced from string", () => {
+    expect(configSet({}, "workflow.maxConcurrency", "8")).toEqual({
+      workflow: { maxConcurrency: 8 },
+    });
+  });
+
+  test("zero is rejected (positive integer only)", () => {
+    expect(() => configSet({}, "workflow.maxConcurrency", "0")).toThrow();
+  });
+
+  test("a negative value is rejected", () => {
+    expect(() => configSet({}, "workflow.maxConcurrency", "-4")).toThrow();
+  });
+
+  test("a non-integer is rejected", () => {
+    expect(() => configSet({}, "workflow.maxConcurrency", "2.5")).toThrow();
+  });
+
+  test("configGet reads back the set value", () => {
+    const next = configSet({}, "workflow.maxConcurrency", "12");
+    expect(configGet(next, "workflow.maxConcurrency")).toBe(12);
+  });
+});
+
 describe("configSet — path parsing + unknown keys", () => {
   test("an empty segment between dots is rejected", () => {
     expect(() => configSet({}, "output..format", "text")).toThrow(/empty segment between dots/);

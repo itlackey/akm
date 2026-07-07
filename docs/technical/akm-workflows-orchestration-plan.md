@@ -110,7 +110,9 @@ rationale is given so you can override.
    **deferred** to fast-follow. Fan-out and schema output are the load-bearing
    parity features and both have existing substrate (`executeRunner`,
    `callStructured`); progress streaming and budget ceilings are additive and
-   land incrementally (P3).
+   land incrementally (P3). **[SHIPPED — see addendum]** budget ceilings,
+   `isolation: worktree`, and `workflow watch` (NDJSON stream) all landed in
+   R2; this "deferred" scoping is superseded.
 
 > These four are **decided** (owner-confirmed), not open. Decision 3 was the one
 > change from the first draft: resume is *configurable* (both modes), not
@@ -778,7 +780,8 @@ extension*, not literally untouched.
 Both surfaced from the review and affect the **default** native path; the plan
 assumes the first option in each:
 
-1. **SDK worktree isolation. STILL OPEN.** `runOpencodeSdk` is a process-wide
+1. **SDK worktree isolation. ✅ RESOLVED in R2 — [SHIPPED — see addendum]**
+   (this was "STILL OPEN" pre-addendum; kept for the rationale). `runOpencodeSdk` is a process-wide
    singleton with no per-call cwd, so `isolation: worktree` is unimplementable
    against it as-is. *Assumed:* refactor the SDK runner to key its server by
    working directory (also fixes the concurrent-run test-isolation hazard).
@@ -786,8 +789,10 @@ assumes the first option in each:
    `isolation: worktree` units to the CLI runner (`runAgent` honors `cwd`
    today) — two default paths, less refactor. *Smallest:* defer worktree
    isolation past v1 with a documented gap. **P0.5 took the *smallest* path
-   (nothing shipped here); decide between the first two options no later
-   than P4, where `isolation: worktree` lands.**
+   (nothing shipped here); R2 then resolved this as a SPLIT (neither of the
+   two assumed options verbatim): cwd is per-call in the opencode SDK and env
+   goes through an env-keyed server registry, so `isolation: worktree` works on
+   the DEFAULT sdk runner AND the agent runner — see the R2 addendum bullet.**
 2. **Mid-unit abort. ✅ RESOLVED in P0.5** — `signal` is threaded through
    both `runAgent` (SIGTERM→SIGKILL on the process group, `"aborted"`
    failure reason) and `runOpencodeSdk` (prompt raced against the signal,
@@ -1194,7 +1199,12 @@ mismatch against the producer's declared schema).
   reports via `akm workflow report`. CC becomes documentation, not a
   compile target. The `min(16, cores−2)` cap becomes an akm config knob
   (`workflow.maxConcurrency`) with a conservative default, not a CC
-  constant.
+  constant. ✅ SHIPPED — `workflow.maxConcurrency` (positive integer; unset =
+  the CPU-derived default `min(16, max(1, cores−2))`; explicit values clamped
+  at read time to `[1, 64]`, floored at 1) is honored by the native scheduler,
+  with the internal `maxConcurrency` test seam retaining precedence. The
+  brief/report driver surface does not consult it (drivers own their own
+  parallelism).
 - **Still explicitly out of scope (owner):** the GitHub Copilot
   coding-agent cloud delegate; the stash MCP server.
 
@@ -1310,10 +1320,21 @@ mismatch against the producer's declared schema).
   deliberately collapsed: it is an engine-internal `<baseId>~r<n>`
   re-dispatch mechanic, and the driver protocol delegates retries to the
   driver, which reports only a unit's FINAL outcome. This status sweep of
-  the present document is the remaining R4 deliverable. Chaos tests
-  (crash/resume, lease contention, hostile content) are covered by the
-  existing R1/R2 replay-divergence, lease-enforcement, and event-metadata
-  test suites; no separate chaos harness was added. Docs delivered:
+  the present document is the remaining R4 deliverable. Chaos, fuzz, and
+  cross-process resilience DID land as dedicated harnesses (an earlier draft
+  of this bullet said "no separate chaos harness was added" — that is now
+  false): a single-process adversarial suite
+  (`tests/workflows/chaos.test.ts` — crash/resume, lease contention, hostile
+  `${{ … }}`/injection/100KB/invalid-UTF-16 content, all asserting on durable
+  db/event state with injected dispatchers/judges), a seeded property/fuzz
+  directory (`tests/workflows/fuzz/` — expression, JSON-schema-subset,
+  reducer, replay-identity, and whole-program generators), and three
+  MULTI-PROCESS integration suites that spawn real `bun` drivers against one
+  shared `workflow.db` (`tests/integration/workflow-db-contention.test.ts`
+  writer-queue contention, `workflow-lease-crossproc.test.ts` single-driver
+  lease arbitration, `workflow-worktree-leftovers.test.ts` isolation cleanup)
+  — complementing, not replacing, the R1/R2 replay-divergence,
+  lease-enforcement, and event-metadata suites they build on. Docs delivered:
   "Driving a run from any agent (brief/report)" in
   `docs/features/workflows.md`, the extended experimental bullet in
   `STABILITY.md`, and the `[Unreleased]` CHANGELOG entry.
@@ -1325,3 +1346,41 @@ mismatch against the producer's declared schema).
   and the `akm workflow status --units` diagnostic surface (unit-row
   failure reasons + result/error text kept OUT of the deterministic artifact
   graph). Migration 009 (additive) lands the unit-claim columns.
+- **Codex review round 3 + plan-completion round. ✅ LANDED 2026-07-07.** A
+  final external-reviewer pass (Codex) plus the plan-completion sweep closed
+  the last correctness + parity gaps, again without reshaping the surface:
+  engine **gate-loop resume seeding** (a resumed run recovers the journaled
+  `<stepId>.gate:l<n>` feedback via `recoverGateFeedback` so a mid-loop
+  restart re-emits loop-N's unit ids/hashes instead of restarting the loop);
+  **`report --rerun` token carry-forward + attempt-row rehydration** (a rerun
+  accumulates the prior attempt's tokens into the run total rather than
+  dropping them, and rehydrates the prior unit rows so the reduced artifact is
+  complete) and a **budget fail-fast** that ignores `on_error`; **required-gate
+  judge-error blocking** (`gate.required` / `--require-gates`: when the judge
+  throws, is unreachable, or returns an unparseable verdict, a required gate
+  now BLOCKS for a human via a new `errored` verdict flag instead of failing
+  open the way a non-required gate does); **stale-claim surfacing** on
+  `brief`/`status --units` (a `running` claim silent past the 90 s window shows
+  as reclaimable `stale`); **Claude native-json structured output** (the
+  `claude` harness result-extractor parses its JSON stream as a first-class
+  `native-json` tier); a **cross-extension create guard** (creating
+  `foo.yaml` while `foo.md` exists — or vice-versa — is refused, since
+  `workflow:foo` resolves `.md` before `.yaml` and would silently shadow the
+  new asset; a different-extension collision cannot be `--force`d over); and
+  **`report --settle`** — the unit-less mutating verb that advances a run
+  parked on a NON-dispatching step (a params-only route, an empty fan-out, or
+  an all-unresolvable work-list) through the same shared completion helpers, so
+  a driver is never wedged at a step no `report --unit` could complete. This
+  plan-completion run also added two remaining items: the
+  **`workflow.maxConcurrency` config knob** (already recorded under *Replaced*
+  above — positive integer, unset = `min(16, max(1, cores − 2))`, explicit
+  values clamped to `[1, 64]`; native engine only, drivers own their
+  parallelism), and a **non-fatal program validator WARNINGS channel**
+  (`collectProgramWarnings` in `ir/compile.ts`) that never changes the frozen
+  plan or its hash: it warns (A) when a unit/map step declares no step-level
+  `output:` schema (its results ride as an untyped artifact — the addendum's
+  promised "validator warns") and (B) when a `${{ params.<name> }}` reference
+  names a param the declared `params:` block omits (a likely typo; still
+  resolves at run time if start-supplied). Warnings surface additively on
+  `workflow validate` (human text + the `warnings` JSON key) and as `warn()`
+  lines at `workflow start`.

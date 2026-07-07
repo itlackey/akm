@@ -42,7 +42,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type WorkflowProgramCompileResult =
-  | { ok: true; plan: WorkflowPlanGraph }
+  | { ok: true; plan: WorkflowPlanGraph; warnings: WorkflowError[] }
   | { ok: false; errors: WorkflowError[] };
 
 /**
@@ -106,6 +106,10 @@ export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgra
   const paramNames = program.params ? Object.keys(program.params) : [];
   return {
     ok: true,
+    // Non-fatal advisories (redesign addendum). Warnings NEVER change the plan
+    // or its hash — they are computed alongside the frozen plan and surfaced by
+    // `workflow validate` / `workflow start`, never persisted onto the run row.
+    warnings: collectProgramWarnings(program),
     plan: {
       irVersion: WORKFLOW_IR_VERSION,
       title: program.name,
@@ -297,10 +301,92 @@ function checkReference(ref: ExpressionAst, check: ExpressionCheck, inMapUnit: b
       // extra, so treating the block as closed would reject a runtime-supported
       // authoring pattern and put the two layers in disagreement. A genuine typo
       // (`params.changed_file` for `changed_files`) surfaces at run time with a
-      // precise "is not defined in the run's params" error instead.
+      // precise "is not defined in the run's params" error instead. As a lint-time
+      // heads-up short of rejection, `collectProgramWarnings` (below) emits a
+      // non-fatal WARNING for an undeclared reference when a `params:` block is
+      // declared — never an error, so the runtime-supported pattern still compiles.
       return;
     }
   }
+}
+
+// ── Non-fatal warnings ───────────────────────────────────────────────────────
+
+/**
+ * Collect the program's non-fatal WARNINGS — advisories that never fail
+ * compilation, never change the frozen plan or its hash, and are surfaced by
+ * `workflow validate` (human + JSON) and as `warn()` lines at `workflow start`.
+ *
+ * Two promised-but-previously-missing warnings (redesign addendum):
+ *
+ *   A. A unit/map step with NO step-level `output:` schema carries its units'
+ *      raw results as an untyped artifact — permitted, but the addendum says
+ *      "the validator warns". Anchored on the STEP's `output` (the reducer /
+ *      step-artifact schema); a per-unit `output:` types the unit result but
+ *      leaves the step artifact untyped.
+ *   B. A `${{ params.<name> }}` reference to an UNDECLARED param, but ONLY when
+ *      the program declares a `params:` block. Compile-time REJECTION was tried
+ *      and reverted (see the `case "param"` note above): the runtime legitimately
+ *      resolves any param supplied at start, declared or not. The agreed middle
+ *      ground is a warning — a likely typo (`changed_file` for `changed_files`)
+ *      surfaces at lint time, while a genuinely start-supplied extra still runs.
+ *      With no `params:` block there is nothing to compare against, so B is silent.
+ *
+ * Pure and deterministic; the returned order is document order per step
+ * (warning A, then each undeclared-param reference in field/document order).
+ * Only called on an OK compile, so every template here already parsed cleanly.
+ */
+export function collectProgramWarnings(program: WorkflowProgram): WorkflowError[] {
+  const warnings: WorkflowError[] = [];
+  const declaredParams = program.params ? new Set(Object.keys(program.params)) : undefined;
+
+  for (const step of program.steps) {
+    // Warning A — a unit/map step with no step-level output schema.
+    if ((step.unit || step.map) && step.output === undefined) {
+      warnings.push({
+        line: step.source.start,
+        message:
+          `Step "${step.id}" declares no \`output:\` schema — its unit results are carried as an untyped ` +
+          `artifact (permitted). Add an \`output:\` JSON Schema to type and validate the step artifact.`,
+      });
+    }
+
+    // Warning B — references to a param the declared `params:` block omits.
+    if (declaredParams) collectUndeclaredParamWarnings(step, declaredParams, warnings);
+  }
+
+  return warnings;
+}
+
+/**
+ * Push a warning for every `${{ params.<name> }}` reference in `step` whose
+ * name is not in the declared param set. Walks the same template-bearing
+ * fields the compiler validates (unit / map.over + map unit / route.input) so
+ * the step + field context in the message matches the error labels.
+ */
+function collectUndeclaredParamWarnings(step: ProgramStep, declared: Set<string>, warnings: WorkflowError[]): void {
+  const declaredList = [...declared].join(", ");
+  const scan = (text: string, line: number, label: string): void => {
+    const parsed = parseTemplate(text);
+    if (!parsed.ok) return; // OK compile guarantees this parses; defensive only.
+    for (const ref of listReferences(parsed.segments)) {
+      if (ref.kind !== "param" || declared.has(ref.name)) continue;
+      warnings.push({
+        line,
+        message:
+          `${label}: "\${{ ${formatReference(ref)} }}" references a param not declared in \`params:\` ` +
+          `(declared: ${declaredList || "none"}) — likely a typo. An undeclared param supplied at start still ` +
+          `resolves at run time.`,
+      });
+    }
+  };
+
+  if (step.unit) scan(step.unit.instructions, step.unit.source.start, `Step "${step.id}" instructions`);
+  if (step.map) {
+    scan(step.map.over, step.source.start, `Step "${step.id}" map.over`);
+    scan(step.map.unit.instructions, step.map.unit.source.start, `Step "${step.id}" instructions`);
+  }
+  if (step.route) scan(step.route.input, step.source.start, `Step "${step.id}" route.input`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

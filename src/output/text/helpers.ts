@@ -209,7 +209,18 @@ export function formatWorkflowValidatePlain(r: Record<string, unknown>): string 
   if (!ok) return `workflow validate: failed (${pathValue})`;
   const title = typeof r.title === "string" ? r.title : "";
   const stepCount = typeof r.stepCount === "number" ? r.stepCount : 0;
-  return `workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`;
+  const lines = [`workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`];
+  // Non-fatal advisories: clearly marked, printed after the ok line so `ok`
+  // is never in doubt. Absent/empty for markdown and fully-typed programs.
+  const warnings = Array.isArray(r.warnings) ? (r.warnings as Array<Record<string, unknown>>) : [];
+  if (warnings.length > 0) {
+    lines.push(`  ${warnings.length} warning(s):`);
+    for (const w of warnings) {
+      const line = typeof w.line === "number" ? w.line : "?";
+      lines.push(`    warning: ${pathValue}:${line} — ${String(w.message ?? "")}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 /**

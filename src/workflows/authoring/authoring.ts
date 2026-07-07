@@ -280,7 +280,7 @@ export function validateWorkflowSource(target: string): {
  */
 export function validateWorkflowProgramSource(target: string): {
   path: string;
-  result: { ok: true; program: WorkflowProgram } | { ok: false; errors: WorkflowError[] };
+  result: { ok: true; program: WorkflowProgram; warnings: WorkflowError[] } | { ok: false; errors: WorkflowError[] };
 } {
   const resolved = path.resolve(target);
   if (!fs.existsSync(resolved)) {
@@ -295,7 +295,9 @@ export function validateWorkflowProgramSource(target: string): {
   if (!compiled.ok) {
     return { path: target, result: { ok: false, errors: compiled.errors } };
   }
-  return { path: target, result: { ok: true, program: parse.program } };
+  // Non-fatal advisories ride along on a successful validation (additive) so
+  // `workflow validate` can surface them without changing the ok verdict.
+  return { path: target, result: { ok: true, program: parse.program, warnings: compiled.warnings } };
 }
 
 function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {

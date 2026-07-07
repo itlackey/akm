@@ -9,8 +9,11 @@
  * existing semaphore-bounded pool is generalized, not forked. The scheduler
  * owns the engine-wide limits the plan requires:
  *
- *   - Concurrency cap `min(16, cores − 2)` (matching Claude Code), applied on
- *     top of whatever per-step concurrency the workflow declares.
+ *   - Engine-wide concurrency cap, applied on top of whatever per-step
+ *     concurrency the workflow declares. The cap is the `workflow.maxConcurrency`
+ *     akm config setting when set (clamped to
+ *     `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`), else the CPU-derived default
+ *     `min(16, cores − 2)` (the original Claude-Code-matching formula).
  *   - Cooperative cancellation via AbortSignal (workers stop claiming items;
  *     the same signal is passed into each dispatch so in-flight units can be
  *     preempted too).
@@ -25,10 +28,59 @@
 
 import os from "node:os";
 import { concurrentMap } from "../../core/concurrent";
+import { loadConfig } from "../../core/config/config";
 
-/** Engine-wide ceiling on concurrent units, matching Claude Code's cap. */
-export function maxUnitConcurrency(cpuCount = os.cpus()?.length ?? 4): number {
+/**
+ * Hard ceiling on an EXPLICIT `workflow.maxConcurrency`. A user value above
+ * this is clamped down (not rejected) so a config shared across machines with
+ * very different core counts never hard-fails; a value below 1 is floored to 1.
+ * 64 is deliberately far above any sane fan-out width — it exists only to keep
+ * a fat-fingered `100000` from spawning a runaway pool.
+ */
+export const WORKFLOW_MAX_CONCURRENCY_CEILING = 64;
+
+/**
+ * CPU-derived engine cap used when `workflow.maxConcurrency` is unset — the
+ * original `min(16, cores−2)` formula (matching Claude Code), floored at 1.
+ */
+export function cpuDerivedUnitConcurrency(cpuCount = os.cpus()?.length ?? 4): number {
   return Math.min(16, Math.max(1, cpuCount - 2));
+}
+
+/** Clamp an explicit configured value into `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`. */
+export function clampMaxConcurrency(value: number): number {
+  return Math.min(WORKFLOW_MAX_CONCURRENCY_CEILING, Math.max(1, Math.floor(value)));
+}
+
+/**
+ * Read `workflow.maxConcurrency` from config, fail-open to `undefined` (use the
+ * CPU default) on any load error or a non-numeric value. Kept side-effect-free
+ * and defensive: the scheduler must never fail a run because config is unwell.
+ */
+function configuredMaxConcurrency(): number | undefined {
+  try {
+    const value = loadConfig().workflow?.maxConcurrency;
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Engine-wide ceiling on concurrent units. Precedence:
+ *   1. An explicit `workflow.maxConcurrency` config value, clamped to
+ *      `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`.
+ *   2. Otherwise the CPU-derived default `min(16, max(1, cores−2))`.
+ * The per-run test seam (`ScheduleOptions.maxConcurrency`) is applied ABOVE
+ * this in {@link scheduleUnits}, so it always wins for tests.
+ *
+ * @param cpuCount   CPU count for the fallback formula (injected by tests).
+ * @param configured Explicit config value seam (defaults to reading config);
+ *                   pass `undefined` explicitly to force the CPU path in a test.
+ */
+export function maxUnitConcurrency(cpuCount = os.cpus()?.length ?? 4, configured = configuredMaxConcurrency()): number {
+  if (configured !== undefined) return clampMaxConcurrency(configured);
+  return cpuDerivedUnitConcurrency(cpuCount);
 }
 
 /** Lifetime unit cap per run — a runaway-loop backstop, far above real use. */
@@ -51,7 +103,13 @@ export interface ScheduleOptions {
    */
   concurrency?: number;
   signal?: AbortSignal;
-  /** Test seam for the CPU-derived cap. */
+  /**
+   * Test seam for the engine cap. When set it OVERRIDES both the
+   * `workflow.maxConcurrency` config value and the CPU-derived default —
+   * tests pin an exact cap without depending on the host's core count or a
+   * config file. Production callers leave it unset so {@link maxUnitConcurrency}
+   * (config → CPU default) decides.
+   */
   maxConcurrency?: number;
 }
 

@@ -29,10 +29,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { completeWorkflowStep, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { withSeam } from "../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 
@@ -249,5 +251,110 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
     const env = JSON.parse(stderr) as { ok: boolean; error: string };
     expect(env.ok).toBe(false);
     expect(env.error).toMatch(/not found|No sources|origin/i);
+  });
+});
+
+describe("akm workflow validate — non-fatal WARNINGS surface additively (ok stays true)", () => {
+  /** Write a YAML program that trips both warnings: undeclared param + untyped step. */
+  function writeWarnyProgram(stashDir: string, name: string): string {
+    const file = path.join(stashDir, "workflows", `${name}.yaml`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      [
+        "version: 1",
+        `name: ${name}`,
+        "params:",
+        "  changed_files: { type: array }",
+        "steps:",
+        "  - id: review",
+        "    unit:",
+        "      instructions: Review ${{ params.changed_file }}.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    return file;
+  }
+
+  test("--json validate reports ok:true with an additive warnings array (both warnings)", async () => {
+    const file = writeWarnyProgram(storage.stashDir, "warny");
+    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", file]);
+    expect(code).toBe(0);
+    const env = JSON.parse(stdout) as {
+      ok: boolean;
+      format: string;
+      warnings: Array<{ line: number; message: string }>;
+    };
+    expect(env.ok).toBe(true);
+    expect(env.format).toBe("program");
+    expect(env.warnings.length).toBe(2);
+    expect(env.warnings.some((w) => /no `output:` schema/.test(w.message))).toBe(true);
+    expect(env.warnings.some((w) => /params\.changed_file.*not declared/.test(w.message))).toBe(true);
+    for (const w of env.warnings) expect(typeof w.line).toBe("number");
+  });
+
+  test("text validate prints the warnings clearly marked below the ok line", async () => {
+    const file = writeWarnyProgram(storage.stashDir, "warny-text");
+    const { code, stdout } = await runCliCapture(["--format", "text", "workflow", "validate", file]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("workflow validate: ok");
+    expect(stdout).toContain("2 warning(s):");
+    expect(stdout).toMatch(/warning: .*:\d+ —/);
+  });
+
+  test("a fully-typed, fully-declared program validates with an empty warnings array", async () => {
+    const file = path.join(storage.stashDir, "workflows", "clean.yaml");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      [
+        "version: 1",
+        "name: clean",
+        "params:",
+        "  changed_files: { type: array }",
+        "steps:",
+        "  - id: review",
+        "    unit:",
+        "      instructions: Review ${{ params.changed_files }}.",
+        "    output: { type: object }",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", file]);
+    expect(code).toBe(0);
+    const env = JSON.parse(stdout) as { ok: boolean; warnings: unknown[] };
+    expect(env.ok).toBe(true);
+    expect(env.warnings).toEqual([]);
+  });
+
+  test("markdown validate carries no warnings key at all (warning-free frontend)", async () => {
+    writeSingleStepWorkflow(storage.stashDir, "md-flow");
+    const file = path.join(storage.stashDir, "workflows", "md-flow.md");
+    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", file]);
+    expect(code).toBe(0);
+    const env = JSON.parse(stdout) as Record<string, unknown>;
+    expect(env.ok).toBe(true);
+    expect(env).not.toHaveProperty("warnings");
+  });
+
+  test("workflow start emits the program's warnings as non-fatal warn() lines (stderr)", async () => {
+    writeWarnyProgram(storage.stashDir, "warny-start");
+    const captured: string[] = [];
+    await withSeam(
+      _setWarnSinkForTests,
+      (level, args) => {
+        if (level === "warn") captured.push(args.map((a) => String(a)).join(" "));
+      },
+      async () => {
+        const started = await startWorkflowRun("workflow:warny-start");
+        // Non-fatal: the run still starts.
+        expect(started.run.status).toBe("active");
+      },
+    );
+    const joined = captured.join("\n");
+    expect(joined).toMatch(/workflow start:.*no `output:` schema/);
+    expect(joined).toMatch(/workflow start:.*params\.changed_file.*not declared/);
   });
 });

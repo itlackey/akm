@@ -145,6 +145,9 @@ export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSc
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
 
+/** Workflow-engine settings (`workflow`). See config-schema.ts for docs. */
+export type WorkflowConfig = z.infer<typeof import("./config-schema").WorkflowConfigSchema>;
+
 /**
  * The full on-disk config shape. This IS the Zod schema's output type — there
  * is no parallel hand-written interface to keep in sync.

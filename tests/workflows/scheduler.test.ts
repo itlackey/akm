@@ -2,8 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { describe, expect, test } from "bun:test";
-import { maxUnitConcurrency, scheduleUnits } from "../../src/workflows/exec/scheduler";
+import { afterEach, describe, expect, test } from "bun:test";
+import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
+import type { AkmConfig } from "../../src/core/config/config-types";
+import {
+  clampMaxConcurrency,
+  cpuDerivedUnitConcurrency,
+  maxUnitConcurrency,
+  scheduleUnits,
+  WORKFLOW_MAX_CONCURRENCY_CEILING,
+} from "../../src/workflows/exec/scheduler";
 
 /**
  * Direct scheduler tests (orchestration plan §Trust & limits): the engine
@@ -60,11 +68,37 @@ describe("scheduleUnits", () => {
     expect(probe.peak()).toBe(3);
   });
 
-  test("maxUnitConcurrency is min(16, cores − 2), floored at 1", () => {
-    expect(maxUnitConcurrency(32)).toBe(16);
-    expect(maxUnitConcurrency(8)).toBe(6);
-    expect(maxUnitConcurrency(2)).toBe(1);
-    expect(maxUnitConcurrency(1)).toBe(1);
+  test("maxUnitConcurrency default is min(16, cores − 2), floored at 1 (config unset)", () => {
+    // Pass `configured: undefined` explicitly to force the CPU-derived path
+    // regardless of any ambient config file.
+    expect(maxUnitConcurrency(32, undefined)).toBe(16);
+    expect(maxUnitConcurrency(8, undefined)).toBe(6);
+    expect(maxUnitConcurrency(2, undefined)).toBe(1);
+    expect(maxUnitConcurrency(1, undefined)).toBe(1);
+    // cpuDerivedUnitConcurrency is the same formula in isolation.
+    expect(cpuDerivedUnitConcurrency(32)).toBe(16);
+    expect(cpuDerivedUnitConcurrency(1)).toBe(1);
+  });
+
+  test("an explicit workflow.maxConcurrency wins over the CPU default and is clamped", () => {
+    // Configured value takes precedence over the CPU formula (which would be 16 on 32 cores).
+    expect(maxUnitConcurrency(32, 4)).toBe(4);
+    expect(maxUnitConcurrency(2, 8)).toBe(8);
+    // Clamped to [1, ceiling]: values above the ceiling clamp down, <1 floors to 1.
+    expect(maxUnitConcurrency(32, 100000)).toBe(WORKFLOW_MAX_CONCURRENCY_CEILING);
+    expect(maxUnitConcurrency(32, 0)).toBe(1);
+    expect(maxUnitConcurrency(32, -5)).toBe(1);
+    // Fractional values floor before clamping.
+    expect(maxUnitConcurrency(32, 3.9)).toBe(3);
+  });
+
+  test("clampMaxConcurrency floors at 1 and caps at the ceiling", () => {
+    expect(clampMaxConcurrency(1)).toBe(1);
+    expect(clampMaxConcurrency(0)).toBe(1);
+    expect(clampMaxConcurrency(-100)).toBe(1);
+    expect(clampMaxConcurrency(WORKFLOW_MAX_CONCURRENCY_CEILING)).toBe(WORKFLOW_MAX_CONCURRENCY_CEILING);
+    expect(clampMaxConcurrency(WORKFLOW_MAX_CONCURRENCY_CEILING + 1)).toBe(WORKFLOW_MAX_CONCURRENCY_CEILING);
+    expect(WORKFLOW_MAX_CONCURRENCY_CEILING).toBe(64);
   });
 
   test("an aborted signal stops claiming new items; unclaimed slots stay undefined", async () => {
@@ -93,5 +127,34 @@ describe("scheduleUnits", () => {
       { concurrency: 3, maxConcurrency: 3 },
     );
     expect(results).toEqual([1, undefined, 3]);
+  });
+});
+
+describe("scheduleUnits — workflow.maxConcurrency config knob", () => {
+  afterEach(() => {
+    resetConfigCache();
+  });
+
+  test("honours a configured cap when no test seam is passed", async () => {
+    // Persist an explicit cap of 2 into the sandbox config, then declare a
+    // wider per-step concurrency with NO maxConcurrency seam: the config cap
+    // must clamp the observed peak to 2.
+    saveConfig({ workflow: { maxConcurrency: 2 } } as AkmConfig);
+    resetConfigCache();
+    expect(loadConfig().workflow?.maxConcurrency).toBe(2);
+
+    const probe = concurrencyProbe();
+    await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, { concurrency: 8 });
+    expect(probe.peak()).toBe(2);
+  });
+
+  test("the maxConcurrency test seam still overrides the configured value", async () => {
+    saveConfig({ workflow: { maxConcurrency: 2 } } as AkmConfig);
+    resetConfigCache();
+
+    const probe = concurrencyProbe();
+    // Seam of 4 wins over the configured 2.
+    await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, { concurrency: 8, maxConcurrency: 4 });
+    expect(probe.peak()).toBe(4);
   });
 });

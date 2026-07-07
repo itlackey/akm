@@ -572,6 +572,28 @@ brief reports the run is done.
 
 Repeat until `brief` reports `done: true`.
 
+#### Advancing a step with no reportable units (`--settle`)
+
+Some steps dispatch **no** per-unit work a driver can `report --unit`: a route
+step keyed on a params expression, a fan-out over an empty list, or a step whose
+entire work-list is unresolvable. A driver looping on `brief → report --unit`
+would get stuck at such a step forever. For exactly these, `brief` emits a
+top-level `settleCommand` instead of per-unit report lines:
+
+```sh
+akm workflow report <run> --settle --expect-step <activeStep>
+```
+
+`report --settle` takes **no** `--unit`/`--status` — it runs the same
+deterministic completion path the engine runs for a non-dispatching step
+(reduce → promote/validate the typed artifact → judge the gate →
+`completeWorkflowStep`), advancing the spine past every step that has no
+`report --unit` a driver could ever send, until it reaches a step with real
+work (or the run terminates). It is **refused if the step actually has
+reportable units** (report those instead) and, like every mutating verb,
+refused under a live engine lease. It carries `--expect-step` so a stale copy
+fails once the spine has moved.
+
 #### Unit check-in and heartbeat
 
 Executing a long unit? Claim it and heartbeat so other drivers know it is in
@@ -785,6 +807,29 @@ Trust note: a workflow that fans out is authorizing **N parallel agents**, not
 one — the security section below applies with multiplied blast radius. The
 engine enforces a concurrency cap, a lifetime unit cap per run, per-unit
 timeouts, and (when the program declares them) run budget ceilings.
+
+The concurrency cap is the engine-wide ceiling on how many units run at once
+during native fan-out (`akm workflow run`). A step's declared `concurrency:` is
+always clamped to it. The cap comes from the `workflow.maxConcurrency` akm
+config setting:
+
+- **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a
+  conservative default that leaves headroom on the host and matches the
+  original Claude-Code cap.
+- **Set:** an explicit positive integer, clamped at read time to `[1, 64]`
+  (values above 64 are clamped down, never rejected, so one config shared
+  across machines with different core counts never hard-fails).
+
+```console
+$ akm config set workflow.maxConcurrency 8   # raise the engine ceiling to 8
+$ akm config get workflow.maxConcurrency
+8
+```
+
+This cap governs the **native** engine only. The R3 brief/report driver surface
+(`akm workflow brief` / `report`) does **not** consult it — an external driver
+session owns its own parallelism; the engine caps only the units it dispatches
+itself.
 
 ## Security: workflow sources are executed code
 

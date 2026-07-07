@@ -8,6 +8,7 @@ import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { warn } from "../../core/warn";
 import type {
   WorkflowRunStatus,
   WorkflowRunStepState,
@@ -24,6 +25,7 @@ import {
 } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { detectSecretShapedParams } from "../exec/param-secrets";
+import { collectProgramWarnings } from "../ir/compile";
 import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
@@ -226,6 +228,15 @@ export async function startWorkflowRun(
   // later invocation executes this snapshot — the asset file is never re-read
   // for an in-flight run; re-planning is an explicit new run.
   const plan = compileWorkflowAssetPlan(asset);
+  // Non-fatal WARNINGS (redesign addendum): a YAML program's untyped-step and
+  // undeclared-param advisories surface as `warn()` lines at start (stderr,
+  // consistent with the repo's other author-facing warnings) without blocking
+  // the run. Markdown workflows carry no `program` and warn about nothing.
+  if (asset.program) {
+    for (const w of collectProgramWarnings(asset.program)) {
+      warn(`workflow start: ${asset.path}:${w.line} — ${w.message}`);
+    }
+  }
   // Reviewer #12: validate supplied `--params` against the frozen param
   // schemas BEFORE creating the run, so a type-mismatched param (e.g. a string
   // for a `{ type: array }` param) is rejected with actionable errors instead

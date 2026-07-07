@@ -20,7 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     one with `akm workflow template --yaml` or `akm workflow create
     <name>.yaml`. A closed `${{ … }}` expression language (exactly
     `params.<name>`, `steps.<id>.output.<path>`, `item`, `item_index`, parsed
-    once into an AST) wires steps together.
+    once into an AST) wires steps together. `validate` also surfaces non-fatal
+    **warnings** (a step with no typed `output:` schema; a `${{ params.<name> }}`
+    reference to a param the declared `params:` block omits) that never change
+    the frozen plan or its hash. Creating a workflow whose canonical name
+    collides with an existing asset of a **different** extension (`foo.yaml`
+    while `foo.md` exists, or vice-versa) is refused, since the two would
+    silently shadow each other.
   - **Compilation + frozen plans.** `akm workflow start` compiles the program
     into a backend-agnostic Workflow Plan Graph IR (`src/workflows/ir/`) and
     freezes it on the run row (`plan_json` + `plan_hash`); a run executes the
@@ -40,7 +46,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `workflow_run_units` table behind a serialized writer queue.
   - **Execution (`akm workflow run`).** A semaphore-bounded scheduler fans a
     step's units out (concurrency defaults to 1 per the local-model
-    LLM-defaults rule, capped at `min(16, cores − 2)`), enforces per-unit
+    LLM-defaults rule, capped by the engine-wide `workflow.maxConcurrency`
+    config knob — unset = `min(16, max(1, cores − 2))`, explicit values
+    clamped to `[1, 64]`), enforces per-unit
     timeouts (default 10 m) and run **budget ceilings** (`budget.max_tokens` /
     `budget.max_units`, seeded from the journal so they span resumes), and
     advances the run **strictly through `completeWorkflowStep`** so completion
@@ -75,8 +83,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     differing hash, budget enforcement, schema validation, and the
     artifact-judged gate/`max_loops` completion path). `--status running`
     claims/heartbeats a unit for stale-driver detection without advancing the
-    spine; `--rerun` records a fresh attempt for a failed unit. The engine and
-    the brief/report surfaces are proven to produce **identical unit graphs**
+    spine; `--rerun` records a fresh attempt for a failed unit (carrying its
+    prior token total forward). Every report command carries `--expect-step`
+    (refused if the spine has moved since the brief), and `report --settle`
+    (no `--unit`) advances a step that dispatches no reportable units — a
+    params-only route, an empty fan-out, or an all-unresolvable work-list — so
+    a driver is never wedged. The engine and the brief/report surfaces are
+    proven to produce **identical unit graphs**
     (`tests/workflows/conformance/driver-parity.test.ts`).
   - **Observability.** `akm workflow watch <run>` tails the run's `workflow_*`
     / `workflow_unit_*` events as NDJSON (`--stream` foreground-polls to a

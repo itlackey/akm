@@ -324,12 +324,16 @@ const workflowValidateCommand = defineJsonCommand({
       if (!result.ok) {
         throw new UsageError(formatWorkflowErrors(filePath, result.errors));
       }
+      // Non-fatal WARNINGS ride the envelope additively — `ok` stays true. The
+      // text formatter renders them clearly marked for humans; the JSON key is
+      // the machine channel. Empty array when the program is fully typed/declared.
       output("workflow-validate", {
         ok: true,
         path: filePath,
         format: "program",
         title: result.program.name,
         stepCount: result.program.steps.length,
+        warnings: result.warnings.map((w) => ({ line: w.line, message: w.message })),
       });
       return;
     }
