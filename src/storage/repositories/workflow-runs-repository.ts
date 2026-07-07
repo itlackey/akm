@@ -89,6 +89,12 @@ export interface InsertUnitInput {
   runner: string | null;
   model: string | null;
   inputHash: string | null;
+  /**
+   * Isolation worktree path for `isolation: worktree` units (migration 004
+   * column, R2 enforcement): journaled at dispatch so a dirty-retained
+   * worktree can always be located from the unit row. Omitted ⇒ NULL.
+   */
+  worktreePath?: string | null;
   startedAt: string;
 }
 
@@ -432,8 +438,8 @@ export class WorkflowRunsRepository {
       .prepare(
         `INSERT OR REPLACE INTO workflow_run_units (
           run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model,
-          status, input_hash, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+          status, input_hash, worktree_path, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
       )
       .run(
         input.runId,
@@ -445,6 +451,7 @@ export class WorkflowRunsRepository {
         input.runner,
         input.model,
         input.inputHash,
+        input.worktreePath ?? null,
         input.startedAt,
       );
   }

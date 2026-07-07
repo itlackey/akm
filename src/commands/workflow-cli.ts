@@ -384,6 +384,43 @@ const workflowRunCommand = defineJsonCommand({
   },
 });
 
+const workflowWatchCommand = defineJsonCommand({
+  meta: {
+    name: "watch",
+    description:
+      "Print a run's workflow_* events (state.db events table) as NDJSON and exit; --stream polls in the " +
+      "foreground until the run reaches a terminal status (no daemon)",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+    stream: {
+      type: "boolean",
+      description: "Keep polling for new events until the run leaves 'active' (completed/failed/blocked)",
+      default: false,
+    },
+    "interval-ms": { type: "string", description: "Poll interval in milliseconds for --stream (default: 1000)" },
+  },
+  async run({ args }) {
+    const rawInterval = getStringArg(args, "interval-ms");
+    let intervalMs: number | undefined;
+    if (rawInterval !== undefined) {
+      intervalMs = Number.parseInt(rawInterval, 10);
+      if (!/^\d+$/.test(rawInterval) || intervalMs <= 0) {
+        throw new UsageError(`--interval-ms must be a positive integer, got "${rawInterval}".`, "INVALID_FLAG_VALUE");
+      }
+    }
+    const { watchWorkflowRun } = await import("../workflows/exec/watch.js");
+    const result = await watchWorkflowRun({
+      runId: args.runId,
+      stream: args.stream === true,
+      ...(intervalMs !== undefined ? { intervalMs } : {}),
+    });
+    // The event lines above are raw NDJSON on stdout; this trailing envelope
+    // is the machine-readable command result (counts + terminal status).
+    output("workflow-watch", { ok: true, ...result });
+  },
+});
+
 const workflowAbandonCommand = defineJsonCommand({
   meta: {
     name: "abandon",
@@ -429,6 +466,7 @@ export const workflowCommand = defineCommand({
     abandon: workflowAbandonCommand,
     validate: workflowValidateCommand,
     run: workflowRunCommand,
+    watch: workflowWatchCommand,
   },
   run({ args }) {
     return runWithJsonErrors(async () => {

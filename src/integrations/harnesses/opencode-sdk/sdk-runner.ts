@@ -12,8 +12,44 @@
  * This is the runtime surface of the {@link OpencodeSdkHarness} (`id =
  * 'opencode-sdk'`). It is the dispatch path for `sdkMode` profiles; it exposes
  * no native session logs of its own (`capabilities.sessionLogs = false`).
+ *
+ * ## Per-call cwd and env (redesign addendum R2, open seam decision 1)
+ *
+ * The plan left one decision open: per-call cwd/env forwarding vs a server
+ * keyed by `(cwd, envKeysHash)`. Reading the SDK settled it as a SPLIT — the
+ * two halves have different API realities (verified against
+ * `@opencode-ai/sdk` 1.2.20):
+ *
+ *   - **cwd is PER-CALL.** `session.create` / `session.prompt` /
+ *     `session.delete` all accept a `query.directory` parameter that scopes
+ *     the session's working directory, so a single server can host sessions
+ *     in any number of working directories. {@link RunAgentOptions.cwd} is
+ *     forwarded as `query: { directory }` on every session call — no
+ *     per-cwd server processes, no server-key explosion for worktree
+ *     isolation (which mints a fresh directory per unit attempt).
+ *
+ *   - **env is PER-SERVER (keyed registry).** The SDK exposes NO per-call or
+ *     per-session env surface; the only way env reaches tool child processes
+ *     is the `opencode serve` process environment, which
+ *     `createOpencodeServer` copies from `process.env` **synchronously**
+ *     (its `spawn` call runs before its first `await`, so the snapshot is
+ *     taken inside our call frame). {@link getOrStartServer} therefore keys
+ *     servers by a hash of the FULL env binding entries (keys AND values —
+ *     two bindings that share keys but differ in values must not share a
+ *     server), overlays the bindings onto `process.env` for exactly the
+ *     synchronous prefix of the `createOpencode` call, and restores the
+ *     previous values before awaiting. JavaScript's single-threaded event
+ *     loop makes that overlay window atomic: no concurrently-running akm
+ *     code can observe the mutated environment. Units with the same
+ *     bindings share one server; units with none share the default server
+ *     (byte-identical to the pre-R2 singleton behavior).
+ *
+ * This is what removed the workflow engine's `env_unsupported` hard-fail for
+ * the sdk runner: injection genuinely reaches the child, because tool
+ * subprocesses (bash etc.) inherit the server process environment.
  */
 
+import { createHash } from "node:crypto";
 import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
@@ -21,10 +57,15 @@ import { resolveModel } from "../../agent/model-aliases";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
 
+/** Per-call working-directory scope (see module doc — SDK `query.directory`). */
+interface SdkDirectoryQuery {
+  directory?: string;
+}
+
 /** Minimal surface of the OpenCode SDK client used by this runner. */
 interface SdkClient {
   session: {
-    create(args: { body: { title: string } }): Promise<{ data?: { id?: string } }>;
+    create(args: { body: { title: string }; query?: SdkDirectoryQuery }): Promise<{ data?: { id?: string } }>;
     prompt(args: {
       path: { id: string };
       // `system` and `tools` are forwarded when present — see the #564 bug
@@ -35,6 +76,7 @@ interface SdkClient {
         system?: string;
         tools?: Record<string, boolean>;
       };
+      query?: SdkDirectoryQuery;
     }): Promise<{
       data?: {
         // AssistantMessage projection (SDK 1.2.20 types.gen.d.ts): token
@@ -44,7 +86,7 @@ interface SdkClient {
         parts?: { type: string; text?: string }[];
       };
     }>;
-    delete(args: { path: { id: string } }): Promise<unknown>;
+    delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
   };
 }
 
@@ -54,8 +96,22 @@ interface SdkServer {
   server: { close(): void };
 }
 
-// Singleton server — started once per process, reused across calls
-let _server: SdkServer | null = null;
+/** The `createOpencode` surface this runner needs (real SDK or test fake). */
+type SdkServerFactory = (options: { config?: Record<string, unknown> }) => Promise<SdkServer>;
+
+// Server registry — one server per env-binding signature, started lazily and
+// reused across calls. The default (no env bindings) key is "" and behaves
+// exactly like the pre-R2 process-wide singleton.
+const _servers = new Map<string, Promise<SdkServer>>();
+
+// Test override: when set, every call uses this server (all keys) and no real
+// server is ever started.
+let _testServer: SdkServer | null = null;
+
+// Test seam replacing the real `createOpencode` import (see __setServerFactory).
+let _serverFactory: SdkServerFactory | null = null;
+
+let _exitHookInstalled = false;
 
 /**
  * Test-only seam: inject a fake {@link SdkServer} so `runOpencodeSdk` can be
@@ -65,20 +121,46 @@ let _server: SdkServer | null = null;
  * leading underscores mark it as internal.
  */
 export function __setTestServer(server: SdkServer | null): void {
-  _server = server;
+  _testServer = server;
 }
 
 /**
- * Close the singleton OpenCode SDK server and reset the handle.
- * Primarily for use in tests to ensure clean teardown between test runs.
+ * Test-only seam: replace the `createOpencode` factory so the env-keyed
+ * server registry (module doc, *Per-call cwd and env*) can be exercised
+ * without the real SDK. The fake MUST read whatever `process.env` state it
+ * cares about in its SYNCHRONOUS prefix — exactly like the real
+ * `createOpencodeServer`, whose `spawn` snapshot happens before its first
+ * await — because the runner restores the env overlay as soon as the factory
+ * call returns its promise. Pass `null` to clear.
+ */
+export function __setServerFactory(factory: SdkServerFactory | null): void {
+  _serverFactory = factory;
+}
+
+/**
+ * Close every started OpenCode SDK server and reset the registry (and any
+ * injected test server). Primarily for use in tests to ensure clean teardown
+ * between test runs; also wired to process exit.
  */
 export function closeServer(): void {
+  for (const pending of _servers.values()) {
+    pending
+      .then((s) => {
+        try {
+          s.server.close();
+        } catch {
+          /* ignore */
+        }
+      })
+      .catch(() => {});
+  }
+  _servers.clear();
   try {
-    _server?.server.close();
+    _testServer?.server.close();
   } catch {
     /* ignore */
   }
-  _server = null;
+  _testServer = null;
 }
 
 /**
@@ -162,23 +244,102 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
   return sdkConfig;
 }
 
-async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
-  if (_server) return _server;
+/**
+ * Stable key for the env-keyed server registry: sha256 over the SORTED
+ * binding entries (keys AND values — see module doc), "" when no bindings.
+ */
+function envServerKey(env: Record<string, string> | undefined): string {
+  if (!env || Object.keys(env).length === 0) return "";
+  const entries = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
 
-  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
-    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
-  });
+/**
+ * Overlay `env` onto `process.env`, returning a restore function. The
+ * overlay is intended to live only for the SYNCHRONOUS prefix of the server
+ * factory call (module doc): mutation → factory() → restore happens in one
+ * uninterruptible event-loop turn, so no other code observes it.
+ */
+function overlayProcessEnv(env: Record<string, string>): () => void {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(env)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  return () => {
+    for (const [key, prior] of previous) {
+      if (prior === undefined) delete process.env[key];
+      else process.env[key] = prior;
+    }
+  };
+}
+
+async function startServer(
+  profile: AgentProfile,
+  llmConfig: LlmConnectionConfig | undefined,
+  env: Record<string, string> | undefined,
+): Promise<SdkServer> {
+  const factory: SdkServerFactory =
+    _serverFactory ??
+    (
+      (await import("@opencode-ai/sdk").catch(() => {
+        throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
+      })) as { createOpencode: SdkServerFactory }
+    ).createOpencode;
 
   const sdkConfig = buildSdkConfig(profile, llmConfig);
+  const options = Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {};
 
-  _server = (await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {})) as SdkServer;
+  // Env injection (module doc): the SDK's createOpencodeServer snapshots
+  // process.env synchronously (its spawn precedes its first await), so the
+  // overlay only needs to survive the factory's synchronous prefix. Restore
+  // BEFORE awaiting, so nothing else ever runs under the mutated env.
+  let pending: Promise<SdkServer>;
+  if (env && Object.keys(env).length > 0) {
+    const restore = overlayProcessEnv(env);
+    try {
+      pending = factory(options);
+    } finally {
+      restore();
+    }
+  } else {
+    pending = factory(options);
+  }
 
-  process.once("exit", () => {
-    closeServer();
-  });
+  const server = await pending;
+  if (!server) throw new Error("Failed to initialise OpenCode SDK server.");
 
-  if (!_server) throw new Error("Failed to initialise OpenCode SDK server.");
-  return _server;
+  if (!_exitHookInstalled) {
+    _exitHookInstalled = true;
+    process.once("exit", () => {
+      closeServer();
+    });
+  }
+  return server;
+}
+
+/**
+ * Get (or lazily start) the server for this call's env bindings. Servers are
+ * keyed by {@link envServerKey}; concurrent callers of the same key share one
+ * start (the registry stores the in-flight promise). A failed start is
+ * evicted so the next call can retry instead of caching the error forever.
+ */
+async function getOrStartServer(
+  profile: AgentProfile,
+  llmConfig?: LlmConnectionConfig,
+  env?: Record<string, string>,
+): Promise<SdkServer> {
+  if (_testServer) return _testServer;
+  const key = envServerKey(env);
+  let pending = _servers.get(key);
+  if (!pending) {
+    pending = startServer(profile, llmConfig, env);
+    _servers.set(key, pending);
+    pending.catch(() => {
+      if (_servers.get(key) === pending) _servers.delete(key);
+    });
+  }
+  return pending;
 }
 
 /**
@@ -222,7 +383,7 @@ export async function runOpencodeSdk(
 
   let client: SdkClient;
   try {
-    ({ client } = await getOrStartServer(profile, llmConfig));
+    ({ client } = await getOrStartServer(profile, llmConfig, opts.env));
   } catch (e) {
     return {
       ok: false,
@@ -235,8 +396,13 @@ export async function runOpencodeSdk(
     };
   }
 
+  // Per-call working directory (module doc): forwarded as the SDK's
+  // `query.directory` on every session call, so worktree-isolated units run
+  // in their own checkout without a per-cwd server.
+  const query: SdkDirectoryQuery | undefined = opts.cwd ? { directory: opts.cwd } : undefined;
+
   // One session per call — do NOT reuse (history accumulates, token costs grow)
-  const sessionRes = await client.session.create({ body: { title: "akm" } });
+  const sessionRes = await client.session.create({ body: { title: "akm" }, ...(query ? { query } : {}) });
   const sessionId = sessionRes.data?.id;
   if (!sessionId) {
     return {
@@ -291,7 +457,7 @@ export async function runOpencodeSdk(
   const abortSignal = opts.signal;
 
   try {
-    const promptPromise = client.session.prompt({ path: { id: sessionId }, body });
+    const promptPromise = client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) });
     type PromptResult = Awaited<typeof promptPromise>;
 
     const racers: Promise<PromptResult | typeof TIMED_OUT | typeof ABORTED>[] = [promptPromise];
@@ -372,6 +538,6 @@ export async function runOpencodeSdk(
     if (timer !== undefined) clearTimeoutImpl(timer);
     if (abortSignal && onAbort) abortSignal.removeEventListener("abort", onAbort);
     // Clean up session to prevent disk accumulation in ~/.local/share/opencode/
-    await client.session.delete({ path: { id: sessionId } }).catch(() => {});
+    await client.session.delete({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
   }
 }

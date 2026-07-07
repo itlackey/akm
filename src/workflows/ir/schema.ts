@@ -45,7 +45,13 @@ export const WORKFLOW_IR_VERSION = 2;
 /** Execution backend for a unit. `inherit` = the run-level default runner. */
 export type IrRunnerKind = "llm" | "agent" | "sdk" | "inherit";
 
-/** Filesystem isolation for parallel file-mutating units. TODO(R2): enforcement. */
+/**
+ * Filesystem isolation for parallel file-mutating units. `worktree` (R2,
+ * enforced by the native executor): each attempt of an agent/sdk unit runs
+ * in a fresh detached git worktree of the engine's working directory —
+ * journaled on the unit row (`worktree_path`), removed when left clean,
+ * retained when dirty. llm units cannot be isolated (no child process).
+ */
 export type IrIsolation = "none" | "worktree";
 
 /** How a `map` node folds its per-item results into one step result. */
@@ -109,7 +115,7 @@ export interface IrAgentNode {
   onError: IrOnError;
   /** Env asset refs resolved into the child env at dispatch. */
   env?: string[];
-  /** TODO(R2): worktree isolation is engine-rework scope; carried through now. */
+  /** Filesystem isolation (see {@link IrIsolation}); absent = `"none"`. */
   isolation?: IrIsolation;
   source?: SourceRef;
 }

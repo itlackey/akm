@@ -158,6 +158,15 @@ export interface RunAgentOptions {
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
   /**
+   * Observability seam (redesign addendum R2, `workflow watch`): invoked at
+   * spawn start and spawn exit with ids/status only — pid, profile name,
+   * exit code, failure reason. NEVER prompt or output content (07 P1-B
+   * rule). Best-effort: a throwing callback is swallowed so observability
+   * can never break a dispatch. No events fire when the child was never
+   * spawned (pre-spawn abort, synchronous spawn failure).
+   */
+  onEvent?: (evt: { type: string; data?: Record<string, unknown> }) => void;
+  /**
    * Abstract dispatch parameters. When present, the platform-specific
    * AgentCommandBuilder constructs the argv from these fields (system prompt,
    * model alias, tool policy). When absent, falls back to the legacy
@@ -346,6 +355,16 @@ export async function runAgent(
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
 
+  // Observability seam — ids/status only, best-effort (see RunAgentOptions.onEvent).
+  const emitSpawnEvent = (type: string, data: Record<string, unknown>): void => {
+    if (!options.onEvent) return;
+    try {
+      options.onEvent({ type, data });
+    } catch {
+      // Observability must never break the dispatch.
+    }
+  };
+
   // Build argv via the platform-specific builder when dispatch params are
   // provided; fall back to the legacy positional-prompt form otherwise.
   let builtArgv: readonly string[];
@@ -409,6 +428,10 @@ export async function runAgent(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+  emitSpawnEvent("spawn_start", {
+    profile: profile.name,
+    ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+  });
 
   // Hard timeout. We prefer SIGTERM, then SIGKILL if SIGTERM is ignored,
   // but the subprocess only exposes a single .kill() — one signal is enough
@@ -511,6 +534,12 @@ export async function runAgent(
     // will not block indefinitely.
     await Promise.allSettled([stdoutPromise, stderrPromise]);
     const durationMs = Date.now() - start;
+    emitSpawnEvent("spawn_exit", {
+      profile: profile.name,
+      ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+      exitCode: null,
+      status: "spawn_failed",
+    });
     return {
       ok: false,
       exitCode: null,
@@ -523,6 +552,12 @@ export async function runAgent(
   }
   clearTimeoutImpl(timer);
   abortSignal?.removeEventListener("abort", onAbort);
+  emitSpawnEvent("spawn_exit", {
+    profile: profile.name,
+    ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+    exitCode,
+    status: aborted ? "aborted" : timedOut ? "timeout" : exitCode !== 0 ? "non_zero_exit" : "ok",
+  });
 
   const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
   const durationMs = Date.now() - start;

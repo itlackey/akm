@@ -79,6 +79,16 @@
  *     times when its `failureReason` is in `on`. Every retry journals its OWN
  *     row under `<unitId>~r<attempt>` so no attempt's record is clobbered.
  *
+ * Worktree isolation (addendum, R2 `isolation: worktree`): each journaled
+ * attempt of an isolated agent/sdk unit runs in a FRESH detached git worktree
+ * of the engine's working directory (`ctx.workDir`, default `process.cwd()`),
+ * minted under a run-scoped tmp dir (`worktree.ts`) and passed to dispatch as
+ * the child's cwd. The path is journaled on the unit row (`worktree_path`);
+ * after the unit finishes, a clean worktree is removed and a dirty one is
+ * retained + logged (uncollected work is never destroyed). A non-git base
+ * directory fails the step cleanly before any dispatch, and llm units reject
+ * isolation loudly — there is no child process to isolate.
+ *
  * Budget ceilings (addendum, R2): a frozen plan's `budget` block
  * (`max_units` / `max_tokens`) is enforced per RUN. The engine seeds
  * `ctx.unitsDispatched` (journal row count) and `ctx.tokensUsed` (journaled
@@ -103,6 +113,7 @@ import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { runStructured } from "../../core/structured";
+import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import type { IrAgentNode, IrBudget, IrStepPlan } from "../ir/schema";
@@ -115,6 +126,7 @@ import {
 } from "../program/expressions";
 import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./scheduler";
 import { enqueueUnitWrite } from "./unit-writer";
+import { assertGitWorkTree, cleanupUnitWorktree, createUnitWorktree } from "./worktree";
 
 /**
  * Default per-unit timeout. Deliberately NOT the 60 s agent default
@@ -143,6 +155,14 @@ export interface UnitDispatchRequest {
   schema?: Record<string, unknown>;
   /** Resolved env bindings to merge into the child environment. */
   env?: Record<string, string>;
+  /**
+   * Working directory for the unit's child — set exactly when the unit
+   * declares `isolation: worktree` (a fresh detached worktree per attempt,
+   * see `worktree.ts`). Forwarded to the agent (CLI) spawn and, per-call, to
+   * the opencode SDK session; the llm runner has no working directory, so a
+   * cwd reaching a resolved-llm dispatch fails loudly.
+   */
+  cwd?: string;
   signal?: AbortSignal;
 }
 
@@ -238,6 +258,13 @@ export interface StepExecutionContext {
   tokensUsed?: number;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
+  /**
+   * Base directory for `isolation: worktree` units — the git repository the
+   * per-attempt detached worktrees are minted from. Defaults to
+   * `process.cwd()` (the directory the engine invocation runs in); injected
+   * by tests so no chdir is needed.
+   */
+  workDir?: string;
 }
 
 export interface StepExecutionResult {
@@ -462,6 +489,28 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     }
   }
 
+  // Worktree isolation preflight (addendum R2), once per step, before any
+  // dispatch: llm units have no working directory to isolate (fail loudly),
+  // and a non-git base directory fails the step cleanly instead of N units
+  // racing into identical git errors. The actual worktrees are minted per
+  // journaled attempt in dispatchJournaledAttempt.
+  let worktreeBase: string | undefined;
+  if (template.isolation === "worktree") {
+    if (template.runner === "llm") {
+      return failedStep(
+        dispatched,
+        `Step "${plan.stepId}" declares isolation: worktree on an llm unit — the llm runner has no ` +
+          `working directory to isolate. Use the agent or sdk runner for worktree-isolated units.`,
+      );
+    }
+    const base = ctx.workDir ?? process.cwd();
+    const gitError = assertGitWorkTree(base);
+    if (gitError !== undefined) {
+      return failedStep(dispatched, `Step "${plan.stepId}" cannot use isolation: worktree: ${gitError}`);
+    }
+    worktreeBase = base;
+  }
+
   const dispatcher = ctx.dispatcher ?? defaultUnitDispatcher;
 
   // Durable-row resume: a unit whose previous attempt completed with the
@@ -523,6 +572,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
           unitId: unitIds[index],
           isFanOut,
           env,
+          ...(worktreeBase !== undefined ? { worktreeBase } : {}),
           ctx,
           signal,
           dispatcher,
@@ -634,6 +684,8 @@ interface RunUnitInput {
   unitId: string;
   isFanOut: boolean;
   env?: Record<string, string>;
+  /** Git repo worktrees are minted from — set exactly when the unit declares `isolation: worktree`. */
+  worktreeBase?: string;
   ctx: StepExecutionContext;
   /**
    * Effective dispatch signal: `ctx.signal`, or the budget-chained
@@ -772,6 +824,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
       attemptId,
       isFanOut,
       inputHash,
+      ...(input.worktreeBase !== undefined ? { worktreeBase: input.worktreeBase } : {}),
     });
     // Budget token accounting (addendum R2): every actual dispatch's reported
     // usage counts against the run's max_tokens ceiling; crossing it aborts
@@ -796,11 +849,28 @@ interface JournaledAttemptInput {
   attemptId: string;
   isFanOut: boolean;
   inputHash: string;
+  /** Git repo to mint this attempt's isolation worktree from (`isolation: worktree`). */
+  worktreeBase?: string;
 }
 
 /** Journal one dispatch attempt: insert row, events, dispatch, finish row. */
 async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<UnitOutcome> {
-  const { plan, template, ctx, dispatcher, request, attemptId, isFanOut, inputHash } = input;
+  const { plan, template, ctx, dispatcher, attemptId, isFanOut, inputHash } = input;
+  let request = input.request;
+
+  // Worktree isolation (addendum R2): a FRESH detached worktree per journaled
+  // attempt, minted before the row is inserted so worktree_path is journaled
+  // with the dispatch. A creation failure fails the unit WITHOUT journaling a
+  // row — nothing was dispatched (same contract as an expression failure).
+  let worktreePath: string | undefined;
+  if (input.worktreeBase !== undefined) {
+    const created = createUnitWorktree(input.worktreeBase, ctx.runId, attemptId);
+    if (!created.ok) {
+      return { unitId: request.unitId, ok: false, failureReason: "worktree_failed", error: created.error };
+    }
+    worktreePath = created.path;
+    request = { ...request, cwd: worktreePath };
+  }
 
   await enqueueUnitWrite(async () => {
     await withWorkflowRunsRepo((repo) =>
@@ -814,6 +884,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
         runner: template.runner,
         model: template.model ?? null,
         inputHash,
+        worktreePath: worktreePath ?? null,
         startedAt: new Date().toISOString(),
       }),
     );
@@ -861,6 +932,21 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
       ...(outcome.tokens !== undefined ? { tokens: outcome.tokens } : {}),
     },
   });
+
+  // Worktree lifecycle epilogue: a CLEAN worktree (`git status --porcelain`
+  // empty) is removed; a DIRTY one is retained and logged — the unit left
+  // uncollected work, and its journaled worktree_path says where. Cleanup is
+  // best-effort observability, never a unit failure.
+  if (worktreePath !== undefined && input.worktreeBase !== undefined) {
+    const cleanup = cleanupUnitWorktree(input.worktreeBase, worktreePath);
+    if (cleanup.dirty) {
+      warn(
+        `Workflow unit ${attemptId} left uncommitted changes in its isolation worktree; retained at ${worktreePath}`,
+      );
+    } else if (!cleanup.removed) {
+      warn(`Workflow unit ${attemptId}: could not clean up isolation worktree ${worktreePath}: ${cleanup.error}`);
+    }
+  }
 
   return outcome;
 }
@@ -1178,18 +1264,34 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
 
   const resolved = resolveUnitRunner(request, config);
 
-  // `env` bindings can only reach a spawned child process. The opencode
-  // SDK server is process-wide (no per-call env — plan open decision 1) and
-  // the llm runner has no child at all. Failing loudly beats an audit event
-  // that claims an injection which never reached the unit.
-  if (request.env && Object.keys(request.env).length > 0 && resolved.kind !== "agent") {
+  // `env` bindings can only reach a child process. The agent (CLI) runner
+  // spawns one per call, and the sdk runner now injects them for real via the
+  // env-keyed opencode server registry (sdk-runner.ts module doc, open seam
+  // decision 1 resolved in R2) — but the llm runner has no child at all, so
+  // it still fails loudly: an audit event claiming an injection that never
+  // reached the unit would be a lie.
+  if (request.env && Object.keys(request.env).length > 0 && resolved.kind === "llm") {
     return {
       ok: false,
       text: "",
       failureReason: "env_unsupported",
       error:
-        `unit "${request.unitId}" declares env bindings, which currently require the agent (CLI) runner — ` +
-        `the "${resolved.kind}" runner cannot inject a per-unit child environment.`,
+        `unit "${request.unitId}" declares env bindings, which require a child process (agent or sdk runner) — ` +
+        `the "llm" runner cannot inject a per-unit child environment.`,
+    };
+  }
+
+  // Same shape for worktree isolation resolved onto llm through `inherit`:
+  // the executor already rejects an EXPLICIT llm+isolation pairing before
+  // dispatch, but an inherit unit only reveals its runner here.
+  if (request.cwd && resolved.kind === "llm") {
+    return {
+      ok: false,
+      text: "",
+      failureReason: "isolation_unsupported",
+      error:
+        `unit "${request.unitId}" declares isolation: worktree but resolved to the "llm" runner, ` +
+        `which has no working directory to isolate. Use the agent or sdk runner for isolated units.`,
     };
   }
 
@@ -1228,6 +1330,9 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
     parseOutput: "text",
     timeoutMs: request.timeoutMs,
     ...(request.env ? { env: request.env } : {}),
+    // Worktree isolation: the unit's fresh checkout is the child's cwd —
+    // runAgent spawns there; the sdk runner scopes the session to it.
+    ...(request.cwd ? { cwd: request.cwd } : {}),
     ...(request.signal ? { signal: request.signal } : {}),
     // Route CLI dispatch through the platform AgentCommandBuilder so model
     // aliases resolve per-harness (P0.5 model routing).
