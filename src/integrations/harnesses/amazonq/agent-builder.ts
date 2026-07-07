@@ -39,7 +39,7 @@
  *   ("via prompt+validate": *(none documented)* — there is no `--json` or
  *   `--output-format` to ask for). The JSON Schema is therefore passed
  *   through the prompt: a directive matching the engine's wording
- *   (`native-executor.ts` `buildUnitPrompt`) is appended to the payload.
+ *   (`step-work.ts` `buildUnitPrompt`) is appended to the payload.
  *   Stdout stays plain text; `./result-extractor.ts` strips terminal framing
  *   and the engine's shared embedded-JSON parse + retry-until-valid loop does
  *   the rest. No schema temp file is written — that seam is codex-only

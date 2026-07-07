@@ -91,6 +91,7 @@ const PASSTHROUGH_COMMANDS = [
   "wiki-show",
   "wiki-stash",
   "workflow-abandon",
+  "workflow-brief",
   "workflow-complete",
   "workflow-complete-rejected",
   "workflow-create",

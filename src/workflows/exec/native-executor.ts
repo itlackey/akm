@@ -107,8 +107,6 @@
  *     engine loop's job (`run-workflow.ts`) via `completeWorkflowStep`.
  */
 
-import { createHash } from "node:crypto";
-import unitPreambleTemplate from "../../assets/prompts/workflow-unit-preamble.md" with { type: "text" };
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
@@ -116,29 +114,29 @@ import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
-import type { IrAgentNode, IrBudget, IrStepPlan } from "../ir/schema";
-import {
-  type ExpressionScope,
-  parseTemplate,
-  resolveTemplate,
-  resolveWholeValue,
-  type TemplateSegment,
-} from "../program/expressions";
+import type { IrBudget, IrStepPlan } from "../ir/schema";
 import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./scheduler";
+// Shared step semantics — the ONE implementation consumed by both the engine
+// (this module + run-workflow.ts) and, from R3, the brief/report driver
+// protocol. This module dispatches; step-work.ts owns the pure decisions.
+import {
+  buildArtifactSummary,
+  buildEvidence,
+  computeStepWorkList,
+  DEFAULT_UNIT_TIMEOUT_MS,
+  type GateFeedback,
+  projectStepOutput,
+  type StepWorkUnit,
+  stepOutputsFromEvidence,
+  type UnitOutcome,
+  validateStepArtifact,
+} from "./step-work";
 import { enqueueUnitWrite } from "./unit-writer";
 import { assertGitWorkTree, cleanupUnitWorktree, createUnitWorktree } from "./worktree";
 
-/**
- * Default per-unit timeout. Deliberately NOT the 60 s agent default
- * (`DEFAULT_AGENT_TIMEOUT_MS`) — workflow units routinely run real coding
- * tasks on slow local models; 10 minutes matches the LLM-path default
- * (`tryLlmFeature`). A unit's `timeout` declaration overrides this; `none`
- * disables.
- */
-export const DEFAULT_UNIT_TIMEOUT_MS = 600_000;
-
-/** How much raw unit output is retained in step evidence (full text lives on the unit row). */
-const EVIDENCE_TEXT_CLIP = 2_000;
+// Re-exported for existing consumers (run-workflow.ts, tests) that import these
+// from native-executor; they now live in the shared step-work module.
+export { buildArtifactSummary, DEFAULT_UNIT_TIMEOUT_MS, type GateFeedback, projectStepOutput, type UnitOutcome };
 
 /** Everything the dispatcher needs to run one unit, resolved by the executor. */
 export interface UnitDispatchRequest {
@@ -191,33 +189,6 @@ export interface UnitDispatchResult {
 
 /** The one dispatch seam. `feedback` carries runStructured's corrective retry message. */
 export type UnitDispatcher = (request: UnitDispatchRequest, feedback?: string) => Promise<UnitDispatchResult>;
-
-export interface UnitOutcome {
-  unitId: string;
-  ok: boolean;
-  /** Parsed value for schema units; raw (clipped) text otherwise. */
-  result?: unknown;
-  text?: string;
-  failureReason?: string;
-  error?: string;
-  tokens?: number;
-  /**
-   * Harness-native session id revealed during dispatch (last one wins across
-   * structured-output retries). Persisted on the unit row by `finishUnit`.
-   */
-  sessionId?: string;
-}
-
-/**
- * Corrective feedback from a rejected completion gate, threaded into the next
- * gate-loop execution of the step subgraph (`gate.max_loops`, addendum R2).
- * Appended to every unit prompt, so the input hash changes and the loop's
- * units re-dispatch naturally instead of reusing the rejected attempt's rows.
- */
-export interface GateFeedback {
-  feedback: string;
-  missing: string[];
-}
 
 export interface StepExecutionContext {
   runId: string;
@@ -374,91 +345,24 @@ class DispatchBudget {
 /** Execute one step plan natively. Never throws for unit-level failures. */
 export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
   const dispatched = ctx.unitsDispatched ?? 0;
-  const root = plan.root;
 
-  // Route-only steps (YAML `route:`) carry no execution subgraph — the engine
-  // loop (`run-workflow.ts`) evaluates them without calling this function.
-  // Reaching here without a root is an error, never a silent no-op.
-  if (!root) {
-    return failedStep(
-      dispatched,
-      `Step "${plan.stepId}" has no execution subgraph (a route-only step); the native executor cannot dispatch it.`,
-    );
+  // Work-list computation is the SHARED, PURE decision (step-work.ts): resolve
+  // the fan-out list, derive content-derived unit ids, assemble each unit's
+  // prompt, and hash its resolved input. `brief` (R3) computes the identical
+  // list — that shared implementation is the anti-drift guarantee. This module
+  // owns only the impure remainder: env/worktree preflight, durable-row reuse,
+  // dispatch, journaling, budget.
+  const workList = computeStepWorkList(plan, {
+    runId: ctx.runId,
+    params: ctx.params,
+    stepOutputs: stepOutputsFromEvidence(ctx.evidence),
+    ...(ctx.gateLoop !== undefined ? { gateLoop: ctx.gateLoop } : {}),
+    ...(ctx.gateFeedback ? { gateFeedback: ctx.gateFeedback } : {}),
+  });
+  if (!workList.ok) {
+    return failedStep(dispatched, workList.error);
   }
-
-  const template = root.kind === "map" ? root.template : root;
-  const reducer = root.kind === "map" ? root.reducer : "collect";
-
-  // The deterministic expression scope for this step: run params plus prior
-  // steps' promoted artifacts (projectStepOutput over their journaled evidence).
-  const scope: ExpressionScope = { params: ctx.params, stepOutputs: stepOutputsFromEvidence(ctx.evidence) };
-
-  // Parse the instruction template ONCE per step (deterministic; resolution
-  // is a single pass per unit — substituted content is never re-scanned).
-  // Only nodes the frontend marked `templating: "expressions"` (YAML program
-  // units) carry the `${{ … }}` grammar; everything else — classic linear
-  // markdown steps, whose behavior is a stable contract — is opaque verbatim
-  // text, so a literal `${{` in markdown instructions passes through to the
-  // agent unchanged instead of failing the step.
-  let instructionSegments: TemplateSegment[];
-  if (template.templating === "expressions") {
-    const parsedInstructions = parseTemplate(template.instructions);
-    if (!parsedInstructions.ok) {
-      return failedStep(
-        dispatched,
-        `Step "${plan.stepId}" instructions template failed to parse: ` +
-          parsedInstructions.errors.map((e) => e.message).join(" "),
-      );
-    }
-    instructionSegments = parsedInstructions.segments;
-  } else {
-    instructionSegments = [{ kind: "literal", text: template.instructions }];
-  }
-
-  // Resolve fan-out items: `over` is a single whole-value `${{ … }}`
-  // reference naming its producer explicitly (a run param or an earlier
-  // step's output) — no ambient key search.
-  let items: unknown[];
-  if (root.kind === "map") {
-    const source = resolveWholeValue(root.over, scope);
-    if (!source.ok) {
-      return failedStep(
-        dispatched,
-        `Step "${plan.stepId}" fan-out "over" (${root.over}) failed to resolve: ${source.error.message}`,
-      );
-    }
-    if (!Array.isArray(source.value)) {
-      return failedStep(
-        dispatched,
-        `Step "${plan.stepId}" fan-out "over" (${root.over}) resolved to ${typeof source.value}, not an array.`,
-      );
-    }
-    items = source.value;
-  } else {
-    items = [undefined];
-  }
-
-  // Content-derived unit identity (module doc): compute every unit id up
-  // front from the resolved items. Duplicate items collide on identity — an
-  // authoring error caught HERE, deterministically, before any dispatch.
-  const isFanOut = root.kind === "map";
-  const unitIds = items.map((item) => unitIdFor(template.id, item, isFanOut));
-  if (isFanOut) {
-    const firstIndexByCanonical = new Map<string, number>();
-    for (let i = 0; i < items.length; i++) {
-      const canonical = canonicalJson(items[i]) ?? "null";
-      const firstIndex = firstIndexByCanonical.get(canonical);
-      if (firstIndex !== undefined) {
-        return failedStep(
-          dispatched,
-          `Step "${plan.stepId}" fan-out list contains duplicate items (indices ${firstIndex} and ${i}: ` +
-            `${clip(canonical, 200)}). Content-derived unit identity requires distinct items — ` +
-            `deduplicate the list this workflow fans out over.`,
-        );
-      }
-      firstIndexByCanonical.set(canonical, i);
-    }
-  }
+  const { template, reducer, isFanOut, items, units: workUnits } = workList.list;
 
   if (items.length === 0) {
     // The promoted step artifact of an empty collect is the empty array; an
@@ -560,17 +464,11 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   let outcomes: Array<UnitOutcome | undefined>;
   try {
     outcomes = await scheduleUnits(
-      items,
-      (item, index) =>
+      workUnits,
+      (workUnit) =>
         runUnit({
           plan,
-          template,
-          instructionSegments,
-          scope,
-          item,
-          index,
-          unitId: unitIds[index],
-          isFanOut,
+          workUnit,
           env,
           ...(worktreeBase !== undefined ? { worktreeBase } : {}),
           ctx,
@@ -580,7 +478,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
           budget,
         }),
       {
-        concurrency: root.kind === "map" ? root.concurrency : 1,
+        concurrency: workList.list.concurrency,
         signal,
         maxConcurrency: ctx.maxConcurrency,
       },
@@ -602,7 +500,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const units = outcomes.map(
     (outcome, index) =>
       outcome ?? {
-        unitId: unitIds[index],
+        unitId: workUnits[index].unitId,
         ok: false,
         failureReason: "aborted",
         error: "unit was not dispatched (aborted or scheduler failure)",
@@ -628,7 +526,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   // reducer with no majority fails the step under either policy — a routing
   // decision downstream must never consume a non-result.
   const failed = units.filter((u) => !u.ok);
-  const evidence = buildEvidence(units, reducer, root.kind === "map");
+  const evidence = buildEvidence(units, reducer, isFanOut);
   const reducerNote = typeof evidence.voteError === "string" ? ` ${evidence.voteError}` : "";
   const tolerateFailures = template.onError === "continue";
   let ok = (tolerateFailures || failed.length === 0) && !evidence.voteError;
@@ -673,16 +571,8 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
 
 interface RunUnitInput {
   plan: IrStepPlan;
-  template: IrAgentNode;
-  /** Instruction template segments, parsed ONCE per step by executeStepPlan. */
-  instructionSegments: TemplateSegment[];
-  /** Step-wide expression scope (params + prior step outputs); item scoping is per unit. */
-  scope: ExpressionScope;
-  item: unknown;
-  index: number;
-  /** Content-derived unit id (`<node_id>:<hash12>` / `<node_id>:solo`), computed by executeStepPlan. */
-  unitId: string;
-  isFanOut: boolean;
+  /** The precomputed work unit (id, resolved prompt + input hash, node metadata) from step-work. */
+  workUnit: StepWorkUnit;
   env?: Record<string, string>;
   /** Git repo worktrees are minted from — set exactly when the unit declares `isolation: worktree`. */
   worktreeBase?: string;
@@ -700,67 +590,46 @@ interface RunUnitInput {
 }
 
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
-  const { plan, template, item, index, unitId, isFanOut, env, ctx, dispatcher } = input;
+  const { plan, workUnit, env, ctx, dispatcher } = input;
+  const unitId = workUnit.unitId;
 
-  // Single-pass resolution of the pre-parsed template against this unit's
-  // scope. A resolution failure (missing param, bad path) is deterministic
-  // authoring/data breakage: the unit fails WITHOUT dispatching — and without
-  // journaling a row, since no resolved input exists to hash.
-  const unitScope: ExpressionScope = isFanOut ? { ...input.scope, item, itemIndex: index } : input.scope;
-  const resolved = resolveTemplate(input.instructionSegments, unitScope);
-  if (!resolved.ok) {
-    return {
-      unitId,
-      ok: false,
-      failureReason: "expression_error",
-      error: `instructions failed to resolve: ${resolved.errors.map((e) => e.message).join(" ")}`,
-    };
+  // A per-unit expression resolution failure (missing param, bad `item.<path>`)
+  // is deterministic authoring/data breakage computed by the shared work-list:
+  // the unit fails WITHOUT dispatching — and without journaling a row, since no
+  // resolved input exists to hash.
+  if (!workUnit.resolved.ok) {
+    return { unitId, ok: false, failureReason: "expression_error", error: workUnit.resolved.error };
   }
 
-  // The prompt (and therefore the input hash) is built once with the BASE
-  // unit id: a retry re-dispatches the SAME input, the `~r<n>` suffix is
-  // journal bookkeeping only.
-  const prompt = buildUnitPrompt({ plan, template, ctx, unitId, instructions: resolved.text });
-  const timeoutMs = template.timeoutMs === undefined ? DEFAULT_UNIT_TIMEOUT_MS : template.timeoutMs;
+  // The prompt (and therefore the input hash) was built once with the BASE
+  // unit id by computeStepWorkList: a retry re-dispatches the SAME input, the
+  // `~r<n>` suffix is journal bookkeeping only.
+  const { prompt, inputHash } = workUnit.resolved;
 
   const request: UnitDispatchRequest = {
     runId: ctx.runId,
     stepId: plan.stepId,
     unitId,
-    nodeId: template.id,
+    nodeId: workUnit.nodeId,
     prompt,
-    runner: template.runner,
-    ...(template.profile ? { profile: template.profile } : {}),
-    ...(template.model ? { model: template.model } : {}),
-    timeoutMs,
-    ...(template.schema ? { schema: template.schema } : {}),
+    runner: workUnit.runner,
+    ...(workUnit.profile ? { profile: workUnit.profile } : {}),
+    ...(workUnit.model ? { model: workUnit.model } : {}),
+    timeoutMs: workUnit.timeoutMs,
+    ...(workUnit.schema ? { schema: workUnit.schema } : {}),
     ...(env ? { env } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
   };
 
-  const inputHash = createHash("sha256")
-    .update(
-      JSON.stringify({
-        prompt,
-        runner: template.runner,
-        model: template.model ?? null,
-        schema: template.schema ?? null,
-      }),
-    )
-    .digest("hex");
-
   // Bounded retry (IR v2 failure policy): attempt 0 journals under the base
-  // unit id, retry attempt N under `<unitId>~r<N>` — every attempt keeps its
-  // own row, nothing is clobbered. Retries only fire when the failure reason
-  // is in `retry.on`.
-  const retry = template.retry;
+  // journal id (`<unitId>`, or `<unitId>~l<loop>` in a gate loop — computed by
+  // the shared work-list), retry attempt N under `<baseId>~r<N>`. Every attempt
+  // keeps its own row. Retries only fire when the failure reason is in
+  // `retry.on`.
+  const retry = workUnit.retry;
   const maxAttempts = 1 + Math.max(0, retry?.max ?? 0);
-  // Gate loops (module doc): attempts of loop >= 2 journal under
-  // `<unitId>~l<loop>` so loop 1's rows are never clobbered; `~r<n>` retry
-  // suffixes stack on top. Both suffixes are journal bookkeeping — the
-  // content-derived identity (and the prompt's {{UNIT_ID}}) stays the base id.
   const gateLoop = ctx.gateLoop ?? 1;
-  const journalBaseId = gateLoop > 1 ? `${unitId}~l${gateLoop}` : unitId;
+  const journalBaseId = workUnit.journalBaseId;
   const attemptIdFor = (attempt: number): string => (attempt === 0 ? journalBaseId : `${journalBaseId}~r${attempt}`);
 
   // Durable-row reuse: the FIRST completed attempt of this unit decides.
@@ -778,7 +647,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     const prior = input.existingUnits?.get(attemptId);
     if (!prior || prior.status !== "completed") continue;
     if (prior.input_hash === inputHash) {
-      return reuseCompletedUnit(attemptId, prior, template.schema !== undefined);
+      return reuseCompletedUnit(attemptId, prior, workUnit.schema !== undefined);
     }
     if (gateLoop > 1) {
       // Gate-loop rows are NOT replay-deterministic: the prompt embeds the
@@ -817,12 +686,11 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     }
     outcome = await dispatchJournaledAttempt({
       plan,
-      template,
+      workUnit,
       ctx,
       dispatcher,
       request: { ...request, unitId: attemptId },
       attemptId,
-      isFanOut,
       inputHash,
       ...(input.worktreeBase !== undefined ? { worktreeBase: input.worktreeBase } : {}),
     });
@@ -841,13 +709,12 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
 
 interface JournaledAttemptInput {
   plan: IrStepPlan;
-  template: IrAgentNode;
+  workUnit: StepWorkUnit;
   ctx: StepExecutionContext;
   dispatcher: UnitDispatcher;
   request: UnitDispatchRequest;
   /** Journal id of this attempt: `<unitId>` or `<unitId>~r<n>` for retries. */
   attemptId: string;
-  isFanOut: boolean;
   inputHash: string;
   /** Git repo to mint this attempt's isolation worktree from (`isolation: worktree`). */
   worktreeBase?: string;
@@ -855,7 +722,7 @@ interface JournaledAttemptInput {
 
 /** Journal one dispatch attempt: insert row, events, dispatch, finish row. */
 async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<UnitOutcome> {
-  const { plan, template, ctx, dispatcher, attemptId, isFanOut, inputHash } = input;
+  const { plan, workUnit, ctx, dispatcher, attemptId, inputHash } = input;
   let request = input.request;
 
   // Worktree isolation (addendum R2): a FRESH detached worktree per journaled
@@ -886,11 +753,11 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
         runId: ctx.runId,
         unitId: attemptId,
         stepId: plan.stepId,
-        nodeId: template.id,
-        parentUnitId: isFanOut ? `${plan.stepId}.map` : null,
+        nodeId: workUnit.nodeId,
+        parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
         phase: null,
-        runner: template.runner,
-        model: template.model ?? null,
+        runner: workUnit.runner,
+        model: workUnit.model ?? null,
         inputHash,
         worktreePath: worktreePath ?? null,
         startedAt: new Date().toISOString(),
@@ -905,7 +772,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     metadata: { runId: ctx.runId, stepId: plan.stepId, unitId: attemptId },
   });
 
-  const outcome = await dispatchUnit(request, template, dispatcher);
+  const outcome = await dispatchUnit(request, dispatcher);
 
   await enqueueUnitWrite(async () => {
     await withWorkflowRunsRepo((repo) =>
@@ -967,11 +834,7 @@ class UnitTransportError extends Error {
   }
 }
 
-async function dispatchUnit(
-  request: UnitDispatchRequest,
-  template: IrAgentNode,
-  dispatcher: UnitDispatcher,
-): Promise<UnitOutcome> {
+async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispatcher): Promise<UnitOutcome> {
   let tokens = 0;
   let sawUsage = false;
   // Harness-native session id revealed by dispatch (P2). Captured across
@@ -998,8 +861,8 @@ async function dispatchUnit(
   });
 
   try {
-    if (template.schema) {
-      const schema = template.schema;
+    if (request.schema) {
+      const schema = request.schema;
       const structured = await runStructured<unknown>({
         dispatch: dispatchOnce,
         validate: (candidate) => {
@@ -1041,200 +904,6 @@ async function dispatchUnit(
       ...captured(),
     };
   }
-}
-
-// ── Prompt assembly ──────────────────────────────────────────────────────────
-
-interface BuildPromptInput {
-  plan: IrStepPlan;
-  template: IrAgentNode;
-  ctx: StepExecutionContext;
-  unitId: string;
-  /** Instructions with every `${{ … }}` reference already resolved (single pass). */
-  instructions: string;
-}
-
-/**
- * Assemble the final prompt: engine preamble + resolved instructions
- * (+ gate feedback on loop re-executions, + schema directive). Workflow-
- * authored interpolation happened upstream via the expression module; only
- * the ENGINE's own preamble placeholders are substituted here.
- */
-function buildUnitPrompt(input: BuildPromptInput): string {
-  const { plan, template, ctx, unitId, instructions } = input;
-  // Function replacements throughout: a string replacement would interpret
-  // GetSubstitution patterns ($&, $$, $', $`) inside VALUES and silently
-  // corrupt the prompt (e.g. a param value containing "$&").
-  const preamble = unitPreambleTemplate
-    .replaceAll("{{RUN_ID}}", () => ctx.runId)
-    .replaceAll("{{STEP_ID}}", () => plan.stepId)
-    .replaceAll("{{UNIT_ID}}", () => unitId)
-    .replaceAll("{{PARAMS_JSON}}", () => safeJson(ctx.params));
-
-  // Gate-loop feedback (R2 max_loops): the judge's rejection is appended so
-  // the re-executed unit can address it — and so the input hash changes,
-  // making the loop's re-dispatch natural instead of a durable-row reuse.
-  const gateBlock = ctx.gateFeedback
-    ? `\n\n## Completion-gate feedback (previous attempt rejected)\n` +
-      `A completion-criteria judge rejected this step's previous results. Address this feedback:\n` +
-      ctx.gateFeedback.feedback +
-      (ctx.gateFeedback.missing.length > 0
-        ? `\nUnmet criteria:\n${ctx.gateFeedback.missing.map((m) => `- ${m}`).join("\n")}`
-        : "")
-    : "";
-
-  const schemaDirective = template.schema
-    ? `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${safeJson(template.schema)}`
-    : "";
-
-  return `${preamble}\n${instructions}${gateBlock}${schemaDirective}`;
-}
-
-// ── Step outputs + reducers ──────────────────────────────────────────────────
-
-/**
- * The value `${{ steps.<id>.output }}` resolves to for ONE step, given that
- * step's journaled evidence:
- *
- *   - engine-executed steps carry a promoted ARTIFACT under `evidence.output`
- *     (written by {@link buildEvidence}: solo unit result/text, collect
- *     array, or vote winner) — that artifact IS the step output, exactly the
- *     addressing the docs teach (`steps.discover.output.files`);
- *   - evidence without an `output` key (manually-completed steps, pre-R1
- *     rows) is exposed as-is — whatever the author recorded is the output.
- *
- * Typed artifacts (R2): when the step declares an output schema, the artifact
- * this projection exposes has already been validated against it — a
- * schema-violating artifact fails the step before completion
- * ({@link validateStepArtifact}), so it never reaches a reference.
- */
-export function projectStepOutput(evidence: Record<string, unknown>): unknown {
-  return Object.hasOwn(evidence, "output") ? evidence.output : evidence;
-}
-
-/**
- * Typed artifacts (addendum, R2): validate the promoted step artifact against
- * `IrStepPlan.outputSchema`. Returns the step-failure summary (validation
- * errors included) on mismatch, undefined when valid or when no schema is
- * declared. Runs BEFORE completion so a schema-violating artifact never
- * reaches the gate or downstream `${{ steps.<id>.output }}` references.
- */
-function validateStepArtifact(plan: IrStepPlan, evidence: Record<string, unknown>): string | undefined {
-  if (!plan.outputSchema) return undefined;
-  const errors = validateJsonSchemaSubset(projectStepOutput(evidence), plan.outputSchema);
-  if (errors.length === 0) return undefined;
-  return (
-    `Step "${plan.stepId}" artifact failed validation against the step's declared output schema: ` +
-    `${errors.join("; ")}.`
-  );
-}
-
-/** How much artifact JSON the completion-criteria judge receives (addendum R2, artifact-judging gates). */
-const GATE_ARTIFACT_CLIP = 4_000;
-
-/**
- * Build the summary the completion-criteria gate judges for an ENGINE-driven
- * step (addendum R2, "typed artifacts, honest gates"): a one-line unit count
- * followed by the promoted step artifact as canonical JSON, clipped at
- * {@link GATE_ARTIFACT_CLIP} chars. This replaces the machine-prose
- * "Executed N unit(s)…" summary as the judged content, so the gate evaluates
- * real results instead of engine bookkeeping.
- */
-export function buildArtifactSummary(stepId: string, units: UnitOutcome[], evidence: Record<string, unknown>): string {
-  const failedCount = units.filter((u) => !u.ok).length;
-  const json = canonicalJson(projectStepOutput(evidence)) ?? "null";
-  return (
-    `Step "${stepId}" executed ${units.length} unit(s) (${units.length - failedCount} succeeded, ${failedCount} failed). ` +
-    `Step artifact (canonical JSON${json.length > GATE_ARTIFACT_CLIP ? `, clipped at ${GATE_ARTIFACT_CLIP} chars` : ""}):\n` +
-    clip(json, GATE_ARTIFACT_CLIP)
-  );
-}
-
-/** Project the engine's evidence map into the expression scope's `stepOutputs`. */
-function stepOutputsFromEvidence(evidence: StepExecutionContext["evidence"]): Record<string, unknown> {
-  const outputs: Record<string, unknown> = {};
-  for (const [stepId, stepEvidence] of Object.entries(evidence)) {
-    if (stepEvidence !== undefined) outputs[stepId] = projectStepOutput(stepEvidence);
-  }
-  return outputs;
-}
-
-/** A unit's contribution to the step artifact: structured result, else text, else null (failures). */
-function unitOutputValue(unit: UnitOutcome): unknown {
-  if (!unit.ok) return null;
-  if (unit.result !== undefined) return unit.result;
-  return unit.text ?? null;
-}
-
-function buildEvidence(
-  units: UnitOutcome[],
-  reducer: "collect" | "vote" | "best-of-n",
-  isFanOut: boolean,
-): Record<string, unknown> {
-  const collected = units.map((u) => ({
-    unitId: u.unitId,
-    ok: u.ok,
-    ...(u.result !== undefined ? { result: u.result } : {}),
-    ...(u.text !== undefined ? { text: clip(u.text, EVIDENCE_TEXT_CLIP) } : {}),
-    ...(u.failureReason ? { failureReason: u.failureReason } : {}),
-    ...(u.error ? { error: clip(u.error, 500) } : {}),
-  }));
-  const evidence: Record<string, unknown> = { units: collected, itemCount: units.length };
-
-  // Promoted step artifact (`evidence.output`) — what `${{ steps.<id>.output }}`
-  // resolves to (see projectStepOutput). Values are UNCLIPPED (the clipped
-  // copies above are diagnostics; downstream data flow must be lossless):
-  //   solo unit      → its structured result or text;
-  //   map + collect  → per-item values in item order (a failed unit under
-  //                    on_error: continue contributes null — positions stay
-  //                    aligned, and referencing the failed slot errs loudly);
-  //   map + vote     → the winner (set below; a vote with no winner fails the
-  //                    step, so its null artifact is never consumed).
-  if (reducer === "vote") {
-    evidence.output = null;
-  } else {
-    evidence.output = isFanOut ? units.map(unitOutputValue) : unitOutputValue(units[0]);
-  }
-
-  if (reducer === "vote") {
-    const counts = new Map<string, { value: unknown; count: number }>();
-    for (const unit of units) {
-      if (!unit.ok) continue;
-      const value = unit.result !== undefined ? unit.result : unit.text;
-      const key = canonicalJson(value);
-      const entry = counts.get(key);
-      if (entry) entry.count++;
-      else counts.set(key, { value, count: 1 });
-    }
-    const ranked = [...counts.values()].sort((a, b) => b.count - a.count);
-    if (ranked.length === 0) {
-      evidence.voteError = "Vote reducer had no successful unit results to count.";
-    } else if (ranked.length > 1 && ranked[0].count === ranked[1].count) {
-      evidence.voteError = `Vote reducer tied at ${ranked[0].count} vote(s) — no majority.`;
-    } else {
-      evidence.vote = { winner: ranked[0].value, votes: ranked[0].count, total: units.length };
-      evidence.output = ranked[0].value;
-    }
-  }
-
-  return evidence;
-}
-
-/** Stable stringify (sorted object keys, recursively) so equal values vote together. */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeys(value));
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([k, v]) => [k, sortKeys(v)]),
-    );
-  }
-  return value;
 }
 
 // ── Env bindings ─────────────────────────────────────────────────────────────
@@ -1500,19 +1169,6 @@ function requireDefaultLlm(
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 
-/**
- * Content-derived unit identity (module doc): `<node_id>:<hash12>` for a
- * fan-out item, `<node_id>:solo` otherwise. The hash is over the item's
- * canonical JSON (sorted keys — same canonicalization the vote reducer
- * counts with), so identity survives list reordering/regeneration and is
- * independent of item position. Retry attempts stack `~r<n>` on top.
- */
-function unitIdFor(nodeId: string, item: unknown, isFanOut: boolean): string {
-  if (!isFanOut) return `${nodeId}:solo`;
-  const canonical = canonicalJson(item) ?? "null";
-  return `${nodeId}:${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`;
-}
-
 /** Rehydrate a journaled completed unit row into a UnitOutcome (durable-row reuse). */
 function reuseCompletedUnit(unitId: string, row: WorkflowRunUnitRow, hasSchema: boolean): UnitOutcome {
   let parsed: unknown;
@@ -1548,18 +1204,6 @@ function failedStep(dispatched: number, reason: string): StepExecutionResult {
     summary: reason,
     unitsDispatched: dispatched,
   };
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? "null";
-  } catch {
-    return "null";
-  }
-}
-
-function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 function message(err: unknown): string {

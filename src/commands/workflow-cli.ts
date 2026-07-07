@@ -384,6 +384,28 @@ const workflowRunCommand = defineJsonCommand({
   },
 });
 
+const workflowBriefCommand = defineJsonCommand({
+  meta: {
+    name: "brief",
+    description:
+      "EXPERIMENTAL: describe a run's active step as an executable work-list for ANY agent session (the " +
+      "harness-neutral driver protocol) — read-only, takes no engine lease, mutates nothing; prints per-unit " +
+      "instructions, output schema, env binding names, and the exact `akm workflow report` command lines",
+  },
+  args: {
+    target: {
+      type: "positional",
+      description: "Workflow run id (or a workflow ref with an active run)",
+      required: true,
+    },
+  },
+  async run({ args }) {
+    const { buildWorkflowBrief } = await import("../workflows/exec/brief.js");
+    const result = await buildWorkflowBrief(args.target);
+    output("workflow-brief", result);
+  },
+});
+
 const workflowWatchCommand = defineJsonCommand({
   meta: {
     name: "watch",
@@ -466,6 +488,7 @@ export const workflowCommand = defineCommand({
     abandon: workflowAbandonCommand,
     validate: workflowValidateCommand,
     run: workflowRunCommand,
+    brief: workflowBriefCommand,
     watch: workflowWatchCommand,
   },
   run({ args }) {

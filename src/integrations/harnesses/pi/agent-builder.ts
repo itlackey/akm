@@ -30,7 +30,7 @@
  * - **schema** — the matrix places Pi in the "via prompt+validate" tier (no
  *   native `--output-schema` equivalent, unlike Codex), so the JSON Schema is
  *   passed through the prompt: a directive matching the engine's wording
- *   (`native-executor.ts` `buildUnitPrompt`) is appended to the prompt
+ *   (`step-work.ts` `buildUnitPrompt`) is appended to the prompt
  *   payload, and `--mode json` is emitted so stdout is the documented JSONL
  *   event stream that `./result-extractor.ts` normalizes. The engine's shared
  *   retry-until-valid loop performs the actual validation. Without a schema

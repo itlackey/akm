@@ -32,7 +32,7 @@
  * - **schema** — the matrix places Gemini in the "via prompt+validate" tier
  *   (no native `--output-schema` equivalent, unlike Codex — so no temp-file
  *   plumbing here), so the JSON Schema is passed through the prompt: a
- *   directive matching the engine's wording (`native-executor.ts`
+ *   directive matching the engine's wording (`step-work.ts`
  *   `buildUnitPrompt`) is appended to the `-p` payload, and
  *   `--output-format json` is emitted so stdout is the documented JSON
  *   envelope the gemini result extractor normalizes. The engine's shared

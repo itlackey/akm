@@ -28,7 +28,7 @@
  * - **schema** — the matrix places Copilot in the "via prompt+validate" tier
  *   (no native `--output-schema` equivalent, unlike Codex), so the JSON
  *   Schema is passed through the prompt: a directive matching the engine's
- *   wording (`native-executor.ts` `buildUnitPrompt`) is appended to the `-p`
+ *   wording (`step-work.ts` `buildUnitPrompt`) is appended to the `-p`
  *   payload, and `--output-format json` is emitted so stdout is the
  *   documented JSON envelope the copilot result extractor normalizes. The
  *   engine's shared retry-until-valid loop performs the actual validation.

@@ -47,7 +47,7 @@
  *   Codex-style `--output-schema` flag exists, so NO temp schema file is
  *   written; the JSON Schema is injected into the task payload using the
  *   exact directive wording of the engine's prompt assembly
- *   (`native-executor.ts` `buildUnitPrompt`) and the pi/aider builders, so
+ *   (`step-work.ts` `buildUnitPrompt`) and the pi/aider builders, so
  *   all dispatch paths speak one dialect. Downstream, the extractor pulls the
  *   final message out of the JSONL stream and the engine's shared
  *   retry-until-valid loop performs the actual validation.

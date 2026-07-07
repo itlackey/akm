@@ -42,7 +42,7 @@
  *   normalization", tier "none"): there is no schema flag and no JSON output
  *   flag, so the JSON Schema is injected into the message payload using the
  *   exact directive wording of the engine's prompt assembly
- *   (`native-executor.ts` `buildUnitPrompt`) and the pi builder, so all
+ *   (`step-work.ts` `buildUnitPrompt`) and the pi builder, so all
  *   dispatch paths speak one dialect. Downstream, embedded-JSON extraction +
  *   the engine's shared retry-until-valid loop supply the validation Aider
  *   lacks. No temp schema file is written — that is Codex's native-schema

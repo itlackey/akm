@@ -1,0 +1,453 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: `\${{ … }}` is the
+// workflow expression grammar under test, not a JS template literal.
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { WorkflowRunStatus } from "../../src/sources/types";
+import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
+import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
+import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
+import { computeStepWorkList } from "../../src/workflows/exec/step-work";
+import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
+import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
+import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+
+/**
+ * `akm workflow brief` (redesign addendum R3, task step 2). Proves brief:
+ *   - is read-only (workflow.db byte-identical before/after);
+ *   - predicts the engine's work-list via the SHARED step-work module (unit
+ *     ids / input hashes equal `computeStepWorkList`), across solo, fan-out
+ *     (mixed journaled statuses), and gate loop 2 (feedback recovered from the
+ *     journaled gate row);
+ *   - surfaces the deterministic route decision, a completed run's empty list,
+ *     a live engine lease warning, and a clear error for a legacy NULL-plan run.
+ */
+
+let tmpDir = "";
+let prevDataDir: string | undefined;
+const RUN_ID = "12345678-1234-4123-8123-123456789abc";
+
+function dbPath(): string {
+  return path.join(tmpDir, "workflow.db");
+}
+
+function plan(yamlText: string): WorkflowPlanGraph {
+  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
+  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
+  const compiled = compileWorkflowProgram(parsed.program);
+  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
+  return compiled.plan;
+}
+
+interface SeedStep {
+  id: string;
+  title?: string;
+  criteria?: string[];
+  status?: "pending" | "completed" | "failed" | "blocked" | "skipped";
+  evidence?: Record<string, unknown>;
+}
+
+interface SeedUnit {
+  unitId: string;
+  stepId: string;
+  nodeId: string;
+  phase?: string | null;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  inputHash?: string | null;
+  resultJson?: string | null;
+  tokens?: number | null;
+  failureReason?: string | null;
+}
+
+function seedRun(opts: {
+  plan?: WorkflowPlanGraph | null;
+  status?: WorkflowRunStatus;
+  currentStepId?: string | null;
+  params?: Record<string, unknown>;
+  steps: SeedStep[];
+  units?: SeedUnit[];
+  lease?: { holder: string; until: string };
+}): void {
+  const db = openWorkflowDatabase(dbPath());
+  try {
+    const now = new Date().toISOString();
+    const frozen = opts.plan === null ? null : (opts.plan ?? null);
+    const planJson = frozen ? canonicalPlanJson(frozen) : null;
+    const planHash = frozen ? computePlanHash(frozen) : null;
+    const current =
+      opts.currentStepId !== undefined
+        ? opts.currentStepId
+        : (opts.steps.find((s) => (s.status ?? "pending") === "pending")?.id ?? null);
+    db.prepare(
+      `INSERT INTO workflow_runs
+         (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
+          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash,
+          engine_lease_holder, engine_lease_until)
+       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      RUN_ID,
+      opts.status ?? "active",
+      JSON.stringify(opts.params ?? {}),
+      current,
+      now,
+      now,
+      planJson,
+      planHash,
+      opts.lease?.holder ?? null,
+      opts.lease?.until ?? null,
+    );
+    opts.steps.forEach((step, i) => {
+      db.prepare(
+        `INSERT INTO workflow_run_steps
+           (run_id, step_id, step_title, instructions, completion_json, sequence_index, status, evidence_json)
+         VALUES (?, ?, ?, 'instructions', ?, ?, ?, ?)`,
+      ).run(
+        RUN_ID,
+        step.id,
+        step.title ?? step.id,
+        step.criteria ? JSON.stringify(step.criteria) : null,
+        i,
+        step.status ?? "pending",
+        step.evidence ? JSON.stringify(step.evidence) : null,
+      );
+    });
+    for (const u of opts.units ?? []) {
+      db.prepare(
+        `INSERT INTO workflow_run_units
+           (run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model, status,
+            input_hash, result_json, tokens, failure_reason, worktree_path, started_at, finished_at)
+         VALUES (?, ?, ?, ?, NULL, ?, 'sdk', NULL, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+      ).run(
+        RUN_ID,
+        u.unitId,
+        u.stepId,
+        u.nodeId,
+        u.phase ?? null,
+        u.status,
+        u.inputHash ?? null,
+        u.resultJson ?? null,
+        u.tokens ?? null,
+        u.failureReason ?? null,
+        now,
+        u.status === "completed" || u.status === "failed" ? now : null,
+      );
+    }
+  } finally {
+    closeWorkflowDatabase(db);
+  }
+}
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-brief-"));
+  prevDataDir = process.env.AKM_DATA_DIR;
+  process.env.AKM_DATA_DIR = tmpDir;
+});
+
+afterEach(() => {
+  if (prevDataDir === undefined) delete process.env.AKM_DATA_DIR;
+  else process.env.AKM_DATA_DIR = prevDataDir;
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+});
+
+// ── Workflows ────────────────────────────────────────────────────────────────
+
+const SOLO_WF = `version: 1
+name: Solo
+steps:
+  - id: build
+    title: Build
+    unit:
+      instructions: Build \${{ params.target }}.
+      env: [env:ci-secrets]
+    gate:
+      criteria: [the build passes]
+  - id: wrap
+    title: Wrap
+    unit:
+      instructions: Wrap up.
+`;
+
+const FANOUT_WF = `version: 1
+name: Fanout
+steps:
+  - id: review
+    title: Review
+    map:
+      over: \${{ params.files }}
+      reducer: collect
+      unit:
+        instructions: Review \${{ item }}.
+        output:
+          type: object
+          properties: { verdict: { type: string } }
+          required: [verdict]
+`;
+
+const LOOP_WF = `version: 1
+name: Loop
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      max_loops: 3
+`;
+
+const ROUTE_WF = `version: 1
+name: Route
+steps:
+  - id: judge
+    title: Judge
+    unit:
+      instructions: Judge it.
+  - id: triage
+    title: Triage
+    route:
+      input: \${{ steps.judge.output.verdict }}
+      when: { pass: ship, fail: rework }
+      default: rework
+  - id: ship
+    title: Ship
+    unit:
+      instructions: Ship it.
+  - id: rework
+    title: Rework
+    unit:
+      instructions: Rework it.
+`;
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+describe("workflow brief — solo step", () => {
+  test("emits the active step's single unit with env NAMES only + report command", async () => {
+    const p = plan(SOLO_WF);
+    seedRun({
+      plan: p,
+      params: { target: "widget" },
+      steps: [{ id: "build", criteria: ["the build passes"] }, { id: "wrap" }],
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.active).toBe(true);
+    expect(brief.step?.stepId).toBe("build");
+    expect(brief.step?.kind).toBe("execute");
+    expect(brief.step?.gate.currentLoop).toBe(1);
+    expect(brief.step?.gate.judgesArtifact).toBe(true);
+    expect(brief.workList.units).toHaveLength(1);
+
+    const u = brief.workList.units[0];
+    // Predicts the engine: unit id + input hash equal computeStepWorkList.
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: { target: "widget" }, stepOutputs: {} });
+    expect(engine.ok).toBe(true);
+    if (engine.ok) {
+      expect(u.unitId).toBe(engine.list.units[0].unitId);
+      if (u.resolved.ok && engine.list.units[0].resolved.ok) {
+        expect(u.resolved.inputHash).toBe(engine.list.units[0].resolved.inputHash);
+        expect(u.resolved.instructions).toContain("Build widget.");
+      }
+    }
+    // Env is surfaced as REF NAMES, never resolved values.
+    expect(u.env).toEqual(["env:ci-secrets"]);
+    expect(u.report).toContain(`report ${RUN_ID} --unit ${u.unitId} --status completed`);
+    expect(u.journaled).toBeUndefined();
+  });
+});
+
+describe("workflow brief — read-only", () => {
+  test("leaves workflow.db byte-identical", async () => {
+    seedRun({ plan: plan(SOLO_WF), params: { target: "x" }, steps: [{ id: "build" }, { id: "wrap" }] });
+    // Settle any residual WAL frames so the pre/post snapshots compare cleanly.
+    await withWorkflowRunsRepo((repo) => repo.getRunById(RUN_ID));
+
+    const before = createHash("sha256").update(fs.readFileSync(dbPath())).digest("hex");
+    await buildWorkflowBrief(RUN_ID);
+    const after = createHash("sha256").update(fs.readFileSync(dbPath())).digest("hex");
+    expect(after).toBe(before);
+  });
+});
+
+describe("workflow brief — fan-out with mixed journaled statuses", () => {
+  test("surfaces per-unit journaled status and predicts every content-derived id", async () => {
+    const p = plan(FANOUT_WF);
+    const params = { files: ["a.ts", "b.ts", "c.ts"] };
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params, stepOutputs: {} });
+    expect(engine.ok).toBe(true);
+    if (!engine.ok) return;
+    const [ua, ub, uc] = engine.list.units;
+
+    // a.ts already completed, b.ts failed, c.ts never dispatched.
+    seedRun({
+      plan: p,
+      params,
+      steps: [{ id: "review" }],
+      units: [
+        {
+          unitId: ua.unitId,
+          stepId: "review",
+          nodeId: ua.nodeId,
+          status: "completed",
+          inputHash: ua.resolved.ok ? ua.resolved.inputHash : null,
+          resultJson: JSON.stringify({ verdict: "ok" }),
+          tokens: 42,
+        },
+        { unitId: ub.unitId, stepId: "review", nodeId: ub.nodeId, status: "failed", failureReason: "timeout" },
+      ],
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.isFanOut).toBe(true);
+    expect(brief.workList.itemCount).toBe(3);
+    const byId = new Map(brief.workList.units.map((u) => [u.unitId, u]));
+    expect(byId.get(ua.unitId)?.journaled?.status).toBe("completed");
+    expect(byId.get(ua.unitId)?.journaled?.tokens).toBe(42);
+    expect(byId.get(ub.unitId)?.journaled?.status).toBe("failed");
+    expect(byId.get(ub.unitId)?.journaled?.failureReason).toBe("timeout");
+    expect(byId.get(uc.unitId)?.journaled).toBeUndefined();
+    // Every unit carries its output schema + fan-out item.
+    expect(byId.get(ua.unitId)?.outputSchema).toBeDefined();
+    expect(byId.get(ua.unitId)?.item).toBe("a.ts");
+  });
+});
+
+describe("workflow brief — gate loop 2", () => {
+  test("recovers feedback from the journaled gate row; unit ids match the engine's loop-2 dispatch", async () => {
+    const p = plan(LOOP_WF);
+    const reject = { complete: false, missing: ["the work is thorough"], feedback: "Add the analysis." };
+    seedRun({
+      plan: p,
+      steps: [{ id: "work", criteria: ["the work is thorough"] }],
+      units: [
+        {
+          unitId: "work.gate:l1",
+          stepId: "work",
+          nodeId: "work.gate",
+          phase: "gate",
+          status: "completed",
+          resultJson: JSON.stringify(reject),
+        },
+      ],
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.step?.gate.currentLoop).toBe(2);
+    expect(brief.gateFeedback).toEqual({ feedback: "Add the analysis.", missing: ["the work is thorough"] });
+
+    const u = brief.workList.units[0];
+    // The engine would compute loop 2 the same way — ids, hashes, prompt.
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      gateLoop: 2,
+      gateFeedback: { feedback: "Add the analysis.", missing: ["the work is thorough"] },
+    });
+    expect(engine.ok).toBe(true);
+    if (engine.ok && u.resolved.ok && engine.list.units[0].resolved.ok) {
+      expect(u.unitId).toBe(engine.list.units[0].unitId);
+      expect(u.resolved.inputHash).toBe(engine.list.units[0].resolved.inputHash);
+      expect(u.resolved.instructions).toBe(engine.list.units[0].resolved.prompt);
+      expect(u.resolved.instructions).toContain("Add the analysis.");
+    }
+  });
+});
+
+describe("workflow brief — route step", () => {
+  test("shows the deterministic decision contract and the selected branch", async () => {
+    seedRun({
+      plan: plan(ROUTE_WF),
+      currentStepId: "triage",
+      steps: [
+        { id: "judge", status: "completed", evidence: { output: { verdict: "pass" } } },
+        { id: "triage" },
+        { id: "ship" },
+        { id: "rework" },
+      ],
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.step?.kind).toBe("route");
+    expect(brief.workList.units).toHaveLength(0);
+    expect(brief.route?.input).toBe("${{ steps.judge.output.verdict }}");
+    expect(brief.route?.when).toEqual({ pass: "ship", fail: "rework" });
+    expect(brief.route?.evaluatedNow).toBe(true);
+    expect(brief.route?.decision).toEqual({ value: "pass", selected: "ship" });
+  });
+});
+
+describe("workflow brief — completed run", () => {
+  test("reports done with an empty work-list", async () => {
+    seedRun({
+      plan: plan(SOLO_WF),
+      status: "completed",
+      currentStepId: null,
+      steps: [
+        { id: "build", status: "completed" },
+        { id: "wrap", status: "completed" },
+      ],
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.done).toBe(true);
+    expect(brief.active).toBe(false);
+    expect(brief.workList.units).toHaveLength(0);
+    expect(brief.message).toContain("completed");
+  });
+});
+
+describe("workflow brief — legacy run (NULL plan_json)", () => {
+  test("errors clearly, pointing at engine-driven mode", async () => {
+    seedRun({ plan: null, params: { target: "x" }, steps: [{ id: "build" }, { id: "wrap" }] });
+    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/predates frozen plans.*workflow run/s);
+  });
+});
+
+describe("workflow brief — live engine lease", () => {
+  test("surfaces the lease and a loud warning", async () => {
+    const until = new Date(Date.now() + 60_000).toISOString();
+    seedRun({
+      plan: plan(SOLO_WF),
+      params: { target: "x" },
+      steps: [{ id: "build" }, { id: "wrap" }],
+      lease: { holder: "engine-abc", until },
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.engineLease).toEqual({ holder: "engine-abc", until, live: true });
+    expect(brief.warnings.some((w) => w.includes("LIVE run lease") && w.includes("engine-abc"))).toBe(true);
+  });
+
+  test("an expired lease is surfaced but not live and raises no warning", async () => {
+    const until = new Date(Date.now() - 60_000).toISOString();
+    seedRun({
+      plan: plan(SOLO_WF),
+      params: { target: "x" },
+      steps: [{ id: "build" }, { id: "wrap" }],
+      lease: { holder: "engine-old", until },
+    });
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.engineLease?.live).toBe(false);
+    expect(brief.warnings.some((w) => w.includes("LIVE run lease"))).toBe(false);
+  });
+});
+
+describe("workflow brief — unknown run", () => {
+  test("a missing run id is a not-found error", async () => {
+    seedRun({ plan: plan(SOLO_WF), steps: [{ id: "build" }, { id: "wrap" }] });
+    await expect(buildWorkflowBrief("nonexistent-run-id")).rejects.toThrow(/not found/i);
+  });
+});
