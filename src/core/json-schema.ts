@@ -123,7 +123,10 @@ function validateNode(value: unknown, schema: Record<string, unknown>, path: str
 
     if (Array.isArray(schema.required)) {
       for (const key of schema.required) {
-        if (typeof key === "string" && !(key in record)) {
+        // `Object.hasOwn`, not `key in record`: a required key satisfied only by
+        // an inherited prototype member (e.g. "toString", "constructor") is NOT
+        // present on the value itself, so `{}` must fail `required: ["toString"]`.
+        if (typeof key === "string" && !Object.hasOwn(record, key)) {
           errors.push(`${path}: missing required property "${key}"`);
         }
       }
