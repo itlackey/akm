@@ -148,6 +148,15 @@ gates. Linear markdown workflows are unaffected — they keep compiling to a
 linear plan exactly as before, and the manual `next`/`complete` loop keeps
 working on every run.
 
+The native engine is not the only thing that can drive an orchestrated run.
+The **harness-neutral driver protocol** (`akm workflow brief` /
+`akm workflow report`, described in *Driving a run from any agent* below)
+lets any agent session — Claude Code, opencode, Codex, or a human at a shell
+— execute a run's units itself and report the results back through the same
+code paths the engine uses. A run is driven by **one engine _or_ one external
+driver at a time** (the run lease arbitrates), and both surfaces produce
+byte-identical unit graphs.
+
 YAML programs live in your stash under `workflows/` with a `.yaml` or `.yml`
 extension and are addressed with the same `workflow:<name>` refs. Print a
 starter with **`akm workflow template --yaml`**, and lint with
