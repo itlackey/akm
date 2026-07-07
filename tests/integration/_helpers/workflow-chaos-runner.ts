@@ -44,8 +44,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
+import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 
 function requireEnv(name: string): string {

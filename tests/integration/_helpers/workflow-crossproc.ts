@@ -150,11 +150,7 @@ export async function expireLease(runId: string): Promise<void> {
  * step), in fan-out (array) order — the same ids `runWorkflowSteps` journals,
  * so the parent can key marker/journal assertions on them.
  */
-export async function unitIds(
-  runId: string,
-  params: Record<string, unknown>,
-  stepIndex = 0,
-): Promise<string[]> {
+export async function unitIds(runId: string, params: Record<string, unknown>, stepIndex = 0): Promise<string[]> {
   const row = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
   const plan = JSON.parse(row?.plan_json ?? "null") as WorkflowPlanGraph;
   const computed = computeStepWorkList(plan.steps[stepIndex], { runId, params, stepOutputs: {} });
