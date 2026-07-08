@@ -20,7 +20,7 @@ const STRING_ATOMS = [
   "日本語",
   "emoji-🔥",
   "with space",
-  "${{ params.secret }}", // injection payload — must survive as literal data
+  `\${{ params.secret }}`, // injection payload — must survive as literal data
   "line\nbreak",
   "quote\"'`",
   "$&$$\\",

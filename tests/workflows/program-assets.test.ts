@@ -183,14 +183,14 @@ describe("loadWorkflowAsset over YAML programs", () => {
     const discover = asset.steps[0];
     expect(discover?.title).toBe("Discover targets");
     // Raw template — NOT resolved or re-scanned.
-    expect(discover?.instructions).toContain("${{ params.changed_files }}");
+    expect(discover?.instructions).toContain(`\${{ params.changed_files }}`);
 
     const review = asset.steps[1];
-    expect(review?.instructions).toContain("${{ item }}");
+    expect(review?.instructions).toContain(`\${{ item }}`);
 
     // Route steps have no unit; the projection stands in a routing description.
     const triage = asset.steps[2];
-    expect(triage?.instructions).toContain("${{ steps.review.output.verdict }}");
+    expect(triage?.instructions).toContain(`\${{ steps.review.output.verdict }}`);
 
     expect(asset.parameters).toEqual([{ name: "changed_files" }]);
   });
@@ -209,7 +209,7 @@ describe("loadWorkflowAsset over YAML programs", () => {
     expect(plan.title).toBe("review-changes");
     const review = plan.steps.find((s: { stepId: string }) => s.stepId === "review");
     expect(review?.root?.kind).toBe("map");
-    expect(review?.root?.over).toBe("${{ steps.discover.output.files }}");
+    expect(review?.root?.over).toBe(`\${{ steps.discover.output.files }}`);
   });
 
   test("gate criteria project into completionCriteria, persist on step rows, and arm the completion gate (peer review)", async () => {
@@ -291,9 +291,9 @@ describe("validateWorkflowProgramSource", () => {
         "steps:",
         "  - id: fan",
         "    map:",
-        "      over: ${{ steps.nope.output.files }}",
+        `      over: \${{ steps.nope.output.files }}`,
         "      unit:",
-        "        instructions: Review ${{ item }}.",
+        `        instructions: Review \${{ item }}.`,
       ].join("\n"),
     );
     const { result } = validateWorkflowProgramSource(file);
@@ -345,7 +345,7 @@ describe("workflow-program-yaml renderer", () => {
 
     const review = steps.find((s) => s.id === "review");
     expect(review?.orchestration?.fanOut).toEqual({
-      over: "${{ steps.discover.output.files }}",
+      over: `\${{ steps.discover.output.files }}`,
       concurrency: 8,
       reducer: "collect",
     });
@@ -356,7 +356,7 @@ describe("workflow-program-yaml renderer", () => {
 
     const triage = steps.find((s) => s.id === "triage");
     expect(triage?.orchestration?.route).toEqual({
-      input: "${{ steps.review.output.verdict }}",
+      input: `\${{ steps.review.output.verdict }}`,
       branches: [
         { match: "pass", stepId: "ship" },
         { match: "fail", stepId: "rework" },

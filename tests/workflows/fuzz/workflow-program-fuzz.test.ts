@@ -72,8 +72,8 @@ function instructionRef(rng: Rng, params: string[], earlier: string[], inMap: bo
   if (params.length) opts.push(() => `\${{ params.${rng.pick(params)} }}`);
   if (earlier.length) opts.push(() => `\${{ steps.${rng.pick(earlier)}.output${randPath(rng)} }}`);
   if (inMap) {
-    opts.push(() => "${{ item }}");
-    opts.push(() => "${{ item_index }}");
+    opts.push(() => `\${{ item }}`);
+    opts.push(() => `\${{ item_index }}`);
   }
   return opts.length ? rng.pick(opts)() : "";
 }
@@ -242,11 +242,11 @@ function invalidProgram(rng: Rng): Corruption {
       // Make the LAST step route back to the first — always a backward edge.
       const last = steps.length - 1;
       if (last === 0) {
-        steps.push({ id: "tail", route: { input: "${{ params.x }}", when: { m: steps[0].id as string } } });
+        steps.push({ id: "tail", route: { input: `\${{ params.x }}`, when: { m: steps[0].id as string } } });
       } else {
         delete steps[last].unit;
         delete steps[last].map;
-        steps[last].route = { input: "${{ params.x }}", when: { m: steps[0].id as string } };
+        steps[last].route = { input: `\${{ params.x }}`, when: { m: steps[0].id as string } };
       }
       return { yaml, expect: "backward" };
     }

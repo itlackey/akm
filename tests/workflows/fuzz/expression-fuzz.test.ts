@@ -58,9 +58,9 @@ function validRef(rng: Rng): string {
     case 0:
       return `\${{ params.${rng.pick(IDENTS)} }}`;
     case 1:
-      return "${{ item }}";
+      return `\${{ item }}`;
     case 2:
-      return "${{ item_index }}";
+      return `\${{ item_index }}`;
     default:
       return `\${{ steps.${rng.pick(STEP_IDS)}.output.${rng.pick(IDENTS)} }}`;
   }
@@ -68,16 +68,16 @@ function validRef(rng: Rng): string {
 
 function malformedRef(rng: Rng): string {
   return rng.pick([
-    "${{ }}",
-    "${{ unknownRoot }}",
-    "${{ 123 }}",
-    "${{ params }}",
-    "${{ params.x.y.z }}",
-    "${{ item.foo }}",
-    "${{ steps.x }}",
-    "${{ params.x", // unterminated
-    "${{ a ${{ b }} }}", // nested
-    "${{ steps.x.output[abc] }}",
+    `\${{ }}`,
+    `\${{ unknownRoot }}`,
+    `\${{ 123 }}`,
+    `\${{ params }}`,
+    `\${{ params.x.y.z }}`,
+    `\${{ item.foo }}`,
+    `\${{ steps.x }}`,
+    `\${{ params.x`, // unterminated
+    `\${{ a \${{ b }} }}`, // nested
+    `\${{ steps.x.output[abc] }}`,
   ]);
 }
 
@@ -136,12 +136,12 @@ describe("expression fuzz — parseTemplate never throws", () => {
 
 describe("expression fuzz — resolution never re-scans substituted data", () => {
   const seeds = fuzzSeeds(300);
-  test("a planted ${{ params.SECRET }} inside a scope value is inserted literally, never resolved", () => {
+  test(`a planted \${{ params.SECRET }} inside a scope value is inserted literally, never resolved`, () => {
     for (const seed of seeds) {
       withSeed(seed, () => {
         const rng = new Rng(seed);
         const sentinel = `LEAKED_${seed}_${rng.int(1_000_000)}`;
-        const payloadRef = "${{ params.SECRET }}";
+        const payloadRef = `\${{ params.SECRET }}`;
         // The injected value carries a live-looking reference to the secret.
         const injected: unknown = rng.bool()
           ? `before ${payloadRef} after`
@@ -170,7 +170,7 @@ describe("expression fuzz — resolution never re-scans substituted data", () =>
 
 describe("expression fuzz — resolveWholeValue accepts exactly one bare reference", () => {
   const seeds = fuzzSeeds(300);
-  test("a lone ${{ ref }} resolves to its RAW value; any wrapping is rejected", () => {
+  test(`a lone \${{ ref }} resolves to its RAW value; any wrapping is rejected`, () => {
     for (const seed of seeds) {
       withSeed(seed, () => {
         const rng = new Rng(seed);
