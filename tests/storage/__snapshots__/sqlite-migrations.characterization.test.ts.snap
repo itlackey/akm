@@ -1,99 +1,5 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`SQLite migration runner characterization workflow.db: fresh-DB migration replay produces a stable schema + ledger 1`] = `
-{
-  "migrations": [
-    "001-add-scope-key",
-    "002-add-agent-identity",
-    "003-checkin-and-step-summary",
-  ],
-  "schema": [
-    {
-      "name": "idx_workflow_run_steps_run_sequence",
-      "sql": 
-"CREATE INDEX idx_workflow_run_steps_run_sequence
-      ON workflow_run_steps(run_id, sequence_index)"
-,
-      "type": "index",
-    },
-    {
-      "name": "idx_workflow_runs_agent_session",
-      "sql": 
-"CREATE INDEX idx_workflow_runs_agent_session
-        ON workflow_runs(agent_harness, agent_session_id)"
-,
-      "type": "index",
-    },
-    {
-      "name": "idx_workflow_runs_ref",
-      "sql": "CREATE INDEX idx_workflow_runs_ref ON workflow_runs(workflow_ref)",
-      "type": "index",
-    },
-    {
-      "name": "idx_workflow_runs_scope_ref_status",
-      "sql": 
-"CREATE INDEX idx_workflow_runs_scope_ref_status
-        ON workflow_runs(scope_key, workflow_ref, status)"
-,
-      "type": "index",
-    },
-    {
-      "name": "idx_workflow_runs_status",
-      "sql": "CREATE INDEX idx_workflow_runs_status ON workflow_runs(status)",
-      "type": "index",
-    },
-    {
-      "name": "schema_migrations",
-      "sql": 
-"CREATE TABLE schema_migrations (
-      id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    )"
-,
-      "type": "table",
-    },
-    {
-      "name": "workflow_run_steps",
-      "sql": 
-"CREATE TABLE workflow_run_steps (
-      run_id          TEXT NOT NULL,
-      step_id         TEXT NOT NULL,
-      step_title      TEXT NOT NULL,
-      instructions    TEXT NOT NULL,
-      completion_json TEXT,
-      sequence_index  INTEGER NOT NULL,
-      status          TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'blocked', 'failed', 'skipped')),
-      notes           TEXT,
-      evidence_json   TEXT,
-      completed_at    TEXT, summary TEXT,
-      PRIMARY KEY (run_id, step_id),
-      FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-    )"
-,
-      "type": "table",
-    },
-    {
-      "name": "workflow_runs",
-      "sql": 
-"CREATE TABLE workflow_runs (
-      id                TEXT PRIMARY KEY,
-      workflow_ref      TEXT NOT NULL,
-      workflow_entry_id INTEGER,
-      workflow_title    TEXT NOT NULL,
-      status            TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),
-      params_json       TEXT NOT NULL DEFAULT '{}',
-      current_step_id   TEXT,
-      created_at        TEXT NOT NULL,
-      updated_at        TEXT NOT NULL,
-      completed_at      TEXT
-    , scope_key TEXT, agent_harness TEXT, agent_session_id TEXT, checkin_armed_at TEXT)"
-,
-      "type": "table",
-    },
-  ],
-}
-`;
-
 exports[`SQLite migration runner characterization state.db: fresh-DB migration replay produces a stable schema + ledger 1`] = `
 {
   "migrations": [
@@ -513,6 +419,140 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         target_ref    TEXT,
         metadata_json TEXT    NOT NULL DEFAULT '{}'
       )"
+,
+      "type": "table",
+    },
+  ],
+}
+`;
+
+exports[`SQLite migration runner characterization workflow.db: fresh-DB migration replay produces a stable schema + ledger 1`] = `
+{
+  "migrations": [
+    "001-add-scope-key",
+    "002-add-agent-identity",
+    "003-checkin-and-step-summary",
+    "004-workflow-run-units",
+    "005-unit-session-id",
+    "006-frozen-plan-and-lease",
+    "007-unit-last-checkin",
+    "008-unit-attempts",
+    "009-unit-claim",
+  ],
+  "schema": [
+    {
+      "name": "idx_workflow_run_steps_run_sequence",
+      "sql": 
+"CREATE INDEX idx_workflow_run_steps_run_sequence
+      ON workflow_run_steps(run_id, sequence_index)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_run_units_run_step",
+      "sql": 
+"CREATE INDEX idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_agent_session",
+      "sql": 
+"CREATE INDEX idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_ref",
+      "sql": "CREATE INDEX idx_workflow_runs_ref ON workflow_runs(workflow_ref)",
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_scope_ref_status",
+      "sql": 
+"CREATE INDEX idx_workflow_runs_scope_ref_status
+        ON workflow_runs(scope_key, workflow_ref, status)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_status",
+      "sql": "CREATE INDEX idx_workflow_runs_status ON workflow_runs(status)",
+      "type": "index",
+    },
+    {
+      "name": "schema_migrations",
+      "sql": 
+"CREATE TABLE schema_migrations (
+      id         TEXT    PRIMARY KEY,
+      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )"
+,
+      "type": "table",
+    },
+    {
+      "name": "workflow_run_steps",
+      "sql": 
+"CREATE TABLE workflow_run_steps (
+      run_id          TEXT NOT NULL,
+      step_id         TEXT NOT NULL,
+      step_title      TEXT NOT NULL,
+      instructions    TEXT NOT NULL,
+      completion_json TEXT,
+      sequence_index  INTEGER NOT NULL,
+      status          TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'blocked', 'failed', 'skipped')),
+      notes           TEXT,
+      evidence_json   TEXT,
+      completed_at    TEXT, summary TEXT,
+      PRIMARY KEY (run_id, step_id),
+      FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+    )"
+,
+      "type": "table",
+    },
+    {
+      "name": "workflow_run_units",
+      "sql": 
+"CREATE TABLE workflow_run_units (
+        run_id         TEXT NOT NULL,
+        unit_id        TEXT NOT NULL,
+        step_id        TEXT,
+        node_id        TEXT NOT NULL,
+        parent_unit_id TEXT,
+        phase          TEXT,
+        runner         TEXT,
+        model          TEXT,
+        status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        input_hash     TEXT,
+        result_json    TEXT,
+        tokens         INTEGER,
+        failure_reason TEXT,
+        worktree_path  TEXT,
+        started_at     TEXT,
+        finished_at    TEXT, session_id TEXT, last_checkin_at TEXT, attempts INTEGER NOT NULL DEFAULT 1, claim_holder TEXT, claim_expires_at TEXT,
+        PRIMARY KEY (run_id, unit_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "workflow_runs",
+      "sql": 
+"CREATE TABLE workflow_runs (
+      id                TEXT PRIMARY KEY,
+      workflow_ref      TEXT NOT NULL,
+      workflow_entry_id INTEGER,
+      workflow_title    TEXT NOT NULL,
+      status            TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),
+      params_json       TEXT NOT NULL DEFAULT '{}',
+      current_step_id   TEXT,
+      created_at        TEXT NOT NULL,
+      updated_at        TEXT NOT NULL,
+      completed_at      TEXT
+    , scope_key TEXT, agent_harness TEXT, agent_session_id TEXT, checkin_armed_at TEXT, plan_json TEXT, plan_hash TEXT, engine_lease_until TEXT, engine_lease_holder TEXT)"
 ,
       "type": "table",
     },

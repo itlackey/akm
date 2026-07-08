@@ -1,0 +1,328 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://itlackey.github.io/akm/schemas/akm-workflow.json",
+  "title": "AKM Workflow Program",
+  "description": "YAML workflow program for the akm CLI (Agent Knowledge Management). Files live under workflows/ with extension .yaml or .yml. Hand-authored alongside src/workflows/program/schema.ts; the enum vocabularies and patterns here are pinned against the TypeScript constants by tests/workflows/program-parser.test.ts — update both together.",
+  "type": "object",
+  "required": ["version", "name", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Workflow program format version. Only 1 is valid."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Workflow name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional human-readable description."
+    },
+    "params": {
+      "type": "object",
+      "description": "Run parameters: param name -> JSON Schema declaration. Names must be ${{ params.<name> }}-addressable identifiers.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/jsonSchemaObject"
+      }
+    },
+    "defaults": {
+      "$ref": "#/definitions/defaults"
+    },
+    "budget": {
+      "$ref": "#/definitions/budget"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/step"
+      }
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+      "description": "Step id: a letter or underscore first, then letters, digits, underscores, or dashes (no dots, no leading digit). This is exactly the ${{ steps.<id>.output }}-addressable grammar; dots are reserved for the .output path separator and the engine's internal <stepId>.gate node id."
+    },
+    "timeout": {
+      "description": "Duration: \"<n>ms\" | \"<n>s\" | \"<n>m\" | \"none\" (bare integers are milliseconds).",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^([0-9]+(ms|s|m)?|none)$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "runner": {
+      "description": "Execution backend for a unit; inherit defers to the run-level default.",
+      "enum": ["llm", "agent", "sdk", "inherit"]
+    },
+    "onError": {
+      "description": "Failure policy: fail the step on the first unit failure (default), or record failures and let the gate decide.",
+      "enum": ["fail", "continue"]
+    },
+    "reducer": {
+      "description": "How a map step folds per-item unit results into the step artifact.",
+      "enum": ["collect", "vote"]
+    },
+    "isolation": {
+      "description": "Filesystem isolation for file-mutating units (enforcement lands in R2).",
+      "enum": ["none", "worktree"]
+    },
+    "failureReason": {
+      "description": "Persisted AgentFailureReason taxonomy (src/integrations/agent/spawn.ts).",
+      "enum": [
+        "timeout",
+        "spawn_failed",
+        "non_zero_exit",
+        "parse_error",
+        "cooldown",
+        "llm_rate_limit",
+        "llm_content_filter",
+        "llm_invalid_json",
+        "content_policy_reject",
+        "unsupported_type",
+        "no_change",
+        "aborted"
+      ]
+    },
+    "jsonSchemaObject": {
+      "type": "object",
+      "description": "A JSON Schema declaration (validated as a schema by the compiler, not here)."
+    },
+    "retry": {
+      "type": "object",
+      "description": "Bounded retry on transient failures, keyed on the persisted failure_reason taxonomy.",
+      "required": ["max", "on"],
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum retry attempts per unit."
+        },
+        "on": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/failureReason"
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "description": "Run-level budget ceilings, enforced by the engine per run (journal-seeded). Hitting a ceiling fails the step hard, regardless of on_error.",
+      "additionalProperties": false,
+      "properties": {
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Ceiling on total reported token usage across the run (seeded from journaled unit rows)."
+        },
+        "max_units": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Ceiling on total dispatched units across the run (seeded from journaled unit rows)."
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Run-level defaults, overridable per unit.",
+      "additionalProperties": false,
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/runner"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model alias (tier) or exact id; resolved per-harness at dispatch."
+        },
+        "timeout": {
+          "$ref": "#/definitions/timeout"
+        },
+        "on_error": {
+          "$ref": "#/definitions/onError"
+        }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "description": "A single dispatchable unit: instructions plus dispatch overrides.",
+      "required": ["instructions"],
+      "additionalProperties": false,
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/runner"
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Agent/LLM profile name."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout": {
+          "$ref": "#/definitions/timeout"
+        },
+        "retry": {
+          "$ref": "#/definitions/retry"
+        },
+        "on_error": {
+          "$ref": "#/definitions/onError"
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Instruction template. ${{ … }} expressions are parsed against the closed grammar: params.<name> | steps.<id>.output.<path> | item | item_index."
+        },
+        "output": {
+          "$ref": "#/definitions/jsonSchemaObject"
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Env asset refs injected into the dispatched unit env."
+        },
+        "isolation": {
+          "$ref": "#/definitions/isolation"
+        }
+      }
+    },
+    "map": {
+      "type": "object",
+      "description": "Fan the unit template out over an expression-addressed item list.",
+      "required": ["over", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "over": {
+          "type": "string",
+          "minLength": 1,
+          "description": "${{ … }} expression naming the producer of the item list (e.g. ${{ steps.discover.output.files }})."
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max concurrent units for this step; capped by the engine's global limit."
+        },
+        "reducer": {
+          "$ref": "#/definitions/reducer"
+        },
+        "unit": {
+          "$ref": "#/definitions/unit"
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "description": "Route on an explicit ${{ … }} input to a LATER step. Targets must come after the routing step.",
+      "required": ["input", "when"],
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "type": "string",
+          "minLength": 1,
+          "description": "${{ … }} expression naming the value to route on."
+        },
+        "when": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Match value -> target step id.",
+          "additionalProperties": {
+            "$ref": "#/definitions/identifier"
+          }
+        },
+        "default": {
+          "$ref": "#/definitions/identifier"
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "description": "Completion gate criteria judged against the step artifact.",
+      "required": ["criteria"],
+      "additionalProperties": false,
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "max_loops": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Evaluator-optimizer loop bound (execution lands in R2)."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "When true, the gate must be judged: if no summary-validation judge is available (offline / misconfigured LLM), the step BLOCKS for a human instead of failing open and silently passing. Absent = fail-open default. The engine's --require-gates flag applies this to every criteria-bearing gate for one invocation."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "description": "One step of the gated spine. Exactly one of unit | map | route.",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "$ref": "#/definitions/unit"
+        },
+        "map": {
+          "$ref": "#/definitions/map"
+        },
+        "route": {
+          "$ref": "#/definitions/route"
+        },
+        "output": {
+          "$ref": "#/definitions/jsonSchemaObject"
+        },
+        "gate": {
+          "$ref": "#/definitions/gate"
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["unit"]
+            },
+            {
+              "required": ["map"]
+            },
+            {
+              "required": ["route"]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

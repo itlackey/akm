@@ -31,7 +31,7 @@ function checkFrontmatterKeys(data: Record<string, unknown>, fmEndLine: number, 
     if (ALLOWED_FRONTMATTER_KEYS.has(key)) continue;
     errors.push({
       line: fmEndLine,
-      message: `Workflow frontmatter "${key}" is not supported. Use only: description, tags, params, when_to_use.`,
+      message: `Workflow frontmatter "${key}" is not supported. Use only: description, tags, params, name, updated, when_to_use.`,
     });
   }
 }

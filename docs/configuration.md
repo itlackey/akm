@@ -134,6 +134,7 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `feedback.allowedFailureModes` | array | curated set | Restrict the accepted `--failure-mode` values. |
 | `improve.utilityDecay` / `calibration` / `exploration` / `salience` | object | — | Improve-pipeline tuning. See [Advanced improve tuning](#advanced-improve-tuning). |
 | `improve.eventRetentionDays` | number | `90` | Retention window (days) for `state.db` `events`. `0` disables purging. |
+| `workflow.maxConcurrency` | integer | `min(16, max(1, cores − 2))` | Engine-wide ceiling on concurrent units for native workflow fan-out (`akm workflow run`). A step's declared `concurrency:` is clamped to it. Unset = the CPU-derived default; an explicit value is clamped at read time to `[1, 64]`. Does not affect the `akm workflow brief`/`report` driver surface (drivers own their own parallelism). |
 | `stashDir` | string | platform default | Path to the working stash. |
 | `search.minScore` | number | `0.2` | Minimum score floor for semantic-only hits. |
 | `search.graphBoost.directBoostPerEntity` | number | `0.25` | Additive direct-match graph boost per matched entity. |

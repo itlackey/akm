@@ -115,13 +115,13 @@ akm tasks doctor                      # scheduler backend + cron path
 
 ## Environment Injection with akm env run
 
-Tasks that need secrets or environment-specific configuration use `akm env` vaults. A vault is an encrypted `.env` file stored in your stash under `env/<name>.env`. You inject it into a child process using `akm env run`:
+Tasks that need secrets or environment-specific configuration use `akm env`. An env asset is an encrypted `.env` file stored in your stash under `env/<name>.env`. You inject it into a child process using `akm env run`:
 
 ```sh
 akm env run env:fwdslsh -- bash ./scripts/post-to-discord.sh
 ```
 
-The `env:` prefix is the canonical ref form. In task YAML, akm also resolves bare vault names — the worked example below uses the bare name to match the production file exactly.
+The `env:` prefix is the canonical ref form. In task YAML, akm also resolves bare env names — the worked example below uses the bare name to match the production file exactly.
 
 In a task `command` field, the same pattern applies directly:
 
@@ -129,15 +129,15 @@ In a task `command` field, the same pattern applies directly:
 command: akm env run fwdslsh -- bash /home/founder3/akm/scripts/akm-health-discord.sh
 ```
 
-This injects every variable in the `fwdslsh` vault into the shell process that runs the script. The variables live only in that child process — they are never written to disk or exported to the parent environment. The task definition itself contains no secrets, only the vault reference. You can commit task YAML to your stash and share it without exposing credentials.
+This injects every variable in the `fwdslsh` environment group into the shell process that runs the script. The variables live only in that child process — they are never written to disk or exported to the parent environment. The task definition itself contains no secrets, only the environment group reference. You can commit task YAML to your stash and share it without exposing credentials.
 
-If a task needs only a subset of the vault's variables, `--only` narrows the injection:
+If a task needs only a subset of the environment group variables, `--only` narrows the injection:
 
 ```sh
 akm env run env:fwdslsh --only DISCORD_WEBHOOK_URL -- bash ./post.sh
 ```
 
-`--only` accepts a single key or a comma-separated list. Use `--except` to inject everything in the vault except specific keys.
+`--only` accepts a single key or a comma-separated list. Use `--except` to inject everything in the environment group except specific keys.
 
 ## Worked Example: The Discord Health Report
 
@@ -157,7 +157,7 @@ tags:
   - monitoring
 ```
 
-The task fires at the top of every hour. It injects the `fwdslsh` vault (which contains the Discord webhook URL and any other credentials the script needs), then runs the health report script. The script calls `akm health --since=4h` and `akm health --since=8h`, computes deltas between the two windows for trend context, and posts a formatted embed to Discord.
+The task fires at the top of every hour. It injects the `fwdslsh` environment group (which contains the Discord webhook URL and any other credentials the script needs), then runs the health report script. The script calls `akm health --since=4h` and `akm health --since=8h`, computes deltas between the two windows for trend context, and posts a formatted embed to Discord.
 
 The embed has three inline fields — Output (promoted refs, merged memories, memory inference yield), Failures (chunk failures, skip reason anomalies), and Latency (median, P95, prior-window comparison) — plus a Needs Attention section that only appears when something is actually off. The footer includes the hostname and run timestamp so reports from multiple machines are distinguishable at a glance.
 

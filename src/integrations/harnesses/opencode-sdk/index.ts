@@ -6,10 +6,15 @@
  * OpenCode SDK harness (#564).
  *
  * Per-harness barrel for the SDK-mode dispatch path:
+ *   - descriptor → ./harness.ts ({@link OpencodeSdkHarness}, the
+ *     {@link AkmHarness} that `HARNESS_REGISTRY` registers)
  *   - agent runner → ./sdk-runner.ts (runOpencodeSdk)
  *
- * It also defines {@link OpencodeSdkHarness}, the {@link AkmHarness} descriptor
- * that `HARNESS_REGISTRY` registers.
+ * The descriptor lives in its own leaf module (`./harness.ts`) rather than
+ * here so that the registry can import the class WITHOUT pulling in
+ * `./sdk-runner` (and its `core/config` dependency) — see the header of
+ * `./harness.ts` for the temporal-dead-zone cycle this avoids. This barrel is
+ * the runtime entry point that re-exports both.
  *
  * Unlike the CLI harnesses, the SDK path has no native session logs of its own
  * (`capabilities.sessionLogs = false`): it dispatches via the embedded
@@ -18,37 +23,5 @@
  * names. Canonical id is `'opencode-sdk'` with no alias.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
-
+export { OpencodeSdkHarness } from "./harness";
 export { closeServer, runOpencodeSdk } from "./sdk-runner";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    v1Migration: false,
-    ...c,
-  };
-}
-
-/**
- * OpenCode SDK (embedded-SDK dispatch path).
- *
- * Dispatch-only: no native session logs, but detected at setup and migrated
- * from v1 profile names.
- */
-export class OpencodeSdkHarness extends BaseHarness {
-  readonly id = "opencode-sdk" as const;
-  readonly displayName = "OpenCode SDK";
-  readonly aliases = [] as const;
-  // Decorated v1 profile names like "opencode-sdk-fast" belong to the SDK path.
-  protected readonly v1ProfilePrefixes = ["opencode-sdk"] as const;
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-    v1Migration: true,
-  });
-}

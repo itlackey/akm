@@ -1,0 +1,31 @@
+# akm YAML workflow program (redesign addendum, v1).
+# Save under workflows/<name>.yaml and lint with:
+#   akm workflow validate workflows/<name>.yaml
+version: 1
+name: example-workflow
+description: Describe what this workflow accomplishes.
+
+params:
+  example_param: { type: string, description: Explain this parameter }
+
+defaults: # run-level defaults, overridable per unit
+  runner: inherit # llm | agent | sdk | inherit
+  timeout: 10m # "<n>ms" | "<n>s" | "<n>m" | "none"
+  on_error: fail # fail | continue
+
+steps:
+  - id: first-step
+    title: First Step
+    unit:
+      instructions: |
+        Describe what to do in this step.
+        Reference run parameters explicitly: ${{ params.example_param }}.
+    gate:
+      criteria:
+        - Confirm the first step is complete
+
+  - id: second-step
+    title: Second Step
+    unit:
+      instructions: |
+        Describe what happens next.

@@ -19,8 +19,10 @@
  * Claude Code's 'claude' vs 'claude-code'), so no alias bridge is needed.
  */
 
+import type { SessionLogHarness } from "../../session-logs/types";
 import { BaseHarness, type HarnessCapabilities } from "../types";
 import { opencodeBuilder } from "./agent-builder";
+import { OpenCodeProvider } from "./session-log";
 
 export { opencodeBuilder } from "./agent-builder";
 export { openCodeImporter } from "./config-import";
@@ -55,6 +57,20 @@ export class OpencodeHarness extends BaseHarness {
   // is claimed by OpencodeSdkHarness before this prefix can over-match it.
   protected readonly v1ProfilePrefixes = ["opencode"] as const;
   readonly agentBuilder = opencodeBuilder;
+  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
+  // This entry is the CLI spawn path (`opencode run …`): akm launches the
+  // harness locally per unit ⇒ local-runner. (The SDK path is the separate
+  // `opencode-sdk` harness.)
+  readonly pattern = "local-runner" as const;
+  // The CLI path emits plain text — no JSON stream akm consumes — so the
+  // engine uses the prompt-injected schema + embedded-JSON extraction tier
+  // (the matrix's "via prompt+validate"). The SDK entry is native-json.
+  readonly structuredOutput = "none" as const;
+  // `opencode run --session <id>` continues a previous session.
+  readonly resume = { flag: "--session", takesSessionId: true } as const;
+  // Session-id env marker for run attribution.
+  readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
+  readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();
   readonly capabilities = caps({
     sessionLogs: true,
     agentDispatch: true,

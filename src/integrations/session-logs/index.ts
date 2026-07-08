@@ -3,8 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { getHarness, SESSION_LOG_HARNESSES } from "../harnesses";
-import { ClaudeCodeProvider } from "../harnesses/claude/session-log";
-import { OpenCodeProvider } from "../harnesses/opencode/session-log";
 import type {
   InlineRefMention,
   SessionData,
@@ -26,14 +24,33 @@ export type {
   SessionSummary,
 };
 
-const HARNESSES: SessionLogHarness[] = [new ClaudeCodeProvider(), new OpenCodeProvider()];
+// #562/P2 (plan §"Kill registry drift"): the provider array is DERIVED from
+// the unified HARNESS_REGISTRY — every harness with `capabilities.sessionLogs`
+// must supply a `sessionLogProvider` factory on its descriptor, and this is
+// the only place providers are instantiated. Adding a session-log harness is
+// therefore one registry entry, never an edit here.
+//
+// Ordered by canonical id so the pre-derivation provider order
+// ([claude-code, opencode] — visible in e.g. `extract --auto` result order)
+// is preserved deterministically, independent of HARNESS_REGISTRY declaration
+// order (which is pinned for JSON-schema enum stability).
+const HARNESSES: SessionLogHarness[] = [...SESSION_LOG_HARNESSES]
+  .sort((a, b) => a.id.localeCompare(b.id))
+  .map((h) => {
+    const provider = h.sessionLogProvider?.();
+    if (!provider) {
+      throw new Error(
+        `[akm] harness "${h.id}" declares capabilities.sessionLogs but no sessionLogProvider factory (src/integrations/harnesses). Add one to its descriptor.`,
+      );
+    }
+    return provider;
+  });
 
-// #562: the unified HARNESS_REGISTRY is the single source of truth for which
-// harnesses expose session logs. Validate (behaviour-preserving) that every
-// session-log provider instantiated above resolves to a registry harness whose
-// `sessionLogs` capability is set — and via the id-normalization bridge, so a
-// provider named "claude-code" still maps to the canonical "claude" harness.
-// This turns a silently-drifting third registry into a startup invariant.
+// Reverse invariant (kept from #562): every derived provider's runtime name
+// must resolve back — via the id-normalization bridge, so a provider named
+// "claude-code" still maps to the canonical "claude" harness — to a registry
+// harness whose `sessionLogs` capability is set. Catches a descriptor whose
+// factory returns a provider named for a different/unregistered harness.
 for (const provider of HARNESSES) {
   const harness = getHarness(provider.name);
   if (!harness?.capabilities.sessionLogs) {
@@ -42,8 +59,6 @@ for (const provider of HARNESSES) {
     );
   }
 }
-// Touch the derived list so the dependency is explicit and tree-shake-safe.
-void SESSION_LOG_HARNESSES;
 
 const ERROR_PATTERNS = /error|failed|exception|cannot|undefined|null pointer|ENOENT|timeout/i;
 

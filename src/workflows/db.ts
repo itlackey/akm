@@ -175,6 +175,141 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_run_steps ADD COLUMN summary TEXT;
     `,
   },
+  // ── Migration 004 — per-unit run state (orchestration plan P1) ──────────────
+  //
+  // A step's execution may now fan out into N concurrent units (native
+  // executor, docs/technical/akm-workflows-orchestration-plan.md). Units hang
+  // off the gated step spine: `workflow_run_steps` stays the durable top-level
+  // record; each dispatched unit gets its own row here so a crash-and-resume
+  // re-dispatches only incomplete units (durable-row resume) and budget/usage
+  // is attributable per unit. `input_hash` is reserved for the P5 deterministic
+  // replay mode; `failure_reason` carries runAgent's structured failure
+  // vocabulary so retry/continue-on-error policy has semantics to act on.
+  {
+    id: "004-workflow-run-units",
+    up: `
+      CREATE TABLE IF NOT EXISTS workflow_run_units (
+        run_id         TEXT NOT NULL,
+        unit_id        TEXT NOT NULL,
+        step_id        TEXT,
+        node_id        TEXT NOT NULL,
+        parent_unit_id TEXT,
+        phase          TEXT,
+        runner         TEXT,
+        model          TEXT,
+        status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        input_hash     TEXT,
+        result_json    TEXT,
+        tokens         INTEGER,
+        failure_reason TEXT,
+        worktree_path  TEXT,
+        started_at     TEXT,
+        finished_at    TEXT,
+        PRIMARY KEY (run_id, unit_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id);
+    `,
+  },
+  // ── Migration 005 — harness-native unit session id (plan P2) ────────────────
+  //
+  // The P2 harness adapters' result extractors reveal the harness-native
+  // session id of a dispatched unit (codex `session_configured`, gemini/pi
+  // JSON envelopes, the opencode SDK session). It is stored opportunistically
+  // on the unit row so resume can replay the harness's own context cache
+  // (e.g. `codex exec resume <id>`, `gemini --resume <id>`); akm never
+  // *depends* on it — `workflow_run_units` remains the durable source of
+  // truth (plan §"Session, MCP, and identity across harnesses").
+  {
+    id: "005-unit-session-id",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN session_id TEXT;
+    `,
+  },
+  // ── Migration 006 — frozen plan + engine lease (redesign addendum, R1) ──────
+  //
+  // `workflow start` now compiles the workflow into its plan graph ONCE and
+  // freezes it on the run row: `plan_json` holds the canonical plan JSON
+  // (`ir/plan-hash.ts`) and `plan_hash` its sha256, so every subsequent
+  // invocation executes the frozen snapshot with an integrity check — the
+  // source file is never re-read for an in-flight run. Runs created before
+  // this migration have NULL plan_json (legacy) and fall back to
+  // compile-from-asset with a warning.
+  //
+  // `engine_lease_until` / `engine_lease_holder` reserve the run-lease columns
+  // (a second `workflow run` on a leased run refuses up front). TODO(R2):
+  // lease ENFORCEMENT is engine-rework scope — only the columns land now.
+  {
+    id: "006-frozen-plan-and-lease",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN plan_json TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN plan_hash TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN engine_lease_until TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN engine_lease_holder TEXT;
+    `,
+  },
+  // ── Migration 007 — unit-level check-in heartbeat (redesign addendum, R3) ────
+  //
+  // The harness-neutral driver protocol lets ANY agent session claim and
+  // heartbeat a unit it is executing via `akm workflow report --status running`.
+  // `last_checkin_at` records the most recent heartbeat (distinct from
+  // `started_at`, the first claim) so a pure timestamp evaluator
+  // (`runtime/unit-checkin.ts`) can surface a claimed-but-silent unit as stale
+  // in `workflow brief` without any background thread. Nullable and additive;
+  // engine-dispatched rows never set it (they finish before a heartbeat window
+  // could elapse), so their transient `running` state is judged from
+  // `started_at`.
+  {
+    id: "007-unit-last-checkin",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN last_checkin_at TEXT;
+    `,
+  },
+  // ── Migration 008 — per-unit dispatch-attempt counter (PR #714 review, P2) ───
+  //
+  // `workflow_run_units.unit_id` is CONTENT-derived and stable across
+  // crash/resume (retries/loops carry `~r<n>`/`~l<loop>` suffixes, so they are
+  // DISTINCT rows). A crash between a unit's dispatch (`insertUnit`, status
+  // `running`) and its finish leaves a stale `running` row; durable-row resume
+  // re-dispatches the SAME unit_id and `insertUnit` REPLACES that single row.
+  // Because the run's budget/lifetime seed was derived from the NUMBER of unit
+  // rows, each crash/resume of one unit erased the prior dispatch from
+  // `budget.max_units` / lifetime-cap accounting, letting a run spend past its
+  // declared ceiling. `attempts` counts how many times a row was (re)dispatched
+  // — incremented by `insertUnit` on every REPLACE of an existing row — so both
+  // budget seeds sum `attempts` instead of counting rows and crash-retried
+  // dispatches are charged. Existing rows back-fill to 1 (one dispatch each).
+  {
+    id: "008-unit-attempts",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
+  // ── Migration 009 — per-unit claim ownership (PR #714 review round 2) ─────────
+  //
+  // `akm workflow report --status running` claims a unit before executing it.
+  // Round-2 review (#3): a running row had no claim owner, no compare-and-set,
+  // and no stale-hash guard, so a stale/tampered `running` row could be
+  // finalized by anyone with a fresh result while keeping an old input_hash.
+  // These columns record who holds the claim (`claim_holder` — the driver's
+  // `--session-id` or a token report mints and returns) and until when
+  // (`claim_expires_at`, ISO-8601 UTC). Heartbeating or finishing a live-claimed
+  // running row requires the matching holder; an EXPIRED claim is reclaimable by
+  // a new holder (crash recovery). The TTL equals the unit-checkin stale window
+  // (`runtime/unit-checkin.UNIT_STALE_MS`), so an expired claim is exactly a unit
+  // that `workflow brief` already surfaces as stale. Both columns are nullable
+  // and additive: engine-dispatched rows and simple claimless drivers leave them
+  // NULL, and finishing a never-claimed unit stays allowed (input_hash is still
+  // validated always).
+  {
+    id: "009-unit-claim",
+    up: `
+      ALTER TABLE workflow_run_units ADD COLUMN claim_holder TEXT;
+      ALTER TABLE workflow_run_units ADD COLUMN claim_expires_at TEXT;
+    `,
+  },
 ];
 
 /**

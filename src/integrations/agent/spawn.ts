@@ -158,6 +158,15 @@ export interface RunAgentOptions {
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
   /**
+   * Observability seam (redesign addendum R2, `workflow watch`): invoked at
+   * spawn start and spawn exit with ids/status only — pid, profile name,
+   * exit code, failure reason. NEVER prompt or output content (07 P1-B
+   * rule). Best-effort: a throwing callback is swallowed so observability
+   * can never break a dispatch. No events fire when the child was never
+   * spawned (pre-spawn abort, synchronous spawn failure).
+   */
+  onEvent?: (evt: { type: string; data?: Record<string, unknown> }) => void;
+  /**
    * Abstract dispatch parameters. When present, the platform-specific
    * AgentCommandBuilder constructs the argv from these fields (system prompt,
    * model alias, tool policy). When absent, falls back to the legacy
@@ -297,22 +306,99 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
   return env;
 }
 
+interface StreamReadResult {
+  text: string;
+  timedOut: boolean;
+  error?: unknown;
+}
+
+const STREAM_READ_TIMEOUT = Symbol("stream-read-timeout");
+
 async function readStream(
   stream: ReadableStream<Uint8Array> | null | undefined,
-  opts?: { timeoutMs?: number },
-): Promise<string> {
-  if (!stream) return "";
-  const readPromise = new Response(stream).text().catch(() => "");
-  if (!opts?.timeoutMs) return readPromise;
+  opts?: {
+    timeoutMs?: number;
+    setTimeoutFn?: typeof setTimeout;
+    clearTimeoutFn?: typeof clearTimeout;
+  },
+): Promise<StreamReadResult> {
+  if (!stream) return { text: "", timedOut: false };
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  if (!opts?.timeoutMs) {
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      text += decoder.decode();
+      return { text, timedOut: false };
+    } catch (error) {
+      return { text, timedOut: false, error };
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   // Race the stream read against a timeout so a process that is killed via
   // SIGTERM/SIGKILL but whose pipe endpoints stay open (e.g. background
   // threads still holding the fd) cannot block the caller indefinitely.
-  // On timeout we return whatever we received so far (empty string here since
-  // `readPromise` is all-or-nothing with `Response.text()`).
-  const timeoutPromise = new Promise<string>((resolve) => {
-    setTimeout(() => resolve(""), opts.timeoutMs);
+  // On timeout we return whatever was decoded before the pipe stopped draining.
+  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
+  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
+  const timeoutPromise = new Promise<typeof STREAM_READ_TIMEOUT>((resolve) => {
+    timer = setTimeoutImpl(() => {
+      timer = undefined;
+      resolve(STREAM_READ_TIMEOUT);
+    }, opts.timeoutMs);
+    if (typeof timer !== "number") timer.unref?.();
   });
-  return Promise.race([readPromise, timeoutPromise]);
+  try {
+    while (true) {
+      const chunk = await Promise.race([reader.read(), timeoutPromise]);
+      if (chunk === STREAM_READ_TIMEOUT) {
+        void reader.cancel().catch(() => {});
+        return { text, timedOut: true };
+      }
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    text += decoder.decode();
+    return { text, timedOut: false };
+  } catch (error) {
+    return { text, timedOut: false, error };
+  } finally {
+    if (timer !== undefined) {
+      clearTimeoutImpl(timer);
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function streamFailureMessage(
+  profileName: string,
+  stdout: StreamReadResult,
+  stderr: StreamReadResult,
+): string | undefined {
+  const failures: string[] = [];
+  if (stdout.error)
+    failures.push(`stdout read failed: ${stdout.error instanceof Error ? stdout.error.message : String(stdout.error)}`);
+  if (stderr.error)
+    failures.push(`stderr read failed: ${stderr.error instanceof Error ? stderr.error.message : String(stderr.error)}`);
+  if (stdout.timedOut) failures.push("stdout drain timed out");
+  if (stderr.timedOut) failures.push("stderr drain timed out");
+  if (failures.length === 0) return undefined;
+  return `agent CLI "${profileName}" output capture failed: ${failures.join("; ")}`;
 }
 
 /**
@@ -345,6 +431,16 @@ export async function runAgent(
   const parseOutput = options.parseOutput ?? profile.parseOutput;
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
+
+  // Observability seam — ids/status only, best-effort (see RunAgentOptions.onEvent).
+  const emitSpawnEvent = (type: string, data: Record<string, unknown>): void => {
+    if (!options.onEvent) return;
+    try {
+      options.onEvent({ type, data });
+    } catch {
+      // Observability must never break the dispatch.
+    }
+  };
 
   // Build argv via the platform-specific builder when dispatch params are
   // provided; fall back to the legacy positional-prompt form otherwise.
@@ -409,6 +505,10 @@ export async function runAgent(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+  emitSpawnEvent("spawn_start", {
+    profile: profile.name,
+    ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+  });
 
   // Hard timeout. We prefer SIGTERM, then SIGKILL if SIGTERM is ignored,
   // but the subprocess only exposes a single .kill() — one signal is enough
@@ -429,10 +529,11 @@ export async function runAgent(
       timedOut = true;
       killGroup(proc, "SIGTERM");
       // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
-      setTimeoutImpl(() => {
+      const sigkillTimer = setTimeoutImpl(() => {
         if (!proc || proc.exitCode !== null) return;
         killGroup(proc, "SIGKILL");
       }, 5000);
+      if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
     }, timeoutMs);
   }
 
@@ -467,12 +568,20 @@ export async function runAgent(
   const streamDrainTimeoutMs = timeoutMs !== null ? timeoutMs + 2_000 : 30_000;
   const stdoutPromise =
     stdioMode === "captured"
-      ? readStream(proc.stdout ?? null, { timeoutMs: streamDrainTimeoutMs })
-      : Promise.resolve("");
+      ? readStream(proc.stdout ?? null, {
+          timeoutMs: streamDrainTimeoutMs,
+          setTimeoutFn: setTimeoutImpl,
+          clearTimeoutFn: clearTimeoutImpl,
+        })
+      : Promise.resolve({ text: "", timedOut: false });
   const stderrPromise =
     stdioMode === "captured"
-      ? readStream(proc.stderr ?? null, { timeoutMs: streamDrainTimeoutMs })
-      : Promise.resolve("");
+      ? readStream(proc.stderr ?? null, {
+          timeoutMs: streamDrainTimeoutMs,
+          setTimeoutFn: setTimeoutImpl,
+          clearTimeoutFn: clearTimeoutImpl,
+        })
+      : Promise.resolve({ text: "", timedOut: false });
 
   // Optional stdin payload (captured mode only).
   //
@@ -511,6 +620,12 @@ export async function runAgent(
     // will not block indefinitely.
     await Promise.allSettled([stdoutPromise, stderrPromise]);
     const durationMs = Date.now() - start;
+    emitSpawnEvent("spawn_exit", {
+      profile: profile.name,
+      ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+      exitCode: null,
+      status: "spawn_failed",
+    });
     return {
       ok: false,
       exitCode: null,
@@ -523,8 +638,16 @@ export async function runAgent(
   }
   clearTimeoutImpl(timer);
   abortSignal?.removeEventListener("abort", onAbort);
+  emitSpawnEvent("spawn_exit", {
+    profile: profile.name,
+    ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+    exitCode,
+    status: aborted ? "aborted" : timedOut ? "timeout" : exitCode !== 0 ? "non_zero_exit" : "ok",
+  });
 
-  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+  const [stdoutRead, stderrRead] = await Promise.all([stdoutPromise, stderrPromise]);
+  const stdout = stdoutRead.text;
+  const stderr = stderrRead.text;
   const durationMs = Date.now() - start;
 
   if (aborted) {
@@ -548,6 +671,19 @@ export async function runAgent(
       durationMs,
       reason: "timeout",
       error: `agent CLI "${profile.name}" timed out after ${timeoutMs ?? 0}ms`,
+    };
+  }
+
+  const captureFailure = streamFailureMessage(profile.name, stdoutRead, stderrRead);
+  if (captureFailure) {
+    return {
+      ok: false,
+      exitCode,
+      stdout,
+      stderr,
+      durationMs,
+      reason: "spawn_failed",
+      error: captureFailure,
     };
   }
 

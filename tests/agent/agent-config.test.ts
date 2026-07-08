@@ -13,12 +13,22 @@ function mkConfig(over: Partial<AkmConfig> = {}): AkmConfig {
 }
 
 describe("built-in profile resolution", () => {
-  test("resolves opencode, claude, codex, gemini, aider out of the box", async () => {
+  test("resolves the built-in agent CLIs out of the box", async () => {
     const { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } = await import(
       "../../src/integrations/agent/profiles"
     );
-    expect(BUILTIN_AGENT_PROFILE_NAMES).toEqual(["aider", "claude", "codex", "gemini", "opencode"]);
-    for (const name of ["opencode", "claude", "codex", "gemini", "aider"]) {
+    expect(BUILTIN_AGENT_PROFILE_NAMES).toEqual([
+      "aider",
+      "amazonq",
+      "claude",
+      "codex",
+      "copilot",
+      "gemini",
+      "opencode",
+      "openhands",
+      "pi",
+    ]);
+    for (const name of ["opencode", "claude", "codex", "gemini", "aider", "copilot", "pi", "amazonq", "openhands"]) {
       const profile = getBuiltinAgentProfile(name);
       expect(profile).toBeDefined();
       expect(profile?.bin).toBeTruthy();

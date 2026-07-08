@@ -29,7 +29,6 @@ import { isWithin, writeFileAtomic } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
 import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { parseFlagValue } from "../../output/context";
@@ -261,73 +260,14 @@ async function runEnvInjected(
     throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
   }
 
-  const { loadEnv } = await import("./env.js");
-  const allValues = loadEnv(absPath);
-
-  // Value-safe key filtering (--only / --except operate on key NAMES only).
-  let envValues = allValues;
-  if (opts.only && opts.except) {
-    throw new UsageError("Pass only one of --only or --except.", "INVALID_FLAG_VALUE");
-  }
-  if (opts.only) {
-    const wanted = new Set(opts.only);
-    const missing = opts.only.filter((k) => !(k in allValues));
-    if (missing.length > 0) {
-      process.stderr.write(
-        `warning: --only key(s) not present in ${makeEnvRef(name, source)}: ${missing.join(", ")}\n`,
-      );
-    }
-    envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => wanted.has(k)));
-  } else if (opts.except) {
-    const excluded = new Set(opts.except);
-    envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
-  }
-  // Substitute `${secret:NAME}` tokens in values with the value of the sibling
-  // secret asset in the SAME stash. The lookup is injected so commands/env.ts
-  // keeps its narrow dependency surface; we resolve each name against this env's
-  // own `source`. A missing secret is a hard error — inject NOTHING (no partial
-  // injection). Resolved values are never logged or printed.
-  const { resolveSecretTokens } = await import("./env.js");
-  const { readValue } = await import("./secret.js");
-  const secretsRoot = path.join(source.path, "secrets");
-  const resolveSecret = (secretName: string): string | undefined => {
-    const secretPath = resolveAssetPathFromName("secret", secretsRoot, secretName);
-    // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
-    if (!isWithin(secretPath, secretsRoot)) {
-      throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);
-    }
-    if (!fs.existsSync(secretPath)) return undefined;
-    // Match `secret run`: read utf8, do not trim (stay consistent with that path).
-    return readValue(secretPath).toString("utf8");
-  };
-  const { values: substituted, missing } = resolveSecretTokens(envValues, resolveSecret);
-  if (missing.length > 0) {
-    const envRef = makeEnvRef(name, source);
-    throw new NotFoundError(
-      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => `secret:${n}`).join(", ")}. Nothing was injected.`,
-      "FILE_NOT_FOUND",
-      `Create the missing secret, e.g. \`akm secret set secret:${missing[0]}\`.`,
-    );
-  }
-  envValues = substituted;
-  const keys = Object.keys(envValues);
-
-  // Scan injected keys for known process-hijacking variables (LD_PRELOAD,
-  // PATH, ...). Block for third-party-sourced stashes (origin has a registryId);
-  // warn for the operator's own first-party stash, where they own the file.
-  const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
-  const dangerous = keys.filter(isDangerousEnvKey);
-  if (dangerous.length > 0) {
-    const detail = `Env "${makeEnvRef(name, source)}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
-    if (source.registryId) {
-      throw new UsageError(
-        `Refusing to inject env from a third-party stash. ${detail}\n` +
-          `       Review the file, then copy the values into a first-party env if you trust them.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    process.stderr.write(`warning: ${detail} Injecting anyway (first-party stash).\n`);
-  }
+  // Load → filter → secret-substitute → dangerous-key policy → keys-only
+  // audit event. Shared with the workflow engine's per-unit env bindings —
+  // see env-binding.ts for the extracted core and its safety invariants.
+  const { resolveEnvBinding } = await import("./env-binding.js");
+  const { values: envValues } = resolveEnvBinding(target, {
+    only: opts.only,
+    except: opts.except,
+  });
 
   const mergedEnv = buildChildEnv(process.env, {
     clean: opts.clean === true,
@@ -336,13 +276,6 @@ async function runEnvInjected(
   for (const [envKey, envValue] of Object.entries(envValues)) {
     mergedEnv[envKey] = envValue;
   }
-
-  // Audit trail: keys only, never values.
-  appendEvent({
-    eventType: "env_access",
-    ref: makeEnvRef(name, source),
-    metadata: { keys },
-  });
 
   const result = spawnSync(command[0] as string, command.slice(1), {
     stdio: "inherit",

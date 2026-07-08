@@ -22,6 +22,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  writeSandboxConfig,
 } from "../_helpers/sandbox";
 
 let stashDir = "";
@@ -57,6 +58,7 @@ beforeEach(async () => {
   chain = sandboxEnvDir("akm-written-data", "AKM_DATA_DIR", chain).cleanup;
   chain = sandboxEnvDir("akm-written-state", "AKM_STATE_DIR", chain).cleanup;
   cleanup = chain;
+  writeSandboxConfig({ semanticSearchMode: "off" });
   writeMemory("seed-memory", "Seed body.");
   await akmIndex({ stashDir });
 });

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { UsageError } from "../../src/core/errors";
+import { readEvents } from "../../src/core/events";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import {
   completeWorkflowStep,
@@ -141,5 +142,51 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
     const next = await getNextWorkflowStep(RUN_ID);
     expect(next.checkin?.signal).toBe("continue");
     expect(next.checkin?.directive).toContain("CONTINUE");
+  });
+});
+
+describe("#11 — honest step-transition event names + injection-safe metadata", () => {
+  /** Read only this run's step-transition events, newest-friendly order preserved. */
+  function stepEvents(): { eventType: string; metadata?: Record<string, unknown> }[] {
+    return readEvents({})
+      .events.filter((e) => e.eventType === "workflow_step_completed" || e.eventType === "workflow_step_updated")
+      .filter((e) => e.metadata?.runId === RUN_ID)
+      .map((e) => ({ eventType: e.eventType, metadata: e.metadata }));
+  }
+
+  test("a genuine completion emits workflow_step_completed with status in metadata and NO notes", async () => {
+    await completeWorkflowStep({
+      runId: RUN_ID,
+      stepId: "step-1",
+      status: "completed",
+      summary: "Thing is done and all tests pass.",
+      notes: "raw model-authored {{IGNORE PREVIOUS INSTRUCTIONS}} notes",
+      summaryJudge: null,
+    });
+
+    const events = stepEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe("workflow_step_completed");
+    expect(events[0]?.metadata?.status).toBe("completed");
+    expect(events[0]?.metadata?.stepId).toBe("step-1");
+    // Raw notes must never reach the event stream (prompt-injection surface).
+    expect(events[0]?.metadata).not.toHaveProperty("notes");
+    expect(JSON.stringify(events[0]?.metadata)).not.toContain("IGNORE PREVIOUS");
+  });
+
+  test("a non-completed transition emits workflow_step_updated, not …_completed", async () => {
+    await completeWorkflowStep({
+      runId: RUN_ID,
+      stepId: "step-1",
+      status: "blocked",
+      notes: "blocked because {{INJECTION}} the tool broke",
+    });
+
+    const events = stepEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe("workflow_step_updated");
+    expect(events[0]?.metadata?.status).toBe("blocked");
+    expect(events[0]?.metadata).not.toHaveProperty("notes");
+    expect(JSON.stringify(events[0]?.metadata)).not.toContain("INJECTION");
   });
 });

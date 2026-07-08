@@ -85,11 +85,13 @@ const BUILTIN_BUILDERS: Readonly<Record<string, AgentCommandBuilder>> = (() => {
  * A *custom* profile (unknown platform) falls back to the default builder —
  * that generic `--system-prompt`/`--model`/`--` shape is the documented
  * contract for user-defined wrappers. A *known built-in agent CLI* with no
- * dedicated builder (codex, gemini, aider + their `-headless` variants) is a
- * loud `ConfigError` instead: the default flag shape is wrong for those CLIs
- * (aider, for one, treats positionals as file names), so the old silent
- * fallback produced a broken command that "ran" and failed downstream.
- * Custom builders injected via tests can be passed as `registry`.
+ * dedicated builder is a loud `ConfigError` instead: the default flag shape
+ * is wrong for those CLIs (aider, for one, treats positionals as file names),
+ * so the old silent fallback produced a broken command that "ran" and failed
+ * downstream. As of the P2 harness-adapter integration every built-in profile
+ * has a registry-derived builder, so this branch only fires if a future
+ * builtin profile ships without one. Custom builders injected via tests can
+ * be passed as `registry`.
  */
 export function getCommandBuilder(
   platform: string,

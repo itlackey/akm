@@ -14,6 +14,7 @@
  */
 
 import { defineCommand } from "citty";
+import { getStringArg } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { parseAssetRef } from "../core/asset/asset-ref";
@@ -27,7 +28,9 @@ import { resolveAssetPath } from "../sources/resolve";
 import {
   createWorkflowAsset,
   formatWorkflowErrors,
+  getWorkflowProgramTemplate,
   getWorkflowTemplate,
+  validateWorkflowProgramSource,
   validateWorkflowSource,
 } from "../workflows/authoring/authoring";
 import {
@@ -36,6 +39,7 @@ import {
   parseWorkflowStepState,
   WORKFLOW_STEP_STATES,
 } from "../workflows/cli";
+import { isWorkflowProgramPath } from "../workflows/program/project";
 import {
   abandonWorkflowRun,
   completeWorkflowStep,
@@ -169,9 +173,17 @@ const workflowStatusCommand = defineJsonCommand({
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
+    units: {
+      type: "boolean",
+      description:
+        "Also list per-unit rows from the run journal (unit id, status, failure_reason, and any result/error " +
+        "diagnostic text). Diagnostics only — step evidence stays deterministic and is unaffected (#22).",
+      default: false,
+    },
   },
   async run({ args }) {
     const target = args.target;
+    const includeUnits = args.units === true;
     // Check if target looks like a workflow ref
     const parsed = (() => {
       try {
@@ -188,10 +200,10 @@ const workflowStatusCommand = defineJsonCommand({
       }
       const mostRecent = runs[0];
       if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
-      const result = await getWorkflowStatus(mostRecent.id);
+      const result = await getWorkflowStatus(mostRecent.id, { includeUnits });
       output("workflow-status", result);
     } else {
-      const result = await getWorkflowStatus(target);
+      const result = await getWorkflowStatus(target, { includeUnits });
       output("workflow-status", result);
     }
   },
@@ -215,12 +227,14 @@ const workflowListCommand = defineJsonCommand({
 const workflowCreateCommand = defineJsonCommand({
   meta: {
     name: "create",
-    description: "Create a workflow markdown document in the working stash",
+    description:
+      "Create a workflow in the working stash (markdown document by default; a .yaml/.yml name writes a YAML program)",
   },
   args: {
     name: {
       type: "positional",
-      description: "Workflow name (flat, no '/'; use --path for a subdirectory)",
+      description:
+        "Workflow name (flat, no '/'; use --path for a subdirectory). A .yaml/.yml suffix creates a YAML program.",
       required: true,
     },
     path: {
@@ -228,7 +242,10 @@ const workflowCreateCommand = defineJsonCommand({
       description:
         "Relative subdirectory under workflows/ to place the workflow in (e.g. 'release'). The filename comes from the name.",
     },
-    from: { type: "string", description: "Import and validate markdown from an existing file" },
+    from: {
+      type: "string",
+      description: "Import and validate content from an existing file (parsed per the destination extension)",
+    },
     force: {
       type: "boolean",
       description: "Overwrite an existing workflow (requires --from or --reset)",
@@ -271,27 +288,55 @@ const workflowCreateCommand = defineJsonCommand({
 const workflowTemplateCommand = defineCommand({
   meta: {
     name: "template",
-    description: "Print a valid workflow markdown template",
+    description: "Print a valid workflow template (markdown by default, --yaml for a YAML program)",
   },
-  run() {
-    process.stdout.write(getWorkflowTemplate());
+  args: {
+    yaml: {
+      type: "boolean",
+      description: "Print a minimal valid YAML workflow program instead of the markdown template",
+      default: false,
+    },
+  },
+  run({ args }) {
+    process.stdout.write(args.yaml ? getWorkflowProgramTemplate() : getWorkflowTemplate());
   },
 });
 
 const workflowValidateCommand = defineJsonCommand({
   meta: {
     name: "validate",
-    description: "Validate a workflow markdown file or ref and print any errors",
+    description: "Validate a workflow file or ref (markdown document or YAML program) and print any errors",
   },
   args: {
     target: {
       type: "positional",
-      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md",
+      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md/.yaml",
       required: true,
     },
   },
   async run({ args }) {
     const filePath = await resolveWorkflowFilePath(args.target);
+    // YAML programs (redesign addendum, R1) validate through the program
+    // parser AND compiler so expression/reference errors surface at lint
+    // time; both error lists carry line numbers. Markdown is unchanged.
+    if (isWorkflowProgramPath(filePath)) {
+      const { result } = validateWorkflowProgramSource(filePath);
+      if (!result.ok) {
+        throw new UsageError(formatWorkflowErrors(filePath, result.errors));
+      }
+      // Non-fatal WARNINGS ride the envelope additively — `ok` stays true. The
+      // text formatter renders them clearly marked for humans; the JSON key is
+      // the machine channel. Empty array when the program is fully typed/declared.
+      output("workflow-validate", {
+        ok: true,
+        path: filePath,
+        format: "program",
+        title: result.program.name,
+        stepCount: result.program.steps.length,
+        warnings: result.warnings.map((w) => ({ line: w.line, message: w.message })),
+      });
+      return;
+    }
     const { parse } = validateWorkflowSource(filePath);
     if (parse.ok) {
       output("workflow-validate", {
@@ -307,7 +352,15 @@ const workflowValidateCommand = defineJsonCommand({
 });
 
 async function resolveWorkflowFilePath(target: string): Promise<string> {
-  if (!target.startsWith("workflow:")) return target;
+  // A bare (`workflow:<name>`) OR origin-qualified (`<origin>//workflow:<name>`)
+  // ref resolves through the source search, exactly like `workflow start` /
+  // `status` / `next`. Anything else is treated as a filesystem path. Detecting
+  // the origin-qualified form here (not just the bare prefix) keeps `validate`'s
+  // ref contract in lockstep with the rest of the workflow command family — an
+  // `extra//workflow:foo` ref validates the file that `extra//workflow:foo`
+  // starts, rather than being mistaken for a relative path that does not exist.
+  const looksLikeWorkflowRef = target.startsWith("workflow:") || target.includes("//workflow:");
+  if (!looksLikeWorkflowRef) return target;
   const parsed = parseAssetRef(target);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
@@ -324,6 +377,246 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
   }
   throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
 }
+
+const workflowRunCommand = defineJsonCommand({
+  meta: {
+    name: "run",
+    description:
+      "EXPERIMENTAL: execute a workflow's steps with the native engine — akm dispatches each step's units " +
+      "(fan-out, schema output) to the configured runner and advances the run through the normal completion gates",
+  },
+  args: {
+    target: { type: "positional", description: "Workflow run id or workflow ref (auto-starts a run)", required: true },
+    params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
+    "max-steps": { type: "string", description: "Stop after executing this many steps" },
+    "require-gates": {
+      type: "boolean",
+      description:
+        "Treat every criteria-bearing completion gate as required: if no LLM judge is available, BLOCK the step " +
+        "(for a human to resolve via `akm workflow resume`) instead of failing open. A per-step `gate.required: true` " +
+        "in the workflow does the same on every surface; this is the run-wide override (#18).",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    const { runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
+    const rawMaxSteps = getStringArg(args, "max-steps");
+    let maxSteps: number | undefined;
+    if (rawMaxSteps !== undefined) {
+      maxSteps = Number.parseInt(rawMaxSteps, 10);
+      if (!/^\d+$/.test(rawMaxSteps) || maxSteps <= 0) {
+        throw new UsageError(`--max-steps must be a positive integer, got "${rawMaxSteps}".`, "INVALID_FLAG_VALUE");
+      }
+    }
+    const result = await runWorkflowSteps({
+      target: args.target,
+      ...(args.params ? { params: parseWorkflowJsonObject(args.params, "--params") } : {}),
+      ...(maxSteps !== undefined ? { maxSteps } : {}),
+      ...(args["require-gates"] === true ? { requireGates: true } : {}),
+    });
+    output("workflow-run", result);
+  },
+});
+
+const workflowBriefCommand = defineJsonCommand({
+  meta: {
+    name: "brief",
+    description:
+      "EXPERIMENTAL: describe a run's active step as an executable work-list for ANY agent session (the " +
+      "harness-neutral driver protocol) — read-only, takes no engine lease, mutates nothing; prints per-unit " +
+      "instructions, output schema, env binding names, and the exact `akm workflow report` command lines",
+  },
+  args: {
+    target: {
+      type: "positional",
+      description: "Workflow run id (or a workflow ref with an active run)",
+      required: true,
+    },
+  },
+  async run({ args }) {
+    const { buildWorkflowBrief } = await import("../workflows/exec/brief.js");
+    const result = await buildWorkflowBrief(args.target);
+    output("workflow-brief", result);
+  },
+});
+
+const WORKFLOW_REPORT_STATES = ["completed", "failed", "running"] as const;
+type WorkflowReportStatus = (typeof WORKFLOW_REPORT_STATES)[number];
+
+const workflowReportCommand = defineJsonCommand({
+  meta: {
+    name: "report",
+    description:
+      "EXPERIMENTAL: report a unit's result back into a run (the mutating half of the harness-neutral driver " +
+      "protocol) — ingested through the SAME shared step semantics the engine uses. --status running claims/" +
+      "heartbeats a unit; completed/failed records it and, when the step's work-list is fully terminal, runs the " +
+      "engine's completion path (reducer, artifact + schema validation, gate). --settle (no --unit) advances a run " +
+      "parked on a route-only/empty step. Refused while a live engine lease exists",
+  },
+  args: {
+    target: {
+      type: "positional",
+      description: "Workflow run id (or a workflow ref with an active run)",
+      required: true,
+    },
+    unit: {
+      type: "string",
+      description: "Content-derived unit id from `akm workflow brief` (copy it verbatim). Omit with --settle.",
+    },
+    settle: {
+      type: "boolean",
+      description:
+        "Advance/finalize a run whose active step has NO unit left to report: a non-dispatching step (params-based route, empty fan-out, all-unresolvable) OR a fully-terminal step still needing finalization (every unit ran but the gate never judged — e.g. after resuming a required-gate block). Runs the deterministic completion path. Mutually exclusive with --unit; refused when the step still has genuinely pending units",
+      default: false,
+    },
+    "expect-step": {
+      type: "string",
+      description:
+        "Guard: the step id you briefed against. Refuses the report if the run's active step has since moved (from the `brief` report/settle command line)",
+    },
+    status: { type: "string", description: `Unit status: ${WORKFLOW_REPORT_STATES.join(", ")}` },
+    result: { type: "string", description: "Result payload (JSON for a schema unit, else text). completed only." },
+    "result-file": { type: "string", description: "Read the result payload from this file instead of --result/stdin" },
+    tokens: { type: "string", description: "Tokens spent on this unit (counts against a declared budget)" },
+    "session-id": { type: "string", description: "Harness-native session id revealed while executing the unit" },
+    "failure-reason": { type: "string", description: "Structured failure vocabulary for a --status failed report" },
+    note: { type: "string", description: "Short progress note for a --status running heartbeat (not persisted)" },
+    rerun: {
+      type: "boolean",
+      description:
+        "Re-run an already-FAILED unit: record a NEW attempt (re-applies budget) instead of refusing a differing re-report",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    // --settle: the unit-less verb that advances a run parked on a
+    // non-dispatching step. Mutually exclusive with the per-unit report flags.
+    if (args.settle === true) {
+      if (getStringArg(args, "unit") !== undefined || getStringArg(args, "status") !== undefined) {
+        throw new UsageError(
+          "--settle advances a route-only/empty step and takes no --unit or --status. Drop them, or report a " +
+            "specific unit with `--unit <id> --status <state>` instead.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const { settleWorkflowSpine } = await import("../workflows/exec/report.js");
+      const result = await settleWorkflowSpine({
+        target: args.target,
+        ...(getStringArg(args, "expect-step") !== undefined ? { expectStep: getStringArg(args, "expect-step") } : {}),
+      });
+      output("workflow-report", result);
+      return;
+    }
+
+    const status = args.status as string;
+    if (!status) {
+      throw new UsageError(
+        "--status is required (completed | failed | running), or pass --settle to advance a non-dispatching step.",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
+    if (!WORKFLOW_REPORT_STATES.includes(status as WorkflowReportStatus)) {
+      throw new UsageError(
+        `Invalid --status "${status}". Expected one of: ${WORKFLOW_REPORT_STATES.join(", ")}.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const unitId = getStringArg(args, "unit");
+    if (!unitId) {
+      throw new UsageError(
+        "--unit is required (the content-derived unit id from `akm workflow brief`), or pass --settle for a route-only/empty step.",
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
+
+    let tokens: number | undefined;
+    const rawTokens = getStringArg(args, "tokens");
+    if (rawTokens !== undefined) {
+      tokens = Number.parseInt(rawTokens, 10);
+      if (!/^\d+$/.test(rawTokens)) {
+        throw new UsageError(`--tokens must be a non-negative integer, got "${rawTokens}".`, "INVALID_FLAG_VALUE");
+      }
+    }
+
+    // Result payload precedence: --result, then --result-file, then stdin
+    // (completed/failed only; a running heartbeat carries no result).
+    let resultRaw: string | undefined;
+    if (status !== "running") {
+      const resultFile = getStringArg(args, "result-file");
+      if (args.result !== undefined && resultFile !== undefined) {
+        throw new UsageError("Pass at most one of --result or --result-file.", "INVALID_FLAG_VALUE");
+      }
+      if (args.result !== undefined) {
+        resultRaw = String(args.result);
+      } else if (resultFile !== undefined) {
+        const fs = await import("node:fs");
+        resultRaw = fs.readFileSync(resultFile, "utf8");
+      } else if (!process.stdin.isTTY) {
+        resultRaw = await readStdin();
+      }
+    }
+
+    const { reportWorkflowUnit } = await import("../workflows/exec/report.js");
+    const result = await reportWorkflowUnit({
+      target: args.target,
+      unitId,
+      status: status as WorkflowReportStatus,
+      ...(getStringArg(args, "expect-step") !== undefined ? { expectStep: getStringArg(args, "expect-step") } : {}),
+      ...(resultRaw !== undefined ? { resultRaw } : {}),
+      ...(tokens !== undefined ? { tokens } : {}),
+      ...(args.rerun === true ? { rerun: true } : {}),
+      ...(getStringArg(args, "session-id") !== undefined ? { sessionId: getStringArg(args, "session-id") } : {}),
+      ...(getStringArg(args, "failure-reason") !== undefined
+        ? { failureReason: getStringArg(args, "failure-reason") }
+        : {}),
+      ...(getStringArg(args, "note") !== undefined ? { note: getStringArg(args, "note") } : {}),
+    });
+    output("workflow-report", result);
+  },
+});
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+const workflowWatchCommand = defineJsonCommand({
+  meta: {
+    name: "watch",
+    description:
+      "Print a run's workflow_* events (state.db events table) as NDJSON and exit; --stream polls in the " +
+      "foreground until the run reaches a terminal status (no daemon)",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+    stream: {
+      type: "boolean",
+      description: "Keep polling for new events until the run leaves 'active' (completed/failed/blocked)",
+      default: false,
+    },
+    "interval-ms": { type: "string", description: "Poll interval in milliseconds for --stream (default: 1000)" },
+  },
+  async run({ args }) {
+    const rawInterval = getStringArg(args, "interval-ms");
+    let intervalMs: number | undefined;
+    if (rawInterval !== undefined) {
+      intervalMs = Number.parseInt(rawInterval, 10);
+      if (!/^\d+$/.test(rawInterval) || intervalMs <= 0) {
+        throw new UsageError(`--interval-ms must be a positive integer, got "${rawInterval}".`, "INVALID_FLAG_VALUE");
+      }
+    }
+    const { watchWorkflowRun } = await import("../workflows/exec/watch.js");
+    const result = await watchWorkflowRun({
+      runId: args.runId,
+      stream: args.stream === true,
+      ...(intervalMs !== undefined ? { intervalMs } : {}),
+    });
+    // The event lines above are raw NDJSON on stdout; this trailing envelope
+    // is the machine-readable command result (counts + terminal status).
+    output("workflow-watch", { ok: true, ...result });
+  },
+});
 
 const workflowAbandonCommand = defineJsonCommand({
   meta: {
@@ -369,6 +662,10 @@ export const workflowCommand = defineCommand({
     resume: workflowResumeCommand,
     abandon: workflowAbandonCommand,
     validate: workflowValidateCommand,
+    run: workflowRunCommand,
+    brief: workflowBriefCommand,
+    report: workflowReportCommand,
+    watch: workflowWatchCommand,
   },
   run({ args }) {
     return runWithJsonErrors(async () => {

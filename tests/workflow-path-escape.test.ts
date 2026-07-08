@@ -89,8 +89,11 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
     // symlink path as the stash dir.  This simulates environments where HOME
     // or a parent directory is a symlink (e.g. macOS /tmp → /private/tmp).
     const realDir = makeTempDir("akm-issue157-real-");
-    const symlinkDir = path.join(os.tmpdir(), `akm-issue157-link-${Date.now()}`);
-    tempDirs.push(symlinkDir); // cleaned up by afterEach (rm -rf is ok for dead links)
+    // Nest the symlink inside a unique mkdtemp parent so the link path is
+    // collision-free under the parallel sharded test harness (a bare
+    // `Date.now()` name has only millisecond resolution and can EEXIST).
+    const linkParent = makeTempDir("akm-issue157-link-");
+    const symlinkDir = path.join(linkParent, "stash-link");
     fs.symlinkSync(realDir, symlinkDir);
 
     process.env.AKM_STASH_DIR = symlinkDir;

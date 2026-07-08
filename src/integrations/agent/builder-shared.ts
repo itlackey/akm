@@ -18,6 +18,7 @@
 import { UsageError } from "../../core/errors";
 import type { ShowResponse } from "../../sources/types";
 import type { AgentProfile } from "./profiles";
+import type { AgentRunResult } from "./spawn";
 
 /**
  * Platform-agnostic description of what the caller wants to dispatch.
@@ -67,6 +68,34 @@ export interface BuiltCommand {
   /** Payload to write to stdin (honoured only in captured stdio mode). */
   readonly stdin?: string;
 }
+
+/**
+ * Normalized payload extracted from one raw harness run (P2, plan §"The
+ * adapter contract" step 3 / §"Structured-output normalization").
+ *
+ * `text` is the harness's final answer with transport framing stripped
+ * (JSONL event streams, SDK envelopes, banner noise) — the input that
+ * schema validation / `parseEmbeddedJsonResponse` then runs against.
+ * `sessionId` is the harness-native session id when the output reveals one,
+ * stored opportunistically on the unit row for resume (`workflow_run_units`
+ * stays the source of truth; akm never depends on it).
+ */
+export interface AgentResultExtraction {
+  text: string;
+  sessionId?: string;
+}
+
+/**
+ * Per-harness result extractor — the counterpart of {@link AgentCommandBuilder}
+ * on the output side. Registered on the harness descriptor
+ * (`AkmHarness.resultExtractor`) so the workflow engine can normalize any
+ * harness's raw {@link AgentRunResult} without a hand-maintained switch.
+ *
+ * A function type (not an object) because extraction is a pure
+ * `raw result → { text, sessionId? }` mapping; schema validation and the
+ * retry-until-valid loop stay in the engine, shared across harnesses.
+ */
+export type AgentResultExtractor = (result: AgentRunResult) => AgentResultExtraction;
 
 /** Strategy for building the argv for one agent CLI platform. */
 export interface AgentCommandBuilder {

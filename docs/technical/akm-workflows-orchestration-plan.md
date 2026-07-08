@@ -4,9 +4,24 @@
 *Open decisions* and *Formalization addendum* below. Supersedes Part F of
 [`claude-code-vs-akm-workflows.md`](./claude-code-vs-akm-workflows.md).
 **P0.5 SHIPPED 2026-07-05** — merged to main in
-[PR #713](https://github.com/itlackey/akm/pull/713) (see the annotated
-*Rollout phases* for exactly what landed vs. was deferred). Next up: P0
-(IR + compiler), then P1 (`akm workflow run`).
+[PR #713](https://github.com/itlackey/akm/pull/713).
+**P0/P1 SHIPPED, P2 SHIPPED 2026-07-06** on the PR #714 branch.
+**REDESIGN 2026-07-06:** after P2, an owner review found the P1 execution
+semantics brittle and coupled to Claude Code. The *Redesign addendum*
+at the end of this document records the owner decisions (YAML program
+format, full replay semantics) and **supersedes** the P1 markdown
+orchestration grammar, the P3 CC-delegation backend, and the P5 replay
+design below. Phases R1–R4 in the addendum replace P3–P5.
+**ADDENDUM FULLY DELIVERED (R1–R4) 2026-07-07** on the PR #714 branch:
+R1 (YAML format + frozen plan) and R2 (engine rework) shipped 2026-07-06;
+R3 (harness-neutral driver protocol — `akm workflow brief`/`report` +
+unit-level check-in) and R4 (cross-surface conformance hardening + this
+status sweep) shipped 2026-07-07. Only **two owner-decided items are
+permanently out of scope** and were never built: the GitHub Copilot
+cloud-delegate backend and the stash MCP server. Everything below that
+predates the addendum (the P3–P5 CC-delegation/cloud/replay designs) is
+retained as historical context and is superseded by the addendum — read
+the *Redesign addendum* as the governing record of what shipped.
 
 ## Goal
 
@@ -95,7 +110,9 @@ rationale is given so you can override.
    **deferred** to fast-follow. Fan-out and schema output are the load-bearing
    parity features and both have existing substrate (`executeRunner`,
    `callStructured`); progress streaming and budget ceilings are additive and
-   land incrementally (P3).
+   land incrementally (P3). **[SHIPPED — see addendum]** budget ceilings,
+   `isolation: worktree`, and `workflow watch` (NDJSON stream) all landed in
+   R2; this "deferred" scoping is superseded.
 
 > These four are **decided** (owner-confirmed), not open. Decision 3 was the one
 > change from the first draft: resume is *configurable* (both modes), not
@@ -383,7 +400,7 @@ that is the whole point of routing everything through `RunnerSpec` /
 |---|---|---|---|---|---|---|---|
 | **Claude Code** | (`Workflow` tool / `claude -p`) | tool calls | via tool schema | `runId` cache | client+server | `CLAUDE_SESSION_ID` | in-harness |
 | **OpenCode** | SDK `session.prompt` / CLI | SDK events | via prompt+validate | session id | client | `OPENCODE_SESSION_ID` | local (sdk/cli) |
-| **OpenAI Codex** | `codex exec "<p>"` | `--json` (JSONL events) | **`--output-schema <file>`** | `codex exec resume <id>` | client+server | `CODEX_SANDBOX`, `CODEX_HOME` | local |
+| **OpenAI Codex** | `codex exec --sandbox workspace-write "<p>"` | `--json` (JSONL events) | **`--output-schema <file>`** | `codex exec resume <id>` | client+server | `CODEX_SANDBOX`, `CODEX_HOME` | local |
 | **Copilot CLI** | `copilot -p "<p>" --allow-all-tools` | `--output-format json` | via prompt+validate | `--continue`/`--resume <id>` | `~/.copilot/mcp-config.json` | `COPILOT_*`/`GH_TOKEN` | local |
 | **Copilot coding agent** | assign issue / `gh agent-task` / API | task status API + PR | n/a | server-side (PR branch) | GitHub MCP (tools) | `copilot-swe-agent[bot]` | **cloud delegate** |
 | **Pi** | `pi -p "<p>"` | `--mode json` (JSONL) | via prompt+validate | `-c`/`-r`/`--session` | extensions only | `PI_*` | local |
@@ -711,6 +728,8 @@ chain. The drift is already real: `codex`/`gemini`/`aider` have **profiles but
 no descriptor and no builder** (`profiles.ts:93-116`), so dispatching them hits
 the **default builder** (`builders.ts:43-60`) — whose `--system-prompt/--model/--`
 convention is wrong for all of them, producing a silently broken command.
+*(Codex now has a dedicated builder that injects `--sandbox workspace-write`;
+gemini and aider still lack builders.)*
 
 Fix, before adding harnesses (status as of P0.5, PR #713):
 1. Add descriptor fields to `AkmHarness`: `pattern`
@@ -763,7 +782,8 @@ extension*, not literally untouched.
 Both surfaced from the review and affect the **default** native path; the plan
 assumes the first option in each:
 
-1. **SDK worktree isolation. STILL OPEN.** `runOpencodeSdk` is a process-wide
+1. **SDK worktree isolation. ✅ RESOLVED in R2 — [SHIPPED — see addendum]**
+   (this was "STILL OPEN" pre-addendum; kept for the rationale). `runOpencodeSdk` is a process-wide
    singleton with no per-call cwd, so `isolation: worktree` is unimplementable
    against it as-is. *Assumed:* refactor the SDK runner to key its server by
    working directory (also fixes the concurrent-run test-isolation hazard).
@@ -771,8 +791,10 @@ assumes the first option in each:
    `isolation: worktree` units to the CLI runner (`runAgent` honors `cwd`
    today) — two default paths, less refactor. *Smallest:* defer worktree
    isolation past v1 with a documented gap. **P0.5 took the *smallest* path
-   (nothing shipped here); decide between the first two options no later
-   than P4, where `isolation: worktree` lands.**
+   (nothing shipped here); R2 then resolved this as a SPLIT (neither of the
+   two assumed options verbatim): cwd is per-call in the opencode SDK and env
+   goes through an env-keyed server registry, so `isolation: worktree` works on
+   the DEFAULT sdk runner AND the agent runner — see the R2 addendum bullet.**
 2. **Mid-unit abort. ✅ RESOLVED in P0.5** — `signal` is threaded through
    both `runAgent` (SIGTERM→SIGKILL on the process group, `"aborted"`
    failure reason) and `runOpencodeSdk` (prompt raced against the signal,
@@ -1004,3 +1026,363 @@ Reuse unchanged:
 - `src/integrations/agent/runner-dispatch.ts`, `spawn.ts`, `runner.ts` (core), `builders.ts` (mechanism)
 - `src/integrations/harnesses/opencode-sdk/**`, `src/integrations/harnesses/{claude,opencode}/agent-builder.ts`
 - `src/llm/structured-call.ts`, `usage-telemetry.ts`
+
+## Redesign addendum (owner decisions, 2026-07-06) — the deterministic program format
+
+**Trigger.** A post-P2 owner review judged the shipped P1 execution semantics
+"brittle and not deterministic in the same way Claude Code workflows are." A
+root-cause review agreed and located the failure precisely: **P1 ported
+Claude Code's features without porting its foundation.** CC's robustness
+comes from four properties, none of which is a feature:
+
+1. the plan is an **immutable program** for the life of a run;
+2. data flows through **explicit variables**, producer → consumer;
+3. resume is **journaled replay** of that program against cached leaf
+   results;
+4. **exactly one runtime** drives the loop.
+
+The P1 implementation violated all four: the plan was recompiled from the
+live asset file on every invocation (a half-finished run could change
+behavior when the file changed — the IR was specified as "serialized
+alongside `WorkflowDocument`" and never was); data flowed through an
+ambient, string-keyed evidence search (`over:` matched params, then *any*
+prior step's evidence, first hit wins); unit identity was positional
+(`node.unit[3]`); nothing stopped two concurrent `akm workflow run`
+invocations from racing the same run. Two further defects independent of
+determinism: the completion gate judged an engine-generated summary
+("Executed 3 units…") instead of the work, and no failure policy existed
+despite `failure_reason` being persisted expressly to enable one. The
+markdown grammar was meanwhile accreting program semantics (routes, gate
+loops, data flow) one subsection at a time — becoming a bad programming
+language instead of either staying simple or being a real one.
+
+### Owner decisions (recorded verbatim, supersede conflicting text above)
+
+1. **Direction → program format, YAML.** Orchestrated workflows are a
+   deterministic orchestration *program* expressed in **YAML** (chosen over
+   markdown for lintability/parseability — a published JSON Schema in
+   `schemas/` validates it, and `akm workflow validate` lints it). The
+   durable, gated step spine remains the organizing principle; YAML is how
+   the program is written, not a change to what a run is.
+2. **Determinism bar → full replay semantics.** The compiled plan is frozen
+   per run; orchestration decisions are pure functions of (frozen plan,
+   params, journaled unit results). No wall-clock, randomness, or ambient
+   lookup exists in the expression language *by construction*, so a resumed
+   run is byte-reproducible in every decision the engine makes. The only
+   nondeterminism is inside agent/LLM calls — and those are journaled.
+3. **Rework scope → break the P1 surface freely.** The P1 markdown
+   orchestration subsections (`### Runner`/`### Fan-out`/`### Schema`/
+   `### Route`/…) are **removed**, not kept alongside (they were shipped
+   experimental and unreleased). Classic **linear markdown workflows remain
+   fully supported and unchanged** — they compile to a linear plan exactly
+   as today (that CLI contract is stable). `workflow.db` evolution stays
+   strictly additive; migrations 001–005 are untouched.
+4. **Failure policy → explicit surface, fail-fast default.** Per-unit
+   `on_error: fail | continue` and bounded `retry` (keyed on the persisted
+   `failure_reason` taxonomy). The default remains fail-fast so nothing
+   silently degrades.
+
+### The YAML workflow format (v1 sketch — normative schema ships in R1)
+
+```yaml
+version: 1
+name: review-changes
+description: Review changed files and route the outcome
+params:
+  changed_files: { type: array, items: { type: string } }
+defaults:            # run-level defaults, overridable per unit
+  runner: sdk        # llm | agent | sdk | inherit
+  model: balanced
+  timeout: 10m
+  on_error: fail
+
+steps:
+  - id: discover
+    title: Discover targets
+    unit:
+      instructions: |
+        List the files that need review for ${{ params.changed_files }}.
+      output:                      # TYPED step artifact (JSON Schema)
+        type: object
+        properties: { files: { type: array, items: { type: string } } }
+        required: [files]
+    gate:
+      criteria: [every target is listed]
+
+  - id: review
+    title: Review files
+    map:
+      over: ${{ steps.discover.output.files }}   # EXPLICIT producer address
+      concurrency: 8
+      reducer: collect
+      unit:
+        runner: agent
+        profile: reviewer
+        model: deep
+        timeout: 5m
+        retry: { max: 1, on: [timeout, llm_rate_limit] }
+        on_error: continue
+        instructions: |
+          Review ${{ item }} for correctness bugs.
+        output: { type: object, properties: { file: { type: string }, verdict: { type: string } }, required: [file, verdict] }
+    output:                        # step artifact produced by the reducer
+      type: object
+      properties: { verdict: { type: string } }
+    gate:
+      criteria: [every changed file has a verdict]
+      max_loops: 2                 # evaluator-optimizer, bounded
+
+  - id: triage
+    route:                         # routing on an EXPLICIT input
+      input: ${{ steps.review.output.verdict }}
+      when: { pass: ship, fail: rework }
+      default: manual-triage
+```
+
+**The expression language is the whole trick.** `${{ … }}` references are
+*parsed*, not string-replaced: a closed grammar of `params.<name>`,
+`steps.<id>.output.<json-path>`, `item`, `item_index` — nothing else. No
+functions, no clock, no randomness, no ambient search. Single-pass
+resolution over a parsed AST means substituted *content* can never inject
+further directives (the P1 `{{item}}`/`{{params.x}}` re-scan bug class is
+structurally impossible). Every reference names its producer explicitly, so
+shadowing and resolution-order surprises are gone, and the validator can
+check every edge at lint time (unknown step, unknown output path, type
+mismatch against the producer's declared schema).
+
+### Execution contract (replaces the P1 semantics)
+
+- **Frozen plan.** `workflow start` compiles YAML → plan graph and persists
+  `plan_json` + `plan_hash` on the run row (migration 006, additive). Every
+  subsequent invocation executes the frozen plan; the source file is never
+  re-read for an in-flight run. Re-planning is an explicit new run.
+- **Journal + replay.** Unit identity is **content-derived**:
+  `unit_id = <node_id>:<sha256(canonical(item))[:12]>` (`:solo` for
+  non-fan-out), so identity survives list regeneration and reordering. A
+  completed journal row with matching `input_hash` IS the result on replay;
+  same identity with a different hash is a **replay divergence error**
+  (impossible under a frozen plan unless the journal was tampered with —
+  fail loudly, never silently re-run). Failed/missing units dispatch live.
+  Gate evaluator calls are journaled like units (they are LLM calls);
+  human gate approvals are never cached (a blocked gate stays blocked).
+- **Typed artifacts, honest gates.** A step's `output` schema is validated
+  against the reducer result; the gate judge receives the **artifact**
+  (plus criteria), not engine-generated prose. `collect` produces the array
+  of unit outputs; `vote` produces the majority value; a step with no
+  `output` declaration carries its units' raw results as an untyped
+  artifact (permitted, but the validator warns).
+- **Run lease.** The engine takes a lease (`engine_lease_until` +
+  holder id, migration 006) before dispatching and renews it while running;
+  a second `workflow run` on a leased run refuses up front. The manual
+  `next`/`complete` loop also respects the lease.
+- **Failure policy.** `on_error: fail` (default) fails the step on the
+  first unit failure; `continue` records failures in the artifact and lets
+  the gate decide. `retry: { max, on: [<failure_reason>…] }` re-dispatches
+  transient failures (same unit identity, attempt counter on the row).
+- **What carries over unchanged from P0–P2:** the gated spine and
+  `completeWorkflowStep` invariant, `workflow_run_units` + writer queue +
+  migrations, the scheduler caps, `runStructured` + the JSON-schema-subset
+  validator, the unit preamble, env bindings, model-alias tiers, and all
+  seven P2 harness adapters (the dispatch seam is untouched by this
+  redesign — only what feeds it changes).
+
+### What is deleted or replaced
+
+- **Deleted:** the P1 markdown orchestration subsections and their parser
+  (`parser-orchestration.ts` grammar surface), the evidence-search data
+  flow, positional unit ids, the synthetic step summaries, and the P5
+  "replay as opt-in mode" design (full replay is now the *only* mode —
+  durable-row behavior is its degenerate case when the journal is empty).
+- **Replaced:** the P3 Claude-Code-delegation backend (a compiler emitting
+  CC-proprietary `Workflow` scripts + report-back) is replaced by a
+  **harness-neutral driver protocol**: `akm workflow brief <run>` emits the
+  frozen plan's pending units + report contract as plain markdown/JSON;
+  *any* agent session (Claude Code, opencode, Codex, a human) executes and
+  reports via `akm workflow report`. CC becomes documentation, not a
+  compile target. The `min(16, cores−2)` cap becomes an akm config knob
+  (`workflow.maxConcurrency`) with a conservative default, not a CC
+  constant. ✅ SHIPPED — `workflow.maxConcurrency` (positive integer; unset =
+  the CPU-derived default `min(16, max(1, cores−2))`; explicit values clamped
+  at read time to `[1, 64]`, floored at 1) is honored by the native scheduler,
+  with the internal `maxConcurrency` test seam retaining precedence. The
+  brief/report driver surface does not consult it (drivers own their own
+  parallelism).
+- **Still explicitly out of scope (owner):** the GitHub Copilot
+  coding-agent cloud delegate; the stash MCP server.
+
+### Revised phases (replace P3–P5)
+
+- **R1 — format + frozen plan. ✅ SHIPPED 2026-07-06.** YAML schema
+  (`schemas/akm-workflow.json`)
+  + parser/linter (`workflow validate`), expression-language parser,
+  compiler to the (revised) IR, migration 006 (`plan_json`, `plan_hash`,
+  lease columns), plan freezing in `workflow start`/`run`. Linear markdown
+  workflows compile to the same IR unchanged. P1 orchestration grammar
+  removed. Conformance goldens rewritten against YAML sources.
+  Delivered: all of the above plus `workflow template --yaml`,
+  route-on-explicit-input with journaled decisions, and the
+  `on_error`/`retry` failure policy (pulled forward from R2); deferred to
+  R2 as planned: lease *enforcement* (columns only), content-derived unit
+  identity/replay divergence, typed step-artifact validation +
+  artifact-judging gates, `gate.max_loops` execution, budget/watch/worktree
+  (all carried through the IR with `TODO(R2)` markers).
+- **R2 — engine rework. ✅ SHIPPED 2026-07-07.** Content-derived unit
+  identity, replay journal semantics + divergence detection, run lease
+  enforcement, typed step artifacts + artifact-judging gates, failure
+  policy (`on_error`/`retry`), route-on-explicit-input. Re-land the P4
+  features on this foundation: budget ceilings, `workflow watch`,
+  `isolation: worktree` (resolving SDK seam decision 1 properly — server
+  keyed by cwd — so isolation and env bindings work on the DEFAULT runner),
+  bounded gate loops.
+  Delivered: all of the above (failure policy + route-on-explicit-input had
+  already shipped early in R1). Unit ids are
+  `<node_id>:<sha256(canonicalJson(item))[:12]>` / `:solo` (+`~r<n>` retry
+  suffix); a journaled COMPLETED unit with matching identity but different
+  `input_hash` is a hard "replay divergence" step failure — R1's positional
+  ids get no back-compat shim (pre-release data; they never match and are
+  ignored). Lease: 90 s TTL acquired before any dispatch, renewed between
+  steps, released in a `finally`; second `run` refuses naming holder +
+  expiry, expired lease claimable, manual `complete` refused under a live
+  engine lease (`workflow next`/`status` stay read-only and surface
+  `engineLease`). Gates judge the step artifact (canonical JSON, 4000-char
+  clip) via an explicit summary into the unchanged `completeWorkflowStep`
+  spine; gate evaluations journal as `<stepId>.gate:l<loop>` unit rows;
+  `max_loops` re-executes the subgraph with gateFeedback threaded into
+  prompts (feedback changes `input_hash` ⇒ natural re-dispatch); a typed
+  step-artifact schema miss feeds the same loop. Budget
+  (`budget.max_tokens`/`max_units`) is journal-seeded, aborts pending
+  dispatches via an AbortController, and fails the step hard regardless of
+  `on_error`. `workflow watch` is a foreground NDJSON tail (`--stream`,
+  `--interval-ms`), plus the `RunAgentOptions.onEvent` seam.
+  `isolation: worktree` works on agent AND sdk; SDK seam decision 1
+  resolved as a SPLIT rather than a cwd-keyed server: cwd is per-call in
+  the opencode SDK, env goes through an env-keyed server registry (see the
+  `opencode-sdk` module doc), which removed the sdk `env_unsupported`
+  hard-fail (llm still rejects env). Deferred: nothing from this bullet —
+  R3 (driver protocol) and R4 (hardening + this document's status sweep),
+  both now shipped 2026-07-07 (below).
+- **R3 — driver protocol. ✅ SHIPPED 2026-07-07.** The harness-neutral
+  replacement for CC delegation: `akm workflow brief <run>` +
+  `akm workflow report <run>` + unit-level check-in. Delivered exactly per
+  the addendum's "no duplicated semantics" cardinal rule — work-list
+  computation (item resolution, content-derived unit ids, input hashes,
+  prompt assembly with recovered gate feedback), route evaluation,
+  reducer/artifact promotion, output-schema validation, and artifact-judged
+  gate completion were extracted into ONE shared module
+  (`src/workflows/exec/step-work.ts`) that `run-workflow.ts`,
+  `brief.ts`, and `report.ts` all call, so the engine behavior is
+  preserved (existing tests prove it). **`brief`** (`src/workflows/exec/brief.ts`,
+  passthrough shape `workflow-brief`) is read-only — takes no lease,
+  dispatches nothing, mutates nothing (a test proves the db file is
+  byte-identical across a brief) — and emits the active step's expected
+  work-list with per-unit `{unitId, nodeId, runner, model, resolved
+  instructions + inputHash, outputSchema, env binding NAMES only, timeout,
+  retry/onError}`, already-journaled unit statuses, the gate/artifact
+  contract, the exact `report` command lines, a loud warning when the
+  engine lease is live, and surfaced stale claimed units. Gate feedback is
+  recovered from the latest journaled `<stepId>.gate:l<n>` row so a loop-N
+  brief predicts the engine's loop-N unit ids/hashes. **`report`**
+  (`src/workflows/exec/report.ts`, shape `workflow-report`) is the ONE
+  mutating verb: `--unit <id> --status completed|failed|running
+  [--result | --result-file | stdin] [--tokens] [--session-id]
+  [--failure-reason]`. It refuses a non-active run and refuses while a live
+  engine lease exists; validates the unit against the recomputed work-list
+  (unknown id ⇒ UsageError naming the valid ids); computes the input hash
+  identically to the engine; validates `--result` against the unit's output
+  schema; writes through the same repository path; treats a same-hash
+  re-report of a COMPLETED unit as an idempotent no-op and a different-hash
+  one as replay divergence; enforces journal-seeded budget ceilings; and
+  when a report makes the step's work-list fully terminal, runs the SAME
+  completion path as the engine (reducer → artifact promotion → schema
+  validation → artifact-judged gate → `completeWorkflowStep`), honoring
+  `on_error` and `gate.max_loops` (a rejection with loops left leaves the
+  step active so the next brief emits the loop-N work-list). **Unit-level
+  check-in** (`--status running`, migration 007's additive `last_checkin_at`
+  column, `src/workflows/runtime/unit-checkin.ts`) claims/heartbeats a unit
+  without touching the spine; `brief`/`status` surface stale claims via a
+  pure, `now`-injectable timestamp evaluator in the style of
+  `runtime/checkin.ts`. The gate judge on the report path is the same lazy
+  `llm/client` call with the same fail-open/blocked semantics as the engine.
+  Two documented small calls: `report` **settles the spine** past
+  non-dispatching steps (route-only, empty fan-out, all-unresolvable) through
+  the same shared helpers so a driver never gets stuck at a step no
+  `report --unit` can complete; and a typed-artifact schema mismatch is a
+  HARD failure on the report surface (no gate row is journaled for it, so the
+  stateless report path cannot recover its feedback across invocations — a
+  GATE rejection, which DOES journal a row, stays a real bounded loop).
+- **R4 — hardening. ✅ SHIPPED 2026-07-07.** Cross-surface conformance:
+  `tests/workflows/conformance/driver-parity.test.ts` runs every golden
+  program twice against identical fixture dispatch results and judge
+  verdicts — (a) engine-driven `runWorkflowSteps`, (b) a
+  `brief → report` loop over every pending unit — and asserts the two
+  produce IDENTICAL unit graphs (same dispatch-unit rows down to
+  `unit_id`/`node_id`/`input_hash`/`status`/`result_json`/`failure_reason`,
+  same gate-evaluation rows, same journaled route decisions, same per-step
+  statuses + promoted artifacts, same final run status). `retry` is
+  deliberately collapsed: it is an engine-internal `<baseId>~r<n>`
+  re-dispatch mechanic, and the driver protocol delegates retries to the
+  driver, which reports only a unit's FINAL outcome. This status sweep of
+  the present document is the remaining R4 deliverable. Chaos, fuzz, and
+  cross-process resilience DID land as dedicated harnesses (an earlier draft
+  of this bullet said "no separate chaos harness was added" — that is now
+  false): a single-process adversarial suite
+  (`tests/workflows/chaos.test.ts` — crash/resume, lease contention, hostile
+  `${{ … }}`/injection/100KB/invalid-UTF-16 content, all asserting on durable
+  db/event state with injected dispatchers/judges), a seeded property/fuzz
+  directory (`tests/workflows/fuzz/` — expression, JSON-schema-subset,
+  reducer, replay-identity, and whole-program generators), and three
+  MULTI-PROCESS integration suites that spawn real `bun` drivers against one
+  shared `workflow.db` (`tests/integration/workflow-db-contention.test.ts`
+  writer-queue contention, `workflow-lease-crossproc.test.ts` single-driver
+  lease arbitration, `workflow-worktree-leftovers.test.ts` isolation cleanup)
+  — complementing, not replacing, the R1/R2 replay-divergence,
+  lease-enforcement, and event-metadata suites they build on. Docs delivered:
+  "Driving a run from any agent (brief/report)" in
+  `docs/features/workflows.md`, the extended experimental bullet in
+  `STABILITY.md`, and the `[Unreleased]` CHANGELOG entry.
+- **Owner-review hardening round. ✅ LANDED 2026-07-07.** The PR #714
+  owner-review passes tightened the R1–R4 surface without changing its
+  shape: plan-hash completeness, honest `report`/brief claims, gate/route
+  fail-loud on both the engine and driver surfaces, frozen param-schema
+  re-validation on replay, event-metadata hygiene (ids/status/enums only),
+  and the `akm workflow status --units` diagnostic surface (unit-row
+  failure reasons + result/error text kept OUT of the deterministic artifact
+  graph). Migration 009 (additive) lands the unit-claim columns.
+- **Codex review round 3 + plan-completion round. ✅ LANDED 2026-07-07.** A
+  final external-reviewer pass (Codex) plus the plan-completion sweep closed
+  the last correctness + parity gaps, again without reshaping the surface:
+  engine **gate-loop resume seeding** (a resumed run recovers the journaled
+  `<stepId>.gate:l<n>` feedback via `recoverGateFeedback` so a mid-loop
+  restart re-emits loop-N's unit ids/hashes instead of restarting the loop);
+  **`report --rerun` token carry-forward + attempt-row rehydration** (a rerun
+  accumulates the prior attempt's tokens into the run total rather than
+  dropping them, and rehydrates the prior unit rows so the reduced artifact is
+  complete) and a **budget fail-fast** that ignores `on_error`; **required-gate
+  judge-error blocking** (`gate.required` / `--require-gates`: when the judge
+  throws, is unreachable, or returns an unparseable verdict, a required gate
+  now BLOCKS for a human via a new `errored` verdict flag instead of failing
+  open the way a non-required gate does); **stale-claim surfacing** on
+  `brief`/`status --units` (a `running` claim silent past the 90 s window shows
+  as reclaimable `stale`); **Claude native-json structured output** (the
+  `claude` harness result-extractor parses its JSON stream as a first-class
+  `native-json` tier); a **cross-extension create guard** (creating
+  `foo.yaml` while `foo.md` exists — or vice-versa — is refused, since
+  `workflow:foo` resolves `.md` before `.yaml` and would silently shadow the
+  new asset; a different-extension collision cannot be `--force`d over); and
+  **`report --settle`** — the unit-less mutating verb that advances a run
+  parked on a NON-dispatching step (a params-only route, an empty fan-out, or
+  an all-unresolvable work-list) through the same shared completion helpers, so
+  a driver is never wedged at a step no `report --unit` could complete. This
+  plan-completion run also added two remaining items: the
+  **`workflow.maxConcurrency` config knob** (already recorded under *Replaced*
+  above — positive integer, unset = `min(16, max(1, cores − 2))`, explicit
+  values clamped to `[1, 64]`; native engine only, drivers own their
+  parallelism), and a **non-fatal program validator WARNINGS channel**
+  (`collectProgramWarnings` in `ir/compile.ts`) that never changes the frozen
+  plan or its hash: it warns (A) when a unit/map step declares no step-level
+  `output:` schema (its results ride as an untyped artifact — the addendum's
+  promised "validator warns") and (B) when a `${{ params.<name> }}` reference
+  names a param the declared `params:` block omits (a likely typo; still
+  resolves at run time if start-supplied). Warnings surface additively on
+  `workflow validate` (human text + the `warnings` JSON key) and as `warn()`
+  lines at `workflow start`.

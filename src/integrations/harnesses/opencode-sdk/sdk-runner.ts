@@ -12,8 +12,85 @@
  * This is the runtime surface of the {@link OpencodeSdkHarness} (`id =
  * 'opencode-sdk'`). It is the dispatch path for `sdkMode` profiles; it exposes
  * no native session logs of its own (`capabilities.sessionLogs = false`).
+ *
+ * ## Per-call cwd and env (redesign addendum R2, open seam decision 1)
+ *
+ * The plan left one decision open: per-call cwd/env forwarding vs a server
+ * keyed by `(cwd, envKeysHash)`. Reading the SDK settled it as a SPLIT — the
+ * two halves have different API realities (verified against
+ * `@opencode-ai/sdk` 1.2.20):
+ *
+ *   - **cwd is PER-CALL.** `session.create` / `session.prompt` /
+ *     `session.delete` all accept a `query.directory` parameter that scopes
+ *     the session's working directory, so a single server can host sessions
+ *     in any number of working directories. {@link RunAgentOptions.cwd} is
+ *     forwarded as `query: { directory }` on every session call — no
+ *     per-cwd server processes, no server-key explosion for worktree
+ *     isolation (which mints a fresh directory per unit attempt).
+ *
+ *   - **env is PER-SERVER (keyed registry).** The SDK exposes NO per-call or
+ *     per-session env surface; the only way env reaches tool child processes
+ *     is the `opencode serve` process environment, which
+ *     `createOpencodeServer` copies from `process.env` **synchronously**
+ *     (its `spawn` call runs before its first `await`, so the snapshot is
+ *     taken inside our call frame). {@link getOrStartServer} therefore keys
+ *     servers by a hash of the FULL env binding entries (keys AND values —
+ *     two bindings that share keys but differ in values must not share a
+ *     server), overlays the bindings onto `process.env` for exactly the
+ *     synchronous prefix of the `createOpencode` call, and restores the
+ *     previous values before awaiting. JavaScript's single-threaded event
+ *     loop makes that overlay window atomic: no concurrently-running akm
+ *     code can observe the mutated environment. Units with the same
+ *     bindings share one server; units with none share the default server
+ *     (byte-identical to the pre-R2 singleton behavior).
+ *
+ * This is what removed the workflow engine's `env_unsupported` hard-fail for
+ * the sdk runner: injection genuinely reaches the child, because tool
+ * subprocesses (bash etc.) inherit the server process environment.
+ *
+ * Registry hygiene (peer-review fixes):
+ *
+ *   - **Ports.** `createOpencodeServer` binds a FIXED default port (4096),
+ *     so coexisting registry entries would contend for the same bind. The
+ *     default key keeps the SDK default; every env-keyed entry is started on
+ *     its own OS-assigned free port (see {@link startServer}).
+ *   - **Shutdown.** {@link closeServer} closes resolved servers
+ *     SYNCHRONOUSLY — it runs from `process.once('exit')`, where Bun never
+ *     drains microtasks, so a `.then()`-based close would orphan every
+ *     `opencode serve` child.
+ *
+ * Process-lifecycle note (owner finding 4): a cached `opencode serve` child is
+ * a live OS handle that keeps Bun's event loop OPEN, so a one-shot CLI never
+ * becomes idle and `process.once('exit')` never fires — the exit hook alone
+ * cannot free a process the child is keeping alive (a deadlock that hangs the
+ * caller after an otherwise-successful run). The registry is therefore drained
+ * PROACTIVELY at the end of a dispatching command: the workflow engine calls
+ * `disposeDispatchResources()` (→ {@link closeServer}) in its run `finally`.
+ * The `process.once('exit')` hook stays as the last-resort backstop for paths
+ * that never reach that drain.
+ *
+ * ## Managed server spawn (owner finding 4, live-harness follow-up)
+ *
+ * Draining the registry is necessary but NOT sufficient with the SDK's own
+ * `createOpencodeServer`: its `close()` merely sends SIGTERM and it never
+ * `unref()`s the child or its stdio pipes, so akm's event loop stays pinned
+ * until the child ACTUALLY exits — and a real `opencode serve` (a live HTTP
+ * server with provider children) can outlive SIGTERM long enough to hang the
+ * caller indefinitely. {@link createManagedOpencode} therefore owns the spawn
+ * (the SDK package is used only for `createOpencodeClient`):
+ *
+ *   - after the URL handshake, the child and its stdio are `unref()`ed /
+ *     destroyed, so the handle can never hold akm open;
+ *   - `close()` sends SIGTERM and arms a bounded grace timer
+ *     ({@link SERVER_KILL_GRACE_MS}) that escalates to SIGKILL and is cleared
+ *     on cooperative exit, so stubborn children cannot survive parent exit and
+ *     stale timers cannot signal a reused PID;
+ *   - the spawn (and its `process.env` snapshot) stays in the SYNCHRONOUS
+ *     prefix of the factory call, preserving the env-overlay contract above.
  */
 
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
@@ -21,10 +98,15 @@ import { resolveModel } from "../../agent/model-aliases";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
 
+/** Per-call working-directory scope (see module doc — SDK `query.directory`). */
+interface SdkDirectoryQuery {
+  directory?: string;
+}
+
 /** Minimal surface of the OpenCode SDK client used by this runner. */
 interface SdkClient {
   session: {
-    create(args: { body: { title: string } }): Promise<{ data?: { id?: string } }>;
+    create(args: { body: { title: string }; query?: SdkDirectoryQuery }): Promise<{ data?: { id?: string } }>;
     prompt(args: {
       path: { id: string };
       // `system` and `tools` are forwarded when present — see the #564 bug
@@ -35,6 +117,7 @@ interface SdkClient {
         system?: string;
         tools?: Record<string, boolean>;
       };
+      query?: SdkDirectoryQuery;
     }): Promise<{
       data?: {
         // AssistantMessage projection (SDK 1.2.20 types.gen.d.ts): token
@@ -44,7 +127,7 @@ interface SdkClient {
         parts?: { type: string; text?: string }[];
       };
     }>;
-    delete(args: { path: { id: string } }): Promise<unknown>;
+    delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
   };
 }
 
@@ -54,8 +137,37 @@ interface SdkServer {
   server: { close(): void };
 }
 
-// Singleton server — started once per process, reused across calls
-let _server: SdkServer | null = null;
+/** The `createOpencode` surface this runner needs (real SDK or test fake). */
+type SdkServerFactory = (options: { config?: Record<string, unknown>; port?: number }) => Promise<SdkServer>;
+
+// Server registry — one server per env-binding signature, started lazily and
+// reused across calls. The default (no env bindings) key is "" and behaves
+// exactly like the pre-R2 process-wide singleton.
+const _servers = new Map<string, Promise<SdkServer>>();
+
+// Resolved servers by registry key, mirrored from `_servers` as each start
+// promise settles. This exists so closeServer() can close started servers
+// SYNCHRONOUSLY: it is wired to `process.once('exit')`, and Bun does not
+// drain microtasks scheduled inside 'exit' handlers, so a `.then()`-based
+// close never runs there and would orphan every `opencode serve` child.
+const _resolvedServers = new Map<string, SdkServer>();
+
+// Listen ports handed to non-default registry entries (see startServer) —
+// tracked so two coexisting servers in this process can never be assigned
+// the same port.
+const _serverPorts = new Map<string, number>();
+
+/** The port `createOpencodeServer` binds when none is passed (SDK 1.2.20). */
+const DEFAULT_SDK_PORT = 4096;
+
+// Test override: when set, every call uses this server (all keys) and no real
+// server is ever started.
+let _testServer: SdkServer | null = null;
+
+// Test seam replacing the real `createOpencode` import (see __setServerFactory).
+let _serverFactory: SdkServerFactory | null = null;
+
+let _exitHookInstalled = false;
 
 /**
  * Test-only seam: inject a fake {@link SdkServer} so `runOpencodeSdk` can be
@@ -65,20 +177,65 @@ let _server: SdkServer | null = null;
  * leading underscores mark it as internal.
  */
 export function __setTestServer(server: SdkServer | null): void {
-  _server = server;
+  _testServer = server;
 }
 
 /**
- * Close the singleton OpenCode SDK server and reset the handle.
- * Primarily for use in tests to ensure clean teardown between test runs.
+ * Test-only seam: replace the `createOpencode` factory so the env-keyed
+ * server registry (module doc, *Per-call cwd and env*) can be exercised
+ * without the real SDK. The fake MUST read whatever `process.env` state it
+ * cares about in its SYNCHRONOUS prefix — exactly like the real
+ * `createOpencodeServer`, whose `spawn` snapshot happens before its first
+ * await — because the runner restores the env overlay as soon as the factory
+ * call returns its promise. Pass `null` to clear.
+ */
+export function __setServerFactory(factory: SdkServerFactory | null): void {
+  _serverFactory = factory;
+}
+
+/**
+ * Close every started OpenCode SDK server and reset the registry (and any
+ * injected test server). Used by tests for clean teardown between runs and
+ * wired to `process.once('exit')` — which is why resolved servers MUST be
+ * closed synchronously here: Bun never drains microtasks scheduled inside
+ * 'exit' handlers, so a promise-based close would silently orphan the
+ * `opencode serve` children (leaking processes AND keeping their ports
+ * bound for the next invocation).
  */
 export function closeServer(): void {
+  for (const [key, pending] of _servers) {
+    const resolved = _resolvedServers.get(key);
+    if (resolved) {
+      // Synchronous close — safe from the 'exit' hook.
+      try {
+        resolved.server.close();
+      } catch {
+        /* ignore */
+      }
+    } else {
+      // Still starting: close on arrival. This branch can never complete
+      // inside the 'exit' hook (no microtasks there), but it keeps
+      // mid-start test teardown leak-free.
+      pending
+        .then((s) => {
+          try {
+            s.server.close();
+          } catch {
+            /* ignore */
+          }
+        })
+        .catch(() => {});
+    }
+  }
+  _servers.clear();
+  _resolvedServers.clear();
+  _serverPorts.clear();
   try {
-    _server?.server.close();
+    _testServer?.server.close();
   } catch {
     /* ignore */
   }
-  _server = null;
+  _testServer = null;
 }
 
 /**
@@ -162,23 +319,299 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
   return sdkConfig;
 }
 
-async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
-  if (_server) return _server;
+/**
+ * Stable key for the env-keyed server registry: sha256 over the SORTED
+ * binding entries (keys AND values — see module doc), "" when no bindings.
+ */
+function envServerKey(env: Record<string, string> | undefined): string {
+  if (!env || Object.keys(env).length === 0) return "";
+  const entries = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
 
-  const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
+/**
+ * Overlay `env` onto `process.env`, returning a restore function. The
+ * overlay is intended to live only for the SYNCHRONOUS prefix of the server
+ * factory call (module doc): mutation → factory() → restore happens in one
+ * uninterruptible event-loop turn, so no other code observes it.
+ */
+function overlayProcessEnv(env: Record<string, string>): () => void {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(env)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  return () => {
+    for (const [key, prior] of previous) {
+      if (prior === undefined) delete process.env[key];
+      else process.env[key] = prior;
+    }
+  };
+}
+
+/**
+ * Ask the OS for a currently-free localhost port (bind :0, read the assigned
+ * port, release it). Skips the SDK's fixed default port and any port already
+ * handed to another registry entry in this process, so coexisting servers
+ * never contend. The probe-then-use gap is the standard free-port race —
+ * acceptable here because the failure mode is a clean `spawn_failed` on the
+ * next dispatch, not corruption.
+ */
+async function allocateFreePort(): Promise<number> {
+  const { createServer } = await import("node:net");
+  const taken = new Set(_serverPorts.values());
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createServer();
+      probe.unref();
+      probe.on("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const address = probe.address();
+        probe.close(() => {
+          if (address && typeof address === "object") resolve(address.port);
+          else reject(new Error("could not read the probe socket's port"));
+        });
+      });
+    });
+    if (port !== DEFAULT_SDK_PORT && !taken.has(port)) return port;
+  }
+  throw new Error("could not allocate a free port for the OpenCode SDK server");
+}
+
+/** Grace between SIGTERM and SIGKILL when closing a managed server child. */
+const SERVER_KILL_GRACE_MS = 2_000;
+
+/** How long the managed spawn waits for the server's listening handshake. */
+const SERVER_START_TIMEOUT_MS = 5_000;
+
+// Test seam: override the argv used to spawn the server child ("opencode"
+// plus serve flags by default) so the managed-spawn lifecycle (handshake,
+// unref, SIGTERM→SIGKILL escalation) is testable without the real binary.
+let _serveCommand: string[] | null = null;
+
+/** Test-only seam: replace the `opencode serve` argv. Pass `null` to clear. */
+export function __setServeCommand(argv: string[] | null): void {
+  _serveCommand = argv;
+}
+
+/**
+ * Spawn-owning replacement for the SDK's `createOpencode` (module doc,
+ * *Managed server spawn*). Mirrors `createOpencodeServer`'s contract — the
+ * `spawn` (and its `process.env` snapshot) happens in the SYNCHRONOUS prefix,
+ * `OPENCODE_CONFIG_CONTENT` carries the config, the handshake parses the
+ * "opencode server listening on <url>" line — but manages the child so its
+ * handle can never pin akm's event loop:
+ *
+ *   - handshake success → stdio destroyed, listeners dropped, `proc.unref()`;
+ *   - `close()` → SIGTERM now, SIGKILL after an unref'ed grace timer;
+ *   - handshake failure → the child is killed and unref'ed before rejecting.
+ */
+async function createManagedOpencode(options: { config?: Record<string, unknown>; port?: number }): Promise<SdkServer> {
+  const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
     throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
+  })) as { createOpencodeClient: (options: { baseUrl: string }) => SdkClient };
+
+  const port = options.port ?? DEFAULT_SDK_PORT;
+  const argv = _serveCommand ?? ["opencode", "serve", "--hostname=127.0.0.1", `--port=${port}`];
+  // Synchronous prefix: the env snapshot (incl. any binding overlay in the
+  // caller's frame) is taken HERE, before the first await below.
+  const proc = spawn(argv[0] as string, argv.slice(1), {
+    env: { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {}) },
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
+  let closeStarted = false;
+  let closeEscalation: ReturnType<typeof setTimeout> | undefined;
+  const childExited = (): boolean => proc.exitCode !== null || proc.signalCode !== null;
+  const clearCloseEscalation = (): void => {
+    if (closeEscalation !== undefined) {
+      clearTimeout(closeEscalation);
+      closeEscalation = undefined;
+    }
+  };
+  const closeManaged = (): void => {
+    if (closeStarted) return;
+    closeStarted = true;
+    if (childExited()) return;
+
+    proc.once("exit", clearCloseEscalation);
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      proc.off("exit", clearCloseEscalation);
+      return;
+    }
+    if (childExited()) return;
+
+    closeEscalation = setTimeout(() => {
+      closeEscalation = undefined;
+      if (childExited()) return;
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }, SERVER_KILL_GRACE_MS);
+  };
+
+  const url = await new Promise<string>((resolve, reject) => {
+    let output = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const cleanupStartup = (): void => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      proc.stdout?.off("data", onStdoutData);
+      proc.stderr?.off("data", onStderrData);
+      proc.off("exit", onExit);
+      proc.off("error", onError);
+    };
+    const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanupStartup();
+      closeManaged();
+      proc.stdout?.destroy();
+      proc.stderr?.destroy();
+      proc.unref();
+      reject(err);
+    };
+    const succeed = (serverUrl: string): void => {
+      if (settled) return;
+      settled = true;
+      cleanupStartup();
+      resolve(serverUrl);
+    };
+    const onStdoutData = (chunk: Buffer): void => {
+      output += chunk.toString();
+      for (const line of output.split("\n")) {
+        if (line.startsWith("opencode server listening")) {
+          const match = line.match(/on\s+(https?:\/\/\S+)/);
+          if (!match?.[1]) {
+            fail(new Error(`Failed to parse the OpenCode server url from: ${line}`));
+            return;
+          }
+          succeed(match[1]);
+          return;
+        }
+      }
+    };
+    const onStderrData = (chunk: Buffer): void => {
+      output += chunk.toString();
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      const status = code !== null ? `code ${code}` : `signal ${signal ?? "unknown"}`;
+      fail(new Error(`OpenCode server exited with ${status}${output.trim() ? `\nServer output: ${output}` : ""}`));
+    };
+    const onError = (err: Error): void => {
+      fail(err instanceof Error ? err : new Error(String(err)));
+    };
+    timer = setTimeout(() => {
+      fail(new Error(`Timeout waiting for the OpenCode server to start after ${SERVER_START_TIMEOUT_MS}ms`));
+    }, SERVER_START_TIMEOUT_MS);
+    proc.stdout?.on("data", onStdoutData);
+    proc.stderr?.on("data", onStderrData);
+    proc.on("exit", onExit);
+    proc.on("error", onError);
+  });
+
+  // Handshake done: from here on the child must never hold akm open. Its
+  // lifetime is managed explicitly (closeServer → closeManaged), not by the
+  // event loop. Destroying the pipes also releases their loop handles.
+  proc.stdout?.destroy();
+  proc.stderr?.destroy();
+  proc.unref();
+
+  return { client: createOpencodeClient({ baseUrl: url }), server: { close: closeManaged } };
+}
+
+async function startServer(
+  profile: AgentProfile,
+  llmConfig: LlmConnectionConfig | undefined,
+  env: Record<string, string> | undefined,
+  registryKey: string,
+): Promise<SdkServer> {
+  const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
   const sdkConfig = buildSdkConfig(profile, llmConfig);
+  const options: { config?: Record<string, unknown>; port?: number } =
+    Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {};
 
-  _server = (await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {})) as SdkServer;
+  // Port discipline: `createOpencodeServer` defaults to a FIXED port (4096),
+  // so two coexisting servers — the default one plus any env-keyed one —
+  // would contend for the same bind and the second start would fail. The
+  // default key keeps the SDK default (byte-identical to the pre-R2
+  // singleton); every other registry entry gets its own OS-assigned free
+  // port, allocated BEFORE the env overlay below (allocation awaits).
+  if (registryKey !== "") {
+    const port = await allocateFreePort();
+    _serverPorts.set(registryKey, port);
+    options.port = port;
+  }
 
-  process.once("exit", () => {
-    closeServer();
-  });
+  // Env injection (module doc): the SDK's createOpencodeServer snapshots
+  // process.env synchronously (its spawn precedes its first await), so the
+  // overlay only needs to survive the factory's synchronous prefix. Restore
+  // BEFORE awaiting, so nothing else ever runs under the mutated env.
+  let pending: Promise<SdkServer>;
+  if (env && Object.keys(env).length > 0) {
+    const restore = overlayProcessEnv(env);
+    try {
+      pending = factory(options);
+    } finally {
+      restore();
+    }
+  } else {
+    pending = factory(options);
+  }
 
-  if (!_server) throw new Error("Failed to initialise OpenCode SDK server.");
-  return _server;
+  const server = await pending;
+  if (!server) throw new Error("Failed to initialise OpenCode SDK server.");
+
+  if (!_exitHookInstalled) {
+    _exitHookInstalled = true;
+    process.once("exit", () => {
+      closeServer();
+    });
+  }
+  return server;
+}
+
+/**
+ * Get (or lazily start) the server for this call's env bindings. Servers are
+ * keyed by {@link envServerKey}; concurrent callers of the same key share one
+ * start (the registry stores the in-flight promise). A failed start is
+ * evicted so the next call can retry instead of caching the error forever.
+ */
+async function getOrStartServer(
+  profile: AgentProfile,
+  llmConfig?: LlmConnectionConfig,
+  env?: Record<string, string>,
+): Promise<SdkServer> {
+  if (_testServer) return _testServer;
+  const key = envServerKey(env);
+  let pending = _servers.get(key);
+  if (!pending) {
+    pending = startServer(profile, llmConfig, env, key);
+    _servers.set(key, pending);
+    pending.then(
+      (server) => {
+        // Mirror into the synchronously-closable registry (see closeServer)
+        // — but only while this start is still the live entry (closeServer
+        // may have cleared the registry mid-start).
+        if (_servers.get(key) === pending) _resolvedServers.set(key, server);
+      },
+      () => {
+        if (_servers.get(key) === pending) {
+          _servers.delete(key);
+          _serverPorts.delete(key);
+        }
+      },
+    );
+  }
+  return pending;
 }
 
 /**
@@ -198,6 +631,81 @@ function extractUsage(info?: {
     usage.reasoningTokens = tokens.reasoning;
   }
   return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+const SDK_OPERATION_TIMED_OUT = Symbol("opencode-sdk-operation-timeout");
+const SDK_OPERATION_ABORTED = Symbol("opencode-sdk-operation-aborted");
+const SDK_SESSION_DELETE_TIMEOUT_MS = 5_000;
+
+async function raceSdkOperation<T>(
+  operation: Promise<T>,
+  opts: {
+    timeoutMs: number | null;
+    setTimeoutFn: typeof setTimeout;
+    clearTimeoutFn: typeof clearTimeout;
+    signal?: AbortSignal;
+  },
+): Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED> {
+  let timer: ReturnType<typeof opts.setTimeoutFn> | undefined;
+  let onAbort: (() => void) | undefined;
+  const racers: Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED>[] = [operation];
+
+  if (opts.timeoutMs !== null) {
+    racers.push(
+      new Promise<typeof SDK_OPERATION_TIMED_OUT>((resolve) => {
+        timer = opts.setTimeoutFn(() => resolve(SDK_OPERATION_TIMED_OUT), opts.timeoutMs ?? 0);
+      }),
+    );
+  }
+  if (opts.signal) {
+    racers.push(
+      new Promise<typeof SDK_OPERATION_ABORTED>((resolve) => {
+        onAbort = () => resolve(SDK_OPERATION_ABORTED);
+        if (opts.signal?.aborted) onAbort();
+        else opts.signal?.addEventListener("abort", onAbort, { once: true });
+      }),
+    );
+  }
+
+  try {
+    return racers.length === 1 ? await operation : await Promise.race(racers);
+  } finally {
+    if (timer !== undefined) opts.clearTimeoutFn(timer);
+    if (opts.signal && onAbort) opts.signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function appendStderr(stderr: string, message: string): string {
+  return stderr ? `${stderr}\n${message}` : message;
+}
+
+async function deleteSessionBestEffort(
+  client: SdkClient,
+  sessionId: string,
+  query: SdkDirectoryQuery | undefined,
+  setTimeoutFn: typeof setTimeout,
+  clearTimeoutFn: typeof clearTimeout,
+): Promise<string | undefined> {
+  try {
+    const deleted = await raceSdkOperation(
+      client.session.delete({ path: { id: sessionId }, ...(query ? { query } : {}) }),
+      {
+        timeoutMs: SDK_SESSION_DELETE_TIMEOUT_MS,
+        setTimeoutFn,
+        clearTimeoutFn,
+      },
+    );
+    if (deleted === SDK_OPERATION_TIMED_OUT) {
+      return `OpenCode session cleanup timed out after ${SDK_SESSION_DELETE_TIMEOUT_MS}ms`;
+    }
+    return undefined;
+  } catch (err) {
+    return `OpenCode session cleanup failed: ${errorText(err)}`;
+  }
 }
 
 export async function runOpencodeSdk(
@@ -222,7 +730,7 @@ export async function runOpencodeSdk(
 
   let client: SdkClient;
   try {
-    ({ client } = await getOrStartServer(profile, llmConfig));
+    ({ client } = await getOrStartServer(profile, llmConfig, opts.env));
   } catch (e) {
     return {
       ok: false,
@@ -235,9 +743,75 @@ export async function runOpencodeSdk(
     };
   }
 
-  // One session per call — do NOT reuse (history accumulates, token costs grow)
-  const sessionRes = await client.session.create({ body: { title: "akm" } });
-  const sessionId = sessionRes.data?.id;
+  // #564 bug fix (3): enforce a hard timeout like the CLI path (runAgent).
+  // Previously runOpencodeSdk() awaited SDK calls with no timeout, so a stalled
+  // local-model endpoint or wedged server could block the caller indefinitely.
+  // We resolve the same budget runAgent uses (opts.timeoutMs override →
+  // profile.timeoutMs → DEFAULT_AGENT_TIMEOUT_MS) and race both session.create
+  // and session.prompt against it. null disables the timer (parity with
+  // runAgent's "no timeout" contract). Session cleanup is separately bounded
+  // by a short best-effort timer so timeout/abort results cannot be pinned in
+  // the finally path by a hung delete call.
+  const timeoutMs: number | null =
+    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
+  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
+  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+
+  // Per-call working directory (module doc): forwarded as the SDK's
+  // `query.directory` on every session call, so worktree-isolated units run
+  // in their own checkout without a per-cwd server.
+  const query: SdkDirectoryQuery | undefined = opts.cwd ? { directory: opts.cwd } : undefined;
+
+  // One session per call — do NOT reuse (history accumulates, token costs grow).
+  // Session creation is startup plumbing, so failures map to spawn_failed rather
+  // than bubbling out as a generic workflow dispatch exception.
+  const abortSignal = opts.signal;
+  let sessionId: string | undefined;
+  try {
+    const created = await raceSdkOperation(
+      client.session.create({ body: { title: "akm" }, ...(query ? { query } : {}) }),
+      {
+        timeoutMs,
+        setTimeoutFn: setTimeoutImpl,
+        clearTimeoutFn: clearTimeoutImpl,
+        signal: abortSignal,
+      },
+    );
+    if (created === SDK_OPERATION_ABORTED) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: null,
+        reason: "aborted" as AgentFailureReason,
+        error: `opencode-sdk agent "${profile.name}" aborted by caller signal`,
+      };
+    }
+    if (created === SDK_OPERATION_TIMED_OUT) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: null,
+        reason: "timeout" as AgentFailureReason,
+        error: `opencode-sdk agent "${profile.name}" timed out creating a session after ${timeoutMs}ms`,
+      };
+    }
+    sessionId = created.data?.id;
+  } catch (err) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: errorText(err),
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason: "spawn_failed" as AgentFailureReason,
+      error: errorText(err),
+    };
+  }
+
   if (!sessionId) {
     return {
       ok: false,
@@ -265,57 +839,21 @@ export async function runOpencodeSdk(
   if (system) body.system = system;
   if (tools) body.tools = tools;
 
-  // #564 bug fix (3): enforce a hard timeout like the CLI path (runAgent).
-  // Previously runOpencodeSdk() awaited session.prompt() with no timeout, so a
-  // hung SDK call (e.g. a stalled local-model endpoint) blocked the caller
-  // indefinitely while the CLI path would have killed the process. We resolve
-  // the same budget runAgent uses (opts.timeoutMs override → profile.timeoutMs
-  // → DEFAULT_AGENT_TIMEOUT_MS) and race the prompt against it. null disables
-  // the timer (parity with runAgent's "no timeout" contract). There is no
-  // OS process to SIGTERM/SIGKILL here, so on timeout we best-effort delete the
-  // session (the SDK's equivalent of reaping the in-flight work) and return a
-  // structured `timeout` failure with the same reason vocabulary as the CLI.
-  const timeoutMs: number | null =
-    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
-  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
-  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
-
-  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
-  const TIMED_OUT = Symbol("opencode-sdk-timeout");
-  const ABORTED = Symbol("opencode-sdk-aborted");
-
-  // Cooperative cancel: there is no OS process to signal, so an abort simply
-  // wins the race below; the finally block reaps the in-flight session, same
-  // as the timeout path.
-  let onAbort: (() => void) | undefined;
-  const abortSignal = opts.signal;
+  let result: AgentRunResult;
 
   try {
-    const promptPromise = client.session.prompt({ path: { id: sessionId }, body });
-    type PromptResult = Awaited<typeof promptPromise>;
+    const prompted = await raceSdkOperation(
+      client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) }),
+      {
+        timeoutMs,
+        setTimeoutFn: setTimeoutImpl,
+        clearTimeoutFn: clearTimeoutImpl,
+        signal: abortSignal,
+      },
+    );
 
-    const racers: Promise<PromptResult | typeof TIMED_OUT | typeof ABORTED>[] = [promptPromise];
-    if (timeoutMs !== null) {
-      racers.push(
-        new Promise<typeof TIMED_OUT>((resolve) => {
-          timer = setTimeoutImpl(() => resolve(TIMED_OUT), timeoutMs);
-        }),
-      );
-    }
-    if (abortSignal) {
-      racers.push(
-        new Promise<typeof ABORTED>((resolve) => {
-          onAbort = () => resolve(ABORTED);
-          if (abortSignal.aborted) onAbort();
-          else abortSignal.addEventListener("abort", onAbort, { once: true });
-        }),
-      );
-    }
-
-    const result = racers.length === 1 ? await promptPromise : await Promise.race(racers);
-
-    if (result === ABORTED) {
-      return {
+    if (prompted === SDK_OPERATION_ABORTED) {
+      result = {
         ok: false,
         stdout: "",
         stderr: "",
@@ -325,10 +863,8 @@ export async function runOpencodeSdk(
         error: `opencode-sdk agent "${profile.name}" aborted by caller signal`,
         sessionId,
       };
-    }
-
-    if (result === TIMED_OUT) {
-      return {
+    } else if (prompted === SDK_OPERATION_TIMED_OUT) {
+      result = {
         ok: false,
         stdout: "",
         stderr: "",
@@ -338,40 +874,41 @@ export async function runOpencodeSdk(
         error: `opencode-sdk agent "${profile.name}" timed out after ${timeoutMs}ms`,
         sessionId,
       };
+    } else {
+      const parts = prompted.data?.parts ?? [];
+      const textPart = parts.find((p) => p.type === "text");
+      const stdout = textPart?.text ?? "";
+      // Token accounting from the AssistantMessage (previously discarded) —
+      // the seam that makes workflow budget.maxTokens meterable on the
+      // default sdk runner.
+      const usage = extractUsage(prompted.data?.info);
+
+      result = {
+        ok: true,
+        stdout,
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: 0,
+        sessionId,
+        ...(usage ? { usage } : {}),
+      };
     }
-
-    const parts = result.data?.parts ?? [];
-    const textPart = parts.find((p) => p.type === "text");
-    const stdout = textPart?.text ?? "";
-    // Token accounting from the AssistantMessage (previously discarded) —
-    // the seam that makes workflow budget.maxTokens meterable on the
-    // default sdk runner.
-    const usage = extractUsage(result.data?.info);
-
-    return {
-      ok: true,
-      stdout,
-      stderr: "",
-      durationMs: Date.now() - start,
-      exitCode: 0,
-      sessionId,
-      ...(usage ? { usage } : {}),
-    };
-  } catch (e) {
-    return {
+  } catch (err) {
+    result = {
       ok: false,
       stdout: "",
-      stderr: String(e),
+      stderr: errorText(err),
       durationMs: Date.now() - start,
       exitCode: 1,
       reason: "non_zero_exit" as AgentFailureReason,
-      error: String(e),
+      error: errorText(err),
       sessionId,
     };
-  } finally {
-    if (timer !== undefined) clearTimeoutImpl(timer);
-    if (abortSignal && onAbort) abortSignal.removeEventListener("abort", onAbort);
-    // Clean up session to prevent disk accumulation in ~/.local/share/opencode/
-    await client.session.delete({ path: { id: sessionId } }).catch(() => {});
   }
+
+  // Clean up session to prevent disk accumulation in ~/.local/share/opencode/.
+  // Failures are non-fatal to the agent result but must not be invisible.
+  const cleanupWarning = await deleteSessionBestEffort(client, sessionId, query, setTimeoutImpl, clearTimeoutImpl);
+  if (cleanupWarning) result.stderr = appendStderr(result.stderr, cleanupWarning);
+  return result;
 }

@@ -308,7 +308,10 @@ function collectStepBody(
 
     errors.push({
       line: sub.headingLine,
-      message: `Step "${stepTitle}" has an unknown "### ${sub.name}" section. Only "### Instructions" and "### Completion Criteria" are supported.`,
+      message:
+        `Step "${stepTitle}" has an unknown "### ${sub.name}" section. Supported sections: ` +
+        `"### Instructions", "### Completion Criteria". For orchestrated workflows (runners, ` +
+        `fan-out, routing), author a YAML workflow program instead — see \`akm workflow template --yaml\`.`,
     });
   }
 

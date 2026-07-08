@@ -7,7 +7,13 @@ import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { extractCommandParameters, generateMetadataFlat } from "../src/indexer/passes/metadata";
 import { buildSearchText } from "../src/indexer/search/search-fields";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  writeSandboxConfig,
+} from "./_helpers/sandbox";
 
 let currentStashDir = "";
 let envCleanup: Cleanup = () => {};
@@ -18,6 +24,7 @@ beforeEach(() => {
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   currentStashDir = stashResult.dir;
   envCleanup = stashResult.cleanup;
+  writeSandboxConfig({ semanticSearchMode: "off" });
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {

@@ -80,9 +80,10 @@ export interface AgentProfile {
 const COMMON_PASSTHROUGH = ["HOME", "PATH", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "AKM_EVENT_SOURCE"] as const;
 
 /**
- * Built-in profiles for the five agent CLIs the v1 spec calls out
- * explicitly. The fields here are conservative defaults — every value is
- * overridable from user config.
+ * Built-in profiles for the agent CLIs akm knows out of the box: the five the
+ * v1 spec calls out explicitly, plus the P2 harness adapters (copilot, pi,
+ * amazonq, openhands — plan §"Capability matrix"). The fields here are
+ * conservative defaults — every value is overridable from user config.
  *
  * For headless/automation use (propose, reflect, tasks), use the '-headless' variant.
  */
@@ -127,10 +128,43 @@ const BUILTINS: Record<string, AgentProfile> = {
     envPassthrough: [...COMMON_PASSTHROUGH, "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
     parseOutput: "text",
   },
+  // ── P2 harness-adapter profiles (plan §"Capability matrix") ────────────────
+  copilot: {
+    name: "copilot",
+    bin: "copilot",
+    args: [],
+    stdio: "interactive",
+    envPassthrough: [...COMMON_PASSTHROUGH, "GH_TOKEN", "GITHUB_TOKEN"],
+    parseOutput: "text",
+  },
+  pi: {
+    name: "pi",
+    bin: "pi",
+    args: [],
+    stdio: "interactive",
+    envPassthrough: [...COMMON_PASSTHROUGH, "PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+    parseOutput: "text",
+  },
+  amazonq: {
+    name: "amazonq",
+    bin: "q",
+    args: [],
+    stdio: "interactive",
+    envPassthrough: [...COMMON_PASSTHROUGH, "AWS_PROFILE", "AWS_REGION"],
+    parseOutput: "text",
+  },
+  openhands: {
+    name: "openhands",
+    bin: "openhands",
+    args: [],
+    stdio: "interactive",
+    envPassthrough: [...COMMON_PASSTHROUGH, "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"],
+    parseOutput: "text",
+  },
 };
 
 /**
- * Headless variants of the five base profiles for automation use (propose, reflect, tasks).
+ * Headless variants of the base profiles for automation use (propose, reflect, tasks).
  *
  * These profiles use `stdio: "captured"` and `parseOutput: "json"` so the
  * agent's response can be read from stdout. They share the same `bin` and
@@ -182,10 +216,43 @@ const HEADLESS_BUILTINS: Record<string, AgentProfile> = {
     envPassthrough: [...COMMON_PASSTHROUGH, "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
     parseOutput: "json",
   },
+  // ── P2 harness-adapter headless variants (plan §"Capability matrix") ───────
+  "copilot-headless": {
+    name: "copilot-headless",
+    bin: "copilot",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [...COMMON_PASSTHROUGH, "GH_TOKEN", "GITHUB_TOKEN"],
+    parseOutput: "json",
+  },
+  "pi-headless": {
+    name: "pi-headless",
+    bin: "pi",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [...COMMON_PASSTHROUGH, "PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+    parseOutput: "json",
+  },
+  "amazonq-headless": {
+    name: "amazonq-headless",
+    bin: "q",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [...COMMON_PASSTHROUGH, "AWS_PROFILE", "AWS_REGION"],
+    parseOutput: "json",
+  },
+  "openhands-headless": {
+    name: "openhands-headless",
+    bin: "openhands",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [...COMMON_PASSTHROUGH, "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"],
+    parseOutput: "json",
+  },
 };
 
 /**
- * Names of the five primary built-in profiles. Stable, sorted. Does NOT
+ * Names of the primary built-in profiles. Stable, sorted. Does NOT
  * include the `-headless` variants (those are resolvable by name but are
  * excluded from detection/enumeration flows).
  */

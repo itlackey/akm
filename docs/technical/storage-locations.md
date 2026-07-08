@@ -348,7 +348,8 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (written\|error), `reason`, `error?` |
 | `reflect_completed` | reflect pass inside `akm improve` (after proposal created) | `proposalId`, `source` |
 | `workflow_started` | workflow engine | `runId` |
-| `workflow_step_completed` | workflow engine | `runId`, `stepId` |
+| `workflow_step_completed` | workflow engine (genuine `completed` transition only) | `runId`, `stepId`, `status` |
+| `workflow_step_updated` | workflow engine (every non-`completed` transition: `failed`/`skipped`/`blocked`) | `runId`, `stepId`, `status` |
 | `workflow_finished` | workflow engine | `runId` |
 
 **Read API:** `readEvents(options)` — filter by `since`, `sinceOffset` (row id cursor), `type`, `ref`, `includeTags`, `excludeTags`. Returns `{ events, nextOffset }`. `tailEvents()` provides a polling loop.

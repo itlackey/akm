@@ -103,12 +103,32 @@ export interface WorkflowParameter {
   description?: string;
 }
 
+/**
+ * Read-only projection of a YAML workflow-program step's orchestration
+ * declarations for `show` (`summarizeProgramStepOrchestration` in
+ * src/workflows/program/project.ts). `fanOut.over` and `route.input` carry
+ * raw `${{ … }}` expressions; the full JSON Schema is reduced to a presence
+ * flag to keep show output compact.
+ */
+export interface WorkflowStepOrchestrationSummary {
+  runner?: string;
+  profile?: string;
+  model?: string;
+  timeoutMs?: number | null;
+  fanOut?: { over: string; concurrency?: number; reducer?: string };
+  hasSchema?: boolean;
+  env?: string[];
+  route?: { input: string; branches: Array<{ match: string; stepId: string }>; defaultStepId?: string };
+}
+
 export interface WorkflowStepDefinition {
   id: string;
   title: string;
   instructions: string;
   completionCriteria?: string[];
   sequenceIndex?: number;
+  /** Present only for YAML workflow-program steps that declare orchestration. */
+  orchestration?: WorkflowStepOrchestrationSummary;
 }
 
 export type WorkflowRunStatus = "active" | "completed" | "blocked" | "failed";
@@ -139,6 +159,12 @@ export interface WorkflowRunSummary {
   agentHarness?: string | null;
   /** Platform-native session id that owns the run, if known. */
   agentSessionId?: string | null;
+  /**
+   * Engine run lease (R2 single-driver enforcement): present while an
+   * `akm workflow run` invocation holds the run. `until` is the ISO-8601
+   * expiry; an expired lease may still be surfaced here (claimable, not live).
+   */
+  engineLease?: { holder: string; until: string };
 }
 
 export interface AddResponse {

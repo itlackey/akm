@@ -91,15 +91,19 @@ const PASSTHROUGH_COMMANDS = [
   "wiki-show",
   "wiki-stash",
   "workflow-abandon",
+  "workflow-brief",
   "workflow-complete",
   "workflow-complete-rejected",
   "workflow-create",
   "workflow-list",
   "workflow-next",
+  "workflow-report",
   "workflow-resume",
+  "workflow-run",
   "workflow-start",
   "workflow-status",
   "workflow-validate",
+  "workflow-watch",
 ] as const;
 
 export const passthroughShapes: OutputShapeEntry[] = PASSTHROUGH_COMMANDS.map((command) => ({

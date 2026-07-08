@@ -1,6 +1,6 @@
 # Manual Testing Checklist
 
-Use this checklist to exercise akm `v0.8.x` in an isolated sandbox before
+Use this checklist to exercise akm `v0.9.x` in an isolated sandbox before
 cutting a release. Pair it with `testing-workflow.md` and
 `test-coverage-guide.md`.
 
@@ -11,16 +11,16 @@ cover:
 - prompt/usage flows
 - migration/error envelopes
 - file-system side effects
-- newer command surfaces and maintenance flows (`history`, `events`, `graph`,
-  `improve`, `propose`, `proposals`, `tasks`, `wiki`, `vault`)
+- newer command surfaces and maintenance flows (`history`, `log`, `graph`,
+  `improve`, `propose`, `proposal`, `tasks`, `wiki`, `env`, `secret`)
 
 Time budget:
 
 - ~35 minutes for the core offline/local pass
 - +10 to 15 minutes for network-backed source and registry checks
-- +10 to 15 minutes for optional agent/LLM-backed `0.8.x` flows
+- +10 to 15 minutes for optional agent/LLM-backed `0.9.x` flows
 
-This document was rebuilt against current `0.8.x` behavior on 2026-05-13.
+This document was rebuilt against current `0.9.x` behavior on 2026-07-08.
 
 ---
 
@@ -116,13 +116,14 @@ Fixture refs worth using throughout this doc:
 - [ ] `akm hints` prints non-empty text.
 - [ ] `akm hints --detail full` prints the extended hint text.
 - [ ] `akm --help` lists the current command surface:
-      `setup`, `init`, `index`, `info`, `add`, `list`, `remove`, `update`,
-      `upgrade`, `search`, `curate`, `show`, `workflow`, `remember`, `import`,
-      `save`, `clone`, `registry`, `config`, `enable`, `disable`, `feedback`,
-      `history`, `events`, `agent`, `lint`, `improve`, `propose`, `proposals`,
-      `accept`, `reject`, `diff`, `help`, `hints`, `completions`, `vault`,
-      `wiki`, `graph`, `tasks`.
-- [ ] `akm enable --help` and `akm disable --help` mention `skills.sh` only.
+      `setup`, `init`, `index`, `health`, `info`, `graph`, `add`, `list`,
+      `remove`, `update`, `upgrade`, `search`, `curate`, `show`, `workflow`,
+      `remember`, `import`, `sync`, `clone`, `registry`, `config`, `feedback`,
+      `history`, `log`, `agent`, `lessons`, `lint`, `improve`, `extract`,
+      `propose`, `proposal`, `help`, `hints`, `completions`, `env`, `secret`,
+      `wiki`, `tasks`.
+- [ ] `akm config enable --help` and `akm config disable --help` mention `skills.sh`
+      only.
 - [ ] `akm upgrade --check` returns structured version/install-method info and
       does not modify the sandbox or the host install.
 - [ ] `akm completions` prints a bash completion script to stdout.
@@ -305,22 +306,23 @@ These cover the shared write-target path and git-backed save behavior.
 - [ ] `akm import does-not-exist.md --name broken` fails cleanly with a
       structured usage error and no stack trace.
 
-### 8.5 save
+### 8.5 sync
 
-- [ ] `akm save --format json` on the primary sandbox stash returns either a
+- [ ] `akm sync --format json` on the primary sandbox stash returns either a
       commit result or a structured `skipped: true` no-op if the stash is not a
       git repo.
 - [ ] If `akm setup` created a git repo, modify one file in the sandbox stash
-      and run `akm save -m "Manual QA save test"`; verify it commits only inside
+      and run `akm sync -m "Manual QA sync test"`; verify it commits only inside
       the sandbox repo.
 - [ ] Add a second git-backed sandbox source with an explicit slash-containing
-      name (for example `team/save-qa`), confirm that exact name via
-      `akm list --format json`, then run `akm save team/save-qa -m "Manual QA named save"`
+      name (for example `team/sync-qa`), confirm that exact name via
+      `akm list --format json`, then run
+      `akm sync team/sync-qa -m "Manual QA named sync"`
       and verify the commit lands in that repo, not the primary stash.
-- [ ] If the named source is literally `json`, `akm save json --format json`
-      still saves that named stash; `akm save --format json` with no positional
+- [ ] If the named source is literally `json`, `akm sync json --format json`
+      still saves that named stash; `akm sync --format json` with no positional
       still saves the primary stash.
-- [ ] Do not point `akm save` at any real repo or writable remote outside the
+- [ ] Do not point `akm sync` at any real repo or writable remote outside the
       sandbox.
 
 ---
@@ -428,31 +430,36 @@ register a real long-lived knowledge repo unless you intend to exercise it.
 
 ---
 
-## 13. Vault
+## 13. Env and Secret
 
-The vault surface is intentionally strict about not printing values. Confirm
-that guarantee carefully.
+Env and secret surfaces are intentionally strict about not printing values.
+Confirm that guarantee carefully.
 
-- [ ] `akm vault list` is empty initially.
-- [ ] `akm vault create test-vault` creates `vaults/test-vault.env`.
-- [ ] `printf '%s' "secret-value" | akm vault set vault:test-vault MY_KEY --comment "test secret"`
-      succeeds.
-- [ ] `akm show vault:test-vault` lists keys/comments only.
-- [ ] `akm vault list --format json` contains the vault under `vaults[]` with
+- [ ] `akm env list` is empty initially.
+- [ ] `akm env create test-env` creates `env/test-env.env`.
+- [ ] `printf '%s' "secret-value" | akm env set env:test-env API_KEY` succeeds.
+- [ ] `akm show env:test-env` lists keys/comments only.
+- [ ] `akm env list --format json` contains the env under `envs[]` with
       `keys` and no secret values.
-- [ ] `akm vault path vault:test-vault` prints the absolute vault file path and
-      not the secret value.
-- [ ] `akm vault run vault:test-vault -- bash -lc 'test "$MY_KEY" = "secret-value"'`
-      injects the value only into the subprocess environment.
-- [ ] `akm vault run vault:test-vault/MY_KEY -- bash -lc 'test "$MY_KEY" = "secret-value" && test -z "${OTHER_KEY-}"'`
-      injects only the named key.
-- [ ] `akm vault unset vault:test-vault MY_KEY` removes the key.
+- [ ] `akm env path env:test-env` prints the absolute env file path and not the
+      secret values.
+- [ ] `akm env run env:test-env -- bash -lc 'test "$API_KEY" = "secret-value"'`
+      injects values into the subprocess environment.
+- [ ] `printf '%s' "token-value" | akm secret set secret:test-token` succeeds.
+- [ ] `akm secret list --format json` contains `secret:test-token` with only path
+      output.
+- [ ] `akm secret path secret:test-token` prints the absolute secret file path and
+      no secret value.
+- [ ] `akm secret run secret:test-token CI_TOKEN -- bash -lc 'test "$CI_TOKEN" = "token-value"'`
+      injects only that variable.
+- [ ] `akm env unset env:test-env API_KEY` removes the key.
+- [ ] `akm secret remove secret:test-token -y` removes the secret.
 
 ---
 
-## 14. Feedback, History, and Events
+## 14. Feedback, History, and Log
 
-These are core auditability flows to validate in `0.8.x`.
+These are core auditability flows to validate in `0.9.x`.
 
 - [ ] `akm feedback skill:k8s-deploy --positive` succeeds.
 - [ ] `akm feedback skill:k8s-deploy --negative --reason "not specific enough"`
@@ -463,11 +470,11 @@ These are core auditability flows to validate in `0.8.x`.
 - [ ] `akm history --ref skill:k8s-deploy` returns chronological history entries.
 - [ ] `akm history --since 2026-01-01T00:00:00Z --format jsonl` emits one JSON
       object per line.
-- [ ] `akm events list` shows appended mutation events.
-- [ ] `akm events list --type feedback --ref skill:k8s-deploy` filters correctly.
-- [ ] `akm events tail --max-events 2 --format jsonl` streams events and ends
+- [ ] `akm log list` shows appended mutation events.
+- [ ] `akm log list --type feedback --ref skill:k8s-deploy` filters correctly.
+- [ ] `akm log tail --max-events 2 --format jsonl` streams events and ends
       with a trailer row containing `nextOffset`.
-- [ ] `akm events tail --max-events 1 --format text` emits line-oriented events
+- [ ] `akm log tail --max-events 1 --format text` emits line-oriented events
       on stdout and the trailer on stderr.
 
 ---
@@ -578,14 +585,18 @@ checklist did not exercise.
 - [ ] `akm tasks add` writes a new `.yml` and refuses to overwrite an existing
       `.md` without `--force`.
 
-#### `vault set --from-env` and stdin behaviour
+#### `env set` and secret set --from-env / stdin behavior
 
-- [ ] `printf '%s' "secret" | akm vault set vault:prod KEY` writes via stdin.
-- [ ] `AKM_VAL=secret akm vault set vault:prod KEY --from-env AKM_VAL` writes
-      from the named env var; unset var exits with code 2.
-- [ ] Piping a payload > 1 MB to `akm vault set` is rejected with a
+- [ ] `printf '%s' "secret" | akm env set env:prod KEY` writes via stdin.
+- [ ] `AKM_VAL=secret akm env set env:prod KEY --from-env AKM_VAL` writes from
+      the named env var; unset var exits with code 2.
+- [ ] `printf '%s' "secret" | akm secret set secret:prod SECRET_TOKEN` writes via
+      stdin.
+- [ ] `AKM_VAL=secret akm secret set secret:prod SECRET_TOKEN --from-env AKM_VAL`
+      writes from the named env var; unset var exits with code 2.
+- [ ] Piping a payload > 1 MB to `akm env set` is rejected with a
       `UsageError`.
-- [ ] `akm vault set vault:prod KEY=value` (positional value or KEY=VALUE
+- [ ] `akm env set env:prod KEY=value` (positional value or KEY=VALUE
       form) is rejected with `UsageError`.
 
 #### `--auto-accept=false` regression check
@@ -629,7 +640,7 @@ Spot-check that failures always arrive as structured JSON on stderr with
 - [ ] `akm help migrate` with no version fails with `MISSING_REQUIRED_ARGUMENT`.
 - [ ] `akm workflow next definitely-not-a-run-id` fails structurally and does
       not dump a stack trace.
-- [ ] `akm vault path missing-vault` fails with `ASSET_NOT_FOUND` or the
+- [ ] `akm env path missing-env` fails with `ASSET_NOT_FOUND` or the
       current typed not-found envelope.
 
 If any failure prints a bare stack trace, that is a regression.
@@ -649,7 +660,7 @@ for cmd in \
   'config list' \
   'curate "review code"' \
   'history --ref skill:k8s-deploy' \
-  'events list'; do
+  'log list'; do
   akm $cmd --format json | jq -e . > /dev/null || exit 1
 done
 ```

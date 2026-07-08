@@ -5,12 +5,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import workflowTemplate from "../../assets/workflows/workflow-template.md" with { type: "text" };
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
+import { compileWorkflowProgram } from "../ir/compile";
 import { parseWorkflow } from "../parser";
+import { parseWorkflowProgram } from "../program/parser";
+import type { WorkflowProgram } from "../program/schema";
 import type { WorkflowError } from "../schema";
+import workflowProgramTemplate from "./workflow-program-template.yaml" with { type: "text" };
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
   title: "Example Workflow",
@@ -20,6 +24,16 @@ const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
 
 export function getWorkflowTemplate(): string {
   return DEFAULT_WORKFLOW_TEMPLATE;
+}
+
+/**
+ * Minimal valid YAML workflow *program* (redesign addendum, R1), printed by
+ * `akm workflow template --yaml`. Kept as an external asset file per the repo
+ * convention (see `workflow-program-template.yaml` next to this module);
+ * `tests/workflows/program-assets.test.ts` pins that it parses AND compiles.
+ */
+export function getWorkflowProgramTemplate(): string {
+  return workflowProgramTemplate;
 }
 
 export function buildWorkflowTemplate(name?: string): string {
@@ -39,6 +53,33 @@ export function buildWorkflowTemplate(name?: string): string {
   return customized;
 }
 
+/**
+ * Customize the shipped YAML program template ({@link getWorkflowProgramTemplate})
+ * for a named workflow: swap the placeholder `name:` for the workflow's slug so
+ * a freshly created `.yaml`/`.yml` asset round-trips through the program parser
+ * (its `title` becomes the slug). Parses AND compiles the result — mirroring
+ * {@link buildWorkflowTemplate} — so a create never writes an asset that
+ * `show`/`start`/`validate` would then reject.
+ */
+export function buildWorkflowProgramTemplate(name?: string): string {
+  if (!name) return workflowProgramTemplate;
+
+  const programName = slugifyWorkflowStepId(name);
+  const customized = workflowProgramTemplate.replace(/^name:.*$/m, `name: ${programName}`);
+  const parsed = parseWorkflowProgram(customized, { path: `<template:${name}>` });
+  if (!parsed.ok) {
+    throw new UsageError(formatWorkflowErrors(`<template:${name}>`, parsed.errors));
+  }
+  const compiled = compileWorkflowProgram(parsed.program);
+  if (!compiled.ok) {
+    throw new UsageError(formatWorkflowErrors(`<template:${name}>`, compiled.errors));
+  }
+  return customized;
+}
+
+/** Recognized YAML workflow-program suffixes (see {@link WORKFLOW_EXTENSIONS}). */
+const WORKFLOW_PROGRAM_SUFFIX_RE = /\.ya?ml$/i;
+
 export function createWorkflowAsset(input: { name: string; content?: string; from?: string; force?: boolean }): {
   ref: string;
   path: string;
@@ -48,10 +89,46 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const typeRoot = path.join(stashDir, "workflows");
   fs.mkdirSync(typeRoot, { recursive: true });
 
+  // A `.yaml`/`.yml` name selects the YAML *program* format (redesign
+  // addendum, R1); capture the exact suffix the user typed so the written file
+  // keeps it, then strip every workflow extension to get the canonical name.
+  const suffixMatch = input.name.trim().replace(/\\/g, "/").match(WORKFLOW_PROGRAM_SUFFIX_RE);
+  const programSuffix = suffixMatch ? suffixMatch[0].toLowerCase() : undefined;
+  const isProgram = programSuffix !== undefined;
+
   const normalizedName = normalizeWorkflowName(input.name);
-  const assetPath = resolveAssetPathFromName("workflow", typeRoot, normalizedName);
+  // The write target is DEFINITIVE — the canonical name plus the chosen format's
+  // extension (`.yaml`/`.yml` for a program, `.md` for markdown). We deliberately
+  // do NOT go through `resolveAssetPathFromName`, which PROBES existing files and
+  // would redirect a markdown create onto an existing `foo.yaml` (writing
+  // markdown into a `.yaml`). Computing the target directly makes a markdown
+  // create always write `.md`, so the finding-C cross-extension check below sees
+  // the real collision instead of a self-match.
+  const targetSuffix = isProgram ? (programSuffix as string) : ".md";
+  const assetPath = path.join(typeRoot, `${normalizedName}${targetSuffix}`);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved workflow path escapes the stash: "${normalizedName}"`, "PATH_ESCAPE_VIOLATION");
+  }
+  // Codex round-3 finding C: a `workflow:<name>` ref is canonical across every
+  // recognized extension (`.md`/`.yaml`/`.yml`) and resolves `.md` BEFORE
+  // `.yaml`. So creating `foo.yaml` while `foo.md` exists would return the ref
+  // `workflow:foo` that still starts the OLD markdown workflow — a silently
+  // shadowed asset. Reject creation when ANY recognized extension already holds
+  // the same canonical name, naming the existing file. A same-extension collision
+  // (the target path itself exists) keeps the classic `--force` overwrite escape;
+  // a DIFFERENT-extension collision cannot be force-overwritten (writing a new
+  // file would leave the old one shadowing it) — remove the existing file first.
+  const existingPaths = WORKFLOW_EXTENSIONS.map((ext) => path.join(typeRoot, `${normalizedName}${ext}`)).filter(
+    (candidate) => fs.existsSync(candidate),
+  );
+  const conflicting = existingPaths.find((p) => p !== assetPath);
+  if (conflicting !== undefined) {
+    throw new UsageError(
+      `Workflow "${normalizedName}" already exists as ${path.relative(stashDir, conflicting)} — the ` +
+        `\`workflow:${normalizedName}\` ref resolves to that file, so creating this one would shadow it. ` +
+        `Remove or rename the existing file first, or create the workflow under a different name.`,
+      "RESOURCE_ALREADY_EXISTS",
+    );
   }
   if (fs.existsSync(assetPath) && !input.force) {
     throw new UsageError(
@@ -62,11 +139,28 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   const content = input.from
     ? readWorkflowSource(input.from, stashDir)
-    : (input.content ?? buildWorkflowTemplate(normalizedName));
-  const sourcePath = input.from ?? `workflows/${normalizedName}.md`;
-  const result = parseWorkflow(content, { path: sourcePath });
-  if (!result.ok) {
-    throw new UsageError(formatWorkflowErrors(sourcePath, result.errors));
+    : (input.content ??
+      (isProgram ? buildWorkflowProgramTemplate(normalizedName) : buildWorkflowTemplate(normalizedName)));
+  const sourcePath = input.from ?? `workflows/${normalizedName}${isProgram ? programSuffix : ".md"}`;
+
+  // Validate against the format the destination extension selects — a YAML
+  // program parses+compiles as a program, markdown as a document — so the
+  // created asset is guaranteed usable by show/start/validate, which pick
+  // their parser by the same extension.
+  if (isProgram) {
+    const parsed = parseWorkflowProgram(content, { path: sourcePath });
+    if (!parsed.ok) {
+      throw new UsageError(formatWorkflowErrors(sourcePath, parsed.errors));
+    }
+    const compiled = compileWorkflowProgram(parsed.program);
+    if (!compiled.ok) {
+      throw new UsageError(formatWorkflowErrors(sourcePath, compiled.errors));
+    }
+  } else {
+    const result = parseWorkflow(content, { path: sourcePath });
+    if (!result.ok) {
+      throw new UsageError(formatWorkflowErrors(sourcePath, result.errors));
+    }
   }
 
   fs.mkdirSync(path.dirname(assetPath), { recursive: true });
@@ -103,11 +197,16 @@ function readWorkflowSource(source: string, stashDir: string): string {
 }
 
 function normalizeWorkflowName(name: string): string {
-  const normalized = name
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "")
-    .replace(/\.md$/i, "");
+  // Strip any recognized workflow extension (.md/.yaml/.yml) so the canonical
+  // name — and thus the `workflow:<name>` ref — is extension-free regardless of
+  // how the user spelled it. The chosen format is recovered from the raw suffix
+  // by the caller (createWorkflowAsset).
+  const normalized = canonicalizeWorkflowName(
+    name
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\/+|\/+$/g, ""),
+  );
   if (!normalized) {
     throw new UsageError("Workflow name cannot be empty.");
   }
@@ -169,6 +268,36 @@ export function validateWorkflowSource(target: string): {
   }
   const content = fs.readFileSync(resolved, "utf8");
   return { path: target, parse: parseWorkflow(content, { path: target }) };
+}
+
+/**
+ * Validate a YAML workflow *program* by filesystem path: parse via
+ * `parseWorkflowProgram`, then — only when the parse is clean — compile via
+ * `compileWorkflowProgram` so expression/reference errors surface too. Both
+ * error lists carry line numbers and are returned in the same
+ * `WorkflowError[]` shape, ready for `formatWorkflowErrors`. Throws
+ * `UsageError` only when the target cannot be located on disk.
+ */
+export function validateWorkflowProgramSource(target: string): {
+  path: string;
+  result: { ok: true; program: WorkflowProgram; warnings: WorkflowError[] } | { ok: false; errors: WorkflowError[] };
+} {
+  const resolved = path.resolve(target);
+  if (!fs.existsSync(resolved)) {
+    throw new UsageError(`Workflow file not found: "${target}".`);
+  }
+  const content = fs.readFileSync(resolved, "utf8");
+  const parse = parseWorkflowProgram(content, { path: target });
+  if (!parse.ok) {
+    return { path: target, result: { ok: false, errors: parse.errors } };
+  }
+  const compiled = compileWorkflowProgram(parse.program);
+  if (!compiled.ok) {
+    return { path: target, result: { ok: false, errors: compiled.errors } };
+  }
+  // Non-fatal advisories ride along on a successful validation (additive) so
+  // `workflow validate` can surface them without changing the ok verdict.
+  return { path: target, result: { ok: true, program: parse.program, warnings: compiled.warnings } };
 }
 
 function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {

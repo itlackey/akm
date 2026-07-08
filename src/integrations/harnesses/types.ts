@@ -23,7 +23,50 @@
  * implementations are migrated under each harness in #563/#564.
  */
 
-import type { AgentCommandBuilder } from "../agent/builder-shared";
+import type { AgentCommandBuilder, AgentResultExtractor } from "../agent/builder-shared";
+import type { SessionLogHarness } from "../session-logs/types";
+
+/**
+ * Which of the three workflow-engine execution patterns this harness uses
+ * (plan §"Reconciliation with existing akm seams"):
+ *   - `in-harness`:     the orchestrating agent session itself executes units
+ *                       (Claude Code driving `akm workflow` tools).
+ *   - `local-runner`:   akm spawns the harness locally per unit (CLI argv or
+ *                       embedded SDK) and ingests its output.
+ *   - `cloud-delegate`: akm submits the task to a provider API and later
+ *                       ingests the produced artifact (e.g. a PR).
+ */
+export type HarnessExecutionPattern = "in-harness" | "local-runner" | "cloud-delegate";
+
+/**
+ * Structured-output tier (plan §"Structured-output normalization"):
+ *   - `native-schema`: the harness enforces a caller-supplied JSON schema
+ *                      itself (tool input schema, `--output-schema`).
+ *   - `native-json`:   the harness emits a documented JSON/JSONL stream; akm
+ *                      parses it, extracts the final message, then validates.
+ *   - `none`:          plain text only; akm injects the schema into the
+ *                      prompt and extracts embedded JSON from stdout.
+ * All three tiers funnel through the engine's one retry-until-valid loop.
+ */
+export type HarnessStructuredOutput = "native-schema" | "native-json" | "none";
+
+/**
+ * How to resume a previous harness session from the CLI. Absent when the
+ * harness has no flag-shaped resume (no session model, or resume is
+ * programmatic via an SDK session id).
+ */
+export interface HarnessResumeSupport {
+  /** The CLI resume flag (e.g. `--resume`). */
+  readonly flag: string;
+  /**
+   * Whether {@link flag} takes the harness-native session id as its argument
+   * (`--resume <id>`). `false` = a bare flag resuming implicit local state
+   * (e.g. Amazon Q's `--resume` replays the working directory's previous
+   * conversation). Consumers building argv MUST check this before appending
+   * a session id after the flag.
+   */
+  readonly takesSessionId: boolean;
+}
 
 /**
  * Capability flags describing which of akm's six integration surfaces a
@@ -109,6 +152,69 @@ export interface AkmHarness {
   readonly agentBuilder?: AgentCommandBuilder;
 
   /**
+   * Workflow-engine execution pattern (plan §"Capability matrix"). Optional
+   * on the interface for backward compatibility with external implementers
+   * (additive seam change), but every registry entry MUST declare it — pinned
+   * by `tests/harnesses-registry.test.ts`.
+   */
+  readonly pattern?: HarnessExecutionPattern;
+
+  /**
+   * Structured-output tier for workflow-unit result normalization (plan
+   * §"Structured-output normalization"). Optional on the interface (additive
+   * seam change); required on registry entries, pinned by tests.
+   */
+  readonly structuredOutput?: HarnessStructuredOutput;
+
+  /**
+   * CLI resume support: the flag that replays a harness-native session id.
+   * Absent ⇒ resume is programmatic (SDK) or unsupported; akm's
+   * `workflow_run_units` remains the durable source of truth either way.
+   */
+  readonly resume?: HarnessResumeSupport;
+
+  /**
+   * Env vars that carry this harness's *session id* when a process runs under
+   * it (e.g. `CLAUDE_SESSION_ID`). The workflow runtime's agent-identity
+   * detection (`src/workflows/runtime/agent-identity.ts`) is DERIVED from
+   * these markers, so a new harness only registers here — never in a parallel
+   * if/else chain. Only session-id-bearing vars belong here: the VALUE of the
+   * first matching var is persisted as `workflow_runs.agent_session_id`, so a
+   * bare "this-harness-is-present" flag would journal a fake session id (and
+   * stamp identity onto manual runs). Presence-only flags belong in
+   * {@link presenceEnv}.
+   */
+  readonly identityEnv?: readonly string[];
+
+  /**
+   * Env vars whose mere PRESENCE indicates "this process runs under this
+   * harness" without carrying a session id (e.g. `CODEX_SANDBOX=seatbelt`,
+   * `GEMINI_CLI=1`). Used ONLY to infer the harness for run attribution —
+   * their values are never recorded as a session id, and a concrete
+   * `identityEnv` session id (from any harness) outranks presence inference.
+   * Only vars the harness stamps on its OWN child processes belong here;
+   * user-profile config vars (e.g. `CODEX_HOME`, commonly exported in shell
+   * profiles) would stamp identity onto manual runs and must not be
+   * registered.
+   */
+  readonly presenceEnv?: readonly string[];
+
+  /**
+   * Harness-owned result extractor: normalizes a raw `AgentRunResult` into
+   * `{ text, sessionId? }` before schema validation (plan §"The adapter
+   * contract" step 3). Absent ⇒ the engine uses the raw stdout as text.
+   */
+  readonly resultExtractor?: AgentResultExtractor;
+
+  /**
+   * Factory for this harness's session-log provider, required when
+   * `capabilities.sessionLogs` is true. The session-logs index
+   * (`src/integrations/session-logs/index.ts`) DERIVES its provider array
+   * from this field, so the provider list cannot drift from the registry.
+   */
+  readonly sessionLogProvider?: () => SessionLogHarness;
+
+  /**
    * Does a legacy v1 agent-profile name belong to this harness? (#566)
    *
    * v1 agent profiles never carried an explicit `platform`; the platform was
@@ -141,6 +247,13 @@ export abstract class BaseHarness implements AkmHarness {
   readonly runtimeId?: string;
   readonly setupDetectionDir?: string;
   readonly agentBuilder?: AgentCommandBuilder;
+  readonly pattern?: HarnessExecutionPattern;
+  readonly structuredOutput?: HarnessStructuredOutput;
+  readonly resume?: HarnessResumeSupport;
+  readonly identityEnv?: readonly string[];
+  readonly presenceEnv?: readonly string[];
+  readonly resultExtractor?: AgentResultExtractor;
+  readonly sessionLogProvider?: () => SessionLogHarness;
 
   /**
    * Lowercase prefixes that a decorated v1 profile name may start with and

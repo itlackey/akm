@@ -23,7 +23,7 @@ describe("detectAgentCliProfiles", () => {
   test("reports every built-in profile, available iff bin found", () => {
     const results = detectAgentCliProfiles(undefined, whichOnly(["claude", "codex"]));
     const names = results.map((r) => r.name).sort();
-    expect(names).toEqual(["aider", "claude", "codex", "gemini", "opencode"]);
+    expect(names).toEqual(["aider", "amazonq", "claude", "codex", "copilot", "gemini", "opencode", "openhands", "pi"]);
     expect(results.find((r) => r.name === "claude")?.available).toBe(true);
     expect(results.find((r) => r.name === "codex")?.available).toBe(true);
     expect(results.find((r) => r.name === "gemini")?.available).toBe(false);
