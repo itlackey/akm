@@ -68,8 +68,27 @@
  * `disposeDispatchResources()` (→ {@link closeServer}) in its run `finally`.
  * The `process.once('exit')` hook stays as the last-resort backstop for paths
  * that never reach that drain.
+ *
+ * ## Managed server spawn (owner finding 4, live-harness follow-up)
+ *
+ * Draining the registry is necessary but NOT sufficient with the SDK's own
+ * `createOpencodeServer`: its `close()` merely sends SIGTERM and it never
+ * `unref()`s the child or its stdio pipes, so akm's event loop stays pinned
+ * until the child ACTUALLY exits — and a real `opencode serve` (a live HTTP
+ * server with provider children) can outlive SIGTERM long enough to hang the
+ * caller indefinitely. {@link createManagedOpencode} therefore owns the spawn
+ * (the SDK package is used only for `createOpencodeClient`):
+ *
+ *   - after the URL handshake, the child and its stdio are `unref()`ed /
+ *     destroyed, so the handle can never hold akm open;
+ *   - `close()` sends SIGTERM and arms an UNREF'ed grace timer
+ *     ({@link SERVER_KILL_GRACE_MS}) that escalates to SIGKILL — best-effort
+ *     cleanup that itself cannot keep the process alive;
+ *   - the spawn (and its `process.env` snapshot) stays in the SYNCHRONOUS
+ *     prefix of the factory call, preserving the env-overlay contract above.
  */
 
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
 import type { ShowResponse } from "../../../sources/types";
@@ -358,19 +377,123 @@ async function allocateFreePort(): Promise<number> {
   throw new Error("could not allocate a free port for the OpenCode SDK server");
 }
 
+/** Grace between SIGTERM and SIGKILL when closing a managed server child. */
+const SERVER_KILL_GRACE_MS = 2_000;
+
+/** How long the managed spawn waits for the server's listening handshake. */
+const SERVER_START_TIMEOUT_MS = 5_000;
+
+// Test seam: override the argv used to spawn the server child ("opencode"
+// plus serve flags by default) so the managed-spawn lifecycle (handshake,
+// unref, SIGTERM→SIGKILL escalation) is testable without the real binary.
+let _serveCommand: string[] | null = null;
+
+/** Test-only seam: replace the `opencode serve` argv. Pass `null` to clear. */
+export function __setServeCommand(argv: string[] | null): void {
+  _serveCommand = argv;
+}
+
+/**
+ * Spawn-owning replacement for the SDK's `createOpencode` (module doc,
+ * *Managed server spawn*). Mirrors `createOpencodeServer`'s contract — the
+ * `spawn` (and its `process.env` snapshot) happens in the SYNCHRONOUS prefix,
+ * `OPENCODE_CONFIG_CONTENT` carries the config, the handshake parses the
+ * "opencode server listening on <url>" line — but manages the child so its
+ * handle can never pin akm's event loop:
+ *
+ *   - handshake success → stdio destroyed, listeners dropped, `proc.unref()`;
+ *   - `close()` → SIGTERM now, SIGKILL after an unref'ed grace timer;
+ *   - handshake failure → the child is killed and unref'ed before rejecting.
+ */
+async function createManagedOpencode(options: { config?: Record<string, unknown>; port?: number }): Promise<SdkServer> {
+  const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
+    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
+  })) as { createOpencodeClient: (options: { baseUrl: string }) => SdkClient };
+
+  const port = options.port ?? DEFAULT_SDK_PORT;
+  const argv = _serveCommand ?? ["opencode", "serve", "--hostname=127.0.0.1", `--port=${port}`];
+  // Synchronous prefix: the env snapshot (incl. any binding overlay in the
+  // caller's frame) is taken HERE, before the first await below.
+  const proc = spawn(argv[0] as string, argv.slice(1), {
+    env: { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {}) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  const closeManaged = (): void => {
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      /* already dead */
+    }
+    const escalate = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }, SERVER_KILL_GRACE_MS);
+    // The escalation is best-effort cleanup: it must never itself keep the
+    // process alive waiting to deliver a SIGKILL to an already-dead child.
+    escalate.unref?.();
+  };
+
+  const url = await new Promise<string>((resolve, reject) => {
+    let output = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const fail = (err: Error): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      closeManaged();
+      proc.unref();
+      reject(err);
+    };
+    timer = setTimeout(() => {
+      fail(new Error(`Timeout waiting for the OpenCode server to start after ${SERVER_START_TIMEOUT_MS}ms`));
+    }, SERVER_START_TIMEOUT_MS);
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+      for (const line of output.split("\n")) {
+        if (line.startsWith("opencode server listening")) {
+          const match = line.match(/on\s+(https?:\/\/\S+)/);
+          if (!match?.[1]) {
+            fail(new Error(`Failed to parse the OpenCode server url from: ${line}`));
+            return;
+          }
+          if (timer !== undefined) clearTimeout(timer);
+          resolve(match[1]);
+          return;
+        }
+      }
+    });
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    proc.on("exit", (code) => {
+      fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\nServer output: ${output}` : ""}`));
+    });
+    proc.on("error", (err) => {
+      fail(err instanceof Error ? err : new Error(String(err)));
+    });
+  });
+
+  // Handshake done: from here on the child must never hold akm open. Its
+  // lifetime is managed explicitly (closeServer → closeManaged), not by the
+  // event loop. Destroying the pipes also releases their loop handles.
+  proc.stdout?.removeAllListeners("data");
+  proc.stderr?.removeAllListeners("data");
+  proc.stdout?.destroy();
+  proc.stderr?.destroy();
+  proc.unref();
+
+  return { client: createOpencodeClient({ baseUrl: url }), server: { close: closeManaged } };
+}
+
 async function startServer(
   profile: AgentProfile,
   llmConfig: LlmConnectionConfig | undefined,
   env: Record<string, string> | undefined,
   registryKey: string,
 ): Promise<SdkServer> {
-  const factory: SdkServerFactory =
-    _serverFactory ??
-    (
-      (await import("@opencode-ai/sdk").catch(() => {
-        throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
-      })) as { createOpencode: SdkServerFactory }
-    ).createOpencode;
+  const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
   const sdkConfig = buildSdkConfig(profile, llmConfig);
   const options: { config?: Record<string, unknown>; port?: number } =
