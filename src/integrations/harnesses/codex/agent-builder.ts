@@ -9,7 +9,7 @@
  * Translates a platform-agnostic {@link AgentDispatchRequest} into the exact
  * headless argv the `codex` CLI expects:
  *
- *   codex exec [--model <m>] --json [--output-schema <file>] -- "<prompt>"
+ *   codex exec --sandbox workspace-write [--model <m>] --json [--output-schema <file>] -- "<prompt>"
  *
  * Capability-matrix facts this builder encodes (July 2026 research):
  *   - Headless invocation is the `exec` subcommand (`codex exec "<p>"`), not a
@@ -30,9 +30,15 @@
  *     into the prompt payload (system text first, blank line, then the task),
  *     after the `--` end-of-options separator so it can never be parsed as a
  *     flag.
- *   - Tool policy is omitted: codex governs tool access through its own
- *     sandbox/approval config (`--sandbox`, `config.toml`), not a per-tool
- *     allowlist flag.
+ *   - Tool policy is omitted, but the builder DOES inject `--sandbox
+ *     workspace-write` so dispatched units can write to their working
+ *     directory.  `codex exec` defaults to a read-only sandbox that silently
+ *     blocks file writes; without this flag the unit returns "workspace is
+ *     read-only" and the engine marks the step complete with no real mutation.
+ *     `--ask-for-approval` is NOT injected — that flag only exists on the
+ *     interactive `codex` command, not on `codex exec`, and exec mode is
+ *     already non-approval-blocking.  Profile-supplied `--sandbox` flags
+ *     (long or short form) are preserved (not duplicated).
  *   - Resume is the `codex exec resume <id>` SUBCOMMAND, not a flag, so it is
  *     not expressible through `AgentDispatchRequest` (which has no session
  *     field yet); {@link codexResumeArgs} exposes the argv prefix for the
@@ -78,8 +84,29 @@ export function codexResumeArgs(sessionId: string): readonly string[] {
 }
 
 /**
+ * Return `base` plus the `--sandbox workspace-write` flag that makes `codex exec`
+ * able to write to its working directory.  `codex exec` defaults to a read-only
+ * sandbox that silently blocks file writes — without this flag the unit returns
+ * "workspace is read-only" and the engine marks the step complete with no real
+ * mutation.  If the profile already pins `--sandbox` (long or short form) the
+ * default is not duplicated.
+ *
+ * Note: `--ask-for-approval` is an *interactive* codex flag only — `codex exec`
+ * does not accept it (it errors with "unexpected argument").  Non-interactive
+ * exec mode is implicitly non-approval-blocking; `--sandbox workspace-write`
+ * alone is sufficient for dispatched units.
+ */
+function ensureSandboxFlags(base: readonly string[]): string[] {
+  const out = [...base];
+  if (!out.includes("--sandbox") && !out.includes("-s")) {
+    out.push("--sandbox", "workspace-write");
+  }
+  return out;
+}
+
+/**
  * OpenAI Codex builder.
- * Command shape: codex exec [--model <m>] --json [--output-schema <file>] -- "<prompt>"
+ * Command shape: codex exec --sandbox workspace-write [--model <m>] --json [--output-schema <file>] -- "<prompt>"
  */
 export const codexBuilder: AgentCommandBuilder = {
   platform: "codex",
@@ -89,7 +116,14 @@ export const codexBuilder: AgentCommandBuilder = {
     // Built-in codex profiles ship `args: []`; headless dispatch is the `exec`
     // subcommand. Don't double it when a user profile already pins it.
     const extra = profile.args[0] === "exec" ? profile.args.slice(1) : [...profile.args];
-    const args: string[] = ["exec", ...extra];
+    // `codex exec` defaults to a read-only sandbox that silently blocks file
+    // writes — dispatched units would return "workspace is read-only" and the
+    // engine would mark them complete with no real mutation.  Force
+    // `workspace-write` (writes scoped to cwd) unless the profile already pins
+    // its own --sandbox flag (`--ask-for-approval` is not injectable here —
+    // see ensureSandboxFlags).
+    const sandboxArgs = ensureSandboxFlags(extra);
+    const args: string[] = ["exec", ...sandboxArgs];
     if (req.model) {
       const resolved = resolveModel(req.model, "codex", profile.modelAliases, profile.globalModelAliases);
       args.push("--model", resolved);

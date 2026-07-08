@@ -53,9 +53,9 @@ function flagValue(argv: readonly string[], flag: string): string {
 // ── codexBuilder — basic dispatch ─────────────────────────────────────────────
 
 describe("codexBuilder — basic dispatch", () => {
-  test("plain prompt: argv = [codex, exec, --json, --, <prompt>]", () => {
+  test("plain prompt: argv includes sandbox default then --json", () => {
     const cmd = codexBuilder.build(makeCodexProfile(), { prompt: "do work" });
-    expect(cmd.argv).toEqual(["codex", "exec", "--json", "--", "do work"]);
+    expect(cmd.argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "--json", "--", "do work"]);
   });
 
   test("platform id is 'codex' (canonical harness id)", () => {
@@ -64,12 +64,21 @@ describe("codexBuilder — basic dispatch", () => {
 
   test("`exec` subcommand comes first and is not doubled when the profile pins it", () => {
     const cmd = codexBuilder.build(makeCodexProfile({ args: ["exec"] }), { prompt: "go" });
-    expect(cmd.argv).toEqual(["codex", "exec", "--json", "--", "go"]);
+    expect(cmd.argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "--json", "--", "go"]);
   });
 
   test("extra profile args are kept after `exec`, before builder flags", () => {
     const cmd = codexBuilder.build(makeCodexProfile({ args: ["--skip-git-repo-check"] }), { prompt: "go" });
-    expect(cmd.argv).toEqual(["codex", "exec", "--skip-git-repo-check", "--json", "--", "go"]);
+    expect(cmd.argv).toEqual([
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "--json",
+      "--",
+      "go",
+    ]);
   });
 
   test("--json is always emitted (JSONL event stream is the extractor's input)", () => {
@@ -101,6 +110,37 @@ describe("codexBuilder — basic dispatch", () => {
     const argv = cmd.argv as string[];
     expect(argv.includes("--allowedTools")).toBe(false);
     expect(argv.join(" ")).not.toContain("read,write");
+  });
+
+  test("sandbox flag is injected by default (codex exec defaults to read-only)", () => {
+    const cmd = codexBuilder.build(makeCodexProfile(), { prompt: "go" });
+    const argv = cmd.argv as string[];
+    expect(argv).toContain("--sandbox");
+    expect(argv[argv.indexOf("--sandbox") + 1]).toBe("workspace-write");
+  });
+
+  test("profile-supplied --sandbox is preserved, not duplicated", () => {
+    const cmd = codexBuilder.build(makeCodexProfile({ args: ["--sandbox", "danger-full-access"] }), { prompt: "go" });
+    const argv = cmd.argv as string[];
+    expect(argv.filter((a) => a === "--sandbox").length).toBe(1);
+    expect(argv[argv.indexOf("--sandbox") + 1]).toBe("danger-full-access");
+    expect(argv.join(" ")).not.toContain("workspace-write");
+  });
+
+  test("short-form -s in profile args suppresses injection of long form", () => {
+    const cmd = codexBuilder.build(makeCodexProfile({ args: ["-s", "workspace-write"] }), {
+      prompt: "go",
+    });
+    const argv = cmd.argv as string[];
+    expect(argv).not.toContain("--sandbox");
+    expect(argv.filter((a) => a === "-s").length).toBe(1);
+  });
+
+  test("--ask-for-approval is NOT injected (only valid on interactive codex, not exec)", () => {
+    const cmd = codexBuilder.build(makeCodexProfile(), { prompt: "go" });
+    const argv = cmd.argv as string[];
+    expect(argv).not.toContain("--ask-for-approval");
+    expect(argv).not.toContain("-a");
   });
 });
 
