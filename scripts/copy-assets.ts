@@ -6,7 +6,12 @@
 //      predictable subfolders. Output is always dist/assets/<subfolder>/<file>.
 //      To add a new embedded asset: put it in src/assets/, update the
 //      importing .ts file's path, done — no glob changes needed.
-//   2. Bundle scripts/migrate-storage.ts + scripts/migrations/*.ts into
+//   2. Mirror module-local YAML templates next to compiler outputs in `dist/`.
+//      The files are imported `with { type: "text" }` from nearby TypeScript
+//      modules, so this keeps runtime-compatible paths intact.
+//   3. Copy schema artifacts (`schemas/**`) so published packages expose
+//      contract artifacts in `dist/schemas` for source-less deploys.
+//   4. Bundle scripts/migrate-storage.ts + scripts/migrations/*.ts into
 //      dist/scripts/ so globally-installed users (npm / prebuilt binary)
 //      can run them without `../src/...` import paths breaking (#469).
 import { mkdir } from "node:fs/promises";
@@ -33,6 +38,13 @@ for await (const src of yamlTemplateGlob.scan(".")) {
   await Bun.write(dest, Bun.file(src));
 }
 
+const schemaGlob = new Bun.Glob("schemas/**/*");
+for await (const src of schemaGlob.scan(".")) {
+  const dest = src.replace(/^schemas\//, "dist/schemas/");
+  await mkdir(dirname(dest), { recursive: true });
+  await Bun.write(dest, Bun.file(src));
+}
+
 // Soft check: the vendored ECharts payload backs `akm health --format html`
 // in self-contained (inline) mode. Missing it is non-fatal — the report can
 // still be generated with AKM_ECHARTS=cdn — but warn loudly so a broken
@@ -46,7 +58,7 @@ try {
   );
 }
 
-// 3. Copy the published launchers plus the Node-runtime entry wrapper and
+// 5. Copy the published launchers plus the Node-runtime entry wrapper and
 //    text-import loader hook into dist/. The shell launchers keep the npm/bun
 //    global-install contract runtime-agnostic: prefer Bun when present, fall
 //    back to Node wrappers otherwise.

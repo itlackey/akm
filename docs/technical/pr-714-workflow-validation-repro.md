@@ -11,6 +11,13 @@ latest fixes on PR #714.
   scenario
 - this repo checked out locally
 
+Define your repo root at runtime so the repro stays portable across machines:
+
+```sh
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CLI="$REPO_ROOT/src/cli.ts"
+```
+
 Branch used:
 
 ```sh
@@ -65,7 +72,7 @@ export XDG_CACHE_HOME="$REPRO_ROOT/xdg-cache"
 export XDG_STATE_HOME="$REPRO_ROOT/xdg-state"
 export AKM_STASH_DIR="$REPRO_ROOT/stash"
 
-bun src/cli.ts init
+bun "$CLI" init
 ```
 
 Replace `config.json` with this minimal reproducible config:
@@ -291,12 +298,12 @@ EOF
 Index and validate the sandbox stash:
 
 ```sh
-bun src/cli.ts index --full
+bun "$CLI" index --full
 
-bun src/cli.ts workflow validate workflow:basic-check
-bun src/cli.ts workflow validate workflow:gate-block
-bun src/cli.ts workflow validate workflow:token-budget
-bun src/cli.ts workflow validate workflow:worktree-proof
+bun "$CLI" workflow validate workflow:basic-check
+bun "$CLI" workflow validate workflow:gate-block
+bun "$CLI" workflow validate workflow:token-budget
+bun "$CLI" workflow validate workflow:worktree-proof
 ```
 
 Expected result:
@@ -309,9 +316,9 @@ Expected result:
 Start the run and inspect the initial brief:
 
 ```sh
-START_JSON=$(bun src/cli.ts workflow start workflow:basic-check --params '{"files":["src/a.ts"]}')
+START_JSON=$(bun "$CLI" workflow start workflow:basic-check --params '{"files":["src/a.ts"]}')
 RUN_ID=$(printf '%s' "$START_JSON" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).run.id)')
-BRIEF_JSON=$(bun src/cli.ts workflow brief "$RUN_ID")
+BRIEF_JSON=$(bun "$CLI" workflow brief "$RUN_ID")
 UNIT_ID=$(printf '%s' "$BRIEF_JSON" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).workList.units[0].unitId)')
 ```
 
@@ -322,7 +329,7 @@ Expected result:
 Claim it, then brief again:
 
 ```sh
-bun src/cli.ts workflow report "$RUN_ID" \
+bun "$CLI" workflow report "$RUN_ID" \
   --unit "$UNIT_ID" \
   --expect-step review \
   --status running \
@@ -330,6 +337,7 @@ bun src/cli.ts workflow report "$RUN_ID" \
 
 CLAIM_HOLDER=$(bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync("claim.json","utf8")).claim.holder)')
 bun src/cli.ts workflow brief "$RUN_ID"
+bun "$CLI" workflow brief "$RUN_ID"
 ```
 
 Expected result:
@@ -341,16 +349,16 @@ Expected result:
 ## Manual Scenario 2: Required Gate Blocks, `--active` Excludes It, Resume + Settle Works
 
 ```sh
-BLOCKED_START=$(bun src/cli.ts workflow start workflow:gate-block)
+BLOCKED_START=$(bun "$CLI" workflow start workflow:gate-block)
 BLOCKED_RUN_ID=$(printf '%s' "$BLOCKED_START" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).run.id)')
 
-bun src/cli.ts workflow report workflow:gate-block \
+bun "$CLI" workflow report workflow:gate-block \
   --unit draft:solo \
   --expect-step draft \
   --status completed \
   --result 'the work is done'
 
-bun src/cli.ts workflow list --active
+bun "$CLI" workflow list --active
 ```
 
 Expected result:
@@ -361,8 +369,8 @@ Expected result:
 Resume it and inspect the brief:
 
 ```sh
-bun src/cli.ts workflow resume "$BLOCKED_RUN_ID"
-bun src/cli.ts workflow brief "$BLOCKED_RUN_ID"
+bun "$CLI" workflow resume "$BLOCKED_RUN_ID"
+bun "$CLI" workflow brief "$BLOCKED_RUN_ID"
 ```
 
 Notes:
@@ -378,7 +386,7 @@ Expected result:
 Finalize through the new settle path:
 
 ```sh
-bun src/cli.ts workflow report "$BLOCKED_RUN_ID" \
+bun "$CLI" workflow report "$BLOCKED_RUN_ID" \
   --settle \
   --expect-step draft
 ```
@@ -391,17 +399,17 @@ Expected result:
 ## Manual Scenario 3: Budget Ceiling on the Report Path
 
 ```sh
-BUDGET_START=$(bun src/cli.ts workflow start workflow:token-budget --params '{"files":["a.ts","b.ts","c.ts"]}')
+BUDGET_START=$(bun "$CLI" workflow start workflow:token-budget --params '{"files":["a.ts","b.ts","c.ts"]}')
 BUDGET_RUN_ID=$(printf '%s' "$BUDGET_START" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).run.id)')
 
-bun src/cli.ts workflow report "$BUDGET_RUN_ID" \
+bun "$CLI" workflow report "$BUDGET_RUN_ID" \
   --unit review.unit:8b3148685648 \
   --expect-step review \
   --status completed \
   --tokens 60 \
   --result 'pass a'
 
-bun src/cli.ts workflow report "$BUDGET_RUN_ID" \
+bun "$CLI" workflow report "$BUDGET_RUN_ID" \
   --unit review.unit:630647ca5751 \
   --expect-step review \
   --status completed \
@@ -421,7 +429,7 @@ Start a fresh run, claim the unit, then simulate a dead driver by aging the
 claim in `workflow.db`.
 
 ```sh
-STALE_START=$(bun src/cli.ts workflow start workflow:basic-check --force --params '{"files":["stale.ts"]}')
+STALE_START=$(bun "$CLI" workflow start workflow:basic-check --force --params '{"files":["stale.ts"]}')
 STALE_RUN_ID=$(printf '%s' "$STALE_START" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).run.id)')
 STALE_BRIEF=$(bun src/cli.ts workflow brief "$STALE_RUN_ID")
 STALE_UNIT_ID=$(printf '%s' "$STALE_BRIEF" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).workList.units[0].unitId)')
@@ -435,7 +443,7 @@ bun src/cli.ts workflow report "$STALE_RUN_ID" \
 sqlite3 "$WORKFLOW_DB" \
   "update workflow_run_units set last_checkin_at='2000-01-01T00:00:00.000Z', claim_expires_at='2000-01-01T00:00:00.000Z' where run_id='$STALE_RUN_ID' and unit_id='$STALE_UNIT_ID';"
 
-bun src/cli.ts workflow brief "$STALE_RUN_ID"
+bun "$CLI" workflow brief "$STALE_RUN_ID"
 ```
 
 Expected result:
@@ -447,7 +455,7 @@ Expected result:
 Optional completion step:
 
 ```sh
-bun src/cli.ts workflow report "$STALE_RUN_ID" \
+bun "$CLI" workflow report "$STALE_RUN_ID" \
   --unit "$STALE_UNIT_ID" \
   --expect-step review \
   --status completed \
@@ -459,20 +467,20 @@ bun src/cli.ts workflow report "$STALE_RUN_ID" \
 Start the same workflow in two different directories.
 
 ```sh
-SCOPE_A_START=$(bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow start workflow:basic-check --force --params '{"files":["scope-a.ts"]}')
+SCOPE_A_START=$(bun "$CLI" workflow start workflow:basic-check --force --params '{"files":["scope-a.ts"]}')
 SCOPE_RUN_A=$(printf '%s' "$SCOPE_A_START" | bun -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).run.id)')
 ```
 
 Run this second command from `PROJECT_B`:
 
 ```sh
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow start workflow:basic-check --params '{"files":["scope-b.ts"]}'
+bun "$CLI" workflow start workflow:basic-check --params '{"files":["scope-b.ts"]}'
 ```
 
 Then list active runs in each directory separately:
 
 ```sh
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow list --active
+bun "$CLI" workflow list --active
 ```
 
 Expected result:
@@ -484,7 +492,7 @@ Expected result:
 ## Manual Scenario 6: Watch A Blocked Run In Stream Mode
 
 ```sh
-bun src/cli.ts workflow watch "$BLOCKED_RUN_ID" --stream --interval-ms 5
+bun "$CLI" workflow watch "$BLOCKED_RUN_ID" --stream --interval-ms 5
 ```
 
 Expected result:
@@ -500,7 +508,7 @@ Run from inside the disposable git repo:
 ```sh
 cd "$PROJECT_A"
 
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow run workflow:worktree-proof --max-steps 1
+bun "$CLI" workflow run workflow:worktree-proof --max-steps 1
 ```
 
 Expected functional result:
@@ -684,9 +692,9 @@ hang is visible.
 ```sh
 cd "$MULTI_ROOT/project"
 
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow run workflow:worktree-proof-opencode --max-steps 1
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow run workflow:worktree-proof-codex --max-steps 1
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow run workflow:worktree-proof-claude --max-steps 1
+bun "$CLI" workflow run workflow:worktree-proof-opencode --max-steps 1
+bun "$CLI" workflow run workflow:worktree-proof-codex --max-steps 1
+bun "$CLI" workflow run workflow:worktree-proof-claude --max-steps 1
 ```
 
 Then inspect terminal state and diagnostics:
@@ -812,7 +820,7 @@ or article ingestion.
 Live task file:
 
 ```sh
-readlink -f /home/founder3/akm/tasks/curate-agent-learning.yml
+readlink -f "$REPO_ROOT/tasks/curate-agent-learning.yml"
 ```
 
 Current behavior encoded in the live task:
@@ -820,14 +828,14 @@ Current behavior encoded in the live task:
 - schedule: daily at 12:15
 - task shape: prompt-backed
 - execution model: drives `workflow:curate-to-wiki` end to end
-- config source: `/home/founder3/akm/config/curation/agent-learning.json`
+  - config source: `$REPO_ROOT/config/curation/agent-learning.json`
 
 Safe verification steps:
 
 ```sh
-sed -n '1,120p' /home/founder3/akm/tasks/curate-agent-learning.yml
-sed -n '1,160p' /home/founder3/akm/workflows/curate-to-wiki.md
-sed -n '1,120p' /home/founder3/akm/config/curation/agent-learning.json
+sed -n '1,120p' "$REPO_ROOT/tasks/curate-agent-learning.yml"
+sed -n '1,160p' "$REPO_ROOT/workflows/curate-to-wiki.md"
+sed -n '1,120p' "$REPO_ROOT/config/curation/agent-learning.json"
 ```
 
 What to confirm:
@@ -850,21 +858,21 @@ Why this matters:
 Live task file:
 
 ```sh
-readlink -f /home/founder3/akm/tasks/akm-health-report.yml
+readlink -f "$REPO_ROOT/tasks/akm-health-report.yml"
 ```
 
 Current behavior encoded in the live task:
 
 - schedule: hourly at minute 3
 - task shape: command-backed
-- execution model: `akm env run ... -- bun /home/founder3/akm/scripts/akm-health-discord.ts`
+  - execution model: `akm env run ... -- bun "$REPO_ROOT/scripts/akm-health-discord.ts`
 - production concern: env-injected external notification
 
 Safe verification steps:
 
 ```sh
-sed -n '1,80p' /home/founder3/akm/tasks/akm-health-report.yml
-ls /home/founder3/akm/scripts/akm-health-discord.ts
+sed -n '1,80p' "$REPO_ROOT/tasks/akm-health-report.yml"
+ls "$REPO_ROOT/scripts/akm-health-discord.ts"
 ```
 
 What to confirm:
@@ -882,13 +890,13 @@ What to confirm:
 Live source workflow to convert:
 
 ```sh
-readlink -f /home/founder3/akm/workflows/web-ux-validation-gate.md
+readlink -f "$REPO_ROOT/workflows/web-ux-validation-gate.md"
 ```
 
 Converted YAML workflow program created for manual verification:
 
 ```sh
-readlink -f /home/founder3/akm/workflows/web-ux-validation-gate-program.yaml
+readlink -f "$REPO_ROOT/workflows/web-ux-validation-gate-program.yaml"
 ```
 
 Why this example is useful:
@@ -902,11 +910,11 @@ Why this example is useful:
 Safe verification steps:
 
 ```sh
-sed -n '1,220p' /home/founder3/akm/workflows/web-ux-validation-gate.md
-sed -n '1,260p' /home/founder3/akm/workflows/web-ux-validation-gate-program.yaml
+sed -n '1,220p' "$REPO_ROOT/workflows/web-ux-validation-gate.md"
+sed -n '1,260p' "$REPO_ROOT/workflows/web-ux-validation-gate-program.yaml"
 
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow validate /home/founder3/akm/workflows/web-ux-validation-gate.md
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow validate /home/founder3/akm/workflows/web-ux-validation-gate-program.yaml
+bun "$CLI" workflow validate "$REPO_ROOT/workflows/web-ux-validation-gate.md"
+bun "$CLI" workflow validate "$REPO_ROOT/workflows/web-ux-validation-gate-program.yaml"
 ```
 
 What to confirm:
@@ -924,9 +932,9 @@ If you want an additional non-side-effect proof that these live assets are still
 resolvable on the current machine, run:
 
 ```sh
-akm workflow validate /home/founder3/akm/workflows/curate-to-wiki.md
+akm workflow validate "$REPO_ROOT/workflows/curate-to-wiki.md"
 akm search "curate-to-wiki" --type workflow
-bun /home/founder3/code/github/itlackey/akm/src/cli.ts workflow validate /home/founder3/akm/workflows/web-ux-validation-gate-program.yaml
+bun "$CLI" workflow validate "$REPO_ROOT/workflows/web-ux-validation-gate-program.yaml"
 ```
 
 Do not run the live task commands/prompts directly during routine manual

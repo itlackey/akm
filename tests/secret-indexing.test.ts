@@ -20,7 +20,14 @@ import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { akmIndex } from "../src/indexer/indexer";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withEnv,
+  writeSandboxConfig,
+} from "./_helpers/sandbox";
 
 const SECRET_VALUE = "correct-horse-battery-staple-secret-do-not-leak";
 
@@ -37,6 +44,7 @@ beforeEach(() => {
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   currentStashDir = stashResult.dir;
   envCleanup = stashResult.cleanup;
+  writeSandboxConfig({ semanticSearchMode: "off" });
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {

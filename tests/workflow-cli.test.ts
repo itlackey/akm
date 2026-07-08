@@ -22,7 +22,7 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
   const xdgConfig = makeTempDir("akm-workflow-config-");
   const xdgData = makeTempDir("akm-workflow-data-");
   const xdgState = makeTempDir("akm-workflow-state-");
-  return {
+  const env = {
     ...process.env,
     AKM_STASH_DIR: stashDir,
     XDG_CACHE_HOME: xdgCache,
@@ -30,6 +30,8 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
     XDG_DATA_HOME: xdgData,
     XDG_STATE_HOME: xdgState,
   };
+  writeConfig(env, { semanticSearchMode: "off" });
+  return env;
 }
 
 function writeConfig(env: NodeJS.ProcessEnv, config: Record<string, unknown>) {
