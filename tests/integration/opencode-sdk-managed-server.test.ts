@@ -40,7 +40,12 @@ afterEach(() => {
 });
 
 /** Write a fake `opencode serve` script; returns its argv. */
-function fakeServe(opts: { ignoreSigterm: boolean; pidFile: string }): string[] {
+function fakeServe(opts: {
+  ignoreSigterm: boolean;
+  pidFile: string;
+  handshakeLine?: string | null;
+  exitCode?: number;
+}): string[] {
   const dir = mkdtempSync(join(tmpdir(), "akm-fake-serve-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const script = join(dir, "serve.ts");
@@ -49,9 +54,10 @@ function fakeServe(opts: { ignoreSigterm: boolean; pidFile: string }): string[] 
     [
       `require("node:fs").writeFileSync(${JSON.stringify(opts.pidFile)}, String(process.pid));`,
       opts.ignoreSigterm ? `process.on("SIGTERM", () => {});` : "",
-      // Handshake line the managed spawn parses, then stay alive forever.
-      `console.log("opencode server listening on http://127.0.0.1:1");`,
-      `setInterval(() => {}, 1000);`,
+      opts.handshakeLine === null
+        ? ""
+        : `console.log(${JSON.stringify(opts.handshakeLine ?? "opencode server listening on http://127.0.0.1:1")});`,
+      typeof opts.exitCode === "number" ? `process.exit(${opts.exitCode});` : `setInterval(() => {}, 1000);`,
     ].join("\n"),
   );
   return [process.execPath, script];
@@ -130,4 +136,53 @@ test("a cooperative serve child exits on SIGTERM without needing the escalation"
   closeServer();
   // SIGTERM alone should reap it well inside the SIGKILL grace.
   expect(await pollUntil(() => !pidAlive(pid), 1_500)).toBe(true);
+}, 15_000);
+
+test("managed serve startup failure: malformed listening line is structured and reaped", async () => {
+  const pidFile = join(mkdtempSync(join(tmpdir(), "akm-serve-pid3-")), "pid");
+  cleanups.push(() => rmSync(join(pidFile, ".."), { recursive: true, force: true }));
+  __setServeCommand(
+    fakeServe({
+      ignoreSigterm: false,
+      pidFile,
+      handshakeLine: "opencode server listening on not-a-url",
+    }),
+  );
+
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
+
+  expect(result.ok).toBe(false);
+  expect(result.reason).toBe("spawn_failed");
+  expect(result.error).toContain("Failed to parse the OpenCode server url");
+  const pid = Number(require("node:fs").readFileSync(pidFile, "utf8"));
+  expect(await pollUntil(() => !pidAlive(pid), 2_000)).toBe(true);
+}, 15_000);
+
+test("managed serve startup failure: early child exit is structured", async () => {
+  const pidFile = join(mkdtempSync(join(tmpdir(), "akm-serve-pid4-")), "pid");
+  cleanups.push(() => rmSync(join(pidFile, ".."), { recursive: true, force: true }));
+  __setServeCommand(fakeServe({ ignoreSigterm: false, pidFile, handshakeLine: null, exitCode: 42 }));
+
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
+
+  expect(result.ok).toBe(false);
+  expect(result.reason).toBe("spawn_failed");
+  expect(result.error).toContain("OpenCode server exited with code 42");
+}, 15_000);
+
+test("managed serve startup failure: listening timeout kills a stubborn child", async () => {
+  const pidFile = join(mkdtempSync(join(tmpdir(), "akm-serve-pid5-")), "pid");
+  cleanups.push(() => rmSync(join(pidFile, ".."), { recursive: true, force: true }));
+  __setServeCommand(fakeServe({ ignoreSigterm: true, pidFile, handshakeLine: null }));
+
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
+
+  expect(result.ok).toBe(false);
+  expect(result.reason).toBe("spawn_failed");
+  expect(result.error).toContain("Timeout waiting for the OpenCode server to start");
+  const pid = Number(require("node:fs").readFileSync(pidFile, "utf8"));
+  expect(await pollUntil(() => !pidAlive(pid), 4_000)).toBe(true);
 }, 15_000);

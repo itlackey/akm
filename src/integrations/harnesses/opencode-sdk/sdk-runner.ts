@@ -81,9 +81,10 @@
  *
  *   - after the URL handshake, the child and its stdio are `unref()`ed /
  *     destroyed, so the handle can never hold akm open;
- *   - `close()` sends SIGTERM and arms an UNREF'ed grace timer
- *     ({@link SERVER_KILL_GRACE_MS}) that escalates to SIGKILL — best-effort
- *     cleanup that itself cannot keep the process alive;
+ *   - `close()` sends SIGTERM and arms a bounded grace timer
+ *     ({@link SERVER_KILL_GRACE_MS}) that escalates to SIGKILL and is cleared
+ *     on cooperative exit, so stubborn children cannot survive parent exit and
+ *     stale timers cannot signal a reused PID;
  *   - the spawn (and its `process.env` snapshot) stays in the SYNCHRONOUS
  *     prefix of the factory call, preserving the env-overlay contract above.
  */
@@ -419,37 +420,71 @@ async function createManagedOpencode(options: { config?: Record<string, unknown>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  let closeStarted = false;
+  let closeEscalation: ReturnType<typeof setTimeout> | undefined;
+  const childExited = (): boolean => proc.exitCode !== null || proc.signalCode !== null;
+  const clearCloseEscalation = (): void => {
+    if (closeEscalation !== undefined) {
+      clearTimeout(closeEscalation);
+      closeEscalation = undefined;
+    }
+  };
   const closeManaged = (): void => {
+    if (closeStarted) return;
+    closeStarted = true;
+    if (childExited()) return;
+
+    proc.once("exit", clearCloseEscalation);
     try {
       proc.kill("SIGTERM");
     } catch {
-      /* already dead */
+      proc.off("exit", clearCloseEscalation);
+      return;
     }
-    const escalate = setTimeout(() => {
+    if (childExited()) return;
+
+    closeEscalation = setTimeout(() => {
+      closeEscalation = undefined;
+      if (childExited()) return;
       try {
         proc.kill("SIGKILL");
       } catch {
         /* already dead */
       }
     }, SERVER_KILL_GRACE_MS);
-    // The escalation is best-effort cleanup: it must never itself keep the
-    // process alive waiting to deliver a SIGKILL to an already-dead child.
-    escalate.unref?.();
   };
 
   const url = await new Promise<string>((resolve, reject) => {
     let output = "";
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const cleanupStartup = (): void => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      proc.stdout?.off("data", onStdoutData);
+      proc.stderr?.off("data", onStderrData);
+      proc.off("exit", onExit);
+      proc.off("error", onError);
+    };
     const fail = (err: Error): void => {
-      if (timer !== undefined) clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      cleanupStartup();
       closeManaged();
+      proc.stdout?.destroy();
+      proc.stderr?.destroy();
       proc.unref();
       reject(err);
     };
-    timer = setTimeout(() => {
-      fail(new Error(`Timeout waiting for the OpenCode server to start after ${SERVER_START_TIMEOUT_MS}ms`));
-    }, SERVER_START_TIMEOUT_MS);
-    proc.stdout?.on("data", (chunk: Buffer) => {
+    const succeed = (serverUrl: string): void => {
+      if (settled) return;
+      settled = true;
+      cleanupStartup();
+      resolve(serverUrl);
+    };
+    const onStdoutData = (chunk: Buffer): void => {
       output += chunk.toString();
       for (const line of output.split("\n")) {
         if (line.startsWith("opencode server listening")) {
@@ -458,28 +493,33 @@ async function createManagedOpencode(options: { config?: Record<string, unknown>
             fail(new Error(`Failed to parse the OpenCode server url from: ${line}`));
             return;
           }
-          if (timer !== undefined) clearTimeout(timer);
-          resolve(match[1]);
+          succeed(match[1]);
           return;
         }
       }
-    });
-    proc.stderr?.on("data", (chunk: Buffer) => {
+    };
+    const onStderrData = (chunk: Buffer): void => {
       output += chunk.toString();
-    });
-    proc.on("exit", (code) => {
-      fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\nServer output: ${output}` : ""}`));
-    });
-    proc.on("error", (err) => {
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      const status = code !== null ? `code ${code}` : `signal ${signal ?? "unknown"}`;
+      fail(new Error(`OpenCode server exited with ${status}${output.trim() ? `\nServer output: ${output}` : ""}`));
+    };
+    const onError = (err: Error): void => {
       fail(err instanceof Error ? err : new Error(String(err)));
-    });
+    };
+    timer = setTimeout(() => {
+      fail(new Error(`Timeout waiting for the OpenCode server to start after ${SERVER_START_TIMEOUT_MS}ms`));
+    }, SERVER_START_TIMEOUT_MS);
+    proc.stdout?.on("data", onStdoutData);
+    proc.stderr?.on("data", onStderrData);
+    proc.on("exit", onExit);
+    proc.on("error", onError);
   });
 
   // Handshake done: from here on the child must never hold akm open. Its
   // lifetime is managed explicitly (closeServer → closeManaged), not by the
   // event loop. Destroying the pipes also releases their loop handles.
-  proc.stdout?.removeAllListeners("data");
-  proc.stderr?.removeAllListeners("data");
   proc.stdout?.destroy();
   proc.stderr?.destroy();
   proc.unref();
@@ -593,6 +633,81 @@ function extractUsage(info?: {
   return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
+const SDK_OPERATION_TIMED_OUT = Symbol("opencode-sdk-operation-timeout");
+const SDK_OPERATION_ABORTED = Symbol("opencode-sdk-operation-aborted");
+const SDK_SESSION_DELETE_TIMEOUT_MS = 5_000;
+
+async function raceSdkOperation<T>(
+  operation: Promise<T>,
+  opts: {
+    timeoutMs: number | null;
+    setTimeoutFn: typeof setTimeout;
+    clearTimeoutFn: typeof clearTimeout;
+    signal?: AbortSignal;
+  },
+): Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED> {
+  let timer: ReturnType<typeof opts.setTimeoutFn> | undefined;
+  let onAbort: (() => void) | undefined;
+  const racers: Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED>[] = [operation];
+
+  if (opts.timeoutMs !== null) {
+    racers.push(
+      new Promise<typeof SDK_OPERATION_TIMED_OUT>((resolve) => {
+        timer = opts.setTimeoutFn(() => resolve(SDK_OPERATION_TIMED_OUT), opts.timeoutMs ?? 0);
+      }),
+    );
+  }
+  if (opts.signal) {
+    racers.push(
+      new Promise<typeof SDK_OPERATION_ABORTED>((resolve) => {
+        onAbort = () => resolve(SDK_OPERATION_ABORTED);
+        if (opts.signal?.aborted) onAbort();
+        else opts.signal?.addEventListener("abort", onAbort, { once: true });
+      }),
+    );
+  }
+
+  try {
+    return racers.length === 1 ? await operation : await Promise.race(racers);
+  } finally {
+    if (timer !== undefined) opts.clearTimeoutFn(timer);
+    if (opts.signal && onAbort) opts.signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function appendStderr(stderr: string, message: string): string {
+  return stderr ? `${stderr}\n${message}` : message;
+}
+
+async function deleteSessionBestEffort(
+  client: SdkClient,
+  sessionId: string,
+  query: SdkDirectoryQuery | undefined,
+  setTimeoutFn: typeof setTimeout,
+  clearTimeoutFn: typeof clearTimeout,
+): Promise<string | undefined> {
+  try {
+    const deleted = await raceSdkOperation(
+      client.session.delete({ path: { id: sessionId }, ...(query ? { query } : {}) }),
+      {
+        timeoutMs: SDK_SESSION_DELETE_TIMEOUT_MS,
+        setTimeoutFn,
+        clearTimeoutFn,
+      },
+    );
+    if (deleted === SDK_OPERATION_TIMED_OUT) {
+      return `OpenCode session cleanup timed out after ${SDK_SESSION_DELETE_TIMEOUT_MS}ms`;
+    }
+    return undefined;
+  } catch (err) {
+    return `OpenCode session cleanup failed: ${errorText(err)}`;
+  }
+}
+
 export async function runOpencodeSdk(
   profile: AgentProfile,
   prompt: string,
@@ -628,14 +743,75 @@ export async function runOpencodeSdk(
     };
   }
 
+  // #564 bug fix (3): enforce a hard timeout like the CLI path (runAgent).
+  // Previously runOpencodeSdk() awaited SDK calls with no timeout, so a stalled
+  // local-model endpoint or wedged server could block the caller indefinitely.
+  // We resolve the same budget runAgent uses (opts.timeoutMs override →
+  // profile.timeoutMs → DEFAULT_AGENT_TIMEOUT_MS) and race both session.create
+  // and session.prompt against it. null disables the timer (parity with
+  // runAgent's "no timeout" contract). Session cleanup is separately bounded
+  // by a short best-effort timer so timeout/abort results cannot be pinned in
+  // the finally path by a hung delete call.
+  const timeoutMs: number | null =
+    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
+  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
+  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+
   // Per-call working directory (module doc): forwarded as the SDK's
   // `query.directory` on every session call, so worktree-isolated units run
   // in their own checkout without a per-cwd server.
   const query: SdkDirectoryQuery | undefined = opts.cwd ? { directory: opts.cwd } : undefined;
 
-  // One session per call — do NOT reuse (history accumulates, token costs grow)
-  const sessionRes = await client.session.create({ body: { title: "akm" }, ...(query ? { query } : {}) });
-  const sessionId = sessionRes.data?.id;
+  // One session per call — do NOT reuse (history accumulates, token costs grow).
+  // Session creation is startup plumbing, so failures map to spawn_failed rather
+  // than bubbling out as a generic workflow dispatch exception.
+  const abortSignal = opts.signal;
+  let sessionId: string | undefined;
+  try {
+    const created = await raceSdkOperation(
+      client.session.create({ body: { title: "akm" }, ...(query ? { query } : {}) }),
+      {
+        timeoutMs,
+        setTimeoutFn: setTimeoutImpl,
+        clearTimeoutFn: clearTimeoutImpl,
+        signal: abortSignal,
+      },
+    );
+    if (created === SDK_OPERATION_ABORTED) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: null,
+        reason: "aborted" as AgentFailureReason,
+        error: `opencode-sdk agent "${profile.name}" aborted by caller signal`,
+      };
+    }
+    if (created === SDK_OPERATION_TIMED_OUT) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: null,
+        reason: "timeout" as AgentFailureReason,
+        error: `opencode-sdk agent "${profile.name}" timed out creating a session after ${timeoutMs}ms`,
+      };
+    }
+    sessionId = created.data?.id;
+  } catch (err) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: errorText(err),
+      durationMs: Date.now() - start,
+      exitCode: 1,
+      reason: "spawn_failed" as AgentFailureReason,
+      error: errorText(err),
+    };
+  }
+
   if (!sessionId) {
     return {
       ok: false,
@@ -663,57 +839,21 @@ export async function runOpencodeSdk(
   if (system) body.system = system;
   if (tools) body.tools = tools;
 
-  // #564 bug fix (3): enforce a hard timeout like the CLI path (runAgent).
-  // Previously runOpencodeSdk() awaited session.prompt() with no timeout, so a
-  // hung SDK call (e.g. a stalled local-model endpoint) blocked the caller
-  // indefinitely while the CLI path would have killed the process. We resolve
-  // the same budget runAgent uses (opts.timeoutMs override → profile.timeoutMs
-  // → DEFAULT_AGENT_TIMEOUT_MS) and race the prompt against it. null disables
-  // the timer (parity with runAgent's "no timeout" contract). There is no
-  // OS process to SIGTERM/SIGKILL here, so on timeout we best-effort delete the
-  // session (the SDK's equivalent of reaping the in-flight work) and return a
-  // structured `timeout` failure with the same reason vocabulary as the CLI.
-  const timeoutMs: number | null =
-    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
-  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
-  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
-
-  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
-  const TIMED_OUT = Symbol("opencode-sdk-timeout");
-  const ABORTED = Symbol("opencode-sdk-aborted");
-
-  // Cooperative cancel: there is no OS process to signal, so an abort simply
-  // wins the race below; the finally block reaps the in-flight session, same
-  // as the timeout path.
-  let onAbort: (() => void) | undefined;
-  const abortSignal = opts.signal;
+  let result: AgentRunResult;
 
   try {
-    const promptPromise = client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) });
-    type PromptResult = Awaited<typeof promptPromise>;
+    const prompted = await raceSdkOperation(
+      client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) }),
+      {
+        timeoutMs,
+        setTimeoutFn: setTimeoutImpl,
+        clearTimeoutFn: clearTimeoutImpl,
+        signal: abortSignal,
+      },
+    );
 
-    const racers: Promise<PromptResult | typeof TIMED_OUT | typeof ABORTED>[] = [promptPromise];
-    if (timeoutMs !== null) {
-      racers.push(
-        new Promise<typeof TIMED_OUT>((resolve) => {
-          timer = setTimeoutImpl(() => resolve(TIMED_OUT), timeoutMs);
-        }),
-      );
-    }
-    if (abortSignal) {
-      racers.push(
-        new Promise<typeof ABORTED>((resolve) => {
-          onAbort = () => resolve(ABORTED);
-          if (abortSignal.aborted) onAbort();
-          else abortSignal.addEventListener("abort", onAbort, { once: true });
-        }),
-      );
-    }
-
-    const result = racers.length === 1 ? await promptPromise : await Promise.race(racers);
-
-    if (result === ABORTED) {
-      return {
+    if (prompted === SDK_OPERATION_ABORTED) {
+      result = {
         ok: false,
         stdout: "",
         stderr: "",
@@ -723,10 +863,8 @@ export async function runOpencodeSdk(
         error: `opencode-sdk agent "${profile.name}" aborted by caller signal`,
         sessionId,
       };
-    }
-
-    if (result === TIMED_OUT) {
-      return {
+    } else if (prompted === SDK_OPERATION_TIMED_OUT) {
+      result = {
         ok: false,
         stdout: "",
         stderr: "",
@@ -736,40 +874,41 @@ export async function runOpencodeSdk(
         error: `opencode-sdk agent "${profile.name}" timed out after ${timeoutMs}ms`,
         sessionId,
       };
+    } else {
+      const parts = prompted.data?.parts ?? [];
+      const textPart = parts.find((p) => p.type === "text");
+      const stdout = textPart?.text ?? "";
+      // Token accounting from the AssistantMessage (previously discarded) —
+      // the seam that makes workflow budget.maxTokens meterable on the
+      // default sdk runner.
+      const usage = extractUsage(prompted.data?.info);
+
+      result = {
+        ok: true,
+        stdout,
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: 0,
+        sessionId,
+        ...(usage ? { usage } : {}),
+      };
     }
-
-    const parts = result.data?.parts ?? [];
-    const textPart = parts.find((p) => p.type === "text");
-    const stdout = textPart?.text ?? "";
-    // Token accounting from the AssistantMessage (previously discarded) —
-    // the seam that makes workflow budget.maxTokens meterable on the
-    // default sdk runner.
-    const usage = extractUsage(result.data?.info);
-
-    return {
-      ok: true,
-      stdout,
-      stderr: "",
-      durationMs: Date.now() - start,
-      exitCode: 0,
-      sessionId,
-      ...(usage ? { usage } : {}),
-    };
-  } catch (e) {
-    return {
+  } catch (err) {
+    result = {
       ok: false,
       stdout: "",
-      stderr: String(e),
+      stderr: errorText(err),
       durationMs: Date.now() - start,
       exitCode: 1,
       reason: "non_zero_exit" as AgentFailureReason,
-      error: String(e),
+      error: errorText(err),
       sessionId,
     };
-  } finally {
-    if (timer !== undefined) clearTimeoutImpl(timer);
-    if (abortSignal && onAbort) abortSignal.removeEventListener("abort", onAbort);
-    // Clean up session to prevent disk accumulation in ~/.local/share/opencode/
-    await client.session.delete({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
   }
+
+  // Clean up session to prevent disk accumulation in ~/.local/share/opencode/.
+  // Failures are non-fatal to the agent result but must not be invisible.
+  const cleanupWarning = await deleteSessionBestEffort(client, sessionId, query, setTimeoutImpl, clearTimeoutImpl);
+  if (cleanupWarning) result.stderr = appendStderr(result.stderr, cleanupWarning);
+  return result;
 }

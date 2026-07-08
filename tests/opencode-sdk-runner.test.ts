@@ -52,6 +52,10 @@ interface PromptCapture {
 function makeFakeServer(
   capture: PromptCapture,
   promptImpl?: () => Promise<{ data?: { parts?: { type: string; text?: string }[] } }>,
+  overrides: {
+    createImpl?: () => Promise<{ data?: { id?: string } }>;
+    deleteImpl?: () => Promise<unknown>;
+  } = {},
 ) {
   let deleted = false;
   return {
@@ -61,6 +65,7 @@ function makeFakeServer(
         session: {
           create: async (args?: { query?: { directory?: string } }) => {
             capture.createQuery = args?.query;
+            if (overrides.createImpl) return overrides.createImpl();
             return { data: { id: "sess-1" } };
           },
           prompt: async (args: PromptCapture & { path: { id: string }; query?: { directory?: string } }) => {
@@ -72,6 +77,7 @@ function makeFakeServer(
           delete: async (args?: { query?: { directory?: string } }) => {
             deleted = true;
             capture.deleteQuery = args?.query;
+            if (overrides.deleteImpl) return overrides.deleteImpl();
             return {};
           },
         },
@@ -165,9 +171,13 @@ describe("runOpencodeSdk — #564 bug fix (3): timeout enforcement", () => {
 
     // Deterministic timer: fire the timeout callback synchronously instead of
     // waiting on a wall clock, so the test never actually blocks.
+    let timers = 0;
     const fakeSetTimeout = ((fn: () => void) => {
-      fn();
-      return 0 as unknown as ReturnType<typeof setTimeout>;
+      timers++;
+      // session.create is now timeout-protected too. Let its timer stay idle,
+      // then fire the prompt timer deterministically.
+      if (timers === 2) fn();
+      return timers as unknown as ReturnType<typeof setTimeout>;
       // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
     }) as any;
     // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
@@ -322,6 +332,91 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("aborted");
     expect(capture.body).toBeUndefined();
+  });
+
+  test("session.create rejection returns structured spawn_failed", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture, undefined, {
+      createImpl: async () => {
+        throw new Error("create exploded");
+      },
+    });
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(profile, "hi", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("spawn_failed");
+    expect(result.error).toContain("create exploded");
+    expect(capture.body).toBeUndefined();
+    expect(fake.deletedRef()).toBe(false);
+  });
+
+  test("session.create timeout returns structured timeout", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture, undefined, {
+      createImpl: () => new Promise(() => {}),
+    });
+    __setTestServer(fake.server as never);
+    const fakeSetTimeout = ((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    }) as any;
+    // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    const fakeClearTimeout = (() => {}) as any;
+
+    const result = await runOpencodeSdk(profile, "hi", {
+      timeoutMs: 50,
+      setTimeoutFn: fakeSetTimeout,
+      clearTimeoutFn: fakeClearTimeout,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(result.error).toContain("creating a session");
+    expect(capture.body).toBeUndefined();
+  });
+
+  test("prompt rejection returns non_zero_exit and still deletes the session", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture, async () => {
+      throw new Error("prompt exploded");
+    });
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(profile, "hi", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.error).toContain("prompt exploded");
+    expect(fake.deletedRef()).toBe(true);
+  });
+
+  test("hung session.delete is bounded and reported without masking success", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture, undefined, {
+      deleteImpl: () => new Promise(() => {}),
+    });
+    __setTestServer(fake.server as never);
+    const fakeSetTimeout = ((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    }) as any;
+    // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    const fakeClearTimeout = (() => {}) as any;
+
+    const result = await runOpencodeSdk(profile, "hi", {
+      timeoutMs: null,
+      setTimeoutFn: fakeSetTimeout,
+      clearTimeoutFn: fakeClearTimeout,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("ok-response");
+    expect(fake.deletedRef()).toBe(true);
+    expect(result.stderr).toContain("OpenCode session cleanup timed out");
   });
 });
 

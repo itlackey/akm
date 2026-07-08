@@ -209,21 +209,22 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     return await driveRun(options, next, leaseHolder, heartbeat);
   } finally {
     heartbeat?.stop();
-    if (leased) {
-      await withWorkflowRunsRepo((repo) => {
-        repo.releaseEngineLease(runId, leaseHolder);
-      });
-    }
-    // Process-lifecycle drain (owner finding 4): release any cached SDK server
-    // child processes so a one-shot CLI invocation exits cleanly instead of
-    // hanging on the leaked handle. Runs on every exit path this `try` covers
-    // (success, gate rejection, failure, caller abort). No-op when dispatch
-    // never started an SDK server. Best-effort: a disposal error must not mask
-    // the run's own result/throw, so it is swallowed.
     try {
-      (options.disposeDispatchResources ?? disposeDispatchResources)();
-    } catch {
-      /* disposal is best-effort; never let cleanup mask the run outcome */
+      if (leased) {
+        await withWorkflowRunsRepo((repo) => {
+          repo.releaseEngineLease(runId, leaseHolder);
+        });
+      }
+    } finally {
+      // Process-lifecycle drain (owner finding 4): release any cached SDK server
+      // child processes so a one-shot CLI invocation exits cleanly instead of
+      // hanging on the leaked handle. Runs even if lease release itself fails;
+      // a teardown-time repository error must not skip dispatch cleanup.
+      try {
+        (options.disposeDispatchResources ?? disposeDispatchResources)();
+      } catch {
+        /* disposal is best-effort; never let cleanup mask the run outcome */
+      }
     }
   }
 }

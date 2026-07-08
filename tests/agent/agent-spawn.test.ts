@@ -43,6 +43,21 @@ function asReadableStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
+function erroringReadableStream(text: string, error: Error): ReadableStream<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  let sent = false;
+  return new ReadableStream({
+    pull(controller) {
+      if (sent) {
+        controller.error(error);
+        return;
+      }
+      sent = true;
+      controller.enqueue(bytes);
+    },
+  });
+}
+
 interface FakeSubprocessConfig {
   exitCode: number;
   stdout?: string;
@@ -189,6 +204,23 @@ describe("runAgent — JSON parse mode", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("parse_error");
     expect(result.error).toBeTruthy();
+  });
+
+  test("stdout read failure yields `spawn_failed`, not an empty parse_error", async () => {
+    const spawn: SpawnFn = () => ({
+      exitCode: 0,
+      exited: Promise.resolve(0),
+      stdout: erroringReadableStream('{"partial":', new Error("pipe broke")),
+      stderr: asReadableStream(""),
+      stdin: null,
+      kill() {},
+    });
+    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("spawn_failed");
+    expect(result.stdout).toBe('{"partial":');
+    expect(result.error).toContain("stdout read failed");
+    expect(result.error).toContain("pipe broke");
   });
 
   // ── #284 GAP-HIGH 10: parseOutput=json + non-zero exit + non-JSON stderr ──
@@ -388,6 +420,46 @@ describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => 
     const result = await promise;
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("timeout");
+  });
+
+  test("abort path unrefs the SIGKILL grace timer", async () => {
+    type TimerHandle = {
+      cb: () => void;
+      unrefCalled: boolean;
+      unref?: () => void;
+    };
+    const timers: TimerHandle[] = [];
+    const setTimeoutFn = ((cb: () => void): TimerHandle => {
+      const handle: TimerHandle = {
+        cb,
+        unrefCalled: false,
+        unref() {
+          handle.unrefCalled = true;
+        },
+      };
+      timers.push(handle);
+      return handle;
+    }) as unknown as typeof setTimeout;
+    const clearTimeoutFn = (() => {}) as unknown as typeof clearTimeout;
+
+    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
+    const controller = new AbortController();
+    const promise = runAgent(makeProfile(), "go", {
+      spawn,
+      timeoutMs: null,
+      setTimeoutFn,
+      clearTimeoutFn,
+      signal: controller.signal,
+    });
+
+    expect(timers.length).toBe(2);
+    controller.abort();
+    expect(timers.length).toBe(3);
+    expect(timers[2]?.unrefCalled).toBe(true);
+
+    const result = await promise;
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("aborted");
   });
 
   test("a clean fast exit is not misreported when the signal aborts afterwards", async () => {
