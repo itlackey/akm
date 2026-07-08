@@ -25,7 +25,13 @@ import { CodexHarness } from "./codex";
 import { CopilotHarness } from "./copilot";
 import { GeminiHarness } from "./gemini";
 import { OpencodeHarness } from "./opencode";
-import { OpencodeSdkHarness } from "./opencode-sdk";
+// Import the descriptor from its LEAF module, not the per-harness barrel: the
+// barrel re-exports `./sdk-runner` (which imports `core/config`, and
+// `core/config/config-types` derives `VALID_HARNESS_IDS` back from this file).
+// Importing the class through the barrel would form an initialization cycle
+// that throws a TDZ error when the barrel is the first module loaded in a fresh
+// graph (see ./opencode-sdk/harness.ts). This keeps the registry a config-leaf.
+import { OpencodeSdkHarness } from "./opencode-sdk/harness";
 import { OpenhandsHarness } from "./openhands";
 import { PiHarness } from "./pi";
 import type { AkmHarness } from "./types";
