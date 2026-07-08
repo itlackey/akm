@@ -400,7 +400,7 @@ that is the whole point of routing everything through `RunnerSpec` /
 |---|---|---|---|---|---|---|---|
 | **Claude Code** | (`Workflow` tool / `claude -p`) | tool calls | via tool schema | `runId` cache | client+server | `CLAUDE_SESSION_ID` | in-harness |
 | **OpenCode** | SDK `session.prompt` / CLI | SDK events | via prompt+validate | session id | client | `OPENCODE_SESSION_ID` | local (sdk/cli) |
-| **OpenAI Codex** | `codex exec "<p>"` | `--json` (JSONL events) | **`--output-schema <file>`** | `codex exec resume <id>` | client+server | `CODEX_SANDBOX`, `CODEX_HOME` | local |
+| **OpenAI Codex** | `codex exec --sandbox workspace-write "<p>"` | `--json` (JSONL events) | **`--output-schema <file>`** | `codex exec resume <id>` | client+server | `CODEX_SANDBOX`, `CODEX_HOME` | local |
 | **Copilot CLI** | `copilot -p "<p>" --allow-all-tools` | `--output-format json` | via prompt+validate | `--continue`/`--resume <id>` | `~/.copilot/mcp-config.json` | `COPILOT_*`/`GH_TOKEN` | local |
 | **Copilot coding agent** | assign issue / `gh agent-task` / API | task status API + PR | n/a | server-side (PR branch) | GitHub MCP (tools) | `copilot-swe-agent[bot]` | **cloud delegate** |
 | **Pi** | `pi -p "<p>"` | `--mode json` (JSONL) | via prompt+validate | `-c`/`-r`/`--session` | extensions only | `PI_*` | local |
@@ -728,6 +728,8 @@ chain. The drift is already real: `codex`/`gemini`/`aider` have **profiles but
 no descriptor and no builder** (`profiles.ts:93-116`), so dispatching them hits
 the **default builder** (`builders.ts:43-60`) — whose `--system-prompt/--model/--`
 convention is wrong for all of them, producing a silently broken command.
+*(Codex now has a dedicated builder that injects `--sandbox workspace-write`;
+gemini and aider still lack builders.)*
 
 Fix, before adding harnesses (status as of P0.5, PR #713):
 1. Add descriptor fields to `AkmHarness`: `pattern`

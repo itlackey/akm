@@ -713,6 +713,14 @@ bun src/cli.ts workflow status <claude-run-id> --units
   `failureReason: non_zero_exit` and diagnostic text showing authentication
   errors; the parent command should still exit naturally after printing the
   terminal failed result
+  - note: `codex exec` defaults to a read-only sandbox that blocks file writes,
+    so a unit that needs to create files (e.g. the worktree sentinel) would
+    fail even when authenticated
+  - the akm codex builder now injects `--sandbox workspace-write` so dispatched
+    units can actually write files in their working directory
+  - if the codex sandbox helper binary is unavailable (e.g. sandboxed HOME
+    under `/tmp`), the codex unit may still fail with
+    `sandbox helper missing` despite the `--sandbox workspace-write` flag
 - `claude`: if the local account lacks credits or authorization, expect a
   terminal failed run with `failureReason: non_zero_exit` and diagnostic text
   such as `Credit balance is too low`; the parent command should still exit
@@ -729,6 +737,10 @@ bun src/cli.ts workflow status <claude-run-id> --units
   - workflow reached terminal `failed`
   - unit diagnostic showed repeated `401 Unauthorized: Missing bearer or basic authentication in header`
   - parent command exited normally after printing the terminal failed result
+  - note: after applying the codex sandbox fix (commit `6a93892a`), codex
+    dispatch completes successfully when `CODEX_HOME` is properly inherited,
+    but may still fail in sandboxes where the `codex-linux-sandbox` helper
+    cannot be created
 - `claude`
   - workflow reached terminal `failed`
   - unit diagnostic showed `Credit balance is too low`
