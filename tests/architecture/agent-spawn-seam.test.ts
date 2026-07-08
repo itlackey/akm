@@ -76,6 +76,36 @@ function fakeSpawn(stdout: string, stderr: string, exitCode: number): { spawn: S
   };
 }
 
+function makeFakeTimerFns() {
+  type TimerHandle = {
+    id: number;
+    cb: () => void;
+    cleared: boolean;
+    unrefCalled: boolean;
+    unref?: () => void;
+  };
+  const timers: TimerHandle[] = [];
+  let nextId = 1;
+  const setTimeoutFn = ((cb: () => void): TimerHandle => {
+    const handle: TimerHandle = {
+      id: nextId++,
+      cb,
+      cleared: false,
+      unrefCalled: false,
+      unref() {
+        handle.unrefCalled = true;
+      },
+    };
+    timers.push(handle);
+    return handle;
+  }) as unknown as typeof setTimeout;
+  const clearTimeoutFn = ((handle: TimerHandle): void => {
+    const timer = timers.find((t) => t === handle);
+    if (timer) timer.cleared = true;
+  }) as unknown as typeof clearTimeout;
+  return { timers, setTimeoutFn, clearTimeoutFn };
+}
+
 describe("`runAgent` seam (v1 spec §9.7, §12.2)", () => {
   test("`runAgent` is exported from both the spawn module and the agent barrel", () => {
     expect(typeof runAgent).toBe("function");
@@ -169,11 +199,11 @@ describe("`runAgent` seam (v1 spec §9.7, §12.2)", () => {
       };
       return { spawn };
     };
-    const fakeTimers: Array<{ id: number; cb: () => void }> = [];
+    const fakeTimers: Array<{ id: number; cb: () => void; ms: number }> = [];
     let nextId = 1;
-    const setTimeoutFn = ((cb: () => void): number => {
+    const setTimeoutFn = ((cb: () => void, ms?: number): number => {
       const id = nextId++;
-      fakeTimers.push({ id, cb });
+      fakeTimers.push({ id, cb, ms: ms ?? 0 });
       return id;
     }) as unknown as typeof setTimeout;
     const clearTimeoutFn = ((id: number): void => {
@@ -189,12 +219,41 @@ describe("`runAgent` seam (v1 spec §9.7, §12.2)", () => {
       clearTimeoutFn,
     });
     // Drive the timer synchronously.
-    expect(fakeTimers.length).toBe(1);
-    fakeTimers[0]?.cb();
+    expect(fakeTimers.length).toBe(3);
+    fakeTimers.find((t) => t.ms === 10)?.cb();
     const result = await promise;
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("timeout");
     expect(typeof result.error).toBe("string");
+  });
+
+  test("captured-mode success clears internal timers instead of leaving them live", async () => {
+    const fake = fakeSpawn("agent-output", "agent-stderr", 0);
+    const { timers, setTimeoutFn, clearTimeoutFn } = makeFakeTimerFns();
+    const result = await runAgent(makeProfile(), "hello", {
+      spawn: fake.spawn,
+      timeoutMs: 10,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+    expect(result.ok).toBe(true);
+    expect(timers.length).toBe(3);
+    expect(timers.every((t) => t.cleared)).toBe(true);
+  });
+
+  test("captured-mode non-zero exit also clears internal timers", async () => {
+    const fake = fakeSpawn("", "oops", 7);
+    const { timers, setTimeoutFn, clearTimeoutFn } = makeFakeTimerFns();
+    const result = await runAgent(makeProfile(), undefined, {
+      spawn: fake.spawn,
+      timeoutMs: 10,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(timers.length).toBe(3);
+    expect(timers.every((t) => t.cleared)).toBe(true);
   });
 
   test("`AgentFailureReason` union from the barrel matches the documented vocabulary", () => {

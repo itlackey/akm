@@ -308,7 +308,11 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
 
 async function readStream(
   stream: ReadableStream<Uint8Array> | null | undefined,
-  opts?: { timeoutMs?: number },
+  opts?: {
+    timeoutMs?: number;
+    setTimeoutFn?: typeof setTimeout;
+    clearTimeoutFn?: typeof clearTimeout;
+  },
 ): Promise<string> {
   if (!stream) return "";
   const readPromise = new Response(stream).text().catch(() => "");
@@ -318,10 +322,23 @@ async function readStream(
   // threads still holding the fd) cannot block the caller indefinitely.
   // On timeout we return whatever we received so far (empty string here since
   // `readPromise` is all-or-nothing with `Response.text()`).
+  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
+  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
   const timeoutPromise = new Promise<string>((resolve) => {
-    setTimeout(() => resolve(""), opts.timeoutMs);
+    timer = setTimeoutImpl(() => {
+      timer = undefined;
+      resolve("");
+    }, opts.timeoutMs);
+    if (typeof timer !== "number") timer.unref?.();
   });
-  return Promise.race([readPromise, timeoutPromise]);
+  try {
+    return await Promise.race([readPromise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeoutImpl(timer);
+    }
+  }
 }
 
 /**
@@ -452,10 +469,11 @@ export async function runAgent(
       timedOut = true;
       killGroup(proc, "SIGTERM");
       // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
-      setTimeoutImpl(() => {
+      const sigkillTimer = setTimeoutImpl(() => {
         if (!proc || proc.exitCode !== null) return;
         killGroup(proc, "SIGKILL");
       }, 5000);
+      if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
     }, timeoutMs);
   }
 
@@ -490,11 +508,19 @@ export async function runAgent(
   const streamDrainTimeoutMs = timeoutMs !== null ? timeoutMs + 2_000 : 30_000;
   const stdoutPromise =
     stdioMode === "captured"
-      ? readStream(proc.stdout ?? null, { timeoutMs: streamDrainTimeoutMs })
+      ? readStream(proc.stdout ?? null, {
+          timeoutMs: streamDrainTimeoutMs,
+          setTimeoutFn: setTimeoutImpl,
+          clearTimeoutFn: clearTimeoutImpl,
+        })
       : Promise.resolve("");
   const stderrPromise =
     stdioMode === "captured"
-      ? readStream(proc.stderr ?? null, { timeoutMs: streamDrainTimeoutMs })
+      ? readStream(proc.stderr ?? null, {
+          timeoutMs: streamDrainTimeoutMs,
+          setTimeoutFn: setTimeoutImpl,
+          clearTimeoutFn: clearTimeoutImpl,
+        })
       : Promise.resolve("");
 
   // Optional stdin payload (captured mode only).
