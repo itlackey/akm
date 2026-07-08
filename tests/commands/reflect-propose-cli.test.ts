@@ -240,7 +240,6 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
   test("timeout: short --timeout-ms is honoured by the wrapper", async () => {
     const stash = makeStashDir();
     const coerced = coerceReflectArgs({ ref: "lesson:rg-over-grep", "timeout-ms": "1" });
-    let timerCb: (() => void) | undefined;
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
@@ -248,10 +247,13 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: hangingSpawn(),
+        // `runAgent` registers several timers through this seam — the wrapper
+        // timeout AND the stdout/stderr stream-drain watchdogs (spawn.ts). Fire
+        // EACH callback independently on the next tick; a single shared `timerCb`
+        // would let a later drain-timer registration clobber the wrapper timeout
+        // so it never fires and the hanging spawn wedges the test.
         setTimeoutFn: ((cb: () => void) => {
-          timerCb = cb;
-          // Fire on next tick — keeps the test deterministic.
-          queueMicrotask(() => timerCb?.());
+          queueMicrotask(() => cb());
           return 1 as unknown as ReturnType<typeof setTimeout>;
         }) as unknown as typeof setTimeout,
         clearTimeoutFn: (() => undefined) as unknown as typeof clearTimeout,
