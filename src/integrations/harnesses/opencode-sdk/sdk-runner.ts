@@ -58,6 +58,16 @@
  *     SYNCHRONOUSLY — it runs from `process.once('exit')`, where Bun never
  *     drains microtasks, so a `.then()`-based close would orphan every
  *     `opencode serve` child.
+ *
+ * Process-lifecycle note (owner finding 4): a cached `opencode serve` child is
+ * a live OS handle that keeps Bun's event loop OPEN, so a one-shot CLI never
+ * becomes idle and `process.once('exit')` never fires — the exit hook alone
+ * cannot free a process the child is keeping alive (a deadlock that hangs the
+ * caller after an otherwise-successful run). The registry is therefore drained
+ * PROACTIVELY at the end of a dispatching command: the workflow engine calls
+ * `disposeDispatchResources()` (→ {@link closeServer}) in its run `finally`.
+ * The `process.once('exit')` hook stays as the last-resort backstop for paths
+ * that never reach that drain.
  */
 
 import { createHash } from "node:crypto";

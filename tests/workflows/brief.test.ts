@@ -529,6 +529,12 @@ describe("workflow brief — unit action states (#15)", () => {
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.workList.units[0].action).toBe("claimed");
     expect(brief.workList.units[0].journaled?.claimedBy).toBe("claim:other");
+    // Finding 2: a live-claimed unit's report command MUST carry the holder's
+    // --session-id (only that holder can finish it), so a second driver reads it
+    // as spoken-for rather than free, runnable work.
+    const claimedCmd = brief.workList.units[0].report ?? "";
+    expect(claimedCmd).toContain("--session-id claim:other");
+    expect(claimedCmd).toContain("--status completed");
   });
 
   test("a running unit silent past the window is `stale` and reclaimable", async () => {
@@ -555,7 +561,21 @@ describe("workflow brief — unit action states (#15)", () => {
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.workList.units[0].action).toBe("stale");
     expect(brief.workList.units[0].report).toBeDefined();
+    // An EXPIRED/silent claim is freely reclaimable, so its report command is the
+    // plain completed form — NO --session-id (contrast the live `claimed` case).
+    expect(brief.workList.units[0].report).not.toContain("--session-id");
     expect(brief.staleUnits.some((s) => s.unitId === solo.unitId)).toBe(true);
+  });
+
+  test("an unclaimed unit is `pending` with a plain completed command (no --session-id)", async () => {
+    const p = plan(LOOP_WF);
+    seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    const u0 = brief.workList.units[0];
+    expect(u0.action).toBe("pending");
+    expect(u0.journaled).toBeUndefined();
+    expect(u0.report).toContain("--status completed");
+    expect(u0.report).not.toContain("--session-id");
   });
 
   test("a live engine lease flips every unit to do_not_run with no report command", async () => {
@@ -568,6 +588,134 @@ describe("workflow brief — unit action states (#15)", () => {
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.workList.units[0].action).toBe("do_not_run");
     expect(brief.workList.units[0].report).toBeUndefined();
+  });
+});
+
+describe("workflow brief — fully-terminal step needing finalization (owner finding 3)", () => {
+  const REQUIRED_GATE_WF = `version: 1
+name: ReqGate
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      required: true
+`;
+
+  /** Seed the post-resume state: the run is active, the step is pending again,
+   *  but its only unit already ran to completion — the fully-terminal recovery
+   *  state a required-gate block + resume (or a crash before completion) leaves. */
+  function seedResumedFullyTerminal(p: WorkflowPlanGraph): { unitId: string; nodeId: string } {
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    if (!engine.ok) throw new Error("compute failed");
+    const solo = engine.list.units[0];
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+      units: [
+        {
+          unitId: solo.unitId,
+          stepId: "work",
+          nodeId: solo.nodeId,
+          status: "completed",
+          inputHash: solo.resolved.ok ? solo.resolved.inputHash : null,
+          resultJson: JSON.stringify("Did the work."),
+        },
+      ],
+    });
+    return { unitId: solo.unitId, nodeId: solo.nodeId };
+  }
+
+  test("the completed unit is `done` with no report command, yet a settle command IS emitted", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    seedResumedFullyTerminal(p);
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.active).toBe(true);
+    expect(brief.workList.units).toHaveLength(1);
+    expect(brief.workList.units[0].action).toBe("done");
+    expect(brief.workList.units[0].report).toBeUndefined();
+    // The recovery command a driver can actually run.
+    expect(brief.settleCommand).toContain("--settle");
+    expect(brief.settleCommand).toContain("--expect-step work");
+  });
+
+  test("the message no longer says 'Execute them' and explains the required-gate re-block", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    seedResumedFullyTerminal(p);
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.message).not.toContain("Execute them");
+    expect(brief.message).toContain("terminal state");
+    expect(brief.message).toContain("--settle");
+    // A required gate with no judge available re-blocks — the message says so.
+    expect(brief.message).toMatch(/re-block/i);
+  });
+
+  test("a non-required fully-terminal gate omits the re-block note but still emits settle", async () => {
+    const p = plan(LOOP_WF); // gate criteria, not `required`
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    if (!engine.ok) throw new Error("compute failed");
+    const solo = engine.list.units[0];
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+      units: [
+        {
+          unitId: solo.unitId,
+          stepId: "work",
+          nodeId: solo.nodeId,
+          status: "completed",
+          inputHash: solo.resolved.ok ? solo.resolved.inputHash : null,
+          resultJson: JSON.stringify("Did the work."),
+        },
+      ],
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.settleCommand).toContain("--settle");
+    expect(brief.message).toContain("terminal state");
+    expect(brief.message).not.toMatch(/re-block/i);
+  });
+
+  test("a still-pending unit keeps the normal per-unit report path (no settle command)", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units[0].action).toBe("pending");
+    expect(brief.workList.units[0].report).toBeDefined();
+    expect(brief.settleCommand).toBeUndefined();
+    expect(brief.message).toContain("Execute them");
+  });
+
+  test("a live engine lease suppresses the settle command even on a fully-terminal list", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    if (!engine.ok) throw new Error("compute failed");
+    const solo = engine.list.units[0];
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+      units: [
+        {
+          unitId: solo.unitId,
+          stepId: "work",
+          nodeId: solo.nodeId,
+          status: "completed",
+          inputHash: solo.resolved.ok ? solo.resolved.inputHash : null,
+          resultJson: JSON.stringify("Did the work."),
+        },
+      ],
+      lease: { holder: "engine-live", until: new Date(Date.now() + 60_000).toISOString() },
+    });
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.settleCommand).toBeUndefined();
   });
 });
 

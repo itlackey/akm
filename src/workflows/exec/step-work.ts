@@ -726,6 +726,69 @@ export function selectUnitAttemptRow(
   return fallback;
 }
 
+/**
+ * Is a FAILED unit still RETRY-ELIGIBLE — i.e. NOT terminal, because a driver
+ * could still re-run it via the `--rerun` form (the engine's automatic
+ * `<baseId>~r<n>` retry)? A unit whose declared `retry.on` matches the recorded
+ * failure reason AND whose attempt budget (`1 + retry.max`) is not yet spent can
+ * still be re-run. No `retry`, an off-list reason, or an exhausted attempt budget
+ * ⇒ the failure IS terminal. Shared by the report fail-fast decision, the
+ * `--settle` refusal, and `brief`'s fully-terminal detection so all three agree
+ * on when a failed unit is genuinely done vs. still re-runnable. The normalized
+ * failure reason is compared against `retry.on` directly (a canonical taxonomy
+ * reason is stored verbatim; an `external:*` reason is by construction outside
+ * the taxonomy `retry.on` lists).
+ */
+export function isRetryEligibleFailure(
+  workUnit: StepWorkUnit,
+  row: WorkflowRunUnitRow | undefined,
+  failureReason: string | null,
+): boolean {
+  const retry = workUnit.retry;
+  if (!retry || failureReason === null || !retry.on.includes(failureReason)) return false;
+  const attempts = row?.attempts ?? 1;
+  return attempts < 1 + Math.max(0, retry.max);
+}
+
+/**
+ * Does a resolvable unit still need a driver to execute + report it (or re-run
+ * it)? True for a unit with no terminal row (pending), a still-`running` row (a
+ * live/stale claim another driver holds), or a FAILED row that is still
+ * retry-eligible. False for a COMPLETED row, a terminal non-retry-eligible
+ * FAILURE, or an UNRESOLVABLE unit (the engine's immediate `expression_error` —
+ * never reportable). The best terminal attempt (base + `~r<n>` retries) is the
+ * one consulted, the SAME reuse the engine and reducer apply.
+ */
+export function unitStillNeedsReport(workUnit: StepWorkUnit, dispatchRows: Map<string, WorkflowRunUnitRow>): boolean {
+  if (!workUnit.resolved.ok) return false;
+  const row = selectUnitAttemptRow(workUnit, dispatchRows);
+  if (!row) return true; // no journal row → pending
+  if (row.status === "running") return true; // a live/stale claim is still in flight
+  if (row.status === "failed") return isRetryEligibleFailure(workUnit, row, row.failure_reason);
+  return false; // completed (or a non-retry-eligible failure) → terminal
+}
+
+/**
+ * Is the active step's work-list FULLY TERMINAL — every resolvable unit run to a
+ * terminal (done, or non-retry-eligible failed) state with nothing left to
+ * execute or per-unit report — yet still needing finalization? This is the
+ * driver-recovery state after a required-gate block is resumed, or a crash
+ * between the last unit write and the step's completion (owner manual-validation
+ * finding 3): the work-list is done but the step never advanced. `brief`
+ * surfaces it with a single `report --settle` command and `--settle` runs the
+ * shared completion path for it. A list with ANY outstanding unit (pending,
+ * in-flight, or retry-eligible failed) is NOT fully terminal — the driver
+ * `report --unit`s those. A route-only / empty / all-unresolvable list (no
+ * resolvable units) is a DIFFERENT non-dispatching state, handled separately.
+ */
+export function isWorkListFullyTerminal(
+  workList: StepWorkList,
+  dispatchRows: Map<string, WorkflowRunUnitRow>,
+): boolean {
+  if (!workList.units.some((u) => u.resolved.ok)) return false;
+  return workList.units.every((u) => !unitStillNeedsReport(u, dispatchRows));
+}
+
 /** Stable stringify (sorted object keys, recursively) so equal values vote together. */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value));

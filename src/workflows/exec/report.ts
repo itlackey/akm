@@ -67,6 +67,7 @@ import {
   computeStepWorkList,
   type ExecutedStepOutcome,
   finalizeExecutedStep,
+  isRetryEligibleFailure,
   parseFrozenPlan,
   type RouteSkipInfo,
   recoverGateFeedback,
@@ -79,6 +80,7 @@ import {
   stepOutputsFromEvidence,
   type UnitOutcome,
   unitOutcomeFromRow,
+  unitStillNeedsReport,
 } from "./step-work";
 
 // ── Public contract ──────────────────────────────────────────────────────────
@@ -682,16 +684,49 @@ export async function settleWorkflowSpine(input: {
   const plan = loadFrozenPlan(runId, runRow.plan_json, runRow.plan_hash);
   assertRunParamsSatisfyPlan(runId, plan, next.run.params ?? {});
 
-  // Refuse when the active step HAS reportable units — those advance via
-  // `report --unit`, not `--settle`.
+  // A step with resolvable units is settled ONLY when its work-list is FULLY
+  // TERMINAL — every resolvable unit run to a terminal state, nothing left to
+  // `report --unit` — yet still un-finalized (a required-gate block that was
+  // resumed, or a crash between the last unit write and completion; owner
+  // manual-validation finding 3). Such a list has no pending unit to report, so
+  // `--settle` runs the SAME shared completion path a report would
+  // (reducer → gate → advance / re-block). A step with GENUINELY PENDING units
+  // (pending, in-flight, or retry-eligible failed) is still refused — those
+  // advance via `report --unit`.
   const ctx = buildStepContext(runId, plan, next, units);
   if (ctx.dispatching) {
-    const valid = ctx.workList?.units.filter((u) => u.resolved.ok).map((u) => u.unitId) ?? [];
-    throw new UsageError(
-      `Active step "${ctx.stepState.id}" of run ${runId} has reportable units — advance it with ` +
-        `\`akm workflow report ${runId} --unit <id> ...\`, not --settle. Unit ids: ${valid.join(", ") || "(none)"}.`,
-      "INVALID_FLAG_VALUE",
-    );
+    const workList = ctx.workList;
+    if (!workList) {
+      throw new UsageError(`Active step "${ctx.stepState.id}" of run ${runId} has no work-list to settle.`);
+    }
+    const byUnit = indexDispatchRows(units);
+    const outstanding = workList.units.filter((u) => unitStillNeedsReport(u, byUnit));
+    if (outstanding.length > 0) {
+      const valid = outstanding.filter((u) => u.resolved.ok).map((u) => u.unitId);
+      throw new UsageError(
+        `Active step "${ctx.stepState.id}" of run ${runId} has reportable units — advance it with ` +
+          `\`akm workflow report ${runId} --unit <id> ...\`, not --settle. Unit ids: ${valid.join(", ") || "(none)"}.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    // Fully terminal: finalize through the shared completion path. `finalizeStep`
+    // runs its OWN finalize CAS (claims the engine lease as a lock), so we must
+    // NOT also hold the settle lock here — call it directly.
+    return finalizeStep({
+      runId,
+      next,
+      plan,
+      stepPlan: ctx.stepPlan,
+      stepState: ctx.stepState,
+      workList,
+      byUnit,
+      gateLoop: ctx.gateLoop,
+      priorEvidence: ctx.priorEvidence,
+      summaryJudge: input.summaryJudge,
+      now: nowFn,
+      written: { unitId: "(settle)", status: "skipped" },
+      recorded: "not-recorded",
+    });
   }
 
   // Finalize CAS: claim the engine lease as a short-lived settle lock, thread the
@@ -974,8 +1009,12 @@ async function finalizeStep(args: {
   summaryJudge: SummaryJudge | null | undefined;
   now: () => Date;
   written: { unitId: string; status: WorkflowRunUnitStatus };
-  /** How the triggering unit write resolved — surfaced verbatim on the result. */
-  recorded: "written" | "idempotent";
+  /**
+   * How the triggering unit write resolved — surfaced verbatim on the result.
+   * `not-recorded` is the `--settle` verb finalizing a fully-terminal step: no
+   * unit row was written by this call, only the step advanced.
+   */
+  recorded: "written" | "idempotent" | "not-recorded";
 }): Promise<WorkflowReportResult> {
   const { runId, next, plan, stepPlan, stepState, workList, byUnit, gateLoop, recorded } = args;
 
@@ -1327,30 +1366,6 @@ export function normalizeFailureReason(raw: string | undefined): string {
   return `external:${slug || "unknown"}`;
 }
 
-/**
- * Is a just-written FAILED unit still RETRY-ELIGIBLE — i.e. NOT terminal for the
- * fail-fast decision (finding B)? A unit whose declared `retry.on` matches the
- * recorded failure reason AND whose attempt budget (`1 + retry.max`) is not yet
- * spent can still be re-run — the `--rerun` form brief advertises, which
- * re-dispatches under the same budget the engine's automatic `~r<n>` retry
- * would. Under `on_error: fail` the step must therefore NOT fail-fast on such a
- * failure (the retry may still succeed). No `retry`, an off-list reason, or an
- * exhausted attempt budget ⇒ the failure IS terminal and fail-fast applies. The
- * normalized failure reason is compared against `retry.on` directly: a canonical
- * taxonomy reason is stored verbatim (`normalizeFailureReason`), and an
- * `external:*` reason is by construction outside the taxonomy `retry.on` lists.
- */
-function isRetryEligibleFailure(
-  workUnit: StepWorkUnit,
-  row: WorkflowRunUnitRow | undefined,
-  failureReason: string | null,
-): boolean {
-  const retry = workUnit.retry;
-  if (!retry || failureReason === null || !retry.on.includes(failureReason)) return false;
-  const attempts = row?.attempts ?? 1;
-  return attempts < 1 + Math.max(0, retry.max);
-}
-
 /** Validate + shape the reported result into what `finishUnit` persists. */
 function prepareResult(
   input: ReportUnitInput,
@@ -1595,7 +1610,7 @@ async function contendedFinalizeResult(
   stepState: NonNullable<WorkflowNextResult["step"]>,
   written: { unitId: string; status: WorkflowRunUnitStatus },
   gateLoop: number,
-  recorded: "written" | "idempotent",
+  recorded: "written" | "idempotent" | "not-recorded",
   fresh?: WorkflowNextResult,
 ): Promise<WorkflowReportResult> {
   const state = fresh ?? (await getNextWorkflowStep(runId));
@@ -1699,7 +1714,7 @@ function reportResult(
   runStatus: WorkflowRunStatus,
   stepOutcome: ReportStepOutcome,
   message: string,
-  recorded: "written" | "idempotent" = "written",
+  recorded: "written" | "idempotent" | "not-recorded" = "written",
 ): WorkflowReportResult {
   return {
     ok: true,

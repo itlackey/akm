@@ -131,6 +131,64 @@ describe("WorkflowRunsRepository reads", () => {
     expect(otherScope).toEqual([]);
   });
 
+  test("listRuns activeOnly excludes a BLOCKED run; plain list keeps it (owner finding 1)", async () => {
+    const RUN_BLOCKED = "cccccccc-3333-4333-8333-333333333333";
+    const db = openWorkflowDatabase(dbPath);
+    try {
+      db.prepare(
+        `INSERT INTO workflow_runs
+           (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
+            params_json, current_step_id, created_at, updated_at, checkin_armed_at)
+         VALUES (?, 'workflow:gamma', 'dir:v1:demo', NULL, 'Gamma', 'blocked', '{}', 'step-1',
+                 '2026-01-05T00:00:00.000Z', '2026-01-06T00:00:00.000Z', NULL)`,
+      ).run(RUN_BLOCKED);
+    } finally {
+      closeWorkflowDatabase(db);
+    }
+
+    // --active means EXACTLY status='active' — a blocked run is NOT executable
+    // work and must never surface here (a script consuming --active would
+    // otherwise treat it as still-runnable).
+    const active = await withWorkflowRunsRepo((repo) => repo.listRuns({ scopeKey: "dir:v1:demo", activeOnly: true }));
+    expect(active.map((r) => r.id)).toEqual([RUN_A]);
+    expect(active.some((r) => r.status === "blocked")).toBe(false);
+
+    // Plain (unfiltered) list keeps the blocked run visible with its status, so a
+    // blocked run can never be silently lost.
+    const all = await withWorkflowRunsRepo((repo) => repo.listRuns({ scopeKey: "dir:v1:demo" }));
+    expect(all.map((r) => r.id)).toContain(RUN_BLOCKED);
+    expect(all.find((r) => r.id === RUN_BLOCKED)?.status).toBe("blocked");
+  });
+
+  test("scope guards split active-only from active-or-blocked (per-call-site semantics)", async () => {
+    const RUN_BLOCKED = "dddddddd-4444-4444-8444-444444444444";
+    // A scope whose ONLY run is blocked — isolates the two guards' divergent intent.
+    const db = openWorkflowDatabase(dbPath);
+    try {
+      db.prepare(
+        `INSERT INTO workflow_runs
+           (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
+            params_json, current_step_id, created_at, updated_at, checkin_armed_at)
+         VALUES (?, 'workflow:delta', 'dir:v1:blocked-scope', NULL, 'Delta', 'blocked', '{}', 'step-1',
+                 '2026-01-05T00:00:00.000Z', '2026-01-06T00:00:00.000Z', NULL)`,
+      ).run(RUN_BLOCKED);
+    } finally {
+      closeWorkflowDatabase(db);
+    }
+
+    // The START guard (findActiveRunForScope, status='active' only): a blocked
+    // run does NOT occupy the scope, so a fresh `workflow start` is allowed.
+    const startGuard = await withWorkflowRunsRepo((repo) =>
+      repo.findActiveRunForScope("workflow:delta", "dir:v1:blocked-scope"),
+    );
+    expect(startGuard ?? undefined).toBeUndefined();
+
+    // The SHOW-scope guard (findActiveOrBlockedRunForScope, active∪blocked): a
+    // blocked run IS the scope's occupant, surfaced by `akm show`.
+    const showGuard = await withWorkflowRunsRepo((repo) => repo.findActiveOrBlockedRunForScope("dir:v1:blocked-scope"));
+    expect(showGuard?.id).toBe(RUN_BLOCKED);
+  });
+
   test("getStepsForRun returns steps ordered by sequence_index", async () => {
     const steps = await withWorkflowRunsRepo((repo) => repo.getStepsForRun(RUN_A));
     expect(steps.map((s) => s.step_id)).toEqual(["step-1", "step-2"]);

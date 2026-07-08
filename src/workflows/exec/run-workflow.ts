@@ -49,11 +49,23 @@
  * and an expired lease is claimable (crash recovery). While the lease is
  * live, manual `workflow complete` is refused too — the engine owns the
  * spine while driving (enforced inside `completeWorkflowStep`).
+ *
+ * Process-lifecycle contract (owner finding 4 — no leaked handles): the SDK
+ * dispatch path caches `opencode serve` CHILD PROCESSES in a per-env registry
+ * for reuse across units. Each live child is an OS handle that keeps Bun's
+ * event loop open; the registry's own teardown is wired only to
+ * `process.once('exit')`, which never fires while a child holds the loop open.
+ * That deadlock hangs a one-shot CLI (`akm workflow run` has no `process.exit`
+ * on success — it relies on the loop draining). The engine therefore DRAINS
+ * the dispatch registry ({@link disposeDispatchResources}) in its run `finally`,
+ * on EVERY exit path, so the process exits cleanly the moment the run resolves.
+ * The drain is synchronous, idempotent, and a no-op when no SDK server started.
  */
 
 import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
+import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { assertRunParamsSatisfyPlan } from "../ir/params";
@@ -119,6 +131,21 @@ export interface RunWorkflowOptions {
    * alive). Injected by tests to drive ticks deterministically.
    */
   heartbeatScheduler?: HeartbeatScheduler;
+  /**
+   * Process-lifecycle disposal seam (owner finding 4 — leaked dispatch
+   * handles). The SDK dispatch path caches `opencode serve` CHILD PROCESSES in
+   * a per-env registry for reuse across units; each live child is an OS handle
+   * that keeps Bun's event loop open, and the registry's own teardown is wired
+   * only to `process.once('exit')`, which NEVER fires while a child holds the
+   * loop open (a deadlock that hangs the CLI after an otherwise-successful run).
+   * The engine therefore DRAINS the registry in its `finally` — on EVERY exit
+   * path (success, gate rejection, failure, abort) — so the process can exit
+   * cleanly instead of waiting out the caller's tool timeout. Defaults to
+   * {@link disposeDispatchResources} (a synchronous, idempotent close that is a
+   * no-op when no SDK server was ever started, so the agent/llm paths pay
+   * nothing). Injected by tests to assert the drain fires on each path.
+   */
+  disposeDispatchResources?: () => void;
 }
 
 export interface ExecutedStepReport {
@@ -186,6 +213,17 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
       await withWorkflowRunsRepo((repo) => {
         repo.releaseEngineLease(runId, leaseHolder);
       });
+    }
+    // Process-lifecycle drain (owner finding 4): release any cached SDK server
+    // child processes so a one-shot CLI invocation exits cleanly instead of
+    // hanging on the leaked handle. Runs on every exit path this `try` covers
+    // (success, gate rejection, failure, caller abort). No-op when dispatch
+    // never started an SDK server. Best-effort: a disposal error must not mask
+    // the run's own result/throw, so it is swallowed.
+    try {
+      (options.disposeDispatchResources ?? disposeDispatchResources)();
+    } catch {
+      /* disposal is best-effort; never let cleanup mask the run outcome */
     }
   }
 }

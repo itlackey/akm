@@ -89,10 +89,16 @@ input hash.
 `akm workflow list` shows workflow runs in the current scope.
 
 ```sh
-akm workflow list              # All runs in this scope
-akm workflow list --active     # Only active runs
+akm workflow list              # All runs in this scope (any status)
+akm workflow list --active     # Only status=active (executable) runs
 akm workflow list --ref workflow:ship-release  # Runs for a specific workflow
 ```
+
+`--active` filters to runs whose status is exactly `active` — currently
+executable work. A `blocked` run (parked awaiting a human `akm workflow resume`)
+or a `failed`/`completed` run is **not** active and is excluded, so a script
+that treats `--active` output as runnable never picks one up. Blocked runs
+remain listed by the unfiltered `akm workflow list` with their `blocked` status.
 
 **Example: see what is in flight**
 
@@ -574,25 +580,38 @@ Repeat until `brief` reports `done: true`.
 
 #### Advancing a step with no reportable units (`--settle`)
 
-Some steps dispatch **no** per-unit work a driver can `report --unit`: a route
-step keyed on a params expression, a fan-out over an empty list, or a step whose
-entire work-list is unresolvable. A driver looping on `brief → report --unit`
-would get stuck at such a step forever. For exactly these, `brief` emits a
-top-level `settleCommand` instead of per-unit report lines:
+Two states leave the active step with **no** per-unit work a driver can
+`report --unit`, so a driver looping on `brief → report --unit` would get stuck
+forever. For both, `brief` emits a top-level `settleCommand` (with a message
+that says what to do — never `Execute them, then report each result` when there
+is nothing to execute) instead of per-unit report lines:
 
 ```sh
 akm workflow report <run> --settle --expect-step <activeStep>
 ```
 
+1. **Non-dispatching step** — a route step keyed on a params expression, a
+   fan-out over an empty list, or a step whose entire work-list is unresolvable.
+   Nothing was ever dispatchable.
+2. **Fully-terminal step still needing finalization** — every unit already ran
+   to a terminal state (they show as `done`/`failed` with **no** report
+   command), but the step never advanced. This is the recovery state after a
+   **required-gate block was resumed** (`akm workflow resume` reopens the step,
+   but the gate still needs judging) or a crash between the last unit write and
+   the step's completion. The work is done; only the gate/finalize remains.
+
 `report --settle` takes **no** `--unit`/`--status` — it runs the same
-deterministic completion path the engine runs for a non-dispatching step
-(reduce → promote/validate the typed artifact → judge the gate →
-`completeWorkflowStep`), advancing the spine past every step that has no
-`report --unit` a driver could ever send, until it reaches a step with real
-work (or the run terminates). It is **refused if the step actually has
-reportable units** (report those instead) and, like every mutating verb,
-refused under a live engine lease. It carries `--expect-step` so a stale copy
-fails once the spine has moved.
+deterministic completion path the engine runs (reduce → promote/validate the
+typed artifact → judge the gate → `completeWorkflowStep`), advancing the spine
+past every step that has no `report --unit` a driver could ever send, until it
+reaches a step with real work (or the run terminates). For the fully-terminal
+case it finalizes the resting step in place: it **advances** if the gate passes,
+or — for a **required gate with no judge available** — correctly **re-blocks**
+the run, pending a configured judge or a manual `akm workflow complete`. It is
+**refused if the step still has genuinely pending units** (anything to execute,
+in-flight, or a retry-eligible failure — `report --unit`/`--rerun` those
+instead) and, like every mutating verb, refused under a live engine lease. It
+carries `--expect-step` so a stale copy fails once the spine has moved.
 
 #### Unit check-in and heartbeat
 

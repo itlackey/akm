@@ -961,6 +961,95 @@ steps:
     expect(engineGraph).toContain("run status=completed");
   });
 
+  // Owner manual-validation finding 3 parity extension: a required-gate step
+  // whose only unit already COMPLETED but whose gate never got judged (a
+  // required-gate BLOCK that was resumed, or a crash before finalization) is a
+  // FULLY-TERMINAL work-list on a still-active step. The engine re-reduces the
+  // completed unit and re-blocks the required gate; the brief/report driver has
+  // no `report --unit` to run (the unit is `done`) and must use the `--settle`
+  // verb brief now emits, running the SAME shared completion path. Both surfaces
+  // must re-block identically (no judge available), with byte-identical graphs.
+  test("fully-terminal required-gate step: engine re-reduce and brief/report --settle both re-block identically", async () => {
+    const yaml = `version: 1
+name: Golden
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      required: true
+`;
+    const plan = compile(yaml);
+    const steps: SeedStep[] = [{ id: "work", criteria: ["the work is thorough"] }];
+    // No judge (fail-open resolution) ⇒ the required gate blocks on both surfaces.
+    const golden: Golden = {
+      name: "settle-reblock",
+      yaml,
+      params: {},
+      steps,
+      outcome: (base) => ({ ok: true, text: `did ${base}` }),
+    };
+
+    // Seed the fully-terminal recovery pre-state: run active, step pending again,
+    // its solo unit already completed with the engine's content-derived hash.
+    const seedCompletedUnit = async (): Promise<void> => {
+      const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+      if (!computed.ok) throw new Error(computed.error);
+      const unit = computed.list.units[0];
+      if (!unit.resolved.ok) throw new Error(unit.resolved.error);
+      await withWorkflowRunsRepo((repo) => {
+        const now = new Date().toISOString();
+        repo.insertUnit({
+          runId: RUN_ID,
+          unitId: unit.unitId,
+          stepId: "work",
+          nodeId: unit.nodeId,
+          parentUnitId: null,
+          phase: null,
+          runner: "agent",
+          model: null,
+          inputHash: unit.resolved.ok ? unit.resolved.inputHash : null,
+          startedAt: now,
+        });
+        repo.finishUnit({
+          runId: RUN_ID,
+          unitId: unit.unitId,
+          status: "completed",
+          resultJson: JSON.stringify(`did ${unit.unitId}`),
+          tokens: null,
+          failureReason: null,
+          finishedAt: now,
+        });
+      });
+    };
+
+    // (a) engine surface.
+    const engineDir = path.join(rootDir, "engine");
+    fs.mkdirSync(engineDir, { recursive: true });
+    process.env.AKM_DATA_DIR = engineDir;
+    seedRun(plan, {}, steps);
+    await seedCompletedUnit();
+    await runEngineSurface(golden);
+    const engineGraph = await canonicalGraph();
+
+    // (b) brief/report surface: the driver loop sees a `done` unit + a settle
+    // command and settles, running the same completion path.
+    const driverDir = path.join(rootDir, "driver");
+    fs.mkdirSync(driverDir, { recursive: true });
+    process.env.AKM_DATA_DIR = driverDir;
+    seedRun(plan, {}, steps);
+    await seedCompletedUnit();
+    await runDriverSurface(golden);
+    const driverGraph = await canonicalGraph();
+
+    assertGraphsIdentical(engineGraph, driverGraph, "settle-reblock");
+    expect(lineFor(engineGraph, "unit work:solo ")).toContain("status=completed");
+    expect(lineFor(engineGraph, "step work")).toContain("status=blocked");
+    expect(engineGraph).toContain("run status=blocked");
+  });
+
   // Codex round-3 finding C parity extension: an engine crash AFTER a unit's
   // retry succeeded leaves the journal with a FAILED base attempt AND a COMPLETED
   // `~r1` retry. Engine resume reuses the `~r1` row (classifyUnitReuse), so the

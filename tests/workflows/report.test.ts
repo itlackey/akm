@@ -457,6 +457,32 @@ describe("workflow report — running claim + stale surfacing", () => {
     expect(status.workflow.steps[0].status).toBe("pending");
   });
 
+  test("after report --status running, the next brief renders the unit as `claimed` with a --session-id command", async () => {
+    // Owner manual-validation finding 2 (end-to-end): a driver claims a unit via
+    // `report --status running` (no --session-id ⇒ a token is minted), then the
+    // NEXT brief must render that unit as `claimed` (not `pending`) AND emit a
+    // report command carrying the claim holder's --session-id — so a second
+    // driver cannot mistake live-claimed work for free, runnable work.
+    const p = plan(ONERROR_WF("fail"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+
+    const claim = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" });
+    const holder = claim.claim?.holder as string;
+    expect(holder).toMatch(/^claim:/);
+
+    const brief = await buildWorkflowBrief(RUN_ID);
+    const claimed = brief.workList.units.find((u) => u.unitId === ua);
+    expect(claimed?.action).toBe("claimed");
+    expect(claimed?.journaled?.claimedBy).toBe(holder);
+    expect(claimed?.report).toContain(`--session-id ${holder}`);
+    // A sibling unit that was never claimed stays `pending` with a plain command.
+    const sibling = brief.workList.units.find((u) => u.unitId !== ua);
+    expect(sibling?.action).toBe("pending");
+    expect(sibling?.report).not.toContain("--session-id");
+  });
+
   test("a stale claimed unit surfaces in brief with a warning", async () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
@@ -1559,5 +1585,125 @@ describe("report --settle advances a run parked on a non-dispatching step", () =
     await expect(settleWorkflowSpine({ target: RUN_ID, expectStep: "ship", summaryJudge: null })).rejects.toThrow(
       /--expect-step/,
     );
+  });
+});
+
+// ── --settle finalizes a fully-terminal but un-advanced step (owner finding 3) ──
+
+const REQUIRED_GATE_WF = `version: 1
+name: ReqGate
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+    gate:
+      criteria: [the work is thorough]
+      required: true
+`;
+
+describe("report --settle finalizes a fully-terminal step still needing completion", () => {
+  /** The post-resume recovery state: run active, step pending again, but its
+   *  only unit already completed — nothing left to `report --unit`. */
+  function seedResumedFullyTerminal(p: WorkflowPlanGraph): string {
+    const [unit] = unitIds(p, 0, {});
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+      units: [
+        {
+          unitId: unit,
+          stepId: "work",
+          nodeId: "work",
+          status: "completed",
+          resultJson: JSON.stringify("Did the work."),
+        },
+      ],
+    });
+    return unit;
+  }
+
+  test("brief points at --settle for the fully-terminal step, and --settle re-blocks under a required gate with no judge", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    seedResumedFullyTerminal(p);
+
+    // brief surfaces the settle command (not a per-unit report) — the recovery
+    // path owner finding 3 says must be obvious.
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.workList.units[0].action).toBe("done");
+    expect(brief.workList.units[0].report).toBeUndefined();
+    expect(brief.settleCommand).toContain("--settle");
+
+    // --settle runs the shared completion path; a required gate with no judge
+    // BLOCKS (correct behavior), it does not silently pass.
+    const settled = await settleWorkflowSpine({ target: RUN_ID, expectStep: "work", summaryJudge: null });
+    expect(settled.stepOutcome?.kind).toBe("blocked");
+    expect(settled.runStatus).toBe("blocked");
+    expect(settled.recorded).toBe("not-recorded");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("blocked");
+  });
+
+  test("--settle completes the fully-terminal step under a passing judge", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    seedResumedFullyTerminal(p);
+    const settled = await settleWorkflowSpine({ target: RUN_ID, expectStep: "work", summaryJudge: acceptJudge });
+    expect(settled.stepOutcome?.kind).toBe("advanced");
+    expect(settled.runStatus).toBe("completed");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0].status).toBe("completed");
+  });
+
+  test("--settle still refuses a step whose unit is genuinely PENDING (nothing terminal yet)", async () => {
+    const p = plan(REQUIRED_GATE_WF);
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+    });
+    await expect(settleWorkflowSpine({ target: RUN_ID, expectStep: "work", summaryJudge: null })).rejects.toThrow(
+      /has reportable units/,
+    );
+  });
+
+  test("--settle still refuses a step with a retry-eligible FAILED unit (re-run work remains)", async () => {
+    const RETRY_WF = `version: 1
+name: RetryGate
+steps:
+  - id: work
+    title: Work
+    unit:
+      instructions: Do the work.
+      retry: { max: 2, on: [timeout] }
+    gate:
+      criteria: [the work is thorough]
+      required: true
+`;
+    const p = plan(RETRY_WF);
+    const [unit] = unitIds(p, 0, {});
+    seedRun({
+      plan: p,
+      currentStepId: "work",
+      steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
+      units: [
+        {
+          unitId: unit,
+          stepId: "work",
+          nodeId: "work",
+          status: "failed",
+          failureReason: "timeout",
+          attempts: 1,
+        },
+      ],
+    });
+    // The failure is retry-eligible (timeout ∈ retry.on, attempts 1 < 1+2), so the
+    // driver can still `--rerun` it — the list is NOT fully terminal, settle refuses.
+    await expect(settleWorkflowSpine({ target: RUN_ID, expectStep: "work", summaryJudge: null })).rejects.toThrow(
+      /has reportable units/,
+    );
+    const brief = await buildWorkflowBrief(RUN_ID);
+    expect(brief.settleCommand).toBeUndefined();
+    expect(brief.workList.units[0].action).toBe("failed");
   });
 });

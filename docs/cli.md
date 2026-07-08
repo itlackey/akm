@@ -524,7 +524,7 @@ Subcommands:
 | `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
 | `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses |
-| `list` | List workflow runs (optionally filtered by `--ref` and `--active`) |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`) |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
 
 Workflow runs are scoped to the current working context, not globally across all

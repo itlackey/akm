@@ -30,10 +30,35 @@
  */
 
 import { assertNever } from "../../core/assert";
-import { runOpencodeSdk } from "../harnesses/opencode-sdk";
+import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk";
 import type { AgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
 import { type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
+
+/**
+ * Release every long-lived resource the dispatch runners CACHE for reuse, so a
+ * one-shot process (the CLI) can exit cleanly once dispatching is done.
+ *
+ * The `sdk` runner keeps a per-env registry of `opencode serve` CHILD
+ * PROCESSES (see `opencode-sdk/sdk-runner.ts`), started lazily and reused
+ * across units within a process. Each live child is an OS handle that keeps
+ * Bun's event loop open — and the registry's own teardown is wired ONLY to
+ * `process.once('exit')`, which never fires while such a child holds the loop
+ * open. That is a deadlock: a successful `akm workflow run` that dispatched via
+ * the SDK path would hang the CLI (owner finding 4) because the process is
+ * never idle enough for the exit hook to run and close the children it is
+ * waiting on.
+ *
+ * The engine therefore calls this in its run `finally` (every exit path —
+ * success, gate rejection, failure, abort) to drain the registry deterministically
+ * BEFORE relying on the event loop to drain. The close is synchronous and
+ * idempotent; when no SDK server was ever started it is a no-op, so the `agent`
+ * / `llm` dispatch paths pay nothing. Servers are re-created lazily on the next
+ * dispatch, so calling this between independent dispatch invocations is safe.
+ */
+export function disposeDispatchResources(): void {
+  disposeOpencodeSdkServers();
+}
 
 /**
  * Per-kind dispatch overrides. The `llm` handler is required at every real call

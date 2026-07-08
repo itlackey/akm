@@ -186,6 +186,14 @@ export interface InsertStepInput {
 export interface ListRunsFilter {
   scopeKey: string;
   workflowRef?: string;
+  /**
+   * Restrict to runs that are EXACTLY `status = 'active'` (currently
+   * executable). `blocked`/`failed`/`completed` runs are excluded — a `blocked`
+   * run is parked awaiting a human `resume`, not executable, so it must not
+   * surface under `--active`. It stays visible in an unfiltered `listRuns` with
+   * its own status. For the active-OR-blocked "who occupies this scope" query
+   * (the `akm show` guard) use {@link WorkflowRunsRepository.findActiveOrBlockedRunForScope}.
+   */
   activeOnly?: boolean;
 }
 
@@ -255,7 +263,17 @@ export class WorkflowRunsRepository {
       params.push(filter.workflowRef);
     }
     if (filter.activeOnly) {
-      filters.push("status IN ('active', 'blocked')");
+      // `activeOnly` means EXACTLY status='active' — a run currently
+      // executable. A `blocked` run is NOT active (it is parked awaiting a
+      // human `resume`), so it must never appear under `--active`, or a script
+      // treating `--active` output as executable work would pick up a blocked
+      // run (owner manual-validation finding 1). Blocked runs stay visible in
+      // plain `list` (all statuses) with their `blocked` status. The
+      // active-OR-blocked scope semantics some call sites want (the `akm show`
+      // scope guard, which surfaces a blocked run as the scope's occupant) live
+      // in the SEPARATE {@link findActiveOrBlockedRunForScope} — never folded
+      // into this shared list filter.
+      filters.push("status = 'active'");
     }
     const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
     return this.db

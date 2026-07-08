@@ -50,6 +50,7 @@ import {
   evaluateRoute,
   GATE_EVALUATION_PHASE,
   type GateFeedback,
+  isWorkListFullyTerminal,
   parseFrozenPlan,
   recoverGateFeedback,
   selectUnitAttemptRow,
@@ -433,6 +434,10 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
 
   // The work-list — the SAME computation the engine runs (no drift).
   let workList: WorkflowBriefWorkList = EMPTY_WORK_LIST;
+  // True when every resolvable unit ran to a terminal state but the step never
+  // finalized (a required-gate block that was resumed, or a crash between the
+  // last unit write and completion) — the fully-terminal recovery state.
+  let fullyTerminal = false;
   if (!isRouteOnly) {
     const computed = computeStepWorkList(stepPlan, {
       runId: run.id,
@@ -445,6 +450,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
       workList = { ...EMPTY_WORK_LIST, error: computed.error };
     } else {
       const list = computed.list;
+      fullyTerminal = !leaseLive && isWorkListFullyTerminal(list, journaledByUnit);
       // #21: a worktree-isolated unit runs in a throwaway git worktree that is
       // auto-removed when clean. Files it writes to a `.gitignore`d path are
       // treated as disposable and discarded — warn any driver so collectible
@@ -499,19 +505,29 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
     }
   }
 
-  // Finding D: a step that dispatches NO reportable units — a route-only step,
-  // an empty fan-out, an all-unresolvable work-list, or a whole-list failure —
-  // has no per-unit `report --unit` a driver can run. Emit the `--settle` verb
-  // so the driver can still advance the spine (never while a live engine lease
-  // owns it — a report/settle is refused then anyway). `--expect-step` guards a
-  // stale copy once the spine moves.
+  // A step the driver cannot advance with a per-unit `report --unit` gets the
+  // `--settle` verb instead. TWO cases:
+  //   - NON-DISPATCHING (finding D): a route-only step, an empty fan-out, an
+  //     all-unresolvable work-list, or a whole-list failure — nothing was ever
+  //     dispatchable.
+  //   - FULLY TERMINAL (owner manual-validation finding 3): every resolvable
+  //     unit already ran to a terminal state, but the step never finalized (a
+  //     required-gate block that was resumed, or a crash before completion). The
+  //     units show `done`/`failed` with no report command, so without this the
+  //     driver is stranded — `--settle` runs the shared completion path.
+  // Never while a live engine lease owns the spine (a report/settle is refused
+  // then anyway). `--expect-step` guards a stale copy once the spine moves.
   const hasReportableWork = !isRouteOnly && !workList.error && workList.units.some((u) => u.resolved.ok);
-  const settleCommand =
-    !leaseLive && !hasReportableWork
-      ? `akm workflow report ${run.id} --settle --expect-step ${stepState.id}`
-      : undefined;
+  const nonDispatching = !hasReportableWork;
+  const settleable = !leaseLive && (nonDispatching || fullyTerminal);
+  const settleCommand = settleable ? `akm workflow report ${run.id} --settle --expect-step ${stepState.id}` : undefined;
+  const settleState: "none" | "non-dispatching" | "finalize" = !settleable
+    ? "none"
+    : fullyTerminal
+      ? "finalize"
+      : "non-dispatching";
 
-  const message = buildMessage(step, workList, route, gateLoop, settleCommand !== undefined);
+  const message = buildMessage(step, workList, route, gateLoop, settleState);
 
   return {
     ...base,
@@ -547,7 +563,7 @@ function toBriefUnit(
   ctx: { stale: boolean; leaseLive: boolean },
 ): WorkflowBriefUnit {
   const action = deriveUnitAction(unit, journaled, ctx);
-  const report = reportCommandForAction(runId, unit, stepId, action);
+  const report = reportCommandForAction(runId, unit, stepId, action, journaled?.claim_holder ?? null);
   return {
     unitId: unit.unitId,
     nodeId: unit.nodeId,
@@ -617,21 +633,35 @@ function toBriefJournaled(row: WorkflowRunUnitRow): WorkflowBriefJournaled {
  * The `report` command line for a unit, tailored to its action (#15). Terminal
  * `done` and `do_not_run` units get NO command; a `failed` unit gets the
  * `--rerun` form (records a fresh attempt, per #25); `pending`/`stale`/`claimed`
- * get the normal completed form. Every command carries `--expect-step` (#14) so
- * a copy-pasted command from a stale brief is refused once the spine moves on.
+ * get the completed form. Every command carries `--expect-step` (#14) so a
+ * copy-pasted command from a stale brief is refused once the spine moves on.
+ *
+ * A `claimed` unit is held by a LIVE `--status running` claim (`claimHolder`):
+ * ONLY that holder can finish it — the report path's claim compare-and-set
+ * refuses any other `--session-id`. So its command carries `--session-id
+ * <holder>`, which (a) is the exact form the holding driver must use to finish
+ * its OWN claim, and (b) makes it unmistakable to a SECOND driver that the unit
+ * is spoken for rather than free, runnable work (owner manual-validation
+ * finding 2: two drivers must not both treat a live-claimed unit as free). A
+ * `stale` unit's claim has expired and is freely reclaimable/finishable by
+ * anyone, so it keeps the plain completed form (no `--session-id`).
  */
 function reportCommandForAction(
   runId: string,
   unit: import("./step-work").StepWorkUnit,
   stepId: string,
   action: WorkflowBriefUnitAction,
+  claimHolder: string | null,
 ): string | undefined {
   if (action === "done" || action === "do_not_run") return undefined;
   const resultHint = unit.schema
     ? "--result-file <result.json>   # JSON matching the unit's outputSchema"
     : "--result-file <result.txt>    # or --result '<text>' / pipe via stdin";
   const rerun = action === "failed" ? " --rerun" : "";
-  return `akm workflow report ${runId} --unit ${unit.unitId} --expect-step ${stepId} --status completed${rerun} ${resultHint}`;
+  // A live claim requires its holder's --session-id to finish; surface it so the
+  // holder's command is correct and other drivers see the unit is claimed.
+  const session = action === "claimed" && claimHolder ? ` --session-id ${claimHolder}` : "";
+  return `akm workflow report ${runId} --unit ${unit.unitId} --expect-step ${stepId} --status completed${rerun}${session} ${resultHint}`;
 }
 
 export function buildLease(holder: string | null, until: string | null): WorkflowBriefLease | undefined {
@@ -644,10 +674,11 @@ function buildMessage(
   workList: WorkflowBriefWorkList,
   route: WorkflowBriefRoute | undefined,
   gateLoop: number,
-  settleable: boolean,
+  settleState: "none" | "non-dispatching" | "finalize",
 ): string {
   const loopNote = gateLoop > 1 ? ` (gate loop ${gateLoop}, addressing prior rejection feedback)` : "";
-  const settleNote = settleable ? " Advance it with `akm workflow report --settle` (see settleCommand)." : "";
+  const settleNote =
+    settleState !== "none" ? " Advance it with `akm workflow report --settle` (see settleCommand)." : "";
   if (step.kind === "route") {
     const decided = route?.decision ? ` → selects step "${route.decision.selected}"` : "";
     return `Active step "${step.stepId}" is a route step — no units to execute${decided}.${settleNote || " Advances deterministically."}`;
@@ -656,7 +687,22 @@ function buildMessage(
     return `Active step "${step.stepId}" could not compute a work-list: ${workList.error}${settleNote}`;
   }
   const n = workList.units.length;
-  if (settleable) {
+  if (settleState === "finalize") {
+    // Fully-terminal work-list on a still-active step: everything ran, nothing
+    // remains to execute — the step only needs finalization (the run was
+    // gate-blocked then resumed, or a crash interrupted completion). A required
+    // gate with no judge available will re-block, which is correct behavior.
+    const gateNote =
+      step.gate.required && step.gate.criteria.length > 0
+        ? " If this step's REQUIRED gate has no judge available it will re-block, pending a configured judge or a manual `akm workflow complete`."
+        : "";
+    return (
+      `Active step "${step.stepId}" has run all ${n} unit(s) to a terminal state${loopNote} — nothing remains to ` +
+      `execute or report. Finalize it with \`akm workflow report --settle\` (see settleCommand): the gate is judged ` +
+      `and the step advances.${gateNote}`
+    );
+  }
+  if (settleState === "non-dispatching") {
     return `Active step "${step.stepId}" dispatches no reportable units${loopNote}.${settleNote}`;
   }
   return `Active step "${step.stepId}" expects ${n} unit(s)${loopNote}. Execute them, then report each result.`;

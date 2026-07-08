@@ -466,7 +466,7 @@ const workflowReportCommand = defineJsonCommand({
     settle: {
       type: "boolean",
       description:
-        "Advance a run whose active step dispatches NO reportable units (a params-based route, empty fan-out, or all-unresolvable step) through the deterministic settle path. Mutually exclusive with --unit; refused when the step has reportable units",
+        "Advance/finalize a run whose active step has NO unit left to report: a non-dispatching step (params-based route, empty fan-out, all-unresolvable) OR a fully-terminal step still needing finalization (every unit ran but the gate never judged — e.g. after resuming a required-gate block). Runs the deterministic completion path. Mutually exclusive with --unit; refused when the step still has genuinely pending units",
       default: false,
     },
     "expect-step": {
