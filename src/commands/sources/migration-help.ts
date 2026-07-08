@@ -121,10 +121,13 @@ export function renderMigrationHelp(versionInput: string, changelogText = loadCh
   if (changelogText) {
     for (const candidate of candidates) {
       const section = extractChangelogSection(changelogText, candidate);
-      if (section) {
-        const bundled = loadReleaseNote(candidate);
-        if (!bundled) return `${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
+      const bundled = loadReleaseNote(candidate);
+      if (bundled) {
+        if (!section) return `${bundled.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
         return `${bundled.trim()}\n\nRelease notes\n-------------\n${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
+      }
+      if (section) {
+        return `${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
       }
     }
   }

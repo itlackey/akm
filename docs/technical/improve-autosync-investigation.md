@@ -73,8 +73,8 @@ neither commits the primary stash on a normal run:
    resolved *source* is a `git` kind.
 
 2. **`saveGitStash`** (`src/sources/providers/git.ts:474-584`) is the **stash-level**
-   commit/push utility, invoked **only** by the manual `akm sync` / `akm save`
-   commands via `runSyncBody` (`src/cli.ts:1320`). Nothing in the improve pipeline
+   commit/push utility, invoked **only** by the manual `akm sync`
+   command via `runSyncBody` (`src/cli.ts:1320`). Nothing in the improve pipeline
    calls it.
 
 **Consequence (verified against the user's environment):** the primary stash
@@ -91,8 +91,8 @@ $ git -C /home/founder3/akm remote -v  # (empty — NO remote configured)
 $ git -C /home/founder3/akm log -5     # commits are "akm save <ts>" / "improve runs"
 ```
 
-The "akm save" commits in history are from the user manually running `akm sync`/
-`akm save`, **not** from improve. This is precisely the gap the feature closes.
+The `akm sync` commits in history are from the user manually running `akm sync`,
+**not** from improve. This is precisely the gap the feature closes.
 
 ### 2.2 `saveGitStash` already implements the entire desired behaviour
 
@@ -479,13 +479,13 @@ feature is real and supported:
   pulls instead of re-cloning)."
 - `docs/cli.md:666` — `--writable` flag: "Mark a git source as writable so
   `akm sync` also pushes (default: false)."
-- `docs/features/sources-registries.md:117` — `akm save my-skills -m "Update"
+- `docs/features/sources-registries.md:117` — `akm sync my-skills -m "Update"
   # Named writable git source`.
 - `docs/cli.md:846` — `akm sync my-skills  # Sync a named writable git stash`.
 
-BUT note what the **user-facing docs say persists those writes**: every one of
-them describes `akm save`/`akm sync` (→ `saveGitStash`, a BATCH `git add -A`
-commit, `git.ts:487-604`) as the persistence mechanism — NOT per-asset commit.
+BUT note what the **user-facing docs say persists those writes**: they describe
+`akm sync` (→ `saveGitStash`, a BATCH `git add -A` commit, `git.ts:487-604`)
+as the persistence mechanism — NOT per-asset commit.
 
 **`pushOnCommit` is effectively undocumented.** Outside the v1 spec pseudocode
 (`v1-architecture-spec.md:179,202,411`) the only mention in the docs tree is
@@ -564,7 +564,7 @@ gating identically. Required work:
 5. Tests/docs to update: delete/rewrite the `tests/core/write-source.test.ts`
    git-commit/push/sanitization cases onto the boundary path; amend
    `v1-architecture-spec.md:160-209` and `architecture.md:167-168` to describe
-   the batch model; the user-facing docs already describe `akm save`/`sync` as
+   the batch model; the user-facing docs already describe `akm sync` as
    the persistence path so they need no change.
 
 This is non-trivial (config-schema change + spec amendment + test re-homing) and
