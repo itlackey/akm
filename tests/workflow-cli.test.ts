@@ -699,10 +699,12 @@ describe("workflow CLI — qa fixes", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. listWorkflowRuns --active includes blocked runs
+// 2. listWorkflowRuns --active is status-'active' ONLY (owner manual-validation
+//    finding 1): a blocked run is NOT executable work, so --active must not
+//    return it — it stays visible (with its blocked status) in the plain list.
 // ---------------------------------------------------------------------------
-describe("workflow list --active includes blocked", async () => {
-  test("blocked run appears in --active list", async () => {
+describe("workflow list --active excludes blocked", async () => {
+  test("blocked run is absent from --active but present (blocked) in the plain list", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
@@ -717,7 +719,12 @@ describe("workflow list --active includes blocked", async () => {
     const listed = await runCli(["workflow", "list", "--ref", "workflow:test-flow", "--active"], env);
     expect(listed.status).toBe(0);
     const { runs } = JSON.parse(listed.stdout) as { runs: Array<{ id: string; status: string }> };
-    expect(runs.some((r) => r.id === startRun.id && r.status === "blocked")).toBe(true);
+    expect(runs.some((r) => r.id === startRun.id)).toBe(false);
+
+    const plain = await runCli(["workflow", "list", "--ref", "workflow:test-flow"], env);
+    expect(plain.status).toBe(0);
+    const { runs: allRuns } = JSON.parse(plain.stdout) as { runs: Array<{ id: string; status: string }> };
+    expect(allRuns.some((r) => r.id === startRun.id && r.status === "blocked")).toBe(true);
   });
 
   test("completed run does NOT appear in --active list", async () => {
