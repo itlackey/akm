@@ -45,5 +45,3 @@ Use a memory when a future agent would make a better decision by knowing a speci
   (`tags: [auth, projectA]`) for cross-cutting recall.
 - When a memory turns out to be domain-general, **append** a new
   `knowledge:<domain>/…` asset that xrefs it — never rename the memory up a rung.
-- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
-  full placement and cross-linking rules.

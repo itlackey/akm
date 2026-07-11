@@ -1,28 +1,31 @@
 ---
 category: convention
-description: Where to place an asset in the stash — the one path partition axis, chosen by asset type, so refs stay stable and prefix-scoped retrieval works.
+description: Where to place an asset in the stash — the one path partition axis, chosen by asset type, so refs stay stable and slug search (akm search "<slug>" --type <type>) co-locates related assets.
 when_to_use: Surfaced to authoring agents when they create or move any non-wiki asset and must decide its subdirectory/name.
 ---
 
 <!--
   SOFT guidance only — advice, not a contract. Nothing here is enforced by the
   proposal gate. It steers WHERE assets go so that path-derived refs stay stable
-  and `akm search "<type>:<prefix>/"` keeps working. Tune the axis choices and
-  the domain vocabulary to match how your stash is actually queried.
+  and scoped search (`akm search "<slug>" --type <type>`) keeps working. Tune
+  the axis choices and the domain vocabulary to match how your stash is queried.
 -->
 
 # Stash organization conventions
 
 A file's path under its type directory **becomes part of its ref**
 (`knowledge/auth/oauth-refresh-races.md` → `knowledge:auth/oauth-refresh-races`).
-That ref is an address other assets cite and `akm search` filters by prefix. The
+That ref is an address other assets cite, and its segments are search terms —
+`akm search "projectA" --type memory` reconstructs a project's memories. The
 path is therefore the one facet you **cannot express twice and cannot change
 without breaking the ref** — so spend it deliberately, on exactly one axis.
 
 Retrieval is search, not browse: no one walks these folders at query time. A
-subdirectory buys you only two things — a small indexing-confidence bump and a
-ref-prefix filter (`akm search "memory:projectA/"`). Every other facet belongs
-in frontmatter, where the index can actually read it.
+subdirectory buys you three things: its tokens are indexed as part of the
+asset's **name** (the highest-weighted search field), they auto-derive into
+`tags` when `tags` is empty, and for scope-born types a slug matching the
+current repo's name earns an automatic in-project ranking boost. Every other
+facet belongs in frontmatter, where the index can actually read it.
 
 ## Choose the partition axis by asset TYPE, not per-asset judgment
 
@@ -32,25 +35,34 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
 - **Scope-born types → current project / client / team slug.**
   `memory`, `lesson`, `task`, `env`, `secret`. These are born bound to the work
   in front of you, so the working context *is* the answer — no judgment needed.
+  When the scope is a single repo, use its repo/package name as the slug (as
+  `git remote`/package.json spell it) — ranking auto-boosts assets whose name
+  or tags match the current repo. Client/team slugs get no such boost; just
+  reuse the existing spelling.
   - `memory:projectA/auth-token-refresh`
   - `lesson:clientX/migration-rollback-gotcha`
   - `secret:clientX/api-key`
 - **Reuse-born types → stable domain from a short vocabulary.**
-  `knowledge`, `skill`, `wiki`, `fact`. These are meant to be reused across
-  projects, so co-locate them by subject and let any project prefix-search them.
+  `knowledge`, `skill`, `wiki`, `fact`, `script`. These are meant to be reused
+  across projects, so co-locate them by subject — any project retrieves them
+  with `akm search "<domain>" --type <type>`. For a wiki the domain names the
+  wiki itself (`wikis/auth/`); inside it, its `schema.md` and wiki lint govern
+  layout, not these rules.
   - `knowledge:auth/oauth-refresh-races`
   - `skill:testing/flaky-test-triage`
   - `fact:policies/pii-handling`
 - **Global-by-nature types → type root or a tool slug.**
   `command`, `agent`, `workflow`, and stash-wide `env`. Scoping these to a
-  project rarely improves precision and only adds rename risk.
+  project rarely improves precision and only adds rename risk. `env` defaults
+  to the project/client slug; only an env consumed by every project sits at
+  the type root — if any single project would break when it changes, it is
+  scope-born.
 
 **Why reuse types don't take the project axis:** project relevance is already
 recovered at query time — AKM blends a per-project usage signal into ranking
-(scoped utility, keyed independently of the path, so it is rename-proof).
-Spending the scarce path segment on the project axis for a reusable asset is
-therefore redundant; free it for the domain, which is the *only* handle that
-co-locates cross-project reuse.
+(scoped utility, keyed off the current repo, not the asset's path). Free the
+scarce path segment for the domain — the *only* handle that co-locates
+cross-project reuse.
 
 ## Placement rules
 
@@ -74,20 +86,22 @@ co-locates cross-project reuse.
   (`acme` vs `acme-corp`) so the prefix does not fragment. Keep the domain
   vocabulary in `fact:conventions/domains`.
 - **Off-axis facets go in `tags:`, not a bare field.** The indexed FTS fields are
-  name, description, tags, hints, and content — there is **no `project` field**,
-  so `project: projectA` in frontmatter is invisible to search. Put the off-axis
-  facet in `tags` instead (a project-scoped memory adds `tags: [auth]`; a
-  domain-scoped asset genuinely tied to a project adds `tags: [projectA]`
-  sparingly).
-- **Footgun:** path segments are auto-added to `tags` **only when `tags` is
-  empty**. The moment you set `tags` explicitly you must also include the path
-  scope/domain token, or you silently drop the auto-derived one.
+  name, description, tags, hints, and content (headings only — body prose is
+  not indexed) — there is **no `project` field**, so `project: projectA` in
+  frontmatter is invisible to search. Put the off-axis facet in `tags` instead
+  (a project-scoped memory adds `tags: [auth]`; a domain-scoped asset genuinely
+  tied to a project adds `tags: [projectA]` sparingly).
+- **Footgun:** path and filename tokens are auto-added to `tags` **only when
+  `tags` is empty**. When you set `tags` explicitly, restate the scope/domain
+  token — the name field still carries it, but you lose the tag-match ranking
+  boost.
 
 ## Renames and evolution
 
 - **A ref is chosen once. Default to not renaming.** Non-wiki inbound xrefs have
   no broken-link lint, so a rename dangles them silently while the dead ref
-  string keeps scoring in FTS.
+  string keeps scoring in FTS — and a renamed file is a new index entry, so the
+  asset's accumulated usage-ranking history resets.
 - If a rename is truly unavoidable, treat it as an xref-fixing operation: grep
   the stash for the old ref string and fix every inbound reference in the same
   pass.

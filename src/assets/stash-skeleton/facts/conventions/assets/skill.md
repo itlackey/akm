@@ -45,5 +45,3 @@ Use a skill when the stash needs reusable procedural guidance for a recurring cl
   stable **domain** prefix from `fact:conventions/domains`
   (`skill:testing/flaky-test-triage`) so any project finds and reuses it instead
   of duplicating the procedure.
-- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
-  full placement and cross-linking rules.

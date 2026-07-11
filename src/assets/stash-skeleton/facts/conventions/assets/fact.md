@@ -34,7 +34,8 @@ Use a fact for stable information that future agents should treat as true or nor
 ## Maintenance strategy
 
 - Revise or supersede facts when the durable truth changes.
-- Do not allow contradictory facts to remain equally active.
+- Do not allow contradictory facts to remain equally active: mark the loser
+  `beliefState: superseded` / `supersededBy: [<new ref>]` so ranking demotes it.
 - Promote repeated memories or lessons into facts only when they become stable context.
 - Keep convention and meta facts especially clear, because they steer future asset creation.
 
@@ -47,5 +48,3 @@ Use a fact for stable information that future agents should treat as true or nor
   author, so this is where naming, placement, and linking house-rules live. Keep
   each one short — they inject into authoring prompts. Reserve `pinned: true` for
   the small always-injected core.
-- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
-  full placement and cross-linking rules.

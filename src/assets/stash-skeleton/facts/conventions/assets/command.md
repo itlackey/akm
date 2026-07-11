@@ -42,5 +42,3 @@ Use a command when the user or agent needs to perform the same prompt-shaped tas
 - Commands are usually **global**: keep them at the type root or under a
   tool/domain slug. Scope to a project only when the command is genuinely
   project-specific.
-- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
-  full placement and cross-linking rules.

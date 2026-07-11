@@ -47,5 +47,3 @@ Use a lesson to record:
 - Lessons are **scope-born**: file them under the **project/client** they were
   learned in (`lesson:projectA/token-refresh-gotcha`) and xref the asset the
   lesson corrects or refines.
-- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
-  full placement and cross-linking rules.

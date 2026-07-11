@@ -36,15 +36,15 @@ Use a knowledge asset for durable reference material, synthesized explanations, 
 
 - Update the existing page when new information changes the same topic; append a dated note rather than silently rewriting when provenance matters.
 - Create a new page when the concept deserves its own durable entry.
-- Add links both ways when a new relationship matters.
+- Add a return link when you are already editing the related page in the same pass.
 - Periodically scan for orphaned, stale, or overlapping knowledge docs and consolidate them.
 
 ## Placement & linking
 
 - Knowledge is **reuse-born**: file it under a stable **domain** prefix from
   `fact:conventions/domains` (`knowledge:auth/oauth-refresh-races`), not under a
-  project — that prefix is what lets any project prefix-search and reuse it.
-- Treat ingested source docs as immutable; record corrections as new assets that
-  xref the source. Carry a provenance xref and a self-situating header.
-- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
-  full placement and cross-linking rules.
+  project — that domain slug is what any project searches to reuse it.
+- Knowledge pages are the rewritable synthesized layer — update them in place.
+  Ingested source material stays immutable; corrections to it are new assets
+  that xref the source. Carry a provenance xref when derived, and a
+  self-situating header.

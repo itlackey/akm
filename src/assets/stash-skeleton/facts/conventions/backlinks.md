@@ -1,15 +1,16 @@
 ---
 category: convention
-description: How to cross-link assets so retrieval compounds — one mandatory provenance xref, sparse real associative xrefs, corrections as new assets, and canonical entity naming.
+description: How to cross-link assets so retrieval compounds — a provenance xref when derived, sparse real associative xrefs, corrections as new assets, and canonical entity naming.
 when_to_use: Surfaced to authoring agents when they create or revise any non-wiki asset that derives from, corrects, or relates to another asset.
 ---
 
 <!--
   SOFT guidance only — advice, not a contract. Back-linking here is a RETRIEVAL
-  mechanism, not decoration: `xrefs:` frontmatter folds into the search index and
-  feeds the entity/relation graph boost. Over-linking degrades ranking, so these
-  rules are deliberately conservative. Wikis have their own xref + lint system —
-  this convention is for non-wiki assets.
+  mechanism, not decoration: `xrefs:` frontmatter folds into the search index;
+  the entity/relation graph is extracted from BODY prose (memory + knowledge),
+  never from frontmatter. Over-linking degrades ranking, so these rules are
+  deliberately conservative. Wikis have their own xref + lint system — this
+  convention is for non-wiki assets.
 -->
 
 # Back-linking conventions
@@ -25,46 +26,52 @@ lever — which means both too few and too many hurt.
 description: OAuth refresh-token race on token rotation
 tags: [auth, projectA]
 xrefs:
-  - knowledge:vendor-x/token-api        # provenance: what this was synthesized from
+  - knowledge:auth/vendor-x-token-api   # provenance: what this was synthesized from
   - lesson:projectA/token-refresh-gotcha # one real associative link
 ---
 ```
 
 ## Link rules
 
-- **Exactly one mandatory xref: provenance.** Every synthesized or derived asset
-  cites the ref of the source it came from
-  (`memory:projectA/token-quirk` xrefs `knowledge:vendor-x/token-api`). It is
-  single-target, self-limiting, and the one link backed by real lint
-  (`uncited-raw`, for wikis).
+- **One xref is mandatory when the asset derives from another: cite the source
+  ref** (`memory:projectA/token-quirk` xrefs `knowledge:auth/vendor-x-token-api`
+  — it also makes this asset findable from searches for its source). An
+  original observation with no source carries none — never invent provenance.
+  Wikis enforce the analogous rule mechanically (`sources:` + `uncited-raw`
+  lint); non-wiki provenance is discipline only.
 - **Associative xrefs are discretionary — real relationships only.** Add one when
   you already know a genuine load-bearing connection. Do **not** hit a link
-  quota by pointing at the topically-nearest sibling you can name — a
-  plausible-but-wrong edge poisons the graph boost and surfaces unrelated assets.
-- **Cap total xrefs at ~5.** Because ref strings fold into the FTS hint field, a
-  high-degree asset smears its ref token across every citer, wrecking the ranking
-  signal of popular sources and hubs.
-- **Corrections are new assets, never edits to a source.** Treat ingested
-  `knowledge/` as immutable-by-discipline. A hard-won fix is a new `lesson:` or
-  `knowledge:` asset that xrefs the thing it corrects
-  (`lesson:projectA/oauth-race-fix` xrefs `knowledge:auth/oauth-refresh-races`) —
-  this preserves provenance and lets the synthesized layer be rewritten without
-  losing ground truth.
+  quota by pointing at the topically-nearest sibling — a plausible-but-wrong
+  xref makes this asset a false search match for the other topic, and a wrong
+  relationship asserted in prose poisons the entity graph. A relationship you
+  want the graph to learn must be named in the body (e.g. open with "Corrects
+  knowledge:auth/oauth-refresh-races").
+- **Cap total xrefs at ~5 (a heuristic, not a measured threshold).** Each xref
+  folds its ref tokens into THIS asset's search hints — past a handful, the
+  asset matches queries about several other topics and its own ranking signal
+  blurs.
+- **Corrections are new assets; ingested material is immutable.** Treat wiki
+  `raw/`, vendored docs, and transcripts as immutable-by-discipline: a hard-won
+  fix is a new `lesson:` or `knowledge:` asset that xrefs what it corrects.
+  Synthesized `knowledge:` pages are the rewritable layer — update them in
+  place. When a correction supersedes a standalone asset (memory OR knowledge),
+  also set the old asset's `beliefState: superseded` and
+  `supersededBy: [<new ref>]` — a metadata edit, not a content edit — so the
+  ranker demotes the stale version instead of letting it outrank your fix.
 - **Bidirectional back-links are best-effort.** Add a return xref only when you
   are already editing the target in the same pass. Never require editing a
   separate hot file just to add a back-xref — concurrent writes drop it under
   last-writer-wins and no lint will notice.
 
-## Canonical naming feeds the graph
+## Self-situating headers and canonical naming
 
-The entity/relation graph is extracted from **body text, not the path**. So the
-retrieval boost only fires when names are spelled consistently. Open every asset
-with a **self-situating header** — a plain title plus a one-line orientation
-naming what it is, its scope/domain, and its key entities in canonical spelling
-(`Postgres`, `OAuth`, `TLS`, `Acme`). This single move helps FTS, embeddings, the
-entity graph, and humans at once, and the literature ties it to a large drop in
-failed retrievals. Keep a short canonical-spelling list in
-`fact:conventions/domains` (or a `fact:canonical-names`) so agents don't
+Put the one-line orientation in `description:` and the trigger conditions in
+`when_to_use:` — those are indexed fields; body prose is not (only headings
+reach the index). Then open the body with a plain title plus a one-line
+orientation naming what it is, its scope/domain, and its key entities in
+canonical spelling (`Postgres`, `OAuth`, `TLS`, `Acme`) — the entity/relation
+graph is extracted from body prose, and readers land here from `akm show`.
+Keep the canonical-spelling list in `fact:conventions/domains` so agents don't
 fragment `postgres` / `postgresql` / `pg`.
 
 ## Hubs are optional, not per-namespace obligations

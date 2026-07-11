@@ -17,6 +17,10 @@ consistency and reducing repeated context-setting.
 | `workflows/` | Workflows | Multi-step orchestration sequences |
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |
+| `facts/` | Facts | Durable stash-level context; the house conventions in `facts/conventions/` are auto-surfaced to authoring agents |
+| `wikis/` | Wikis | Agent-maintained knowledge bases (see `akm wiki`) |
+| `scripts/` | Scripts | Executable helpers agents and humans can run |
+| `env/`, `secrets/` | Env & Secrets | Configuration groups and single credentials; values are never content-indexed |
 
 Add your own assets to any of these directories. AKM will index them automatically
 on the next `akm index` run (or when the background improve pipeline picks them up).
@@ -25,19 +29,20 @@ on the next `akm index` run (or when the background improve pipeline picks them 
 
 A file's path under its type directory becomes part of its ref
 (`knowledge/auth/oauth-refresh-races.md` → `knowledge:auth/oauth-refresh-races`),
-and `akm search "knowledge:auth/"` narrows to that subtree. Retrieval is search,
-not folder-browse, so pick subdirectories deliberately. The house rules live in
-three convention facts under `facts/conventions/` and are surfaced to agents
-automatically when they author assets:
+and its segments are search terms: `akm search "auth" --type knowledge` narrows
+to that subtree. Retrieval is search, not folder-browse, so pick subdirectories
+deliberately. The house rules live in three convention facts under
+`facts/conventions/` and are surfaced to agents automatically when they author
+assets:
 
 - **`fact:conventions/organization`** — the single path axis, chosen by asset
   type. **Scope-born** types (`memory`, `lesson`, `task`, `env`, `secret`) go
   under the current **project/client** slug; **reuse-born** types (`knowledge`,
-  `skill`, `wiki`, `fact`) go under a stable **domain**; global types stay at the
-  type root.
-- **`fact:conventions/backlinks`** — how to cross-link: one mandatory provenance
-  xref, sparse real associative links, corrections as new assets, canonical
-  entity naming.
+  `skill`, `wiki`, `fact`, `script`) go under a stable **domain**; global types
+  stay at the type root.
+- **`fact:conventions/backlinks`** — how to cross-link: a provenance xref
+  whenever an asset derives from another, sparse real associative links,
+  corrections as new assets, canonical entity naming.
 - **`fact:conventions/domains`** — the (editable) domain vocabulary for
   reuse-born assets, plus canonical entity spellings.
 
