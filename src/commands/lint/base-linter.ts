@@ -310,6 +310,21 @@ function checkMissingRefs(
 // ── frontmatter refs ─────────────────────────────────────────────────────────
 
 /**
+ * Frontmatter keys that carry cross-reference lists per the stash
+ * organization conventions: `xrefs:` (provenance / associative links),
+ * `supersededBy:` and `contradictedBy:` (belief-state correction links).
+ * The missing-ref check validates each of these in ADDITION to the body /
+ * `refs:` scan — they are the channel the conventions mandate, and a rename
+ * would otherwise dangle them silently.
+ *
+ * `sources:` is deliberately excluded (non-wiki `sources:` was rejected as a
+ * typed channel; wiki `sources:` is checked by lintWiki). `source_refs:` /
+ * `evidenceSources:` are excluded too — they legitimately point at
+ * merged-away or pruned assets (historical provenance).
+ */
+const XREF_FRONTMATTER_KEYS = ["xrefs", "supersededBy", "contradictedBy"] as const;
+
+/**
  * Return the `refs:` array from frontmatter when it is present and is an
  * array of strings; otherwise return `null` to signal the caller should
  * fall back to scanning the body. An empty array (`refs: []`) is also
@@ -616,6 +631,35 @@ export abstract class BaseLinter implements AssetLinter {
           detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
           fixed: false,
         });
+      }
+
+      // Frontmatter xref channels (xrefs / supersededBy / contradictedBy).
+      // Runs regardless of the `refs:` body-scan carve-out above — that
+      // carve-out governs only the BODY scan (`refs: []` declares "no
+      // outbound refs in the body", not "skip my correction links").
+      // Non-ref-shaped values (URLs, `raw/<slug>`, `<placeholder>`
+      // templates, shell vars) fall out via checkMissingRefs' guards.
+      //
+      // Skipped when ctx.frontmatter is null: on the task/YAML path
+      // (lint/index.ts) the whole file IS the body (`body === raw`), so
+      // ref values under these keys are already caught by the body scan
+      // above — running the pass again would double-report each dangling
+      // ref. Md files without a frontmatter block also land here, with
+      // empty ctx.data, so nothing is lost for them either.
+      if (ctx.frontmatter !== null) {
+        for (const key of XREF_FRONTMATTER_KEYS) {
+          const values = readRefsArray(ctx.data?.[key]);
+          if (values === null) continue;
+          const missingXrefs = checkMissingRefs(values.join("\n"), ctx.stashRoot, ctx.extraStashRoots);
+          for (const { ref, resolvedRelPath } of missingXrefs) {
+            issues.push({
+              file: ctx.relPath,
+              issue: "missing-ref",
+              detail: `missing ref: ${ref} (frontmatter ${key}; resolved to ${resolvedRelPath})`,
+              fixed: false,
+            });
+          }
+        }
       }
     }
 

@@ -98,10 +98,11 @@ cross-project reuse.
 
 ## Renames and evolution
 
-- **A ref is chosen once. Default to not renaming.** Non-wiki inbound xrefs have
-  no broken-link lint, so a rename dangles them silently while the dead ref
-  string keeps scoring in FTS — and a renamed file is a new index entry, so the
-  asset's accumulated usage-ranking history resets.
+- **A ref is chosen once. Default to not renaming.** A rename dangles inbound
+  xrefs silently at write time — nothing catches the breakage until the next
+  `akm lint` run flags the dead frontmatter refs (`missing-ref`) — while the
+  dead ref string keeps scoring in FTS, and a renamed file is a new index
+  entry, so the asset's accumulated usage-ranking history resets.
 - If a rename is truly unavoidable, treat it as an xref-fixing operation: grep
   the stash for the old ref string and fix every inbound reference in the same
   pass.

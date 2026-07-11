@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmLint } from "../src/commands/lint/index";
+import type { AkmConfig } from "../src/core/config/config";
 import { runCliCapture } from "./_helpers/cli";
 import { withEnv } from "./_helpers/sandbox";
 
@@ -654,6 +655,335 @@ describe("missing-ref check", () => {
     );
     const result = akmLint({ dir: stashDir });
     expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+});
+
+// ── SPEC-1: missing-ref frontmatter xref channels ────────────────────────────
+//
+// The stash conventions route provenance and correction links through the
+// `xrefs:`, `supersededBy:`, and `contradictedBy:` frontmatter keys. The
+// missing-ref check scans those keys for dangling refs in ADDITION to the
+// existing body / `refs:` scan. The frontmatter-key pass:
+//   - flags dangling refs with a detail naming the frontmatter key,
+//   - runs regardless of the `refs:` body-scan carve-out (`refs: []` is
+//     authoritative for the BODY only),
+//   - ignores non-ref-shaped values (URLs, raw/<slug>, `<placeholder>`
+//     templates, shell vars) via the existing checkMissingRefs guards,
+//   - resolves refs against the primary stash AND extraStashRoots,
+//   - is suppressed by `lint_skip: [missing-ref]`,
+//   - applies to all md linters (memory/knowledge/lesson/fact); wikis stay
+//     out of `akm lint` entirely.
+
+describe("missing-ref frontmatter xref channels (xrefs/supersededBy/contradictedBy)", () => {
+  test("flags a dangling ref in `xrefs:` with the frontmatter-key detail", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "derived-tip.md",
+      "---\nname: derived-tip\ntype: memory\nupdated: 2025-01-01\nxrefs:\n  - knowledge:auth/nonexistent\n---\n\nDistilled from the auth doc.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].file).toContain("derived-tip.md");
+    expect(missing[0].detail).toContain("knowledge:auth/nonexistent");
+    expect(missing[0].detail).toContain("frontmatter xrefs");
+    expect(missing[0].detail).toContain(path.join("knowledge", "auth", "nonexistent.md"));
+    expect(missing[0].fixed).toBe(false);
+  });
+
+  test("does NOT flag resolvable xrefs (same stash, incl. knowledge subdir layout)", () => {
+    // NOTE: passes pre-implementation too (no frontmatter pass exists yet);
+    // kept as the over-flagging guard once the pass lands.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "knowledge/auth",
+      "oauth-flow.md",
+      "---\nname: auth/oauth-flow\ntype: knowledge\nupdated: 2025-01-01\n---\n\nOAuth flow doc.\n",
+    );
+    writeFile(
+      stashDir,
+      "memories",
+      "source-note.md",
+      "---\nname: source-note\ntype: memory\nupdated: 2025-01-01\n---\n\nSource note.\n",
+    );
+    writeFile(
+      stashDir,
+      "memories",
+      "derived-tip.md",
+      "---\nname: derived-tip\ntype: memory\nupdated: 2025-01-01\nxrefs:\n  - knowledge:auth/oauth-flow\n  - memory:source-note\n---\n\nDerived from both.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
+  test("mixed valid + dangling xrefs: only the dangling ref is flagged", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "knowledge/auth",
+      "oauth-flow.md",
+      "---\nname: auth/oauth-flow\ntype: knowledge\nupdated: 2025-01-01\n---\n\nOAuth flow doc.\n",
+    );
+    writeFile(
+      stashDir,
+      "memories",
+      "derived-tip.md",
+      "---\nname: derived-tip\ntype: memory\nupdated: 2025-01-01\nxrefs:\n  - knowledge:auth/oauth-flow\n  - memory:vanished-note\n---\n\nDerived.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("memory:vanished-note");
+    expect(missing[0].detail).not.toContain("knowledge:auth/oauth-flow");
+  });
+
+  test("flags a dangling `supersededBy:` ref with the frontmatter-key detail", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "stale-tip.md",
+      "---\nname: stale-tip\ntype: memory\nupdated: 2025-01-01\nbeliefState: superseded\nsupersededBy:\n  - memory:corrections/newer-tip\n---\n\nOld guidance.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("memory:corrections/newer-tip");
+    expect(missing[0].detail).toContain("frontmatter supersededBy");
+    expect(missing[0].fixed).toBe(false);
+  });
+
+  test("flags a dangling `contradictedBy:` ref (inline-flow YAML list)", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "shaky-tip.md",
+      '---\nname: shaky-tip\ntype: memory\nupdated: 2025-01-01\ncontradictedBy: ["memory:conflicts/other-take"]\n---\n\nContested guidance.\n',
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("memory:conflicts/other-take");
+    expect(missing[0].detail).toContain("frontmatter contradictedBy");
+  });
+
+  test("authoritative-empty `refs: []` does NOT suppress the xrefs scan", () => {
+    const stashDir = makeTempStash();
+    // `refs: []` suppresses the BODY scan (the literal memory:foo below must
+    // stay unflagged) but the frontmatter xrefs channel is still checked.
+    writeFile(
+      stashDir,
+      "memories",
+      "captured.md",
+      "---\nname: captured\ntype: memory\nupdated: 2025-01-01\nrefs: []\nxrefs:\n  - knowledge:pipelines/gone\n---\n\nTranscript mentions a literal memory:foo token.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("knowledge:pipelines/gone");
+    expect(missing[0].detail).toContain("frontmatter xrefs");
+    expect(missing.some((i) => i.detail.includes("memory:foo"))).toBe(false);
+  });
+
+  test("non-ref values in xrefs are ignored (URL, raw/<slug>, placeholder, shell vars)", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "linky.md",
+      "---\nname: linky\ntype: memory\nupdated: 2025-01-01\nxrefs:\n" +
+        '  - "https://example.com/upstream-doc"\n' +
+        "  - raw/2026-06-01-session-transcript\n" +
+        "  - knowledge:<slug>\n" +
+        "  - memory:$(git rev-parse HEAD)\n" +
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell-var placeholder the linter must skip
+        '  - "knowledge:${DOCS_ROOT}/setup"\n' +
+        "  - workflow:definitely-gone\n" +
+        "---\n\nBody without refs.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    // Only the real dangling ref is flagged; every non-ref value falls out.
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("workflow:definitely-gone");
+    for (const skipped of ["example.com", "raw/2026-06-01", "<slug>", "$(", "${"]) {
+      expect(missing.some((i) => i.detail.includes(skipped))).toBe(false);
+    }
+  });
+
+  test("`lint_skip: [missing-ref]` suppresses the frontmatter xref pass too", () => {
+    // NOTE: passes pre-implementation (nothing scans xrefs yet); pins that the
+    // new pass lives inside the same shouldRun("missing-ref") gate.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "skipped.md",
+      "---\nname: skipped\ntype: memory\nupdated: 2025-01-01\nlint_skip: [missing-ref]\nxrefs:\n  - knowledge:void/gone\n---\n\nBody cites workflow:also-gone here.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
+  test("wikis stay untouched: dangling xrefs in wikis/ produce no lint findings", () => {
+    // NOTE: passes pre-implementation ("wikis" is not a linted stash subdir);
+    // guards that the frontmatter pass does not pull wikis into akm lint.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "wikis",
+      "hub.md",
+      "---\nname: hub\ntype: wiki\nupdated: 2025-01-01\nxrefs:\n  - knowledge:void/gone\n---\n\nWiki hub page.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.file.includes("hub.md"))).toHaveLength(0);
+  });
+
+  test("frontmatter xref pass runs for memory, knowledge, lesson, and fact linters", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "mem-derived.md",
+      "---\nname: mem-derived\ntype: memory\nupdated: 2025-01-01\nxrefs:\n  - knowledge:origins/gone-a\n---\n\nBody.\n",
+    );
+    writeFile(
+      stashDir,
+      "knowledge",
+      "kn-derived.md",
+      "---\nname: kn-derived\ntype: knowledge\nupdated: 2025-01-01\nxrefs:\n  - memory:origins/gone-b\n---\n\nBody.\n",
+    );
+    writeFile(
+      stashDir,
+      "lessons",
+      "ls-derived.md",
+      "---\nname: ls-derived\ntype: lesson\nupdated: 2025-01-01\nxrefs:\n  - knowledge:origins/gone-c\n---\n\nBody.\n",
+    );
+    writeFile(
+      stashDir,
+      "facts",
+      "team-glossary.md",
+      "---\nname: team-glossary\ntype: fact\ncategory: team\nupdated: 2025-01-01\nxrefs:\n  - fact:conventions/gone-d\n---\n\nBody.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(4);
+    const byFile = (name: string) => missing.filter((i) => i.file.includes(name));
+    expect(byFile("mem-derived.md")).toHaveLength(1);
+    expect(byFile("mem-derived.md")[0].detail).toContain("knowledge:origins/gone-a");
+    expect(byFile("kn-derived.md")).toHaveLength(1);
+    expect(byFile("kn-derived.md")[0].detail).toContain("memory:origins/gone-b");
+    expect(byFile("ls-derived.md")).toHaveLength(1);
+    expect(byFile("ls-derived.md")[0].detail).toContain("knowledge:origins/gone-c");
+    expect(byFile("team-glossary.md")).toHaveLength(1);
+    expect(byFile("team-glossary.md")[0].detail).toContain("fact:conventions/gone-d");
+    for (const issue of missing) {
+      expect(issue.detail).toContain("frontmatter xrefs");
+    }
+  });
+
+  test("xref resolvable only in an extraStashRoot is clean; dangling sibling still flagged", () => {
+    const stashDir = makeTempStash();
+    const extraStash = makeTempStash("akm-lint-extra-");
+    writeFile(
+      extraStash,
+      "knowledge/shared",
+      "present.md",
+      "---\nname: shared/present\ntype: knowledge\nupdated: 2025-01-01\n---\n\nShared doc in the extra stash.\n",
+    );
+    writeFile(
+      stashDir,
+      "memories",
+      "cross-stash.md",
+      "---\nname: cross-stash\ntype: memory\nupdated: 2025-01-01\nxrefs:\n  - knowledge:shared/present\n  - memory:vanished-note\n---\n\nDerived from the shared doc.\n",
+    );
+
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", path: extraStash }],
+    };
+    const result = akmLint({ dir: stashDir, config });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("memory:vanished-note");
+    expect(missing.some((i) => i.detail.includes("knowledge:shared/present"))).toBe(false);
+  });
+
+  test("task .yml with a dangling xrefs entry is flagged exactly once (body scan only)", () => {
+    // Tasks are pure YAML: lint/index.ts sets body = raw and frontmatter =
+    // null, so ref values under `xrefs:` are already caught by the BODY scan.
+    // The frontmatter-xref pass must skip that path or every dangling task
+    // xref would be double-reported (one plain + one `frontmatter xrefs`
+    // finding for a single on-disk occurrence).
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "tasks",
+      "t1.yml",
+      "name: t1\ndescription: task citing a vanished memory\nxrefs:\n  - memory:gone-task-ref\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].file).toContain("t1.yml");
+    expect(missing[0].detail).toContain("memory:gone-task-ref");
+    expect(missing[0].detail).not.toContain("frontmatter");
+  });
+
+  test("scalar-valued supersededBy (no list syntax) is silently skipped", () => {
+    // readRefsArray only accepts arrays; a scalar `supersededBy: <ref>` is
+    // neither scanned nor crashed on. The conventions and writeContradictEdge
+    // both use the array form — this pins the skip so a regression that
+    // started false-flagging (or throwing on) scalars would be caught.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "scalar-superseded.md",
+      "---\nname: scalar-superseded\ntype: memory\nupdated: 2025-01-01\nbeliefState: superseded\nsupersededBy: memory:corrections/never-written\n---\n\nOld guidance.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
+  test("same dangling ref in body AND xrefs frontmatter yields two findings (one per channel)", () => {
+    // Each channel reports independently for md files: the body occurrence
+    // gets the plain detail, the frontmatter occurrence gets the keyed
+    // detail. Two on-disk occurrences, two findings — a dedupe refactor must
+    // not silently collapse (or further inflate) this.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "doubled.md",
+      "---\nname: doubled\ntype: memory\nupdated: 2025-01-01\nxrefs:\n  - knowledge:void/gone\n---\n\nDerived from knowledge:void/gone which no longer exists.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(2);
+    const plain = missing.filter((i) => !i.detail.includes("frontmatter"));
+    const keyed = missing.filter((i) => i.detail.includes("frontmatter xrefs"));
+    expect(plain).toHaveLength(1);
+    expect(plain[0].detail).toContain("knowledge:void/gone");
+    expect(keyed).toHaveLength(1);
+    expect(keyed[0].detail).toContain("knowledge:void/gone");
   });
 });
 

@@ -66,9 +66,14 @@ load-bearing facts, each verified in code:
    flow** (`resolveStashStandards`); `facts/conventions/assets/<type>.md` is
    surfaced type-scoped (`resolveTypeConventions`). This is the only channel that
    reaches a browse-blind agent mid-task — so conventions must ship as facts.
-9. **Non-wiki xrefs have no broken-link lint.** Only wikis get
-   orphan/broken-xref/stale-index/uncited-raw checks. A rename silently dangles
-   non-wiki inbound links.
+9. **Non-wiki xref breakage is caught by `akm lint`, not at write time.** The
+   deterministic `missing-ref` check covers body refs, the `refs:` frontmatter
+   array, and (since SPEC-1 landed) the `xrefs:`/`supersededBy:`/
+   `contradictedBy:` frontmatter channels. A rename still dangles non-wiki
+   inbound links silently — nothing catches them until the next `akm lint`
+   run flags them. Wikis are excluded from `akm lint` and instead get their own
+   orphan/broken-xref/broken-source/stale-index/uncited-raw checks via
+   `akm wiki lint`.
 
 ## Research inputs
 
@@ -234,14 +239,15 @@ Scheduled consolidation is argued down there (the improve pipeline already
 injects the amended conventions); vocabulary governance and the typed
 provenance channel remain genuinely open.
 
-- **A thin HARD floor.** `akm lint` already runs a deterministic `missing-ref`
-  check over body text and `refs:` frontmatter for non-wiki markdown assets; the
-  gap is precisely the `xrefs:`/`supersededBy:`/`contradictedBy:` frontmatter
-  channels the conventions mandate. Orphan and uncited-source checks for non-wiki
-  assets are argued down (orphanhood is the sanctioned normal state under
-  discretionary linking; uncited-source is undecidable without knowing whether an
-  asset is derived). Specced as SPEC-1 in
-  [stash-conventions-code-spec.md](stash-conventions-code-spec.md).
+- **A thin HARD floor.** `akm lint` runs a deterministic `missing-ref` check
+  over body text and `refs:` frontmatter for non-wiki markdown assets; the gap
+  was precisely the `xrefs:`/`supersededBy:`/`contradictedBy:` frontmatter
+  channels the conventions mandate — closed by SPEC-1 in
+  [stash-conventions-code-spec.md](stash-conventions-code-spec.md) (implemented:
+  the same check now scans those keys too). Orphan and uncited-source checks for
+  non-wiki assets are argued down (orphanhood is the sanctioned normal state
+  under discretionary linking; uncited-source is undecidable without knowing
+  whether an asset is derived).
 - **Kill the tag footgun in code.** Always merge path segments into `tags` rather
   than only when `tags` is empty, removing the explicit-tags trap.
 - **Vocabulary governance.** How an agent proposes a `fact:conventions/domains`

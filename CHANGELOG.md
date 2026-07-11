@@ -117,6 +117,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`fable` built-in model alias** — resolves to `claude-fable-5`
   (`opencode/claude-fable-5` on opencode); recommended resolution target for
   the `deep` workflow model tier.
+- **`akm lint` now checks the frontmatter xref channels for broken refs.**
+  The existing `missing-ref` check additionally scans the `xrefs:`,
+  `supersededBy:`, and `contradictedBy:` frontmatter keys of non-wiki markdown
+  assets (memories, knowledge, lessons, facts, agents, commands, skills,
+  workflows) — the channels the stash back-linking conventions route
+  provenance and correction links through, and previously the only ref channel
+  with zero checking. Dangling refs are flagged with a detail naming the key
+  (`missing ref: <ref> (frontmatter <key>; resolved to <relPath>)`). The
+  `refs: []` body-scan carve-out does not suppress the new pass; `lint_skip:
+  [missing-ref]` suppresses both; non-ref values (URLs, `raw/<slug>`,
+  `<placeholder>` templates, shell vars) are ignored; refs resolving in a
+  configured extra stash root stay clean. **Note for `--fail-on-flagged` CI
+  users:** stashes with already-dangling xrefs (e.g. from past renames) will
+  gain new `missing-ref` findings on upgrade — fix the refs or add
+  `lint_skip: [missing-ref]` per file. `sources:`, `source_refs:`, and
+  `evidenceSources:` are deliberately not checked (wiki `sources:` is covered
+  by `akm wiki lint`; the latter two legitimately point at merged-away
+  assets).
 
 ### Fixed
 
