@@ -27,10 +27,14 @@ load-bearing facts, each verified in code:
 
 1. **Path becomes the ref.** A file's subpath under its type dir is part of its
    ref name — `memories/projectA/auth-tip.md` → `memory:projectA/auth-tip`. Works
-   for every type. There is NO ref-prefix query syntax: `sanitizeFtsQuery` strips
-   `:` and `/` and `entry_type` is not an FTS column, so
-   `akm search "memory:projectA/"` returns nothing useful (empirically tested).
-   The working idiom is `akm search "projectA" --type memory`. The path is
+   for every type. A ref-prefix query syntax exists since SPEC-4 landed
+   (amended 2026-07-11): `akm search "memory:projectA/"` enumerates exactly
+   that subtree (typed, recursive, `/`-boundary exact) and a bare `memory:`
+   enumerates the whole type. At review time the idiom was false —
+   `sanitizeFtsQuery` strips `:` and `/` and `entry_type` is not an FTS
+   column, so the query degenerated to token noise (empirically tested; see
+   the Review round). `akm search "projectA" --type memory` remains the
+   token-match alternative. The path is
    therefore the one facet you cannot express twice and cannot change without
    breaking the ref (and every inbound reference to it).
 2. **Retrieval is search, not browse — and folders are highly visible to the
@@ -213,7 +217,12 @@ corrections, each code-verified or empirically tested:
 - **The ref-prefix search idiom was false.** `akm search "<type>:<prefix>/"`
   never worked (`sanitizeFtsQuery` strips `:` and `/`; `entry_type` is not an
   FTS column) — live-tested at zero hits. All convention text now uses
-  `akm search "<slug>" --type <type>`.
+  `akm search "<slug>" --type <type>`. *Amendment (2026-07-11): SPEC-4 has
+  since made the idiom real — `<type>:<prefix>/` (and bare `<type>:`) queries
+  now translate to a typed subtree enumeration (`parseRefPrefixQuery`). The
+  finding was correct at review time; the shipped convention facts keep the
+  `--type` idiom for now (re-adoption deferred one release — see open
+  questions).*
 - **"Folders are invisible to the ranker" was backwards.** Subpath tokens are
   indexed in the FTS `name` column at the highest weight and earn the cwd
   project-context boost; the claimed "indexing-confidence bump" does not exist.
@@ -238,10 +247,12 @@ corrections, each code-verified or empirically tested:
 ## Open questions / future work
 
 Items with an implementation path are specced in
-[stash-conventions-code-spec.md](stash-conventions-code-spec.md): ref-prefix
-filter → SPEC-4, convention-fact query crowding → SPEC-6, body-orientation
-indexing → SPEC-8 (the tag footgun's SPEC-2 and correction demotion's SPEC-5
-have landed — see fact 6 and the demotion bullet below). Scheduled
+[stash-conventions-code-spec.md](stash-conventions-code-spec.md):
+convention-fact query crowding → SPEC-6, body-orientation
+indexing → SPEC-8 (the tag footgun's SPEC-2, correction demotion's SPEC-5,
+and the ref-prefix filter's SPEC-4
+have landed — see facts 1 and 6 and the demotion and ref-prefix bullets
+below). Scheduled
 consolidation is argued down there
 (the improve pipeline already injects the amended conventions); vocabulary
 governance and the typed provenance channel remain genuinely open.
@@ -272,9 +283,16 @@ governance and the typed provenance channel remain genuinely open.
   `entry.scope` (user/agent/run/channel) / `scopeKey` concepts in code — the
   convention facts deliberately say "project/client slug" and "partition axis" to
   avoid cross-wiring; keep it that way.
-- **Ref-prefix filter in code.** Detect `type:prefix/`-shaped queries in search
-  and translate to `entry_type` + `entry_key LIKE`, making the natural idiom
-  real (today it returns nothing).
+- **Ref-prefix filter in code.** Closed by SPEC-4 in
+  [stash-conventions-code-spec.md](stash-conventions-code-spec.md)
+  (implemented: `parseRefPrefixQuery` detects `<type>:<prefix>/` — and bare
+  `<type>:` — queries on the untyped search path and translates them to a
+  typed index enumeration with name-prefix narrowing; hits carry the fixed
+  browse score 1, an explicit `--type` wins over the parsed type, and the
+  in-memory prefix filter leaves an `entry_key LIKE` SQL push-down as a later
+  optimization). Whether the skeleton convention facts should re-adopt the
+  idiom over `akm search "<slug>" --type <type>` stays deferred one release so
+  older CLI versions aren't taught a query shape they don't support.
 - **Index self-situating body text.** Surface the first body paragraph into an
   indexed field (or embed body openings) so orientation prose pays retrieval
   rent.

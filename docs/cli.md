@@ -336,7 +336,25 @@ akm search "deploy" --filter user=alice --filter agent=claude
 
 # Include proposal-queue entries (v1 spec §4.2):
 akm search "deploy" --include-proposed
+
+# Ref-prefix enumeration — list a typed subtree instead of keyword-matching:
+akm search "memory:projectA/"
+akm search "knowledge:"
 ```
+
+A query shaped like a **ref prefix** — `<type>:<prefix>/` with a trailing
+slash, or a bare `<type>:` — is not keyword-matched. It enumerates the type's
+entries whose names start with the prefix: `akm search "memory:projectA/"`
+lists exactly the `projectA/` subtree of memories (recursive, `/`-boundary
+exact — a sibling `projectAlpha/` scope does not leak), and `akm search
+"session:"` lists every session (the parsed type is explicit intent, so the
+default `session` exclusion — an untyped-path policy — does not apply). Hits
+carry the fixed browse score `1` in deterministic listing order, matching the
+empty-query enumeration contract, and compose with `--limit`, `--belief`,
+`--filter`, and named `--source` narrowing. A full ref without the trailing
+slash (`memory:projectA/auth-tip`) stays an ordinary keyword search — use
+`akm show` to resolve a single ref. An explicit `--type` flag wins over the
+type parsed from the query.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |

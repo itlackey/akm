@@ -226,8 +226,14 @@ knowledge/clientX/api-guide.md   →  knowledge:clientX/api-guide
 This works for **any** asset type. The subpath segments become part of the
 indexed name, so `akm search "projectA" --type memory` narrows results to
 that subtree, and `akm show memory:projectA/auth-tip` resolves the full ref.
-(There is no ref-prefix query syntax — `akm search "memory:projectA/"` does
-not filter.)
+There is also a **ref-prefix query syntax**: `akm search "memory:projectA/"`
+enumerates exactly that subtree (typed, recursive, `/`-boundary exact — a
+sibling `projectAlpha/` scope does not leak), and a bare `akm search
+"memory:"` lists the whole type. Ref-prefix hits are a deterministic listing
+with the fixed browse score `1`, not a relevance ranking. A full ref without
+the trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword
+search — resolving a single ref is `akm show`'s job — and an explicit
+`--type` flag always wins over the type parsed from the query.
 
 **Recommendation:** use physical subdirectories now to organize multi-project
 or multi-team stashes. They sort cleanly on disk and require no configuration.

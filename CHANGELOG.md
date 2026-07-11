@@ -186,6 +186,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   parser. On a git write target the demotion is ordered before the
   batch-at-boundary commit, so the correction and the demoted old asset land
   in one commit.
+- **Ref-prefix search queries — `akm search "<type>:<prefix>/"` now enumerates
+  that subtree.** A query shaped like a ref prefix (trailing slash required:
+  `memory:projectA/`; a bare `memory:` lists the whole type) translates to a
+  typed index enumeration narrowed to entry names under the prefix, instead of
+  degenerating into the AND-token FTS query its sanitized form used to produce
+  (`"memory projectA"` — noise, since `entry_type` is not an FTS column). The
+  listing is recursive and `/`-boundary exact (`projectA/` cannot leak a
+  sibling `projectAlpha/…` scope), matches names case-insensitively (the CLI
+  lowercases queries; on-disk scope directories may carry mixed case), and
+  composes with `--limit`, `--belief`, `--filter`, and named `--source`
+  narrowing exactly like the existing empty-query enumeration — hits carry the
+  fixed browse score `1` in deterministic listing order, not a relevance
+  ranking. The parsed type is explicit intent: a bare `session:` enumerates
+  sessions just like `--type session` (the default session exclusion is an
+  untyped-path policy), while an explicit `--type` flag always wins over the
+  type parsed from the query (the branch fires only on untyped searches). A
+  full ref without the trailing slash (`memory:projectA/auth-tip`) stays an
+  ordinary keyword search — resolving a single ref is `akm show`'s job.
+  **Stable-surface note:** `akm search` is Stable; this changes results for a
+  query shape that previously returned noise or nothing. A user literally
+  keyword-searching for the string `memory:x/` loses the old fuzzy token
+  behavior — accepted as negligible.
 
 ### Changed
 

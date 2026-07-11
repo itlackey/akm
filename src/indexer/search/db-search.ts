@@ -19,6 +19,7 @@ import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
+import { getAssetTypes } from "../../core/asset/asset-spec";
 import type { AkmAssetType } from "../../core/common";
 import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
@@ -48,6 +49,7 @@ import {
 } from "../graph/graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "../passes/metadata";
 import { resolveProjectContext } from "../walk/project-context";
+import { parseRefPrefixQuery } from "./fts-query";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -308,61 +310,54 @@ async function searchDatabase(
   const defaultExcludes =
     searchType === "any" && !includeExcludedTypes ? (config.search?.defaultExcludeTypes ?? ["session"]) : [];
 
+  // SPEC-4 — ref-prefix queries (`<type>:` / `<type>:<prefix>/`) translate to
+  // a typed enumeration narrowed by name prefix, instead of degenerating into
+  // the AND-token FTS query their sanitized form would produce ("memory
+  // projecta" — noise). The branch fires only on the untyped path: an explicit
+  // `--type` flag expresses stronger intent and wins. The PARSED type is
+  // itself explicit intent, so `defaultExcludeTypes` does not apply — a bare
+  // `session:` enumerates sessions exactly like `--type session` does.
+  const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, getAssetTypes()) : null;
+  if (refPrefix) {
+    return enumerateEntries({
+      db,
+      query,
+      typeFilter: refPrefix.type,
+      excludeTypes: [],
+      namePrefix: refPrefix.namePrefix,
+      limit,
+      stashDir,
+      allSourceDirs,
+      sources,
+      config,
+      rendererRegistry,
+      filters,
+      includeProposed,
+      beliefFilter,
+      restrictToSources,
+    });
+  }
+
   // Empty queries — including ones that sanitize down to no searchable FTS
   // tokens such as "." — should enumerate matching entries instead of
   // returning an empty result set from FTS.
   if (!hasSearchableTokens) {
-    const typeFilter = searchType === "any" ? undefined : searchType;
-    const allEntries = getAllEntries(db, typeFilter, defaultExcludes);
-    // Deduplicate by file path — multiple entries can share the same file
-    const seenFilePaths = new Set<string>();
-    const uniqueEntries = allEntries.filter((ie) => {
-      if (seenFilePaths.has(ie.filePath)) return false;
-      seenFilePaths.add(ie.filePath);
-      return true;
+    return enumerateEntries({
+      db,
+      query,
+      typeFilter: searchType === "any" ? undefined : searchType,
+      excludeTypes: defaultExcludes,
+      limit,
+      stashDir,
+      allSourceDirs,
+      sources,
+      config,
+      rendererRegistry,
+      filters,
+      includeProposed,
+      beliefFilter,
+      restrictToSources,
     });
-    // Source filter: when the caller narrowed `sources` via `--source <name>`,
-    // drop entries whose filePath does not live under any of the requested
-    // sources. The FTS index spans every configured source, so without this
-    // filter a narrowed --source request would still leak results.
-    const sourceFiltered = restrictToSources
-      ? uniqueEntries.filter((ie) => findSourceForPath(ie.filePath, sources) !== undefined)
-      : uniqueEntries;
-    // Scope filter: drop entries whose stored scope does not satisfy every
-    // supplied scope key. Filtering happens BEFORE the limit slice so a
-    // restrictive filter still returns up to `limit` results.
-    const scopeFiltered = filters
-      ? sourceFiltered.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
-      : sourceFiltered;
-    // Proposed-quality filter (v1 spec §4.2): exclude entries with
-    // `quality: "proposed"` unless the caller explicitly opts in.
-    const qualityFiltered = includeProposed
-      ? scopeFiltered
-      : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
-    // 03-R3: derived twins inherit their base's demoting belief state here too,
-    // so the belief FILTER (and the reported hit state) stays consistent on the
-    // enumerate/browse path — not only on the FTS-scored path below.
-    inheritDerivedTwinBeliefStates(db, qualityFiltered);
-    const beliefFiltered = qualityFiltered.filter((ie) => matchBeliefFilter(ie.entry.beliefState, beliefFilter));
-    const selected = beliefFiltered.slice(0, limit);
-    const hits = await Promise.all(
-      selected.map((ie) =>
-        buildDbHit({
-          entry: ie.entry,
-          path: ie.filePath,
-          score: 1,
-          query,
-          rankingMode: "fts",
-          defaultStashDir: stashDir,
-          allSourceDirs,
-          sources,
-          config,
-          rendererRegistry,
-          db,
-        }),
-      ),
-    );
-    return { hits };
   }
 
   // Start the async embedding request without awaiting, then run FTS
@@ -564,6 +559,101 @@ async function searchDatabase(
   );
 
   return { embedMs, rankMs, hits };
+}
+
+// ── Enumeration (browse) path ────────────────────────────────────────────────
+
+/**
+ * Enumerate index entries without FTS scoring — the browse path shared by
+ * empty/unsearchable queries and SPEC-4 ref-prefix queries (`<type>:` /
+ * `<type>:<prefix>/`). Applies the same post-ranking filters as the scored
+ * path (source narrowing, scope, proposed-quality, belief) before the limit
+ * slice. Hits carry the fixed browse score 1 in insertion order — this is a
+ * deterministic listing, not a relevance ranking.
+ */
+async function enumerateEntries(opts: {
+  db: Database;
+  query: string;
+  /** Restrict enumeration to a single asset type; undefined enumerates all. */
+  typeFilter?: string;
+  /** Types hidden from untyped enumeration (config `defaultExcludeTypes`). */
+  excludeTypes: string[];
+  /**
+   * SPEC-4 name-prefix narrowing (e.g. `"projecta/"`, trailing slash retained
+   * for exact `/`-boundary subtree semantics). Compared case-insensitively:
+   * the command layer lowercases queries while on-disk directory names — and
+   * therefore entry names — may carry mixed case. Empty/undefined keeps every
+   * entry of the type.
+   */
+  namePrefix?: string;
+  limit: number;
+  stashDir: string;
+  allSourceDirs: string[];
+  sources: SearchSource[];
+  config: AkmConfig;
+  rendererRegistry: RendererRegistry;
+  filters?: StashEntryScope;
+  includeProposed: boolean;
+  beliefFilter: BeliefFilterMode;
+  restrictToSources: boolean;
+}): Promise<{ hits: SourceSearchHit[] }> {
+  const { db, query, sources, config, rendererRegistry, filters, beliefFilter } = opts;
+  const allEntries = getAllEntries(db, opts.typeFilter, opts.excludeTypes);
+  // SPEC-4: narrow to the requested subtree. `startsWith` on the full
+  // slash-retaining prefix is exact — "projecta/" cannot match a sibling
+  // "projectalpha/…" scope.
+  const namePrefix = opts.namePrefix?.toLowerCase() ?? "";
+  const prefixFiltered =
+    namePrefix.length > 0 ? allEntries.filter((ie) => ie.entry.name.toLowerCase().startsWith(namePrefix)) : allEntries;
+  // Deduplicate by file path — multiple entries can share the same file
+  const seenFilePaths = new Set<string>();
+  const uniqueEntries = prefixFiltered.filter((ie) => {
+    if (seenFilePaths.has(ie.filePath)) return false;
+    seenFilePaths.add(ie.filePath);
+    return true;
+  });
+  // Source filter: when the caller narrowed `sources` via `--source <name>`,
+  // drop entries whose filePath does not live under any of the requested
+  // sources. The FTS index spans every configured source, so without this
+  // filter a narrowed --source request would still leak results.
+  const sourceFiltered = opts.restrictToSources
+    ? uniqueEntries.filter((ie) => findSourceForPath(ie.filePath, sources) !== undefined)
+    : uniqueEntries;
+  // Scope filter: drop entries whose stored scope does not satisfy every
+  // supplied scope key. Filtering happens BEFORE the limit slice so a
+  // restrictive filter still returns up to `limit` results.
+  const scopeFiltered = filters
+    ? sourceFiltered.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
+    : sourceFiltered;
+  // Proposed-quality filter (v1 spec §4.2): exclude entries with
+  // `quality: "proposed"` unless the caller explicitly opts in.
+  const qualityFiltered = opts.includeProposed
+    ? scopeFiltered
+    : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
+  // 03-R3: derived twins inherit their base's demoting belief state here too,
+  // so the belief FILTER (and the reported hit state) stays consistent on the
+  // enumerate/browse path — not only on the FTS-scored path.
+  inheritDerivedTwinBeliefStates(db, qualityFiltered);
+  const beliefFiltered = qualityFiltered.filter((ie) => matchBeliefFilter(ie.entry.beliefState, beliefFilter));
+  const selected = beliefFiltered.slice(0, opts.limit);
+  const hits = await Promise.all(
+    selected.map((ie) =>
+      buildDbHit({
+        entry: ie.entry,
+        path: ie.filePath,
+        score: 1,
+        query,
+        rankingMode: "fts",
+        defaultStashDir: opts.stashDir,
+        allSourceDirs: opts.allSourceDirs,
+        sources,
+        config,
+        rendererRegistry,
+        db,
+      }),
+    ),
+  );
+  return { hits };
 }
 
 /**
