@@ -135,15 +135,22 @@ const SAMPLE_LLM = {
 };
 
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
-  return {
+  const base: AkmConfig = {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    profiles: { llm: { default: { ...SAMPLE_LLM } } },
-    defaults: { llm: "default" },
+    engines: { test: { kind: "llm", ...SAMPLE_LLM } },
+    defaults: { engine: "test", llmEngine: "test" },
     // batchSize 1 forces the per-asset path so each body is observable
     // distinctly in `extractedBodies`.
-    index: { graph: { graphExtractionBatchSize: 1 } },
+    index: { defaults: { engine: "test" }, graph: { graphExtractionBatchSize: 1 } },
+  };
+  return {
+    ...base,
     ...overrides,
-  } as AkmConfig;
+    engines: { ...base.engines, ...overrides?.engines },
+    defaults: { ...base.defaults, ...overrides?.defaults },
+    index: { ...base.index, ...overrides?.index },
+  };
 }
 
 function dbPath(): string {
