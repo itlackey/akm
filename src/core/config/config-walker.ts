@@ -132,7 +132,7 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
  *
  * Throws {@link UsageError} on:
  *   - unknown path
- *   - apiKey paths (#454)
+ *   - invalid apiKey paths
  *   - coercion failure
  */
 export function configSet(config: Record<string, unknown>, dotted: string, raw: string): Record<string, unknown> {
@@ -227,10 +227,8 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
 // ── apiKey rejection (#454) ─────────────────────────────────────────────────
 
 /**
- * Reject any attempt to persist an apiKey via `akm config set`. Matches:
- *   - `llm.apiKey` (legacy alias mapped to default LLM profile)
- *   - `embedding.apiKey`
- *   - `profiles.llm.<name>.apiKey`
+ * Embedding credentials are never persisted. Engine credentials are symbolic
+ * configuration and are validated by the engine schema below.
  */
 function rejectApiKeyPath(path: Path, dotted: string): void {
   if (path[0] === "engines" && path[2] === "apiKey") return;
@@ -264,10 +262,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function recipeForApiKey(path: Path, _dotted: string): string {
   if (path[0] === "embedding") return "AKM_EMBED_API_KEY";
-  if (path[0] === "llm") return "AKM_LLM_API_KEY";
-  if (path[0] === "profiles" && path[1] === "llm" && typeof path[2] === "string") {
-    const upper = path[2].toUpperCase().replace(/-/g, "_");
-    return `AKM_PROFILE_${upper}_API_KEY (or AKM_LLM_API_KEY for the default profile)`;
+  if (path[0] === "engines" && typeof path[1] === "string") {
+    return `AKM_ENGINE_${path[1].toUpperCase().replaceAll("-", "_")}_API_KEY`;
   }
   return "AKM_LLM_API_KEY / AKM_EMBED_API_KEY";
 }
@@ -391,7 +387,7 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
 
 export function unknownKeyHint(_attempted: string): string {
   const keys = listTopLevelConfigKeys();
-  return `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, profiles.llm.<name>.model).`;
+  return `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, engines.<name>.model).`;
 }
 
 // ── Re-exports for the CLI ──────────────────────────────────────────────────

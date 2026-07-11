@@ -469,9 +469,9 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   const llmConfig = resolveIndexPassLLM("graph", config);
   if (!llmConfig) {
     const reason =
-      getIndexPassConfig(config.index, "graph")?.llm === false
-        ? "index.graph.llm is false"
-        : "no default LLM profile is configured";
+      getIndexPassConfig(config.index, "graph")?.enabled === false
+        ? "index.graph.enabled is false"
+        : "no LLM engine is configured";
     warnVerbose(`graph extraction: skipped because ${reason}.`);
     return { ...EMPTY_RESULT };
   }
