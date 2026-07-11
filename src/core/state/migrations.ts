@@ -781,8 +781,7 @@ const MIGRATIONS: Migration[] = [
     id: "017-improve-run-strategy",
     up: `
       ALTER TABLE improve_runs ADD COLUMN strategy TEXT;
-      CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started
-        ON improve_runs(strategy, started_at);
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
     `,
   },
 ];

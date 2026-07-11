@@ -119,10 +119,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     },
     {
       "name": "idx_improve_runs_strategy_started",
-      "sql": 
-"CREATE INDEX idx_improve_runs_strategy_started
-        ON improve_runs(strategy, started_at)"
-,
+      "sql": "CREATE INDEX idx_improve_runs_strategy_started ON improve_runs(strategy, started_at)",
       "type": "index",
     },
     {
