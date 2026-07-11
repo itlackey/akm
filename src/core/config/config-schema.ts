@@ -713,6 +713,13 @@ export const SourceConfigEntrySchema = z
   })
   .passthrough()
   .superRefine((entry, ctx) => {
+    if (!["filesystem", "git", "website", "npm"].includes(entry.type)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["type"],
+        message: `unsupported source type "${entry.type}"; expected filesystem, git, website, or npm`,
+      });
+    }
     if (entry.writable === true && (entry.type === "website" || entry.type === "npm")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

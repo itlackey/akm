@@ -256,6 +256,7 @@ describe("GitSourceProvider", () => {
     fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
 
     saveConfig({
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
       sources: [{ type: "git", url: stashUrl, name: "context-hub" }],
     });

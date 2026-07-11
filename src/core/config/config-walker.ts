@@ -110,7 +110,9 @@ function resolveSchemaAt(path: Path): z.ZodTypeAny | undefined {
       return undefined;
     }
   }
-  return unwrap(schema);
+  // Preserve leaf refinements/transforms for validation. Traversal unwraps at
+  // the start of each loop iteration, while coercion unwraps independently.
+  return schema;
 }
 
 /**

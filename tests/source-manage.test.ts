@@ -137,12 +137,10 @@ describe("addStash", () => {
     expect(result.message).toContain("already configured");
   });
 
-  test("supports custom provider types", () => {
+  test("rejects unsupported custom provider types", () => {
     const url = "https://custom.example.com";
-    const result = addStash({ target: url, providerType: "custom-provider" });
-
-    expect(result.added).toBe(true);
-    expect(result.entry?.type).toBe("custom-provider");
+    expect(() => addStash({ target: url, providerType: "custom-provider" })).toThrow(/unsupported source type/);
+    expect(loadConfig().sources ?? []).toEqual([]);
   });
 
   test("adds an http:// URL source", () => {
@@ -157,7 +155,7 @@ describe("addStash", () => {
     const url = "https://shared.example.com";
     addStash({ target: url, providerType: "website" });
     // Same URL but different provider — deduplicates by URL regardless of type
-    const result = addStash({ target: url, providerType: "custom" });
+    const result = addStash({ target: url, providerType: "git" });
     expect(result.added).toBe(false);
   });
 
@@ -181,13 +179,13 @@ describe("addStash", () => {
     const fsPath = createTmpDir("akm-multi-fs-");
     addStash({ target: fsPath });
     addStash({ target: "https://example1.example.com", providerType: "website" });
-    addStash({ target: "https://custom.example.com", providerType: "custom-provider" });
+    addStash({ target: "https://git.example.com/repo.git", providerType: "git" });
 
     const config = loadConfig();
     expect(config.sources).toHaveLength(3);
     expect(config.sources?.[0].type).toBe("filesystem");
     expect(config.sources?.[1].type).toBe("website");
-    expect(config.sources?.[2].type).toBe("custom-provider");
+    expect(config.sources?.[2].type).toBe("git");
   });
 
   test("preserves existing sources when adding", () => {
@@ -351,7 +349,7 @@ describe("listStashes", () => {
     const fsPath = createTmpDir("akm-list-mixed-");
     addStash({ target: fsPath });
     addStash({ target: "https://example.com", providerType: "website" });
-    addStash({ target: "https://custom.example.com", providerType: "custom" });
+    addStash({ target: "https://git.example.com/repo.git", providerType: "git" });
 
     const result = listStashes();
     expect(result.sources).toHaveLength(3);
@@ -392,24 +390,24 @@ describe("round-trip integration", () => {
     expect(afterRemove.sources.some((s) => s.url === url)).toBe(false);
   });
 
-  test("add then list then remove custom provider source", () => {
-    const url = "https://custom-roundtrip.example.com";
+  test("add then list then remove git provider source", () => {
+    const url = "https://git-roundtrip.example.com/repo.git";
     addStash({
       target: url,
-      providerType: "my-custom",
-      name: "custom-rt",
+      providerType: "git",
+      name: "git-rt",
       options: { key: "value" },
     });
 
     const listed = listStashes();
-    const entry = listed.sources.find((s) => s.name === "custom-rt");
+    const entry = listed.sources.find((s) => s.name === "git-rt");
     expect(entry).toBeDefined();
-    expect(entry?.type).toBe("my-custom");
+    expect(entry?.type).toBe("git");
     expect(entry?.options).toEqual({ key: "value" });
 
-    removeStash("custom-rt");
+    removeStash("git-rt");
     const afterRemove = listStashes();
-    expect(afterRemove.sources.some((s) => s.name === "custom-rt")).toBe(false);
+    expect(afterRemove.sources.some((s) => s.name === "git-rt")).toBe(false);
   });
 
   test("multiple adds and removes maintain order and integrity", () => {

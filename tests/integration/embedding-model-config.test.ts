@@ -279,6 +279,7 @@ describe("config file parsing for localModel", () => {
     const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
@@ -304,6 +305,7 @@ describe("config file parsing for localModel", () => {
     const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         localModel: "Xenova/bge-small-en-v1.5",
@@ -347,6 +349,7 @@ describe("parseEmbeddingConfig edge cases", () => {
     const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
@@ -374,6 +377,7 @@ describe("parseEmbeddingConfig edge cases", () => {
     const { loadConfig } = await import("../../src/core/config/config");
 
     const configData = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
