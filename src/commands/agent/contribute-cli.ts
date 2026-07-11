@@ -193,7 +193,7 @@ export const proposeCommand = defineCommand({
     },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
-    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    engine: { type: "string", description: "Engine to use (defaults to defaults.engine)" },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
   async run({ args }) {
@@ -222,7 +222,7 @@ export const proposeCommand = defineCommand({
         type: String(args.type),
         name: proposedName,
         task: taskText,
-        profile: getStringArg(args, "profile"),
+        engine: getStringArg(args, "engine"),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("propose", result);

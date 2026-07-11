@@ -220,38 +220,21 @@ export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | un
   return resolved ? materializeLlmConnection(resolved) : undefined;
 }
 
-// Drop the string index signature that `.passthrough()` adds to the processes
-// object, keeping only the explicitly-named process keys — so the accessor's
-// key argument is the concrete union (`consolidate` | `extract` | …) rather
-// than being widened to `string`.
 type NamedKeys<T> = keyof {
   [K in keyof T as string extends K ? never : number extends K ? never : K]: unknown;
 };
-
-/** Name of an improve process section under `processes` (`consolidate`, `extract`, …). */
 export type ImproveProcessName = NamedKeys<NonNullable<ImproveProfileConfig["processes"]>>;
 
 /**
- * Resolve the per-process config section for an improve process,
- * centralizing the deeply-nested lookup
- * `profile?.processes?.<name>` that was previously copy-pasted across the
- * improve command family (20+ call sites).
- *
- * When an `activeProfile` is supplied (the profile resolved for the current
- * `akm improve --profile <name>` run), its per-process override wins; otherwise
- * — and as a fallback when the active profile does not define the section — the
- * lookup falls back to the `"default"` improve profile from the on-disk config.
- * Callers that have not yet threaded the active profile pass only `config` and
- * get the historical default-profile behavior unchanged.
+ * Transitional internal accessor. It deliberately never consults a configured
+ * default strategy; callers must pass their already selected strategy.
  */
 export function getImproveProcessConfig(
-  config: AkmConfig,
+  _config: AkmConfig,
   processName: ImproveProcessName,
-  activeProfile?: ImproveProfileConfig,
+  selected?: ImproveProfileConfig,
 ): ImproveProcessConfig | undefined {
-  const fromActiveProfile = activeProfile?.processes?.[processName];
-  if (fromActiveProfile !== undefined) return fromActiveProfile;
-  return config.profiles?.improve?.default?.processes?.[processName];
+  return selected?.processes?.[processName];
 }
 
 /**
@@ -351,28 +334,18 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
     sanitized.embedding = { ...config.embedding };
   }
 
-  if (config.profiles?.llm) {
-    const llmProfiles: Record<string, unknown> = {};
-    for (const [name, profile] of Object.entries(config.profiles.llm)) {
-      if (profile.apiKey !== undefined) {
-        if (isEnvReference(profile.apiKey)) {
-          llmProfiles[name] = { ...profile };
-        } else {
-          const { apiKey: _drop, ...rest } = profile;
-          llmProfiles[name] = rest;
-          if (profile.apiKey) {
-            const envVar = `AKM_PROFILE_${name.toUpperCase().replace(/-/g, "_")}_API_KEY`;
-            stripped.push(`profiles.llm.${name}.apiKey (set ${envVar} to provide at runtime)`);
-          }
-        }
-      } else {
-        llmProfiles[name] = { ...profile };
+  if (config.engines) {
+    const engines: Record<string, unknown> = {};
+    for (const [name, engine] of Object.entries(config.engines)) {
+      if (engine.kind !== "llm" || engine.apiKey === undefined || isEnvReference(engine.apiKey)) {
+        engines[name] = { ...engine };
+        continue;
       }
+      const { apiKey: _drop, ...rest } = engine;
+      engines[name] = rest;
+      if (engine.apiKey) stripped.push(`engines.${name}.apiKey`);
     }
-    sanitized.profiles = {
-      ...((sanitized.profiles as Record<string, unknown> | undefined) ?? {}),
-      llm: llmProfiles,
-    };
+    sanitized.engines = engines;
   }
 
   if (stripped.length > 0) {

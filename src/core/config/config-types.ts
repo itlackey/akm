@@ -68,7 +68,10 @@ export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentP
  * graphExtraction; `minClusterSize`/`relatednessSource` = recombine;
  * `minRecurrence`/`emitAs` = procedural).
  */
-export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
+export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema> & {
+  /** @deprecated Compile-time aid for removed pre-0.9 tests; runtime rejects it. */
+  llm?: z.infer<typeof import("./config-schema").LlmInvocationOverridesSchema> | boolean;
+};
 
 /**
  * A named improve profile (`profiles.improve.<name>`). Holds the per-process
@@ -136,14 +139,17 @@ export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfig
  * the default LLM profile; setting `llm: false` opts a single pass out. Read
  * pass-named entries via `getIndexPassConfig()`.
  */
-export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
+export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema> & {
+  /** @deprecated Compile-time aid for removed pre-0.9 tests; runtime rejects it. */
+  llm?: z.infer<typeof import("./config-schema").LlmInvocationOverridesSchema> | boolean;
+};
 
 /**
  * Index-time configuration. Combines well-known feature sections
  * (`metadataEnhance`; `stalenessDetection` is retired but tolerated) with
  * per-pass overrides keyed by pass name.
  */
-export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSchema>;
+export type IndexConfig = Record<string, IndexPassConfig | { enabled?: boolean } | undefined>;
 
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
@@ -155,4 +161,13 @@ export type WorkflowConfig = z.infer<typeof import("./config-schema").WorkflowCo
  * The full on-disk config shape. This IS the Zod schema's output type — there
  * is no parallel hand-written interface to keep in sync.
  */
-export type AkmConfig = import("./config-schema").AkmConfigParsed;
+export type AkmConfig = import("./config-schema").AkmConfigParsed & {
+  /** @deprecated Internal migration aid. Persisted configs reject this key. */
+  profiles?: z.infer<typeof import("./config-schema").ProfilesSchema>;
+  /** @deprecated Internal migration aid. Persisted configs reject these keys. */
+  defaults?: import("./config-schema").AkmConfigParsed["defaults"] & {
+    llm?: string;
+    agent?: string;
+    improve?: string;
+  };
+};

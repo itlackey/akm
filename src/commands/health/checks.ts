@@ -5,8 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { loadConfig } from "../../core/config/config";
 import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
-import type { AgentProfile } from "../../integrations/agent";
-import { detectAgentCliProfiles, requireAgentProfile } from "../../integrations/agent";
+import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import {
   type HealthCheckResult,
   type ImproveHealthMetrics,
@@ -75,105 +74,84 @@ export interface HealthCheck {
  */
 export function runAgentProbe(): HealthCheckResult {
   const config = loadConfig();
-
-  // v2: check profiles.agent first
-  if (config.profiles?.agent) {
-    const defaultName = config.defaults?.agent;
-    const profileCount = Object.keys(config.profiles.agent).length;
-    if (profileCount === 0) {
-      return {
-        name: "agent-profile",
-        kind: "deterministic",
-        status: "unknown",
-        confidence: "high",
-        message: "No agent profiles configured in profiles.agent.",
-      };
-    }
-    const profileName = defaultName ?? Object.keys(config.profiles.agent)[0];
-    const profile = config.profiles.agent[profileName];
+  const engineName = config.defaults?.engine;
+  if (!engineName) {
     return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "pass",
-      confidence: "high",
-      message: `v2 agent profile "${profileName}" configured (platform: ${profile?.platform ?? "unknown"}).`,
-      evidence: { profile: profileName, platform: profile?.platform, profileCount },
-    };
-  }
-
-  if (!config.profiles?.agent && !config.defaults?.agent) {
-    return {
-      name: "agent-profile",
+      name: "default-agent-engine",
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
-      message: "No agent config present.",
+      message: "No default engine is configured.",
     };
   }
-
-  let profile: AgentProfile;
   try {
-    profile = requireAgentProfile(config);
+    const runner = resolveEngine(engineName, config);
+    if (runner.kind === "llm") {
+      return {
+        name: "default-agent-engine",
+        kind: "deterministic",
+        status: "unknown",
+        confidence: "high",
+        message: `Default engine "${engineName}" is an LLM; no default agent engine is selected.`,
+        evidence: { engine: engineName, platform: null, runtimeKind: "llm", model: runner.connection.model },
+      };
+    }
+    const profile = runner.profile;
+    if (runner.kind === "sdk") {
+      return {
+        name: "default-agent-engine",
+        kind: "deterministic",
+        status: profile.model ? "pass" : "warn",
+        confidence: "high",
+        message: profile.model
+          ? `SDK engine "${engineName}" is configured.`
+          : `SDK engine "${engineName}" has no explicit model.`,
+        evidence: {
+          engine: engineName,
+          platform: profile.platform ?? null,
+          runtimeKind: "sdk",
+          model: profile.model ?? null,
+        },
+      };
+    }
+    const version = spawnSync(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
+    if ((version.status ?? 1) !== 0) {
+      return {
+        name: "default-agent-engine",
+        kind: "deterministic",
+        status: "warn",
+        confidence: "medium",
+        message: `Agent engine "${engineName}" was found but \`--version\` failed.`,
+        evidence: {
+          engine: engineName,
+          platform: profile.platform ?? null,
+          runtimeKind: "agent",
+          model: profile.model ?? null,
+        },
+      };
+    }
+    return {
+      name: "default-agent-engine",
+      kind: "deterministic",
+      status: "pass",
+      confidence: "high",
+      message: `Agent engine "${engineName}" is available.`,
+      evidence: {
+        engine: engineName,
+        platform: profile.platform ?? null,
+        runtimeKind: "agent",
+        model: profile.model ?? null,
+      },
+    };
   } catch (error) {
     return {
-      name: "agent-profile",
+      name: "default-agent-engine",
       kind: "deterministic",
       status: "warn",
       confidence: "high",
       message: error instanceof Error ? error.message : String(error),
     };
   }
-  if (profile.sdkMode === true) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: profile.model ? "pass" : "warn",
-      confidence: "high",
-      message: profile.model
-        ? `SDK mode profile "${profile.name}" is configured.`
-        : `SDK mode profile "${profile.name}" has no explicit model.`,
-      evidence: { profile: profile.name, sdkMode: true, model: profile.model ?? null },
-    };
-  }
-
-  const detections = detectAgentCliProfiles(config);
-  const detection = detections.find((entry) => entry.name === profile.name);
-  if (!detection?.available) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "fail",
-      confidence: "high",
-      message: `Default agent profile "${profile.name}" is not available on PATH.`,
-      evidence: { profile: profile.name, bin: profile.bin },
-    };
-  }
-
-  const version = spawnSync(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
-  if ((version.status ?? 1) !== 0) {
-    return {
-      name: "agent-profile",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "medium",
-      message: `Agent binary "${profile.bin}" was found but \`--version\` failed.`,
-      evidence: {
-        profile: profile.name,
-        bin: profile.bin,
-        exitCode: version.status ?? null,
-        stderr: (version.stderr ?? "").trim(),
-      },
-    };
-  }
-
-  return {
-    name: "agent-profile",
-    kind: "deterministic",
-    status: "pass",
-    confidence: "high",
-    message: `Agent profile "${profile.name}" is available.`,
-    evidence: { profile: profile.name, bin: profile.bin, version: (version.stdout ?? "").trim() },
-  };
 }
 
 /**
@@ -256,7 +234,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     }),
   },
   {
-    name: "agent-profile",
+    name: "default-agent-engine",
     channel: "hard",
     run: () => runAgentProbe(),
   },

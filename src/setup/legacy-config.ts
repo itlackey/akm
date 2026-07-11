@@ -3,23 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * 0.8.0 config-shape adapters for the setup wizard.
- *
- * The wizard's internal logic uses the legacy mental model of a single
- * top-level `llm` + `agent` block; these helpers translate to and from the
- * new `profiles.*` + `defaults.*` config shape.
+ * Setup conversion helpers. The prompt steps return connection details, while
+ * the persisted configuration always uses named engines.
  */
 
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { getDefaultLlmConfig } from "../core/config/config";
-import { warn } from "../core/warn";
-import { v1ProfilePlatform } from "../integrations/harnesses";
 
 /**
- * Snapshot used by the setup wizard's internal logic — the legacy mental
- * model of a single top-level `llm` + `agent` block. Translated to the new
- * `profiles.*` + `defaults.*` shape when written via {@link applyLegacyLlm}
- * and {@link applyLegacyAgent}.
+ * Snapshot used by the prompt UI before it is lowered into named engines.
  */
 export interface LegacyAgentBlockShape {
   default?: string;
@@ -35,14 +27,16 @@ export function getCurrentLlm(config: AkmConfig): LlmConnectionConfig | undefine
   return getDefaultLlmConfig(config);
 }
 
-/** Read a synthesised legacy-shape agent block from the new-shape AkmConfig. */
+/** Read the default agent engine for prompt UI display. */
 export function getCurrentAgentBlock(config: AkmConfig): LegacyAgentBlockShape | undefined {
-  if (!config.profiles?.agent && !config.defaults?.agent) return undefined;
+  if (!config.engines || !config.defaults?.engine) return undefined;
   const block: LegacyAgentBlockShape = {};
-  if (config.defaults?.agent) block.default = config.defaults.agent;
-  if (config.profiles?.agent) {
+  const defaultEngine = config.engines[config.defaults.engine];
+  if (defaultEngine?.kind === "agent") block.default = config.defaults.engine;
+  if (config.engines) {
     const profiles: NonNullable<LegacyAgentBlockShape["profiles"]> = {};
-    for (const [name, raw] of Object.entries(config.profiles.agent)) {
+    for (const [name, raw] of Object.entries(config.engines)) {
+      if (raw.kind !== "agent") continue;
       profiles[name] = {
         ...(raw.platform === "opencode-sdk" ? { sdkMode: true } : {}),
         ...(raw.model ? { model: raw.model } : {}),
@@ -55,61 +49,48 @@ export function getCurrentAgentBlock(config: AkmConfig): LegacyAgentBlockShape |
   return block;
 }
 
-/** Apply an LLM connection patch onto the new-shape config. */
+/** Apply an LLM connection as the deterministic `default` engine. */
 export function applyLegacyLlm(config: AkmConfig, llm: LlmConnectionConfig | undefined): Partial<AkmConfig> {
+  const name = config.defaults?.llmEngine ?? "default";
   if (!llm) {
-    // Clear the default LLM profile.
-    const name = config.defaults?.llm ?? "default";
-    const remaining = { ...(config.profiles?.llm ?? {}) };
+    const remaining = { ...(config.engines ?? {}) };
     delete remaining[name];
     return {
-      profiles: { ...(config.profiles ?? {}), llm: remaining },
-      defaults: { ...(config.defaults ?? {}), llm: undefined },
+      engines: remaining,
+      defaults: { ...(config.defaults ?? {}), llmEngine: undefined },
     };
   }
-  const name = config.defaults?.llm ?? "default";
+  const endpoint = llm.endpoint.endsWith("/chat/completions")
+    ? llm.endpoint
+    : `${llm.endpoint.replace(/\/$/, "")}/chat/completions`;
   return {
-    profiles: {
-      ...(config.profiles ?? {}),
-      llm: { ...(config.profiles?.llm ?? {}), [name]: llm },
-    },
-    defaults: { ...(config.defaults ?? {}), llm: name },
+    engines: { ...(config.engines ?? {}), [name]: { ...llm, kind: "llm", endpoint } },
+    defaults: { ...(config.defaults ?? {}), llmEngine: name },
   };
 }
 
-/** Apply a legacy-shape agent block onto the new-shape config. */
+/** Apply prompt UI agent choices as platform-selected engines. */
 export function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape | undefined): Partial<AkmConfig> {
   if (!agent) {
     return {
-      profiles: { ...(config.profiles ?? {}), agent: undefined },
-      defaults: { ...(config.defaults ?? {}), agent: undefined },
+      defaults: { ...(config.defaults ?? {}), engine: undefined },
     };
   }
-  const v2Profiles: NonNullable<AkmConfig["profiles"]>["agent"] = { ...(config.profiles?.agent ?? {}) };
+  const engines = { ...(config.engines ?? {}) };
   for (const [name, profile] of Object.entries(agent.profiles ?? {})) {
-    // #566: resolve the platform via the harness registry instead of the old
-    // `name.includes("claude") ? "claude" : "opencode"` heuristic, which
-    // silently mapped Cursor/Copilot/any new harness to "opencode". An explicit
-    // sdkMode flag still wins; otherwise we ask the registry. A name the
-    // registry does not recognize is surfaced (warn) rather than silently
-    // misclassified, then kept as a best-effort "opencode" profile so the user
-    // does not lose a profile they explicitly configured.
-    let platform: "opencode" | "claude" | "opencode-sdk";
-    if (profile.sdkMode) {
-      platform = "opencode-sdk";
-    } else {
-      const resolved = v1ProfilePlatform(name) as "opencode" | "claude" | "opencode-sdk" | undefined;
-      if (resolved) {
-        platform = resolved;
-      } else {
-        warn(
-          `[akm setup] Agent profile "${name}" did not match any known harness; ` +
-            `defaulting its platform to "opencode". Set its platform explicitly in config if this is wrong.`,
-        );
-        platform = "opencode";
-      }
-    }
-    v2Profiles[name] = {
+    const platform = (profile.sdkMode ? "opencode-sdk" : name) as
+      | "opencode"
+      | "claude"
+      | "codex"
+      | "gemini"
+      | "aider"
+      | "copilot"
+      | "pi"
+      | "amazonq"
+      | "openhands"
+      | "opencode-sdk";
+    engines[name] = {
+      kind: "agent",
       platform,
       ...(profile.bin ? { bin: profile.bin } : {}),
       ...(profile.args ? { args: profile.args } : {}),
@@ -117,8 +98,8 @@ export function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape
     };
   }
   return {
-    profiles: { ...(config.profiles ?? {}), agent: v2Profiles },
-    defaults: { ...(config.defaults ?? {}), agent: agent.default },
+    engines,
+    defaults: { ...(config.defaults ?? {}), ...(agent.default ? { engine: agent.default } : {}) },
   };
 }
 

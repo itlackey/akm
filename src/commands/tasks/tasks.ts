@@ -25,7 +25,6 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import { listAgentProfileNames } from "../../integrations/agent";
 import { resolveAssetPath } from "../../sources/resolve";
 import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
 import { parseTaskDocument } from "../../tasks/parser";
@@ -492,14 +491,13 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
   }
   const backend = backendNameForPlatform();
   const config = loadConfig();
-  // v2: prefer profiles.agent / defaults.agent; fall back to legacy agent.default
-  const defaultProfile = config.defaults?.agent;
-  const profiles = config.profiles?.agent ? Object.keys(config.profiles.agent) : listAgentProfileNames(config);
+  const defaultProfile = config.defaults?.engine;
+  const profiles = Object.keys(config.engines ?? {});
 
   // §6.1: surface the effective triage settings for the default improve
   // profile. The struct is a fixed shape, so this is a deliberate addition.
-  const improveProfileName = typeof config.defaults?.improve === "string" ? config.defaults.improve : "default";
-  const triage = resolveImproveProfile(config.defaults?.improve as string | undefined, config).processes?.triage;
+  const improveProfileName = config.defaults?.improveStrategy ?? "default";
+  const triage = resolveImproveProfile(config.defaults?.improveStrategy, config).processes?.triage;
   const improveTriage = triage
     ? {
         defaultProfile: improveProfileName,

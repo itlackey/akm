@@ -239,7 +239,7 @@ export const AgentProfileConfigSchema = z
   })
   .passthrough();
 
-const LlmInvocationOverridesSchema = z
+export const LlmInvocationOverridesSchema = z
   .object({
     temperature: z.number().finite().optional(),
     maxTokens: positiveInt.optional(),
@@ -331,8 +331,6 @@ export const ImproveProcessConfigSchema = z
     model: nonEmptyString.optional(),
     llm: LlmInvocationOverridesSchema.optional(),
     enabled: z.boolean().optional(),
-    mode: z.enum(["llm", "agent", "sdk"]).optional(),
-    profile: z.string().min(1).optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
     allowedTypes: z.array(z.string().min(1)).optional(),
     // Consolidate process: minimum eligible-memory pool size below which the
@@ -669,8 +667,7 @@ export const ImproveProfileConfigSchema = z
   })
   .passthrough();
 
-// ── Profiles / defaults ────────────────────────────────────────────────────
-
+/** Legacy in-memory shape retained only so remaining internal callers can be migrated. It is not a root config key. */
 export const ProfilesSchema = z
   .object({
     llm: z.record(z.string(), LlmProfileConfigSchema).optional(),
@@ -679,16 +676,13 @@ export const ProfilesSchema = z
   })
   .passthrough();
 
+// ── Profiles / defaults ────────────────────────────────────────────────────
+
 export const DefaultsSchema = z
   .object({
     engine: engineName.optional(),
     llmEngine: engineName.optional(),
     improveStrategy: engineName.optional(),
-    // Retained in the parsed TypeScript shape during the consumer cutover. The
-    // root refinement below rejects all three retired persisted fields.
-    llm: z.string().min(1).optional(),
-    agent: z.string().min(1).optional(),
-    improve: z.string().min(1).optional(),
   })
   .passthrough();
 
@@ -932,7 +926,8 @@ const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = [
   "fact",
 ] as const;
 
-const INDEX_PASS_PROVIDER_KEYS = new Set([
+const INDEX_PASS_RETIRED_KEYS = new Set([
+  "llm",
   "endpoint",
   "model",
   "provider",
@@ -944,7 +939,10 @@ const INDEX_PASS_PROVIDER_KEYS = new Set([
 ]);
 
 const INDEX_PASS_KNOWN_KEYS = new Set([
-  "llm",
+  "engine",
+  "model",
+  "timeoutMs",
+  "enabled",
   "graphExtractionBatchSize",
   "graphExtractionIncludeTypes",
   "memoryInferenceBatchSize",
@@ -965,12 +963,12 @@ export const IndexPassConfigSchema = z.preprocess(
     }
     const obj = raw as Record<string, unknown>;
     for (const key of Object.keys(obj)) {
-      if (INDEX_PASS_PROVIDER_KEYS.has(key)) {
+      if (INDEX_PASS_RETIRED_KEYS.has(key)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            `Duplicate LLM provider configuration: \`${[...(ctx.path ?? []), key].join(".")}\` is not allowed. ` +
-            "Configure provider/model/endpoint under `profiles.llm` only; per-pass entries support `{ llm: false }` opt-out.",
+            `Retired or misplaced engine setting: \`${[...(ctx.path ?? []), key].join(".")}\` is not allowed. ` +
+            "Select a named engine and use typed invocation fields instead.",
         });
         return raw;
       }
@@ -985,18 +983,15 @@ export const IndexPassConfigSchema = z.preprocess(
         return raw;
       }
     }
-    if ("llm" in obj && typeof obj.llm !== "boolean") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Invalid \`${[...(ctx.path ?? []), "llm"].join(".")}\`: expected a boolean (true to use the default LLM profile, false to opt out). Got ${typeof obj.llm}.`,
-      });
-      return raw;
-    }
     return raw;
   },
   z
     .object({
-      llm: z.boolean().optional(),
+      engine: engineName.optional(),
+      model: nonEmptyString.optional(),
+      timeoutMs: z.union([positiveInt, z.null()]).optional(),
+      enabled: z.boolean().optional(),
+      llm: LlmInvocationOverridesSchema.optional(),
       graphExtractionBatchSize: positiveInt.optional(),
       graphExtractionIncludeTypes: z.array(z.enum(GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED)).nonempty().optional(),
       memoryInferenceBatchSize: positiveInt.optional(),
@@ -1083,6 +1078,15 @@ export const IndexConfigSchema = z.preprocess(
   },
   z
     .object({
+      defaults: z
+        .object({
+          engine: engineName.optional(),
+          model: nonEmptyString.optional(),
+          timeoutMs: z.union([positiveInt, z.null()]).optional(),
+          llm: LlmInvocationOverridesSchema.optional(),
+        })
+        .passthrough()
+        .optional(),
       metadataEnhance: MetadataEnhanceSchema.optional(),
       stalenessDetection: StalenessDetectionSchema.optional(),
     })
@@ -1148,7 +1152,6 @@ export const SetupConfigSchema = z
 export const AkmConfigShape = {
   configVersion: z.union([z.string().min(1), z.number()]).optional(),
   engines: EnginesSchema.optional(),
-  profiles: ProfilesSchema.optional(),
   defaults: DefaultsSchema.optional(),
   // Global model-alias tiers: alias → platform → exact model string, with a
   // reserved `"*"` platform key as fallback. Lets workflows/callers name a

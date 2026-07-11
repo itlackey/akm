@@ -19,6 +19,7 @@
  */
 
 import type { AkmConfig } from "../core/config/config";
+import { deepMergeConfig } from "../core/config/deep-merge";
 
 /**
  * Context handed to each `SetupStep.run()`. Steps read the in-progress
@@ -64,14 +65,14 @@ export interface SetupStep<TResult = void> {
  * latest snapshot via `ctx.config`.
  */
 export function createSetupContext(initial: AkmConfig, options: { nonInteractive: boolean }): SetupContext {
-  let acc: AkmConfig = { ...initial };
+  let acc: AkmConfig = deepMergeConfig({}, initial) as AkmConfig;
   return {
     get config() {
       return acc;
     },
     nonInteractive: options.nonInteractive,
     apply(delta) {
-      acc = { ...acc, ...delta };
+      acc = deepMergeConfig(acc, delta) as AkmConfig;
     },
   };
 }
