@@ -17,6 +17,7 @@ import { normalizeFailureReason, reportWorkflowUnit, settleWorkflowSpine } from 
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
 import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
 import { freezeWorkflowProgram } from "../_helpers/workflow";
@@ -107,17 +108,20 @@ function seedRun(opts: {
       opts.lease?.holder ?? null,
       opts.lease?.until ?? null,
     );
+    const plannedSteps = new Map(frozenStepRows(opts.plan).map((step) => [step.stepId, step]));
     opts.steps.forEach((step, i) => {
+      const planned = plannedSteps.get(step.id);
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status, evidence_json)
-         VALUES (?, ?, ?, 'instructions', ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         RUN_ID,
         step.id,
-        step.id,
-        step.criteria ? JSON.stringify(step.criteria) : null,
-        i,
+        planned?.stepTitle ?? step.id,
+        planned?.instructions ?? "instructions",
+        planned?.completionJson ?? (step.criteria ? JSON.stringify(step.criteria) : null),
+        planned?.sequenceIndex ?? i,
         step.status ?? "pending",
         step.evidence ? JSON.stringify(step.evidence) : null,
       );
@@ -260,10 +264,17 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
 
     // The gate was judged and journaled as a unit row (llm runner, l1).
     await withWorkflowRunsRepo((repo) => {
-      const gate = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.node_id === "review.gate");
+      const rows = repo.getUnitsForStep(RUN_ID, "review");
+      const dispatchRows = rows.filter((u) => u.phase !== "gate");
+      expect(dispatchRows.every((row) => row.engine === "test-agent" && row.runner === "sdk")).toBe(true);
+      expect(dispatchRows.every((row) => row.model === null && /^[0-9a-f]{64}$/.test(row.input_hash ?? ""))).toBe(true);
+      const gate = rows.filter((u) => u.node_id === "review.gate");
       expect(gate).toHaveLength(1);
       expect(gate[0].unit_id).toBe("review.gate:l1");
       expect(gate[0].runner).toBe("llm");
+      expect(gate[0].engine).toBe("test-llm");
+      expect(gate[0].model).toBe("test-model");
+      expect(gate[0].input_hash).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.parse(gate[0].result_json ?? "null")).toEqual({ complete: true, missing: [] });
     });
 

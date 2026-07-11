@@ -34,6 +34,8 @@ export function canonicalJson(value: unknown): string {
 
 /** Decode, require stored canonical bytes, then verify the stored SHA-256. */
 export function decodeCanonicalPlan(runId: string, planJson: string, planHash: string | null): WorkflowPlanGraph {
+  if (Buffer.byteLength(planJson, "utf8") > 4 * 1024 * 1024)
+    throw new Error(`Workflow run ${runId} frozen plan exceeds the 4 MiB resource limit.`);
   let parsed: unknown;
   try {
     parsed = JSON.parse(planJson);
@@ -44,7 +46,8 @@ export function decodeCanonicalPlan(runId: string, planJson: string, planHash: s
   const canonical = canonicalPlanJson(plan);
   if (planJson !== canonical) throw new Error(`Workflow run ${runId} has noncanonical frozen plan JSON.`);
   const actual = computePlanHash(plan);
-  if (!planHash || actual !== planHash) throw new Error(`Workflow run ${runId} frozen plan integrity check failed.`);
+  if (!planHash || !/^[0-9a-f]{64}$/.test(planHash) || actual !== planHash)
+    throw new Error(`Workflow run ${runId} frozen plan integrity check failed.`);
   return plan;
 }
 

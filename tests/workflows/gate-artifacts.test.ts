@@ -219,6 +219,8 @@ steps:
       criteria: [a fact was extracted]
 `;
 
+const UNGATED_WF = GATED_WF.replace("    gate:\n      criteria: [a fact was extracted]\n", "");
+
 describe("artifact-judging gates — the judge receives the artifact, not machine prose", () => {
   test("the judged summary is built from the artifact: unit-count line + canonical JSON", async () => {
     seedRun({ steps: [{ id: "extract", criteria: ["a fact was extracted"] }] });
@@ -275,7 +277,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
-      loadPlan: usePlan(GATED_WF),
+      loadPlan: usePlan(UNGATED_WF),
       summaryJudge: judge,
     });
     expect(result.done).toBe(true);

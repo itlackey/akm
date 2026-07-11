@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { LlmConnectionConfig } from "../../core/config/config";
+import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import type { FrozenLlmEngine, IrInvocation, WorkflowPlanGraph } from "../ir/schema";
 import type { SummaryJudge } from "../validate-summary";
@@ -30,7 +32,7 @@ export function frozenSummaryJudge(
   };
 }
 
-function materialize(engine: FrozenLlmEngine, invocation: IrInvocation) {
+function materialize(engine: FrozenLlmEngine, invocation: IrInvocation): LlmConnectionConfig {
   let apiKey: string | undefined;
   for (const name of engine.credential?.names ?? []) {
     const value = process.env[name]?.trim();
@@ -44,16 +46,20 @@ function materialize(engine: FrozenLlmEngine, invocation: IrInvocation) {
       `Required engine credential ${engine.credential.names[0]} is not set.`,
       "INVALID_CONFIG_FILE",
     );
-  return {
+  const base = {
     provider: engine.provider,
     endpoint: engine.endpoint,
-    model: invocation.model ?? "",
+    model: invocation.model ?? engine.model,
     ...(engine.temperature !== undefined ? { temperature: engine.temperature } : {}),
     ...(engine.maxTokens !== undefined ? { maxTokens: engine.maxTokens } : {}),
     ...(engine.supportsJsonSchema !== undefined ? { supportsJsonSchema: engine.supportsJsonSchema } : {}),
     ...(engine.extraParams ? { extraParams: engine.extraParams } : {}),
     ...(engine.contextLength !== undefined ? { contextLength: engine.contextLength } : {}),
     ...(engine.enableThinking !== undefined ? { enableThinking: engine.enableThinking } : {}),
+    ...(engine.timeoutMs !== null ? { timeoutMs: engine.timeoutMs } : {}),
     ...(apiKey ? { apiKey } : {}),
   };
+  return (
+    invocation.llm ? deepMergeConfig(base, invocation.llm as Record<string, unknown>) : base
+  ) as LlmConnectionConfig;
 }

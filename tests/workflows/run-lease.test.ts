@@ -408,14 +408,12 @@ describe("manual loop under the lease", () => {
 });
 
 /**
- * Terminal-run no-op (engine early-exit contract): `workflow run` on a run that
- * is already completed or failed must refuse/return WITHOUT acquiring a lease
- * AND without loading or integrity-checking the frozen plan — nothing will ever
- * dispatch, so touching either would be a pure liability (a since-corrupted
- * plan_json throwing on an already-finished run, or a spurious lease write).
+ * Terminal-run classification contract: even a no-op command classifies and
+ * integrity-checks the persisted plan before returning. It still never takes a
+ * lease or dispatches, so a bad hash is rejected before mutation.
  */
 describe("terminal run no-op (no lease, no plan load, no dispatch)", () => {
-  test("a COMPLETED run is a clean no-op even with a since-corrupted frozen plan, and leaves engine_lease_* untouched", async () => {
+  test("a COMPLETED run rejects a corrupt plan before the terminal no-op and leaves engine_lease_* untouched", async () => {
     writeWorkflow("term-completed");
     const started = await startWorkflowRun("workflow:term-completed", {});
     const runId = started.run.id;
@@ -430,31 +428,28 @@ describe("terminal run no-op (no lease, no plan load, no dispatch)", () => {
     expect(done.run.status).toBe("completed");
 
     // Plant a lease directly (as if a stale row lingered) and CORRUPT the frozen
-    // plan_json. A no-op run must not read the plan (loadFrozenPlan would throw
-    // "corrupt frozen plan") and must not disturb the planted lease columns.
+    // plan_json. Classification must reject it before the no-op can return and
+    // must not disturb the planted lease columns.
     const until = isoIn(90_000);
     await plantLease(runId, "planted-holder", until);
     execOnWorkflowDb("UPDATE workflow_runs SET plan_json = ? WHERE id = ?", "{ this is not valid json", runId);
 
     let dispatches = 0;
     let planLoads = 0;
-    const noop = await runWorkflowSteps({
-      target: runId,
-      summaryJudge: null,
-      // A loadPlan seam proves the plan is not loaded even via the injectable
-      // path — the guard returns BEFORE the loader is consulted.
-      loadPlan: async () => {
-        planLoads++;
-        return {} as WorkflowPlanGraph;
-      },
-      dispatcher: async () => {
-        dispatches++;
-        return { ok: true, text: "must not run" };
-      },
-    });
-
-    expect(noop.done).toBe(true);
-    expect(noop.run.status).toBe("completed");
+    await expect(
+      runWorkflowSteps({
+        target: runId,
+        summaryJudge: null,
+        loadPlan: async () => {
+          planLoads++;
+          return {} as WorkflowPlanGraph;
+        },
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true, text: "must not run" };
+        },
+      }),
+    ).rejects.toThrow(/corrupt frozen plan JSON/);
     expect(dispatches).toBe(0);
     expect(planLoads).toBe(0);
     // The planted lease columns are byte-identical — the no-op never wrote them.

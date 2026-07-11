@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -11,6 +12,7 @@ import {
   resolveLlmEngineUse,
 } from "../../integrations/agent/engine-resolution";
 import { resolveModel } from "../../integrations/agent/model-aliases";
+import { getBuiltinAgentProfile } from "../../integrations/agent/profiles";
 import { HARNESS_BY_ID } from "../../integrations/harnesses";
 import type { ProgramUnit } from "../program/schema";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
@@ -26,8 +28,6 @@ import type {
   WorkflowPlanGraph,
 } from "./schema";
 import { WORKFLOW_IR_VERSION } from "./schema";
-
-const DEFAULT_WORKFLOW_TIMEOUT_MS = 600_000;
 
 export interface FrozenWorkflow {
   plan: WorkflowPlanGraph;
@@ -182,7 +182,7 @@ function effectiveTimeout(engine: EngineConfig, layers: readonly EngineUseConfig
   for (let index = layers.length - 1; index >= 0; index--) {
     if (Object.hasOwn(layers[index] ?? {}, "timeoutMs")) return layers[index]?.timeoutMs ?? null;
   }
-  return engine.timeoutMs ?? DEFAULT_WORKFLOW_TIMEOUT_MS;
+  return engine.timeoutMs ?? null;
 }
 
 function mergedLlmOverrides(layers: readonly EngineUseConfig[]): Record<string, unknown> | undefined {
@@ -201,6 +201,8 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
       name,
       kind: "llm",
       endpoint: engine.endpoint,
+      model: exactModel(config, name, engine, []) as string,
+      timeoutMs: engine.timeoutMs ?? null,
       concurrency: engine.concurrency ?? 1,
       ...(engine.provider ? { provider: engine.provider } : {}),
       ...(resolved.credential ? { credential: resolved.credential } : {}),
@@ -218,6 +220,7 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
   if (!harness?.capabilities.agentDispatch)
     throw new ConfigError(`Engine "${name}" cannot dispatch platform ${engine.platform}.`, "INVALID_CONFIG_FILE");
   const sdk = engine.platform === "opencode-sdk";
+  const builtin = getBuiltinAgentProfile(engine.platform);
   const fallback = sdk ? (engine.llmEngine ?? config.defaults?.llmEngine ?? null) : null;
   if (fallback) addSnapshot(config, fallback, target);
   const snapshot: FrozenAgentEngine = {
@@ -225,10 +228,11 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
     kind: "agent",
     runnerKind: sdk ? "sdk" : "agent",
     platform: engine.platform,
-    bin: engine.bin ?? (sdk ? "opencode" : engine.platform),
-    args: [...(engine.args ?? [])],
-    workspace: engine.workspace ?? null,
-    envPassthrough: [],
+    bin: engine.bin ?? builtin?.bin ?? (sdk ? "opencode" : engine.platform),
+    args: [...(engine.args ?? builtin?.args ?? [])],
+    workspace: engine.workspace ? path.resolve(engine.workspace) : null,
+    envPassthrough: [...(builtin?.envPassthrough ?? [])],
+    commandBuilder: builtin?.commandBuilder ?? engine.platform,
     fallbackLlmEngine: fallback,
   };
   target[name] = snapshot;
@@ -248,8 +252,8 @@ function freezeGateJudge(
   addSnapshot(config, resolved.engine, engines);
   return {
     engine: resolved.engine,
-    model: typeof resolved.connection.model === "string" ? resolved.connection.model : null,
-    timeoutMs: resolved.timeoutMs ?? DEFAULT_WORKFLOW_TIMEOUT_MS,
+    model: exactModel(config, resolved.engine, engineDefinition(config, resolved.engine), []),
+    timeoutMs: resolved.timeoutMs,
   };
 }
 

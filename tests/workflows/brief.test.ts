@@ -17,6 +17,7 @@ import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
 import { freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
@@ -105,17 +106,20 @@ function seedRun(opts: {
       opts.lease?.holder ?? null,
       opts.lease?.until ?? null,
     );
+    const plannedSteps = new Map((frozen ? frozenStepRows(frozen) : []).map((step) => [step.stepId, step]));
     opts.steps.forEach((step, i) => {
+      const planned = plannedSteps.get(step.id);
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status, evidence_json)
-         VALUES (?, ?, ?, 'instructions', ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         RUN_ID,
         step.id,
-        step.title ?? step.id,
-        step.criteria ? JSON.stringify(step.criteria) : null,
-        i,
+        planned?.stepTitle ?? step.title ?? step.id,
+        planned?.instructions ?? "instructions",
+        planned?.completionJson ?? (step.criteria ? JSON.stringify(step.criteria) : null),
+        planned?.sequenceIndex ?? i,
         step.status ?? "pending",
         step.evidence ? JSON.stringify(step.evidence) : null,
       );
@@ -276,7 +280,7 @@ describe("workflow brief — solo step", () => {
     // on_error) is carried too — a driver needs every one to dispatch.
     expect(u.nodeId).toBe("build");
     expect(u.runner).toBe("sdk");
-    expect(u.timeoutMs).toBe(600_000);
+    expect(u.timeoutMs).toBeNull();
     expect(u.onError).toBe("fail");
     // #15: an un-journaled unit is `pending` with the completed report command,
     // and #14 embeds the --expect-step spine guard in it.
@@ -445,7 +449,9 @@ describe("workflow brief — completed run", () => {
 describe("workflow brief — legacy run (NULL plan_json)", () => {
   test("errors clearly, pointing at engine-driven mode", async () => {
     seedRun({ plan: null, params: { target: "x" }, steps: [{ id: "build" }, { id: "wrap" }] });
-    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/no frozen v3 plan.*inspection-only.*workflow abandon/s);
+    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(
+      /no executable workflow IR plan.*inspection-only.*workflow abandon/s,
+    );
   });
 });
 

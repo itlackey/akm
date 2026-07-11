@@ -131,6 +131,7 @@
  *     engine loop's job (`run-workflow.ts`) via `completeWorkflowStep`.
  */
 
+import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
@@ -1272,15 +1273,14 @@ function frozenUnitRunner(request: UnitDispatchRequest): ResolvedUnitRunner {
     stdio: "captured" as const,
     envPassthrough: snapshot.envPassthrough,
     parseOutput: "text" as const,
+    commandBuilder: snapshot.commandBuilder,
     ...(snapshot.workspace ? { workspace: snapshot.workspace } : {}),
     ...(request.invocation?.model ? { model: request.invocation.model } : {}),
   };
   if (snapshot.runnerKind === "agent") return { kind: "agent", profile };
   // The catalog is supplied transitively by the work-list only for hashing; the
   // SDK runner receives a frozen fallback copied into the request by its caller.
-  const fallback = request.fallbackEngine
-    ? materializeFrozenLlm(request.fallbackEngine, request.invocation)
-    : undefined;
+  const fallback = request.fallbackEngine ? materializeFrozenLlm(request.fallbackEngine, undefined) : undefined;
   return { kind: "sdk", profile, ...(fallback ? { fallbackConnection: fallback } : {}) };
 }
 
@@ -1301,18 +1301,20 @@ function materializeFrozenLlm(
       `Required engine credential ${snapshot.credential.names[0]} is not set.`,
       "INVALID_CONFIG_FILE",
     );
-  return {
+  const base = {
     provider: snapshot.provider,
     endpoint: snapshot.endpoint,
-    model: invocation?.model ?? "",
+    model: invocation?.model ?? snapshot.model,
     ...(snapshot.temperature !== undefined ? { temperature: snapshot.temperature } : {}),
     ...(snapshot.maxTokens !== undefined ? { maxTokens: snapshot.maxTokens } : {}),
     ...(snapshot.supportsJsonSchema !== undefined ? { supportsJsonSchema: snapshot.supportsJsonSchema } : {}),
     ...(snapshot.extraParams ? { extraParams: snapshot.extraParams } : {}),
     ...(snapshot.contextLength !== undefined ? { contextLength: snapshot.contextLength } : {}),
     ...(snapshot.enableThinking !== undefined ? { enableThinking: snapshot.enableThinking } : {}),
+    ...(snapshot.timeoutMs !== null ? { timeoutMs: snapshot.timeoutMs } : {}),
     ...(apiKey ? { apiKey } : {}),
   };
+  return invocation?.llm ? (deepMergeConfig(base, invocation.llm as Record<string, unknown>) as typeof base) : base;
 }
 
 async function resolveUnitRunner(

@@ -326,6 +326,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
           phase: null,
           runner: workUnit.runner,
+          engine: workUnit.engine?.name ?? null,
           model: workUnit.model ?? null,
           inputHash,
           startedAt: nowIso,
@@ -438,6 +439,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
           phase: null,
           runner: workUnit.runner,
+          engine: workUnit.engine?.name ?? null,
           model: workUnit.model ?? null,
           inputHash,
           startedAt: existing?.started_at ?? nowIso,
@@ -1064,7 +1066,7 @@ async function finalizeStep(args: {
       workflowRef: next.run.workflowRef,
       stepPlan,
       stepId: stepState.id,
-      completionCriteria: stepState.completionCriteria ?? [],
+      completionCriteria: stepPlan.gate.criteria,
       gateLoop,
       reduced,
       priorEvidence: args.priorEvidence,
@@ -1209,6 +1211,7 @@ async function settleSpine(args: {
     const step = state.step;
     const sp = plan.steps.find((s) => s.stepId === step.id);
     if (!sp) break;
+    const stepJudge = summaryJudge === undefined ? frozenSummaryJudge(plan, sp.gate.judge) : summaryJudge;
 
     // A route-skipped target: complete it as skipped, cascading if it is itself
     // a router (identical to the engine loop's skip handling).
@@ -1233,7 +1236,7 @@ async function settleSpine(args: {
         workflowRef: state.run.workflowRef,
         stepId: step.id,
         stepPlan: sp,
-        completionCriteria: step.completionCriteria ?? [],
+        completionCriteria: sp.gate.criteria,
         gateLoop: 1,
         loopsRemaining: false,
         result: {
@@ -1246,7 +1249,7 @@ async function settleSpine(args: {
         params: state.run.params ?? {},
         routeSelected,
         routeUnselected,
-        summaryJudge,
+        summaryJudge: stepJudge,
         ...leaseArg,
       });
       if (fin.kind !== "advanced") break; // a route failure stops the walk
@@ -1295,14 +1298,14 @@ async function settleSpine(args: {
         workflowRef: state.run.workflowRef,
         stepPlan: sp,
         stepId: step.id,
-        completionCriteria: step.completionCriteria ?? [],
+        completionCriteria: sp.gate.criteria,
         gateLoop,
         reduced,
         priorEvidence,
         params: state.run.params ?? {},
         routeSelected,
         routeUnselected,
-        summaryJudge,
+        summaryJudge: stepJudge,
         ...leaseArg,
       });
       if (completion.kind === "advanced") {

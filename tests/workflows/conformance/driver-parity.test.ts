@@ -21,6 +21,7 @@ import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
+import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 import { freezeWorkflowProgram } from "../../_helpers/workflow";
@@ -282,12 +283,21 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>, steps
            params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
         VALUES (?, 'workflow:golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?, ?, ?, 3)`,
     ).run(RUN_ID, JSON.stringify(params), current, now, now, canonicalPlanJson(plan), computePlanHash(plan));
+    const plannedSteps = new Map(frozenStepRows(plan).map((step) => [step.stepId, step]));
     steps.forEach((step, i) => {
+      const planned = plannedSteps.get(step.id);
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
-         VALUES (?, ?, ?, 'instructions', ?, ?, 'pending')`,
-      ).run(RUN_ID, step.id, step.id, step.criteria ? JSON.stringify(step.criteria) : null, i);
+          VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      ).run(
+        RUN_ID,
+        step.id,
+        planned?.stepTitle ?? step.id,
+        planned?.instructions ?? "instructions",
+        planned?.completionJson ?? (step.criteria ? JSON.stringify(step.criteria) : null),
+        planned?.sequenceIndex ?? i,
+      );
     });
   } finally {
     closeWorkflowDatabase(db);

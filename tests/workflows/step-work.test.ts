@@ -500,7 +500,6 @@ function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: Work
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', ?, ?, ?)`,
     ).run(RUN_ID, steps[0].id, now, now);
-    storeFrozenWorkflowPlan(db, RUN_ID, frozen);
     steps.forEach((step, i) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -508,6 +507,7 @@ function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: Work
          VALUES (?, ?, ?, 'instructions', ?, ?, 'pending')`,
       ).run(RUN_ID, step.id, step.id, step.criteria ? JSON.stringify(step.criteria) : null, i);
     });
+    storeFrozenWorkflowPlan(db, RUN_ID, frozen);
   } finally {
     closeWorkflowDatabase(db);
   }
@@ -746,6 +746,7 @@ function seedRouteRunDb(routePlan: WorkflowPlanGraph, selected: string): void {
          VALUES (?, ?, ?, 'i', NULL, ?, ?, ?)`,
       ).run(RUN_ID, s.id, s.id, i, s.status, s.evidence ? JSON.stringify(s.evidence) : null);
     });
+    storeFrozenWorkflowPlan(db, RUN_ID, routePlan);
   } finally {
     closeWorkflowDatabase(db);
   }

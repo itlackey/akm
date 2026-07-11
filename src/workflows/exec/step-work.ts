@@ -67,6 +67,7 @@ import {
   resolveWholeValue,
   type TemplateSegment,
 } from "../program/expressions";
+import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
 import type { SummaryJudge } from "../validate-summary";
 import { enqueueUnitWrite } from "./unit-writer";
@@ -1006,6 +1007,8 @@ export interface GateUnitRef {
   stepId: string;
   /** Gate-loop attempt, 1-based. */
   loop: number;
+  invocation: IrInvocation;
+  inputHash: string;
 }
 
 /** Insert the gate-evaluation unit row (running) just before the judge runs. */
@@ -1023,8 +1026,9 @@ export async function journalGateEvaluationStart(gate: GateUnitRef): Promise<voi
         // seed in `driveRun` skips these so resume accounting matches live.
         phase: GATE_EVALUATION_PHASE,
         runner: "llm",
-        model: null,
-        inputHash: null,
+        engine: gate.invocation.engine,
+        model: gate.invocation.model,
+        inputHash: gate.inputHash,
         startedAt: new Date().toISOString(),
       }),
     ),
@@ -1431,12 +1435,41 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   // Journal engine-driven judge calls as unit rows (they are LLM calls). The
   // wrapper's `invoked` stays false when the gate is fail-open (no criteria / no
   // judge) — nothing is journaled, and human approvals are never cached.
-  const gateUnit: GateUnitRef = { runId, workflowRef, stepId, loop: gateLoop };
+  const frozenGate = innerJudge
+    ? await withWorkflowRunsRepo((repo) => {
+        const row = repo.getRunById(runId);
+        if (!row) throw new UsageError(`Workflow run ${runId} was not found.`);
+        const plan = requireExecutableWorkflowPlan(row);
+        const invocation = plan.steps.find((step) => step.stepId === stepId)?.gate.judge ?? null;
+        return invocation ? { invocation, engine: plan.execution?.engines[invocation.engine] ?? null } : null;
+      })
+    : null;
+  const gateInvocation = frozenGate?.invocation ?? null;
+  let gateUnit: GateUnitRef | undefined;
   const judgeState = { invoked: false, errored: false };
   const summaryJudge: SummaryJudge | null = innerJudge
     ? async (prompt) => {
         judgeState.invoked = true;
-        await journalGateEvaluationStart(gateUnit);
+        if (gateInvocation) {
+          gateUnit = {
+            runId,
+            workflowRef,
+            stepId,
+            loop: gateLoop,
+            invocation: gateInvocation,
+            inputHash: createHash("sha256")
+              .update(
+                canonicalJsonString({
+                  hashVersion: 3,
+                  dispatch: frozenGate?.engine ?? null,
+                  invocation: gateInvocation,
+                  prompt,
+                }),
+              )
+              .digest("hex"),
+          };
+          await journalGateEvaluationStart(gateUnit);
+        }
         try {
           return await innerJudge(prompt);
         } catch (err) {
@@ -1471,7 +1504,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
       ...lease,
     });
   } catch (err) {
-    if (judgeState.invoked) await journalGateEvaluationFinish(gateUnit, true, undefined);
+    if (gateUnit) await journalGateEvaluationFinish(gateUnit, true, undefined);
     throw err;
   }
   const rejection =
@@ -1482,7 +1515,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   // observed outcome is honest, driven by EITHER the wrapper catching a throw OR
   // validateStepSummary flagging an unparseable verdict.
   const gateErrored = judgeState.errored || rejection?.errored === true;
-  if (judgeState.invoked) {
+  if (gateUnit) {
     await journalGateEvaluationFinish(gateUnit, gateErrored, rejection);
   }
 
