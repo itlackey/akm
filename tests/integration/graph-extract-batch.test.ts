@@ -18,7 +18,7 @@
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../../src/core/config/config";
+import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
 
@@ -67,13 +67,14 @@ const SAMPLE_LLM: LlmConnectionConfig = {
   model: "llama3.2",
 };
 
-const AKM_CFG_WITH_GATE = {
+const AKM_CFG_WITH_GATE: AkmConfig = {
+  configVersion: "0.9.0",
   semanticSearchMode: "auto" as const,
-  profiles: {
-    llm: { default: { ...SAMPLE_LLM } },
-    improve: { default: { processes: { graphExtraction: { enabled: true } } } },
+  engines: {
+    test: { kind: "llm", ...SAMPLE_LLM },
   },
-  defaults: { llm: "default" },
+  defaults: { engine: "test", llmEngine: "test" },
+  index: { defaults: { engine: "test" } },
 };
 
 beforeEach(() => {
@@ -93,9 +94,7 @@ describe("extractGraphFromBodies — unit", () => {
     singleRawQueue.push(JSON.stringify({ entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta" }] }));
 
     const result = await extractGraphFromBody(SAMPLE_LLM, "Alpha references Beta.", undefined, {
-      semanticSearchMode: "auto",
-      profiles: { llm: { default: { ...SAMPLE_LLM } } },
-      defaults: { llm: "default" },
+      ...AKM_CFG_WITH_GATE,
     });
 
     expect(result.entities).toEqual(["Alpha", "Beta"]);
@@ -111,12 +110,8 @@ describe("extractGraphFromBodies — unit", () => {
       "Alpha references Beta.",
       undefined,
       {
-        semanticSearchMode: "auto",
-        profiles: {
-          llm: { default: { ...SAMPLE_LLM } },
-          improve: { default: { processes: { graphExtraction: { enabled: false } } } },
-        },
-        defaults: { llm: "default" },
+        ...AKM_CFG_WITH_GATE,
+        index: { ...AKM_CFG_WITH_GATE.index, graph: { enabled: false } },
       },
       (evt) => fallbackEvents.push({ feature: evt.feature, reason: evt.reason }),
     );

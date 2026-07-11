@@ -18,9 +18,8 @@
  *     timeout (default 600s — overridable per call via `opts.timeoutMs`),
  *     and returns `fallback` on disablement, throw, or timeout.
  *
- * The 0.8.0 config shape replaced the legacy `llm.features.*` /
- * `features.<section>.*` trees with the unified
- * `profiles.improve.default.processes.*`, `index.*`, and `search.*` shape.
+ * The 0.9.0 config shape selects named engines and configures standalone index
+ * features through their corresponding `index.*` pass entries.
  * The legacy `LlmFeatureKey` strings (`memory_inference`, etc.) are kept here
  * as a stable external API so call sites do not need to know where each gate
  * lives in the config tree — that mapping is private to this module.
@@ -42,23 +41,22 @@ export type LlmFeatureKey =
 
 /**
  * For each feature key, return the effective enabled state by reading the
- * new 0.8.0 config shape. Defaults match the legacy `LlmFeatureFlags` docstrings.
+ * 0.9.0 config shape. Defaults match the legacy `LlmFeatureFlags` docstrings.
  */
 // Defaults below mirror the legacy LlmFeatureFlags docstrings so existing
 // behaviour is preserved when a config is silent on a flag.
 const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
-  // Legacy default: false → memory_consolidation only runs when explicitly enabled
-  // (either via the user's improve profile or the built-in `default` profile).
+  // Legacy default: false → memory_consolidation only runs when explicitly enabled.
   memory_consolidation: (cfg) => cfg.profiles?.improve?.default?.processes?.consolidate?.enabled ?? false,
-  // 0.8.0 unified gate: replaces the legacy `feedback_distillation` key.
+  // Unified gate: replaces the legacy `feedback_distillation` key.
   // The orchestration gate (planner) and the LLM-call gate now share the same
   // source of truth: `processes.distill.enabled`. Default: true (matches the
   // built-in `default` profile).
   distill: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.enabled ?? true,
   // Legacy default: true
-  memory_inference: (cfg) => cfg.profiles?.improve?.default?.processes?.memoryInference?.enabled ?? true,
+  memory_inference: (cfg) => cfg.index?.memory?.enabled ?? true,
   // Legacy default: true
-  graph_extraction: (cfg) => cfg.profiles?.improve?.default?.processes?.graphExtraction?.enabled ?? true,
+  graph_extraction: (cfg) => cfg.index?.graph?.enabled ?? true,
   // Legacy default: false
   metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
   // Default ON since R3 (docs/design/improve-self-learning-analysis.md G5):
@@ -86,7 +84,7 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
 /**
  * Pure predicate: is the named feature gate enabled in `config`?
  *
- * Reads from the unified 0.8.0 config shape. Defaults follow the legacy
+ * Reads from the unified 0.9.0 config shape. Defaults follow the legacy
  * `LlmFeatureFlags` docstring defaults.
  */
 export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmFeatureKey): boolean {
@@ -172,7 +170,7 @@ export async function tryLlmFeature<T>(
  */
 export function isProcessEnabled(section: string, processName: string, config: AkmConfig | undefined): boolean {
   if (!config) return false;
-  // index.metadataEnhance is a first-class new-shape entry.
+  // Index passes are first-class 0.9 entries.
   if (section === "index") {
     if (processName === "metadata_enhance" || processName === "metadataEnhance") {
       return config.index?.metadataEnhance?.enabled ?? true;
