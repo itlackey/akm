@@ -10,6 +10,7 @@ import {
   extractTagsFromPath,
   fileNameToDescription,
   generateMetadata,
+  generateMetadataFlat,
   isEnrichmentComplete,
   loadStashFile,
   type StashEntry,
@@ -655,4 +656,202 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
   expect(result?.whenToUse).toBe("for triage");
   expect(result?.lessonStrength).toBe(4);
   expect(result?.evidenceSources).toEqual(["memory:x"]);
+});
+
+// ── SPEC-2: merge path-derived scope/domain tokens into tags ─────────────────
+//
+// The stash-organization conventions require the directory (scope/domain)
+// tokens of a nested asset to reach the tags column even when the author set
+// explicit tags. Tokens are derived from the canonical ref subpath
+// (canonicalName), so the stash-walk (generateMetadata) and flat-walk
+// (generateMetadataFlat) paths behave identically. Filename tokens are
+// deliberately NOT merged when explicit tags exist (they already live in the
+// FTS name column and aliases). See
+// docs/design/stash-conventions-code-spec.md SPEC-2.
+
+/** Frontmatter memory doc with an explicit tags list. */
+function memoryDocWithTags(tags: string[]): string {
+  return ["---", "tags:", ...tags.map((t) => `  - ${t}`), "---", "Plain memory body prose."].join("\n");
+}
+
+function sortedTags(entry: StashEntry | undefined): string[] {
+  return [...(entry?.tags ?? [])].sort();
+}
+
+/**
+ * SPEC-2 introduces an exported pure helper on the metadata pass. Loaded
+ * dynamically so this file still compiles (and unrelated tests still run)
+ * before the implementation lands; each dependent test goes red with a clear
+ * missing-export error instead of a module-load failure.
+ */
+async function loadExtractDirTagsFromName(): Promise<(name: string) => string[]> {
+  const mod = (await import("../src/indexer/passes/metadata")) as unknown as Record<string, unknown>;
+  const fn = mod.extractDirTagsFromName;
+  if (typeof fn !== "function") {
+    throw new Error(
+      "SPEC-2 not implemented: expected src/indexer/passes/metadata to export extractDirTagsFromName(name: string): string[]",
+    );
+  }
+  return fn as (name: string) => string[];
+}
+
+test("extractDirTagsFromName tokenizes directory segments of a ref subpath (SPEC-2)", async () => {
+  const extractDirTagsFromName = await loadExtractDirTagsFromName();
+  // Single directory segment, lowercased.
+  expect([...extractDirTagsFromName("projectA/auth-tip")].sort()).toEqual(["projecta"]);
+  // Multiple segments; each split on -/_/. with single-char tokens dropped
+  // (same tokenization as extractTagsFromPath).
+  expect([...extractDirTagsFromName("team-alpha/projectA/note")].sort()).toEqual(["alpha", "projecta", "team"]);
+  expect([...extractDirTagsFromName("client-x/note")].sort()).toEqual(["client"]);
+});
+
+test("extractDirTagsFromName returns no tokens for a name at the type root (SPEC-2)", async () => {
+  const extractDirTagsFromName = await loadExtractDirTagsFromName();
+  // No directory segments: the filename itself must contribute nothing.
+  expect(extractDirTagsFromName("auth-tip")).toEqual([]);
+});
+
+test("generateMetadata merges directory tokens into explicit tags for nested assets (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "projectA", "auth-tip.md");
+  writeFile(file, memoryDocWithTags(["auth"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].name).toBe("projectA/auth-tip");
+  // Explicit tag kept AND the directory scope token added; filename tokens
+  // ("auth-tip" -> "tip") must NOT be merged when explicit tags exist.
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
+});
+
+test("generateMetadata adds no directory tokens for an explicit-tags asset at the type root (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "root-note.md");
+  writeFile(file, memoryDocWithTags(["auth"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  // No directory segments at the type root: explicit tags stay exact — no
+  // filename tokens ("root", "note") sneak in.
+  expect(stash.entries[0].tags).toEqual(["auth"]);
+});
+
+test("generateMetadata keeps the empty-tags path-derived fallback unchanged for nested assets (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "projectA", "auth-tip.md");
+  writeFile(file, "Plain memory body prose with no frontmatter.\n");
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  // Byte-compat with today's extractTagsFromPath fallback: directory AND
+  // filename tokens, deduped.
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta", "tip"]);
+});
+
+test("generateMetadata keeps the empty-tags fallback unchanged at the type root (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "auth-tip.md");
+  writeFile(file, "Plain memory body prose with no frontmatter.\n");
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "tip"]);
+});
+
+test("generateMetadataFlat merges directory tokens from the canonical ref subpath into explicit tags (SPEC-2)", async () => {
+  const stashRoot = tmpDir();
+  const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
+  writeFile(file, memoryDocWithTags(["auth"]));
+
+  const stash = await generateMetadataFlat(stashRoot, [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].type).toBe("memory");
+  // canonicalName is the ref subpath relative to the TYPE root ("memories"),
+  // so "memories" itself is not a tag — only the scope dir "projectA" is.
+  expect(stash.entries[0].name).toBe("projectA/auth-tip");
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
+});
+
+test("flat-walk and stash-walk derive identical tags for a nested asset without explicit tags (SPEC-2)", async () => {
+  // Today the flat walk passes path.dirname(file) as the tag root, so even the
+  // empty-tags fallback loses directory segments there. Deriving tokens from
+  // canonicalName makes both walks agree — and both must carry the scope token.
+  const stashRoot = tmpDir();
+  const memRoot = path.join(stashRoot, "memories");
+  const file = path.join(memRoot, "projectA", "auth-tip.md");
+  writeFile(file, "Plain memory body prose with no frontmatter.\n");
+
+  const flat = await generateMetadataFlat(stashRoot, [file]);
+  const walked = await generateMetadata(memRoot, "memory", [file]);
+  expect(flat.entries).toHaveLength(1);
+  expect(walked.entries).toHaveLength(1);
+  expect(sortedTags(flat.entries[0])).toContain("projecta");
+  expect(sortedTags(flat.entries[0])).toEqual(sortedTags(walked.entries[0]));
+});
+
+test("author-restated scope token is deduped by normalizeTerms after the merge (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "projectA", "pin.md");
+  writeFile(file, memoryDocWithTags(["projectA", "auth"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  const tags = stash.entries[0].tags ?? [];
+  expect(tags.filter((t) => t === "projecta")).toHaveLength(1);
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
+});
+
+test("generateMetadata merges directory tokens into package.json-keyword tags for nested non-md assets (SPEC-2)", async () => {
+  // The other explicit-tags channel: non-md assets get tags from package.json
+  // keywords (Priority 1). A NESTED script must gain its directory token on
+  // top of the keywords, while the root-level case stays exact (pinned by the
+  // "extracts metadata from package.json" test above).
+  const dir = tmpDir();
+  const tool = path.join(dir, "tools", "run.ts");
+  writeFile(tool, `console.log("run")\n`);
+  writeFile(
+    path.join(dir, "package.json"),
+    JSON.stringify({ description: "Git diff summarizer", keywords: ["git", "diff"] }),
+  );
+
+  const stash = await generateMetadata(dir, "script", [tool]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].name).toBe("tools/run.ts");
+  expect(sortedTags(stash.entries[0])).toEqual(["diff", "git", "tools"]);
+});
+
+test("loadStashFile keeps literal tags for nested-name entries — no dir-token merge (SPEC-2)", () => {
+  // .stash.json-declared entries are hand-curated manifests: the SPEC-2 merge
+  // applies only to file-derived entries via buildEntryFromFile. A nested ref
+  // subpath in a declared entry's name must NOT grow directory tokens.
+  const dir = tmpDir();
+  const stash: StashFile = {
+    entries: [
+      {
+        name: "projectA/deploy",
+        type: "script",
+        description: "deploy projectA services",
+        tags: ["auth"],
+        filename: "deploy.sh",
+      },
+    ],
+  };
+  writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
+
+  const result = loadStashFile(dir);
+  expect(result?.entries).toHaveLength(1);
+  expect(result?.entries[0].name).toBe("projectA/deploy");
+  expect(result?.entries[0].tags).toEqual(["auth"]);
+});
+
+test("multi-token directory segments tokenize like extractTagsFromPath in the merge (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "client-x", "billing-tip.md");
+  writeFile(file, memoryDocWithTags(["billing"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  // "client-x" splits to ["client", "x"]; single-char "x" is dropped, and the
+  // raw segment must not survive as a "client x" phrase tag.
+  expect(sortedTags(stash.entries[0])).toEqual(["billing", "client"]);
 });

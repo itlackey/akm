@@ -36,10 +36,10 @@ load-bearing facts, each verified in code:
 2. **Retrieval is search, not browse — and folders are highly visible to the
    ranker.** There is no folder walk at query time — agents `akm search`/
    `akm curate`, then `akm show <ref>`. A subdirectory's real payoff: its tokens
-   join the FTS `name` column at the highest bm25 weight (10.0), auto-derive
-   into `tags` when `tags` is empty, and match the cwd project-context boost
-   (`projectContextRankingContributor`, +0.2/token, cap 0.5). No
-   "indexing-confidence bump" for subdirectories exists in code.
+   join the FTS `name` column at the highest bm25 weight (10.0), always merge
+   into `tags` (since SPEC-2 landed; see fact 6), and match the cwd
+   project-context boost (`projectContextRankingContributor`, +0.2/token,
+   cap 0.5). No "indexing-confidence bump" for subdirectories exists in code.
 3. **The FTS surface is `name`, `description`, `tags`, `hints`, `content`**
    (`entries_fts`, `src/indexer/db/schema.ts`). There is **no `project` field** —
    a bare `project:` frontmatter value is invisible to search. Off-axis facets
@@ -57,9 +57,14 @@ load-bearing facts, each verified in code:
    global + scoped utility history. A reusable asset does not need the *project*
    baked into its path to rank well inside a project — and a rename costs
    learned ranking.
-6. **Path tags are auto-derived only when `tags` is empty**
-   (`src/indexer/passes/metadata.ts:1114`). Setting `tags` explicitly *suppresses*
-   the path-derived tag — a real footgun.
+6. **Directory (scope/domain) tokens always merge into `tags`** — since SPEC-2
+   landed (`extractDirTagsFromName`, `src/indexer/passes/metadata.ts`) they are
+   derived from the canonical ref subpath, so explicit `tags` no longer
+   suppress the scope token, both indexing walks agree, and the exact-tag
+   ranking boost fires for the path token without restating it. Filename
+   tokens are still auto-derived only when `tags` is empty (they already live
+   in the FTS `name` column and in aliases). The old explicit-tags footgun is
+   gone; existing installs pick the merged tags up on the next reindex.
 7. **The entity/relation graph boost extracts from body content, not the path**
    (`graph-extraction.ts`). Canonical entity naming must live in the prose.
 8. **`category: convention|meta` facts are surfaced to every non-wiki authoring
@@ -150,8 +155,9 @@ Supporting rules, all shipped as convention facts:
 - One path axis; depth 1 (2 max for strict containment); lowercase-hyphen
   semantic segments; **no volatile facets in the path** (status/date/version/…);
   flat type-root fallback instead of inventing a one-off domain.
-- Off-axis facets go in `tags` (never a bare `project:` field), and you must
-  restate the path token when you set `tags` explicitly (fact 6).
+- Off-axis facets go in `tags` (never a bare `project:` field); the path
+  scope/domain token merges into `tags` automatically, so it never needs
+  restating (fact 6).
 - **A provenance xref is mandatory when the asset derives from another** (never
   invented for original observations). Associative xrefs are discretionary and
   capped (~5, a heuristic). Corrections are new assets that xref what they
@@ -232,12 +238,12 @@ corrections, each code-verified or empirically tested:
 ## Open questions / future work
 
 Items with an implementation path are specced in
-[stash-conventions-code-spec.md](stash-conventions-code-spec.md): the tag
-footgun → SPEC-2, ref-prefix filter → SPEC-4, correction demotion → SPEC-5,
-convention-fact query crowding → SPEC-6, body-orientation indexing → SPEC-8.
-Scheduled consolidation is argued down there (the improve pipeline already
-injects the amended conventions); vocabulary governance and the typed
-provenance channel remain genuinely open.
+[stash-conventions-code-spec.md](stash-conventions-code-spec.md): ref-prefix
+filter → SPEC-4, correction demotion → SPEC-5, convention-fact query
+crowding → SPEC-6, body-orientation indexing → SPEC-8 (the tag footgun's
+SPEC-2 has landed — see fact 6). Scheduled consolidation is argued down there
+(the improve pipeline already injects the amended conventions); vocabulary
+governance and the typed provenance channel remain genuinely open.
 
 - **A thin HARD floor.** `akm lint` runs a deterministic `missing-ref` check
   over body text and `refs:` frontmatter for non-wiki markdown assets; the gap
@@ -248,8 +254,12 @@ provenance channel remain genuinely open.
   non-wiki assets are argued down (orphanhood is the sanctioned normal state
   under discretionary linking; uncited-source is undecidable without knowing
   whether an asset is derived).
-- **Kill the tag footgun in code.** Always merge path segments into `tags` rather
-  than only when `tags` is empty, removing the explicit-tags trap.
+- **Kill the tag footgun in code.** Closed by SPEC-2 in
+  [stash-conventions-code-spec.md](stash-conventions-code-spec.md)
+  (implemented: directory tokens from the canonical ref subpath now always
+  merge into `tags`; filename tokens still derive only when `tags` is empty).
+  Takes effect on reindex; operators with collapse-detector canary sets should
+  re-mint baselines via `akm improve canary --refresh`.
 - **Vocabulary governance.** How an agent proposes a `fact:conventions/domains`
   addition mid-task without blocking on human review (interim: flat type-root
   fallback + a proposal note).

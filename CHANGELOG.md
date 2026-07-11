@@ -136,6 +136,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by `akm wiki lint`; the latter two legitimately point at merged-away
   assets).
 
+### Changed
+
+- **Directory (scope/domain) tokens now always merge into `tags` at index
+  time**, even when an asset sets explicit `tags:` frontmatter. Previously
+  explicit tags suppressed all path-derived tags, so a nested asset like
+  `memory:projectA/auth-tip` with `tags: [auth]` silently lost the exact
+  tag-match ranking boost for its scope token unless the author restated it.
+  The merged tokens come from the canonical ref subpath
+  (`extractDirTagsFromName`), which also fixes the flat-walk indexing path
+  losing directory segments in the empty-tags fallback. Filename tokens are
+  still auto-derived only when `tags` is empty (they already live in the FTS
+  name column and aliases), and the empty-tags fallback itself is unchanged.
+  **Operator notes:** the change takes effect on the next reindex and alters
+  indexed tag text for nested assets with explicit tags, so collapse-detector
+  canary recall baselines may shift — re-mint them with `akm improve canary
+  --refresh`. Embeddings are not regenerated when indexed text changes; the
+  drift here is small (the merged tokens already appear in the name field),
+  but a purge/re-embed picks up the new text exactly.
+
 ### Fixed
 
 - **Check-in directives now survive plain-text output and `workflow

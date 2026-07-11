@@ -22,10 +22,10 @@ without breaking the ref** — so spend it deliberately, on exactly one axis.
 
 Retrieval is search, not browse: no one walks these folders at query time. A
 subdirectory buys you three things: its tokens are indexed as part of the
-asset's **name** (the highest-weighted search field), they auto-derive into
-`tags` when `tags` is empty, and for scope-born types a slug matching the
-current repo's name earns an automatic in-project ranking boost. Every other
-facet belongs in frontmatter, where the index can actually read it.
+asset's **name** (the highest-weighted search field), they are auto-added to
+`tags` (even when you set `tags` explicitly), and for scope-born types a slug
+matching the current repo's name earns an automatic in-project ranking boost.
+Every other facet belongs in frontmatter, where the index can actually read it.
 
 ## Choose the partition axis by asset TYPE, not per-asset judgment
 
@@ -91,10 +91,11 @@ cross-project reuse.
   frontmatter is invisible to search. Put the off-axis facet in `tags` instead
   (a project-scoped memory adds `tags: [auth]`; a domain-scoped asset genuinely
   tied to a project adds `tags: [projectA]` sparingly).
-- **Footgun:** path and filename tokens are auto-added to `tags` **only when
-  `tags` is empty**. When you set `tags` explicitly, restate the scope/domain
-  token — the name field still carries it, but you lose the tag-match ranking
-  boost.
+- **Directory tokens join `tags` on their own.** The scope/domain segments of
+  the path are always auto-added to `tags` — even when you set `tags`
+  explicitly — so there is no need to restate them; the tag-match ranking
+  boost fires for the scope token either way. Filename tokens are auto-added
+  only when `tags` is empty.
 
 ## Renames and evolution
 

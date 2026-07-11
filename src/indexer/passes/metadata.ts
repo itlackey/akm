@@ -1114,6 +1114,18 @@ async function buildEntryFromFile(
     entry.tags = extractTagsFromPath(file, dirPath);
   }
 
+  // Stash-organization conventions (SPEC-2): directory (scope/domain) tokens
+  // always reach the tags column, even when the author set explicit tags, so
+  // nested assets keep the exact-tag ranking boost for their scope token.
+  // Derived from canonicalName (the ref subpath) rather than the filesystem
+  // path so the stash-walk and flat-walk indexing paths agree (the flat walk
+  // passes `path.dirname(file)` as dirPath, which strips directory segments
+  // from the fallback above). Filename tokens are deliberately NOT merged when
+  // explicit tags exist — they already live in the FTS name column and in
+  // aliases, and merging them would inflate exact-tag matches for every
+  // filename word. `normalizeTerms` below dedupes author-restated tokens.
+  entry.tags = [...(entry.tags ?? []), ...extractDirTagsFromName(canonicalName)];
+
   entry.tags = normalizeTerms(entry.tags ?? []);
   entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
 
@@ -1347,5 +1359,28 @@ export function extractTagsFromPath(filePath: string, rootDir: string): string[]
     }
   }
 
+  return Array.from(tags);
+}
+
+/**
+ * Extract scope/domain tags from the DIRECTORY segments of a canonical asset
+ * name (the ref subpath — e.g. `"projectA/auth-tip"` → `["projecta"]`).
+ *
+ * Unlike {@link extractTagsFromPath} this never tokenizes the filename
+ * segment: it exists so a nested asset's directory (scope/domain) tokens can
+ * be merged into explicit author tags without dragging every filename word
+ * into exact-tag matching (SPEC-2, docs/design/stash-conventions-code-spec.md).
+ * Tokenization mirrors `extractTagsFromPath`: each segment splits on `-`/`_`/
+ * `.`, lowercased, single-character tokens dropped. A name with no directory
+ * segments yields no tags.
+ */
+export function extractDirTagsFromName(name: string): string[] {
+  const tags = new Set<string>();
+  for (const segment of name.split("/").slice(0, -1)) {
+    for (const token of segment.split(/[-_.]+/)) {
+      const clean = token.toLowerCase().trim();
+      if (clean && clean.length > 1) tags.add(clean);
+    }
+  }
   return Array.from(tags);
 }
