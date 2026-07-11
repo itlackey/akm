@@ -28,7 +28,7 @@ import path from "node:path";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { enqueueUnitWrite } from "../../src/workflows/exec/unit-writer";
 import { getWorkflowStatus, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 import { bunAvailable, spawnRunner, unitIds, writeProgram } from "./_helpers/workflow-crossproc";
 
 const BUN = bunAvailable();
@@ -38,14 +38,20 @@ let markerDir: string;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeSandboxConfig({
+    configVersion: "0.9.0",
+    engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
+    defaults: { engine: "test-agent" },
+  });
   markerDir = path.join(storage.root, "markers");
   fs.mkdirSync(markerDir, { recursive: true });
 });
 
 afterEach(() => storage.cleanup());
 
-const WIDE_FANOUT_WF = `version: 1
+const WIDE_FANOUT_WF = `version: 2
 name: db-contention
+defaults: { engine: test-agent }
 params:
   files: { type: array, items: { type: string } }
 steps:
@@ -64,6 +70,7 @@ describe.skipIf(!BUN)("cross-process reader vs fan-out writer", () => {
     const files = Array.from({ length: 40 }, (_, i) => `f${i}.ts`);
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const started = await startWorkflowRun("workflow:db-contention", { files });
+    expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
 
     const driver = spawnRunner({ CHAOS_RUN_ID: runId, CHAOS_MARKER_DIR: markerDir });
@@ -127,6 +134,7 @@ describe("writer queue resilience (fault-injected write failure)", () => {
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const files = ["a.ts", "b.ts", "c.ts"];
     const started = await startWorkflowRun("workflow:db-contention", { files });
+    expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [ua, ub, uc] = await unitIds(runId, { files });
 
