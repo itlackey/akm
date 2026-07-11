@@ -1,3 +1,4 @@
+version: 2
 schedule: "*/15 * * * *"
 command: akm sync
 enabled: true

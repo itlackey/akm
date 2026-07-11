@@ -39,7 +39,7 @@ function memoryExec(initial = ""): CronExec & { current: () => string } {
 function writeTask(id: string, schedule: string, enabled = true): void {
   fs.writeFileSync(
     path.join(tasksDir, `${id}.yml`),
-    `schedule: "${schedule}"\ncommand: echo ${id}\nenabled: ${enabled}\nname: ${id}\n`,
+    `version: 2\nschedule: "${schedule}"\ncommand: echo ${id}\nenabled: ${enabled}\nname: ${id}\n`,
     "utf8",
   );
 }

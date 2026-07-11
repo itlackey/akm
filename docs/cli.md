@@ -11,7 +11,7 @@ include `error` and `hint` fields.
 > extension — carry an **Available since 0.8.0** marker so you can tell at
 > a glance which surface arrived in that release. The locked v1.0 surface
 > is declared in
-> [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
+> [`docs/technical/architecture.md`](technical/architecture.md)
 > §9.4.
 
 ## Global Flags
@@ -392,7 +392,7 @@ populating `warnings` does not affect ranking.
 > Use registry scores only for ranking within a single registry — do **not**
 > compare them numerically against local `SearchHit.score` values or across
 > registries with different scoring formulas. See
-> `docs/technical/v1-architecture-spec.md` §4 for the type-level distinction.
+> `docs/technical/architecture.md` for the current type-level distinction.
 
 ### curate
 
@@ -1591,7 +1591,7 @@ akm wiki pages research
 akm wiki search research "attention"
 akm wiki lint research
 akm wiki ingest research               # dispatches defaults.agent to run the ingest workflow
-akm wiki ingest research --profile claude --model sonnet  # explicit overrides
+akm wiki ingest research --engine claude --model sonnet  # explicit overrides
 akm wiki remove research -y            # preserves raw/ by default
 akm wiki remove research -y --with-sources
 ```
@@ -1609,7 +1609,7 @@ Subcommands:
 | `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
 | `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index, broken sources |
-| `ingest <name>` | Dispatch the configured agent (`--profile` or `config.defaults.agent`) to execute the ingest workflow end-to-end. Requires an accessible agent profile. Flags: `--profile <name>`, `--model <model>`, `--timeout-ms <ms>` |
+| `ingest <name>` | Dispatch the configured agent engine (`--engine` or `config.defaults.engine`) to execute the ingest workflow end-to-end. Requires an accessible agent engine. Flags: `--engine <name>`, `--model <model>`, `--timeout-ms <ms>` |
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$` — lowercase letters and digits
 only; must start with a lowercase letter or digit.
@@ -1791,7 +1791,7 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
 | `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 1; set 0 to include all assets regardless of retrieval history) |
-| `--profile <name>` | Override the active improve profile (e.g. `default`, `quick`, `thorough`, `memory-focus`, or any custom entry under `profiles.improve`) |
+| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Emit the full JSON result on stdout (legacy behaviour). Without this flag the full JSON is written to `<stash>/.akm/runs/<run-id>/improve-result.json` and stdout stays empty; pass `--json-to-stdout` to restore the pre-0.8.0 `akm improve \| jq` pipeline. |
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
@@ -1837,20 +1837,18 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 | --- | --- |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--profile` | Override the default agent profile |
-| `--timeout-ms` | Override the agent profile's `timeoutMs` for this call |
+| `--engine` | Override the default execution engine |
+| `--timeout-ms` | Override the selected engine timeout for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
-**Per-task `timeoutMs` in task YAML files:** a task `.yml` file may set
-`timeoutMs` to override the agent profile's `timeoutMs` (i.e.
-`profiles.agent.<name>.timeoutMs`) for that task only. Set `timeoutMs: null` to
-disable the kill timer entirely (useful for long-running local-model tasks), or
-a positive integer (milliseconds) to apply a task-specific limit.
+**Prompt-task `timeoutMs`:** a version-2 prompt task may set `timeoutMs` to
+override its selected engine timeout. Set it to `null` to disable the timer, or
+to a positive integer (milliseconds) to apply a task-specific limit.
 
 ### proposal
 
-**Status: Available since 0.8.0.**
+**Status: Version-2 schema in 0.9.0.**
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 `list`, `show`, `diff`, `accept`, `reject`, `revert`. Bare `akm proposal`
 behaves as `akm proposal list`.
@@ -1984,7 +1982,8 @@ shell commands. It manages on-disk task definitions under
 akm tasks list                              # List all tasks in the stash
 akm tasks show <id>                         # Show one parsed task
 akm tasks add <id> --schedule "@daily" \    # Register a new task and install it
-  --command "akm improve --auto-accept=90"
+  --command "akm improve --strategy default --auto-accept=90"
+akm tasks add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
 akm tasks run <id>                          # Execute now (what the scheduler calls)
 akm tasks enable <id> / disable <id>        # Toggle scheduler entry
 akm tasks remove <id>                       # Delete task file and uninstall
@@ -1994,11 +1993,13 @@ akm tasks doctor                            # Report scheduler backend + paths
 ```
 
 Each task targets exactly one of `--workflow <ref>`, `--prompt <text-or-ref>`,
-or `--command <shell>`. Prompt targets dispatch through the configured agent
-profile; command targets run as plain shell. Optional fields include
-`--profile`, `--params` (JSON for workflow params), `--name`,
-`--when-to-use`, `--description`, and `--tags`. Per-task `timeoutMs` is set
-in the task YAML itself.
+or `--command <shell>`. Task YAML is strict and begins with `version: 2`.
+Prompt targets dispatch through `--engine` or `defaults.engine` and may set
+`model`, `timeoutMs`, and LLM request overrides; command tasks may set only
+`timeoutMs`; workflow tasks may set only `params`. `tasks add` accepts
+`--engine`, `--model`, `--timeout-ms`, `--params`, `--name`, `--when-to-use`,
+`--description`, and `--tags`. A v1 task is diagnosed by list, sync, and doctor
+but is never rewritten or executed.
 
 `akm tasks run` is what cron / launchd / schtasks invoke at the scheduled
 time — `tasks_invoked` and `tasks_completed` events land in `state.db` so

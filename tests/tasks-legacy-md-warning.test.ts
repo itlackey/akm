@@ -81,7 +81,11 @@ describe("akm tasks list: legacy .md task file warning", () => {
     fs.writeFileSync(path.join(tasksRoot, "daily-backup.md"), "# legacy 0.7.x task\n", "utf8");
     fs.writeFileSync(path.join(tasksRoot, "nightly-report.md"), "# legacy 0.7.x task\n", "utf8");
     // One valid .yml task so we also confirm it still shows up in the result.
-    fs.writeFileSync(path.join(tasksRoot, "ok.yml"), ['schedule: "@daily"', "command: echo hi", ""].join("\n"), "utf8");
+    fs.writeFileSync(
+      path.join(tasksRoot, "ok.yml"),
+      ["version: 2", 'schedule: "@daily"', "command: echo hi", ""].join("\n"),
+      "utf8",
+    );
 
     const stderr = await captureStderr(async () => {
       const result = await akmTasksList();
@@ -97,7 +101,11 @@ describe("akm tasks list: legacy .md task file warning", () => {
 
   test("does not emit a warning when no .md task files exist", async () => {
     const tasksRoot = path.join(stashDir, "tasks");
-    fs.writeFileSync(path.join(tasksRoot, "ok.yml"), ['schedule: "@daily"', "command: echo hi", ""].join("\n"), "utf8");
+    fs.writeFileSync(
+      path.join(tasksRoot, "ok.yml"),
+      ["version: 2", 'schedule: "@daily"', "command: echo hi", ""].join("\n"),
+      "utf8",
+    );
 
     const stderr = await captureStderr(async () => {
       await akmTasksList();
@@ -198,7 +206,11 @@ describe("legacy .md task file warning fires from all task subcommands", () => {
 describe("singular `akm task` alias", () => {
   test("`akm task list` resolves to the same `tasks` command group", async () => {
     const tasksRoot = path.join(stashDir, "tasks");
-    fs.writeFileSync(path.join(tasksRoot, "ok.yml"), ['schedule: "@daily"', "command: echo hi", ""].join("\n"), "utf8");
+    fs.writeFileSync(
+      path.join(tasksRoot, "ok.yml"),
+      ["version: 2", 'schedule: "@daily"', "command: echo hi", ""].join("\n"),
+      "utf8",
+    );
 
     // `task` is a citty meta.alias for `tasks` in 0.8 (flip primary in 0.9).
     const result = await runCliCapture(["task", "list", "--format=json"]);

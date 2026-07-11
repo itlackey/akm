@@ -1,3 +1,4 @@
+version: 2
 schedule: "0 2 * * *"
 command: akm improve --auto-accept safe
 enabled: true

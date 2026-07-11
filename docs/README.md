@@ -12,7 +12,7 @@
 ## Configuration & Data
 
 - [Configuration](configuration.md) -- Providers, settings, and Ollama setup
-- [Configuring Agent Profiles](configuration-agent-profiles.md) -- How akm runs a coding agent, CLI or API
+- [Configuration](configuration.md#engines) -- Named LLM and agent engines
 - [Data & Telemetry](data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
 
 ## Features
@@ -86,7 +86,7 @@ Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` hea
 - [Ref Format](technical/ref.md) -- Wire format for asset references
 - [Core Principles](technical/akm-core-principles.md) -- Design principles and constraints
 - [Claude Code workflows vs. akm workflows](technical/claude-code-vs-akm-workflows.md) -- Comparing the two things that share a name
-- [Extending akm workflows into a harness-agnostic orchestration engine](technical/akm-workflows-orchestration-plan.md) -- Current formalized plan, supersedes part of the doc above
+- [Workflow source and IR](features/workflows.md) -- Current workflow execution model
 
 ## Official Ecosystem Repositories
 

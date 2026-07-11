@@ -15,7 +15,8 @@ import {
 import type { TaskDocument } from "../src/tasks/schema";
 
 const TASK: TaskDocument = {
-  schemaVersion: 1,
+  version: 2,
+  schemaVersion: 2,
   id: "ping",
   schedule: "*/15 * * * *",
   enabled: true,
@@ -149,7 +150,8 @@ function memoryExec(initial = ""): CronExec & { current: () => string } {
 }
 
 const SYNC_TASK: TaskDocument = {
-  schemaVersion: 1,
+  version: 2,
+  schemaVersion: 2,
   id: "ping",
   schedule: "*/15 * * * *",
   enabled: true,

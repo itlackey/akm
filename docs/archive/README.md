@@ -12,6 +12,8 @@ why it was archived and where current truth lives.
 | `0.9.0-improve-tuning-implementation-plan.md` | 0.9.0 | #617 dedup, #581 judgedCache, #604 hot-probation, #614 feedback-valence, #612 calibration |
 | `akm-eval-implementation-plan.md` | 0.9.0 | `scripts/akm-eval/` (all 8 phases; CI-gated) |
 | `architecture-refactor-plan.md` | 0.9.0 | R1–R9, X1–X3, D1–D3, X4 (PRs #667/#669/#670/#671) |
+| `akm-workflows-orchestration-plan.md` | 0.9.0 engine/strategy cutover | Current workflow docs and frozen engine execution |
+| `configuration-agent-profiles.md` | 0.9.0 | Replaced by named engines in `configuration.md` |
 | `env-asset-refactor-plan.md` | 0.9.0 | `vault` removed; `env`/`secret` asset types |
 | `improve-reconciliation-plan.md` | 0.9.0 | WS-0…WS-5 (salience, `asset_outcome`, homeostatic) |
 | `per-asset-commit-unification-plan.md` | 0.9.0 | #507 — per-asset commit retired (`src/core/write-source.ts`) |

@@ -1,3 +1,4 @@
+version: 2
 schedule: "0 9 * * 1"
 command: akm info --check-version
 enabled: true

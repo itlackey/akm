@@ -25,7 +25,6 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import { listAgentProfileNames } from "../../integrations/agent";
 import { resolveAssetPath } from "../../sources/resolve";
 import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
 import { parseTaskDocument } from "../../tasks/parser";
@@ -34,7 +33,7 @@ import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from 
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../../tasks/schedule";
 import type { TaskDocument } from "../../tasks/schema";
 import { validateTaskDocument } from "../../tasks/validator";
-import { resolveImproveProfile } from "../improve/improve-profiles";
+import { resolveImproveStrategy } from "../improve/improve-strategies";
 
 export interface TasksAddInput {
   id: string;
@@ -47,7 +46,9 @@ export interface TasksAddInput {
    * whitespace (`"echo hi"`). Mutually exclusive with `workflow` and `prompt`.
    */
   command?: string | string[];
-  profile?: string;
+  engine?: string;
+  model?: string;
+  timeoutMs?: number;
   params?: string;
   name?: string;
   description?: string;
@@ -82,6 +83,15 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
       "INVALID_FLAG_VALUE",
     );
   }
+  if (input.workflow && (input.engine !== undefined || input.model !== undefined || input.timeoutMs !== undefined)) {
+    throw new UsageError(
+      "Workflow tasks accept only --params; engine, model, and timeout are prompt-task fields.",
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (hasCommand && (input.engine !== undefined || input.model !== undefined)) {
+    throw new UsageError("Command tasks accept --timeout-ms but not --engine or --model.", "INVALID_FLAG_VALUE");
+  }
 
   // Validate the schedule for the active backend before writing anything.
   const backend = backendNameForPlatform();
@@ -109,7 +119,9 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
     workflow: input.workflow,
     prompt: input.prompt,
     command: input.command,
-    profile: input.profile,
+    engine: input.engine,
+    model: input.model,
+    timeoutMs: input.timeoutMs,
     params: input.params,
     name: input.name,
     description: input.description,
@@ -165,6 +177,8 @@ export interface TasksListResult {
     when_to_use?: string;
     tags?: string[];
   }>;
+  /** Task IDs using retired v1 YAML. They are not executable or installable. */
+  stale: string[];
 }
 
 /**
@@ -209,18 +223,20 @@ export function _resetLegacyMdTaskWarningStateForTests(): void {
 export async function akmTasksList(): Promise<TasksListResult> {
   const stashDir = resolveStashDir();
   const typeRoot = path.join(stashDir, "tasks");
-  if (!fs.existsSync(typeRoot)) return { tasks: [] };
+  if (!fs.existsSync(typeRoot)) return { tasks: [], stale: [] };
   const entries = fs.readdirSync(typeRoot);
   warnLegacyMdTaskFiles(typeRoot);
   const files = entries.filter((f) => f.endsWith(".yml"));
   const tasks: TasksListResult["tasks"] = [];
+  const stale: string[] = [];
   for (const file of files) {
     const id = file.slice(0, -4);
     const filePath = path.join(typeRoot, file);
     let task: TaskDocument;
     try {
       task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
-    } catch {
+    } catch (err) {
+      if (isStaleTaskError(err)) stale.push(id);
       continue; // skip malformed files; `akm tasks show <id>` will surface the error
     }
     tasks.push({
@@ -236,7 +252,8 @@ export async function akmTasksList(): Promise<TasksListResult> {
       tags: task.tags,
     });
   }
-  return { tasks };
+  if (stale.length > 0) warnStaleTaskFiles(stale);
+  return { tasks, stale };
 }
 
 export async function akmTasksShow(id: string): Promise<{
@@ -316,6 +333,9 @@ export async function akmTasksSetEnabled(
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const yaml = fs.readFileSync(filePath, "utf8");
+  // Parse before writing so stale v1 tasks are diagnosed without changing the
+  // source file or its installed scheduler entry.
+  parseTaskDocument({ yaml, filePath, id: normalised });
   const updated = setEnabledInYaml(yaml, enabled);
   const ref = taskAssetRef(normalised);
   await writeAssetToSource(target.source, target.config, ref, updated);
@@ -459,15 +479,17 @@ export interface TasksDoctorResult {
   akm: { argv: string[]; via: string };
   logDir: string;
   historyDir: string;
-  agent: { defaultProfile?: string; available: string[] };
+  engine: { defaultEngine?: string; available: string[] };
+  stale: string[];
+  staleGeneratedCommands: Array<{ id: string; replacement: string }>;
   scheduleSubset: string;
   warnings: string[];
   /**
-   * Effective proposal-queue triage settings for the default improve profile.
-   * Absent when the resolved profile has no `triage` process block.
+   * Effective proposal-queue triage settings for the default improve strategy.
+   * Absent when the resolved strategy has no `triage` process block.
    */
   improveTriage?: {
-    defaultProfile: string;
+    defaultStrategy: string;
     enabled: boolean;
     applyMode: string;
     policy: string;
@@ -492,17 +514,17 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
   }
   const backend = backendNameForPlatform();
   const config = loadConfig();
-  // v2: prefer profiles.agent / defaults.agent; fall back to legacy agent.default
-  const defaultProfile = config.defaults?.agent;
-  const profiles = config.profiles?.agent ? Object.keys(config.profiles.agent) : listAgentProfileNames(config);
+  const defaultEngine = config.defaults?.engine;
+  const engines = Object.keys(config.engines ?? {});
 
   // §6.1: surface the effective triage settings for the default improve
-  // profile. The struct is a fixed shape, so this is a deliberate addition.
-  const improveProfileName = typeof config.defaults?.improve === "string" ? config.defaults.improve : "default";
-  const triage = resolveImproveProfile(config.defaults?.improve as string | undefined, config).processes?.triage;
+  // strategy. The struct is a fixed shape, so this is a deliberate addition.
+  const improveStrategyName =
+    typeof config.defaults?.improveStrategy === "string" ? config.defaults.improveStrategy : "default";
+  const triage = resolveImproveStrategy(config.defaults?.improveStrategy, config).config.processes?.triage;
   const improveTriage = triage
     ? {
-        defaultProfile: improveProfileName,
+        defaultStrategy: improveStrategyName,
         enabled: triage.enabled === true,
         applyMode: triage.applyMode ?? "queue",
         policy: triage.policy ?? "personal-stash",
@@ -514,7 +536,9 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
     akm: invocation,
     logDir: getTaskLogDir(),
     historyDir: getTaskHistoryDir(),
-    agent: { defaultProfile, available: profiles },
+    engine: { defaultEngine, available: engines },
+    stale: collectStaleTaskIds(),
+    staleGeneratedCommands: collectStaleGeneratedCommands(),
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,
     ...(improveTriage ? { improveTriage } : {}),
@@ -555,7 +579,9 @@ interface RenderInput {
   workflow?: string;
   prompt?: string;
   command?: string | string[];
-  profile?: string;
+  engine?: string;
+  model?: string;
+  timeoutMs?: number;
   params?: string;
   name?: string;
   description?: string;
@@ -565,7 +591,7 @@ interface RenderInput {
 }
 
 function renderTaskYaml(input: RenderInput): string {
-  const obj: Record<string, unknown> = { schedule: input.schedule };
+  const obj: Record<string, unknown> = { version: 2, schedule: input.schedule, enabled: input.enabled };
   if (input.workflow) {
     obj.workflow = input.workflow;
     if (input.params) {
@@ -573,19 +599,95 @@ function renderTaskYaml(input: RenderInput): string {
     }
   } else if (input.prompt) {
     obj.prompt = input.prompt;
-    if (input.profile) obj.profile = input.profile;
+    if (input.engine) obj.engine = input.engine;
+    if (input.model) obj.model = input.model;
+    if (input.timeoutMs !== undefined) obj.timeoutMs = input.timeoutMs;
   } else if (input.command !== undefined) {
     // Emit a string when given a string, an array when given an array. The
     // parser accepts both forms; preserving the caller's shape keeps the YAML
     // ergonomic for humans editing the file later.
     obj.command = input.command;
+    if (input.timeoutMs !== undefined) obj.timeoutMs = input.timeoutMs;
   }
-  obj.enabled = input.enabled;
   if (input.name) obj.name = input.name;
   if (input.description) obj.description = input.description;
   if (input.when_to_use) obj.when_to_use = input.when_to_use;
   if (input.tags && input.tags.length > 0) obj.tags = input.tags;
   return yamlStringify(obj);
+}
+
+function isStaleTaskError(err: unknown): err is UsageError {
+  return err instanceof UsageError && err.code === "TASK_SCHEMA_VERSION_UNSUPPORTED";
+}
+
+function warnStaleTaskFiles(ids: readonly string[]): void {
+  process.stderr.write(
+    `WARNING: ${ids.length} task file(s) use retired task schema v1 and were not loaded.\n` +
+      `         Rewrite them with version: 2 and replace profile with engine. See docs/migration/v0.8-to-v0.9.md#task-assets.\n` +
+      `         Affected: ${ids.map((id) => `tasks/${id}.yml`).join(", ")}\n`,
+  );
+}
+
+function collectStaleTaskIds(): string[] {
+  const typeRoot = path.join(resolveStashDir(), "tasks");
+  if (!fs.existsSync(typeRoot)) return [];
+  const stale: string[] = [];
+  for (const file of fs.readdirSync(typeRoot)) {
+    if (!file.endsWith(".yml")) continue;
+    const id = file.slice(0, -4);
+    try {
+      parseTaskDocument({
+        yaml: fs.readFileSync(path.join(typeRoot, file), "utf8"),
+        filePath: path.join(typeRoot, file),
+        id,
+      });
+    } catch (err) {
+      if (isStaleTaskError(err)) stale.push(id);
+    }
+  }
+  return stale;
+}
+
+const STALE_GENERATED_COMMANDS: Record<string, { command: string; replacement: string }> = {
+  "akm-improve-frequent": {
+    command: "akm improve --profile frequent --auto-accept safe",
+    replacement: "akm improve --strategy frequent --auto-accept safe",
+  },
+  "akm-improve-consolidate": {
+    command: "akm improve --profile consolidate --auto-accept safe",
+    replacement: "akm improve --strategy consolidate --auto-accept safe",
+  },
+  "akm-improve-nightly": {
+    command: "akm improve --profile thorough --auto-accept safe",
+    replacement: "akm improve --strategy thorough --auto-accept safe",
+  },
+  "akm-improve-catchup": {
+    command: "akm improve --profile catchup --auto-accept safe",
+    replacement: "akm improve --strategy catchup --auto-accept safe",
+  },
+  "akm-graph-refresh-weekly": {
+    command: "akm improve --profile graph-refresh --auto-accept safe",
+    replacement: "akm improve --strategy graph-refresh --auto-accept safe",
+  },
+};
+
+function collectStaleGeneratedCommands(): Array<{ id: string; replacement: string }> {
+  const typeRoot = path.join(resolveStashDir(), "tasks");
+  if (!fs.existsSync(typeRoot)) return [];
+  const stale: Array<{ id: string; replacement: string }> = [];
+  for (const [id, expected] of Object.entries(STALE_GENERATED_COMMANDS)) {
+    const filePath = path.join(typeRoot, `${id}.yml`);
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
+      if (task.target.kind === "command" && task.target.cmd.join(" ") === expected.command) {
+        stale.push({ id, replacement: expected.replacement });
+      }
+    } catch {
+      // Stale-schema reporting owns files that cannot be parsed.
+    }
+  }
+  return stale;
 }
 
 function parseJsonObjectArg(raw: string): Record<string, unknown> {

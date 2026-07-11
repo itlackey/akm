@@ -9,7 +9,7 @@
  *   • the schedule is parseable and translates to the active backend
  *   • the workflow ref resolves (workflow targets)
  *   • the asset/file source exists (prompt targets)
- *   • the agent profile resolves (prompt targets)
+ *   • the selected engine resolves (prompt targets)
  *
  * Validation is deliberately split from parsing: callers that only want to
  * read frontmatter (e.g. `tasks list`) can skip these checks, while
@@ -22,7 +22,7 @@ import { parseAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError } from "../core/errors";
-import { requireAgentProfile } from "../integrations/agent";
+import { resolveEngine } from "../integrations/agent/engine-resolution";
 import { resolveAssetPath } from "../sources/resolve";
 import { parseSchedule, type ScheduleBackend } from "./schedule";
 import type { TaskDocument } from "./schema";
@@ -55,13 +55,17 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
     return;
   }
 
-  // Prompt target. Resolve the profile unconditionally — when no profile is
-  // set on the task, requireAgentProfile falls back to defaults.agent and
-  // throws a clear error if neither is configured. Catching this at
+  // Prompt target. Resolve the engine unconditionally — when no engine is
+  // set on the task, defaults.engine is required. Catching this at
   // `tasks add` / `tasks sync` time is much more useful than failing only
   // when the OS scheduler fires.
   const config = loadConfig();
-  requireAgentProfile(config, task.target.profile);
+  const engine = task.target.engine ?? config.defaults?.engine;
+  if (!engine) throw new NotFoundError(`Task "${task.id}" has no selected engine.`, "ASSET_NOT_FOUND");
+  const resolved = resolveEngine(engine, config);
+  if (task.target.llm !== undefined && resolved.kind !== "llm") {
+    throw new NotFoundError(`Task "${task.id}" uses llm overrides with non-LLM engine "${engine}".`, "ASSET_NOT_FOUND");
+  }
 
   const src = task.target.source;
   if (src.kind === "asset") {

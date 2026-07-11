@@ -41,6 +41,7 @@ function makeFakeDeps(): RegisterDefaultTasksDeps & { calls: TasksAddInput[] } {
           enabled: c.disabled !== true,
           target: { kind: "command", cmd: [String(c.command)] },
         })),
+        stale: [],
       };
     },
     async add(input: TasksAddInput): Promise<TasksAddResult> {
@@ -135,12 +136,12 @@ describe("registerDefaultTasks (#552)", () => {
     expect(laptopNightly?.disabled).toBe(true);
   });
 
-  test("each created task encodes its profile in the command", async () => {
+  test("each created task encodes its strategy in the command", async () => {
     const deps = makeFakeDeps();
     await registerDefaultTasks({ serverInstall: true, deps });
     for (const spec of DEFAULT_IMPROVE_TASKS) {
       const call = deps.calls.find((c) => c.id === spec.id);
-      expect(String(call?.command)).toContain(`--profile ${spec.profile}`);
+      expect(String(call?.command)).toContain(`--strategy ${spec.strategy}`);
     }
   });
 });

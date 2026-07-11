@@ -61,7 +61,7 @@ Net: the user's literal LLM concern does not hold; the check-in concern holds de
 
 **No daemon.** Confirmed: no timer/thread/poller anywhere. The mechanism is entirely pull-based.
 
-Key files: `src/workflows/checkin.ts`, `src/workflows/runs.ts`, `src/workflows/validate-summary.ts`, `src/workflows/agent-identity.ts`, `src/workflows/db.ts`, `src/commands/workflow-cli.ts`, `src/output/text/helpers.ts`, `src/output/text/workflow.ts`, `src/storage/repositories/workflow-runs-repository.ts`, `src/llm/client.ts`, `src/llm/feature-gate.ts`, `docs/technical/workflow-agent-checkin-adr.md`, `docs/technical/v1-architecture-spec.md` (§14).
+Key files: `src/workflows/checkin.ts`, `src/workflows/runs.ts`, `src/workflows/validate-summary.ts`, `src/workflows/agent-identity.ts`, `src/workflows/db.ts`, `src/commands/workflow-cli.ts`, `src/output/text/helpers.ts`, `src/output/text/workflow.ts`, `src/storage/repositories/workflow-runs-repository.ts`, `src/llm/client.ts`, `src/llm/feature-gate.ts`, `docs/technical/workflow-agent-checkin-adr.md`, and `docs/technical/architecture.md`.
 
 ---
 

@@ -1,5 +1,9 @@
 # Configuring Agent Profiles
 
+> **Superseded historical guide.** Profile-based configuration was removed in
+> 0.9. Use [named engines](../configuration.md#engines) instead. This file is
+> retained only to help manually migrate older installations.
+
 ## Overview
 
 An agent profile tells akm how to run a coding agent — either as a CLI

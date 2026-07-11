@@ -5,7 +5,8 @@ import type { TaskDocument } from "../src/tasks/schema";
 
 function makeTask(schedule: string, id = "ping"): TaskDocument {
   return {
-    schemaVersion: 1,
+    version: 2,
+    schemaVersion: 2,
     id,
     schedule,
     enabled: true,

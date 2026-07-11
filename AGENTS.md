@@ -9,7 +9,7 @@
 
 ## Architecture
 - This is a CLI-only package. There is no public API, no barrel exports, and no `exports` map. `src/cli.ts` is the thin dispatcher; add CLI verbs under `src/commands/*.ts`.
-- If you touch providers, refs, search/show behavior, config, or output shaping, read `CLAUDE.md` and `docs/technical/v1-architecture-spec.md` first. `tests/contracts/` pins the spec and is meant to catch contract drift.
+- If you touch providers, refs, search/show behavior, config, or output shaping, read `docs/technical/architecture.md` first. `tests/contracts/` pins active contracts and is meant to catch contract drift.
 - Supported source providers are locked to `filesystem`, `git`, `website`, and `npm`. Do not add `context-hub`; do not reintroduce `openviking`.
 - `SourceProvider` is exactly `{ name, kind, init, path, sync? }`. All providers materialize files to local disk.
 - Asset refs are `[origin//]type:name`. Source locators like `github:owner/repo` are for `akm add`, not for asset addressing.

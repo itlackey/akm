@@ -43,7 +43,9 @@
     "LICENSE",
     "docs/migration/release-notes",
     "docs/migration/v0.7-to-v0.8.md",
-    "docs/data-and-telemetry.md"
+    "docs/migration/v0.8-to-v0.9.md",
+    "docs/data-and-telemetry.md",
+    "schemas"
   ],
   "bin": {
     "akm": "dist/akm",
