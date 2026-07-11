@@ -172,7 +172,7 @@ function pruneOldBackups(backupDir: string): void {
  * predictable for debugging. Uses $CONFIG (not $DATA) because config.json
  * itself lives in $CONFIG — they should fail together if the dir is read-only.
  */
-function getConfigLockPath(): string {
+export function getConfigLockPath(): string {
   return path.join(getConfigDir(), "config.json.lck");
 }
 
@@ -191,8 +191,8 @@ function sleepSyncMs(ms: number): void {
 /**
  * Acquire an exclusive sentinel around config writes.
  *
- * Returns a release function. Best-effort: when all retries are exhausted the
- * write proceeds unlocked rather than erroring (same posture as lockfile.ts).
+ * Returns a release function. Acquisition is fail-closed: config mutation may
+ * never continue without owning the lock that protects its read/merge/write.
  */
 export function acquireConfigLock(): () => void {
   const lockPath = getConfigLockPath();
@@ -207,9 +207,11 @@ export function acquireConfigLock(): () => void {
       if (tryAcquireLockSync(lockPath, String(process.pid))) {
         return () => releaseLock(lockPath);
       }
-    } catch {
-      // Non-EEXIST error (permissions, etc.) — bail out and proceed unlocked.
-      break;
+    } catch (error) {
+      throw new ConfigError(
+        `Unable to acquire config lock at ${lockPath}: ${error instanceof Error ? error.message : String(error)}`,
+        "INVALID_CONFIG_FILE",
+      );
     }
     if (probeLock(lockPath).state === "stale") {
       releaseLock(lockPath);
@@ -228,8 +230,10 @@ export function acquireConfigLock(): () => void {
       sleepSyncMs(CONFIG_LOCK_RETRY_DELAY_MS);
     }
   }
-  // Best-effort: proceed without lock.
-  return () => {};
+  throw new ConfigError(
+    `Timed out waiting for config lock at ${lockPath}. Another AKM process may be updating config.`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
 /**

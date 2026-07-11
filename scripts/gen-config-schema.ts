@@ -13,6 +13,7 @@ import path from "node:path";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   AkmConfigSchema,
+  CURRENT_CONFIG_VERSION,
   EmbeddingConnectionConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,
@@ -65,7 +66,7 @@ function generate(): JsonSchema {
 
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
+    $id: `https://itlackey.github.io/akm/schemas/akm-config.${CURRENT_CONFIG_VERSION}.json`,
     title: "AKM Configuration",
     description:
       "Configuration file for the akm CLI (Agent Knowledge Management). Stored at " +

@@ -38,6 +38,9 @@ import { z } from "zod";
 import type { InstalledStashEntry } from "../../registry/types";
 import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "./config-types";
 
+/** Persisted config schema version. Package prerelease/patch versions do not change this value. */
+export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
+
 // ── Reusable atomic schemas ─────────────────────────────────────────────────
 
 /** Positive integer (used for tokens, timeouts, batch sizes). */
@@ -209,7 +212,7 @@ export const EmbeddingConnectionConfigSchema = z
     provider: z.string().optional(),
     endpoint: z.string().optional(),
     model: z.string().optional(),
-    apiKey: z.string().optional(),
+    apiKey: z.string().regex(ENV_REFERENCE_PATTERN, `apiKey must be $VAR or \${VAR}`).optional(),
     dimension: positiveInt.optional(),
     localModel: z.string().min(1).optional(),
     maxTokens: positiveInt.optional(),
@@ -1163,7 +1166,7 @@ export const SetupConfigSchema = z
  * one-time 0.7→0.8 input transforms before the schema sees the value.
  */
 export const AkmConfigShape = {
-  configVersion: z.union([z.string().min(1), z.number()]).optional(),
+  configVersion: z.literal(CURRENT_CONFIG_VERSION),
   engines: EnginesSchema.optional(),
   defaults: DefaultsSchema.optional(),
   // Global model-alias tiers: alias → platform → exact model string, with a

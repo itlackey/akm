@@ -8,6 +8,7 @@ describe("current engine and strategy configuration contract", () => {
   test("accepts named LLM/agent engines and improve strategies", () => {
     expect(() =>
       AkmConfigSchema.parse({
+        configVersion: "0.9.0",
         engines: {
           fast: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "qwen3" },
           reviewer: { kind: "agent", platform: "opencode" },

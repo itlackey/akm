@@ -28,7 +28,7 @@ describe("0.9 config contract", () => {
 
   test("rejects profile vocabulary and literal LLM credentials", () => {
     writeConfig({
-      configVersion: "0.9.0",
+      configVersion: "0.9.0" as const,
       profiles: { llm: {} },
       engines: {
         fast: {
@@ -62,7 +62,7 @@ describe("0.9 config contract", () => {
 
   test("resolves direct LLM consumers from defaults.llmEngine", () => {
     const config = {
-      configVersion: "0.9.0",
+      configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
       engines: {
         fast: { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "fast-model" },

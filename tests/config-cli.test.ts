@@ -231,9 +231,10 @@ describe("apiKey rejection (#454)", () => {
     expect(() => setConfigValue(base, "engines.fast.apiKey", "sk-test")).toThrow(/apiKey must be \$VAR/);
   });
 
-  test("setConfigValue rejects embedding.apiKey and points at AKM_EMBED_API_KEY", () => {
+  test("setConfigValue accepts symbolic embedding apiKey and rejects literals", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "embedding.apiKey", "sk-test")).toThrow(/AKM_EMBED_API_KEY/);
+    expect(setConfigValue(base, "embedding.apiKey", "$AKM_EMBED_API_KEY").embedding?.apiKey).toBe("$AKM_EMBED_API_KEY");
+    expect(() => setConfigValue(base, "embedding.apiKey", "sk-test")).toThrow(/apiKey must be \$VAR/);
   });
 
   test("setConfigValue accepts symbolic engine apiKey values only", () => {

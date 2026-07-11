@@ -4,7 +4,6 @@ import path from "node:path";
 import { _setClackForTests } from "../../src/cli/clack";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import { _setDefaultTasksForTests } from "../../src/commands/tasks/default-tasks";
-import { _setSaveConfigForTests } from "../../src/core/config/config";
 import type { IndexResponse } from "../../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
@@ -438,21 +437,21 @@ describe("runSetupWizard", () => {
     expect(promptState.logs.some((entry) => entry.includes("asset preparation was skipped"))).toBe(true);
   });
 
-  test("surfaces config save failure after bootstrap init", async () => {
+  test("surfaces config write failure after bootstrap init", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
-    let saveCalls = 0;
-    overrideSeam(_setSaveConfigForTests, () => {
-      saveCalls += 1;
-      throw new Error("EACCES config.json");
+    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
+      const dir = options?.dir ?? DEFAULT_STASH_DIR;
+      setupState.initCalls.push({ dir });
+      fs.mkdirSync(DEFAULT_CONFIG_PATH, { recursive: true });
+      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
     });
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
     promptState.confirms.push(false, false, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    await expect(runSetupWizard()).rejects.toThrow("EACCES config.json");
-    expect(saveCalls).toBe(1);
+    await expect(runSetupWizard()).rejects.toThrow(/EISDIR|directory/);
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
     expect(setupState.indexCalls).toHaveLength(0);
   });

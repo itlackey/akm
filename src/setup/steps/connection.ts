@@ -12,8 +12,14 @@ import type { AkmConfig, EmbeddingConnectionConfig, LlmConnectionConfig } from "
 import { detectAgentCliProfiles, pickDefaultAgentProfile } from "../../integrations/agent";
 import { probeLlmCapabilities } from "../../llm/client";
 import { detectLMStudio, detectOllama, type LMStudioDetectionResult } from "../detect";
+import { verifyOpenAiCompatibleEndpoint } from "../detected-engines";
+import {
+  type AgentEngineSelection,
+  cloneLlmConnection,
+  readAgentEngineSelection,
+  readCurrentLlmEngine,
+} from "../engine-config";
 import type { HarnessLLMConfig } from "../harness-config-import";
-import { cloneLlmConfig, getCurrentAgentBlock, getCurrentLlm, type LegacyAgentBlockShape } from "../legacy-config";
 import { prompt, promptOrBack } from "../prompt";
 
 interface OllamaChoices {
@@ -213,7 +219,7 @@ export async function stepLlm(
   options.push({ value: "lmstudio", label: "LM Studio / local server", hint: lmStudioHint });
   options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
   options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement during indexing" });
-  const currentLlm = getCurrentLlm(current);
+  const currentLlm = readCurrentLlmEngine(current);
   if (currentLlm) {
     options.push({
       value: "keep",
@@ -232,7 +238,7 @@ export async function stepLlm(
     }),
   );
 
-  if (choice === "keep") return cloneLlmConfig(currentLlm);
+  if (choice === "keep") return cloneLlmConnection(currentLlm);
   if (choice === "none") return undefined;
 
   // Handle "Import from <Harness>" choices
@@ -244,14 +250,27 @@ export async function stepLlm(
       `Importing LLM config from ${harness.harnessName}: ` +
         [harness.provider, harness.model, harness.baseUrl].filter(Boolean).join(", "),
     );
+    if (!harness.baseUrl || !harness.model) {
+      p.log.warn(`Skipping ${harness.harnessName}: no complete endpoint/model was detected.`);
+      return undefined;
+    }
+    const verified = await verifyOpenAiCompatibleEndpoint({
+      endpoint: harness.baseUrl,
+      model: harness.model,
+      apiKeyEnvVar: harness.apiKeyEnvVar,
+    });
+    if (!verified.ok) {
+      p.log.warn(`Skipping ${harness.harnessName}: ${verified.reason}. Fix its endpoint/credential and retry setup.`);
+      return undefined;
+    }
     const llmConfig: LlmConnectionConfig = {
-      endpoint: harness.baseUrl ?? "",
+      endpoint: verified.endpoint,
       model: harness.model ?? "",
       temperature: 0.3,
       maxTokens: 1024,
+      ...(harness.apiKeyEnvVar ? { apiKey: `\${${harness.apiKeyEnvVar}}` } : {}),
     };
     if (harness.provider) llmConfig.provider = harness.provider as LlmConnectionConfig["provider"];
-    if (harness.baseUrl) llmConfig.endpoint = harness.baseUrl;
     return llmConfig;
   }
 
@@ -478,7 +497,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     { value: "skip", label: "Skip — disable enrichment features" },
   );
 
-  const currentLlmSmall = getCurrentLlm(current);
+  const currentLlmSmall = readCurrentLlmEngine(current);
   if (currentLlmSmall) {
     providerOptions.push({
       value: "keep",
@@ -498,7 +517,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
   );
 
   if (providerChoice === "keep") {
-    return { llm: cloneLlmConfig(currentLlmSmall), skipped: false, ollamaEndpoint };
+    return { llm: cloneLlmConnection(currentLlmSmall), skipped: false, ollamaEndpoint };
   }
 
   if (providerChoice === "skip") {
@@ -668,8 +687,12 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     );
     const apiKeyInput = await promptOrBack(() =>
       p.text({
-        message: "API key (optional — press Enter to skip):",
-        placeholder: "",
+        message: "API key environment variable name (optional):",
+        placeholder: "CUSTOM_LLM_API_KEY",
+        validate: (value) =>
+          value && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+            ? "Use an environment variable name, not a key value"
+            : undefined,
       }),
     );
     llm = {
@@ -678,7 +701,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
       model: model.trim(),
       temperature: 0.3,
       maxTokens: 1024,
-      ...(apiKeyInput?.trim() ? { apiKey: apiKeyInput.trim() } : {}),
+      ...(apiKeyInput?.trim() ? { apiKey: `\${${apiKeyInput.trim()}}` } : {}),
     };
   }
 
@@ -710,7 +733,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
 export async function stepAgentConnection(
   current: AkmConfig,
   smallModel: SmallModelConnectionResult,
-): Promise<LegacyAgentBlockShape | undefined> {
+): Promise<AgentEngineSelection | undefined> {
   p.log.step("Step 2/2: Configure your agent connection");
 
   p.note(
@@ -724,7 +747,7 @@ export async function stepAgentConnection(
 
   // Detect available CLI agents.
   const detections = detectAgentCliProfiles(current);
-  const currentAgentBlock = getCurrentAgentBlock(current);
+  const currentAgentBlock = readAgentEngineSelection(current);
   const availableClis = detections.filter((d) => d.available);
 
   const agentOptions: Array<{ value: string; label: string; hint?: string }> = [];
@@ -750,8 +773,8 @@ export async function stepAgentConnection(
   if (currentAgentBlock) {
     const currentDesc = currentAgentBlock.default
       ? `CLI: ${currentAgentBlock.default}`
-      : currentAgentBlock.profiles?.default?.model
-        ? `SDK: ${currentAgentBlock.profiles.default.model}`
+      : currentAgentBlock.engines?.default?.model
+        ? `SDK: ${currentAgentBlock.engines.default.model}`
         : "configured";
     agentOptions.push({ value: "keep", label: `Keep current: ${currentDesc}` });
   }
@@ -802,9 +825,9 @@ export async function stepAgentConnection(
     } else {
       const baseEndpoint = smallModel.llm.endpoint.replace("/v1/chat/completions", "");
       p.log.info(`Endpoint: ${baseEndpoint} (from Step 1)`);
-      const profileName = smallModel.llm.provider ?? "default";
+      const profileName = `${smallModel.llm.provider ?? "default"}-agent`;
       // Pre-populate from existing agent profile for this provider, if any.
-      const existingAgentModel = currentAgentBlock?.profiles?.[profileName]?.model ?? smallModel.llm.model ?? undefined;
+      const existingAgentModel = currentAgentBlock?.engines?.[profileName]?.model ?? smallModel.llm.model ?? undefined;
       const agentModel = await prompt(() =>
         p.text({
           message: "Model to use for agent tasks (same model is fine, larger models work better):",
@@ -815,13 +838,14 @@ export async function stepAgentConnection(
       );
       return {
         ...(currentAgentBlock ?? {}),
-        profiles: {
-          ...(currentAgentBlock?.profiles ?? {}),
+        engines: {
+          ...(currentAgentBlock?.engines ?? {}),
           [profileName]: {
-            ...(currentAgentBlock?.profiles?.[profileName] ?? {}),
-            sdkMode: true,
+            ...(currentAgentBlock?.engines?.[profileName] ?? {}),
+            kind: "agent",
+            platform: "opencode-sdk",
             model: agentModel.trim(),
-            endpoint: smallModel.llm.endpoint,
+            ...(current.defaults?.llmEngine ? { llmEngine: current.defaults.llmEngine } : {}),
           },
         },
         default: profileName,
@@ -856,8 +880,8 @@ export async function stepAgentConnection(
 
   // "new-connection" (also fall-through from "same-provider" when Step 1 was skipped)
   // Pre-populate from current "custom" agent profile if available.
-  const currentCustomAgentProfile = currentAgentBlock?.profiles?.custom;
-  const currentNewEndpoint = currentCustomAgentProfile?.endpoint ?? undefined;
+  const currentCustomAgentProfile = currentAgentBlock?.engines?.["custom-agent"];
+  const currentNewEndpoint = undefined;
   const currentNewModel = currentCustomAgentProfile?.model ?? undefined;
   const newEndpoint = await prompt(() =>
     p.text({
@@ -872,8 +896,12 @@ export async function stepAgentConnection(
   );
   const newApiKeyInput = await promptOrBack(() =>
     p.text({
-      message: "API key (optional — press Enter to skip):",
-      placeholder: "",
+      message: "API key environment variable name (optional):",
+      placeholder: "CUSTOM_LLM_API_KEY",
+      validate: (value) =>
+        value && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+          ? "Use an environment variable name, not a key value"
+          : undefined,
     }),
   );
   const newModel = await prompt(() =>
@@ -885,19 +913,28 @@ export async function stepAgentConnection(
     }),
   );
 
+  const llmEngineName = "custom-llm";
+  const agentEngineName = "custom-agent";
   const customProfile = {
-    sdkMode: true,
-    endpoint: newEndpoint.trim(),
+    kind: "agent" as const,
+    platform: "opencode-sdk" as const,
+    llmEngine: llmEngineName,
     model: newModel.trim(),
-    ...(newApiKeyInput?.trim() ? { apiKey: newApiKeyInput.trim() } : {}),
   };
 
   return {
     ...(currentAgentBlock ?? {}),
-    profiles: {
-      ...(currentAgentBlock?.profiles ?? {}),
-      custom: customProfile,
+    engines: {
+      ...(currentAgentBlock?.engines ?? {}),
+      [llmEngineName]: {
+        kind: "llm",
+        provider: "custom",
+        endpoint: newEndpoint.trim(),
+        model: newModel.trim(),
+        ...(newApiKeyInput?.trim() ? { apiKey: `\${${newApiKeyInput.trim()}}` } : {}),
+      },
+      [agentEngineName]: customProfile,
     },
-    default: "custom",
+    default: agentEngineName,
   };
 }

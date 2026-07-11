@@ -161,13 +161,14 @@ export type WorkflowConfig = z.infer<typeof import("./config-schema").WorkflowCo
  * The full on-disk config shape. This IS the Zod schema's output type — there
  * is no parallel hand-written interface to keep in sync.
  */
-export type AkmConfig = import("./config-schema").AkmConfigParsed & {
-  /** @deprecated Internal migration aid. Persisted configs reject this key. */
-  profiles?: z.infer<typeof import("./config-schema").ProfilesSchema>;
-  /** @deprecated Internal migration aid. Persisted configs reject these keys. */
-  defaults?: import("./config-schema").AkmConfigParsed["defaults"] & {
-    llm?: string;
-    agent?: string;
-    improve?: string;
+export type AkmConfig = Partial<import("./config-schema").AkmConfigParsed> &
+  Pick<import("./config-schema").AkmConfigParsed, "semanticSearchMode"> & {
+    /** @deprecated Internal migration aid. Persisted configs reject this key. */
+    profiles?: z.infer<typeof import("./config-schema").ProfilesSchema>;
+    /** @deprecated Internal migration aid. Persisted configs reject these keys. */
+    defaults?: import("./config-schema").AkmConfigParsed["defaults"] & {
+      llm?: string;
+      agent?: string;
+      improve?: string;
+    };
   };
-};

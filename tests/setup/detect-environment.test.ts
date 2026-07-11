@@ -319,6 +319,15 @@ describe("akm setup --reset-recommended", () => {
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-reset-state-"));
     const configPath = path.join(xdgConfig, "akm", "config.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const setupEnv = {
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
+      AKM_STASH_DIR: workDir,
+      AKM_FORCE_SETUP_TMP_STASH: "1",
+      AKM_FORCE_INIT_TMP_STASH: "1",
+    };
+    expect((await runCli(["backup", "create", "--for", "0.9.0", "--format", "json"], setupEnv)).status).toBe(0);
     // Seed a config with a custom registry entry that must survive the merge.
     fs.writeFileSync(
       configPath,
@@ -337,16 +346,7 @@ describe("akm setup --reset-recommended", () => {
     );
 
     try {
-      const result = await runCli(["setup", "--reset-recommended", "--no-init", "--format", "json"], {
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: xdgData,
-        XDG_STATE_HOME: xdgState,
-        AKM_STASH_DIR: workDir,
-        // The temp stash dir lives under /tmp; opt past the setup/init guards
-        // the test runner enforces for that path.
-        AKM_FORCE_SETUP_TMP_STASH: "1",
-        AKM_FORCE_INIT_TMP_STASH: "1",
-      });
+      const result = await runCli(["setup", "--reset-recommended", "--no-init", "--format", "json"], setupEnv);
 
       expect(result.status).toBe(0);
       const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {

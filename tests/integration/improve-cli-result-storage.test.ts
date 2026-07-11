@@ -57,13 +57,15 @@ function runCli(args: string[], stashDir: string): CliRun {
   // sandbox helper to keep mkdtempSync out of the test file; the dir is passed
   // to spawnSync's env (not process.env) so it never leaks.
   const data = sandboxMakeStashDir();
-  disposers.push(data);
+  const cache = sandboxMakeStashDir();
+  disposers.push(data, cache);
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 60_000,
     env: {
       ...process.env,
       AKM_STASH_DIR: stashDir,
+      XDG_CACHE_HOME: cache.dir,
       XDG_DATA_HOME: data.dir,
     },
   });

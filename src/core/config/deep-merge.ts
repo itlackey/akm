@@ -6,7 +6,7 @@ const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 type ConfigObject = Record<string, unknown>;
 
-function isPlainObject(value: unknown): value is ConfigObject {
+export function isPlainObject(value: unknown): value is ConfigObject {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;

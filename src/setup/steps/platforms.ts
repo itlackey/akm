@@ -11,7 +11,7 @@ import * as p from "../../cli/clack";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../../integrations/agent";
 import { detectAgentPlatforms } from "../detect";
-import { getCurrentAgentBlock, type LegacyAgentBlockShape } from "../legacy-config";
+import { type AgentEngineSelection, readAgentEngineSelection } from "../engine-config";
 import { prompt } from "../prompt";
 
 export async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry[]> {
@@ -89,7 +89,7 @@ export function printCapabilitySummary(smallModelSkipped: boolean, agentConfigur
  */
 export interface AgentSetupResult {
   /** Updated agent config block, or `undefined` if the user has nothing installed and no existing block. */
-  agent?: LegacyAgentBlockShape;
+  agent?: AgentEngineSelection;
   /** Per-profile detection results, available to the UI for display. */
   detections: AgentDetectionResult[];
 }
@@ -97,8 +97,8 @@ export interface AgentSetupResult {
 export async function stepAgentSelection(
   current: AkmConfig,
   detections: AgentDetectionResult[],
-): Promise<LegacyAgentBlockShape | undefined> {
-  const currentAgentBlock = getCurrentAgentBlock(current);
+): Promise<AgentEngineSelection | undefined> {
+  const currentAgentBlock = readAgentEngineSelection(current);
   const available = detections.filter((d) => d.available);
   if (available.length === 0) {
     return currentAgentBlock;
@@ -121,7 +121,7 @@ export async function stepAgentSelection(
   );
 
   if (selectedDefault === "disabled") {
-    if (!currentAgentBlock?.profiles && !currentAgentBlock?.timeoutMs) {
+    if (!currentAgentBlock?.engines) {
       return undefined;
     }
     return {
@@ -151,7 +151,7 @@ export function stepAgentCliDetection(
   detectFn: (config?: AkmConfig) => AgentDetectionResult[] = detectAgentCliProfiles,
 ): AgentSetupResult {
   const detections = detectFn(current);
-  const currentAgentBlock = getCurrentAgentBlock(current);
+  const currentAgentBlock = readAgentEngineSelection(current);
   const defaultName = pickDefaultAgentProfile(detections, currentAgentBlock?.default);
 
   // No installed agents found and no existing config → leave block absent.
@@ -159,7 +159,7 @@ export function stepAgentCliDetection(
     return { detections };
   }
 
-  const agent: LegacyAgentBlockShape = {
+  const agent: AgentEngineSelection = {
     ...(currentAgentBlock ?? {}),
     ...(defaultName ? { default: defaultName } : {}),
   };

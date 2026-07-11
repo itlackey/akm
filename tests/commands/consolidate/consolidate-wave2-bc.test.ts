@@ -111,9 +111,9 @@ describe("config-cli: engines.* and embedding.* subkeys (#36)", () => {
     expect(result.embedding?.model).toBe("nomic-embed-text");
   });
 
-  test("parseConfigValue rejects embedding.apiKey persistence (#454)", () => {
-    expect(() => parseConfigValue("embedding.apiKey", "sk-embed")).toThrow(/apiKey cannot be persisted/);
-    expect(() => parseConfigValue("embedding.apiKey", "sk-embed")).toThrow(/AKM_EMBED_API_KEY/);
+  test("parseConfigValue accepts symbolic embedding credentials and rejects literals", () => {
+    expect(parseConfigValue("embedding.apiKey", "$AKM_EMBED_API_KEY").embedding?.apiKey).toBe("$AKM_EMBED_API_KEY");
+    expect(() => parseConfigValue("embedding.apiKey", "sk-embed")).toThrow(/apiKey must be \$VAR/);
   });
 
   test("parseConfigValue rejects an empty engine endpoint", () => {
@@ -146,7 +146,9 @@ describe("config-cli: engines.* and embedding.* subkeys (#36)", () => {
     };
     expect(getConfigValue(config, "embedding.endpoint")).toBe("http://localhost/emb");
     expect(getConfigValue(config, "embedding.model")).toBe("bge-small");
-    expect(getConfigValue(config, "embedding.apiKey")).toBeNull();
+    expect(
+      getConfigValue({ ...config, embedding: { ...config.embedding, apiKey: "$EMBED_KEY" } }, "embedding.apiKey"),
+    ).toBe("$EMBED_KEY");
   });
 
   // ── setConfigValue with deep merge ────────────────────────────────────────

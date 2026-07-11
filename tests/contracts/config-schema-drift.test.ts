@@ -10,6 +10,12 @@ function readSchema(): Record<string, unknown> {
 }
 
 describe("config schema drift pins", () => {
+  test("requires the exact 0.9.0 configVersion const", () => {
+    const root = readSchema();
+    const properties = root.properties as Record<string, Record<string, unknown>>;
+    expect(properties.configVersion).toEqual({ type: "string", const: "0.9.0" });
+    expect(root.required).toContain("configVersion");
+  });
   test("ImproveProcessConfig schema includes qualityGate + contradictionDetection sub-objects", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;

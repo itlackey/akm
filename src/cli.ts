@@ -78,6 +78,7 @@ import { type ArgsDef, defineCommand, runMain } from "citty";
 import { findCittyTopLevelCommand } from "./cli/parse-args";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
+import { backupCommand } from "./commands/backup-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
 import { envCommand } from "./commands/env/env-cli";
@@ -112,7 +113,7 @@ import { tasksCommand } from "./commands/tasks/tasks-cli";
 import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { bestEffort } from "./core/best-effort";
-import { loadConfig } from "./core/config/config";
+import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
@@ -559,6 +560,7 @@ export const main = defineCommand({
     sync: syncCommand,
     clone: cloneCommand,
     registry: registryCommand,
+    backup: backupCommand,
     config: configCommand,
     feedback: feedbackCommand,
     history: historyCommand,
@@ -581,6 +583,18 @@ export const main = defineCommand({
 });
 
 const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
+
+/** Recovery/setup surfaces must remain reachable when config.json is invalid. */
+export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
+  const args = argv.slice(2);
+  if (args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-v")) return true;
+  const command = findCittyTopLevelCommand([...args], MAIN_TOP_LEVEL_ARGS);
+  if (command === "setup" || command === "backup") return true;
+  if (command !== "config") return false;
+  const configIndex = args.indexOf("config");
+  const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));
+  return subcommand === "path" || subcommand === "validate" || subcommand === "migrate";
+}
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 // Canonical table lives in `src/cli/shared.ts` (EXIT_CODES). These aliases keep
@@ -612,7 +626,8 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // rather than letting the raw exception escape with a stack trace.
   try {
     applyEarlyStderrFlags(process.argv);
-    initOutputMode(process.argv, loadConfig().output ?? {});
+    const bypassConfig = shouldBypassConfigStartup(process.argv);
+    initOutputMode(process.argv, bypassConfig ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}));
   } catch (error: unknown) {
     emitJsonError(error);
   }
@@ -632,15 +647,17 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // 0.8.0 moved the index to $XDG_DATA_HOME/akm/index.db (getDataDir()).
   // If the old file exists at $XDG_CACHE_HOME/akm/index.db, remove it so the
   // user isn't confused by a phantom DB. Best-effort; never fatal.
-  bestEffort(() => {
-    const oldIndexPath = path.join(getCacheDir(), "index.db");
-    if (fs.existsSync(oldIndexPath)) {
-      fs.rmSync(oldIndexPath, { force: true });
-      fs.rmSync(`${oldIndexPath}-shm`, { force: true });
-      fs.rmSync(`${oldIndexPath}-wal`, { force: true });
-      warn(`Cleaned up stale 0.7.x index from ${oldIndexPath}. Canonical path is now ${getDbPath()}.`);
-    }
-  }, "stale 0.7.x index cleanup is non-fatal");
+  if (!shouldBypassConfigStartup(process.argv)) {
+    bestEffort(() => {
+      const oldIndexPath = path.join(getCacheDir(), "index.db");
+      if (fs.existsSync(oldIndexPath)) {
+        fs.rmSync(oldIndexPath, { force: true });
+        fs.rmSync(`${oldIndexPath}-shm`, { force: true });
+        fs.rmSync(`${oldIndexPath}-wal`, { force: true });
+        warn(`Cleaned up stale 0.7.x index from ${oldIndexPath}. Canonical path is now ${getDbPath()}.`);
+      }
+    }, "stale 0.7.x index cleanup is non-fatal");
+  }
 
   // First-time-user breadcrumb: when run with no subcommand AND no config
   // exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`
