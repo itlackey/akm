@@ -22,7 +22,13 @@ import { listProposals } from "../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
 import { quietQualityGateConfig } from "../../_helpers/factories";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  withEnv,
+} from "../../_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -137,6 +143,23 @@ afterEach(() => {
 // ── reflect ─────────────────────────────────────────────────────────────────
 
 describe("akm reflect", () => {
+  test("redacts an echoed engine environment credential before proposal persistence", async () => {
+    const sentinel = "REFLECT-ECHO-SENTINEL";
+    const stash = makeStashDir();
+    const echoed = VALID_LESSON_PAYLOAD.replace("Prefer rg.", `Prefer rg. ${sentinel}`);
+    const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
+      akmReflect({
+        ref: "lesson:rg-over-grep",
+        stashDir: stash,
+        config: quietQualityGateConfig(),
+        runAgentOptions: { spawn: fakeSpawn(echoed, "", 0) },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(listProposals(stash))).not.toContain(sentinel);
+    expect(JSON.stringify(listProposals(stash))).toContain("[REDACTED]");
+  });
   test("happy path: produces a queued proposal with source=reflect", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
@@ -364,6 +387,25 @@ describe("akm reflect", () => {
 // ── propose ────────────────────────────────────────────────────────────────
 
 describe("akm propose", () => {
+  test("redacts an echoed engine environment credential before proposal persistence", async () => {
+    const sentinel = "PROPOSE-ECHO-SENTINEL";
+    const stash = makeStashDir();
+    const echoed = VALID_SKILL_PAYLOAD.replace("Say hi politely.", `Say hi politely. ${sentinel}`);
+    const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
+      akmPropose({
+        type: "skill",
+        name: "hello",
+        task: "Say hi",
+        stashDir: stash,
+        agentConfig: quietQualityGateConfig(),
+        runAgentOptions: { spawn: fakeSpawn(echoed, "", 0) },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(listProposals(stash))).not.toContain(sentinel);
+    expect(JSON.stringify(listProposals(stash))).toContain("[REDACTED]");
+  });
   test("happy path: produces a queued proposal with source=propose", async () => {
     const stash = makeStashDir();
     const result = await akmPropose({

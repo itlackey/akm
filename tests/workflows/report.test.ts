@@ -19,6 +19,7 @@ import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { makeStashDir, withEnv } from "../_helpers/sandbox";
 import { freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
@@ -282,6 +283,56 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
     const done = await getWorkflowStatus(RUN_ID);
     expect(done.run.status).toBe("completed");
     expect(done.workflow.steps.every((s) => s.status === "completed")).toBe(true);
+  });
+});
+
+describe("workflow report — sensitive output", () => {
+  test("redacts echoed engine, env-asset, and secret-binding values before manual report persistence", async () => {
+    const engineSentinel = "MANUAL-REPORT-ENGINE-SENTINEL";
+    const envSentinel = "MANUAL-REPORT-ENV-SENTINEL";
+    const secretSentinel = "MANUAL-REPORT-SECRET-SENTINEL";
+    const stash = makeStashDir();
+    fs.mkdirSync(path.join(stash.dir, "secrets"), { recursive: true });
+    fs.mkdirSync(path.join(stash.dir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stash.dir, "secrets", "report-token"), secretSentinel);
+    fs.writeFileSync(
+      path.join(stash.dir, "env", "report.env"),
+      `PLAIN=${envSentinel}\nTOKEN=\${secret:report-token}\n`,
+    );
+    const p = plan(`version: 2
+name: ManualRedaction
+steps:
+  - id: work
+    title: Work
+    unit:
+      env: [env:report]
+      instructions: Do the work.
+`);
+    const fallback = p.execution?.engines["test-llm"];
+    if (!fallback || fallback.kind !== "llm") throw new Error("expected frozen fallback LLM");
+    fallback.credential = { names: ["MANUAL_REPORT_TEST_KEY"], required: true };
+    seedRun({ plan: p, steps: [{ id: "work" }] });
+    const unitId = unitIds(p, 0, {})[0];
+
+    try {
+      await withEnv({ AKM_STASH_DIR: stash.dir, MANUAL_REPORT_TEST_KEY: engineSentinel }, () =>
+        reportWorkflowUnit({
+          target: RUN_ID,
+          unitId,
+          status: "completed",
+          resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel}`,
+          summaryJudge: null,
+        }),
+      );
+      const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+
+      for (const sentinel of [engineSentinel, envSentinel, secretSentinel]) {
+        expect(JSON.stringify(rows)).not.toContain(sentinel);
+      }
+      expect(JSON.stringify(rows)).toContain("[REDACTED]");
+    } finally {
+      stash.cleanup();
+    }
   });
 });
 

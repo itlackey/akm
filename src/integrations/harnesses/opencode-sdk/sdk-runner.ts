@@ -34,15 +34,14 @@
  *     `createOpencodeServer` copies from `process.env` **synchronously**
  *     (its `spawn` call runs before its first `await`, so the snapshot is
  *     taken inside our call frame). {@link getOrStartServer} therefore keys
- *     servers by a hash of the FULL env binding entries (keys AND values —
- *     two bindings that share keys but differ in values must not share a
- *     server), overlays the bindings onto `process.env` for exactly the
+ *     servers by a hash of all server-affecting material (canonical endpoint,
+ *     materialized key, binary, provider config, and full env entries), overlays
+ *     the bindings onto `process.env` for exactly the
  *     synchronous prefix of the `createOpencode` call, and restores the
  *     previous values before awaiting. JavaScript's single-threaded event
  *     loop makes that overlay window atomic: no concurrently-running akm
- *     code can observe the mutated environment. Units with the same
- *     bindings share one server; units with none share the default server
- *     (byte-identical to the pre-R2 singleton behavior).
+ *     code can observe the mutated environment. Identical material shares one
+ *     server; any material difference receives a separate server.
  *
  * This is what removed the workflow engine's `env_unsupported` hard-fail for
  * the sdk runner: injection genuinely reaches the child, because tool
@@ -51,9 +50,9 @@
  * Registry hygiene (peer-review fixes):
  *
  *   - **Ports.** `createOpencodeServer` binds a FIXED default port (4096),
- *     so coexisting registry entries would contend for the same bind. The
- *     default key keeps the SDK default; every env-keyed entry is started on
- *     its own OS-assigned free port (see {@link startServer}).
+ *     so coexisting registry entries would contend for the same bind. Every
+ *     entry is started on its own reserved OS-assigned port (see
+ *     {@link startServer}).
  *   - **Shutdown.** {@link closeServer} closes resolved servers
  *     SYNCHRONOUSLY — it runs from `process.once('exit')`, where Bun never
  *     drains microtasks, so a `.then()`-based close would orphan every
@@ -65,7 +64,8 @@
  * cannot free a process the child is keeping alive (a deadlock that hangs the
  * caller after an otherwise-successful run). The registry is therefore drained
  * PROACTIVELY at the end of a dispatching command: the workflow engine calls
- * `disposeDispatchResources()` (→ {@link closeServer}) in its run `finally`.
+ * `disposeDispatchResources()` (→ {@link closeServer}) in composition-root and
+ * workflow `finally` blocks.
  * The `process.once('exit')` hook stays as the last-resort backstop for paths
  * that never reach that drain.
  *
@@ -134,15 +134,18 @@ interface SdkClient {
 /** Typed server instance returned by `createOpencode`. */
 interface SdkServer {
   client: SdkClient;
-  server: { close(): void };
+  server: { close(): void | Promise<void> };
 }
 
 /** The `createOpencode` surface this runner needs (real SDK or test fake). */
-type SdkServerFactory = (options: { config?: Record<string, unknown>; port?: number }) => Promise<SdkServer>;
+type SdkServerFactory = (options: {
+  bin?: string;
+  config?: Record<string, unknown>;
+  port?: number;
+}) => Promise<SdkServer>;
 
-// Server registry — one server per env-binding signature, started lazily and
-// reused across calls. The default (no env bindings) key is "" and behaves
-// exactly like the pre-R2 process-wide singleton.
+// Server registry — one server per complete server-material signature, started
+// lazily and reused across calls.
 const _servers = new Map<string, Promise<SdkServer>>();
 
 // Resolved servers by registry key, mirrored from `_servers` as each start
@@ -156,6 +159,9 @@ const _resolvedServers = new Map<string, SdkServer>();
 // tracked so two coexisting servers in this process can never be assigned
 // the same port.
 const _serverPorts = new Map<string, number>();
+
+// Serializes probe-and-reserve so concurrent starts cannot claim one port.
+let _portAllocationTail: Promise<void> = Promise.resolve();
 
 /** The port `createOpencodeServer` binds when none is passed (SDK 1.2.20). */
 const DEFAULT_SDK_PORT = 4096;
@@ -202,13 +208,14 @@ export function __setServerFactory(factory: SdkServerFactory | null): void {
  * `opencode serve` children (leaking processes AND keeping their ports
  * bound for the next invocation).
  */
-export function closeServer(): void {
+export async function closeServer(): Promise<void> {
+  const closes: Promise<unknown>[] = [];
   for (const [key, pending] of _servers) {
     const resolved = _resolvedServers.get(key);
     if (resolved) {
       // Synchronous close — safe from the 'exit' hook.
       try {
-        resolved.server.close();
+        closes.push(Promise.resolve(resolved.server.close()));
       } catch {
         /* ignore */
       }
@@ -216,26 +223,24 @@ export function closeServer(): void {
       // Still starting: close on arrival. This branch can never complete
       // inside the 'exit' hook (no microtasks there), but it keeps
       // mid-start test teardown leak-free.
-      pending
-        .then((s) => {
-          try {
-            s.server.close();
-          } catch {
-            /* ignore */
-          }
-        })
-        .catch(() => {});
+      closes.push(
+        pending
+          .then((s) => s.server.close())
+          .catch(() => {})
+          .finally(() => _serverPorts.delete(key)),
+      );
     }
   }
   _servers.clear();
   _resolvedServers.clear();
   _serverPorts.clear();
   try {
-    _testServer?.server.close();
+    if (_testServer) closes.push(Promise.resolve(_testServer.server.close()));
   } catch {
     /* ignore */
   }
   _testServer = null;
+  await Promise.allSettled(closes);
 }
 
 /**
@@ -293,7 +298,7 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
 export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
   // Resolve endpoint and model: profile fields take precedence over config.llm
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
-  const apiKey = resolveSecret(profile.apiKey ?? llmConfig?.apiKey);
+  const apiKey = profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey;
   const model = profile.model
     ? resolveModel(profile.model, "opencode-sdk", profile.modelAliases, profile.globalModelAliases)
     : undefined;
@@ -306,7 +311,7 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
       "akm-custom": {
         npm: "@ai-sdk/openai-compatible",
         options: {
-          baseURL: endpoint?.replace(/\/chat\/completions$/, "").replace(/\/$/, ""),
+          baseURL: canonicalProviderBase(endpoint) ?? undefined,
           ...(apiKey ? { apiKey } : {}),
         },
       },
@@ -319,14 +324,47 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
   return sdkConfig;
 }
 
-/**
- * Stable key for the env-keyed server registry: sha256 over the SORTED
- * binding entries (keys AND values — see module doc), "" when no bindings.
- */
-function envServerKey(env: Record<string, string> | undefined): string {
-  if (!env || Object.keys(env).length === 0) return "";
-  const entries = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+/** Digest every materialized value that can change the managed server. */
+function serverRegistryKey(
+  profile: AgentProfile,
+  llmConfig: LlmConnectionConfig | undefined,
+  env: Record<string, string> | undefined,
+): string {
+  const endpoint = profile.endpoint ?? llmConfig?.endpoint;
+  const material = {
+    bin: profile.bin,
+    endpoint: canonicalProviderBase(endpoint),
+    apiKey: (profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey) ?? null,
+    provider: llmConfig?.provider ?? null,
+    config: buildSdkConfig(profile, llmConfig),
+    env: Object.fromEntries(Object.entries(env ?? {}).sort(([a], [b]) => a.localeCompare(b))),
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(material)))
+    .digest("hex");
+}
+
+function canonicalProviderBase(endpoint: string | undefined): string | null {
+  if (!endpoint) return null;
+  try {
+    const url = new URL(endpoint);
+    url.pathname = url.pathname.replace(/\/chat\/completions$/, "").replace(/\/$/, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return endpoint.replace(/\/chat\/completions$/, "").replace(/\/$/, "");
+  }
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, canonicalize(child)]),
+    );
+  }
+  return value;
 }
 
 /**
@@ -357,25 +395,38 @@ function overlayProcessEnv(env: Record<string, string>): () => void {
  * acceptable here because the failure mode is a clean `spawn_failed` on the
  * next dispatch, not corruption.
  */
-async function allocateFreePort(): Promise<number> {
-  const { createServer } = await import("node:net");
-  const taken = new Set(_serverPorts.values());
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const port = await new Promise<number>((resolve, reject) => {
-      const probe = createServer();
-      probe.unref();
-      probe.on("error", reject);
-      probe.listen(0, "127.0.0.1", () => {
-        const address = probe.address();
-        probe.close(() => {
-          if (address && typeof address === "object") resolve(address.port);
-          else reject(new Error("could not read the probe socket's port"));
+async function allocateFreePort(registryKey: string): Promise<number> {
+  let release!: () => void;
+  const previous = _portAllocationTail;
+  _portAllocationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    const { createServer } = await import("node:net");
+    const taken = new Set(_serverPorts.values());
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const port = await new Promise<number>((resolve, reject) => {
+        const probe = createServer();
+        probe.unref();
+        probe.on("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          const address = probe.address();
+          probe.close(() => {
+            if (address && typeof address === "object") resolve(address.port);
+            else reject(new Error("could not read the probe socket's port"));
+          });
         });
       });
-    });
-    if (port !== DEFAULT_SDK_PORT && !taken.has(port)) return port;
+      if (port !== DEFAULT_SDK_PORT && !taken.has(port)) {
+        _serverPorts.set(registryKey, port);
+        return port;
+      }
+    }
+    throw new Error("could not allocate a free port for the OpenCode SDK server");
+  } finally {
+    release();
   }
-  throw new Error("could not allocate a free port for the OpenCode SDK server");
 }
 
 /** Grace between SIGTERM and SIGKILL when closing a managed server child. */
@@ -406,13 +457,17 @@ export function __setServeCommand(argv: string[] | null): void {
  *   - `close()` → SIGTERM now, SIGKILL after an unref'ed grace timer;
  *   - handshake failure → the child is killed and unref'ed before rejecting.
  */
-async function createManagedOpencode(options: { config?: Record<string, unknown>; port?: number }): Promise<SdkServer> {
+async function createManagedOpencode(options: {
+  bin?: string;
+  config?: Record<string, unknown>;
+  port?: number;
+}): Promise<SdkServer> {
   const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
     throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
   })) as { createOpencodeClient: (options: { baseUrl: string }) => SdkClient };
 
   const port = options.port ?? DEFAULT_SDK_PORT;
-  const argv = _serveCommand ?? ["opencode", "serve", "--hostname=127.0.0.1", `--port=${port}`];
+  const argv = _serveCommand ?? [options.bin ?? "opencode", "serve", "--hostname=127.0.0.1", `--port=${port}`];
   // Synchronous prefix: the env snapshot (incl. any binding overlay in the
   // caller's frame) is taken HERE, before the first await below.
   const proc = spawn(argv[0] as string, argv.slice(1), {
@@ -536,20 +591,14 @@ async function startServer(
   const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
   const sdkConfig = buildSdkConfig(profile, llmConfig);
-  const options: { config?: Record<string, unknown>; port?: number } =
-    Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {};
+  const options: { bin?: string; config?: Record<string, unknown>; port?: number } = {
+    bin: profile.bin,
+    ...(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {}),
+  };
 
-  // Port discipline: `createOpencodeServer` defaults to a FIXED port (4096),
-  // so two coexisting servers — the default one plus any env-keyed one —
-  // would contend for the same bind and the second start would fail. The
-  // default key keeps the SDK default (byte-identical to the pre-R2
-  // singleton); every other registry entry gets its own OS-assigned free
-  // port, allocated BEFORE the env overlay below (allocation awaits).
-  if (registryKey !== "") {
-    const port = await allocateFreePort();
-    _serverPorts.set(registryKey, port);
-    options.port = port;
-  }
+  // Every cached server receives a separately reserved port. This avoids both
+  // inter-entry contention and collisions with an unrelated process on 4096.
+  options.port = await allocateFreePort(registryKey);
 
   // Env injection (module doc): the SDK's createOpencodeServer snapshots
   // process.env synchronously (its spawn precedes its first await), so the
@@ -573,15 +622,15 @@ async function startServer(
   if (!_exitHookInstalled) {
     _exitHookInstalled = true;
     process.once("exit", () => {
-      closeServer();
+      void closeServer();
     });
   }
   return server;
 }
 
 /**
- * Get (or lazily start) the server for this call's env bindings. Servers are
- * keyed by {@link envServerKey}; concurrent callers of the same key share one
+ * Get (or lazily start) the server for this call's complete server material.
+ * Concurrent callers of the same key share one
  * start (the registry stores the in-flight promise). A failed start is
  * evicted so the next call can retry instead of caching the error forever.
  */
@@ -591,7 +640,7 @@ async function getOrStartServer(
   env?: Record<string, string>,
 ): Promise<SdkServer> {
   if (_testServer) return _testServer;
-  const key = envServerKey(env);
+  const key = serverRegistryKey(profile, llmConfig, env);
   let pending = _servers.get(key);
   if (!pending) {
     pending = startServer(profile, llmConfig, env, key);
@@ -644,16 +693,30 @@ async function raceSdkOperation<T>(
     setTimeoutFn: typeof setTimeout;
     clearTimeoutFn: typeof clearTimeout;
     signal?: AbortSignal;
+    onLateSettle?: (result: PromiseSettledResult<T>) => void | Promise<void>;
   },
 ): Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED> {
   let timer: ReturnType<typeof opts.setTimeoutFn> | undefined;
   let onAbort: (() => void) | undefined;
+  let raceFinished = false;
   const racers: Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED>[] = [operation];
+
+  void operation.then(
+    (value) => {
+      if (raceFinished && opts.onLateSettle)
+        void Promise.resolve(opts.onLateSettle({ status: "fulfilled", value })).catch(() => {});
+    },
+    (reason) => {
+      if (raceFinished && opts.onLateSettle)
+        void Promise.resolve(opts.onLateSettle({ status: "rejected", reason })).catch(() => {});
+    },
+  );
 
   if (opts.timeoutMs !== null) {
     racers.push(
       new Promise<typeof SDK_OPERATION_TIMED_OUT>((resolve) => {
         timer = opts.setTimeoutFn(() => resolve(SDK_OPERATION_TIMED_OUT), opts.timeoutMs ?? 0);
+        if (typeof timer !== "number") timer.unref?.();
       }),
     );
   }
@@ -670,6 +733,7 @@ async function raceSdkOperation<T>(
   try {
     return racers.length === 1 ? await operation : await Promise.race(racers);
   } finally {
+    raceFinished = true;
     if (timer !== undefined) opts.clearTimeoutFn(timer);
     if (opts.signal && onAbort) opts.signal.removeEventListener("abort", onAbort);
   }
@@ -775,6 +839,11 @@ export async function runOpencodeSdk(
         setTimeoutFn: setTimeoutImpl,
         clearTimeoutFn: clearTimeoutImpl,
         signal: abortSignal,
+        onLateSettle: (late) => {
+          if (late.status === "fulfilled" && late.value.data?.id) {
+            void deleteSessionBestEffort(client, late.value.data.id, query, setTimeoutImpl, clearTimeoutImpl);
+          }
+        },
       },
     );
     if (created === SDK_OPERATION_ABORTED) {
@@ -849,6 +918,9 @@ export async function runOpencodeSdk(
         setTimeoutFn: setTimeoutImpl,
         clearTimeoutFn: clearTimeoutImpl,
         signal: abortSignal,
+        onLateSettle: () => {
+          void deleteSessionBestEffort(client, sessionId as string, query, setTimeoutImpl, clearTimeoutImpl);
+        },
       },
     );
 

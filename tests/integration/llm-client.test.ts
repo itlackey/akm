@@ -58,6 +58,25 @@ function createErrorServer(statusCode: number, body: string): { url: string; ser
 }
 
 describe("chatCompletion error redaction", () => {
+  test("redacts an exact API key echoed in a successful model response", async () => {
+    const apiKey = "LLM-SUCCESS-ECHO-SENTINEL";
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return Response.json({ choices: [{ message: { content: `echo ${apiKey}` } }] });
+      },
+    });
+    try {
+      const output = await chatCompletion(
+        { endpoint: `http://localhost:${server.port}`, model: "test-model", apiKey },
+        [{ role: "user", content: "hi" }],
+      );
+      expect(output).toBe("echo [REDACTED]");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("redacts API key from 401 response body and keeps status + URL", async () => {
     const leakBody = '{"error":{"message":"Invalid API key sk-proj-LEAKYKEYABCDEF12345"}}';
     const { url, server } = createErrorServer(401, leakBody);

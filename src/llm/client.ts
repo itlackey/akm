@@ -15,6 +15,7 @@
 import { fetchWithTimeout } from "../core/common";
 import { type LlmConnectionConfig, type LlmProfileConfig, resolveSecret } from "../core/config/config";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+import { redactSensitiveText } from "../core/redaction";
 import { warnVerbose } from "../core/warn";
 import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
 
@@ -313,7 +314,7 @@ async function chatCompletionReal(
     await (options?.sleep ?? sleep)(wait);
 
     // The retry must not exceed the original budget.
-    return await chatCompletionAttempt(config, messages, options, remaining ?? 120_000);
+    return await chatCompletionAttempt(config, messages, options, remaining);
   }
 }
 
@@ -388,14 +389,14 @@ async function chatCompletionAttempt(
 
   if (!response.ok) {
     const rawBody = await response.text().catch(() => "");
-    const safeBody = redactErrorBody(rawBody);
+    const safeBody = redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : []);
     const status = response.status;
     if (status === 429) {
       throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
     }
     if (status >= 500 && isHtmlResponse(rawBody)) {
       throw new LlmCallError(
-        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${htmlExcerpt(rawBody)}`,
+        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawBody), resolvedKey ? [resolvedKey] : [])}`,
         "provider_html_error",
         status,
       );
@@ -416,7 +417,7 @@ async function chatCompletionAttempt(
   const rawOkBody = await response.text();
   if (isHtmlResponse(rawOkBody)) {
     throw new LlmCallError(
-      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${htmlExcerpt(rawOkBody)}`,
+      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
       "provider_html_error",
       response.status,
     );
@@ -426,7 +427,7 @@ async function chatCompletionAttempt(
     json = JSON.parse(rawOkBody) as ChatCompletionResponse;
   } catch {
     throw new LlmCallError(
-      `LLM response was not valid JSON ${config.endpoint}: ${redactErrorBody(rawOkBody)}`,
+      `LLM response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
       "parse_error",
       response.status,
     );
@@ -444,7 +445,7 @@ async function chatCompletionAttempt(
 
   const content = (json.choices?.[0]?.message?.content ?? "").trim();
   const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
-  return content || reasoning;
+  return redactSensitiveText(content || reasoning, resolvedKey ? [resolvedKey] : []);
 }
 
 /**

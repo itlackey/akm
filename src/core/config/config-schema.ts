@@ -87,11 +87,11 @@ const PROTECTED_EXTRA_PARAM_KEYS = new Set([
   "model",
   "messages",
   "temperature",
-  "max_tokens",
-  "response_format",
+  "maxtokens",
+  "responseformat",
   "stream",
-  "stream_options",
-  "enable_thinking",
+  "streamoptions",
+  "enablethinking",
 ]);
 const SECRET_EXTRA_PARAM_KEYS = new Set([
   "authorization",
@@ -109,20 +109,26 @@ function normalizedParamKey(key: string): string {
 }
 
 const ExtraParamsSchema = z.record(z.unknown()).superRefine((value, ctx) => {
-  const visit = (entry: unknown, path: (string | number)[], topLevel: boolean): void => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+  const visit = (entry: unknown, path: (string | number)[]): void => {
+    if (Array.isArray(entry)) {
+      entry.forEach((child, index) => {
+        visit(child, [...path, index]);
+      });
+      return;
+    }
+    if (!entry || typeof entry !== "object") return;
     for (const [key, child] of Object.entries(entry as Record<string, unknown>)) {
       const normalized = normalizedParamKey(key);
-      if (topLevel && PROTECTED_EXTRA_PARAM_KEYS.has(key)) {
+      if (PROTECTED_EXTRA_PARAM_KEYS.has(normalized)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: `${key} is protected by AKM` });
       }
       if (SECRET_EXTRA_PARAM_KEYS.has(normalized)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: `${key} cannot carry credentials` });
       }
-      visit(child, [...path, key], false);
+      visit(child, [...path, key]);
     }
   };
-  visit(value, [], true);
+  visit(value, []);
 });
 
 // ── Feedback failure modes (F-3 / #384) ─────────────────────────────────────

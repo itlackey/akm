@@ -107,6 +107,21 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).toThrow(ConfigError);
   });
 
+  test("rejects normalized protected and secret extraParams keys inside arrays", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: {
+        fast: {
+          kind: "llm",
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "test",
+          extraParams: { provider: [{ "Response-Format": {} }, { auth: [{ API_KEY: "leak" }] }] },
+        },
+      },
+    });
+    expect(() => loadUserConfig()).toThrow(ConfigError);
+  });
+
   test("rejects retired improve process selectors", () => {
     writeConfig({
       configVersion: "0.9.0",

@@ -6,6 +6,7 @@ import { buildTaskRunId, openLogsDatabase, queryTaskLogs, type TaskLogRow } from
 import type { AgentRunResult } from "../src/integrations/agent";
 import { resolveAkmInvocation } from "../src/tasks/resolve-akm-bin";
 import { exitCodeForStatus, readTaskHistory, runTask } from "../src/tasks/runner";
+import { withEnv } from "./_helpers/sandbox";
 
 type FakeWorkflowRunner = (
   ref: string,
@@ -267,6 +268,39 @@ describe("runTask — prompt target", () => {
     } finally {
       db.close();
     }
+  });
+
+  test("redacts echoed agent credentials before task logs are persisted", async () => {
+    const sentinel = "TASK-ECHO-SENTINEL";
+    writeTask("redacted", ["version: 2", 'schedule: "@daily"', "prompt: say hello", "engine: opencode", ""].join("\n"));
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: { opencode: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "opencode" },
+      }),
+    );
+
+    const result = await withEnv({ AKM_CONFIG_DIR: configDir, OPENCODE_API_KEY: sentinel }, () =>
+      runTask("redacted", {
+        stashDir,
+        logDir,
+        runAgentImpl: async () => ({
+          ok: true,
+          exitCode: 0,
+          stdout: `echo ${sentinel}`,
+          stderr: "",
+          durationMs: 1,
+        }),
+        now: () => new Date("2025-01-01T00:00:00Z"),
+      }),
+    );
+
+    const durable = fs.readFileSync(result.log, "utf8") + JSON.stringify(readRunLogRows("redacted"));
+    expect(durable).not.toContain(sentinel);
+    expect(durable).toContain("[REDACTED]");
   });
 
   test("agent failure surfaces as failed status with reason", async () => {

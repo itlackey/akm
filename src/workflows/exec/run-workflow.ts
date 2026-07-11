@@ -144,7 +144,7 @@ export interface RunWorkflowOptions {
    * no-op when no SDK server was ever started, so the agent/llm paths pay
    * nothing). Injected by tests to assert the drain fires on each path.
    */
-  disposeDispatchResources?: () => void;
+  disposeDispatchResources?: () => void | Promise<void>;
 }
 
 export interface ExecutedStepReport {
@@ -229,7 +229,7 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
       // hanging on the leaked handle. Runs even if lease release itself fails;
       // a teardown-time repository error must not skip dispatch cleanup.
       try {
-        (options.disposeDispatchResources ?? disposeDispatchResources)();
+        await (options.disposeDispatchResources ?? disposeDispatchResources)();
       } catch {
         /* disposal is best-effort; never let cleanup mask the run outcome */
       }

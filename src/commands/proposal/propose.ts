@@ -21,11 +21,12 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { materializeLlmConnection, resolveEngine } from "../../integrations/agent/engine-resolution";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
-import { executeRunner } from "../../integrations/agent/runner-dispatch";
+import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -163,6 +164,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.runAgentOptions ?? {}),
   };
+  const sensitiveValues = collectDispatchSensitiveValues(runner, runOptions);
   result = await executeRunner(runner, prompt, runOptions, {
     llm: async (spec, llmPrompt) => {
       const { chatCompletion } = await import("../../llm/client.js");
@@ -249,6 +251,8 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       };
     }
   }
+
+  payload = { ...payload, content: redactSensitiveText(payload.content, sensitiveValues) };
 
   // 6. Insert the proposal. Note: we allow the agent's `ref` to normalise the
   // asset name (e.g. path-cleanup), but only after validating that the ref is

@@ -38,6 +38,7 @@ import { ConfigError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
+import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
@@ -54,7 +55,7 @@ import {
   runnerIsLlm,
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
-import { executeRunner } from "../../integrations/agent/runner-dispatch";
+import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { isLlmFeatureEnabled } from "../../llm/feature-gate";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
@@ -1091,6 +1092,10 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const MAX_REFINE_ITERS = 3;
   const maxRefineIters = Math.min(Math.max(1, options.maxRefineIters ?? 1), MAX_REFINE_ITERS);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
+  const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
+    ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+    ...(options.runAgentOptions ?? {}),
+  });
 
   // Determine whether this dispatch can honour the file-write contract.
   // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
@@ -1267,7 +1272,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // Happy path: agent wrote the body to disk. Use the ref the caller
       // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
       // below has no effect when there is no expected ref).
-      const fileContent = fs.readFileSync(lastDraftPath, "utf8");
+      const fileContent = redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues);
       // Phase 6A: file-write contract carries self-rated confidence on the
       // `DRAFT_WRITTEN confidence=<n>` sentinel line. Extract it so the
       // file-write path is on equal footing with the JSON-stdout path for
@@ -1320,6 +1325,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // draft paths.
     cleanupDrafts();
   }
+
+  payload = { ...payload, content: redactSensitiveText(payload.content, sensitiveValues) };
 
   // 6b. Validate payload.ref === options.ref (R-3 / #366).
   // A hallucinating agent can silently retarget proposals to a different ref.

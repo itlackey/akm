@@ -2177,6 +2177,27 @@ steps:
     });
   }
 
+  test("redacts an echoed env-asset value before workflow evidence and unit journals", async () => {
+    const sentinel = "WORKFLOW-ECHO-SENTINEL";
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      resolveEnv: async () => ({ TOKEN: sentinel }),
+      dispatcher: async (request) => ({ ok: true, text: `echo ${request.env?.TOKEN}` }),
+    });
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
+
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+    expect(JSON.stringify(rows)).not.toContain(sentinel);
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(rows)).toContain("[REDACTED]");
+  });
+
   test("a fully-journaled step resumes to completion with a DELETED env asset — the env resolver is never invoked", async () => {
     seedRun({ steps: [{ id: "build", title: "Build" }] });
     const stepPlan = plan(ENV_SOLO_WF).steps[0];
