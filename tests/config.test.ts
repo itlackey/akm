@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  type AkmConfig,
   DEFAULT_CONFIG,
   getDefaultLlmConfig,
   getImproveProcessConfig,
@@ -30,6 +29,10 @@ function cleanup(dir: string): void {
 function writeRawConfig(configPath: string, content: string): void {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, content);
+}
+
+function writeCurrentConfig(value: Record<string, unknown>): void {
+  writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", ...value }));
 }
 
 // XDG_* / HOME / AKM_STASH_DIR / cwd snapshot+restore is provided by
@@ -130,7 +133,7 @@ describe("loadConfig", () => {
 
   test("loads config without requiring AKM_STASH_DIR", () => {
     delete process.env.AKM_STASH_DIR;
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
+    writeCurrentConfig({ semanticSearchMode: "off" });
 
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("off");
@@ -140,7 +143,7 @@ describe("loadConfig", () => {
   });
 
   test("merges partial config with defaults", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
+    writeCurrentConfig({ semanticSearchMode: "off" });
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("off");
     expect(config.sources).toBeUndefined();
@@ -171,12 +174,12 @@ describe("loadConfig", () => {
   });
 
   test("passes through string 'auto' for semanticSearchMode", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
+    writeCurrentConfig({ semanticSearchMode: "auto" });
     expect(loadConfig().semanticSearchMode).toBe("auto");
   });
 
   test("passes through string 'off' for semanticSearchMode", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
+    writeCurrentConfig({ semanticSearchMode: "off" });
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
@@ -199,7 +202,7 @@ describe("loadConfig", () => {
     const projectDir = makeTmpDir();
     const restoreCwd = process.cwd();
     try {
-      writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
+      writeCurrentConfig({ semanticSearchMode: "auto" });
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
@@ -218,77 +221,42 @@ describe("loadConfig", () => {
     }
   });
 
-  test("migrates legacy `stashes[]` to `sources[]` with a deprecation warning", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        stashes: [{ type: "filesystem", path: "/legacy-stash", name: "legacy" }],
-      }),
-    );
+  test("rejects the retired `stashes[]` key instead of aliasing it to `sources[]`", () => {
+    writeCurrentConfig({
+      stashes: [{ type: "filesystem", path: "/legacy-stash", name: "legacy" }],
+    });
 
-    const originalWarn = console.warn;
-    const warnings: string[] = [];
-    try {
-      setQuiet(false);
-      console.warn = (...args: unknown[]) => {
-        warnings.push(args.map(String).join(" "));
-      };
-      const config = loadConfig();
-      expect(config.sources?.[0]?.path).toBe("/legacy-stash");
-      expect((config as unknown as Record<string, unknown>).stashes).toBeUndefined();
-    } finally {
-      console.warn = originalWarn;
-      setQuiet(true);
-    }
-    expect(warnings.some((w) => w.includes("stashes[]") && w.includes("sources[]"))).toBe(true);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/stashes is retired in 0\.9/);
   });
 
-  test("drops openviking sources during migration with a warning", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        sources: [
-          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
-          { type: "filesystem", path: "/keep", name: "keep" },
-        ],
-      }),
-    );
+  test("rejects retired openviking sources instead of dropping them", () => {
+    writeCurrentConfig({
+      sources: [
+        { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
+        { type: "filesystem", path: "/keep", name: "keep" },
+      ],
+    });
 
-    const originalWarn = console.warn;
-    const warnings: string[] = [];
-    try {
-      setQuiet(false);
-      console.warn = (...args: unknown[]) => {
-        warnings.push(args.map(String).join(" "));
-      };
-      const config = loadConfig();
-      expect(config.sources?.length).toBe(1);
-      expect(config.sources?.[0]?.name).toBe("keep");
-    } finally {
-      console.warn = originalWarn;
-      setQuiet(true);
-    }
-    expect(warnings.some((w) => w.includes("openviking") && w.includes("my-ov"))).toBe(true);
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/sources\.0\.type/);
   });
 
   test("throws ConfigError when installed npm entry is marked writable", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        installed: [
-          {
-            id: "npm:left-pad",
-            source: "npm",
-            ref: "npm:left-pad",
-            artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
-            stashRoot: "/tmp/left-pad",
-            cacheDir: "/tmp/cache",
-            installedAt: "2026-05-01T00:00:00.000Z",
-            writable: true,
-          },
-        ],
-      }),
-    );
+    writeCurrentConfig({
+      installed: [
+        {
+          id: "npm:left-pad",
+          source: "npm",
+          ref: "npm:left-pad",
+          artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+          stashRoot: "/tmp/left-pad",
+          cacheDir: "/tmp/cache",
+          installedAt: "2026-05-01T00:00:00.000Z",
+          writable: true,
+        },
+      ],
+    });
 
     expect(() => loadConfig()).toThrow(ConfigError);
     expect(() => loadConfig()).toThrow("writable: true is only supported on filesystem and git sources");
@@ -332,7 +300,11 @@ describe("loadConfig", () => {
 
 describe("saveConfig", () => {
   test("writes formatted JSON to config.json", () => {
-    const config = { semanticSearchMode: "off" as const, sources: [{ type: "filesystem" as const, path: "/extra" }] };
+    const config = {
+      configVersion: "0.9.0" as const,
+      semanticSearchMode: "off" as const,
+      sources: [{ type: "filesystem" as const, path: "/extra" }],
+    };
     saveConfig(config);
     const raw = fs.readFileSync(getConfigPath(), "utf8");
     expect(JSON.parse(raw)).toEqual(config);
@@ -376,7 +348,10 @@ describe("saveConfig", () => {
     const latestPath = path.join(backupDir, "config.latest.json");
 
     expect(fs.existsSync(latestPath)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(latestPath, "utf8"))).toEqual({ semanticSearchMode: "off" });
+    expect(JSON.parse(fs.readFileSync(latestPath, "utf8"))).toEqual({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+    });
 
     const backups = fs.readdirSync(backupDir).filter((name) => name.startsWith("config-") && name.endsWith(".json"));
     expect(backups.length).toBeGreaterThan(0);
@@ -474,7 +449,7 @@ describe("updateConfig", () => {
 
 describe("output config", () => {
   test("loads valid output config", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "text", detail: "full" } }));
+    writeCurrentConfig({ output: { format: "text", detail: "full" } });
     expect(loadConfig().output).toEqual({ format: "text", detail: "full" });
   });
 });
@@ -483,15 +458,12 @@ describe("output config", () => {
 
 describe("embedding config", () => {
   test("loads embedding connection config", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        embedding: {
-          endpoint: "http://localhost:11434/v1/embeddings",
-          model: "nomic-embed-text",
-        },
-      }),
-    );
+    writeCurrentConfig({
+      embedding: {
+        endpoint: "http://localhost:11434/v1/embeddings",
+        model: "nomic-embed-text",
+      },
+    });
     expect(loadConfig().embedding).toEqual({
       endpoint: "http://localhost:11434/v1/embeddings",
       model: "nomic-embed-text",
@@ -499,31 +471,25 @@ describe("embedding config", () => {
   });
 
   test("loads embedding config with apiKey", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        embedding: {
-          endpoint: "https://api.openai.com/v1/embeddings",
-          model: "text-embedding-3-small",
-          apiKey: "sk-test123",
-        },
-      }),
-    );
+    writeCurrentConfig({
+      embedding: {
+        endpoint: "https://api.openai.com/v1/embeddings",
+        model: "text-embedding-3-small",
+        apiKey: "sk-test123",
+      },
+    });
     expect(loadConfig().embedding?.apiKey).toBe("sk-test123");
   });
 
   test("loads embedding config with provider and dimension", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        embedding: {
-          provider: "openai",
-          endpoint: "https://api.openai.com/v1/embeddings",
-          model: "text-embedding-3-small",
-          dimension: 384,
-        },
-      }),
-    );
+    writeCurrentConfig({
+      embedding: {
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1/embeddings",
+        model: "text-embedding-3-small",
+        dimension: 384,
+      },
+    });
     expect(loadConfig().embedding).toEqual({
       provider: "openai",
       endpoint: "https://api.openai.com/v1/embeddings",
@@ -545,87 +511,91 @@ describe("embedding config", () => {
     expect(loadConfig().embedding).toEqual(embeddingConfig);
   });
 
-  test("clears embedding config with undefined", () => {
+  test("clears embedding config with an explicit lifecycle write", () => {
     const embeddingConfig = {
       endpoint: "http://localhost:11434/v1/embeddings",
       model: "nomic-embed-text",
     };
     updateConfig({ embedding: embeddingConfig });
-    updateConfig({ embedding: undefined });
+    saveConfig({ ...loadConfig(), embedding: undefined });
     expect(loadConfig().embedding).toBeUndefined();
   });
 });
 
-// ── llm config ──────────────────────────────────────────────────────────────
+// ── LLM engine config ───────────────────────────────────────────────────────
 
-describe("llm config", () => {
-  test("loads llm connection config", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        llm: {
+describe("LLM engine config", () => {
+  test("loads an LLM engine connection", () => {
+    writeCurrentConfig({
+      engines: {
+        local: {
+          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
           model: "llama3.2",
         },
-      }),
-    );
+      },
+      defaults: { llmEngine: "local" },
+    });
     const cfg = loadConfig();
-    expect(cfg.profiles?.llm?.default).toMatchObject({
+    expect(cfg.engines?.local).toMatchObject({
+      kind: "llm",
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     });
-    expect(cfg.defaults?.llm).toBe("default");
+    expect(cfg.defaults?.llmEngine).toBe("local");
   });
 
-  test("AKM_LLM_API_KEY applies to the IMPLICIT default profile when defaults.llm is unset", () => {
-    // profiles.llm.default present but defaults.llm absent — the env key must
-    // still reach it (routed through resolveDefaultLlmProfileName, not the raw
-    // defaults.llm field). Regression guard for the silent-no-op-run class.
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.8.0",
-        profiles: { llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } } },
-      }),
-    );
-    process.env.AKM_LLM_API_KEY = "sk-implicit-default";
+  test("materializes a symbolic engine apiKey from the environment", () => {
+    writeCurrentConfig({
+      engines: {
+        local: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "llama3.2",
+          apiKey: "$AKM_LLM_API_KEY",
+        },
+      },
+      defaults: { llmEngine: "local" },
+    });
+    process.env.AKM_LLM_API_KEY = "sk-selected-engine";
     try {
       const cfg = loadConfig();
-      expect(cfg.defaults?.llm).toBeUndefined(); // genuinely relying on the implicit default
-      expect(cfg.profiles?.llm?.default?.apiKey).toBe("sk-implicit-default");
+      expect(cfg.engines?.local?.apiKey).toBe("$AKM_LLM_API_KEY");
+      expect(getDefaultLlmConfig(cfg)?.apiKey).toBe("sk-selected-engine");
     } finally {
       delete process.env.AKM_LLM_API_KEY;
     }
   });
 
-  test("loads llm config with apiKey", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        llm: {
+  test("loads a symbolic LLM engine apiKey", () => {
+    writeCurrentConfig({
+      engines: {
+        cloud: {
+          kind: "llm",
           endpoint: "https://api.openai.com/v1/chat/completions",
           model: "gpt-4",
-          apiKey: "sk-key",
+          apiKey: "$OPENAI_API_KEY",
         },
-      }),
-    );
-    expect(loadConfig().profiles?.llm?.default?.apiKey).toBe("sk-key");
+      },
+    });
+    expect(loadConfig().engines?.cloud?.apiKey).toBe("$OPENAI_API_KEY");
   });
 
-  test("loads llm config with provider, temperature, and maxTokens", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        llm: {
+  test("loads an LLM engine with provider, temperature, and maxTokens", () => {
+    writeCurrentConfig({
+      engines: {
+        cloud: {
+          kind: "llm",
           provider: "openai",
           endpoint: "https://api.openai.com/v1/chat/completions",
           model: "gpt-4o-mini",
           temperature: 0.6,
           maxTokens: 256,
         },
-      }),
-    );
-    expect(loadConfig().profiles?.llm?.default).toMatchObject({
+      },
+    });
+    expect(loadConfig().engines?.cloud).toMatchObject({
+      kind: "llm",
       provider: "openai",
       endpoint: "https://api.openai.com/v1/chat/completions",
       model: "gpt-4o-mini",
@@ -634,154 +604,113 @@ describe("llm config", () => {
     });
   });
 
-  test("roundtrips llm config via updateConfig profiles.llm", () => {
-    const llmConfig = {
+  test("roundtrips an LLM engine via updateConfig", () => {
+    const engine = {
+      kind: "llm" as const,
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     };
-    updateConfig({
-      profiles: { llm: { default: llmConfig } },
-      defaults: { llm: "default" },
-    });
-    expect(loadConfig().profiles?.llm?.default).toMatchObject(llmConfig);
+    updateConfig({ engines: { local: engine }, defaults: { llmEngine: "local" } });
+    expect(loadConfig().engines?.local).toMatchObject(engine);
   });
 
-  // Regression: on 2026-05-23 a config-rewrite dropped `defaults.llm` while
-  // leaving `profiles.llm.default` intact. `getDefaultLlmConfig` returned
-  // undefined, every pass that goes through it (memory-inference, distill's
-  // chat path) silently no-op'd for ~18h. Implicit fallback closes that hole.
-  describe("default LLM resolution (implicit profiles.llm.default fallback)", () => {
-    const llmConfig = {
+  describe("default LLM engine resolution", () => {
+    const engine = {
+      kind: "llm" as const,
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
     };
 
-    test("getDefaultLlmConfig honors explicit defaults.llm", () => {
-      const cfg = {
-        ...DEFAULT_CONFIG,
-        defaults: { llm: "primary" },
-        profiles: { llm: { primary: llmConfig } },
-      };
-      expect(getDefaultLlmConfig(cfg)).toEqual(llmConfig);
+    test("getDefaultLlmConfig honors explicit defaults.llmEngine", () => {
+      const cfg = { ...DEFAULT_CONFIG, defaults: { llmEngine: "primary" }, engines: { primary: engine } };
+      expect(getDefaultLlmConfig(cfg)).toEqual({ endpoint: engine.endpoint, model: engine.model });
     });
 
-    test("getDefaultLlmConfig falls back to profiles.llm.default when defaults.llm is unset", () => {
-      const cfg = {
-        ...DEFAULT_CONFIG,
-        defaults: { agent: "opencode" },
-        profiles: { llm: { default: llmConfig } },
-      };
-      expect(getDefaultLlmConfig(cfg)).toEqual(llmConfig);
-    });
-
-    test("getDefaultLlmConfig returns undefined when neither defaults.llm nor profiles.llm.default is set", () => {
-      const cfg = {
-        ...DEFAULT_CONFIG,
-        defaults: { agent: "opencode" },
-        profiles: { llm: { gemma: llmConfig } },
-      };
+    test("getDefaultLlmConfig does not infer an engine named default", () => {
+      const cfg = { ...DEFAULT_CONFIG, engines: { default: engine } };
       expect(getDefaultLlmConfig(cfg)).toBeUndefined();
     });
 
-    test("requireLlmConfig falls back to profiles.llm.default when defaults.llm is unset", () => {
-      const cfg = {
-        ...DEFAULT_CONFIG,
-        defaults: { agent: "opencode" },
-        profiles: { llm: { default: llmConfig } },
-      };
-      expect(requireLlmConfig(cfg)).toEqual(llmConfig);
+    test("getDefaultLlmConfig returns undefined when no LLM engine is selected", () => {
+      const cfg = { ...DEFAULT_CONFIG, engines: { gemma: engine } };
+      expect(getDefaultLlmConfig(cfg)).toBeUndefined();
     });
 
-    test("requireLlmConfig throws when neither defaults.llm nor profiles.llm.default is set", () => {
-      const cfg = {
-        ...DEFAULT_CONFIG,
-        defaults: { agent: "opencode" },
-        profiles: { llm: { gemma: llmConfig } },
-      };
+    test("requireLlmConfig resolves the selected LLM engine", () => {
+      const cfg = { ...DEFAULT_CONFIG, defaults: { llmEngine: "local" }, engines: { local: engine } };
+      expect(requireLlmConfig(cfg)).toEqual({ endpoint: engine.endpoint, model: engine.model });
+    });
+
+    test("requireLlmConfig throws when no LLM engine is selected", () => {
+      const cfg = { ...DEFAULT_CONFIG, engines: { gemma: engine } };
       expect(() => requireLlmConfig(cfg)).toThrow(ConfigError);
-      expect(() => requireLlmConfig(cfg)).toThrow(/LLM is not configured/);
+      expect(() => requireLlmConfig(cfg)).toThrow(/No LLM engine is selected/);
     });
 
-    test("explicit defaults.llm takes precedence over an unrelated profiles.llm.default", () => {
-      const explicit = { endpoint: "http://explicit/v1", model: "explicit-model" };
+    test("explicit defaults.llmEngine selects one of several engines", () => {
+      const explicit = {
+        kind: "llm" as const,
+        endpoint: "http://explicit/v1/chat/completions",
+        model: "explicit-model",
+      };
       const cfg = {
         ...DEFAULT_CONFIG,
-        defaults: { llm: "primary" },
-        profiles: { llm: { primary: explicit, default: llmConfig } },
+        defaults: { llmEngine: "primary" },
+        engines: { primary: explicit, default: engine },
       };
-      expect(getDefaultLlmConfig(cfg)).toEqual(explicit);
-      expect(requireLlmConfig(cfg)).toEqual(explicit);
+      expect(getDefaultLlmConfig(cfg)).toEqual({ endpoint: explicit.endpoint, model: explicit.model });
+      expect(requireLlmConfig(cfg)).toEqual({ endpoint: explicit.endpoint, model: explicit.model });
     });
   });
 });
 
 // ── getImproveProcessConfig accessor ─────────────────────────────────────────
 
-// The centralized deep-chain accessor. Without an active profile it resolves
-// the "default" improve profile (the historical 2-arg behavior); with an
-// active profile (an `akm improve --profile <name>` run) that profile's
-// per-process override wins, falling back to "default" when it doesn't define
-// the section.
+// The accessor only reads the strategy already selected by the caller. It does
+// not re-resolve defaults or fall back to another strategy.
 describe("getImproveProcessConfig", () => {
-  test("returns the named process section from the default improve profile", () => {
-    const cfg = {
-      ...DEFAULT_CONFIG,
-      profiles: {
-        improve: { default: { processes: { consolidate: { enabled: true, minPoolSize: 42 } } } },
-      },
-    } as unknown as AkmConfig;
-    expect(getImproveProcessConfig(cfg, "consolidate")).toEqual({ enabled: true, minPoolSize: 42 });
+  test("returns the named process section from the selected improve strategy", () => {
+    const selected = { processes: { consolidate: { enabled: true, minPoolSize: 42 } } };
+    expect(getImproveProcessConfig(DEFAULT_CONFIG, "consolidate", selected)).toEqual({
+      enabled: true,
+      minPoolSize: 42,
+    });
   });
 
   test("returns undefined when the process is absent", () => {
-    const cfg = {
-      ...DEFAULT_CONFIG,
-      profiles: { improve: { default: { processes: { consolidate: { enabled: true } } } } },
-    } as unknown as AkmConfig;
-    expect(getImproveProcessConfig(cfg, "extract")).toBeUndefined();
+    const selected = { processes: { consolidate: { enabled: true } } };
+    expect(getImproveProcessConfig(DEFAULT_CONFIG, "extract", selected)).toBeUndefined();
   });
 
-  test("returns undefined when profiles/improve/default/processes chain is missing", () => {
+  test("returns undefined when no strategy was selected", () => {
     expect(getImproveProcessConfig(DEFAULT_CONFIG, "reflect")).toBeUndefined();
-    expect(getImproveProcessConfig({ ...DEFAULT_CONFIG, profiles: {} } as AkmConfig, "reflect")).toBeUndefined();
+    expect(getImproveProcessConfig({ ...DEFAULT_CONFIG, improve: {} }, "reflect")).toBeUndefined();
   });
 
-  test("without an active profile, only the 'default' profile is consulted", () => {
+  test("does not implicitly consult configured strategies", () => {
     const cfg = {
       ...DEFAULT_CONFIG,
-      profiles: {
-        improve: {
-          // Only a non-default profile carries the override.
-          aggressive: { processes: { distill: { enabled: true } } },
-        },
-      },
-    } as unknown as AkmConfig;
+      improve: { strategies: { aggressive: { processes: { distill: { enabled: true } } } } },
+    };
     expect(getImproveProcessConfig(cfg, "distill")).toBeUndefined();
   });
 
-  test("an active profile's per-process override wins over the default", () => {
+  test("the selected strategy's per-process override is authoritative", () => {
     const cfg = {
       ...DEFAULT_CONFIG,
-      profiles: {
-        improve: { default: { processes: { distill: { enabled: false } } } },
-      },
-    } as unknown as AkmConfig;
+      improve: { strategies: { baseline: { processes: { distill: { enabled: false } } } } },
+    };
     const activeProfile = { processes: { distill: { enabled: true } } } as unknown as ImproveProfileConfig;
-    // `--profile` honored: the active profile's section is returned, not default's.
     expect(getImproveProcessConfig(cfg, "distill", activeProfile)).toEqual({ enabled: true });
   });
 
-  test("falls back to the default profile when the active profile omits the section", () => {
+  test("does not fall back when the selected strategy omits the section", () => {
     const cfg = {
       ...DEFAULT_CONFIG,
-      profiles: {
-        improve: { default: { processes: { consolidate: { enabled: true, minPoolSize: 7 } } } },
-      },
-    } as unknown as AkmConfig;
-    // Active profile defines `distill` but not `consolidate` → consolidate falls
-    // back to default; a profile that doesn't override a process keeps default.
+      improve: { strategies: { baseline: { processes: { consolidate: { enabled: true, minPoolSize: 7 } } } } },
+    };
     const activeProfile = { processes: { distill: { enabled: true } } } as unknown as ImproveProfileConfig;
-    expect(getImproveProcessConfig(cfg, "consolidate", activeProfile)).toEqual({ enabled: true, minPoolSize: 7 });
+    expect(getImproveProcessConfig(cfg, "consolidate", activeProfile)).toBeUndefined();
   });
 });
 
@@ -789,7 +718,7 @@ describe("getImproveProcessConfig", () => {
 
 describe("stashDir config", () => {
   test("loads stashDir from config.json", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: "/home/user/my-stash" }));
+    writeCurrentConfig({ stashDir: "/home/user/my-stash" });
     expect(loadConfig().stashDir).toBe("/home/user/my-stash");
   });
 
@@ -816,23 +745,20 @@ describe("stashDir config", () => {
 
 describe("search config", () => {
   test("loads search.graphBoost values", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        search: {
-          minScore: 0.15,
-          graphBoost: {
-            directBoostPerEntity: 0.2,
-            directBoostCap: 0.6,
-            hopBoostPerEntity: 0.08,
-            hopBoostCap: 0.24,
-            maxHops: 2,
-            confidenceMode: "multiply",
-            confidenceWeight: 0.4,
-          },
+    writeCurrentConfig({
+      search: {
+        minScore: 0.15,
+        graphBoost: {
+          directBoostPerEntity: 0.2,
+          directBoostCap: 0.6,
+          hopBoostPerEntity: 0.08,
+          hopBoostCap: 0.24,
+          maxHops: 2,
+          confidenceMode: "multiply",
+          confidenceWeight: 0.4,
         },
-      }),
-    );
+      },
+    });
 
     expect(loadConfig().search).toEqual({
       minScore: 0.15,
@@ -849,24 +775,21 @@ describe("search config", () => {
   });
 
   test("rejects search.graphBoost.confidenceWeight > 1 (no silent clamp)", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        search: {
-          graphBoost: {
-            confidenceMode: "blend",
-            confidenceWeight: 99,
-          },
+    writeCurrentConfig({
+      search: {
+        graphBoost: {
+          confidenceMode: "blend",
+          confidenceWeight: 99,
         },
-      }),
-    );
+      },
+    });
 
     expect(() => loadConfig()).toThrow(ConfigError);
     expect(() => loadConfig()).toThrow(/confidenceWeight/);
   });
 
   test("rejects search.graphBoost.maxHops > 3 (no silent clamp)", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ search: { graphBoost: { maxHops: 99 } } }));
+    writeCurrentConfig({ search: { graphBoost: { maxHops: 99 } } });
     expect(() => loadConfig()).toThrow(ConfigError);
     expect(() => loadConfig()).toThrow(/maxHops/);
   });
@@ -874,17 +797,14 @@ describe("search config", () => {
   test("tolerates unknown search.graphBoost keys (lenient unknown-key policy)", () => {
     // Lenient policy: unknown keys are preserved, not rejected — cross-version
     // config skew must not become INVALID_CONFIG_FILE. Known keys still validate.
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        search: {
-          graphBoost: {
-            maxHops: 2,
-            unsupportedNested: "x",
-          },
+    writeCurrentConfig({
+      search: {
+        graphBoost: {
+          maxHops: 2,
+          unsupportedNested: "x",
         },
-      }),
-    );
+      },
+    });
 
     expect(() => loadConfig()).not.toThrow();
     const gb = loadConfig().search?.graphBoost as Record<string, unknown>;
@@ -893,150 +813,116 @@ describe("search config", () => {
   });
 });
 
-describe("v2 config shape parsing", () => {
+describe("0.9 config shape parsing", () => {
   test("parses configVersion", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: 2 }));
+    writeCurrentConfig({});
     const loaded = loadConfig();
-    expect(loaded.configVersion).toBe(2);
+    expect(loaded.configVersion).toBe("0.9.0");
   });
 
-  test("parses profiles.llm with supportsJsonSchema", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: 2,
-        profiles: {
-          llm: {
-            "openai-mini": {
-              endpoint: "https://api.openai.com/v1/chat/completions",
-              model: "gpt-4o-mini",
-              temperature: 0.3,
-              supportsJsonSchema: true,
-            },
-          },
+  test("parses an LLM engine with supportsJsonSchema", () => {
+    writeCurrentConfig({
+      engines: {
+        "openai-mini": {
+          kind: "llm",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o-mini",
+          temperature: 0.3,
+          supportsJsonSchema: true,
         },
-      }),
-    );
+      },
+    });
     const loaded = loadConfig();
-    expect(loaded.profiles?.llm?.["openai-mini"]?.model).toBe("gpt-4o-mini");
-    expect(loaded.profiles?.llm?.["openai-mini"]?.supportsJsonSchema).toBe(true);
+    expect(loaded.engines?.["openai-mini"]?.model).toBe("gpt-4o-mini");
+    expect(loaded.engines?.["openai-mini"]?.supportsJsonSchema).toBe(true);
   });
 
-  test("parses profiles.agent with platform field", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: 2,
-        profiles: {
-          agent: {
-            "opencode-default": { platform: "opencode", bin: "opencode", args: ["run"] },
-            "opencode-sdk": { platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
-          },
-        },
-      }),
-    );
+  test("parses agent engines with platform fields", () => {
+    writeCurrentConfig({
+      engines: {
+        "opencode-default": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
+        "opencode-sdk": { kind: "agent", platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
+      },
+    });
     const loaded = loadConfig();
-    expect(loaded.profiles?.agent?.["opencode-default"]?.platform).toBe("opencode");
-    expect(loaded.profiles?.agent?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
-    expect(loaded.profiles?.agent?.["opencode-sdk"]?.model).toBe("claude-3");
+    expect(loaded.engines?.["opencode-default"]?.platform).toBe("opencode");
+    expect(loaded.engines?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
+    expect(loaded.engines?.["opencode-sdk"]?.model).toBe("claude-3");
   });
 
-  test("rejects agent profile with invalid platform (no silent drop)", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        profiles: { agent: { bad: { platform: "invalid-platform" } } },
-      }),
-    );
+  test("rejects an agent engine with invalid platform (no silent drop)", () => {
+    writeCurrentConfig({ engines: { bad: { kind: "agent", platform: "invalid-platform" } } });
     expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/platform/);
+    expect(() => loadConfig()).toThrow(/engines\.bad/);
   });
 
-  test("parses defaults.llm, defaults.agent, defaults.improve", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: 2,
-        defaults: {
-          llm: "openai-mini",
-          agent: "opencode-default",
-          improve: "my-custom-profile",
+  test("parses canonical engine and improve strategy defaults", () => {
+    writeCurrentConfig({
+      engines: {
+        "openai-mini": {
+          kind: "llm",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o-mini",
         },
-      }),
-    );
+        "opencode-default": { kind: "agent", platform: "opencode" },
+      },
+      defaults: {
+        llmEngine: "openai-mini",
+        engine: "opencode-default",
+        improveStrategy: "my-custom-strategy",
+      },
+      improve: { strategies: { "my-custom-strategy": {} } },
+    });
     const loaded = loadConfig();
-    expect(loaded.defaults?.llm).toBe("openai-mini");
-    expect(loaded.defaults?.agent).toBe("opencode-default");
-    expect(loaded.defaults?.improve).toBe("my-custom-profile");
+    expect(loaded.defaults?.llmEngine).toBe("openai-mini");
+    expect(loaded.defaults?.engine).toBe("opencode-default");
+    expect(loaded.defaults?.improveStrategy).toBe("my-custom-strategy");
   });
 
-  test("migrates legacy features.improve to profiles.improve.default.processes", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        features: {
-          improve: {
-            reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
-            memory_consolidation: false,
-            feedback_distillation: true,
-          },
+  test("rejects legacy features.improve instead of translating it", () => {
+    writeCurrentConfig({
+      features: {
+        improve: {
+          reflect: { mode: "llm", profile: "openai-mini", timeoutMs: 60000 },
+          memory_consolidation: false,
+          feedback_distillation: true,
         },
-      }),
-    );
-    const loaded = loadConfig();
-    const processes = loaded.profiles?.improve?.default?.processes;
-    expect(processes?.reflect?.mode).toBe("llm");
-    expect(processes?.reflect?.timeoutMs).toBe(60000);
-    expect(processes?.consolidate?.enabled).toBe(false);
-    // 0.8.0: feedback_distillation migrates into the unified distill gate.
-    expect(processes?.distill?.enabled).toBe(true);
+      },
+    });
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/features is retired in 0\.9/);
   });
 
-  test("migrates legacy features.index and features.search into new shape", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        features: {
-          index: { memory_inference: true, graph_extraction: { profile: "openai-mini" }, metadata_enhance: false },
-          search: { curate_rerank: true },
-        },
-      }),
-    );
-    const loaded = loadConfig();
-    expect(loaded.profiles?.improve?.default?.processes?.memoryInference?.enabled).toBe(true);
-    expect(loaded.index?.metadataEnhance?.enabled).toBe(false);
-    // curate_rerank is a removed dead feature — dropped on migration, not carried forward.
-    expect(loaded.search?.curateRerank).toBeUndefined();
+  test("rejects legacy feature index/search blocks instead of translating them", () => {
+    writeCurrentConfig({
+      features: {
+        index: { memory_inference: true, graph_extraction: { profile: "openai-mini" }, metadata_enhance: false },
+        search: { curate_rerank: true },
+      },
+    });
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/features is retired in 0\.9/);
   });
 
-  test("sanitizeConfigForWrite strips apiKey from profiles.llm entries", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: 2,
-        profiles: {
-          llm: {
-            myprofile: {
-              endpoint: "https://api.openai.com/v1/chat/completions",
-              model: "gpt-4o",
-              apiKey: "sk-secret",
-            },
-          },
+  test("rejects literal engine apiKey values before persistence", () => {
+    writeCurrentConfig({
+      engines: {
+        cloud: {
+          kind: "llm",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o",
+          apiKey: "sk-secret",
         },
-      }),
-    );
-    const loaded = loadConfig();
-    saveConfig(loaded);
-    // Re-read from disk to verify apiKey was stripped
-    const saved = JSON.parse(require("node:fs").readFileSync(getConfigPath(), "utf8"));
-    expect(saved.profiles?.llm?.myprofile?.apiKey).toBeUndefined();
-    expect(saved.profiles?.llm?.myprofile?.model).toBe("gpt-4o");
+      },
+    });
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/apiKey must be \$VAR/);
   });
 });
 
-// ── Auto-migration hook ──────────────────────────────────────────────────────
+// ── Strict version gate ──────────────────────────────────────────────────────
 
-describe("auto-migration in loadConfig", () => {
+describe("strict 0.9 config loading", () => {
   const originalNoAutoMigrate = process.env.AKM_NO_AUTO_MIGRATE;
 
   afterEach(() => {
@@ -1049,11 +935,10 @@ describe("auto-migration in loadConfig", () => {
     resetConfigCache();
   });
 
-  test("auto-migrates a v1 config file (missing configVersion) and rewrites it to disk", () => {
+  test("rejects a legacy config with no configVersion without rewriting it", () => {
     delete process.env.AKM_NO_AUTO_MIGRATE;
 
     const configPath = getConfigPath();
-    // Write a pre-0.8.0 config: has llm.features block, no configVersion
     const v1Config = {
       llm: {
         endpoint: "http://localhost:11434",
@@ -1061,27 +946,20 @@ describe("auto-migration in loadConfig", () => {
         features: { memory_inference: true },
       },
     };
-    writeRawConfig(configPath, JSON.stringify(v1Config));
+    const original = JSON.stringify(v1Config);
+    writeRawConfig(configPath, original);
 
-    // loadConfig triggers auto-migration
-    const loaded = loadConfig();
-
-    // In-memory config should reflect the migrated shape
-    expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
-
-    // The file on disk should have been rewritten with configVersion
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
     const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(onDisk.configVersion).toBe("0.8.0");
-    expect(onDisk.llm).toBeUndefined();
-    expect(onDisk.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
-
-    // A backup should have been created in the cache dir
+    expect(onDisk.configVersion).toBeUndefined();
+    expect(onDisk.llm?.endpoint).toBe("http://localhost:11434");
+    expect(onDisk.profiles).toBeUndefined();
     const backupDir = path.join(getCacheDir(), "config-backups");
-    const backupFiles = fs.readdirSync(backupDir);
-    expect(backupFiles.length).toBeGreaterThan(0);
+    expect(fs.existsSync(backupDir)).toBe(false);
   });
 
-  test("does NOT rewrite the config file when AKM_NO_AUTO_MIGRATE=1", () => {
+  test("AKM_NO_AUTO_MIGRATE does not bypass the strict version gate", () => {
     process.env.AKM_NO_AUTO_MIGRATE = "1";
 
     const configPath = getConfigPath();
@@ -1094,17 +972,16 @@ describe("auto-migration in loadConfig", () => {
     };
     writeRawConfig(configPath, JSON.stringify(v1Config));
 
-    // loadConfig should NOT rewrite the file
-    loadConfig();
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
 
     const onDisk = fs.readFileSync(configPath, "utf8");
     const parsed = JSON.parse(onDisk);
-    // File should still match v1 shape — no configVersion written
     expect(parsed.configVersion).toBeUndefined();
     expect(parsed.llm?.features?.memory_inference).toBe(true);
   });
 
-  test("does not crash or backup when config file is already at 0.8.0", () => {
+  test("rejects 0.8.0 profile vocabulary without creating a backup", () => {
     delete process.env.AKM_NO_AUTO_MIGRATE;
 
     const configPath = getConfigPath();
@@ -1115,8 +992,8 @@ describe("auto-migration in loadConfig", () => {
     };
     writeRawConfig(configPath, JSON.stringify(currentConfig));
 
-    const loaded = loadConfig();
-    expect(loaded.configVersion).toBe("0.8.0");
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
 
     // No backup should be created since nothing needed migrating
     const backupDir = path.join(getCacheDir(), "config-backups");
@@ -1124,7 +1001,7 @@ describe("auto-migration in loadConfig", () => {
     expect(backupFiles.length).toBe(0);
   });
 
-  test("auto-migration is applied in-memory even when AKM_NO_AUTO_MIGRATE=1", () => {
+  test("does not translate retired LLM vocabulary in memory", () => {
     process.env.AKM_NO_AUTO_MIGRATE = "1";
 
     const configPath = getConfigPath();
@@ -1137,12 +1014,14 @@ describe("auto-migration in loadConfig", () => {
     };
     writeRawConfig(configPath, JSON.stringify(v1Config));
 
-    // The LLM endpoint should still be available even though migration was suppressed
-    const loaded = loadConfig();
-    expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
+    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(onDisk.profiles).toBeUndefined();
+    expect(onDisk.llm.endpoint).toBe("http://localhost:11434");
   });
 
-  test("throws ConfigError when migrated write fails (no infinite re-run loop) (#461)", () => {
+  test("version rejection does not attempt a write even when the directory is read-only (#461)", () => {
     delete process.env.AKM_NO_AUTO_MIGRATE;
 
     const configPath = getConfigPath();
@@ -1155,17 +1034,13 @@ describe("auto-migration in loadConfig", () => {
     };
     writeRawConfig(configPath, JSON.stringify(v1Config));
 
-    // Simulate write failure by making the config directory read-only just
-    // after the initial read but before the migration write. The simplest way
-    // is to make the config FILE read-only AND chmod the dir to drop write
-    // permission so the atomic rename can't replace it.
     const configDir = path.dirname(configPath);
     fs.chmodSync(configDir, 0o555);
     try {
       expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/Failed to write migrated config/);
+      expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
+      expect(JSON.parse(fs.readFileSync(configPath, "utf8")).llm.model).toBe("qwen3");
     } finally {
-      // Restore so cleanup() can rm -rf the tmp dir.
       fs.chmodSync(configDir, 0o755);
     }
   });

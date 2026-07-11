@@ -79,24 +79,24 @@ describe("config-cli: defaultWriteTarget (#21)", () => {
   });
 });
 
-// ── Cluster B: #36 llm/embedding subkey support ───────────────────────────────
+// ── Cluster B: engine/embedding subkey support ────────────────────────────────
 
-describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
-  const base: AkmConfig = { semanticSearchMode: "auto" };
+describe("config-cli: engines.* and embedding.* subkeys (#36)", () => {
+  const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
 
   // ── parseConfigValue ──────────────────────────────────────────────────────
 
-  test("parseConfigValue handles llm.endpoint", () => {
-    const result = parseConfigValue("llm.endpoint", "http://localhost:11434/v1/chat/completions");
-    expect(result.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434/v1/chat/completions");
+  test("parseConfigValue handles engines.local.endpoint", () => {
+    const result = parseConfigValue("engines.local.endpoint", "http://localhost:11434/v1/chat/completions");
+    expect(result.engines?.local?.endpoint).toBe("http://localhost:11434/v1/chat/completions");
   });
 
-  test("parseConfigValue handles llm.model", () => {
-    const result = parseConfigValue("llm.model", "llama3.2");
-    expect(result.profiles?.llm?.default?.model).toBe("llama3.2");
+  test("parseConfigValue handles engines.local.model", () => {
+    const result = parseConfigValue("engines.local.model", "llama3.2");
+    expect(result.engines?.local?.model).toBe("llama3.2");
   });
 
-  test("parseConfigValue rejects llm.apiKey persistence (#454)", () => {
+  test("parseConfigValue explicitly rejects the retired llm.apiKey path (#454)", () => {
     expect(() => parseConfigValue("llm.apiKey", "sk-test")).toThrow(/apiKey cannot be persisted/);
     expect(() => parseConfigValue("llm.apiKey", "sk-test")).toThrow(/AKM_LLM_API_KEY/);
   });
@@ -116,29 +116,27 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
     expect(() => parseConfigValue("embedding.apiKey", "sk-embed")).toThrow(/AKM_EMBED_API_KEY/);
   });
 
-  test("parseConfigValue accepts empty llm.endpoint as a partial setup step", () => {
-    // Post-rewrite: subkey-set allows partial profiles to land. The schema
-    // enforces the full shape at saveConfig time; until then, an empty
-    // endpoint is just an incomplete in-progress profile.
-    const result = parseConfigValue("llm.endpoint", "");
-    expect(result.profiles?.llm?.default?.endpoint).toBe("");
+  test("parseConfigValue rejects an empty engine endpoint", () => {
+    expect(() => parseConfigValue("engines.local.endpoint", "")).toThrow(/endpoint must be a complete URL/);
   });
 
   // ── getConfigValue ────────────────────────────────────────────────────────
 
-  test("getConfigValue: llm.endpoint returns null when llm not set", () => {
-    expect(getConfigValue(base, "llm.endpoint")).toBeNull();
+  test("getConfigValue: engines.local.endpoint returns null when the engine is not set", () => {
+    expect(getConfigValue(base, "engines.local.endpoint")).toBeNull();
   });
 
-  test("getConfigValue: llm.endpoint returns value when set", () => {
+  test("getConfigValue: engine connection fields return values when set", () => {
     const config: AkmConfig = {
       ...base,
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "llama3.2" } } },
-      defaults: { llm: "default" },
+      engines: {
+        local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "llama3.2" },
+      },
+      defaults: { llmEngine: "local" },
     };
-    expect(getConfigValue(config, "llm.endpoint")).toBe("http://localhost/v1");
-    expect(getConfigValue(config, "llm.model")).toBe("llama3.2");
-    expect(getConfigValue(config, "llm.apiKey")).toBeNull();
+    expect(getConfigValue(config, "engines.local.endpoint")).toBe("http://localhost/v1/chat/completions");
+    expect(getConfigValue(config, "engines.local.model")).toBe("llama3.2");
+    expect(getConfigValue(config, "engines.local.apiKey")).toBeNull();
   });
 
   test("getConfigValue: embedding subkeys work", () => {
@@ -153,34 +151,32 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
 
   // ── setConfigValue with deep merge ────────────────────────────────────────
 
-  test("setConfigValue: llm.endpoint preserves sibling model field", () => {
+  test("setConfigValue: engine endpoint preserves sibling model field", () => {
     const config: AkmConfig = {
       ...base,
-      profiles: { llm: { default: { endpoint: "http://old/", model: "old-model" } } },
-      defaults: { llm: "default" },
+      engines: { local: { kind: "llm", endpoint: "http://old/chat/completions", model: "old-model" } },
+      defaults: { llmEngine: "local" },
     };
-    const result = setConfigValue(config, "llm.endpoint", "http://new/");
-    expect(result.profiles?.llm?.default?.endpoint).toBe("http://new/");
-    expect(result.profiles?.llm?.default?.model).toBe("old-model");
+    const result = setConfigValue(config, "engines.local.endpoint", "http://new/chat/completions");
+    expect(result.engines?.local?.endpoint).toBe("http://new/chat/completions");
+    expect(result.engines?.local?.model).toBe("old-model");
   });
 
-  test("setConfigValue: llm.model preserves sibling endpoint field", () => {
+  test("setConfigValue: engine model preserves sibling endpoint field", () => {
     const config: AkmConfig = {
       ...base,
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "old-model" } } },
-      defaults: { llm: "default" },
+      engines: {
+        local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "old-model" },
+      },
+      defaults: { llmEngine: "local" },
     };
-    const result = setConfigValue(config, "llm.model", "gpt-4o");
-    expect(result.profiles?.llm?.default?.model).toBe("gpt-4o");
-    expect(result.profiles?.llm?.default?.endpoint).toBe("http://localhost/v1");
+    const result = setConfigValue(config, "engines.local.model", "gpt-4o");
+    expect(result.engines?.local?.model).toBe("gpt-4o");
+    expect(result.engines?.local?.endpoint).toBe("http://localhost/v1/chat/completions");
   });
 
-  test("setConfigValue: llm.apiKey is rejected with an env-var hint (#454)", () => {
-    const config: AkmConfig = {
-      ...base,
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "llama3.2" } } },
-      defaults: { llm: "default" },
-    };
+  test("setConfigValue: retired llm.apiKey is rejected with an env-var hint (#454)", () => {
+    const config: AkmConfig = { ...base };
     expect(() => setConfigValue(config, "llm.apiKey", "sk-secret")).toThrow(/apiKey cannot be persisted/);
   });
 
@@ -194,27 +190,35 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
 
   // ── unsetConfigValue ──────────────────────────────────────────────────────
 
-  test("unsetConfigValue: llm.endpoint removes the key (was: set to empty string)", () => {
+  test("unsetConfigValue: engine endpoint removes the key", () => {
     const config: AkmConfig = {
       ...base,
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "llama3.2" } } },
-      defaults: { llm: "default" },
+      engines: {
+        local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "llama3.2" },
+      },
+      defaults: { llmEngine: "local" },
     };
-    const result = unsetConfigValue(config, "llm.endpoint");
-    // Post-rewrite: unset deletes the key entirely rather than nulling it.
-    expect(result.profiles?.llm?.default?.endpoint).toBeUndefined();
-    expect(result.profiles?.llm?.default?.model).toBe("llama3.2");
+    const result = unsetConfigValue(config, "engines.local.endpoint");
+    expect(result.engines?.local?.endpoint).toBeUndefined();
+    expect(result.engines?.local?.model).toBe("llama3.2");
   });
 
-  test("unsetConfigValue: llm.apiKey removes the key", () => {
+  test("unsetConfigValue: engine apiKey removes the key", () => {
     const config: AkmConfig = {
       ...base,
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "llama3.2", apiKey: "sk-secret" } } },
-      defaults: { llm: "default" },
+      engines: {
+        local: {
+          kind: "llm",
+          endpoint: "http://localhost/v1/chat/completions",
+          model: "llama3.2",
+          apiKey: "$LOCAL_API_KEY",
+        },
+      },
+      defaults: { llmEngine: "local" },
     };
-    const result = unsetConfigValue(config, "llm.apiKey");
-    expect(result.profiles?.llm?.default?.apiKey).toBeUndefined();
-    expect(result.profiles?.llm?.default?.endpoint).toBe("http://localhost/v1");
+    const result = unsetConfigValue(config, "engines.local.apiKey");
+    expect(result.engines?.local?.apiKey).toBeUndefined();
+    expect(result.engines?.local?.endpoint).toBe("http://localhost/v1/chat/completions");
   });
 
   test("unsetConfigValue: embedding.apiKey removes the key", () => {

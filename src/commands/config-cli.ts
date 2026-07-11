@@ -58,7 +58,7 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
+  return redactConfigValue({ ...DEFAULT_CONFIG, ...config, sources: config.sources ?? [] }) as Record<string, unknown>;
 }
 
 function redactConfigValue(value: unknown): unknown {

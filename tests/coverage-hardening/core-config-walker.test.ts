@@ -7,10 +7,10 @@
 //
 // NO test file imports config-walker directly — it is only exercised
 // indirectly through the config-cli wrappers, and only for a handful of
-// happy-path keys (output.*, embedding.*, llm.*). Several branchy coercion
+// happy-path keys (output.*, embedding.*, engines.*). Several branchy coercion
 // and schema-descent paths in the walker have zero behavioural coverage:
 //   - catchall descent (index.<passName>.<field>)
-//   - z.record descent (profiles.llm.<name>.<field>)
+//   - z.record descent (engines.<name>.<field>)
 //   - boolean case-sensitivity ("True"/"1" must be REJECTED, only "true"/"false")
 //   - number range validation via safeParse (min/max, not just finite)
 //   - empty-segment path rejection ("a..b")
@@ -24,12 +24,12 @@ import { configGet, configSet, configUnset } from "../../src/core/config/config-
 
 describe("configSet — catchall descent (index.<passName>)", () => {
   test("descends through the IndexConfig catchall into a per-pass field", () => {
-    const next = configSet({}, "index.graph.llm", "true");
-    expect(next).toEqual({ index: { graph: { llm: true } } });
+    const next = configSet({}, "index.graph.enabled", "true");
+    expect(next).toEqual({ index: { graph: { enabled: true } } });
   });
 
   test("coerces + validates the per-pass leaf (boolean rejects non-boolean)", () => {
-    expect(() => configSet({}, "index.graph.llm", "yes")).toThrow(/expected true or false/);
+    expect(() => configSet({}, "index.graph.enabled", "yes")).toThrow(/expected true or false/);
   });
 
   test("an unknown per-pass leaf key is rejected as an unknown config key", () => {
@@ -40,10 +40,10 @@ describe("configSet — catchall descent (index.<passName>)", () => {
   });
 });
 
-describe("configSet — z.record descent (profiles.llm.<name>)", () => {
-  test("an arbitrary profile name descends into the record value schema", () => {
-    const next = configSet({}, "profiles.llm.myprofile.model", "gpt-4o");
-    expect(next).toEqual({ profiles: { llm: { myprofile: { model: "gpt-4o" } } } });
+describe("configSet — z.record descent (engines.<name>)", () => {
+  test("an arbitrary engine name descends into the record value schema", () => {
+    const next = configSet({}, "engines.my-engine.model", "gpt-4o");
+    expect(next).toEqual({ engines: { "my-engine": { model: "gpt-4o" } } });
   });
 });
 

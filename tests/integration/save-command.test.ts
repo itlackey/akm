@@ -195,6 +195,7 @@ describe("akm sync", () => {
     spawnSync("git", ["-C", repoDir, "push", "-u", "origin", "HEAD"], { encoding: "utf8" });
 
     writeJson(path.join(xdgConfigHome, "akm", "config.json"), {
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
       sources: [{ type: "git", name: "nopush-stash", url: repoUrl, writable: true }],
     });
@@ -239,6 +240,7 @@ describe("akm sync", () => {
     fs.writeFileSync(path.join(namedRepoDir, "skills", "named.md"), "# named\n");
 
     writeJson(path.join(xdgConfigHome, "akm", "config.json"), {
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
       sources: [{ type: "git", name: "named-stash", url: namedRepoUrl }],
     });
@@ -275,6 +277,7 @@ describe("akm sync", () => {
     fs.writeFileSync(path.join(namedRepoDir, "skills", "named.md"), "# named\n");
 
     writeJson(path.join(configRoot, "akm", "config.json"), {
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
       sources: [{ type: "git", name: namedRepoName, url: namedRepoUrl }],
     });
@@ -311,6 +314,7 @@ describe("akm sync", () => {
 
     const configRoot = makeTempDir("akm-save-config-installed-");
     writeJson(path.join(configRoot, "akm", "config.json"), {
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
       installed: [
         {
