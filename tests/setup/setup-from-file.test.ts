@@ -40,7 +40,8 @@ describe("loadSetupConfigFromFile", () => {
   test("loads a JSON config file (happy path)", async () => {
     const filePath = path.join(workDir, "config.json");
     const payload = {
-      llm: { endpoint: "http://localhost:11434/v1", model: "gpt-oss-20b" },
+      engines: { local: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gpt-oss-20b" } },
+      defaults: { llmEngine: "local" },
       semanticSearchMode: "off",
     };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
@@ -55,16 +56,25 @@ describe("loadSetupConfigFromFile", () => {
     const filePath = path.join(workDir, "config.yml");
     fs.writeFileSync(
       filePath,
-      ["llm:", "  endpoint: http://localhost:11434/v1", "  model: gpt-oss-20b", "semanticSearchMode: off", ""].join(
-        "\n",
-      ),
+      [
+        "engines:",
+        "  local:",
+        "    kind: llm",
+        "    endpoint: http://localhost:11434/v1/chat/completions",
+        "    model: gpt-oss-20b",
+        "defaults:",
+        "  llmEngine: local",
+        "semanticSearchMode: off",
+        "",
+      ].join("\n"),
       "utf8",
     );
 
     const result = await loadSetupConfigFromFile(filePath);
     expect(result.format).toBe("yaml");
     expect(JSON.parse(result.configJson)).toEqual({
-      llm: { endpoint: "http://localhost:11434/v1", model: "gpt-oss-20b" },
+      engines: { local: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gpt-oss-20b" } },
+      defaults: { llmEngine: "local" },
       semanticSearchMode: "off",
     });
   });
@@ -138,7 +148,7 @@ describe("loadSetupConfigFromFile", () => {
   test("throws ConfigError on malformed YAML", async () => {
     const filePath = path.join(workDir, "broken.yaml");
     // Inconsistent indentation breaks the YAML parser.
-    fs.writeFileSync(filePath, "llm:\n  endpoint: x\n model: y\n", "utf8");
+    fs.writeFileSync(filePath, "engines:\n  local:\n    kind: llm\n   model: y\n", "utf8");
 
     try {
       await loadSetupConfigFromFile(filePath);

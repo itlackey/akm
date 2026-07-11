@@ -882,20 +882,21 @@ describe("Scenario: CLI subprocess execution", () => {
     }
   });
 
-  test("cli: akm config set/get manages llm settings via JSON", async () => {
+  test("cli: akm config set/get manages an LLM engine via JSON", async () => {
     const setResult = runCli(
       "config",
       "set",
-      "llm",
-      '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","maxTokens":256}',
+      "engines.local",
+      '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","maxTokens":256}',
     );
     expect(setResult.exitCode).toBe(0);
 
-    const getResult = runCli("config", "get", "llm");
+    const getResult = runCli("config", "get", "engines.local");
     expect(getResult.exitCode).toBe(0);
 
     const json = parseJson(getResult.stdout);
     expect(json).toMatchObject({
+      kind: "llm",
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
       maxTokens: 256,
@@ -905,17 +906,17 @@ describe("Scenario: CLI subprocess execution", () => {
   test("cli: startup applies --quiet before config-load warnings", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "gpt-4" } } },
-      defaults: { llm: "default" },
+      engines: { local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "gpt-4" } },
+      defaults: { llmEngine: "local" },
     });
 
-    const result = runCli("config", "get", "llm", "--quiet");
+    const result = runCli("config", "get", "engines.local", "--quiet");
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
 
     const json = parseJson(result.stdout);
     expect(json).toMatchObject({
-      endpoint: "http://localhost/v1",
+      endpoint: "http://localhost/v1/chat/completions",
       model: "gpt-4",
     });
   });

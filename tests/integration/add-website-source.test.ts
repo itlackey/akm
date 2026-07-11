@@ -78,7 +78,7 @@ describe("akm add website", () => {
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
         path.join(configDir, "config.json"),
-        `${JSON.stringify({ semanticSearchMode: "off" }, null, 2)}\n`,
+        `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }, null, 2)}\n`,
       );
 
       const child = spawn("bun", [CLI, "add", websiteUrl, "--name", "docs-site", "--format=json"], {

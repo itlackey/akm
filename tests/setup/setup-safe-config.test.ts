@@ -63,8 +63,8 @@ function seedFullConfig(): void {
     stashDir: "/home/tester/akm",
     semanticSearchMode: "off",
     output: { format: "json", detail: "full" },
-    profiles: { agent: { claude: { platform: "claude", bin: "claude" } } },
-    defaults: { agent: "claude" },
+    engines: { claude: { kind: "agent", platform: "claude", bin: "claude" } },
+    defaults: { engine: "claude" },
     sources: [{ path: "/home/tester/akm/skills", type: "filesystem" }],
     registries: [{ name: "default", url: "https://example.com/registry" }],
   });
@@ -89,8 +89,8 @@ describe("runSetupFromConfig — deep merge", () => {
     // ...but its sibling survived (the bug this fixes: shallow replace dropped it).
     expect(output.detail).toBe("full");
     // And unrelated top-level keys are untouched.
-    expect(written.profiles).toEqual({ agent: { claude: { platform: "claude", bin: "claude" } } });
-    expect(written.defaults).toEqual({ agent: "claude" });
+    expect(written.engines).toEqual({ claude: { kind: "agent", platform: "claude", bin: "claude" } });
+    expect(written.defaults).toEqual({ engine: "claude" });
     expect(written.sources).toEqual([{ path: "/home/tester/akm/skills", type: "filesystem" }]);
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
   });
@@ -110,20 +110,20 @@ describe("runSetupFromConfig — deep merge", () => {
     expect(output.format).toBe("json");
   });
 
-  test("nested profiles merge key-by-key (sibling agent profile survives)", async () => {
+  test("nested engines merge key-by-key (sibling agent engine survives)", async () => {
     seedFullConfig();
 
-    // Adding a second agent profile must not drop the seeded `claude` profile.
+    // Adding a second agent engine must not drop the seeded `claude` engine.
     await runSetupFromConfig({
       configJson: JSON.stringify({
-        profiles: { agent: { opencode: { platform: "opencode", bin: "opencode" } } },
+        engines: { opencode: { kind: "agent", platform: "opencode", bin: "opencode" } },
       }),
       noInit: true,
     });
 
-    const profiles = readWrittenConfig().profiles as { agent: Record<string, unknown> };
-    expect(profiles.agent.claude).toEqual({ platform: "claude", bin: "claude" });
-    expect(profiles.agent.opencode).toEqual({ platform: "opencode", bin: "opencode" });
+    const engines = readWrittenConfig().engines as Record<string, unknown>;
+    expect(engines.claude).toEqual({ kind: "agent", platform: "claude", bin: "claude" });
+    expect(engines.opencode).toEqual({ kind: "agent", platform: "opencode", bin: "opencode" });
   });
 
   test("an empty --config drops no pre-existing key", async () => {
@@ -171,7 +171,7 @@ describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () =>
     expect(output.detail).toBe("full");
     // Existing values preserved; defaults only fill what was missing.
     expect(written.stashDir).toBe("/home/tester/akm");
-    expect(written.defaults).toEqual({ agent: "claude" });
+    expect(written.defaults).toEqual({ engine: "claude" });
   });
 });
 
@@ -186,11 +186,11 @@ describe("runSetupWithDefaults — idempotency", () => {
     const second = fs.readFileSync(getConfigPath(), "utf8");
 
     // Idempotency contract: running N times == running once. Detection
-    // (#514) may legitimately inject profiles (e.g. a live local LLM), so the
+    // (#514) may legitimately inject engines (e.g. a live local LLM), so the
     // first run is not a no-op — but the SECOND run must add/change nothing.
     // Compare structurally rather than byte-for-byte: JSON object key
     // insertion order is not part of the config's identity, and the apply
-    // helpers can reorder `profiles`/`defaults` keys without altering content.
+    // helpers can reorder `engines`/`defaults` keys without altering content.
     expect(JSON.parse(second)).toEqual(JSON.parse(first));
 
     // No pre-existing value was overwritten by a default.
@@ -200,9 +200,9 @@ describe("runSetupWithDefaults — idempotency", () => {
     expect(written.sources).toEqual([{ path: "/home/tester/akm/skills", type: "filesystem" }]);
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
     // The pre-existing agent default must survive untouched. Detection (#514)
-    // may ADD other defaults (e.g. an `llm` default when a live local server is
-    // present on the host), but it must never overwrite the seeded `agent`.
-    expect((written.defaults as Record<string, unknown>).agent).toBe("claude");
+    // may ADD other defaults (e.g. an LLM engine when a live local server is
+    // present on the host), but it must never overwrite the seeded agent engine.
+    expect((written.defaults as Record<string, unknown>).engine).toBe("claude");
   });
 
   test("on a fresh install writes config and takes no backup", async () => {

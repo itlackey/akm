@@ -35,30 +35,31 @@ describe("config command apiKey redaction", () => {
 
     const outputs = await withEnv(env, async () => {
       writeSandboxConfig({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
         embedding: {
           endpoint: "https://emb.example.test/v1/embeddings",
           model: "embed-model",
         },
-        profiles: {
-          llm: {
-            default: {
-              endpoint: "https://llm.example.test/v1/chat/completions",
-              model: "chat-model",
-            },
+        engines: {
+          default: {
+            kind: "llm",
+            endpoint: "https://llm.example.test/v1/chat/completions",
+            model: "chat-model",
+            apiKey: "$AKM_LLM_API_KEY",
           },
         },
-        defaults: { llm: "default" },
+        defaults: { llmEngine: "default" },
       });
 
       const list = await runCliCapture(["--json", "config", "list"]);
       const show = await runCliCapture(["--json", "config", "show"]);
       const embedding = await runCliCapture(["--json", "config", "get", "embedding"]);
-      const llm = await runCliCapture(["--json", "config", "get", "llm"]);
-      const profiles = await runCliCapture(["--json", "config", "get", "profiles"]);
-      const llmApiKey = await runCliCapture(["--json", "config", "get", "llm.apiKey"]);
+      const llm = await runCliCapture(["--json", "config", "get", "engines.default"]);
+      const engines = await runCliCapture(["--json", "config", "get", "engines"]);
+      const llmApiKey = await runCliCapture(["--json", "config", "get", "engines.default.apiKey"]);
 
-      return { list, show, embedding, llm, profiles, llmApiKey };
+      return { list, show, embedding, llm, engines, llmApiKey };
     });
 
     for (const result of Object.values(outputs)) {
@@ -71,14 +72,14 @@ describe("config command apiKey redaction", () => {
     const show = JSON.parse(outputs.show.stdout) as Record<string, unknown>;
     const embedding = JSON.parse(outputs.embedding.stdout) as Record<string, unknown>;
     const llm = JSON.parse(outputs.llm.stdout) as Record<string, unknown>;
-    const profiles = JSON.parse(outputs.profiles.stdout) as Record<string, unknown>;
+    const engines = JSON.parse(outputs.engines.stdout) as Record<string, unknown>;
     const llmApiKey = JSON.parse(outputs.llmApiKey.stdout);
 
     expect(JSON.stringify(list)).not.toContain("apiKey");
     expect(JSON.stringify(show)).not.toContain("apiKey");
     expect(JSON.stringify(embedding)).not.toContain("apiKey");
     expect(JSON.stringify(llm)).not.toContain("apiKey");
-    expect(JSON.stringify(profiles)).not.toContain("apiKey");
+    expect(JSON.stringify(engines)).not.toContain("apiKey");
     expect(llmApiKey).toBeNull();
   });
 });

@@ -23,7 +23,7 @@
  */
 import { z } from "zod";
 import { UsageError } from "../errors";
-import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
+import { AkmConfigBaseSchema, type AkmConfigShape, EngineConfigSchema, listTopLevelConfigKeys } from "./config-schema";
 import { deepMergeConfig } from "./deep-merge";
 
 type Path = string[];
@@ -98,6 +98,13 @@ function resolveSchemaAt(path: Path): z.ZodTypeAny | undefined {
       // Records (profiles.llm, profiles.agent, profiles.improve, sources, etc.)
       // accept any string key — descend into the value schema.
       schema = schema._def.valueType;
+    } else if (schema instanceof z.ZodUnion) {
+      const option = (schema._def.options as z.ZodTypeAny[]).find((candidate) => {
+        const unwrapped = unwrap(candidate);
+        return unwrapped instanceof z.ZodObject && segment in unwrapped.shape;
+      });
+      if (!option) return undefined;
+      schema = (unwrap(option) as z.ZodObject<z.ZodRawShape>).shape[segment] as z.ZodTypeAny;
     } else {
       // Cannot descend into a non-object schema.
       return undefined;
@@ -163,7 +170,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   // objects, etc.) BEFORE we apply the patch.
   const parsed =
     path[0] === "engines" && path.length === 2
-      ? { success: true as const, data: value }
+      ? EngineConfigSchema.safeParse(value)
       : engineApiKey
         ? /^\$[A-Za-z_][A-Za-z0-9_]*$|^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(raw)
           ? { success: true as const, data: value }

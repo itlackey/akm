@@ -25,7 +25,8 @@ import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../co
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
-  return configGet(config as unknown as Record<string, unknown>, key);
+  if (key.split(".").at(-1) === "apiKey") return null;
+  return redactConfigValue(configGet(config as unknown as Record<string, unknown>, key));
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
@@ -57,7 +58,17 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  return { ...DEFAULT_CONFIG, ...config } as Record<string, unknown>;
+  return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
+}
+
+function redactConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactConfigValue);
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key !== "apiKey") result[key] = redactConfigValue(child);
+  }
+  return result;
 }
 
 export { unknownKeyHint };
@@ -176,7 +187,11 @@ export const configCommand = defineGroupCommand({
     set: defineJsonCommand({
       meta: { name: "set", description: "Set a configuration value by key" },
       args: {
-        key: { type: "positional", required: true, description: "Config key (for example: embedding, llm)" },
+        key: {
+          type: "positional",
+          required: true,
+          description: "Config key (for example: embedding, engines.default)",
+        },
         value: { type: "positional", required: true, description: "Config value" },
         // #463: stable machine-friendly entry point for plugins / hooks.
         // `--silent` suppresses the config dump on stdout so hook-driven
@@ -199,7 +214,7 @@ export const configCommand = defineGroupCommand({
       run({ args }) {
         if (args.layer && args.layer !== "user") {
           throw new UsageError(
-            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.9.0.`,
             "INVALID_FLAG_VALUE",
           );
         }
@@ -214,7 +229,7 @@ export const configCommand = defineGroupCommand({
       },
     }),
     unset: defineJsonCommand({
-      meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/llm section" },
+      meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/engine section" },
       args: {
         key: { type: "positional", required: true, description: "Config key to unset" },
         silent: {
@@ -231,7 +246,7 @@ export const configCommand = defineGroupCommand({
       run({ args }) {
         if (args.layer && args.layer !== "user") {
           throw new UsageError(
-            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.9.0.`,
             "INVALID_FLAG_VALUE",
           );
         }
