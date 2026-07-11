@@ -135,6 +135,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `evidenceSources:` are deliberately not checked (wiki `sources:` is covered
   by `akm wiki lint`; the latter two legitimately point at merged-away
   assets).
+- **`--xref <ref>` on `akm remember` and `akm import` — write-time
+  cross-references with validation.** The stash back-linking conventions route
+  provenance and associative links through `xrefs:` frontmatter, but neither
+  CLI write flow could express them (remember always generated its own
+  frontmatter block; import wrote content verbatim). The new repeatable flag
+  records refs in the written asset's `xrefs:` frontmatter list, which the
+  indexer folds into search hints — the new asset becomes findable from
+  searches for its source. `remember` merges the refs into its generated
+  frontmatter (composes with `--tag`/scope flags; does not trigger the
+  tags-required check); `import` dedupe-appends into the document's existing
+  frontmatter, or adds a block when the document has none — never a nested
+  second block. A document whose existing frontmatter is not a parseable YAML
+  mapping aborts the import (exit 2, nothing written) rather than being
+  rewritten lossily; importing it without `--xref` still preserves it
+  verbatim. Every ref is validated before anything is written, against the
+  write target plus all configured sources (read-only cross-stash sources
+  count): an unresolvable ref fails with the standard usage envelope (exit 2)
+  and leaves the stash untouched. The conventions' ~5-xref cap stays soft —
+  exceeding it warns on stderr but still writes. Additionally, a type-root
+  write (no `--path`, flat name) into a stash carrying convention facts now
+  returns an additive `hint` output key pointing at the stash's placement
+  conventions (`fact:conventions/organization` when that fact exists), so CLI
+  writers see the conventions that LLM flows already receive by injection.
 
 ### Changed
 

@@ -929,6 +929,11 @@ akm remember "Long meeting notes..." --enrich
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
 
+# Cite provenance / related assets in frontmatter `xrefs:` (validated at write time):
+akm remember "The token rotation quirk applies to staging too" \
+  --xref knowledge:auth/vendor-x-token-api \
+  --xref memory:projectA/token-quirk
+
 # Route the write to a specific writable stash (0.8.0+):
 akm remember "Deployment needs VPN access" --target team-stash
 
@@ -944,6 +949,7 @@ akm remember "Deployment needs VPN access" --wiki architecture
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
 | `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
+| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge:auth-flow --xref memory:vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
@@ -972,6 +978,16 @@ multi-tenant / multi-agent contract; the same shape is read back by
 [Configuration → Memory scope](configuration.md#memory-scope) for the
 frontmatter schema and round-trip rules.
 
+**Cross-references** (`--xref`) implement the stash back-linking conventions'
+provenance channel: the refs land in the memory's `xrefs:` frontmatter list,
+which the indexer folds into the asset's search hints, so the new memory is
+findable from searches for its source. Refs are validated before anything is
+written — against the write target plus every configured source, including
+read-only cross-stash sources — so a typo'd ref fails fast (exit 2) instead
+of becoming permanent silent noise. When a write lands at the type root (no
+`--path`, flat name) in a stash that carries convention facts, the JSON output
+includes an additive `hint` key pointing at the stash's placement conventions.
+
 ### import
 
 Import a knowledge document. This writes a markdown file into `knowledge/` in
@@ -990,6 +1006,9 @@ akm import ./notes/release.txt --name release-checklist
 akm import - --name scratch-notes < notes.md
 akm import https://example.com/docs/auth
 
+# Cite provenance in the document's frontmatter `xrefs:` (validated at write time):
+akm import ./notes/oauth-quirks.md --xref knowledge:auth/vendor-x-token-api
+
 # Route the write to a specific writable stash (0.8.0+):
 akm import ./docs/auth-flow.md --target team-stash
 
@@ -1003,6 +1022,7 @@ akm import https://example.com/docs/auth --wiki research
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
+| `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
 | `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do
@@ -1011,6 +1031,16 @@ the URL path (for example, `/docs/auth` -> `knowledge/docs/auth.md`).
 
 The source must be a readable file path, a reachable HTTP/HTTPS URL, or `-` to
 read the document from stdin.
+
+`--xref` behaves as on `remember` (validated refs, soft ~5 cap, additive
+`hint` output key on type-root writes), with one import-specific rule: because
+imported documents may already carry frontmatter, the refs are **merged** —
+existing keys are preserved and the `xrefs:` list is dedupe-appended, so the
+result always has exactly one frontmatter block. The merge requires the
+existing block to parse as a YAML mapping; a malformed block aborts the import
+(exit 2, nothing written) instead of silently flattening the values the parser
+could not read. Importing the same document *without* `--xref` always
+preserves it byte-for-byte.
 
 ### feedback
 

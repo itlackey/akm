@@ -68,7 +68,9 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm remember "note" --target my-other-stash    # Route write to a named writable stash source
+akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable; ref must resolve)
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
+akm import ./doc.md --xref knowledge:auth-flow # Merge provenance xrefs into the imported doc's frontmatter
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --target my-other-stash    # Route import to a named writable stash source

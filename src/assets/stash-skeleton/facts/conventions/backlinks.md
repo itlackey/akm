@@ -37,8 +37,10 @@ xrefs:
   ref** (`memory:projectA/token-quirk` xrefs `knowledge:auth/vendor-x-token-api`
   — it also makes this asset findable from searches for its source). An
   original observation with no source carries none — never invent provenance.
-  Wikis enforce the analogous rule mechanically (`sources:` + `uncited-raw`
-  lint); non-wiki provenance is discipline only.
+  `akm remember`/`akm import` write this channel via `--xref <ref>`
+  (repeatable; refs are checked at write time). Wikis enforce the analogous
+  rule mechanically (`sources:` + `uncited-raw` lint); non-wiki provenance is
+  discipline only.
 - **Associative xrefs are discretionary — real relationships only.** Add one when
   you already know a genuine load-bearing connection. Do **not** hit a link
   quota by pointing at the topically-nearest sibling — a plausible-but-wrong
