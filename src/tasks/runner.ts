@@ -16,7 +16,7 @@
  *   3. Refuse to run when `enabled === false` (defense-in-depth).
  *   4. Dispatch by target kind:
  *        • workflow → `startWorkflowRun(ref, params)`
- *        • prompt   → `runAgent(profile, prompt, { stdio: "captured" })`
+ *        • prompt   → `executeRunner(engine, prompt, { stdio: "captured" })`
  *   5. Capture stdout / stderr as structured rows in logs.db (task_logs) and,
  *      transitionally, as a flat text tail at `<cacheDir>/tasks/logs/<id>/<ts>.log`
  *      (see docs/technical/logs-audit.md).
@@ -44,9 +44,12 @@ import {
 import { getTaskLogDir } from "../core/paths";
 import { withStateDb } from "../core/state-db";
 import { error } from "../core/warn";
-import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
-import { resolveProcessAgentProfile } from "../integrations/agent/config";
-import { resolveRunner } from "../integrations/agent/runner";
+import { type AgentRunResult, type RunAgentOptions, runAgent } from "../integrations/agent";
+import { materializeLlmConnection, resolveEngine, resolveLlmEngineUse } from "../integrations/agent/engine-resolution";
+import { resolveModel } from "../integrations/agent/model-aliases";
+import type { RunnerSpec } from "../integrations/agent/runner";
+import { executeRunner } from "../integrations/agent/runner-dispatch";
+import { chatCompletion } from "../llm/client";
 import { spawn } from "../runtime";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunStatus } from "../sources/types";
@@ -65,7 +68,10 @@ export interface TaskRunResult {
   finishedAt: string;
   durationMs: number;
   log: string;
-  target: { kind: "workflow"; ref: string } | { kind: "prompt"; profile?: string };
+  target:
+    | { kind: "workflow"; ref: string }
+    | { kind: "prompt"; engine: string | null; legacyProfile?: string }
+    | { kind: "command"; cmd?: string[] };
   /** Workflow run id (for workflow targets) or agent reason/error (for prompt targets). */
   detail?: { runId?: string; reason?: string; error?: string; exitCode?: number | null };
 }
@@ -86,6 +92,8 @@ export interface RunTaskOptions {
   logDir?: string;
   /** Extra args/env to pass through to runAgent (tests). */
   agentOptions?: Partial<RunAgentOptions>;
+  /** Override plain LLM prompt dispatch (tests). */
+  chatCompletionImpl?: typeof chatCompletion;
 }
 
 export async function runTask(id: string, options: RunTaskOptions = {}): Promise<TaskRunResult> {
@@ -112,8 +120,8 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       task.target.kind === "workflow"
         ? { kind: "workflow", ref: task.target.ref }
         : task.target.kind === "command"
-          ? { kind: "prompt", profile: undefined }
-          : { kind: "prompt", profile: task.target.profile };
+          ? { kind: "command", cmd: task.target.cmd }
+          : { kind: "prompt", engine: task.target.engine ?? null };
     const result: TaskRunResult = {
       id,
       status: "disabled",
@@ -150,9 +158,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     return await runCommandTask({ task, logPath, startedAt, now });
   }
 
-  // Resolve config once here so runPromptTask does not call loadConfig()
-  // on every dispatch in a batch run (Fix C6).
-  const config = loadConfig();
   return await runPromptTask({
     task,
     stashDir,
@@ -161,8 +166,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     now,
     runAgentImpl,
     agentOptions: options.agentOptions,
-    agentConfig: config,
-    agentTimeoutMs: undefined,
+    chatCompletionImpl: options.chatCompletionImpl ?? chatCompletion,
   });
 }
 
@@ -265,7 +269,7 @@ async function runCommandTask(input: {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
-    target: { kind: "prompt", profile: undefined },
+    target: { kind: "command", cmd },
     detail: { exitCode },
   };
   appendHistory(result);
@@ -385,77 +389,79 @@ async function runPromptTask(input: {
   startedAt: Date;
   now: () => Date;
   runAgentImpl: (...args: Parameters<typeof runAgent>) => Promise<AgentRunResult>;
+  chatCompletionImpl: typeof chatCompletion;
   agentOptions?: Partial<RunAgentOptions>;
-  /** Pre-resolved AkmConfig (avoids re-reading config file per task in batch runs). */
-  agentConfig?: ReturnType<typeof loadConfig>;
-  /** Pre-resolved agent timeout (ms) from the calling context. null = no timeout. */
-  agentTimeoutMs?: number | null;
 }): Promise<TaskRunResult> {
-  const { task, stashDir, logPath, startedAt, now, runAgentImpl, agentOptions } = input;
+  const { task, stashDir, logPath, startedAt, now, agentOptions } = input;
   if (task.target.kind !== "prompt") throw new Error("invariant: prompt target");
+  const promptTarget = task.target;
 
-  // Use pre-resolved agent config when available to avoid redundant loadConfig()
-  // calls in batch task runs (Fix C6). Fall back to loadConfig() for callers
-  // that invoke runPromptTask directly without threading config.
-  const fullConfig = loadConfig();
-  const agentCfg = input.agentConfig !== undefined ? input.agentConfig : fullConfig;
-
-  // Resolve the profile for this task. When the task doc specifies a profile,
-  // use it directly. Otherwise fall back to the per-process config for "task"
-  // (agent.processes["task"]), which itself falls back to agent.default.
-  let profile: ReturnType<typeof requireAgentProfile>;
-  let processTimeoutMs: number | null | undefined;
-  if (task.target.profile) {
-    // v2: if profiles.agent is configured, resolve through new runner
-    if (fullConfig.profiles?.agent) {
-      const mode = (task.target as { mode?: "llm" | "agent" | "sdk" }).mode ?? "agent";
-      if (mode !== "llm") {
-        const runnerSpec = resolveRunner(mode, task.target.profile, fullConfig);
-        if (runnerSpec.kind === "agent" || runnerSpec.kind === "sdk") {
-          profile = runnerSpec.profile as ReturnType<typeof requireAgentProfile>;
-          processTimeoutMs = runnerSpec.timeoutMs;
-        } else {
-          profile = requireAgentProfile(agentCfg, task.target.profile);
-        }
-      } else {
-        profile = requireAgentProfile(agentCfg, task.target.profile);
-      }
-    } else {
-      // v1: Task doc explicitly names a profile — honour it directly.
-      profile = requireAgentProfile(agentCfg, task.target.profile);
-    }
+  const config = loadConfig();
+  const engineName = promptTarget.engine ?? config.defaults?.engine;
+  if (!engineName) throw new NotFoundError(`Task "${task.id}" has no selected engine.`, "ASSET_NOT_FOUND");
+  let runner: RunnerSpec = resolveEngine(engineName, config);
+  if (runner.kind === "llm") {
+    const resolved = resolveLlmEngineUse(config, [
+      {
+        engine: engineName,
+        ...(promptTarget.model !== undefined ? { model: promptTarget.model } : {}),
+        ...(promptTarget.timeoutMs !== undefined ? { timeoutMs: promptTarget.timeoutMs } : {}),
+        ...(promptTarget.llm !== undefined ? { llm: promptTarget.llm } : {}),
+      },
+    ]);
+    runner = {
+      kind: "llm",
+      engine: resolved.engine,
+      connection: materializeLlmConnection(resolved),
+      timeoutMs: resolved.timeoutMs,
+    };
   } else {
-    // No per-task profile: use process config for "task" as a fallback.
-    const resolved = resolveProcessAgentProfile("task", agentCfg);
-    profile = resolved.profile;
-    processTimeoutMs = resolved.timeoutMs;
+    if (promptTarget.llm !== undefined) {
+      throw new NotFoundError(
+        `Task "${task.id}" uses llm overrides with non-LLM engine "${engineName}".`,
+        "ASSET_NOT_FOUND",
+      );
+    }
+    const requestedModel = promptTarget.model;
+    const platform = runner.profile.platform;
+    if (!platform) throw new Error(`Engine "${engineName}" resolved without a platform.`);
+    const model = requestedModel
+      ? resolveModel(requestedModel, platform, undefined, config.modelAliases)
+      : runner.profile.model;
+    runner = {
+      ...runner,
+      profile: { ...runner.profile, ...(model ? { model } : {}) },
+      ...(promptTarget.timeoutMs !== undefined ? { timeoutMs: promptTarget.timeoutMs } : {}),
+    };
   }
-
-  // Task-level timeoutMs (including null = disabled) wins over global config.
-  // Resolution: task.timeoutMs → process entry timeoutMs → input.agentTimeoutMs → agentCfg.timeoutMs.
-  const agentTimeoutMs =
-    task.timeoutMs !== undefined
-      ? task.timeoutMs
-      : processTimeoutMs !== undefined
-        ? processTimeoutMs
-        : input.agentTimeoutMs !== undefined
-          ? input.agentTimeoutMs
-          : undefined;
   const promptText = await resolvePromptText(task, stashDir);
 
-  const result = await runAgentImpl(profile, promptText, {
-    stdio: "captured",
-    timeoutMs: agentTimeoutMs,
-    cwd: stashDir,
-    ...agentOptions,
-    // Stamp task-runner provenance for any akm invocation the agent makes
-    // (DRIFT-6: agent-task traffic must not be recorded as user demand).
-    // Caller-supplied env still wins on conflicts.
-    env: { AKM_EVENT_SOURCE: "task", ...agentOptions?.env },
-  });
+  const result = await executeRunner(
+    runner,
+    promptText,
+    {
+      stdio: "captured",
+      cwd: stashDir,
+      ...agentOptions,
+      // Stamp task-runner provenance for any akm invocation the agent makes
+      // (DRIFT-6: agent-task traffic must not be recorded as user demand).
+      // Caller-supplied env still wins on conflicts.
+      env: { AKM_EVENT_SOURCE: "task", ...agentOptions?.env },
+    },
+    {
+      runAgent: input.runAgentImpl,
+      llm: async (spec, prompt, options) => {
+        const started = Date.now();
+        const stdout = await input.chatCompletionImpl(spec.connection, [{ role: "user", content: prompt }], {
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        });
+        return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
+      },
+    },
+  );
 
   const finishedAt = now();
-  const log = renderPromptLog({ task, profileName: profile.name, result });
+  const log = renderPromptLog({ task, engineName, result });
   persistRunLog({
     taskId: task.id,
     startedAtIso: startedAt.toISOString(),
@@ -473,7 +479,7 @@ async function runPromptTask(input: {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
-    target: { kind: "prompt", profile: profile.name },
+    target: { kind: "prompt", engine: engineName },
     detail: result.ok
       ? { exitCode: result.exitCode }
       : { reason: result.reason, error: result.error, exitCode: result.exitCode },
@@ -500,10 +506,10 @@ async function resolvePromptText(task: TaskDocument, stashDir: string): Promise<
   return fs.readFileSync(assetPath, "utf8");
 }
 
-function renderPromptLog(input: { task: TaskDocument; profileName: string; result: AgentRunResult }): RunLogContent {
+function renderPromptLog(input: { task: TaskDocument; engineName: string; result: AgentRunResult }): RunLogContent {
   const lines: string[] = [];
   const dbLines: TaskLogLineInput[] = [];
-  const header = `[akm tasks] task=${input.task.id} kind=prompt profile=${input.profileName}`;
+  const header = `[akm tasks] task=${input.task.id} kind=prompt engine=${input.engineName}`;
   const summary = `ok=${input.result.ok} exit_code=${input.result.exitCode ?? "null"} duration_ms=${input.result.durationMs}`;
   lines.push(header, summary);
   dbLines.push({ line: header }, { level: input.result.ok ? "info" : "error", line: summary });
@@ -596,9 +602,10 @@ function appendHistory(result: TaskRunResult): void {
         target_kind: result.target.kind,
         target_ref: result.target.kind === "workflow" ? result.target.ref : null,
         metadata_json: JSON.stringify({
+          metadataVersion: 2,
           durationMs: result.durationMs,
           detail: result.detail ?? null,
-          profile: result.target.kind === "prompt" ? result.target.profile : undefined,
+          ...(result.target.kind === "prompt" ? { engine: result.target.engine } : {}),
         }),
       });
     });
@@ -642,7 +649,13 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
 function taskHistoryRowToResult(
   row: import("../storage/repositories/task-history-repository").TaskHistoryRow,
 ): TaskRunResult {
-  let meta: { durationMs?: number; detail?: TaskRunResult["detail"]; profile?: string } = {};
+  let meta: {
+    metadataVersion?: number;
+    durationMs?: number;
+    detail?: TaskRunResult["detail"];
+    engine?: string;
+    profile?: string;
+  } = {};
   try {
     meta = JSON.parse(row.metadata_json) as typeof meta;
   } catch {
@@ -652,7 +665,11 @@ function taskHistoryRowToResult(
   const target: TaskRunResult["target"] =
     row.target_kind === "workflow"
       ? { kind: "workflow", ref: row.target_ref ?? "" }
-      : { kind: "prompt", profile: meta.profile };
+      : row.target_kind === "command"
+        ? { kind: "command" }
+        : meta.metadataVersion === 2
+          ? { kind: "prompt", engine: meta.engine ?? null }
+          : { kind: "prompt", engine: null, ...(meta.profile ? { legacyProfile: meta.profile } : {}) };
 
   return {
     id: row.task_id,

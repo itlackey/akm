@@ -8,8 +8,8 @@
  * Ships a well-tuned multi-cadence task set so a typical single-developer
  * install is correct with zero manual config. Registration is **idempotent**:
  * running `akm setup` / `akm tasks init` twice yields the same task set with no
- * duplicates. Each default task is a shell-command task (`akm improve --profile
- * <name>`), so the profile is overridable in `config.json` without editing the
+ * duplicates. Each default task is a shell-command task (`akm improve --strategy
+ * <name>`), so the strategy is overridable in `config.json` without editing the
  * task definition.
  *
  * The OS-scheduler-touching primitives (`add` / `setEnabled` / `list`) are
@@ -24,12 +24,12 @@ import { akmTasksAdd, akmTasksList, type TasksAddInput } from "./tasks";
 
 /**
  * One default task in the improve task set. `command` is the shell command run
- * on the schedule; `profile` is informational (it is encoded into `command`).
+ * on the schedule; `strategy` is informational (it is encoded into `command`).
  */
 export interface DefaultTaskSpec {
   id: string;
-  /** Improve profile this task runs. Encoded into {@link command}. */
-  profile: string;
+  /** Improve strategy this task runs. Encoded into {@link command}. */
+  strategy: string;
   command: string;
   /** Cron-style schedule, or `null` for a registered-but-unscheduled task. */
   schedule: string | null;
@@ -51,40 +51,40 @@ export interface DefaultTaskSpec {
 export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {
     id: "akm-improve-frequent",
-    profile: "frequent",
-    command: "akm improve --profile frequent --auto-accept safe",
+    strategy: "frequent",
+    command: "akm improve --strategy frequent --auto-accept safe",
     schedule: "0 * * * *",
     description: "Frequent extract + inference pass (every 60 min)",
     enableMode: "always",
   },
   {
     id: "akm-improve-consolidate",
-    profile: "consolidate",
-    command: "akm improve --profile consolidate --auto-accept safe",
+    strategy: "consolidate",
+    command: "akm improve --strategy consolidate --auto-accept safe",
     schedule: "0 */4 * * *",
     description: "Consolidation-only pass (every 4h)",
     enableMode: "always",
   },
   {
     id: "akm-improve-nightly",
-    profile: "thorough",
-    command: "akm improve --profile thorough --auto-accept safe",
+    strategy: "thorough",
+    command: "akm improve --strategy thorough --auto-accept safe",
     schedule: "0 2 * * *",
     description: "Full nightly quality sweep (daily 2am)",
     enableMode: "server",
   },
   {
     id: "akm-improve-catchup",
-    profile: "catchup",
-    command: "akm improve --profile catchup --auto-accept safe",
+    strategy: "catchup",
+    command: "akm improve --strategy catchup --auto-accept safe",
     schedule: null,
     description: "Manual recovery — consolidation + triage drain (run on demand)",
     enableMode: "manual",
   },
   {
     id: "akm-graph-refresh-weekly",
-    profile: "graph-refresh",
-    command: "akm improve --profile graph-refresh --auto-accept safe",
+    strategy: "graph-refresh",
+    command: "akm improve --strategy graph-refresh --auto-accept safe",
     schedule: "0 3 * * 0",
     description: "Full-corpus graph rebuild (weekly Sunday 3am)",
     enableMode: "always",

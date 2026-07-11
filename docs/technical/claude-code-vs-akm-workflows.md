@@ -408,7 +408,7 @@ Every difference reduces to one axis: **who holds the execution loop.**
   > spawner is used today by the `improve`/`reflect` pipeline, **not** by the
   > workflow engine — the workflow engine simply doesn't *use* that substrate
   > yet. That is exactly what the extension plan changes — see
-  > [`akm-workflows-orchestration-plan.md`](./akm-workflows-orchestration-plan.md).
+   > [the current workflow documentation](../features/workflows.md).
 
 Concretely:
 
@@ -445,7 +445,7 @@ is weak (durable, gated, cross-session procedures a human signs off on).
 > other harnesses — providing Claude-Code-equivalent parallelism, structured
 > output, phases, and budgeting on top of akm's existing agent-execution
 > substrate, while keeping akm's durable/gated spine. See
-> [`akm-workflows-orchestration-plan.md`](./akm-workflows-orchestration-plan.md)
+> [the current workflow documentation](../features/workflows.md)
 > for the full technical design. The lighter-weight ideas below remain valid as
 > incremental stepping stones.
 

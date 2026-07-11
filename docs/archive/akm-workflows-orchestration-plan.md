@@ -1,5 +1,11 @@
 # Extending akm workflows into a harness-agnostic orchestration engine
 
+> **Superseded historical plan.** The engine/strategy cutover shipped with the
+> current workflow architecture. This document is retained as historical design
+> context and is not a live implementation contract. See
+> [Workflow architecture](../technical/architecture.md) and
+> [Workflow source and IR](../features/workflows.md) for current behavior.
+
 **Status:** Formalized 2026-07-05 — owner decisions recorded in
 *Open decisions* and *Formalization addendum* below. Supersedes Part F of
 [`claude-code-vs-akm-workflows.md`](./claude-code-vs-akm-workflows.md).

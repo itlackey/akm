@@ -171,7 +171,7 @@ a known builder.
 
 ## See also
 
-- [Configuring Agent Profiles and Model Aliases](../configuration-agent-profiles.md) — built-in profiles, commandBuilder, custom model aliases, and headless variants
+- [Configuration](../configuration.md#engines) — named agent engines and model aliases
 - [Search & Discovery](search-discovery.md) — the full curate → show retrieval path
 - [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
 - [Improvement Loop](improvement-loop.md) — feeding back usage signals

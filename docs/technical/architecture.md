@@ -266,19 +266,20 @@ scripts tell "akm threw unexpectedly" apart from an ordinary `NotFoundError`
 
 ---
 
-## LLM/Agent Boundary
+## Engine Boundary
 
-akm has two distinct integration paths to language models. They do not share
-state, do not share modules, and do not share import graphs. The boundary is
-locked by v1 spec §9.7 and is enforced at two concrete seams.
+Public execution selection uses named `engines`, never profiles. An engine is
+either `kind: "llm"` (an OpenAI-compatible chat-completions connection) or
+`kind: "agent"` (a registered harness platform). `resolveEngine()` lowers the
+selected engine into the internal `RunnerSpec` tagged union; the SDK runtime is
+an internal lowering of an `opencode-sdk` agent engine, not a public engine kind.
+`resolveLlmEngineUse()` selects and overlays one LLM engine without materializing
+its symbolic credential until dispatch.
 
-A unified adapter (`src/llm/call-ai.ts`) bridges the two paths for interactive
-commands (`akm propose`, the reflect pass inside `akm improve`, etc.): it
-routes to the resolved agent profile under `profiles.agent.<name>` (agent CLI
-shell-out or SDK) when an agent is configured, and falls back to the resolved
-LLM profile under `profiles.llm.<name>` (HTTP chat-completions) otherwise. The indexer LLM passes do
-**not** use this adapter — they call `chatCompletion` directly to stay on the
-HTTP path and avoid agent-CLI overhead.
+`executeRunner()` is the sole exhaustive switch over `RunnerSpec`. Callers pass
+their own LLM handler for the LLM arm; agent and SDK arms use the harness runner.
+An explicit missing or incompatible engine is an error and never falls through to
+another configured engine.
 
 ### In-tree LLM helpers (`src/llm/`)
 
@@ -294,14 +295,10 @@ Concretely:
   pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
   stateless model handle (see the comment in that file). It exposes
   `resetLocalEmbedder()` so tests can construct a fresh pipeline.
-- Each call site is gated behind exactly one configuration flag — either a
-  `processes.<name>.enabled` toggle under `profiles.improve.<name>` (improve-
-  bound features such as memory inference, graph extraction, consolidation,
-  feedback distillation) or a first-class section toggle
-  (`index.metadataEnhance.enabled`, `index.stalenessDetection.enabled`) —
-  and falls back to a deterministic path
-  when the flag is `false`, the endpoint is unreachable, or parsing fails.
-  See `docs/configuration.md` for canonical paths.
+- Improve processes are selected through `improve.strategies` and resolve their
+  engine before dispatch. Index and other non-improve consumers use their own
+  documented engine-use sections. See `docs/configuration.md` for canonical
+  paths.
 
 The seam is locked by `tests/architecture/llm-stateless-seam.test.ts`, which
 inspects the module shape of each `src/llm/*` entry — not the source text.
@@ -324,25 +321,15 @@ External coding agents are reachable via two execution paths:
 
 - `runAgentSdk(profile, prompt, opts, llmConfig?)` uses the embedded
   `@opencode-ai/sdk` instead of `Bun.spawn`. No agent CLI binary is required.
-- Enabled when `profile.sdkMode === true`. The profile can specify an
-  `endpoint`, `apiKey`, and `model`; absent fields inherit from `config.llm`.
+- Selected by an agent engine whose `platform` is `"opencode-sdk"`. Its optional
+  `llmEngine` (then `defaults.llmEngine`) supplies the LLM fallback connection.
 - Manages a single per-process singleton server, creating one fresh session
   per call to avoid history accumulation and unbounded token growth.
 
-**Shared pipeline** (`src/integrations/agent/pipeline.ts`):
-
-- `runProposalAgentPipeline(opts)` is the shared entry point for
-  `akm propose` and the reflect pass inside `akm improve`. It routes to
-  `runAgentSdk` when `profile.sdkMode` is true (or the agent profile's
-  `platform` is `"opencode-sdk"`), and to `runAgent` (spawn path)
-  otherwise.
-
-No file under `src/integrations/agent/` imports an in-tree LLM helper
-(`src/llm/`). The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`,
-which asserts the documented shape of `runAgent`, the failure-reason
-discriminated union, and the captured/interactive stdio modes. A regression
-guard in `tests/architecture/agent-no-llm-sdk-guard.test.ts` catches
-accidental introduction of in-tree LLM imports under that path.
+Prompt tasks are versioned task YAML v2 assets. They resolve `engine` from the
+task or `defaults.engine`; LLM prompt tasks use plain chat completion and agent
+prompt tasks use the spawn or SDK runner. Task run history writes metadata v2
+with an `engine`; older metadata is exposed only as `legacyProfile`.
 
 ---
 

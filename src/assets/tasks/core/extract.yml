@@ -1,3 +1,4 @@
+version: 2
 schedule: "*/30 * * * *"
 command: akm extract
 enabled: true

@@ -86,7 +86,7 @@ Registered external wikis also show up in `akm list`.
 ```sh
 akm wiki pages <name>        # list page refs + frontmatter descriptions
 akm wiki search <name> <q>   # scope-filtered search (see below)
-akm wiki ingest <name>       # dispatch defaults.agent (or --profile) to run the ingest workflow
+akm wiki ingest <name>       # dispatch defaults.engine (or --engine) to run the ingest workflow
 ```
 
 `akm wiki search <n> <q>` is a convenience — wiki pages are first-class
@@ -155,12 +155,12 @@ them in `index.md` as a new section automatically.
 
 ## The ingest workflow (what the dispatched agent does)
 
-`akm wiki ingest <name>` resolves an agent profile (from `--profile` or
-`config.defaults.agent`) and dispatches that agent with the wiki's
+`akm wiki ingest <name>` resolves an agent engine (from `--engine` or
+`config.defaults.engine`) and dispatches that agent with the wiki's
 ingest workflow as the prompt. The agent then drives every step in the
 recipe below — `akm` provides the schema-aware commands; the agent
 provides the reasoning. Calling ingest without an accessible agent
-profile fails with a clear error pointing at `profiles.agent`.
+engine fails with a clear error pointing at `engines`.
 
 The workflow steps:
 
@@ -199,8 +199,8 @@ akm wiki ingest research
 # Agent reads schema, finds related pages, creates new pages,
 # updates xrefs, appends to log.md, then reindexes and lints.
 
-# Override the agent profile and model if needed:
-akm wiki ingest research --profile claude --model sonnet --timeout-ms 600000
+# Override the agent engine and model if needed:
+akm wiki ingest research --engine claude --model sonnet --timeout-ms 600000
 akm wiki pages research
 akm wiki lint research        # → "0 finding(s) — clean."
 

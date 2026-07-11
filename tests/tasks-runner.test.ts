@@ -86,7 +86,7 @@ function readRunLogRows(taskId: string): TaskLogRow[] {
 
 describe("runTask — workflow target", () => {
   test("dispatches to startWorkflowRun and writes log + history to state.db", async () => {
-    writeTask("wf", ['schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
+    writeTask("wf", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
     const calls: Array<{ ref: string; params: Record<string, unknown> }> = [];
     const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => {
       calls.push({ ref, params });
@@ -139,7 +139,7 @@ describe("runTask — workflow target", () => {
   ] as const;
   for (const { wf, expected } of STATUS_CASES) {
     test(`maps workflow run status "${wf}" → task status "${expected}"`, async () => {
-      writeTask("map", ['schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
+      writeTask("map", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
       const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => ({
         run: {
           id: "run-map",
@@ -168,8 +168,49 @@ describe("runTask — workflow target", () => {
 });
 
 describe("runTask — prompt target", () => {
+  test("dispatches an LLM prompt task through its selected engine", async () => {
+    writeTask(
+      "llm",
+      ["version: 2", 'schedule: "@daily"', "prompt: answer briefly", "engine: fast", "model: qwen3-small", ""].join(
+        "\n",
+      ),
+    );
+    process.env.AKM_CONFIG_DIR = configDir;
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          fast: {
+            kind: "llm",
+            endpoint: "http://localhost:11434/v1/chat/completions",
+            model: "qwen3",
+          },
+        },
+        defaults: { engine: "fast", llmEngine: "fast" },
+      }),
+    );
+    const seen: { model?: string; prompt?: string } = {};
+
+    const result = await runTask("llm", {
+      stashDir,
+      logDir,
+      chatCompletionImpl: async (connection, messages) => {
+        seen.model = connection.model;
+        seen.prompt = messages[0]?.content;
+        return "complete";
+      },
+      now: () => new Date("2025-01-01T00:00:00Z"),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.target).toEqual({ kind: "prompt", engine: "fast" });
+    expect(seen).toEqual({ model: "qwen3-small", prompt: "answer briefly" });
+  });
+
   test("dispatches to runAgent (mocked) and writes captured stdout to the log", async () => {
-    writeTask("prompt", ['schedule: "@daily"', "prompt: say hello", "profile: opencode", ""].join("\n"));
+    writeTask("prompt", ["version: 2", 'schedule: "@daily"', "prompt: say hello", "engine: opencode", ""].join("\n"));
 
     const fakeRunAgent: FakeRunAgent = async (...args) => {
       const prompt = args[1] as string;
@@ -182,10 +223,17 @@ describe("runTask — prompt target", () => {
       };
     };
 
-    // We need a config with an agent block so requireAgentProfile succeeds.
+    // The prompt task resolves this named agent engine before dispatch.
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ agent: { default: "opencode" } }));
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: { opencode: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "opencode" },
+      }),
+    );
 
     const result = await runTask("prompt", {
       stashDir,
@@ -195,12 +243,12 @@ describe("runTask — prompt target", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.target).toEqual({ kind: "prompt", profile: "opencode" });
+    expect(result.target).toEqual({ kind: "prompt", engine: "opencode" });
     expect(fs.readFileSync(result.log, "utf8")).toContain("agent received: say hello");
 
     const rows = readTaskHistory({ id: "prompt" });
     expect(rows).toHaveLength(1);
-    expect(rows[0].target).toEqual({ kind: "prompt", profile: "opencode" });
+    expect(rows[0].target).toEqual({ kind: "prompt", engine: "opencode" });
 
     // #579: the same run is queryable from logs.db by task_id AND run_id,
     // with the captured agent stdout stored as stream='stdout' rows.
@@ -222,11 +270,18 @@ describe("runTask — prompt target", () => {
   });
 
   test("agent failure surfaces as failed status with reason", async () => {
-    writeTask("fail", ['schedule: "@daily"', "prompt: boom", "profile: opencode", ""].join("\n"));
+    writeTask("fail", ["version: 2", 'schedule: "@daily"', "prompt: boom", "engine: opencode", ""].join("\n"));
 
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ agent: { default: "opencode" } }));
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: { opencode: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "opencode" },
+      }),
+    );
 
     const fakeRunAgent: FakeRunAgent = async () => {
       return {
@@ -261,7 +316,7 @@ describe("runTask — prompt target", () => {
 
 describe("runTask — disabled tasks no-op", () => {
   test("disabled task is recorded but not dispatched", async () => {
-    writeTask("off", ['schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
+    writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
     let called = false;
     const fakeWf = async () => {
       called = true;

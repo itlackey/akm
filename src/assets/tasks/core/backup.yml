@@ -1,3 +1,4 @@
+version: 2
 schedule: "0 3 * * 0"
 command: akm db backups
 enabled: true

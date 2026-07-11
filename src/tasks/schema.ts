@@ -14,7 +14,7 @@
  * inline prompts use a YAML block scalar (`prompt: |`).
  */
 
-export const TASK_SCHEMA_VERSION = 1;
+export const TASK_SCHEMA_VERSION = 2;
 
 export interface TaskWorkflowTarget {
   kind: "workflow";
@@ -33,8 +33,18 @@ export type TaskPromptSource =
 export interface TaskPromptTarget {
   kind: "prompt";
   source: TaskPromptSource;
-  /** Agent profile name; defaults to `defaults.agent` when undefined. */
-  profile?: string;
+  /** Named engine; defaults to `defaults.engine` when undefined. */
+  engine?: string;
+  model?: string;
+  timeoutMs?: number | null;
+  llm?: {
+    temperature?: number;
+    maxTokens?: number;
+    supportsJsonSchema?: boolean;
+    extraParams?: Record<string, unknown>;
+    contextLength?: number;
+    enableThinking?: boolean;
+  };
 }
 
 export interface TaskCommandTarget {
@@ -46,6 +56,8 @@ export interface TaskCommandTarget {
 export type TaskTarget = TaskWorkflowTarget | TaskPromptTarget | TaskCommandTarget;
 
 export interface TaskDocument {
+  /** Source-file version. Task YAML v1 is stale and never normalized here. */
+  version: typeof TASK_SCHEMA_VERSION;
   schemaVersion: typeof TASK_SCHEMA_VERSION;
   /** Filesystem-derived id (basename without `.yml`). */
   id: string;
@@ -63,10 +75,8 @@ export interface TaskDocument {
   /**
    * Per-task agent timeout override (ms).
    *
-   * - Positive number: overrides `config.agent.timeoutMs` for this task only.
-   * - `null` or `0`: disables the timeout entirely (no process kill). Use for
-   *   long-running local-model tasks where wall-clock time is unpredictable.
-   * - Omitted (`undefined`): inherits the global `config.agent.timeoutMs`.
+   * Command-task timeout. Prompt task timeout is stored on its engine use;
+   * workflow tasks cannot set a timeout.
    */
   timeoutMs?: number | null;
 }

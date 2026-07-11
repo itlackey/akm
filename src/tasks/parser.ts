@@ -30,15 +30,15 @@
  * tags: [scheduled, backup]
  * ```
  *
- * Validation lives in {@link validateTaskDocument}. The parser only enforces
- * shape; cron syntax, target reachability, and profile availability are
+ * Validation lives in {@link validateTaskDocument}. The parser enforces the
+ * strict source shape; cron syntax and target reachability are
  * checked separately so callers can choose how strictly to surface errors.
  */
 
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { UsageError } from "../core/errors";
-import { TASK_SCHEMA_VERSION, type TaskDocument, type TaskTarget } from "./schema";
+import { TASK_SCHEMA_VERSION, type TaskDocument, type TaskPromptTarget, type TaskTarget } from "./schema";
 
 export interface ParseTaskInput {
   /** The full YAML contents of the task file. */
@@ -70,7 +70,10 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     );
   }
 
-  const schedule = readString(data.schedule, "schedule", filePath);
+  requireVersion(data, id, filePath);
+  rejectUnknownKeys(data, id, filePath);
+
+  const schedule = requireString(data.schedule, "schedule", filePath);
   if (!schedule) {
     throw new UsageError(
       `Task "${id}" is missing a schedule (YAML key "schedule"). File: ${filePath}`,
@@ -78,11 +81,11 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     );
   }
 
-  const enabled = data.enabled === undefined ? true : data.enabled === true;
-  const name = readString(data.name, "name", filePath);
-  const description = readString(data.description, "description", filePath);
-  const when_to_use = readString(data.when_to_use, "when_to_use", filePath);
-  const tags = readStringArray(data.tags);
+  const enabled = readEnabled(data.enabled, filePath);
+  const name = optionalString(data.name, "name", filePath);
+  const description = optionalString(data.description, "description", filePath);
+  const when_to_use = optionalString(data.when_to_use, "when_to_use", filePath);
+  const tags = readTags(data.tags, filePath);
 
   const hasWorkflow = "workflow" in data && data.workflow !== "" && data.workflow != null;
   const hasPrompt = "prompt" in data && data.prompt !== "" && data.prompt != null;
@@ -103,7 +106,8 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
 
   let target: TaskTarget;
   if (hasWorkflow) {
-    const ref = readString(data.workflow, "workflow", filePath);
+    rejectTargetFields(data, ["params"], id, filePath);
+    const ref = requireString(data.workflow, "workflow", filePath);
     if (!ref) {
       throw new UsageError(`Task "${id}" has empty \`workflow\`. File: ${filePath}`, "INVALID_FLAG_VALUE");
     }
@@ -113,47 +117,101 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
       params: readParams(data.params, filePath),
     };
   } else if (hasCommand) {
+    rejectTargetFields(data, ["timeoutMs"], id, filePath);
     const cmd = readCommand(data.command, filePath, id);
     target = { kind: "command", cmd };
   } else {
-    const promptRaw = readString(data.prompt, "prompt", filePath);
+    rejectTargetFields(data, ["engine", "model", "timeoutMs", "llm"], id, filePath);
+    const promptRaw = requireString(data.prompt, "prompt", filePath);
     if (!promptRaw) {
       throw new UsageError(`Task "${id}" has empty \`prompt\`. File: ${filePath}`, "INVALID_FLAG_VALUE");
     }
-    const profile = readString(data.profile, "profile", filePath);
+    const engine = optionalString(data.engine, "engine", filePath);
+    const model = optionalString(data.model, "model", filePath);
+    const timeoutMs = readTimeout(data.timeoutMs, filePath);
+    const llm = readLlmOverrides(data.llm, filePath);
     target = {
       kind: "prompt",
       source: resolvePromptSource(promptRaw, filePath, id),
-      profile: profile && profile.length > 0 ? profile : undefined,
+      ...(engine ? { engine } : {}),
+      ...(model ? { model } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(llm ? { llm } : {}),
     };
   }
 
-  // null / 0 / negative → disabled (no timeout). Positive number → override.
-  // Omitted → undefined (inherits config.agent.timeoutMs).
-  let timeoutMs: number | null | undefined;
-  if ("timeoutMs" in data) {
-    const raw = data.timeoutMs;
-    if (raw === null || raw === "null" || raw === 0 || (typeof raw === "number" && raw < 0)) {
-      timeoutMs = null;
-    } else if (typeof raw === "number" && raw > 0) {
-      timeoutMs = raw;
-    }
-    // non-numeric / unrecognised → leave as undefined (inherit)
-  }
+  const timeoutMs = hasCommand ? readTimeout(data.timeoutMs, filePath) : undefined;
 
   return {
+    version: TASK_SCHEMA_VERSION,
     schemaVersion: TASK_SCHEMA_VERSION,
     id,
     schedule,
     enabled,
     target,
-    name: name && name.length > 0 ? name : undefined,
-    description: description && description.length > 0 ? description : undefined,
-    when_to_use: when_to_use && when_to_use.length > 0 ? when_to_use : undefined,
-    tags: tags && tags.length > 0 ? tags : undefined,
+    ...(name ? { name } : {}),
+    ...(description ? { description } : {}),
+    ...(when_to_use ? { when_to_use } : {}),
+    ...(tags ? { tags } : {}),
     source: { path: filePath },
     timeoutMs,
   };
+}
+
+const TASK_KEYS = new Set([
+  "version",
+  "name",
+  "description",
+  "when_to_use",
+  "tags",
+  "schedule",
+  "enabled",
+  "workflow",
+  "prompt",
+  "command",
+  "params",
+  "engine",
+  "model",
+  "timeoutMs",
+  "llm",
+]);
+const SHARED_KEYS = new Set(["version", "name", "description", "when_to_use", "tags", "schedule", "enabled"]);
+
+function requireVersion(data: Record<string, unknown>, id: string, filePath: string): void {
+  if (data.version === TASK_SCHEMA_VERSION) return;
+  const actual = data.version === undefined ? "missing" : JSON.stringify(data.version);
+  throw new UsageError(
+    `TASK_SCHEMA_VERSION_UNSUPPORTED: Task "${id}" uses task schema version ${actual}; version: 2 is required. File: ${filePath}`,
+    "TASK_SCHEMA_VERSION_UNSUPPORTED",
+    "Rewrite the task using version: 2 and replace profile with engine.",
+  );
+}
+
+function rejectUnknownKeys(data: Record<string, unknown>, id: string, filePath: string): void {
+  const unknown = Object.keys(data).filter((key) => !TASK_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new UsageError(
+      `Task "${id}" has unknown key(s): ${unknown.join(", ")}. File: ${filePath}`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+}
+
+function rejectTargetFields(
+  data: Record<string, unknown>,
+  allowed: readonly string[],
+  id: string,
+  filePath: string,
+): void {
+  const forbidden = Object.keys(data).filter(
+    (key) => !SHARED_KEYS.has(key) && !allowed.includes(key) && !["workflow", "prompt", "command"].includes(key),
+  );
+  if (forbidden.length > 0) {
+    throw new UsageError(
+      `Task "${id}" has field(s) not valid for this target: ${forbidden.join(", ")}. File: ${filePath}`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
 }
 
 /**
@@ -185,30 +243,47 @@ function resolvePromptSource(raw: string, filePath: string, id: string): import(
   return { kind: "inline", text: trimmed };
 }
 
-function readString(value: unknown, key: string, filePath: string): string | undefined {
+function optionalString(value: unknown, key: string, filePath: string): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string") return value;
   throw new UsageError(`Key "${key}" must be a string. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }
 
-function readStringArray(value: unknown): string[] | undefined {
+function requireString(value: unknown, key: string, filePath: string): string {
+  const result = optionalString(value, key, filePath);
+  if (result === undefined || result.length === 0) {
+    throw new UsageError(`Key "${key}" must be a non-empty string. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  }
+  return result;
+}
+
+function readEnabled(value: unknown, filePath: string): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "boolean")
+    throw new UsageError(`Key "enabled" must be a boolean. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  return value;
+}
+
+function readTags(value: unknown, filePath: string): string[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") {
-    return value
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
   if (Array.isArray(value)) {
-    return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+    if (!value.every((entry) => typeof entry === "string" && entry.length > 0)) {
+      throw new UsageError(`Key "tags" must be an array of non-empty strings. File: ${filePath}`, "INVALID_FLAG_VALUE");
+    }
+    return value as string[];
   }
-  return undefined;
+  throw new UsageError(`Key "tags" must be an array of strings. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }
 
 function readCommand(value: unknown, filePath: string, id: string): string[] {
   if (Array.isArray(value)) {
-    const parts = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+    if (!value.every((entry) => typeof entry === "string" && entry.length > 0)) {
+      throw new UsageError(
+        `Task "${id}" command array must contain non-empty strings. File: ${filePath}`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const parts = value as string[];
     if (parts.length === 0) {
       throw new UsageError(`Task "${id}" has empty \`command\` array. File: ${filePath}`, "INVALID_FLAG_VALUE");
     }
@@ -229,15 +304,54 @@ function readParams(value: unknown, filePath: string): Record<string, unknown> {
   if (typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
   }
-  if (typeof value === "string" && value.trim()) {
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      // fall through
+  throw new UsageError(`Key "params" must be a mapping. File: ${filePath}`, "INVALID_FLAG_VALUE");
+}
+
+function readTimeout(value: unknown, filePath: string): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  throw new UsageError(`Key "timeoutMs" must be a positive integer or null. File: ${filePath}`, "INVALID_FLAG_VALUE");
+}
+
+function readLlmOverrides(value: unknown, filePath: string): TaskPromptTarget["llm"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new UsageError(`Key "llm" must be a mapping. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  }
+  const data = value as Record<string, unknown>;
+  const allowed = new Set([
+    "temperature",
+    "maxTokens",
+    "supportsJsonSchema",
+    "extraParams",
+    "contextLength",
+    "enableThinking",
+  ]);
+  const unknown = Object.keys(data).filter((key) => !allowed.has(key));
+  if (unknown.length)
+    throw new UsageError(
+      `Key "llm" has unknown field(s): ${unknown.join(", ")}. File: ${filePath}`,
+      "INVALID_FLAG_VALUE",
+    );
+  if (data.temperature !== undefined && (typeof data.temperature !== "number" || !Number.isFinite(data.temperature))) {
+    throw new UsageError(`Key "llm.temperature" must be a finite number. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  }
+  for (const key of ["maxTokens", "contextLength"] as const) {
+    if (data[key] !== undefined && (!Number.isInteger(data[key]) || (data[key] as number) <= 0)) {
+      throw new UsageError(`Key "llm.${key}" must be a positive integer. File: ${filePath}`, "INVALID_FLAG_VALUE");
     }
   }
-  throw new UsageError(`Key "params" must be a mapping or a JSON object. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  for (const key of ["supportsJsonSchema", "enableThinking"] as const) {
+    if (data[key] !== undefined && typeof data[key] !== "boolean") {
+      throw new UsageError(`Key "llm.${key}" must be a boolean. File: ${filePath}`, "INVALID_FLAG_VALUE");
+    }
+  }
+  if (
+    data.extraParams !== undefined &&
+    (!data.extraParams || typeof data.extraParams !== "object" || Array.isArray(data.extraParams))
+  ) {
+    throw new UsageError(`Key "llm.extraParams" must be a mapping. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  }
+  return data as TaskPromptTarget["llm"];
 }

@@ -278,11 +278,11 @@ Replaces per-task JSONL files. Indexed on `task_id`, `started_at`.
 | `task_id` | TEXT NOT NULL | Task identifier |
 | `status` | TEXT NOT NULL | |
 | `started_at` | TEXT NOT NULL | ISO-8601 |
-| `finished_at` | TEXT | ISO-8601; NULL while running |
-| `duration_ms` | INTEGER | |
-| `log` | TEXT | |
-| `target` | TEXT | |
-| `detail` | TEXT | JSON blob for extra fields |
+| `completed_at` | TEXT | ISO-8601; NULL while incomplete |
+| `failed_at` | TEXT | ISO-8601; NULL unless failed |
+| `log_path` | TEXT | Transitional flat log path |
+| `target_kind` / `target_ref` | TEXT | Task target identity |
+| `metadata_json` | TEXT | Versioned metadata: v2 records `durationMs`, `detail`, and prompt `engine`; unversioned historical metadata keeps `profile` as `legacyProfile` |
 
 Indexes: `idx_task_history_task` on `task_id`, `idx_task_history_started` on `started_at`.
 
@@ -419,7 +419,7 @@ All asset files live under `$STASH/` in type-specific subdirectories defined by 
 | `secrets/<name>` | secret | raw secret bytes |
 | `wikis/<name>/` | wiki | See wiki structure below |
 | `lessons/<name>.md` | lesson | YAML-FM + Markdown (required: `description`, `when_to_use`) |
-| `tasks/<name>.yml` | task | pure YAML (see `docs/migration/v0.7-to-v0.8.md` for the `.md` → `.yml` conversion) |
+| `tasks/<name>.yml` | task | strict YAML with root `version: 2`; prompt tasks select `engine` (see `docs/migration/v0.8-to-v0.9.md#engine-and-task-assets`) |
 
 ### Wiki File Structure
 

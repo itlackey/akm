@@ -53,6 +53,7 @@ describe("task asset mutations honor write-target resolution", () => {
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultWriteTarget: "target",
         sources: [{ type: "filesystem", name: "target", path: target.dir, writable: true }],
@@ -79,6 +80,7 @@ describe("task asset mutations honor write-target resolution", () => {
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultWriteTarget: "target",
         sources: [{ type: "filesystem", name: "target", path: target.dir, writable: true }],
@@ -105,6 +107,7 @@ describe("task asset mutations honor write-target resolution", () => {
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultWriteTarget: "target",
         sources: [{ type: "filesystem", name: "target", path: target.dir, writable: true }],
