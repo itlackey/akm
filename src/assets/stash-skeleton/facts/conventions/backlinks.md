@@ -60,6 +60,8 @@ xrefs:
   also set the old asset's `beliefState: superseded` and
   `supersededBy: [<new ref>]` — a metadata edit, not a content edit — so the
   ranker demotes the stale version instead of letting it outrank your fix.
+  `akm remember`/`akm import` do both writes in one step via
+  `--supersedes <old ref>` (adds the xref and demotes the old asset).
 - **Bidirectional back-links are best-effort.** Add a return xref only when you
   are already editing the target in the same pass. Never require editing a
   separate hot file just to add a back-xref — concurrent writes drop it under

@@ -122,6 +122,56 @@ function beliefStateBoost(item: RankedEntryInput): number {
   return 0;
 }
 
+/**
+ * Post-boost score ceilings for the demoting belief states (SPEC-5,
+ * stash-conventions-code-spec.md — corrections demotion).
+ *
+ * Why the additive {@link beliefStateBoost} penalties alone are not enough:
+ * keyword base scores are min-max normalized into [0.3, 1.0]
+ * (`normalizeFtsScores`), so the spread between the best FTS hit and its
+ * runner-up can be as large as 0.7 — and the boost sum then MULTIPLIES the
+ * base (`score *= 1 + boostSum`, {@link applyScoreContributors}). A
+ * superseded incumbent that is the best keyword match for a query therefore
+ * stays clamp-pinned at 1.0 above its own correction no matter what additive
+ * penalty it receives — defeating the corrections pattern's point ("so the
+ * ranker demotes the stale version instead of letting it outrank your fix").
+ *
+ * The ceilings guarantee the demotion while keeping flagged entries VISIBLE:
+ * un-demoted keyword hits floor at a 0.3 base, so any un-demoted hit outranks
+ * a ceilinged one; demoted entries still list (belief FILTERING stays a
+ * separate opt-in axis, `--belief`), and scores already below a ceiling keep
+ * their relative ordering. Ceiling order mirrors the additive-penalty
+ * severity order pinned in tests/belief-state-phase1a.test.ts:
+ * deprecated (mildest) > superseded > contradicted > archived.
+ */
+const BELIEF_STATE_SCORE_CEILINGS: Record<string, number> = {
+  deprecated: 0.28,
+  superseded: 0.25,
+  contradicted: 0.2,
+  archived: 0.15,
+};
+
+/**
+ * Clamp a ranked entry's FINAL score (after every additive and utility boost)
+ * to its demoting belief state's ceiling. No-op for `asserted`/`active`/unset
+ * entries. Applied once per item at the end of `applyRankingRules` so sort
+ * order and displayed scores stay consistent (single scoring pipeline).
+ *
+ * When the ceiling clamps, the pre-clamp score is recorded as
+ * `preCeilingScore` so db-search's semantic-only `minScore` floor can judge
+ * the hit by what it would have scored WITHOUT the demotion — a ceiling below
+ * the floor (archived 0.15 < default minScore 0.2) must demote a hit to last
+ * place, never silently drop it from the results.
+ */
+export function applyBeliefStateScoreCeiling(item: RankedEntryInput): void {
+  const state = item.entry.beliefState;
+  const ceiling = state !== undefined ? BELIEF_STATE_SCORE_CEILINGS[state] : undefined;
+  if (ceiling !== undefined && item.score > ceiling) {
+    item.preCeilingScore = item.score;
+    item.score = ceiling;
+  }
+}
+
 const exactNameRankingContributor: RankingContributor = {
   name: "exact-name-ranking",
   appliesTo: () => true,

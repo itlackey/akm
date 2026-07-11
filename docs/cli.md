@@ -934,6 +934,11 @@ akm remember "The token rotation quirk applies to staging too" \
   --xref knowledge:auth/vendor-x-token-api \
   --xref memory:projectA/token-quirk
 
+# Correct an existing memory: write the fix AND demote the stale incumbent
+# (beliefState: superseded + supersededBy on the old asset, in one step):
+akm remember "Staging now uses the new gateway endpoint" \
+  --name new-endpoint --supersedes memory:projectA/old-endpoint
+
 # Route the write to a specific writable stash (0.8.0+):
 akm remember "Deployment needs VPN access" --target team-stash
 
@@ -950,6 +955,7 @@ akm remember "Deployment needs VPN access" --wiki architecture
 | `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
 | `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge:auth-flow --xref memory:vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
+| `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so ranking prefers the correction and `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working stash still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--target` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
@@ -988,6 +994,19 @@ of becoming permanent silent noise. When a write lands at the type root (no
 `--path`, flat name) in a stash that carries convention facts, the JSON output
 includes an additive `hint` key pointing at the stash's placement conventions.
 
+**Corrections** (`--supersedes`) implement the conventions' two-write
+corrections pattern in one command: the new asset is written with an xref to
+what it corrects, and the old asset gets a metadata-only demotion
+(`beliefState: superseded` + `supersededBy: [<new ref>]`) that the write path
+reindexes immediately. The old asset is demoted only when it lives in the
+write target or the working stash — a match in any other configured source
+(read-only, or writable but not this write's target) is reported as
+`applied: false` (with a stderr warning) while the correction still writes;
+so is an old asset whose existing frontmatter is not parseable YAML, which a
+demotion rewrite would corrupt. Validation happens before any write, so a
+typo'd ref, or a ref naming the asset being written itself (exit 2), leaves
+both assets untouched — no partial correction.
+
 ### import
 
 Import a knowledge document. This writes a markdown file into `knowledge/` in
@@ -1009,6 +1028,9 @@ akm import https://example.com/docs/auth
 # Cite provenance in the document's frontmatter `xrefs:` (validated at write time):
 akm import ./notes/oauth-quirks.md --xref knowledge:auth/vendor-x-token-api
 
+# Import a corrected doc AND demote the one it replaces (in one step):
+akm import ./notes/modern-guide.md --supersedes knowledge:legacy-guide
+
 # Route the write to a specific writable stash (0.8.0+):
 akm import ./docs/auth-flow.md --target team-stash
 
@@ -1023,6 +1045,7 @@ akm import https://example.com/docs/auth --wiki research
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
+| `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
 | `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do

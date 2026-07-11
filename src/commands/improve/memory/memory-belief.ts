@@ -71,3 +71,39 @@ export function writeContradictEdge(filePath: string, contradictedByRef: string)
     };
   });
 }
+
+// ── Supersession edge writer ─────────────────────────────────────────────────
+
+/**
+ * Write `supersededBy` and `beliefState: superseded` edges to an asset file's
+ * frontmatter (SPEC-5, stash-conventions-code-spec.md).
+ *
+ * Sibling of {@link writeContradictEdge}: the shared primitive for the
+ * conventions' corrections pattern — when a new asset supersedes an old one,
+ * the old asset gets a METADATA-ONLY demotion edit (every other frontmatter
+ * key and the body are preserved) so the ranker's beliefStateBoost demotes the
+ * stale incumbent and `--belief current` hides it. Used by
+ * `akm remember --supersedes` / `akm import --supersedes`.
+ *
+ * Idempotent: if `supersededByRef` is already in `supersededBy` and the file
+ * is already demoted, the file is not rewritten. Multiple corrections
+ * sorted-set-append their refs.
+ *
+ * @param filePath        - Absolute path to the asset markdown file.
+ * @param supersededByRef - The ref of the correction that supersedes this asset.
+ */
+export function writeSupersededEdge(filePath: string, supersededByRef: string): void {
+  mutateFrontmatter(filePath, (parsed) => {
+    const existing: string[] = Array.isArray(parsed.data.supersededBy) ? (parsed.data.supersededBy as string[]) : [];
+    if (existing.includes(supersededByRef) && parsed.data.beliefState === "superseded") {
+      return null; // Already written — idempotent.
+    }
+
+    const nextSupersededBy = [...new Set([...existing, supersededByRef])].sort();
+    return {
+      ...parsed.data,
+      supersededBy: nextSupersededBy,
+      beliefState: "superseded",
+    };
+  });
+}

@@ -478,9 +478,15 @@ async function searchDatabase(
   // Drop semantic-only hits (cosine-only, no FTS match) whose score falls
   // below the configured floor. FTS hits and hybrid hits are always kept.
   // Default floor: 0.2. Set search.minScore = 0 in config to disable.
+  // Judged on the PRE-ceiling score when a demoting belief state clamped the
+  // item (`preCeilingScore`): the belief ceilings can sit below this floor
+  // (archived 0.15 < 0.2), and a demotion must rank the hit last, not
+  // silently remove a result that would otherwise have listed.
   const minScore = config.search?.minScore ?? 0.2;
   const preFilter =
-    minScore > 0 ? scored.filter((item) => item.rankingMode !== "semantic" || item.score >= minScore) : scored;
+    minScore > 0
+      ? scored.filter((item) => item.rankingMode !== "semantic" || (item.preCeilingScore ?? item.score) >= minScore)
+      : scored;
 
   // Deterministic tiebreaker on equal scores.
   //

@@ -40,7 +40,13 @@ import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
-import { mergeXrefsIntoContent, readKnowledgeInput, resolveXrefsForWrite, writeMarkdownAsset } from "../read/knowledge";
+import {
+  mergeXrefsIntoContent,
+  readKnowledgeInput,
+  resolveSupersedesForWrite,
+  resolveXrefsForWrite,
+  writeMarkdownAsset,
+} from "../read/knowledge";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 
@@ -202,6 +208,11 @@ export const importKnowledgeCommand = defineJsonCommand({
       description:
         "Cross-reference ref merged into the document's `xrefs:` frontmatter (repeatable: --xref knowledge:auth-flow). Existing frontmatter is preserved (dedupe-append, never a nested block); a document whose frontmatter is not parseable YAML aborts the import rather than being rewritten lossily. Each ref must resolve in the write target or a configured source; an unresolvable ref aborts the import.",
     },
+    supersedes: {
+      type: "string",
+      description:
+        "Ref of an existing asset this document corrects (repeatable: --supersedes knowledge:legacy-guide). Imports the correction with an xref to the old asset AND demotes the old asset (`beliefState: superseded` + `supersededBy`, a metadata-only edit) so ranking prefers the correction and `--belief current` hides the stale version. An unresolvable or self-referencing ref aborts the import; a ref outside the write target and working stash still imports the correction but skips the demotion (reported as applied: false).",
+    },
   },
   async run({ args }) {
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
@@ -211,6 +222,15 @@ export const importKnowledgeCommand = defineJsonCommand({
     // read/write so an unresolvable ref (UsageError → exit 2) leaves the
     // stash untouched.
     const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), args.target);
+    // Collect and validate --supersedes occurrences (repeatable). Same
+    // before-any-read/write contract: an unresolvable ref exits 2 with nothing
+    // imported AND nothing demoted. The superseded refs fold into the imported
+    // doc's xrefs automatically (correction provenance); the demotion runs
+    // inside writeMarkdownAsset, ordered before the git boundary commit.
+    const supersedes = resolveSupersedesForWrite(parseAllFlagValues("--supersedes"), args.target);
+    for (const s of supersedes) {
+      if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
+    }
     const stashDir = resolveWriteTarget(loadConfig(), args.target).source.path;
     const { content, preferredName } = await readKnowledgeInput(args.source, { stashDir });
     // Imported docs may carry their own frontmatter: merge (dedupe-append)
@@ -225,6 +245,7 @@ export const importKnowledgeCommand = defineJsonCommand({
       force: args.force,
       target: args.target,
       path: args.path,
+      supersedes,
     });
     appendEvent({
       eventType: "import",

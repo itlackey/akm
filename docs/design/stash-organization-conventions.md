@@ -239,9 +239,10 @@ corrections, each code-verified or empirically tested:
 
 Items with an implementation path are specced in
 [stash-conventions-code-spec.md](stash-conventions-code-spec.md): ref-prefix
-filter → SPEC-4, correction demotion → SPEC-5, convention-fact query
-crowding → SPEC-6, body-orientation indexing → SPEC-8 (the tag footgun's
-SPEC-2 has landed — see fact 6). Scheduled consolidation is argued down there
+filter → SPEC-4, convention-fact query crowding → SPEC-6, body-orientation
+indexing → SPEC-8 (the tag footgun's SPEC-2 and correction demotion's SPEC-5
+have landed — see fact 6 and the demotion bullet below). Scheduled
+consolidation is argued down there
 (the improve pipeline already injects the amended conventions); vocabulary
 governance and the typed provenance channel remain genuinely open.
 
@@ -288,5 +289,12 @@ governance and the typed provenance channel remain genuinely open.
   from default untyped search (their delivery channel is prompt injection,
   parallel to the `session` default exclusion) or demoting the category at rank
   time.
-- **Automate correction demotion.** `curate`/`improve` could set
-  `beliefState: superseded` on the old asset when a correction cites it.
+- **Automate correction demotion.** Closed by SPEC-5 in
+  [stash-conventions-code-spec.md](stash-conventions-code-spec.md)
+  (implemented as the deterministic CLI form: `--supersedes <old ref>` on
+  `akm remember`/`akm import` writes the correction with the xref, sets
+  `beliefState: superseded` + `supersededBy: [<new ref>]` on the old asset,
+  and reindexes it; demoting belief states now also cap the final search
+  score so the stale incumbent cannot outrank its correction). An LLM-side
+  `curate`/`improve` pass that detects citing corrections automatically
+  remains open.

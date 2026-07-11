@@ -31,6 +31,7 @@ akm workflow next <ref>                       # Start or resume a workflow
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm remember "note" --target my-stash         # Route write to a named writable stash source
 akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable)
+akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm import ./doc.md --target my-stash         # Route import to a named writable stash source
 akm wiki list                                 # List available wikis

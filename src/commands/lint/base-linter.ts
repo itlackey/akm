@@ -194,41 +194,64 @@ export function refToRelPath(refType: string, refName: string): string | null {
  */
 export function refExistsInAnyStash(relPath: string, refType: string, refName: string, stashRoots: string[]): boolean {
   for (const root of stashRoots) {
-    const absPath = path.join(root, relPath);
-    if (fs.existsSync(absPath)) return true;
-    // Multi-file skill layout: directory containing SKILL.md
-    const bareDir = absPath.replace(/\.md$/, "");
-    if (fs.existsSync(bareDir) && fs.existsSync(path.join(bareDir, "SKILL.md"))) return true;
-    // .derived.md variant for memory refs
-    if (refType === "memory") {
-      const derivedPath = path.join(root, "memories", `${refName}.derived.md`);
-      if (fs.existsSync(derivedPath)) return true;
-    }
-    // Knowledge-specific: search subdirectories like knowledge/projects/, knowledge/tools/, etc.
-    if (refType === "knowledge") {
-      try {
-        const knowledgeDir = path.join(root, "knowledge");
-        if (fs.existsSync(knowledgeDir) && fs.statSync(knowledgeDir).isDirectory()) {
-          const entries = fs.readdirSync(knowledgeDir, { withFileTypes: true });
-          for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const subPath = path.join(knowledgeDir, entry.name, `${refName}.md`);
-            if (fs.existsSync(subPath)) return true;
-          }
-        }
-      } catch {
-        // Ignore errors reading directory
-      }
-    }
-    // Fallback: the refName may already encode the full stash-relative path
-    // (e.g. knowledge:skills/foo/references/bar where the file lives at
-    // <stash>/skills/foo/references/bar.md, not <stash>/knowledge/skills/...).
-    const directPath = path.join(root, `${refName}.md`);
-    if (fs.existsSync(directPath)) return true;
-    const directDir = path.join(root, refName);
-    if (fs.existsSync(directDir) && fs.existsSync(path.join(directDir, "SKILL.md"))) return true;
+    if (resolveRefPathInStash(relPath, refType, refName, root) !== null) return true;
   }
   return false;
+}
+
+/**
+ * Resolve the on-disk primary file for a ref within a SINGLE stash root, using
+ * the same reachability rules (in the same order) as
+ * {@link refExistsInAnyStash}, which delegates here. Returns the absolute path
+ * of the file that makes the ref "exist" — for a multi-file skill directory
+ * that is its `SKILL.md` primary — or `null` when the ref does not resolve in
+ * this root.
+ *
+ * Extracted for SPEC-5 (`--supersedes` demotion): write commands need the
+ * superseded asset's actual file to mutate, and forking a second resolver
+ * would drift from lint's. NOT part of the akm-plugins ref-resolver contract
+ * (the contract pins `refToRelPath` + `refExistsInAnyStash`; this is the
+ * shared internal both build on).
+ */
+export function resolveRefPathInStash(relPath: string, refType: string, refName: string, root: string): string | null {
+  const absPath = path.join(root, relPath);
+  if (fs.existsSync(absPath)) return absPath;
+  // Multi-file skill layout: directory containing SKILL.md
+  const bareDir = absPath.replace(/\.md$/, "");
+  if (fs.existsSync(bareDir) && fs.existsSync(path.join(bareDir, "SKILL.md"))) {
+    return path.join(bareDir, "SKILL.md");
+  }
+  // .derived.md variant for memory refs
+  if (refType === "memory") {
+    const derivedPath = path.join(root, "memories", `${refName}.derived.md`);
+    if (fs.existsSync(derivedPath)) return derivedPath;
+  }
+  // Knowledge-specific: search subdirectories like knowledge/projects/, knowledge/tools/, etc.
+  if (refType === "knowledge") {
+    try {
+      const knowledgeDir = path.join(root, "knowledge");
+      if (fs.existsSync(knowledgeDir) && fs.statSync(knowledgeDir).isDirectory()) {
+        const entries = fs.readdirSync(knowledgeDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const subPath = path.join(knowledgeDir, entry.name, `${refName}.md`);
+          if (fs.existsSync(subPath)) return subPath;
+        }
+      }
+    } catch {
+      // Ignore errors reading directory
+    }
+  }
+  // Fallback: the refName may already encode the full stash-relative path
+  // (e.g. knowledge:skills/foo/references/bar where the file lives at
+  // <stash>/skills/foo/references/bar.md, not <stash>/knowledge/skills/...).
+  const directPath = path.join(root, `${refName}.md`);
+  if (fs.existsSync(directPath)) return directPath;
+  const directDir = path.join(root, refName);
+  if (fs.existsSync(directDir) && fs.existsSync(path.join(directDir, "SKILL.md"))) {
+    return path.join(directDir, "SKILL.md");
+  }
+  return null;
 }
 
 /**

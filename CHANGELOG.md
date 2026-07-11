@@ -158,6 +158,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   returns an additive `hint` output key pointing at the stash's placement
   conventions (`fact:conventions/organization` when that fact exists), so CLI
   writers see the conventions that LLM flows already receive by injection.
+- **`--supersedes <ref>` on `akm remember` and `akm import` — atomic
+  correction + demotion of the superseded asset.** The stash conventions'
+  corrections pattern needs TWO writes (the new correction asset with an xref
+  to what it corrects, plus a metadata edit demoting the old asset), which
+  previously meant hand-editing the old file's frontmatter and remembering to
+  reindex it. The new repeatable flag does both: the correction is written
+  with the old ref folded into its `xrefs:` (correction provenance), and the
+  old asset gains `beliefState: superseded` +
+  `supersededBy: [<new ref>]` via the shared `writeSupersededEdge` primitive
+  (sibling of `writeContradictEdge`) — a metadata-only frontmatter edit that
+  preserves every other key and the body byte-for-byte, sorted-set-appended
+  and idempotent across re-runs. The mutated old file is reindexed by the
+  write path, so `--belief current` hides it and ranking demotes it
+  immediately. An unresolvable ref is input validation: exit 2 with the
+  standard `{ok:false,error,code}` envelope and NOTHING written or demoted
+  (no partial correction); a ref resolving to the asset being written itself
+  (self-supersede via `--force` overwrite) is rejected the same way instead
+  of letting a correction demote itself. An old asset that resolves only
+  outside the write target and the working stash (in a read-only source, or
+  in a writable source that is not this write's target) is not mutated: the
+  correction still writes, stderr warns, and the JSON output reports the
+  additive `superseded: [{ref, applied: false, reason}]` key (`applied: true`
+  on success) — the reason names the `--target` remedy when one exists. An
+  old asset whose existing frontmatter is not parseable YAML is likewise
+  skipped (`applied: false`) rather than rewritten through the lossy lenient
+  parser. On a git write target the demotion is ordered before the
+  batch-at-boundary commit, so the correction and the demoted old asset land
+  in one commit.
 
 ### Changed
 
@@ -177,6 +205,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   --refresh`. Embeddings are not regenerated when indexed text changes; the
   drift here is small (the merged tokens already appear in the name field),
   but a purge/re-embed picks up the new text exactly.
+- **Demoting belief states now cap an entry's final search score**
+  (superseded ≤ 0.25, contradicted ≤ 0.2, archived ≤ 0.15, deprecated ≤
+  0.28). The existing additive belief penalties are applied inside the
+  multiplicative boost sum on a min-max-normalized FTS base (rank-1 vs rank-2
+  base can differ by up to 0.7), so a superseded incumbent that was the best
+  keyword match stayed clamp-pinned at 1.0 above its own correction — the
+  demotion was invisible exactly when the corrections pattern needs it. The
+  ceiling is applied once at the end of the single scoring pipeline (sort
+  order and displayed scores stay consistent); demoted entries remain listed
+  under the default `--belief all`, keep their relative ordering, and the
+  `--belief` filter axis is unchanged. Semantic-only hits are judged against
+  the `search.minScore` floor by their pre-ceiling score, so a ceiling below
+  the floor (archived 0.15 < default 0.2) ranks the hit last instead of
+  silently dropping it. Ordering changes only for stashes containing
+  belief-flagged assets.
+- **`mutateFrontmatter` (belief-edge writers: supersede/contradict edges,
+  belief refresh) now preserves the body bytes verbatim** when the file
+  already has a frontmatter block, instead of re-normalizing the
+  fence-to-body separator through `assembleAsset`. A metadata edit is no
+  longer a (whitespace-level) content edit; files gaining their first
+  frontmatter block still use the canonical shape.
 
 ### Fixed
 
