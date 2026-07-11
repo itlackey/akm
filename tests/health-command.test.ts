@@ -20,7 +20,16 @@ import {
 } from "./_helpers/sandbox";
 
 function fixtureResult(partial: Record<string, unknown>): AkmImproveResult {
-  return partial as unknown as AkmImproveResult;
+  return {
+    schemaVersion: 1,
+    ok: true,
+    scope: { mode: "all" },
+    dryRun: false,
+    memorySummary: { eligible: 0, derived: 0 },
+    plannedRefs: [],
+    actions: [],
+    ...partial,
+  } as unknown as AkmImproveResult;
 }
 
 // C2 (#499): route every test in this file through the sanctioned
@@ -101,7 +110,7 @@ describe("akmHealth", () => {
 
     const result = akmHealth({ since: "7d" });
 
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
     expect(result.improve.invoked).toBe(1);
     expect(result.improve.completed).toBe(1);
     expect(result.improve.skipped).toBe(1);
@@ -193,14 +202,15 @@ describe("akmHealth", () => {
         completedAt: endA,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
         ok: true,
         result: fixtureResult({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
+          strategy: "default",
           scope: { mode: "all" },
           dryRun: false,
           memorySummary: { eligible: 4, derived: 2 },
@@ -269,7 +279,7 @@ describe("akmHealth", () => {
         completedAt: endB,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -292,7 +302,7 @@ describe("akmHealth", () => {
         completedAt: endDry,
         stashDir: "/tmp/stash",
         dryRun: true,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -316,12 +326,12 @@ describe("akmHealth", () => {
     // Dry-run was excluded — plannedRefs is 3 + 1, not 999+.
     expect(result.improve.plannedRefs).toBe(4);
 
-    // 2026-05-27: profileFilteredRefs aggregation. Fixtures above don't
+    // 2026-05-27: strategyFilteredRefs aggregation. Fixtures above don't
     // populate this field, so the metric stays at 0 — but it must exist
     // on the result so consumers can read it. Regression for the planner
     // pre-filter (0e9f283) whose envelope field was written but never
     // surfaced through the metric (audit found 774/24h invisible).
-    expect(result.improve.profileFilteredRefs).toBe(0);
+    expect(result.improve.strategyFilteredRefs).toBe(0);
 
     // Reflect outcome split.
     expect(result.improve.actions.reflect.ok).toBe(1);
@@ -385,7 +395,7 @@ describe("akmHealth", () => {
     expect(result.improve.wallTime.byPhase.graphExtraction.totalMs).toBe(70);
 
     // Schema bumped.
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
   });
 
   test("manual run row with distinct started_at<completed_at and no task_history yields wallTime from the row delta (#499)", () => {
@@ -403,7 +413,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -449,22 +459,23 @@ describe("akmHealth", () => {
           completedAt: end,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
           ok: true,
           result: fixtureResult({
-            schemaVersion: 1,
+            schemaVersion: 2,
             ok: true,
+            strategy: "default",
             scope: { mode: "all" },
             dryRun: false,
             memorySummary: { eligible, derived },
-            // profileFilteredRefs is also a per-run snapshot — each run lists the
+            // strategyFilteredRefs is also a per-run snapshot — each run lists the
             // (stable) filtered refs; the window value must be the latest, not summed.
-            profileFilteredRefs: Array.from({ length: eligible === 120 ? 7 : 5 }, (_, i) => ({
+            strategyFilteredRefs: Array.from({ length: eligible === 120 ? 7 : 5 }, (_, i) => ({
               ref: `script:s${i}`,
-              reason: "profile_filtered_all_passes",
+              reason: "strategy_filtered_all_passes",
             })),
             plannedRefs: [{ ref: "memory:m" }],
             actions: [{ ref: "memory:m", mode: "distill", result: { outcome: "queued" } }],
@@ -480,8 +491,8 @@ describe("akmHealth", () => {
     // "915,258 of 1,226,025 eligible" KPI.
     expect(result.improve.memorySummary.eligible).toBe(120);
     expect(result.improve.memorySummary.derived).toBe(60);
-    // profileFilteredRefs = latest run's count (7), NOT 7+5=12.
-    expect(result.improve.profileFilteredRefs).toBe(7);
+    // strategyFilteredRefs = latest run's count (7), NOT 7+5=12.
+    expect(result.improve.strategyFilteredRefs).toBe(7);
   });
 
   test("improve run is attributed to its scheduled akm-improve task via the ±5min task_history join", () => {
@@ -509,7 +520,7 @@ describe("akmHealth", () => {
         completedAt: runEnd,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all", // scope is "all" — taskId must NOT come from scope
         scopeValue: null,
         guidance: null,
@@ -563,7 +574,7 @@ describe("akmHealth", () => {
         completedAt: stamp,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -602,7 +613,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -666,7 +677,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -735,7 +746,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -793,7 +804,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -843,7 +854,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -1130,7 +1141,7 @@ describe("akmHealth", () => {
         completedAt: end,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -1205,7 +1216,7 @@ describe("health — window comparison", () => {
           completedAt: endA,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1230,7 +1241,7 @@ describe("health — window comparison", () => {
           completedAt: endB,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1297,7 +1308,7 @@ describe("health — window comparison", () => {
           completedAt: endA,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1414,7 +1425,7 @@ describe("health — window comparison", () => {
           completedAt: earlyEnd,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1437,7 +1448,7 @@ describe("health — window comparison", () => {
           completedAt: lateEnd,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1496,7 +1507,7 @@ describe("health — window comparison", () => {
           completedAt: earliestRunStart,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1520,7 +1531,7 @@ describe("health — window comparison", () => {
           completedAt: latestRunStart,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1570,7 +1581,7 @@ describe("health — window comparison", () => {
           completedAt: lateEnd,
           stashDir: "/tmp/stash",
           dryRun: false,
-          profile: null,
+          legacyProfile: null,
           scopeMode: "all",
           scopeValue: null,
           guidance: null,
@@ -1661,12 +1672,12 @@ describe("health — distill skipReasons", () => {
         completedAt: tsIso,
         stashDir: "/tmp/distill-skipreason-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
         ok: true,
-        result: result as unknown as AkmImproveResult,
+        result: fixtureResult(result),
       });
     } finally {
       db.close();
@@ -1864,7 +1875,7 @@ describe("akm health --group-by run", () => {
         completedAt: endA,
         stashDir: "/tmp/stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,

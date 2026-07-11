@@ -12,43 +12,16 @@
  */
 
 import { Database } from "bun:sqlite";
+import { decodeImproveResult, type ImproveResultEnvelope } from "../../../../src/core/improve-result";
 import { pathExists, resolveStateDbPath } from "./paths";
 import { type ReplayPlayer, type ReplayRecorder } from "./replay-log";
 
-export interface ImproveResultEnvelope {
-  schemaVersion: number;
-  ok?: boolean;
-  scope?: { mode: string; value?: string };
-  dryRun?: boolean;
-  memorySummary?: { eligible?: number; derived?: number };
-  memoryCleanup?: {
-    deletedDerived?: number;
-    archivedSuperseded?: number;
-    archivedStale?: number;
-    beliefStateTransitions?: Array<{ ref: string; fromState: string; toState: string }>;
-    warnings?: string[];
-  };
-  plannedRefs?: Array<{ ref: string; type?: string }>;
-  actions?: Array<{ ref?: string; mode?: string; outcome?: string; proposalId?: string }>;
-  validationFailures?: Array<{ ref: string; reason: string }>;
-  schemaRepairs?: Array<{ ref: string; outcome: string }>;
-  consolidation?: Record<string, unknown>;
-  lintSummary?: { fixed?: number; flagged?: number };
-  memoryIndexHealth?: { lineCount?: number; overBudget?: boolean };
-  evalCasesWritten?: number;
-  memoryInference?: Record<string, unknown>;
-  graphExtraction?: Record<string, unknown>;
-  stalenessDetection?: Record<string, unknown>;
-  orphansPurged?: number;
-  proposalsExpired?: number;
-  reflectCooldownActions?: number;
-  reflectsWithErrorContext?: number;
-  // Allow extra unknown keys without losing them.
-  [key: string]: unknown;
-}
+export type { ImproveResultEnvelope } from "../../../../src/core/improve-result";
 
 interface ImproveRunRow {
   id: string;
+  legacy_profile: string | null;
+  strategy: string | null;
   result_json: string;
 }
 
@@ -139,6 +112,8 @@ export function loadImproveResult(
   runId: string;
   dir: string;
   envelope: ImproveResultEnvelope;
+  strategy: string | null;
+  legacyProfile: string | null;
 } {
   if (opts.recorder && opts.player) {
     throw new Error("loadImproveResult: cannot record and play back simultaneously");
@@ -146,24 +121,31 @@ export function loadImproveResult(
   const runId = resolveImproveRunId(stashRoot, ref);
   const locator = `state.db//improve_runs/${runId}`;
   let raw: string;
+  let storedStrategy: string | null | undefined;
+  let storedLegacyProfile: string | null | undefined;
   if (opts.player) {
     raw = opts.player.nextImproveResult(locator);
   } else {
     const db = new Database(resolveStateDbPath(), { readonly: true });
     try {
-      const row = db.prepare("SELECT result_json FROM improve_runs WHERE id = ?").get(runId) as
-        | { result_json: string }
-        | undefined;
+      const row = db
+        .prepare("SELECT profile AS legacy_profile, strategy, result_json FROM improve_runs WHERE id = ?")
+        .get(runId) as ImproveRunRow | undefined;
       if (!row) throw new Error(`improve_runs result_json missing for ${runId}`);
       raw = row.result_json;
+      storedStrategy = row.strategy;
+      storedLegacyProfile = row.legacy_profile;
     } finally {
       db.close();
     }
     opts.recorder?.recordImproveResult(locator, raw);
   }
-  const envelope = JSON.parse(raw) as ImproveResultEnvelope;
-  if (envelope.schemaVersion !== 1) {
-    throw new Error(`unsupported improve-result schemaVersion: ${envelope.schemaVersion}`);
-  }
-  return { runId, dir: locator, envelope };
+  const decoded = decodeImproveResult(raw);
+  return {
+    runId,
+    dir: locator,
+    envelope: decoded.envelope,
+    strategy: storedStrategy === undefined ? decoded.strategy : storedStrategy,
+    legacyProfile: storedLegacyProfile === undefined ? decoded.legacyProfile : storedLegacyProfile,
+  };
 }

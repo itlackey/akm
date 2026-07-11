@@ -134,6 +134,8 @@ function coercePct(raw: number | string | undefined): number | undefined {
 interface ReportRun {
   id: string;
   taskId: string;
+  strategy: string | null;
+  legacyProfile: string | null;
   startedAt: string;
   completedAt: string;
   wallTimeMs: number;
@@ -186,6 +188,8 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
   return {
     id: r.id,
     taskId: r.taskId ?? "manual",
+    strategy: r.strategy,
+    legacyProfile: r.legacyProfile,
     startedAt: r.startedAt,
     completedAt: r.completedAt,
     wallTimeMs: wall,

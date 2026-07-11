@@ -122,8 +122,9 @@ describe("relativeImproveResultPath", () => {
 
 describe("writeImproveResultFile", () => {
   const baseResult: AkmImproveResult = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
+    strategy: "default",
     scope: { mode: "all" },
     dryRun: false,
     memorySummary: { eligible: 1, derived: 0 },
@@ -153,7 +154,7 @@ describe("writeImproveResultFile", () => {
       expect(rows[0].dry_run).toBe(0);
       expect(rows[0].scope_mode).toBe("all");
       expect(rows[0].profile).toBeNull();
-      expect(rows[0].strategy).toBeNull();
+      expect(rows[0].strategy).toBe("default");
       expect(rows[0].result.ok).toBe(true);
 
       // No legacy on-disk file under .akm/runs/ — the storage swap is complete.
@@ -171,7 +172,7 @@ describe("writeImproveResultFile", () => {
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
     try {
-      writeImproveResultFile(stash, runId, baseResult, undefined, "quick");
+      writeImproveResultFile(stash, runId, { ...baseResult, strategy: "quick" });
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
       expect(rows[0].profile).toBeNull();

@@ -7,6 +7,31 @@ import { akmAgentDispatch } from "../../src/commands/agent/agent-dispatch";
 import { UsageError } from "../../src/core/errors";
 
 describe("akmAgentDispatch engine capability", () => {
+  test("returns the exact v2 public result envelope", async () => {
+    const result = await akmAgentDispatch({
+      engine: "test-agent",
+      prompt: "hello",
+      agentConfig: {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: {
+          "test-agent": { kind: "agent", platform: "aider", bin: "/bin/true" },
+        },
+        defaults: { engine: "test-agent" },
+      },
+    });
+    expect(result).toEqual({
+      schemaVersion: 2,
+      ok: true,
+      shape: "agent-result",
+      engine: "test-agent",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      durationMs: expect.any(Number),
+    });
+  });
+
   test("rejects an LLM engine instead of falling back to an agent profile", async () => {
     await expect(
       akmAgentDispatch({

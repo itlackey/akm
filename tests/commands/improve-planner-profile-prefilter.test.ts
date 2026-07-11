@@ -13,8 +13,8 @@
  *   - Refs where EVERY per-ref pass (reflect + distill) on the active profile
  *     would refuse them are dropped at planner time.
  *   - The audit trail moves to a single summary `improve_skipped` event with
- *     metadata `{reason: "profile_filtered_all_passes", count}` (#592) and an
- *     envelope entry per ref under `profileFilteredRefs`.
+ *     metadata `{reason: "strategy_filtered_all_passes", count}` (#592) and an
+ *     envelope entry per ref under `strategyFilteredRefs`.
  *   - Refs that some-but-not-all passes refuse still flow through (so the
  *     partial-pass work still happens).
  *   - Refs whose type IS accepted are unaffected.
@@ -112,7 +112,7 @@ afterEach(() => {
   }
 });
 
-describe("planner pre-filter: profile_filtered_all_passes", () => {
+describe("planner pre-filter: strategy_filtered_all_passes", () => {
   test("script:* refs are dropped at planner time (reflect AND distill both refuse them on default profile)", async () => {
     const stash = makeTempDir("akm-planner-prefilter-script-stash-");
     fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
@@ -154,11 +154,11 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     const scriptActions = (result.actions ?? []).filter((a) => a.ref.startsWith("script:"));
     expect(scriptActions).toEqual([]);
 
-    // They surface in `profileFilteredRefs` instead.
-    const filteredRefs = (result.profileFilteredRefs ?? []).map((p) => p.ref).sort();
+    // They surface in `strategyFilteredRefs` instead.
+    const filteredRefs = (result.strategyFilteredRefs ?? []).map((p) => p.ref).sort();
     expect(filteredRefs).toEqual(["script:build.sh", "script:deploy.sh"]);
-    for (const entry of result.profileFilteredRefs ?? []) {
-      expect(entry.reason).toBe("profile_filtered_all_passes");
+    for (const entry of result.strategyFilteredRefs ?? []) {
+      expect(entry.reason).toBe("strategy_filtered_all_passes");
     }
   });
 
@@ -184,10 +184,10 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     // profile-filtered bucket with the new reason code.
     const rawWikiPlanned = (result.plannedRefs ?? []).filter((p) => p.ref.includes("/raw/"));
     expect(rawWikiPlanned).toEqual([]);
-    const rawWikiFiltered = (result.profileFilteredRefs ?? []).filter((p) => p.ref.includes("/raw/"));
+    const rawWikiFiltered = (result.strategyFilteredRefs ?? []).filter((p) => p.ref.includes("/raw/"));
     expect(rawWikiFiltered.length).toBeGreaterThan(0);
     for (const entry of rawWikiFiltered) {
-      expect(entry.reason).toBe("profile_filtered_all_passes");
+      expect(entry.reason).toBe("strategy_filtered_all_passes");
     }
   });
 
@@ -205,9 +205,9 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
       distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
     });
 
-    // Primary contract: memory is NOT in profileFilteredRefs (planner accepted
+    // Primary contract: memory is NOT in strategyFilteredRefs (planner accepted
     // it). Downstream signal-delta / preparation-stage filtering is orthogonal.
-    expect((result.profileFilteredRefs ?? []).some((p) => p.ref === "memory:alpha")).toBe(false);
+    expect((result.strategyFilteredRefs ?? []).some((p) => p.ref === "memory:alpha")).toBe(false);
   });
 
   test("skill:* refs are NOT pre-filtered (reflect accepts skill even though distill refuses it)", async () => {
@@ -215,7 +215,7 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
     // rejects skill, but reflect's allowedTypes includes skill. The pre-
     // filter must only drop refs that ALL passes refuse — partial-pass refs
     // must still flow through so reflect work happens. The contract under
-    // test is "skill is NOT in `profileFilteredRefs`"; downstream signal-
+    // test is "skill is NOT in `strategyFilteredRefs`"; downstream signal-
     // delta / preparation-stage filtering is orthogonal to this layer.
     const stash = makeTempDir("akm-planner-prefilter-skill-stash-");
     fs.mkdirSync(path.join(stash, "skills", "alpha"), { recursive: true });
@@ -242,13 +242,13 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
       distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
     });
 
-    // Primary contract: skill is NOT in profileFilteredRefs.
-    expect((result.profileFilteredRefs ?? []).some((p) => p.ref === "skill:alpha")).toBe(false);
+    // Primary contract: skill is NOT in strategyFilteredRefs.
+    expect((result.strategyFilteredRefs ?? []).some((p) => p.ref === "skill:alpha")).toBe(false);
     // And reflect actually ran for skill (partial-pass refusal kept it alive).
     expect((result.actions ?? []).some((a) => a.ref === "skill:alpha" && a.mode === "reflect")).toBe(true);
   });
 
-  test("emits a single summary improve_skipped event for all pre-filtered refs with reason profile_filtered_all_passes", async () => {
+  test("emits a single summary improve_skipped event for all pre-filtered refs with reason strategy_filtered_all_passes", async () => {
     const stash = makeTempDir("akm-planner-prefilter-event-stash-");
     fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
     fs.writeFileSync(path.join(stash, "scripts", "a.sh"), "#!/bin/sh\n", "utf8");
@@ -266,7 +266,7 @@ describe("planner pre-filter: profile_filtered_all_passes", () => {
 
     const events = readEvents({ type: "improve_skipped" }).events;
     const profileFilteredEvents = events.filter(
-      (e) => (e.metadata as { reason?: string } | undefined)?.reason === "profile_filtered_all_passes",
+      (e) => (e.metadata as { reason?: string } | undefined)?.reason === "strategy_filtered_all_passes",
     );
     // #592: one summary event (not one per ref) to avoid O(n) sequential
     // state.db writes on large stashes.

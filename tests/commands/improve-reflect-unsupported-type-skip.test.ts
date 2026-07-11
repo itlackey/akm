@@ -191,16 +191,16 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     // `plannedRefs` and they MUST NOT produce any per-ref action (no
     // reflect-skipped, no distill-skipped). Previously each such ref produced
     // 2× synthetic skip actions per cron run; that audit trail is now a
-    // single `improve_skipped` event with reason `profile_filtered_all_passes`
-    // plus an envelope entry under `profileFilteredRefs`.
+    // single `improve_skipped` event with reason `strategy_filtered_all_passes`
+    // plus an envelope entry under `strategyFilteredRefs`.
     const scriptRefsInPlan = (result.plannedRefs ?? []).filter((p) => p.ref === "script:deploy.sh");
     expect(scriptRefsInPlan).toEqual([]);
     const scriptActions = (result.actions ?? []).filter((a) => a.ref === "script:deploy.sh");
     expect(scriptActions).toEqual([]);
-    const profileFiltered = result.profileFilteredRefs ?? [];
-    const scriptFiltered = profileFiltered.filter((p) => p.ref === "script:deploy.sh");
+    const strategyFiltered = result.strategyFilteredRefs ?? [];
+    const scriptFiltered = strategyFiltered.filter((p) => p.ref === "script:deploy.sh");
     expect(scriptFiltered.length).toBe(1);
-    expect(scriptFiltered[0]?.reason).toBe("profile_filtered_all_passes");
+    expect(scriptFiltered[0]?.reason).toBe("strategy_filtered_all_passes");
 
     // Core assertion 3: the allowed-type skill ref IS reflected normally (type
     // guard must not block allowed types).

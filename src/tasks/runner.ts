@@ -53,7 +53,12 @@ import { chatCompletion } from "../llm/client";
 import { spawn } from "../runtime";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunStatus } from "../sources/types";
-import { getTaskHistory, queryTaskHistory, upsertTaskHistory } from "../storage/repositories/task-history-repository";
+import {
+  decodeTaskHistoryMetadata,
+  getTaskHistory,
+  queryTaskHistory,
+  upsertTaskHistory,
+} from "../storage/repositories/task-history-repository";
 import type { WorkflowRunDetail } from "../workflows/runtime/runs";
 import { startWorkflowRun } from "../workflows/runtime/runs";
 import { parseTaskDocument } from "./parser";
@@ -649,18 +654,7 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
 function taskHistoryRowToResult(
   row: import("../storage/repositories/task-history-repository").TaskHistoryRow,
 ): TaskRunResult {
-  let meta: {
-    metadataVersion?: number;
-    durationMs?: number;
-    detail?: TaskRunResult["detail"];
-    engine?: string;
-    profile?: string;
-  } = {};
-  try {
-    meta = JSON.parse(row.metadata_json) as typeof meta;
-  } catch {
-    // ignore corrupt JSON
-  }
+  const meta = decodeTaskHistoryMetadata(row.metadata_json);
 
   const target: TaskRunResult["target"] =
     row.target_kind === "workflow"
@@ -669,7 +663,7 @@ function taskHistoryRowToResult(
         ? { kind: "command" }
         : meta.metadataVersion === 2
           ? { kind: "prompt", engine: meta.engine ?? null }
-          : { kind: "prompt", engine: null, ...(meta.profile ? { legacyProfile: meta.profile } : {}) };
+          : { kind: "prompt", engine: null, ...(meta.legacyProfile ? { legacyProfile: meta.legacyProfile } : {}) };
 
   return {
     id: row.task_id,
@@ -679,7 +673,7 @@ function taskHistoryRowToResult(
     durationMs: meta.durationMs ?? 0,
     log: row.log_path ?? "",
     target,
-    ...(meta.detail !== undefined ? { detail: meta.detail } : {}),
+    ...(meta.detail !== undefined && meta.detail !== null ? { detail: meta.detail } : {}),
   };
 }
 

@@ -42,6 +42,8 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
   const headers = [
     "ts",
     "ok",
+    "strategy",
+    "legacy_profile",
     "actions",
     "refl_ok/fail/cd/skip",
     "distill_q/llm-fail/qrej/cfg/skip",
@@ -69,6 +71,8 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
     return [
       r.startedAt,
       String(r.ok),
+      r.strategy ?? "",
+      r.legacyProfile ?? "",
       String(totalActions),
       `${r.actions.reflect.ok}/${r.actions.reflect.failed}/${r.actions.reflect.cooldown}/${r.actions.reflect.skipped}`,
       `${r.actions.distill.queued}/${r.actions.distill.llmFailed}/${r.actions.distill.qualityRejected}/${r.actions.distill.configDisabled}/${r.actions.distill.skipped}`,

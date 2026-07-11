@@ -29,6 +29,7 @@
 
 import crypto from "node:crypto";
 import path from "node:path";
+import { decodeImproveResult } from "../../core/improve-result";
 import { withStateDb } from "../../core/state-db";
 import { recordImproveRun } from "../../storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "./improve";
@@ -80,15 +81,14 @@ export function relativeImproveResultPath(runId: string): string {
  * (closes the dry-run/real-run artifact-trap recorded in MEMORY.md
  * `feedback_akm_dryrun_artifact_trap`).
  *
- * @param strategy - The effective 0.9 strategy selected for this invocation.
  */
 export function writeImproveResultFile(
   stashDir: string,
   runId: string,
   result: AkmImproveResult,
   startedAt?: string,
-  strategy?: string | null,
 ): string {
+  const decoded = decodeImproveResult(result);
   withStateDb((db) => {
     const completedAt = new Date().toISOString();
     // startedAt is the ISO timestamp captured at process launch (passed from the
@@ -103,7 +103,8 @@ export function writeImproveResultFile(
       completedAt,
       stashDir,
       dryRun: Boolean(result.dryRun),
-      strategy: strategy ?? result.strategy ?? null,
+      legacyProfile: decoded.legacyProfile,
+      strategy: decoded.strategy,
       scopeMode: result.scope?.mode ?? "all",
       scopeValue: result.scope?.value ?? null,
       guidance: result.guidance ?? null,
@@ -144,28 +145,30 @@ export function recordTerminatedImproveRun(
   runId: string,
   startedAt: string,
   reason: TerminationReason,
-  ctx?: {
+  ctx: {
     scopeMode?: "all" | "type" | "ref";
     scopeValue?: string | null;
     dryRun?: boolean;
-    strategy?: string | null;
+    strategy: string;
     errorMessage?: string;
   },
 ): void {
   const completedAt = new Date().toISOString();
   const minimalResult: AkmImproveResult = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: false,
-    scope: { mode: ctx?.scopeMode ?? "all", ...(ctx?.scopeValue ? { value: ctx.scopeValue } : {}) },
-    dryRun: Boolean(ctx?.dryRun),
+    strategy: ctx.strategy,
+    scope: { mode: ctx.scopeMode ?? "all", ...(ctx.scopeValue ? { value: ctx.scopeValue } : {}) },
+    dryRun: Boolean(ctx.dryRun),
+    memorySummary: { eligible: 0, derived: 0 },
     actions: [],
     plannedRefs: [],
     terminated: {
       reason,
       at: completedAt,
-      ...(ctx?.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+      ...(ctx.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
     },
-  } as unknown as AkmImproveResult;
+  };
 
   withStateDb((db) => {
     recordImproveRun(db, {
@@ -173,10 +176,10 @@ export function recordTerminatedImproveRun(
       startedAt,
       completedAt,
       stashDir,
-      dryRun: Boolean(ctx?.dryRun),
-      strategy: ctx?.strategy ?? null,
-      scopeMode: ctx?.scopeMode ?? "all",
-      scopeValue: ctx?.scopeValue ?? null,
+      dryRun: Boolean(ctx.dryRun),
+      strategy: ctx.strategy,
+      scopeMode: ctx.scopeMode ?? "all",
+      scopeValue: ctx.scopeValue ?? null,
       guidance: null,
       ok: false,
       result: minimalResult,
@@ -184,7 +187,7 @@ export function recordTerminatedImproveRun(
         terminated: {
           reason,
           at: completedAt,
-          ...(ctx?.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+          ...(ctx.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
         },
       },
     });

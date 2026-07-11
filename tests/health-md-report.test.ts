@@ -15,7 +15,7 @@ function zeroImprove(): ImproveHealthMetrics {
     skipped: 0,
     skipReasons: {},
     plannedRefs: 0,
-    profileFilteredRefs: 0,
+    strategyFilteredRefs: 0,
     actions: {
       reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0, skippedByReason: {} },
       distill: {
@@ -150,6 +150,8 @@ function makeRun(overrides: Partial<ImproveRunSummary> = {}): ImproveRunSummary 
     completedAt: "2026-07-03T00:05:00.000Z",
     wallTimeMs: 300_000,
     ok: true,
+    strategy: "default",
+    legacyProfile: null,
     scope: { mode: "all" },
     taskId: "manual",
     actions: base.actions,

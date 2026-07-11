@@ -47,6 +47,22 @@ async function runCli(
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n`;
 
+describe("akm proposal drain strategy selector", () => {
+  test("accepts --strategy and rejects the retired --profile flag", async () => {
+    const stashDir = makeStashDir();
+    const selected = await runCli(["proposal", "drain", "--strategy", "default", "--dry-run", "--format=json"], {
+      stashDir,
+    });
+    expect(selected.status).toBe(0);
+    expect(JSON.parse(selected.stdout).strategy).toBe("default");
+
+    const retired = await runCli(["proposal", "drain", "--profile", "default", "--dry-run", "--format=json"], {
+      stashDir,
+    });
+    expect(retired.status).toBe(2);
+  });
+});
+
 function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
   const result = createProposal(stash, {
     ref,

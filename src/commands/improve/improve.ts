@@ -476,7 +476,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // (cycle 1, in the first try) always overwrites them before any read.
   let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"] = [];
   let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"] = { eligible: 0, derived: 0 };
-  let profileFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["profileFilteredRefs"] = [];
+  let strategyFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["strategyFilteredRefs"] = [];
   let memoryCleanupPlan: ReturnType<typeof analyzeMemoryCleanup> | undefined;
   let guidance: string | undefined;
   let triageDrain: DrainResult | undefined;
@@ -486,7 +486,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // first try) and is re-run at the top of each subsequent multi-cycle cycle.
   // Re-running ensureIndex between cycles makes cycle N's gate-promoted
   // proposals visible to cycle N+1's collectEligibleRefs. Mutates the
-  // outer-scope plannedRefs/memorySummary/profileFilteredRefs/memoryCleanupPlan/
+  // outer-scope plannedRefs/memorySummary/strategyFilteredRefs/memoryCleanupPlan/
   // guidance so for maxCycles:1 the body is byte-identical to pre-#616.
   const runIndexAndCollect = async (): Promise<void> => {
     // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
@@ -544,11 +544,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
-    ({ plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefsImpl(
-      scope,
-      options.stashDir,
-      improveProfile,
-    ));
+    ({
+      plannedRefs,
+      memorySummary,
+      strategyFilteredRefs = [],
+    } = await collectEligibleRefsImpl(scope, options.stashDir, improveProfile));
     const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
 
     // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
@@ -645,7 +645,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
     if (options.dryRun) {
       const result: AkmImproveResult = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         strategy: selectedStrategy.name,
         scope,
@@ -654,7 +654,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         memorySummary,
         ...(memoryCleanupPlan ? { memoryCleanup: shapeMemoryCleanup(memoryCleanupPlan) } : {}),
         plannedRefs,
-        ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
+        ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
       };
       return result;
     }
@@ -802,15 +802,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // event per ref (#592) — the per-ref loop caused O(n) sequential state.db
     // writes that consumed ~500 s on a 9 000-ref stash. No downstream consumer
     // needs the per-ref audit trail: health's skip histogram reads the
-    // `profile_filtered_all_passes` counters from `improve_completed` metadata.
-    if (profileFilteredRefs.length > 0) {
+    // `strategy_filtered_all_passes` counters from `improve_completed` metadata.
+    if (strategyFilteredRefs.length > 0) {
       appendEvent(
         {
           eventType: "improve_skipped",
           ref: undefined,
           metadata: {
-            reason: "profile_filtered_all_passes",
-            count: profileFilteredRefs.length,
+            strategy: selectedStrategy.name,
+            reason: "strategy_filtered_all_passes",
+            count: strategyFilteredRefs.length,
           },
         },
         eventsCtx,
@@ -884,12 +885,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       if (cycleIndex > 0) {
         await runIndexAndCollect();
         // Re-emit the profile-filtered audit summary for this cycle's selection.
-        if (profileFilteredRefs.length > 0) {
+        if (strategyFilteredRefs.length > 0) {
           appendEvent(
             {
               eventType: "improve_skipped",
               ref: undefined,
-              metadata: { reason: "profile_filtered_all_passes", count: profileFilteredRefs.length },
+              metadata: {
+                strategy: selectedStrategy.name,
+                reason: "strategy_filtered_all_passes",
+                count: strategyFilteredRefs.length,
+              },
             },
             eventsCtx,
           );
@@ -920,6 +925,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             eventsCtx,
             initialCleanupWarnings: preEnsureCleanupWarnings,
             improveProfile,
+            strategyName: selectedStrategy.name,
             budgetSignal: budgetAbortController.signal,
           }),
       );
@@ -1089,7 +1095,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
 
     const result: AkmImproveResult = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       strategy: selectedStrategy.name,
       scope,
@@ -1118,7 +1124,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         : {}),
       plannedRefs: preparation.actionableRefs,
-      ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
+      ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
       actions: persistedActions,
       ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),
       ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),
@@ -1213,6 +1219,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         eventType: "improve_failed",
         ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
         metadata: {
+          strategy: selectedStrategy.name,
           error: errMessage(err),
           durationMs: Date.now() - startMs,
         },
@@ -1344,6 +1351,7 @@ function emitImproveCompletedEvent(
           ? result.scope.value
           : `improve:${result.scope.mode}:${result.scope.value ?? "all"}`,
       metadata: {
+        strategy: result.strategy,
         plannedRefs: result.plannedRefs.length,
         reflectActions: actionCounts.reflect,
         distillActions: actionCounts.distill,

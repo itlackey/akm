@@ -51,8 +51,15 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
     configVersion: "0.9.0",
-    engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
-    defaults: { engine: "test-agent" },
+    engines: {
+      "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      "test-llm": {
+        kind: "llm",
+        endpoint: "http://127.0.0.1:1/v1/chat/completions",
+        model: "test-model",
+      },
+    },
+    defaults: { engine: "test-agent", llmEngine: "test-llm" },
   });
   markerDir = path.join(storage.root, "markers");
   fs.mkdirSync(markerDir, { recursive: true });

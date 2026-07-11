@@ -391,7 +391,7 @@
       <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Started</th><th>Task</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
+          <tr><th>Started</th><th>Task</th><th>Strategy</th><th>Legacy Profile</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
         </thead>
         <tbody id="lastRunsTable"></tbody>
       </table>
@@ -683,12 +683,16 @@ tbody.innerHTML = '';
   const ts = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const dur = r.wallTimeMs ? (r.wallTimeMs / 60000).toFixed(1) + 'm' : '—';
   const task = r.taskId || 'manual';
+  const strategy = r.strategy || '—';
+  const legacyProfile = r.legacyProfile || '—';
   const badge = r.ok
     ? '<span class="badge-pill badge-pass" style="padding:2px 8px;font-size:11px;"><span class="dot dot-pass" style="width:6px;height:6px;"></span>&nbsp;ok</span>'
     : '<span class="badge-pill badge-fail" style="padding:2px 8px;font-size:11px;"><span class="dot dot-fail" style="width:6px;height:6px;"></span>&nbsp;failed</span>';
   tr.innerHTML = `
     <td style="font-family:monospace;font-size:12px;">${ts}</td>
     <td><code>${task}</code></td>
+    <td><code>${strategy}</code></td>
+    <td><code>${legacyProfile}</code></td>
     <td>${dur}</td>
     <td style="color:var(--accent);font-weight:600;">${r.promoted || 0}</td>
     <td>${r.merged || 0}</td>
