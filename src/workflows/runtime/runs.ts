@@ -29,6 +29,7 @@ import { collectProgramWarnings } from "../ir/compile";
 import { compileResolveFreezeWorkflow } from "../ir/freeze";
 import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
+import type { FrozenEngineSnapshot } from "../ir/schema";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
@@ -110,13 +111,18 @@ export interface WorkflowUnitDiagnostic {
   engine: string | null;
   /** Planned resolved runtime kind on v3 rows, never inferred for history. */
   runtimeKind: "llm" | "agent" | "sdk" | null;
+  platform: string | null;
   legacyRunnerSelector?: string | null;
 }
 
 /** Clip bound for a unit's `result_json` on the `--units` diagnostic surface. */
 const UNIT_DIAGNOSTIC_CLIP = 2000;
 
-function toUnitDiagnostic(row: WorkflowRunUnitRow, stale?: StaleUnit): WorkflowUnitDiagnostic {
+function toUnitDiagnostic(
+  row: WorkflowRunUnitRow,
+  stale?: StaleUnit,
+  plannedEngine?: FrozenEngineSnapshot,
+): WorkflowUnitDiagnostic {
   let diagnostic: string | null = null;
   if (row.result_json !== null) {
     // `result_json` is a JSON-encoded value: a bare JSON string for a free-text
@@ -152,6 +158,7 @@ function toUnitDiagnostic(row: WorkflowRunUnitRow, stale?: StaleUnit): WorkflowU
     engine: row.engine ?? null,
     runtimeKind:
       row.engine && (row.runner === "llm" || row.runner === "agent" || row.runner === "sdk") ? row.runner : null,
+    platform: plannedEngine?.kind === "agent" ? plannedEngine.platform : null,
     ...(!row.engine && row.runner ? { legacyRunnerSelector: row.runner } : {}),
   };
 }
@@ -368,7 +375,11 @@ export async function getWorkflowStatus(
       // uses (`now` injected for deterministic tests) so a dead driver's claimed
       // `running` unit surfaces as stale here too, not just as raw `running`.
       const staleById = new Map(evaluateStaleUnits(rows, opts.now ?? Date.now()).map((u) => [u.unitId, u]));
-      detail.units = rows.map((row) => toUnitDiagnostic(row, staleById.get(row.unit_id)));
+      const classified = classifyWorkflowRunPlan(run);
+      const engines = classified.support === "supported" ? classified.plan.execution?.engines : undefined;
+      detail.units = rows.map((row) =>
+        toUnitDiagnostic(row, staleById.get(row.unit_id), row.engine ? engines?.[row.engine] : undefined),
+      );
     }
     return detail;
   });
