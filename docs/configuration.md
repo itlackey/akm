@@ -123,10 +123,15 @@ generic walker.
 | `AKM_LLM_API_KEY` | Fallback only for the selected `defaults.llmEngine` |
 | `AKM_EMBED_API_KEY` | Embedding credential |
 | `AKM_STASH_DIR` | Override the stash directory |
+| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 
 For an engine named `fast`, its fallback variable is
 `AKM_ENGINE_FAST_API_KEY`. An explicit `apiKey` symbolic reference is
 authoritative and does not fall through to another variable.
+
+Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
+such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
+network filesystem for the data directory and falls back to `DELETE`.
 
 ## Retired Configuration
 

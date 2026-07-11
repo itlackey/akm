@@ -1,55 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
+import { AkmConfigSchema } from "../../src/core/config/config-schema";
+import { CONFIG_DOC_PATH, extractSection, readDoc } from "./spec-helpers";
 
-// Pins v1 spec §5 — Configuration.
-//
-// The freeze rule:
-//   * The JSON schema names `sources[]`, `registries[]`, `embedder`, `scorer`,
-//     `agent` (Planned), `llm` + `llm.features` (Planned), and
-//     `defaultWriteTarget`.
-//   * Value forms: literal or `{ env: "VAR" }`.
-//   * `writable: true` is rejected on `website` / `npm`.
-//   * Per-provider option schemas validate at config-load time.
+describe("current engine and strategy configuration contract", () => {
+  const docs = readDoc(CONFIG_DOC_PATH);
 
-describe("v1 spec §5 — configuration", () => {
-  const spec = readDoc(SPEC_PATH);
-  const section = extractSection(spec, "## 5. Configuration");
-
-  test("§5 exists in the spec", () => {
-    expect(section).not.toBe("");
+  test("accepts named LLM/agent engines and improve strategies", () => {
+    expect(() =>
+      AkmConfigSchema.parse({
+        engines: {
+          fast: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "qwen3" },
+          reviewer: { kind: "agent", platform: "opencode" },
+        },
+        defaults: { engine: "reviewer", llmEngine: "fast", improveStrategy: "nightly" },
+        improve: { strategies: { nightly: { engine: "fast", processes: { reflect: {} } } } },
+      }),
+    ).not.toThrow();
   });
 
-  test("§5.1 names every locked top-level config key", () => {
-    expect(section).toContain('"sources"');
-    expect(section).toContain('"registries"');
-    expect(section).toContain('"embedder"');
-    expect(section).toContain('"scorer"');
-    expect(section).toContain('"agent"');
-    expect(section).toContain('"llm"');
-    expect(section).toContain('"features"');
-    expect(section).toContain('"defaultWriteTarget"');
+  test("rejects retired profile-based execution configuration", () => {
+    expect(AkmConfigSchema.safeParse({ profiles: { llm: {} } }).success).toBe(false);
+    expect(AkmConfigSchema.safeParse({ defaults: { agent: "reviewer" } }).success).toBe(false);
   });
 
-  test("§5.2 declares the literal-or-env value form", () => {
-    expect(section).toMatch(/literal/i);
-    expect(section).toMatch(/\{\s*"env":\s*"VAR_NAME"\s*\}/);
-    expect(section).toMatch(/Missing required env vars produce `ConfigError`/i);
+  test("rejects writable cache-backed website and npm sources", () => {
+    expect(
+      AkmConfigSchema.safeParse({
+        sources: [{ type: "website", name: "docs", url: "https://example.test", writable: true }],
+      }).success,
+    ).toBe(false);
+    expect(
+      AkmConfigSchema.safeParse({ sources: [{ type: "npm", name: "pkg", package: "example", writable: true }] })
+        .success,
+    ).toBe(false);
   });
 
-  test("§5.3 declares per-provider option JSON schemas validated at load", () => {
-    expect(section).toMatch(/JSON Schema/);
-    expect(section).toMatch(/Missing required fields fail at load/i);
-  });
-
-  test("§5.4 declares the `writable` defaults and rejection rule", () => {
-    expect(section).toMatch(/`true`\s*for\s*`filesystem`/);
-    expect(section).toMatch(/`false`\s*for everything else/);
-    expect(section).toMatch(/rejected at config load.*for `website` and `npm`/s);
-    expect(section).toContain("ConfigError");
-  });
-
-  test("§5 stops before §6 (helper boundary check)", () => {
-    expect(section).not.toContain("## 6.");
-    expect(section).not.toContain("## 7.");
+  test("current docs define engines, strategies, and retired profile keys", () => {
+    expect(extractSection(docs, "## Engines")).toContain("`engines` is the only public execution map");
+    expect(extractSection(docs, "## Strategies")).toContain("improve.strategies");
+    expect(extractSection(docs, "## Retired Configuration")).toContain("`profiles`");
   });
 });

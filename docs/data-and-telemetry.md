@@ -26,7 +26,7 @@ AKM writes to these locations on your machine. All paths follow [XDG Base Direct
 
 | Path | Contents | Safe to delete? |
 |---|---|---|
-| `config.json` | Your AKM configuration: LLM endpoints, stash paths, feature flags, profiles | **No** — deleting resets all settings |
+| `config.json` | Your AKM configuration: engines, strategies, stash paths, and feature settings | **No** — deleting resets all settings |
 
 Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 

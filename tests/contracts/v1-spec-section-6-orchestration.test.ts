@@ -1,48 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
 
-// Pins v1 spec §6 — Orchestration.
-//
-// The freeze rule:
+// Current orchestration invariants:
 //   * search → indexer.search(q); registry hits never merge into source hits.
 //   * show → indexer.lookup(ref) then read file from disk.
 //   * remember/import target resolution: --target → defaultWriteTarget →
 //     working stash → ConfigError.
 //   * `index.db` is ephemeral; `usage_events` is preserved across schema bumps.
 
-describe("v1 spec §6 — orchestration", () => {
-  const spec = readDoc(SPEC_PATH);
-  const section = extractSection(spec, "## 6. Orchestration");
+describe("current orchestration documentation contract", () => {
+  const architecture = readDoc(ARCHITECTURE_PATH);
 
-  test("§6 exists in the spec", () => {
-    expect(section).not.toBe("");
+  test("search uses one local scoring pipeline and keeps registry hits separate", () => {
+    const section = extractSection(architecture, "## Search Pipeline");
+    expect(section).toContain("one");
+    expect(section).toContain("registryHits");
+    expect(section).toMatch(/not\s+rank-merged/i);
   });
 
-  test("§6.1 says search uses indexer.search and registry hits stay separate", () => {
-    expect(section).toMatch(/indexer\.search/);
-    expect(section).toMatch(/--include-registry/);
-    expect(section).toMatch(/never merge into source hits/i);
+  test("show resolves through the index and reads from disk without provider fallback", () => {
+    const section = extractSection(architecture, "## Show Resolution");
+    expect(section).toContain("lookup(ref)");
+    expect(section).toMatch(/reads? the file from disk/i);
+    expect(section).toContain("no remote provider fallback");
   });
 
-  test("§6.2 says show uses indexer.lookup and reads the file from disk", () => {
-    expect(section).toMatch(/indexer\.lookup/);
-    expect(section).toMatch(/readFile/);
+  test("write-target resolution retains explicit, default, stash order", () => {
+    const section = extractSection(architecture, "## Writing to Sources");
+    expect(section.replace(/\s+/g, " ")).toMatch(/--target.*defaultWriteTarget.*stashDir.*ConfigError/);
   });
 
-  test("§6.5 declares the write-target resolution order", () => {
-    const flat = section.replace(/\s+/g, " ");
-    expect(flat).toMatch(/--target.*defaultWriteTarget.*working stash.*ConfigError/);
-    expect(section).toMatch(/akm setup/);
-  });
-
-  test("§6.7 declares index.db is ephemeral and usage_events is preserved", () => {
-    expect(section).toMatch(/index\.db.*ephemeral/i);
-    expect(section).toMatch(/preserving `usage_events`/);
-    expect(section).toMatch(/workflow\.db.*never\s*touched/i);
-  });
-
-  test("§6 stops before §7 (helper boundary check)", () => {
-    expect(section).not.toContain("## 7.");
-    expect(section).not.toContain("## 8.");
+  test("workflow run state remains separate from the asset index", () => {
+    const section = extractSection(architecture, "## Workflow Runtime State");
+    expect(section).toContain("workflow.db");
+    expect(section).toMatch(/survive index rebuilds/i);
+    expect(section).toMatch(/not derived from the FTS index/i);
   });
 });

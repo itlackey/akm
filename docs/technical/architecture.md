@@ -26,13 +26,16 @@ Built-in asset types are:
 - `env`
 - `secret`
 - `wiki`
+- `task`
+- `session`
 
 The deprecated `vault` type was removed in 0.9.0 and replaced by `env` (whole
 `.env` files) and `secret` (single-value secret files).
 
 Each type maps to a canonical source directory through `src/core/asset/asset-spec.ts`
 (`skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, `scripts/`,
-`memories/`, `lessons/`, `facts/`, `env/`, `secrets/`, `wikis/`).
+`memories/`, `lessons/`, `facts/`, `env/`, `secrets/`, `wikis/`, `tasks/`,
+`sessions/`).
 
 ---
 
@@ -373,7 +376,7 @@ with an `engine`; older metadata is exposed only as `legacyProfile`.
 | `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `profiles.improve.<name>.processes.memoryInference.enabled`) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |
 | `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |

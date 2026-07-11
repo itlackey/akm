@@ -1,47 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
+import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
 
-// Pins v1 spec §9.7 — LLM/agent boundary.
-//
-// Two locked invariants:
+// Current execution boundary invariants:
 //   * In-tree LLM helpers are bounded, single-shot, stateless — no shells,
 //     no long-running processes, no caches keyed on prior responses.
-//   * External agents are invoked via CLI shell-out only. akm never imports
-//     a vendor SDK.
+//   * Agent engines lower to either the CLI spawn runner or the embedded SDK
+//     runner; callers dispatch only through RunnerSpec.
 
-describe("v1 spec §9.7 — LLM/agent boundary", () => {
-  const spec = readDoc(SPEC_PATH);
-  const section = extractSection(spec, "### 9.7 LLM/agent boundary");
+describe("current engine and runtime boundary", () => {
+  const section = extractSection(readDoc(ARCHITECTURE_PATH), "## Engine Boundary");
+  const config = {
+    engines: {
+      fast: { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "qwen3" },
+      reviewer: { kind: "agent" as const, platform: "opencode" },
+      sdk: { kind: "agent" as const, platform: "opencode-sdk", llmEngine: "fast" },
+    },
+    defaults: { engine: "reviewer", llmEngine: "fast" },
+  };
 
-  test("§9.7 exists in the spec", () => {
-    expect(section).not.toBe("");
+  test("current architecture defines named engines and RunnerSpec lowering", () => {
+    expect(section).toContain("named `engines`");
+    expect(section).toContain("RunnerSpec");
+    expect(section).toContain("executeRunner()");
   });
 
-  test("§9.7 declares in-tree LLM is bounded, single-shot, stateless", () => {
+  test("in-tree LLM calls remain bounded, single-shot, and stateless", () => {
     expect(section).toMatch(/bounded/i);
     expect(section).toMatch(/single-shot/i);
     expect(section).toMatch(/stateless/i);
   });
 
-  test("§9.7 declares external agents are invoked via CLI shell-out", () => {
-    // Tolerate markdown line-wrapping by collapsing whitespace + emphasis
-    // markers when matching.
-    const flat = section.replace(/[*\s]+/g, " ");
-    expect(flat).toMatch(/cli shell-out/i);
-    // The spec now allows embedded SDK as an alternative invocation path;
-    // the "never imports vendor SDKs" invariant is expressed as the SDK
-    // runner delegating to OpenCode's HTTP layer rather than importing
-    // Anthropic/OpenAI directly.  Check for contract violation language instead.
-    expect(flat).toMatch(/contract violation/i);
+  test("runtime lowers LLM, spawned agent, and SDK engines distinctly", () => {
+    expect(resolveEngine("fast", config).kind).toBe("llm");
+    expect(resolveEngine("reviewer", config).kind).toBe("agent");
+    expect(resolveEngine("sdk", config).kind).toBe("sdk");
   });
 
-  test("§9.7 names a `llm.features.*` per-call-site gate", () => {
-    expect(section).toMatch(/llm\.features\.\*/);
-    expect(section).toMatch(/exactly one/i);
-  });
-
-  test("§9.7 says crossing the boundary is a contract violation", () => {
-    const flat = section.replace(/\s+/g, " ");
-    expect(flat).toMatch(/contract violation/i);
+  test("an explicit missing engine fails instead of falling through", () => {
+    expect(() => resolveEngine("missing", config)).toThrow('Engine "missing" is not configured');
   });
 });

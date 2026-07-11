@@ -1,53 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
+import { isProposedQuality, KNOWN_QUALITY_VALUES, normalizeQuality } from "../../src/indexer/passes/metadata";
 
-// Pins v1 spec §4.2 — Asset quality rules (open set, default-filtered).
-//
-// The freeze rule is:
-//   * `generated` and `curated` are well-known and included in default search.
-//   * `proposed` is well-known and excluded from default search; surfaced via
-//     `--include-proposed` or `akm proposal *`.
-//   * Unknown values parse, warn, and remain searchable.
-
-describe("v1 spec §4.2 — asset quality rules", () => {
-  const spec = readDoc(SPEC_PATH);
-  const section = extractSection(spec, "### 4.2 Asset quality rules");
-
-  test("§4.2 exists in the spec", () => {
-    expect(section).not.toBe("");
+describe("current asset quality runtime contract", () => {
+  test("well-known values include every actively interpreted quality", () => {
+    expect([...KNOWN_QUALITY_VALUES].sort()).toEqual(["curated", "enriched", "generated", "proposed"]);
   });
 
-  test("§4.2 names the three well-known quality values", () => {
-    expect(section).toContain('"generated"');
-    expect(section).toContain('"curated"');
-    expect(section).toContain('"proposed"');
+  test("only exact proposed quality is filtered by default", () => {
+    expect(isProposedQuality("proposed")).toBe(true);
+    for (const quality of ["generated", "curated", "enriched", "PROPOSED", undefined]) {
+      expect(isProposedQuality(quality)).toBe(false);
+    }
   });
 
-  test("§4.2 declares `proposed` is excluded from default search", () => {
-    // Either phrasing is fine; we want both pieces of the rule present.
-    expect(section).toMatch(/Excluded from default search/i);
-    expect(section).toMatch(/--include-proposed|akm proposal/);
-  });
-
-  test("§4.2 names the `--include-proposed` opt-in flag explicitly", () => {
-    // Locked CLI surface — this flag is the single way to surface
-    // `proposed`-quality rows from `akm search` without going through
-    // `akm proposal *`. Renaming is a major bump.
-    expect(section).toContain("--include-proposed");
-  });
-
-  test("§4.2 declares unknown quality values parse-warn-include", () => {
-    expect(section).toMatch(/Unknown quality values/i);
-    expect(section).toMatch(/parse,?\s*warn/i);
-  });
-
-  test("§4.2 declares the legacy registry `curated` boolean is removed", () => {
-    expect(section).toMatch(/legacy registry boolean `curated`/i);
-    expect(section).toMatch(/parses and ignores/i);
-  });
-
-  test("§4.2 names the new optional SearchHit fields", () => {
-    expect(section).toContain("quality?");
-    expect(section).toContain("warnings?");
+  test("unknown quality values remain accepted verbatim", () => {
+    expect(normalizeQuality("experimental-contract-value")).toBe("experimental-contract-value");
   });
 });

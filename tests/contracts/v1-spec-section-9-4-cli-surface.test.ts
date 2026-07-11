@@ -1,90 +1,32 @@
 import { describe, expect, test } from "bun:test";
-import { CLI_DOC_PATH, extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
+import { CLI_DOC_PATH, extractSection, readDoc } from "./spec-helpers";
 
-// Pins v1 spec §9.4 — CLI command surface.
-//
-// The locked surface is exhaustive. The shipped pre-release set and the
-// planned-for-v1 additions together form the v1.0 freeze. Renaming or
-// removing any command after v1.0 is a major version bump.
+// Pins the current documented improvement command surface.
 
-const SHIPPED_COMMANDS = [
-  "add",
-  "remove",
-  "list",
-  "update",
-  "search",
-  "show",
-  "clone",
-  "index",
-  "setup",
-  "remember",
-  "import",
-  "feedback",
-  "info",
-  "curate",
-  "workflow",
-  "vault",
-  "wiki",
-  "graph",
-  "completions",
-  "upgrade",
-  "help",
-  "hints",
-  "config",
-] as const;
+const IMPROVEMENT_COMMANDS = ["agent", "improve", "propose", "proposal"] as const;
 
-// The proposal queue is exposed as the `proposal` noun group (0.8 CLI
-// stabilization). The flat verbs (`proposals` / `accept` / `reject`) and the
-// `save` / `enable` / `disable` aliases were removed in 0.9.0; the canonical
-// v1 surface is `proposal <verb>`, `sync`, and `config enable|disable`.
-const PLANNED_FOR_V1 = ["agent", "improve", "propose", "proposal"] as const;
-
-const PLANNED_FOR_V1_SPEC = [...PLANNED_FOR_V1] as const;
-
-describe("v1 spec §9.4 — CLI command surface", () => {
-  const spec = readDoc(SPEC_PATH);
-  const section = extractSection(spec, "### 9.4 CLI command surface");
-
-  test("§9.4 exists in the spec", () => {
-    expect(section).not.toBe("");
-  });
-
-  test("§9.4 lists every shipped pre-release command", () => {
-    // The shipped set is rendered as a pipe-joined inline-code block; tokens
-    // appear as standalone words. We assert each command word appears in
-    // the section text without caring about its surrounding backticks.
-    for (const cmd of SHIPPED_COMMANDS) {
-      const re = new RegExp(`\\b${cmd}\\b`);
-      expect(re.test(section)).toBe(true);
-    }
-    expect(section).toMatch(/\bregistry\b/);
-  });
-
-  test("§9.4 declares each planned-for-v1 command", () => {
-    for (const cmd of PLANNED_FOR_V1_SPEC) {
-      // accept either `cmd` or `cmd <args>` patterns
-      const re = new RegExp(`\`${cmd}\\b`);
-      expect(re.test(section)).toBe(true);
-    }
-  });
-
-  test("§9.4 explicitly says renaming or removing is major", () => {
-    expect(section).toMatch(/major version bump/i);
-  });
-});
-
-describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
+describe("current improvement CLI documentation contract", () => {
   const cli = readDoc(CLI_DOC_PATH);
 
-  test("cli.md has a 0.8.0 improvement section listing the new command family", () => {
-    const planned = extractSection(cli, "## Improvement Flow (0.8.0+)");
-    expect(planned).not.toBe("");
-    for (const cmd of PLANNED_FOR_V1) {
-      expect(planned).toContain(`### ${cmd}`);
+  test("documents each active improvement command family", () => {
+    const section = extractSection(cli, "## Improvement Flow (0.8.0+)");
+    expect(section).not.toBe("");
+    for (const cmd of IMPROVEMENT_COMMANDS) {
+      expect(section).toContain(`### ${cmd}`);
     }
   });
 
-  test("cli.md uses the documented status legend", () => {
-    expect(cli).toMatch(/Available since 0\.8\.0/);
+  test("agent and propose select named engines while improve selects a strategy", () => {
+    expect(extractSection(cli, "### agent")).toContain("--engine <name>");
+    expect(extractSection(cli, "### propose")).toContain("`--engine`");
+    expect(extractSection(cli, "### improve")).toContain("`--strategy <name>`");
+    expect(extractSection(cli, "### agent")).not.toContain("profiles.agent");
+  });
+
+  test("proposal documents the complete current lifecycle grammar", () => {
+    const section = extractSection(cli, "### proposal");
+    for (const verb of ["list", "show", "diff", "accept", "reject", "revert"]) {
+      expect(section).toContain(`proposal ${verb}`);
+    }
   });
 });
