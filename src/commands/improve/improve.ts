@@ -49,7 +49,8 @@ import {
 } from "./eligibility";
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
-import { resolveImproveProfile, resolveProcessEnabled } from "./improve-profiles";
+import { resolveProcessEnabled } from "./improve-profiles";
+import { resolveImproveStrategy } from "./improve-strategies";
 // #607 per-process lock primitives live in ./locks. Imported for internal use;
 // resetHeldProcessLocks is re-exported (the test seam imports it from here).
 import {
@@ -113,8 +114,8 @@ export interface AkmImproveOptions {
    * is in progress. Default: false (preserve hard error per lock).
    */
   skipIfLocked?: boolean;
-  /** Named improve profile from profiles.improve or built-in profile names (default, quick, thorough, memory-focus). */
-  profile?: string;
+  /** Named improve strategy from improve.strategies or built-in strategy names. */
+  strategy?: string;
   /**
    * #616 — bounded multi-cycle phasing override (CLI/programmatic). Takes
    * precedence over `profile.maxCycles`. Number of prep->loop->post-loop cycles
@@ -407,7 +408,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
-  const improveProfile = resolveImproveProfile(options.profile, _earlyConfig);
+  const selectedStrategy = resolveImproveStrategy(options.strategy, _earlyConfig);
+  const improveProfile = selectedStrategy.config;
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
   // automatically pick up the profile-driven defaults.

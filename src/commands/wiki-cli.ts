@@ -246,13 +246,13 @@ const wikiIngestCommand = defineJsonCommand({
   meta: {
     name: "ingest",
     description:
-      "Dispatch an agent to execute the ingest workflow for this wiki. Uses --profile or config.defaults.agent.",
+      "Dispatch an agent to execute the ingest workflow for this wiki. Uses --engine or config.defaults.engine.",
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
-    profile: {
+    engine: {
       type: "string",
-      description: "Agent profile to use (default: config.defaults.agent).",
+      description: "Agent engine to use (default: config.defaults.engine).",
     },
     model: {
       type: "string",
@@ -266,23 +266,21 @@ const wikiIngestCommand = defineJsonCommand({
     const built = buildIngestWorkflow(stashDir, args.name);
 
     const config = loadConfig();
-    const profileName = getStringArg(args, "profile") ?? config.defaults?.agent;
-    if (!profileName) {
+    const engine = getStringArg(args, "engine") ?? config.defaults?.engine;
+    if (!engine) {
       throw new UsageError(
-        "akm wiki ingest requires an agent profile. Pass --profile <name> or set defaults.agent in config.",
+        "akm wiki ingest requires an agent engine. Pass --engine <name> or set defaults.engine in config.",
         "MISSING_REQUIRED_ARGUMENT",
-        "Available profiles are listed under profiles.agent in your config. Run `akm config get profiles.agent` to inspect.",
+        "Available engines are listed under engines in your config. Run `akm config get engines` to inspect.",
       );
     }
 
     const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
     const model = getStringArg(args, "model");
 
-    const { getDefaultLlmConfig } = await import("../core/config/config.js");
     const dispatchResult = await akmAgentDispatch({
-      profileName,
+      engine,
       agentConfig: config,
-      llmConfig: getDefaultLlmConfig(config),
       prompt: built.workflow,
       dispatch: {
         prompt: built.workflow,
@@ -296,7 +294,7 @@ const wikiIngestCommand = defineJsonCommand({
       path: built.path,
       schemaPath: built.schemaPath,
       dispatched: true,
-      profile: profileName,
+      engine,
       agentResult: dispatchResult,
     });
   },

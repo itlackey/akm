@@ -136,10 +136,10 @@ export const improveCommand = defineCommand({
         "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
       default: false,
     },
-    profile: {
+    strategy: {
       type: "string",
       description:
-        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus, graph-refresh). Controls which sub-processes run and which asset types are processed.",
+        "Named improve strategy from improve.strategies or built-in strategies (default, quick, thorough, memory-focus, graph-refresh). Controls which sub-processes run and which asset types are processed.",
     },
     sync: {
       type: "boolean",
@@ -192,7 +192,7 @@ export const improveCommand = defineCommand({
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
-      const profileArg = getStringArg(args, "profile");
+      const strategyArg = getStringArg(args, "strategy");
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
       // so the resolved profile `sync` block wins by default.
@@ -234,7 +234,7 @@ export const improveCommand = defineCommand({
             scopeMode: inferredScopeMode,
             scopeValue: scopeArg ?? null,
             dryRun: Boolean(dryRun),
-            profile: profileArg ?? null,
+            strategy: strategyArg ?? null,
             ...(errorMessage ? { errorMessage } : {}),
           });
         } catch (err) {
@@ -269,7 +269,7 @@ export const improveCommand = defineCommand({
                 ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
-                ...(profileArg !== undefined ? { profile: profileArg } : {}),
+                ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
                 consolidateOptions: {
                   target: targetArg,
@@ -324,7 +324,7 @@ export const improveCommand = defineCommand({
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, profileArg ?? null);
+          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, strategyArg ?? null);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.

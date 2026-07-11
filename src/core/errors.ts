@@ -29,6 +29,7 @@ export type ConfigErrorCode =
   | "EMBEDDING_NOT_CONFIGURED"
   | "LLM_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  | "UNSUPPORTED_CONFIG_VERSION"
   // Defense-in-depth sentinel raised by `akm init` under `bun test` to
   // refuse persisting a temp-dir stashDir to the user's real config.
   // See src/commands/init.ts.
@@ -39,6 +40,7 @@ export type ConfigErrorCode =
   // falling back to the default profile — the −96% incident class where a cron
   // pinned to a host-only profile name ran the default for weeks.
   | "UNKNOWN_IMPROVE_PROFILE"
+  | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm init`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
@@ -96,6 +98,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The stash directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
   UNKNOWN_IMPROVE_PROFILE:
     "Pass one of the listed profile names to `--profile`, or define it under `profiles.improve` in your config. Names are case-sensitive.",
+  UNKNOWN_IMPROVE_STRATEGY:
+    "Pass one of the listed strategy names to `--strategy`, or define it under `improve.strategies`. Names are case-sensitive.",
 };
 
 /** Default hint for each UsageError code. */

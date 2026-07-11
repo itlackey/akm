@@ -80,19 +80,14 @@ export function relativeImproveResultPath(runId: string): string {
  * (closes the dry-run/real-run artifact-trap recorded in MEMORY.md
  * `feedback_akm_dryrun_artifact_trap`).
  *
- * @param profile - The `--profile` value passed to this invocation (e.g.
- * `quick`, `reflect-distill`), or `null`/`undefined` when no profile was
- * given. Mirrors {@link recordTerminatedImproveRun}'s `ctx.profile`
- * convention so successful and terminated runs are equally queryable by
- * profile. Previously hardcoded to `null` here, which meant only
- * abnormally-terminated runs recorded their profile in state.db.
+ * @param strategy - The effective 0.9 strategy selected for this invocation.
  */
 export function writeImproveResultFile(
   stashDir: string,
   runId: string,
   result: AkmImproveResult,
   startedAt?: string,
-  profile?: string | null,
+  strategy?: string | null,
 ): string {
   withStateDb((db) => {
     const completedAt = new Date().toISOString();
@@ -108,7 +103,7 @@ export function writeImproveResultFile(
       completedAt,
       stashDir,
       dryRun: Boolean(result.dryRun),
-      profile: profile ?? null,
+      strategy: strategy ?? null,
       scopeMode: result.scope?.mode ?? "all",
       scopeValue: result.scope?.value ?? null,
       guidance: result.guidance ?? null,
@@ -153,7 +148,7 @@ export function recordTerminatedImproveRun(
     scopeMode?: "all" | "type" | "ref";
     scopeValue?: string | null;
     dryRun?: boolean;
-    profile?: string | null;
+    strategy?: string | null;
     errorMessage?: string;
   },
 ): void {
@@ -179,7 +174,7 @@ export function recordTerminatedImproveRun(
       completedAt,
       stashDir,
       dryRun: Boolean(ctx?.dryRun),
-      profile: ctx?.profile ?? null,
+      strategy: ctx?.strategy ?? null,
       scopeMode: ctx?.scopeMode ?? "all",
       scopeValue: ctx?.scopeValue ?? null,
       guidance: null,

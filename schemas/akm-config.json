@@ -16,6 +16,151 @@
         }
       ]
     },
+    "engines": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "llm"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apiKey": {
+                "type": "string",
+                "pattern": "^\\$[A-Za-z_][A-Za-z0-9_]*$|^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+              },
+              "temperature": {
+                "type": "number"
+              },
+              "maxTokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "timeoutMs": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "concurrency": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "supportsJsonSchema": {
+                "type": "boolean"
+              },
+              "extraParams": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "contextLength": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "enableThinking": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "endpoint",
+              "model"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "agent"
+              },
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "opencode",
+                  "claude",
+                  "opencode-sdk",
+                  "codex",
+                  "copilot",
+                  "pi",
+                  "gemini",
+                  "aider",
+                  "amazonq",
+                  "openhands"
+                ]
+              },
+              "bin": {
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "workspace": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timeoutMs": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "modelAliases": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "propertyNames": {
+                  "minLength": 1
+                }
+              },
+              "llmEngine": {
+                "type": "string",
+                "maxLength": 63,
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              }
+            },
+            "required": [
+              "kind",
+              "platform"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
     "profiles": {
       "type": "object",
       "properties": {
@@ -4223,6 +4368,21 @@
     "defaults": {
       "type": "object",
       "properties": {
+        "engine": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+        },
+        "llmEngine": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+        },
+        "improveStrategy": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+        },
         "llm": {
           "type": "string",
           "minLength": 1
@@ -4816,6 +4976,151 @@
               "type": "number"
             }
           ]
+        },
+        "engines": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "llm"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "endpoint": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "pattern": "^\\$[A-Za-z_][A-Za-z0-9_]*$|^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+                  },
+                  "temperature": {
+                    "type": "number"
+                  },
+                  "maxTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "timeoutMs": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "concurrency": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "supportsJsonSchema": {
+                    "type": "boolean"
+                  },
+                  "extraParams": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "contextLength": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "enableThinking": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "endpoint",
+                  "model"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "agent"
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "opencode",
+                      "claude",
+                      "opencode-sdk",
+                      "codex",
+                      "copilot",
+                      "pi",
+                      "gemini",
+                      "aider",
+                      "amazonq",
+                      "openhands"
+                    ]
+                  },
+                  "bin": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timeoutMs": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "modelAliases": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "propertyNames": {
+                      "minLength": 1
+                    }
+                  },
+                  "llmEngine": {
+                    "type": "string",
+                    "maxLength": 63,
+                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "platform"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
         },
         "profiles": {
           "type": "object",
@@ -9024,6 +9329,21 @@
         "defaults": {
           "type": "object",
           "properties": {
+            "engine": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            },
+            "llmEngine": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            },
+            "improveStrategy": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            },
             "llm": {
               "type": "string",
               "minLength": 1

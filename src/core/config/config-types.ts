@@ -27,7 +27,7 @@ import type { z } from "zod";
 // is the single source of truth replacing the previously-disconnected
 // registries. config ← harnesses is the only import direction (harnesses/ is a
 // dependency-graph leaf), so there is no cycle.
-import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
+import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "../../integrations/harnesses";
 
 /**
  * Canonical list of valid agent harness / platform ids. Re-exported from the
@@ -36,7 +36,7 @@ import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
  * derive from one place and cannot drift. Add a harness in
  * `src/integrations/harnesses/index.ts`.
  */
-export { VALID_HARNESS_IDS };
+export { HARNESS_BY_ID, VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
@@ -49,6 +49,9 @@ export type LlmConnectionConfig = z.infer<typeof import("./config-schema").LlmCo
 
 /** A named LLM profile (`profiles.llm.<name>`). */
 export type LlmProfileConfig = z.infer<typeof import("./config-schema").LlmProfileConfigSchema>;
+
+/** A named 0.9 engine (LLM connection or agent platform). */
+export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfigSchema>;
 
 /**
  * Per-agent-profile config (`profiles.agent.<name>`). Fields: `platform`,

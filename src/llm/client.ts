@@ -135,7 +135,7 @@ export interface ChatCompletionOptions {
   /** Override the config's temperature for this call. */
   temperature?: number;
   /** Override the config timeout for this call. */
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
   /**
@@ -283,7 +283,8 @@ async function chatCompletionReal(
   messages: ChatMessage[],
   options?: ChatCompletionInternalOptions,
 ): Promise<string> {
-  const effectiveTimeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+  const effectiveTimeoutMs =
+    options && Object.hasOwn(options, "timeoutMs") ? (options.timeoutMs ?? null) : (config.timeoutMs ?? 120_000);
 
   const started = Date.now();
   try {
@@ -294,8 +295,11 @@ async function chatCompletionReal(
     // Timeout-budget guard: if the first attempt already burned most of the
     // budget, a second attempt cannot complete — skip the retry.
     const elapsed = Date.now() - started;
-    const remaining = effectiveTimeoutMs - elapsed;
-    if (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || remaining <= 0) {
+    const remaining = effectiveTimeoutMs === null ? null : effectiveTimeoutMs - elapsed;
+    if (
+      effectiveTimeoutMs !== null &&
+      (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || (remaining !== null && remaining <= 0))
+    ) {
       throw err;
     }
 
@@ -309,7 +313,7 @@ async function chatCompletionReal(
     await (options?.sleep ?? sleep)(wait);
 
     // The retry must not exceed the original budget.
-    return await chatCompletionAttempt(config, messages, options, remaining);
+    return await chatCompletionAttempt(config, messages, options, remaining ?? 120_000);
   }
 }
 
@@ -322,7 +326,7 @@ async function chatCompletionAttempt(
   config: LlmProfileConfig,
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ): Promise<string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const resolvedKey = resolveSecret(config.apiKey);
@@ -374,10 +378,10 @@ async function chatCompletionAttempt(
     // caller-driven cancellations. Map both to typed LlmCallError.
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new LlmCallError(`Request timed out after ${timeoutMs}ms`, "timeout");
+      throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
     }
     if (msg.includes("timed out")) {
-      throw new LlmCallError(`Request timed out after ${timeoutMs}ms`, "timeout");
+      throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
     }
     throw new LlmCallError(`Network error: ${msg}`, "network_error");
   }

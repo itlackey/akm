@@ -10,9 +10,15 @@ import type { AgentProfile } from "./profiles";
 export type ProcessSection = "improve" | "index" | "search" | string;
 
 export type RunnerSpec =
-  | { kind: "llm"; connection: LlmConnectionConfig; timeoutMs?: number }
-  | { kind: "agent"; profile: AgentProfile; timeoutMs?: number }
-  | { kind: "sdk"; profile: AgentProfile; timeoutMs?: number };
+  | { kind: "llm"; engine?: string; connection: LlmConnectionConfig; timeoutMs?: number | null }
+  | { kind: "agent"; engine?: string; profile: AgentProfile; timeoutMs?: number | null }
+  | {
+      kind: "sdk";
+      engine?: string;
+      profile: AgentProfile;
+      fallbackConnection?: LlmConnectionConfig;
+      timeoutMs?: number | null;
+    };
 
 // ── RunnerSpec capability predicates (H1) ───────────────────────────────────
 // The `RunnerSpec` union is dispatched ad-hoc across the improve slice. These

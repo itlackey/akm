@@ -82,6 +82,26 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
     expect(calls[0]?.prompt).toBe("sdk-prompt");
   });
 
+  test("uses the spec timeout when the caller does not provide one and passes SDK fallback connection", async () => {
+    const fallbackConnection = { endpoint: "https://example.test/v1/chat/completions", model: "fallback" };
+    let received: { timeoutMs?: number | null; fallback?: typeof fallbackConnection } | undefined;
+    const spec: RunnerSpec = { kind: "sdk", engine: "sdk", profile: sdkProfile, timeoutMs: null, fallbackConnection };
+
+    await executeRunner(
+      spec,
+      "sdk-prompt",
+      {},
+      {
+        runSdk: async (_profile, _prompt, opts, fallback) => {
+          received = { timeoutMs: opts.timeoutMs, fallback };
+          return okResult("from-sdk");
+        },
+      },
+    );
+
+    expect(received).toEqual({ timeoutMs: null, fallback: fallbackConnection });
+  });
+
   test("(c) {kind:'llm'} routes to the llm handler seam with the connection", async () => {
     const calls: Array<{ connection: LlmConnectionConfig; prompt: string }> = [];
     const seams: RunnerSeams = {

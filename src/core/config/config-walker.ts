@@ -24,6 +24,7 @@
 import { z } from "zod";
 import { UsageError } from "../errors";
 import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
+import { deepMergeConfig } from "./deep-merge";
 
 type Path = string[];
 
@@ -136,22 +137,38 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
  */
 export function configSet(config: Record<string, unknown>, dotted: string, raw: string): Record<string, unknown> {
   const path = parsePath(dotted);
+  if (path.length === 1 && path[0] === "configVersion") {
+    throw new UsageError("configVersion cannot be changed through config set.", "INVALID_FLAG_VALUE");
+  }
 
   // #454: apiKey paths are not persistable. Throw at set time.
   rejectApiKeyPath(path, dotted);
 
   const schema = resolveSchemaAt(path);
-  if (!schema) {
+  const engineApiKey = path[0] === "engines" && path[2] === "apiKey";
+  if (!schema && !engineApiKey) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
   }
 
-  const value = coerceForSchema(schema, raw, dotted);
+  const value =
+    path[0] === "engines" && path.length === 2
+      ? parseObjectPatch(raw, dotted)
+      : engineApiKey
+        ? raw
+        : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
 
   // Validate the coerced value against the leaf schema. This catches enum
   // mismatches, out-of-range numbers, schema-level shape errors (writable
   // npm/website sources via .superRefine, strict-mode unknown keys in nested
   // objects, etc.) BEFORE we apply the patch.
-  const parsed = schema.safeParse(value);
+  const parsed =
+    path[0] === "engines" && path.length === 2
+      ? { success: true as const, data: value }
+      : engineApiKey
+        ? /^\$[A-Za-z_][A-Za-z0-9_]*$|^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(raw)
+          ? { success: true as const, data: value }
+          : { success: false as const, error: { issues: [{ path: [], message: `apiKey must be $VAR or \${VAR}` }] } }
+        : (schema as z.ZodTypeAny).safeParse(value);
   if (!parsed.success) {
     const lines = parsed.error.issues
       .map((i) => {
@@ -162,7 +179,15 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
     throw new UsageError(`Invalid value for ${dotted}:\n${lines}`, "INVALID_FLAG_VALUE");
   }
 
-  const next = setPath(config, path, parsed.data);
+  const existing = path.reduce<unknown>((value, key) => {
+    if (value && typeof value === "object") return (value as Record<string, unknown>)[key];
+    return undefined;
+  }, config);
+  const next = setPath(
+    config,
+    path,
+    isPlainObject(existing) && isPlainObject(parsed.data) ? deepMergeConfig(existing, parsed.data) : parsed.data,
+  );
 
   // Targeted invariant: defaultWriteTarget must point at a configured source
   // (#464.a). Whole-config validation happens at save time; this check fires
@@ -188,6 +213,9 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
  */
 export function configUnset(config: Record<string, unknown>, dotted: string): Record<string, unknown> {
   const path = parsePath(dotted);
+  if (path.length === 1 && path[0] === "configVersion") {
+    throw new UsageError("configVersion cannot be removed through config unset.", "INVALID_FLAG_VALUE");
+  }
   // Validate the path resolves to a real schema field (so typos don't no-op).
   const schema = resolveSchemaAt(path);
   if (!schema) {
@@ -205,6 +233,7 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
  *   - `profiles.llm.<name>.apiKey`
  */
 function rejectApiKeyPath(path: Path, dotted: string): void {
+  if (path[0] === "engines" && path[2] === "apiKey") return;
   const last = path[path.length - 1];
   if (last !== "apiKey") return;
   const recipe = recipeForApiKey(path, dotted);
@@ -214,6 +243,23 @@ function rejectApiKeyPath(path: Path, dotted: string): void {
     "Storing API keys in config.json leaks them through backups, logs, and version control. " +
       "Use the corresponding environment variable. AKM reads it at request time.",
   );
+}
+
+function parseObjectPatch(raw: string, key: string): Record<string, unknown> {
+  try {
+    const value = JSON.parse(raw);
+    if (!isPlainObject(value)) throw new Error("expected an object");
+    return value;
+  } catch (err) {
+    throw new UsageError(
+      `Invalid JSON object for ${key}: ${err instanceof Error ? err.message : String(err)}`,
+      "INVALID_JSON_CONFIG_VALUE",
+    );
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function recipeForApiKey(path: Path, _dotted: string): string {

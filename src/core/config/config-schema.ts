@@ -36,7 +36,7 @@
  */
 import { z } from "zod";
 import type { InstalledStashEntry } from "../../registry/types";
-import { VALID_HARNESS_IDS } from "./config-types";
+import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "./config-types";
 
 // ── Reusable atomic schemas ─────────────────────────────────────────────────
 
@@ -55,6 +55,74 @@ const nonEmptyString = z
 /** HTTP(S) URL string. */
 const httpUrl = z.string().refine((v) => v.startsWith("http://") || v.startsWith("https://"), {
   message: "endpoint must start with http:// or https://",
+});
+
+const ENGINE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const ENV_REFERENCE_PATTERN = /^\$[A-Za-z_][A-Za-z0-9_]*$|^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
+const engineName = z
+  .string()
+  .max(63)
+  .regex(ENGINE_NAME_PATTERN, "engine names must be lowercase kebab-case")
+  .refine((value) => !value.startsWith("akm-"), "engine names beginning with akm- are reserved");
+
+const chatCompletionsEndpoint = z.string().superRefine((value, ctx) => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "endpoint must use http:// or https://" });
+    }
+    if (url.username || url.password || url.search || url.hash || !url.pathname.endsWith("/chat/completions")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "endpoint must be a credential-free OpenAI chat-completions URL without query or fragment",
+      });
+    }
+  } catch {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "endpoint must be a complete URL" });
+  }
+});
+
+const PROTECTED_EXTRA_PARAM_KEYS = new Set([
+  "model",
+  "messages",
+  "temperature",
+  "max_tokens",
+  "response_format",
+  "stream",
+  "stream_options",
+  "enable_thinking",
+]);
+const SECRET_EXTRA_PARAM_KEYS = new Set([
+  "authorization",
+  "headers",
+  "apikey",
+  "token",
+  "password",
+  "secret",
+  "cookie",
+  "setcookie",
+]);
+
+function normalizedParamKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const ExtraParamsSchema = z.record(z.unknown()).superRefine((value, ctx) => {
+  const visit = (entry: unknown, path: (string | number)[], topLevel: boolean): void => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+    for (const [key, child] of Object.entries(entry as Record<string, unknown>)) {
+      const normalized = normalizedParamKey(key);
+      if (topLevel && PROTECTED_EXTRA_PARAM_KEYS.has(key)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: `${key} is protected by AKM` });
+      }
+      if (SECRET_EXTRA_PARAM_KEYS.has(normalized)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: `${key} cannot carry credentials` });
+      }
+      visit(child, [...path, key], false);
+    }
+  };
+  visit(value, [], true);
 });
 
 // ── Feedback failure modes (F-3 / #384) ─────────────────────────────────────
@@ -104,7 +172,7 @@ export const LlmConnectionConfigSchema = z
     timeoutMs: positiveInt.optional(),
     concurrency: positiveInt.optional(),
     capabilities: LlmCapabilitiesSchema.optional(),
-    extraParams: z.record(z.unknown()).optional(),
+    extraParams: ExtraParamsSchema.optional(),
     contextLength: positiveInt.optional(),
     judgeModel: z.string().min(1).optional(),
     enableThinking: z.boolean().optional(),
@@ -171,10 +239,97 @@ export const AgentProfileConfigSchema = z
   })
   .passthrough();
 
+const LlmInvocationOverridesSchema = z
+  .object({
+    temperature: z.number().finite().optional(),
+    maxTokens: positiveInt.optional(),
+    supportsJsonSchema: z.boolean().optional(),
+    extraParams: ExtraParamsSchema.optional(),
+    contextLength: positiveInt.optional(),
+    enableThinking: z.boolean().optional(),
+  })
+  .passthrough();
+
+const LlmEngineSchema = z
+  .object({
+    kind: z.literal("llm"),
+    provider: z.string().optional(),
+    endpoint: chatCompletionsEndpoint,
+    model: nonEmptyString,
+    apiKey: z.string().regex(ENV_REFERENCE_PATTERN, `apiKey must be $VAR or \${VAR}`).optional(),
+    temperature: z.number().finite().optional(),
+    maxTokens: positiveInt.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    concurrency: positiveInt.optional(),
+    supportsJsonSchema: z.boolean().optional(),
+    extraParams: ExtraParamsSchema.optional(),
+    contextLength: positiveInt.optional(),
+    enableThinking: z.boolean().optional(),
+  })
+  .passthrough()
+  .superRefine((value, ctx) => {
+    for (const key of ["platform", "bin", "args", "workspace", "modelAliases", "llmEngine"]) {
+      if (key in value)
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is not valid on an LLM engine` });
+    }
+  });
+
+const AgentEngineSchema = z
+  .object({
+    kind: z.literal("agent"),
+    platform: AgentPlatformSchema.refine(
+      (platform) => HARNESS_BY_ID.get(platform)?.capabilities.agentDispatch === true,
+      {
+        message: "platform does not support agent dispatch",
+      },
+    ),
+    bin: nonEmptyString.optional(),
+    args: z.array(z.string()).optional(),
+    workspace: nonEmptyString.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    modelAliases: z.record(z.string().min(1), z.string().min(1)).optional(),
+    llmEngine: engineName.optional(),
+  })
+  .passthrough()
+  .superRefine((value, ctx) => {
+    for (const key of [
+      "provider",
+      "endpoint",
+      "apiKey",
+      "temperature",
+      "maxTokens",
+      "concurrency",
+      "supportsJsonSchema",
+      "extraParams",
+      "contextLength",
+      "enableThinking",
+    ]) {
+      if (key in value)
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is not valid on an agent engine` });
+    }
+    if (value.platform !== "opencode-sdk" && value.llmEngine !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["llmEngine"],
+        message: "llmEngine is only valid on opencode-sdk",
+      });
+    }
+    if (value.platform === "opencode-sdk" && value.args !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["args"], message: "args is not valid on opencode-sdk" });
+    }
+  });
+
+export const EngineConfigSchema = z.union([LlmEngineSchema, AgentEngineSchema]);
+export const EnginesSchema = z.record(engineName, EngineConfigSchema);
+
 // ── Improve profile / process ──────────────────────────────────────────────
 
 export const ImproveProcessConfigSchema = z
   .object({
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
     enabled: z.boolean().optional(),
     mode: z.enum(["llm", "agent", "sdk"]).optional(),
     profile: z.string().min(1).optional(),
@@ -422,14 +577,34 @@ export const ImproveProcessConfigSchema = z
     rejectEmpty: z.boolean().optional(),
     judgment: z
       .object({
-        mode: z.enum(["llm", "agent", "sdk"]).optional(),
-        profile: z.string().min(1).optional(),
+        engine: engineName.optional(),
+        model: nonEmptyString.optional(),
         timeoutMs: z.union([positiveInt, z.null()]).optional(),
+        llm: LlmInvocationOverridesSchema.optional(),
       })
       .passthrough()
       .optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value, ctx) => {
+    for (const key of ["mode", "profile"]) {
+      if (key in value) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is retired; use engine` });
+      }
+    }
+    const judgment = value.judgment as Record<string, unknown> | undefined;
+    if (judgment) {
+      for (const key of ["mode", "profile"]) {
+        if (key in judgment) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["judgment", key],
+            message: `${key} is retired; use engine`,
+          });
+        }
+      }
+    }
+  });
 
 const ImproveProfileProcessesSchema = z
   .object({
@@ -465,6 +640,10 @@ const ImproveProfileProcessesSchema = z
 
 export const ImproveProfileConfigSchema = z
   .object({
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
     description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
     autoAccept: nonNegativeNumber.optional(),
@@ -502,6 +681,11 @@ export const ProfilesSchema = z
 
 export const DefaultsSchema = z
   .object({
+    engine: engineName.optional(),
+    llmEngine: engineName.optional(),
+    improveStrategy: engineName.optional(),
+    // Retained in the parsed TypeScript shape during the consumer cutover. The
+    // root refinement below rejects all three retired persisted fields.
     llm: z.string().min(1).optional(),
     agent: z.string().min(1).optional(),
     improve: z.string().min(1).optional(),
@@ -723,6 +907,7 @@ const ImproveCollapseDetectorSchema = z
 
 export const ImproveConfigSchema = z
   .object({
+    strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     calibration: ImproveCalibrationSchema.optional(),
@@ -962,6 +1147,7 @@ export const SetupConfigSchema = z
  */
 export const AkmConfigShape = {
   configVersion: z.union([z.string().min(1), z.number()]).optional(),
+  engines: EnginesSchema.optional(),
   profiles: ProfilesSchema.optional(),
   defaults: DefaultsSchema.optional(),
   // Global model-alias tiers: alias → platform → exact model string, with a
@@ -1002,6 +1188,92 @@ export const AkmConfigShape = {
 export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
+  const raw = config as Record<string, unknown>;
+  for (const key of ["profiles", "llm", "agent", "features", "stashes"]) {
+    if (key in raw) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is retired in 0.9; configure engines and improve.strategies instead`,
+      });
+    }
+  }
+  for (const key of ["llm", "agent", "improve"]) {
+    if (config.defaults && key in config.defaults) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaults", key],
+        message: `defaults.${key} is retired in 0.9`,
+      });
+    }
+  }
+  for (const [name, engine] of Object.entries(config.engines ?? {})) {
+    if (engine.kind === "agent" && engine.llmEngine) {
+      const fallback = config.engines?.[engine.llmEngine];
+      if (!fallback || fallback.kind !== "llm") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["engines", name, "llmEngine"],
+          message: "llmEngine must name an LLM engine",
+        });
+      }
+    }
+  }
+  const defaultEngine = config.defaults?.engine;
+  if (defaultEngine && !config.engines?.[defaultEngine]) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["defaults", "engine"],
+      message: "engine does not name a configured engine",
+    });
+  }
+  const defaultLlm = config.defaults?.llmEngine;
+  if (defaultLlm && config.engines?.[defaultLlm]?.kind !== "llm") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["defaults", "llmEngine"],
+      message: "llmEngine must name an LLM engine",
+    });
+  }
+  const llmOnlyProcesses = new Set([
+    "reflect",
+    "distill",
+    "consolidate",
+    "memoryInference",
+    "graphExtraction",
+    "extract",
+    "validation",
+    "recombine",
+    "procedural",
+  ]);
+  for (const [strategyName, strategy] of Object.entries(config.improve?.strategies ?? {})) {
+    const strategyEngine = strategy.engine;
+    if (strategyEngine && !config.engines?.[strategyEngine]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["improve", "strategies", strategyName, "engine"],
+        message: "engine does not name a configured engine",
+      });
+    }
+    for (const [processName, process] of Object.entries(strategy.processes ?? {})) {
+      const processEngine = (process as { engine?: string }).engine ?? strategyEngine;
+      if (!processEngine) continue;
+      const engine = config.engines?.[processEngine];
+      if (!engine) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
+          message: "engine does not name a configured engine",
+        });
+      } else if (llmOnlyProcesses.has(processName) && engine.kind !== "llm") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
+          message: `${processName} requires an LLM engine`,
+        });
+      }
+    }
+  }
   // #464.a: defaultWriteTarget must name a configured source when sources
   // are present. With no sources configured, error out instead of silently
   // accepting (no implicit "first writable" fallback — see locked decision 3).

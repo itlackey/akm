@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm agent <profile> [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]`
+ * `akm agent [--engine <name>] [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]`
  *
- * Dispatch an agent by named profile, optionally injecting a prompt from
+ * Dispatch an agent by named engine, optionally injecting a prompt from
  * inline text, a stash command: asset, or a stash workflow: asset.
  *
  * When none of --prompt, --command, or --workflow are given, the agent is
@@ -17,22 +17,20 @@
 
 import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import type { AgentDispatchRequest } from "../../integrations/agent/builders";
-import { requireAgentProfile } from "../../integrations/agent/config";
+import { resolveEngine } from "../../integrations/agent/engine-resolution";
+import { executeRunner } from "../../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
-import { runAgent } from "../../integrations/agent/spawn";
-import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
 
 export interface AkmAgentDispatchOptions {
-  profileName: string;
+  engine?: string;
   prompt?: string;
   commandRef?: string;
   workflowRef?: string;
   args?: string[];
   agentConfig?: AkmConfig;
-  llmConfig?: LlmConnectionConfig;
   timeoutMs?: number;
   /**
    * Working directory for the spawned agent CLI. Not honoured by the
@@ -52,7 +50,7 @@ export interface AkmAgentDispatchResult {
   schemaVersion: 1;
   ok: boolean;
   shape: "agent-result";
-  profileName: string;
+  engine: string;
   exitCode: number | null;
   stdout: string;
   stderr: string;
@@ -108,13 +106,18 @@ async function resolveAssetBody(ref: string): Promise<string> {
 }
 
 export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promise<AkmAgentDispatchResult> {
-  if (!options.profileName?.trim()) {
-    throw new UsageError("agent: <profile> is required.", "MISSING_REQUIRED_ARGUMENT");
+  if (!options.agentConfig)
+    throw new UsageError("agent requires a valid config with an agent engine.", "MISSING_REQUIRED_ARGUMENT");
+  const engineName = options.engine ?? options.agentConfig.defaults?.engine;
+  if (!engineName) throw new UsageError("agent requires --engine or defaults.engine.", "MISSING_REQUIRED_ARGUMENT");
+  const runner = resolveEngine(engineName, options.agentConfig);
+  if (runner.kind === "llm") {
+    throw new UsageError(
+      `Engine "${engineName}" is an LLM engine; akm agent requires an agent engine.`,
+      "INVALID_FLAG_VALUE",
+    );
   }
-
-  // Resolve the profile — throws ConfigError with an actionable hint when
-  // agent config is absent or the profile is not found.
-  const profile = requireAgentProfile(options.agentConfig, options.profileName.trim());
+  const profile = runner.profile;
 
   // Resolve the prompt text from whichever source was provided.
   let prompt: string | undefined;
@@ -130,7 +133,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
   }
   // When prompt is undefined, the agent is launched interactively.
 
-  const stdio = prompt === undefined && profile.sdkMode !== true ? ("interactive" as const) : profile.stdio;
+  const stdio = prompt === undefined && runner.kind !== "sdk" ? ("interactive" as const) : profile.stdio;
   // Build the final dispatch request: merge the caller-supplied dispatch with
   // the resolved prompt so the builder has all context in one place.
   const dispatchRequest: AgentDispatchRequest | undefined = options.dispatch
@@ -145,15 +148,13 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
   };
-  const result: AgentRunResult = profile.sdkMode
-    ? await runOpencodeSdk(profile, prompt ?? "", runOptions, options.llmConfig)
-    : await runAgent(profile, prompt, runOptions);
+  const result: AgentRunResult = await executeRunner(runner, prompt ?? "", runOptions);
 
   return {
     schemaVersion: 1 as const,
     ok: result.ok,
     shape: "agent-result",
-    profileName: profile.name,
+    engine: engineName,
     exitCode: result.exitCode,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",

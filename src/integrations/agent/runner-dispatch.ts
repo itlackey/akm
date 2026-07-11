@@ -30,6 +30,7 @@
  */
 
 import { assertNever } from "../../core/assert";
+import type { LlmConnectionConfig } from "../../core/config/config";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk";
 import type { AgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
@@ -71,11 +72,16 @@ export interface RunnerSeams {
    * caller (reflect's `runReflectViaLlm` vs drain's `chatCompletion`), so it is
    * supplied rather than defaulted. Receives the narrowed `llm` spec and prompt.
    */
-  llm?: (spec: Extract<RunnerSpec, { kind: "llm" }>, prompt: string) => Promise<AgentRunResult>;
+  llm?: (spec: Extract<RunnerSpec, { kind: "llm" }>, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Override for the `agent` runner kind. Defaults to {@link runAgent}. */
   runAgent?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Override for the `sdk` runner kind. Defaults to {@link runOpencodeSdk}. */
-  runSdk?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
+  runSdk?: (
+    profile: AgentProfile,
+    prompt: string,
+    opts: RunAgentOptions,
+    fallbackConnection?: LlmConnectionConfig,
+  ) => Promise<AgentRunResult>;
 }
 
 /**
@@ -90,20 +96,30 @@ export async function executeRunner(
   opts: RunAgentOptions,
   seams: RunnerSeams = {},
 ): Promise<AgentRunResult> {
+  const withSpecOptions = (timeoutMs: number | null | undefined, workspace?: string): RunAgentOptions => ({
+    ...opts,
+    ...(Object.hasOwn(opts, "timeoutMs") ? {} : timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(opts.cwd === undefined && workspace ? { cwd: workspace } : {}),
+  });
   switch (spec.kind) {
     case "llm": {
       if (!seams.llm) {
         throw new Error("executeRunner: an `llm` runner requires a `seams.llm` handler (no default LLM dispatch).");
       }
-      return seams.llm(spec, prompt);
+      return seams.llm(spec, prompt, withSpecOptions(spec.timeoutMs));
     }
     case "agent": {
       const run = seams.runAgent ?? runAgent;
-      return run(spec.profile, prompt, opts);
+      return run(spec.profile, prompt, withSpecOptions(spec.timeoutMs, spec.profile.workspace));
     }
     case "sdk": {
       const run = seams.runSdk ?? runOpencodeSdk;
-      return run(spec.profile, prompt, opts);
+      return run(
+        spec.profile,
+        prompt,
+        withSpecOptions(spec.timeoutMs, spec.profile.workspace),
+        spec.fallbackConnection,
+      );
     }
     default:
       // Exhaustiveness arm: a 4th RunnerSpec kind becomes a compile error here.

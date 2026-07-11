@@ -56,6 +56,7 @@ export interface ImproveRunRow {
   stash_dir: string;
   dry_run: number;
   profile: string | null;
+  strategy: string | null;
   scope_mode: string;
   scope_value: string | null;
   guidance: string | null;
@@ -180,7 +181,9 @@ export function recordImproveRun(
     completedAt: string | null;
     stashDir: string;
     dryRun: boolean;
-    profile: string | null;
+    /** Historical selector. New 0.9 writers must use strategy instead. */
+    profile?: string | null;
+    strategy?: string | null;
     scopeMode: "all" | "type" | "ref";
     scopeValue: string | null;
     guidance: string | null;
@@ -193,16 +196,17 @@ export function recordImproveRun(
   const metricsObj = input.metrics ?? computeImproveRunMetrics(input.result);
   db.prepare(`
     INSERT INTO improve_runs
-      (id, started_at, completed_at, stash_dir, dry_run, profile,
+       (id, started_at, completed_at, stash_dir, dry_run, profile, strategy,
        scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.startedAt,
     input.completedAt,
     input.stashDir,
     input.dryRun ? 1 : 0,
-    input.profile,
+    input.strategy === undefined ? (input.profile ?? null) : null,
+    input.strategy ?? null,
     input.scopeMode,
     input.scopeValue,
     input.guidance,

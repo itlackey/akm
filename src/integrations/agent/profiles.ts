@@ -24,6 +24,10 @@ export type AgentParseMode = "text" | "json";
 export interface AgentProfile {
   /** Profile name (key in `agent.profiles`). */
   readonly name: string;
+  /** Canonical harness platform selected by an engine. */
+  readonly platform?: string;
+  /** Normalized workspace used when the caller does not provide a cwd. */
+  readonly workspace?: string;
   /** Command to spawn (looked up on PATH). */
   readonly bin: string;
   /** Base args prepended to caller args. */

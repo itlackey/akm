@@ -277,15 +277,15 @@ function normalizeFsPathForComparison(value: string): string {
 export async function fetchWithTimeout(
   url: string,
   opts?: RequestInit,
-  timeoutMs = 30_000,
+  timeoutMs: number | null = 30_000,
   signal?: AbortSignal,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = timeoutMs === null ? undefined : setTimeout(() => controller.abort(), timeoutMs);
   const abortExternal = (): void => controller.abort(signal?.reason);
   if (signal) {
     if (signal.aborted) {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       controller.abort(signal.reason);
     } else {
       signal.addEventListener("abort", abortExternal, { once: true });
@@ -303,7 +303,7 @@ export async function fetchWithTimeout(
     throw err;
   } finally {
     if (signal) signal.removeEventListener("abort", abortExternal);
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 

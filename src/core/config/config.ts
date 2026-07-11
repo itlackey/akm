@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../errors";
 import { backupExistingConfig, parseConfigText, withConfigLock, writeConfigAtomic } from "./config-io";
-import { CURRENT_CONFIG_VERSION, compareConfigVersion, migrateConfigShape } from "./config-migration";
 import { AkmConfigSchema } from "./config-schema";
 import type {
   AkmConfig,
@@ -18,10 +17,12 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
+import { deepMergeConfig } from "./deep-merge";
 
 export { stripJsonComments } from "./config-io";
 
-import { getCacheDir, getConfigPath } from "../paths";
+import { materializeLlmConnection, resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
+import { getConfigPath } from "../paths";
 import { warn } from "../warn";
 
 // Re-export type surface from config-types.ts so call sites don't need to
@@ -88,6 +89,7 @@ export function resolveBatchSize(configured: number | undefined, contextLength?:
 // ── Defaults ────────────────────────────────────────────────────────────────
 
 export const DEFAULT_CONFIG: AkmConfig = {
+  configVersion: "0.9.0",
   semanticSearchMode: "auto",
   registries: [
     { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "akm-registry" },
@@ -115,9 +117,15 @@ export function loadUserConfig(): AkmConfig {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(configPath);
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new ConfigError(
+        `Unable to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
     cachedConfig = undefined;
-    return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
+    return { ...DEFAULT_CONFIG };
   }
 
   // Cache key: mtimeMs + size. Tests that write rapidly back-to-back inside
@@ -135,17 +143,18 @@ export function loadUserConfig(): AkmConfig {
   let text: string;
   try {
     text = fs.readFileSync(configPath, "utf8");
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new ConfigError(
+        `Unable to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
     cachedConfig = undefined;
-    return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
+    return { ...DEFAULT_CONFIG };
   }
 
-  // Auto-migration: rewrite legacy shapes to disk on cache miss so the schema
-  // sees canonical input. AKM_NO_AUTO_MIGRATE=1 skips the disk rewrite (still
-  // applies in-memory).
-  text = maybeAutoMigrateConfigFile(configPath, text);
-
-  const finalConfig = applyRuntimeEnvApiKeys(parseAndValidate(text, configPath));
+  const finalConfig = parseAndValidate(text, configPath);
 
   // Re-stat after potential write-back so the cache key reflects the new mtime.
   let finalStat = stat;
@@ -164,8 +173,7 @@ export function loadUserConfig(): AkmConfig {
 }
 
 /**
- * Parse raw config text, run the legacy-shape migration
- * ({@link migrateConfigShape}), then validate via Zod
+ * Parse raw config text and validate via Zod.
  * ({@link AkmConfigSchema}). Returns the merged-with-defaults AkmConfig.
  *
  * The migration handles all one-time 0.7→0.8 transforms (legacy keys,
@@ -173,17 +181,21 @@ export function loadUserConfig(): AkmConfig {
  * the canonical shape and throws on anything it doesn't recognise.
  */
 function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
-  // Migration absorbs 0.7→0.8 input transforms (semanticSearchMode bool→string,
-  // stashes[] → sources[], openviking removal); the schema then sees a
-  // canonical shape. Migration is idempotent on already-migrated input.
-  const migrated = migrateConfigShape(parseConfigText(text, sourcePath)).result;
-  const parsed = AkmConfigSchema.safeParse(migrated);
+  const raw = parseConfigText(text, sourcePath);
+  if (raw.configVersion !== "0.9.0") {
+    throw new ConfigError(
+      `Unsupported configVersion${sourcePath ? ` at ${sourcePath}` : ""}: expected "0.9.0".`,
+      "UNSUPPORTED_CONFIG_VERSION",
+      "Recreate engines and improve.strategies manually for AKM 0.9.0; profile-based configuration is not translated automatically.",
+    );
+  }
+  const parsed = AkmConfigSchema.safeParse(raw);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
     const where = sourcePath ? ` at ${sourcePath}` : "";
     throw new ConfigError(`Invalid config${where}:\n${lines}`, "INVALID_CONFIG_FILE");
   }
-  return mergeLoadedConfig(DEFAULT_CONFIG, parsed.data as Partial<AkmConfig>);
+  return deepMergeConfig(DEFAULT_CONFIG, parsed.data as Partial<AkmConfig>) as AkmConfig;
 }
 
 export function getSources(config: AkmConfig): SourceConfigEntry[] {
@@ -194,55 +206,9 @@ export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[]
   return config.registries ?? DEFAULT_CONFIG.registries ?? [];
 }
 
-/**
- * Resolve the name of the default LLM profile.
- *
- * Resolution order:
- *   1. `defaults.llm` — explicit pointer set by the user.
- *   2. A profile literally named `default` under `profiles.llm` — implicit
- *      fallback. The convention "name your default profile `default`" is
- *      what `akm setup` produces, so an unset `defaults.llm` next to a
- *      `profiles.llm.default` block is overwhelmingly a config-rewrite
- *      casualty (see [[project_akm_config_clobber_trap]]) rather than
- *      intent. Treating that shape as configured avoids the silent
- *      `getDefaultLlmConfig → undefined → pass-returns-zero` failure mode
- *      that produced 18h of no-op memory-inference runs on 2026-05-23.
- *
- * Returns `undefined` when neither path resolves to a profile name.
- */
-function resolveDefaultLlmProfileName(config: AkmConfig): string | undefined {
-  const explicit = config.defaults?.llm;
-  if (explicit) return explicit;
-  if (config.profiles?.llm?.default) return "default";
-  return undefined;
-}
-
-/**
- * Resolve the default LLM connection from `profiles.llm[defaults.llm]`.
- *
- * Throws {@link ConfigError} when no default profile can be resolved (neither
- * `defaults.llm` nor an implicit `profiles.llm.default`) or when the named
- * profile does not exist under `profiles.llm`. Use this in code paths that
- * must have an LLM configured (per-pass index calls, distill, consolidate,
- * etc).
- */
+/** Resolve and materialize the configured default LLM engine at dispatch time. */
 export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
-  const defaultName = resolveDefaultLlmProfileName(config);
-  if (!defaultName) {
-    throw new ConfigError(
-      "LLM is not configured. Run `akm setup` or set `defaults.llm` to a profile defined in `profiles.llm`.",
-      "LLM_NOT_CONFIGURED",
-    );
-  }
-  const profile = config.profiles?.llm?.[defaultName];
-  if (!profile) {
-    throw new ConfigError(
-      `LLM default profile "${defaultName}" not found in profiles.llm.`,
-      "LLM_NOT_CONFIGURED",
-      `Available profiles: ${Object.keys(config.profiles?.llm ?? {}).join(", ") || "none"}. Run \`akm setup\` to configure.`,
-    );
-  }
-  return profile;
+  return materializeLlmConnection(resolveLlmEngineUse(config, []));
 }
 
 /**
@@ -250,9 +216,8 @@ export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
  * when no LLM is configured. Use in code paths where the LLM is optional.
  */
 export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | undefined {
-  const defaultName = resolveDefaultLlmProfileName(config);
-  if (!defaultName) return undefined;
-  return config.profiles?.llm?.[defaultName];
+  const resolved = resolveLlmEngineUse(config, [], { optional: true });
+  return resolved ? materializeLlmConnection(resolved) : undefined;
 }
 
 // Drop the string index signature that `.passthrough()` adds to the processes
@@ -297,68 +262,6 @@ export function getImproveProcessConfig(
  * If the on-disk config is newer than this binary's known version, the bytes
  * are left untouched (we won't silently strip fields on downgrade).
  */
-function maybeAutoMigrateConfigFile(configPath: string, text: string): string {
-  let obj: Record<string, unknown>;
-  try {
-    obj = parseConfigText(text);
-  } catch {
-    return text; // Malformed JSON — let parseAndValidate surface the error.
-  }
-  // Downgrade protection. Skip migration when the on-disk config is NEWER than
-  // this binary (=== 1), OR when it carries a configVersion we cannot order
-  // against ours (compareConfigVersion returns undefined for an unparseable
-  // value — e.g. one written by a newer/foreign akm). Migrating such a config
-  // could strip fields a newer binary added, a cross-version data-loss path.
-  //
-  // A MISSING configVersion (absent → undefined) is a legacy pre-versioning
-  // config that MUST still migrate, so the unparseable-skip is gated on the
-  // field being PRESENT (`onDiskVersion !== undefined`).
-  const onDiskVersion = obj.configVersion as string | number | undefined;
-  const versionOrder = compareConfigVersion(onDiskVersion, CURRENT_CONFIG_VERSION);
-  if (versionOrder === 1 || (onDiskVersion !== undefined && versionOrder === undefined)) {
-    return text;
-  }
-
-  const { changed, result } = migrateConfigShape(obj);
-  if (!changed) return text;
-
-  const migratedText = `${JSON.stringify(result, null, 2)}\n`;
-  if (process.env.AKM_NO_AUTO_MIGRATE === "1") return migratedText;
-
-  try {
-    withConfigLock(() => {
-      backupExistingConfig(configPath);
-      writeConfigAtomic(configPath, result);
-    });
-    const newVersion = typeof result.configVersion === "string" ? result.configVersion : "0.8.0";
-    const backupDir = `${getCacheDir()}/config-backups`;
-    // WS-2: emit a loud banner to BOTH stderr and stdout so pipelines and
-    // interactive terminals both see it. Include the backup path (resolved,
-    // not ~/...), opt-out env var, and preview diff command.
-    const banner = [
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      `  akm: auto-migrated config → ${newVersion} format`,
-      `  file:   ${configPath}`,
-      `  backup: ${backupDir}/config-<timestamp>.json`,
-      "  to opt out of future auto-migration: AKM_NO_AUTO_MIGRATE=1",
-      "  to preview a dry-run diff:            akm config migrate --dry-run --print-diff",
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    ].join("\n");
-    process.stderr?.write?.(`${banner}\n`);
-    process.stdout?.write?.(`${banner}\n`);
-  } catch (err) {
-    // #461: never return migrated bytes when disk write fails — that triggers
-    // an infinite re-migrate loop on every load. Hard-error so the user
-    // notices and either fixes the disk issue or sets AKM_NO_AUTO_MIGRATE=1.
-    throw new ConfigError(
-      `Failed to write migrated config to ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
-      "INVALID_CONFIG_FILE",
-      "Check filesystem permissions, free space, and disk health. To skip auto-migration, set AKM_NO_AUTO_MIGRATE=1.",
-    );
-  }
-  return migratedText;
-}
-
 export function loadConfig(): AkmConfig {
   // Single-layer load: only the user-level config file is read. Project-level
   // .akm/config.json files discovered under cwd-ancestors emit a one-time
@@ -388,8 +291,6 @@ function saveConfigReal(config: AkmConfig): void {
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
 
-  const sanitized = sanitizeConfigForWrite(config);
-
   // Final validation gate before bytes hit disk. Runs the FULL schema —
   // including the cross-field superRefine guards (removed `feedbackDistillation`
   // process key, `defaultWriteTarget` resolution, writable npm/website sources)
@@ -398,7 +299,7 @@ function saveConfigReal(config: AkmConfig): void {
   // keys are intentionally NOT rejected here — object schemas are `.passthrough()`
   // so cross-version skew round-trips (see config-schema.ts header); the lenient
   // tolerance is by design, not an oversight.
-  const parseResult = AkmConfigSchema.safeParse(sanitized);
+  const parseResult = AkmConfigSchema.safeParse(config);
   if (!parseResult.success) {
     const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
     throw new ConfigError(
@@ -413,7 +314,7 @@ function saveConfigReal(config: AkmConfig): void {
   // invocations do not interleave their backup+atomic-write cycles.
   withConfigLock(() => {
     backupExistingConfig(configPath);
-    writeConfigAtomic(configPath, sanitized);
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(config));
   });
 }
 
@@ -483,14 +384,14 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
   return sanitized;
 }
 
-/** Matches `${VAR}`, `${VAR:-default}`, or `$VAR`. */
+/** Matches the only 0.9 symbolic secret forms: `${VAR}` or `$VAR`. */
 function isEnvReference(value: string): boolean {
-  return /^\$\{[^}]+\}$|^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+  return /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$|^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   const current = loadUserConfig();
-  const merged = mergeLoadedConfig(current, partial);
+  const merged = deepMergeConfig(current, partial) as AkmConfig;
   saveConfig(merged);
   return merged;
 }
@@ -498,8 +399,8 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Resolve a single secret value by expanding `${VAR}` / `$VAR` /
- * `${VAR:-default}` references against `process.env`. Use this at apiKey /
+ * Resolve a single secret value by expanding `${VAR}` / `$VAR` references
+ * against `process.env`. Use this at apiKey /
  * authorization-header consumption sites (LLM client, embedder, agent SDK
  * runner) — NOT on the load path. Non-string inputs pass through unchanged.
  *
@@ -514,13 +415,8 @@ export function resolveSecret(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") return value;
   if (!value.includes("$")) return value;
-  return value.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
-    if (braced) {
-      const [name, ...rest] = (braced as string).split(":-");
-      const fallback = rest.join(":-");
-      return process.env[name] ?? fallback ?? "";
-    }
-    return process.env[bare as string] ?? "";
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
+    return process.env[(braced ?? bare) as string] ?? "";
   });
 }
 
@@ -553,65 +449,6 @@ export { parseSourceSpec, resolveConfiguredSources } from "./config-sources";
  * (current config + partial patch). Sub-objects with named records (profiles,
  * defaults, etc.) shallow-merge; arrays override wholesale.
  */
-function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
-  if (!override) return { ...base };
-  const merged: AkmConfig = { ...base, ...override };
-
-  // Shallow-merge sub-objects so a partial update to e.g. `output.format`
-  // doesn't drop the existing `output.detail`.
-  for (const key of ["output", "embedding", "index", "defaults"] as const) {
-    if (base[key] && override[key]) {
-      // biome-ignore lint/suspicious/noExplicitAny: heterogeneous structural merge
-      (merged as any)[key] = { ...base[key], ...override[key] };
-    }
-  }
-
-  if (base.profiles && override.profiles) {
-    const next: NonNullable<AkmConfig["profiles"]> = { ...base.profiles };
-    for (const k of ["llm", "agent", "improve"] as const) {
-      const ovr = override.profiles[k];
-      if (ovr) next[k] = { ...(next[k] ?? {}), ...ovr } as never;
-    }
-    merged.profiles = next;
-  }
-
-  return merged;
-}
-
-function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
-  const next = { ...config };
-
-  if (next.embedding && !next.embedding.apiKey) {
-    const envKey = process.env.AKM_EMBED_API_KEY?.trim();
-    if (envKey) next.embedding = { ...next.embedding, apiKey: envKey };
-  }
-
-  // LLM profile keys: AKM_LLM_API_KEY for the default profile, then
-  // AKM_PROFILE_<UPPER>_API_KEY for any profile (per-profile wins).
-  // Resolve the default profile the SAME way the rest of the config layer does
-  // (resolveDefaultLlmProfileName), so the implicit `profiles.llm.default`
-  // fallback is honored. Keying off the raw `defaults.llm` field alone silently
-  // dropped AKM_LLM_API_KEY for configs that rely on the implicit default —
-  // the same no-op-run class as the 2026-05-23 incident.
-  const defaultProfile = resolveDefaultLlmProfileName(next);
-  if (next.profiles?.llm) {
-    const updated = { ...next.profiles.llm };
-    let changed = false;
-    for (const [name, profile] of Object.entries(updated)) {
-      if (profile.apiKey) continue;
-      const perProfile = process.env[`AKM_PROFILE_${name.toUpperCase().replace(/-/g, "_")}_API_KEY`]?.trim();
-      const fallback = name === defaultProfile ? process.env.AKM_LLM_API_KEY?.trim() : undefined;
-      const envKey = perProfile || fallback;
-      if (envKey) {
-        updated[name] = { ...profile, apiKey: envKey };
-        changed = true;
-      }
-    }
-    if (changed) next.profiles = { ...next.profiles, llm: updated };
-  }
-
-  return next;
-}
 
 /**
  * Walk cwd-ancestors looking for `.akm/config.json`. If one is found, emit a

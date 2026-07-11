@@ -2,18 +2,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import profileCatchup from "../../assets/profiles/catchup.json" with { type: "json" };
-import profileConsolidate from "../../assets/profiles/consolidate.json" with { type: "json" };
-import profileDefault from "../../assets/profiles/default.json" with { type: "json" };
-import profileFrequent from "../../assets/profiles/frequent.json" with { type: "json" };
-import profileGraphRefresh from "../../assets/profiles/graph-refresh.json" with { type: "json" };
-import profileMemoryFocus from "../../assets/profiles/memory-focus.json" with { type: "json" };
-import profileProactiveMaintenance from "../../assets/profiles/proactive-maintenance.json" with { type: "json" };
-import profileQuick from "../../assets/profiles/quick.json" with { type: "json" };
-import profileRecombineOnly from "../../assets/profiles/recombine-only.json" with { type: "json" };
-import profileReflectDistill from "../../assets/profiles/reflect-distill.json" with { type: "json" };
-import profileSynthesize from "../../assets/profiles/synthesize.json" with { type: "json" };
-import profileThorough from "../../assets/profiles/thorough.json" with { type: "json" };
+import profileCatchup from "../../assets/improve-strategies/catchup.json" with { type: "json" };
+import profileConsolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
+import profileDefault from "../../assets/improve-strategies/default.json" with { type: "json" };
+import profileFrequent from "../../assets/improve-strategies/frequent.json" with { type: "json" };
+import profileGraphRefresh from "../../assets/improve-strategies/graph-refresh.json" with { type: "json" };
+import profileMemoryFocus from "../../assets/improve-strategies/memory-focus.json" with { type: "json" };
+import profileProactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with {
+  type: "json",
+};
+import profileQuick from "../../assets/improve-strategies/quick.json" with { type: "json" };
+import profileRecombineOnly from "../../assets/improve-strategies/recombine-only.json" with { type: "json" };
+import profileReflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
+import profileSynthesize from "../../assets/improve-strategies/synthesize.json" with { type: "json" };
+import profileThorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
