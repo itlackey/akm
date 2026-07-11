@@ -521,7 +521,8 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   // attempt in dispatchJournaledAttempt.
   let worktreeBase: string | undefined;
   if (willDispatch && template.isolation === "worktree") {
-    if (template.runner === "llm") {
+    const engine = template.invocation ? ctx.engines?.[template.invocation.engine] : undefined;
+    if (engine?.kind === "llm" || (!template.invocation && template.runner === "llm")) {
       return failedStep(
         dispatched,
         `Step "${plan.stepId}" declares isolation: worktree on an llm unit — the llm runner has no ` +

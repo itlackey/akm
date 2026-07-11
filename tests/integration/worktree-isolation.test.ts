@@ -34,8 +34,8 @@ import {
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
 import { isGitAvailable, runWorktreeRoot } from "../../src/workflows/exec/worktree";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
-import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import { compileResolveFreezeWorkflow } from "../../src/workflows/ir/freeze";
+import type { FrozenAgentEngine, FrozenLlmEngine, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { makeSandboxDir, withEnv, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -112,24 +112,40 @@ function seedRun(steps: Array<{ id: string; title: string }>, params: Record<str
 function plan(yamlText: string): WorkflowPlanGraph {
   const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
   if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return compileResolveFreezeWorkflow(
+    {
+      ref: "workflow:demo",
+      path: "workflows/demo.yaml",
+      sourcePath: "/tmp",
+      title: parsed.program.name,
+      steps: [],
+      program: parsed.program,
+    },
+    {
+      configVersion: "0.9.0",
+      engines: {
+        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+        "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test" },
+      },
+      defaults: { engine: "test-agent", llmEngine: "test-llm" },
+    } as never,
+  ).plan;
 }
 
-const SOLO_ISOLATED_WF = `version: 1
+const SOLO_ISOLATED_WF = `version: 2
 name: Isolated
+defaults: { engine: test-agent }
 steps:
   - id: work
     title: Work
     unit:
-      runner: agent
       isolation: worktree
       instructions: Do the work.
 `;
 
-const FAN_OUT_ISOLATED_WF = `version: 1
+const FAN_OUT_ISOLATED_WF = `version: 2
 name: Isolated fan-out
+defaults: { engine: test-agent }
 params:
   files: { type: array }
 steps:
@@ -139,7 +155,6 @@ steps:
       over: \${{ params.files }}
       concurrency: 2
       unit:
-        runner: agent
         isolation: worktree
         instructions: Edit \${{ item }}.
 `;
@@ -158,13 +173,16 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
       return { ok: true, text: "done" };
     };
 
-    const result = await executeStepPlan(plan(SOLO_ISOLATED_WF).steps[0], {
+    const workflow = plan(SOLO_ISOLATED_WF);
+    expect(workflow.irVersion).toBe(3);
+    const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
       params: {},
       evidence: {},
       dispatcher,
       workDir: repo,
+      engines: workflow.execution?.engines,
     });
 
     expect(result.ok).toBe(true);
@@ -198,13 +216,16 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
       return { ok: true, text: "done" };
     };
 
-    const result = await executeStepPlan(plan(SOLO_ISOLATED_WF).steps[0], {
+    const workflow = plan(SOLO_ISOLATED_WF);
+    expect(workflow.irVersion).toBe(3);
+    const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
       params: {},
       evidence: {},
       dispatcher,
       workDir: repo,
+      engines: workflow.execution?.engines,
     });
 
     expect(result.ok).toBe(true);
@@ -227,13 +248,16 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
       return { ok: true, text: "done" };
     };
 
-    const result = await executeStepPlan(plan(FAN_OUT_ISOLATED_WF).steps[0], {
+    const workflow = plan(FAN_OUT_ISOLATED_WF);
+    expect(workflow.irVersion).toBe(3);
+    const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
       params: { files: ["a.ts", "b.ts"] },
       evidence: {},
       dispatcher,
       workDir: repo,
+      engines: workflow.execution?.engines,
     });
 
     expect(result.ok).toBe(true);
@@ -250,7 +274,9 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     scratch.push(plainDir);
 
     let dispatched = 0;
-    const result = await executeStepPlan(plan(SOLO_ISOLATED_WF).steps[0], {
+    const workflow = plan(SOLO_ISOLATED_WF);
+    expect(workflow.irVersion).toBe(3);
+    const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
       params: {},
@@ -260,6 +286,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
         return { ok: true, text: "must not run" };
       },
       workDir: plainDir,
+      engines: workflow.execution?.engines,
     });
 
     expect(result.ok).toBe(false);
@@ -276,13 +303,13 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
 // The llm guard is git-independent (it rejects before touching git at all),
 // so it runs even where git is unavailable.
 describe("executeStepPlan — isolation: worktree on the llm runner", () => {
-  const LLM_ISOLATED_WF = `version: 1
+  const LLM_ISOLATED_WF = `version: 2
 name: Bad isolation
+defaults: { engine: test-llm }
 steps:
   - id: work
     title: Work
     unit:
-      runner: llm
       isolation: worktree
       instructions: Do the work.
 `;
@@ -290,7 +317,9 @@ steps:
   test("fails the step loudly — the llm runner has no working directory to isolate", async () => {
     seedRun([{ id: "work", title: "Work" }]);
     let dispatched = 0;
-    const result = await executeStepPlan(plan(LLM_ISOLATED_WF).steps[0], {
+    const workflow = plan(LLM_ISOLATED_WF);
+    expect(workflow.irVersion).toBe(3);
+    const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
       workflowRef: "workflow:demo",
       params: {},
@@ -300,6 +329,7 @@ steps:
         return { ok: true, text: "must not run" };
       },
       workDir: "/nonexistent-never-touched",
+      engines: workflow.execution?.engines,
     });
 
     expect(result.ok).toBe(false);
@@ -322,6 +352,23 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
   });
 
   const ENV_KEY = "OPENCODE_SDK_DISPATCH_TEST";
+  const SDK_ENGINE: FrozenAgentEngine = {
+    name: "mysdk",
+    kind: "agent",
+    runnerKind: "sdk",
+    platform: "opencode-sdk",
+    bin: "opencode",
+    args: [],
+    workspace: null,
+    envPassthrough: [],
+    fallbackLlmEngine: null,
+  };
+  const LLM_ENGINE: FrozenLlmEngine = {
+    name: "test-llm",
+    kind: "llm",
+    endpoint: "http://localhost:1/v1/chat/completions",
+    concurrency: 1,
+  };
 
   function baseRequest(overrides: Partial<UnitDispatchRequest>): UnitDispatchRequest {
     return {
@@ -331,6 +378,8 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
       nodeId: "work",
       prompt: "do the thing",
       runner: "sdk",
+      engine: SDK_ENGINE,
+      invocation: { engine: "mysdk", model: null, timeoutMs: 600_000 },
       timeoutMs: null,
       ...overrides,
     };
@@ -340,7 +389,11 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
     const cfg = makeSandboxDir("akm-wt-cfg");
     try {
       await withEnv({ XDG_CONFIG_HOME: cfg.dir }, async () => {
-        writeSandboxConfig({ profiles: { agent: { mysdk: { platform: "opencode-sdk" } } } });
+        writeSandboxConfig({
+          configVersion: "0.9.0",
+          engines: { mysdk: { kind: "agent", platform: "opencode-sdk" } },
+          defaults: { engine: "mysdk" },
+        });
 
         let injectedAtSpawn: string | undefined;
         let promptDirectory: string | undefined;
@@ -363,7 +416,7 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
         }) as never);
 
         const result = await defaultUnitDispatcher(
-          baseRequest({ profile: "mysdk", env: { [ENV_KEY]: "injected" }, cwd: "/tmp/akm-worktrees/r/u" }),
+          baseRequest({ env: { [ENV_KEY]: "injected" }, cwd: "/tmp/akm-worktrees/r/u" }),
         );
 
         expect(result.ok).toBe(true);
@@ -383,9 +436,18 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
     try {
       await withEnv({ XDG_CONFIG_HOME: cfg.dir }, async () => {
         writeSandboxConfig({
-          profiles: { llm: { default: { endpoint: "http://localhost:1/v1/chat/completions", model: "t" } } },
+          configVersion: "0.9.0",
+          engines: { "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "t" } },
+          defaults: { engine: "test-llm", llmEngine: "test-llm" },
         });
-        const result = await defaultUnitDispatcher(baseRequest({ runner: "llm", env: { FOO: "bar" } }));
+        const result = await defaultUnitDispatcher(
+          baseRequest({
+            runner: "llm",
+            engine: LLM_ENGINE,
+            invocation: { engine: "test-llm", model: "t", timeoutMs: 600_000 },
+            env: { FOO: "bar" },
+          }),
+        );
         expect(result.ok).toBe(false);
         expect(result.failureReason).toBe("env_unsupported");
         expect(result.error).toContain('"llm" runner cannot inject');
@@ -400,9 +462,18 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
     try {
       await withEnv({ XDG_CONFIG_HOME: cfg.dir }, async () => {
         writeSandboxConfig({
-          profiles: { llm: { default: { endpoint: "http://localhost:1/v1/chat/completions", model: "t" } } },
+          configVersion: "0.9.0",
+          engines: { "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "t" } },
+          defaults: { engine: "test-llm", llmEngine: "test-llm" },
         });
-        const result = await defaultUnitDispatcher(baseRequest({ runner: "llm", cwd: "/tmp/somewhere" }));
+        const result = await defaultUnitDispatcher(
+          baseRequest({
+            runner: "llm",
+            engine: LLM_ENGINE,
+            invocation: { engine: "test-llm", model: "t", timeoutMs: 600_000 },
+            cwd: "/tmp/somewhere",
+          }),
+        );
         expect(result.ok).toBe(false);
         expect(result.failureReason).toBe("isolation_unsupported");
         expect(result.error).toContain("no working directory to isolate");
