@@ -38,3 +38,12 @@ Use a skill when the stash needs reusable procedural guidance for a recurring cl
 - Add companion knowledge docs when the skill needs background material that would bloat the main procedure.
 - Promote durable recurring corrections into the skill; leave one-off observations in memories or lessons.
 - Prefer small edits that preserve the skill’s operational shape over broad rewrites that erase tested guidance.
+
+## Placement & linking
+
+- Skills are **reuse-born**: place `skills/<domain>/<name>/SKILL.md` under a
+  stable **domain** prefix from `fact:conventions/domains`
+  (`skill:testing/flaky-test-triage`) so any project finds and reuses it instead
+  of duplicating the procedure.
+- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
+  full placement and cross-linking rules.

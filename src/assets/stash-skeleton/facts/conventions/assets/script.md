@@ -41,3 +41,11 @@ Use a script when a task is mechanical, repeatable, and better handled by a dete
 - Keep dangerous actions behind explicit flags.
 - When a script becomes a core operation, add or update a workflow that explains when to run it.
 - If the script encodes a convention, also document that convention in a fact or knowledge asset.
+
+## Placement & linking
+
+- Scripts are usually **reuse-born**: file a general helper under a
+  tool/domain slug (`script:build/release`); keep a project-specific script under
+  the project slug only when it truly won't generalize.
+- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
+  full placement and cross-linking rules.

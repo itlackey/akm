@@ -229,6 +229,16 @@ that subtree.
 or multi-team stashes. They survive renames, sort cleanly on disk, and
 require no configuration.
 
+**Which subdirectory?** Choose the partition axis by asset **type**:
+scope-born types (`memory`, `lesson`, `task`, `env`, `secret`) take the current
+**project/client** slug; reuse-born types (`knowledge`, `skill`, `wiki`, `fact`)
+take a stable **domain**. The full rules — depth limits, no-volatile-facets,
+off-axis facets as tags, and how to cross-link for retrieval — ship as the
+`fact:conventions/organization`, `fact:conventions/backlinks`, and
+`fact:conventions/domains` convention facts in the stash skeleton, and are
+surfaced to agents automatically at authoring time. See
+[design/stash-organization-conventions.md](design/stash-organization-conventions.md).
+
 Future iterations (no committed dates):
 
 - A `--namespace <ns>` flag will provide a thin name-prefix normalizer on

@@ -41,3 +41,11 @@ Use a workflow when the task requires multiple steps, branching decisions, repea
 - Add logging expectations when the workflow creates durable state.
 - Extract reusable sub-procedures into skills or scripts when the workflow grows too broad.
 - Record recurring mistakes as lessons, then fold stable corrections back into the workflow.
+
+## Placement & linking
+
+- Workflows are usually **global**: keep them at the type root or under a
+  tool/domain slug (`workflow:release-train`). Scoping a workflow to one project
+  rarely improves retrieval and adds rename risk.
+- See `fact:conventions/organization` and `fact:conventions/backlinks` for the
+  full placement and cross-linking rules.
