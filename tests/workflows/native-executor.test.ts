@@ -1391,7 +1391,12 @@ steps:
   });
 
   test("refuses a non-active run BEFORE dispatching any unit (peer review #2)", async () => {
-    seedRun({ steps: [{ id: "first", title: "First" }] });
+    seedRun({
+      steps: [
+        { id: "first", title: "First" },
+        { id: "second", title: "Second" },
+      ],
+    });
     const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
     try {
       db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
@@ -1434,12 +1439,18 @@ steps:
         },
         loadPlan: useFrozenPlan(outOfOrder),
       }),
-    ).rejects.toThrow(/depends on step "second"/);
+    ).rejects.toThrow(/invalid dependency/);
     expect(dispatches).toBe(0);
   });
 
   test("the lifetime unit cap is seeded from the run's journal (peer review #4)", async () => {
-    seedRun({ params: { flavor: "vanilla" }, steps: [{ id: "first", title: "First" }] });
+    seedRun({
+      params: { flavor: "vanilla" },
+      steps: [
+        { id: "first", title: "First" },
+        { id: "second", title: "Second" },
+      ],
+    });
     const { LIFETIME_UNIT_CAP } = await import("../../src/workflows/exec/scheduler");
     await withWorkflowRunsRepo((repo) => {
       for (let i = 0; i < LIFETIME_UNIT_CAP; i++) {

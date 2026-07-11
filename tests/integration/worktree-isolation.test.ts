@@ -361,12 +361,15 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
     args: [],
     workspace: null,
     envPassthrough: [],
+    commandBuilder: "opencode-sdk",
     fallbackLlmEngine: null,
   };
   const LLM_ENGINE: FrozenLlmEngine = {
     name: "test-llm",
     kind: "llm",
     endpoint: "http://localhost:1/v1/chat/completions",
+    model: "test-model",
+    timeoutMs: null,
     concurrency: 1,
   };
 

@@ -68,7 +68,8 @@ import { disposeDispatchResources } from "../../integrations/agent/runner-dispat
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { assertRunParamsSatisfyPlan } from "../ir/params";
-import type { WorkflowPlanGraph } from "../ir/schema";
+import { computePlanHash } from "../ir/plan-hash";
+import { decodeWorkflowPlanV3, type WorkflowPlanGraph } from "../ir/schema";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
 import type { SummaryJudge } from "../validate-summary";
@@ -466,11 +467,14 @@ async function driveRun(
   let unitsDispatched = journaledDispatches.reduce((sum, row) => sum + row.attempts, 0);
   let tokensUsed = journaledDispatches.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
 
-  // One plan per invocation: the test seam receives the workflow ref; the
-  // default reads the run's frozen plan and never touches the asset file.
-  const plan = options.loadPlan
-    ? await options.loadPlan(next.run.workflowRef)
-    : await loadFrozenPlan(next.run.id, next.run.workflowRef);
+  // The decoded/hash-verified row plan is the sole execution authority. The
+  // loader seam may assert an expected plan in tests, but can never replace it.
+  const plan = await loadFrozenPlan(next.run.id, next.run.workflowRef);
+  if (options.loadPlan) {
+    const expected = decodeWorkflowPlanV3(await options.loadPlan(next.run.workflowRef));
+    if (computePlanHash(expected) !== computePlanHash(plan))
+      throw new UsageError(`Injected workflow plan for run ${next.run.id} differs from its frozen plan.`);
+  }
 
   // Reviewer #12: the journaled params row must still satisfy the frozen param
   // schemas before the engine resolves any unit prompt from it. Applied on ALL
@@ -664,7 +668,7 @@ async function driveRun(
         workflowRef: next.run.workflowRef,
         stepId: step.id,
         stepPlan,
-        completionCriteria: step.completionCriteria ?? [],
+        completionCriteria: stepPlan.gate.criteria,
         gateLoop,
         loopsRemaining: gateLoop < maxLoops,
         result,

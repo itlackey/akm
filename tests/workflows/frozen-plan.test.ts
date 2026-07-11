@@ -5,13 +5,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { UsageError } from "../../src/core/errors";
 import { resolveStorageLocations } from "../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
+import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
+import { reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { startWorkflowRun } from "../../src/workflows/runtime/runs";
+import {
+  abandonWorkflowRun,
+  completeWorkflowStep,
+  getNextWorkflowStep,
+  getWorkflowStatus,
+  listWorkflowRuns,
+  resumeWorkflowRun,
+  startWorkflowRun,
+} from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 /**
@@ -180,7 +191,10 @@ describe("plan freezing at workflow start (migration 006)", () => {
     const started = await startWorkflowRun("workflow:legacy", {});
 
     // Simulate a run created before migration 006: no frozen plan on the row.
-    execOnWorkflowDb("UPDATE workflow_runs SET plan_json = NULL, plan_hash = NULL WHERE id = ?", started.run.id);
+    execOnWorkflowDb(
+      "UPDATE workflow_runs SET plan_json = NULL, plan_hash = NULL, plan_ir_version = NULL WHERE id = ?",
+      started.run.id,
+    );
 
     let dispatches = 0;
     await expect(
@@ -193,5 +207,76 @@ describe("plan freezing at workflow start (migration 006)", () => {
       }),
     ).rejects.toThrow(new RegExp(`${started.run.id}.*inspection-only.*workflow abandon`, "s"));
     expect(dispatches).toBe(0);
+  });
+
+  test("historical IR command matrix is inspection/abandon only with the exact unsupported code", async () => {
+    writeWorkflow("old-matrix", "Do old work.");
+    const started = await startWorkflowRun("workflow:old-matrix", {});
+    execOnWorkflowDb(
+      "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = 2 WHERE id = ?",
+      '{"irVersion":2}',
+      started.run.id,
+    );
+
+    const status = await getWorkflowStatus(started.run.id);
+    expect(status.run.executionSupport).toBe("unsupported-version");
+    expect((await listWorkflowRuns()).runs.find((run) => run.id === started.run.id)?.executionSupport).toBe(
+      "unsupported-version",
+    );
+
+    const expectUnsupported = async (operation: Promise<unknown>): Promise<void> => {
+      try {
+        await operation;
+        throw new Error("expected unsupported workflow IR rejection");
+      } catch (error) {
+        expect(error).toBeInstanceOf(UsageError);
+        expect((error as UsageError).code).toBe("WORKFLOW_IR_VERSION_UNSUPPORTED");
+      }
+    };
+    await expectUnsupported(getNextWorkflowStep(started.run.id));
+    await expectUnsupported(buildWorkflowBrief(started.run.id));
+    await expectUnsupported(
+      reportWorkflowUnit({ target: started.run.id, unitId: "only-step:solo", status: "running" }),
+    );
+    await expectUnsupported(completeWorkflowStep({ runId: started.run.id, stepId: "only-step", status: "blocked" }));
+    await expectUnsupported(resumeWorkflowRun(started.run.id));
+    await expectUnsupported(runWorkflowSteps({ target: started.run.id, summaryJudge: null }));
+
+    const abandoned = await abandonWorkflowRun(started.run.id);
+    expect(abandoned.run.status).toBe("failed");
+  });
+
+  test("bad hash and spine mismatch are rejected before any workflow mutation", async () => {
+    writeWorkflow("preflight", "Do immutable work.");
+    const started = await startWorkflowRun("workflow:preflight", {});
+    const beforeRun = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
+    const beforeSteps = await withWorkflowRunsRepo((repo) => repo.getStepsForRun(started.run.id));
+
+    execOnWorkflowDb("UPDATE workflow_runs SET plan_hash = ? WHERE id = ?", "0".repeat(64), started.run.id);
+    await expect(
+      completeWorkflowStep({ runId: started.run.id, stepId: "only-step", status: "blocked" }),
+    ).rejects.toThrow(/integrity check failed/);
+    await expect(abandonWorkflowRun(started.run.id)).rejects.toThrow(/integrity check failed/);
+
+    const afterBadHashRun = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
+    const afterBadHashSteps = await withWorkflowRunsRepo((repo) => repo.getStepsForRun(started.run.id));
+    expect(afterBadHashRun?.status).toBe(beforeRun?.status);
+    expect(afterBadHashRun?.updated_at).toBe(beforeRun?.updated_at);
+    expect(afterBadHashSteps).toEqual(beforeSteps);
+
+    const valid = beforeRun;
+    if (!valid?.plan_hash) throw new Error("fixture requires a plan hash");
+    execOnWorkflowDb("UPDATE workflow_runs SET plan_hash = ? WHERE id = ?", valid.plan_hash, started.run.id);
+    execOnWorkflowDb(
+      "UPDATE workflow_run_steps SET instructions = ? WHERE run_id = ? AND step_id = ?",
+      "tampered instructions",
+      started.run.id,
+      "only-step",
+    );
+    await expect(
+      completeWorkflowStep({ runId: started.run.id, stepId: "only-step", status: "blocked" }),
+    ).rejects.toThrow(/corrupt durable step spine/);
+    expect((await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id)))?.status).toBe("active");
+    expect((await withWorkflowRunsRepo((repo) => repo.getStep(started.run.id, "only-step")))?.status).toBe("pending");
   });
 });

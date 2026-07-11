@@ -40,7 +40,7 @@ import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { assertRunParamsSatisfyPlan } from "../ir/params";
 import type { IrMapReducer, IrOnError, IrRetry, IrRunnerKind } from "../ir/schema";
 import type { ExpressionScope } from "../program/expressions";
-import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
+import { frozenStepRows, requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { snapshotRunForDriver } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
 import { detectSecretShapedParams } from "./param-secrets";
@@ -399,14 +399,16 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
 
   const isRouteOnly = !!stepPlan.route && !stepPlan.root;
   const kind: WorkflowBriefStep["kind"] = isRouteOnly ? "route" : stepPlan.route ? "execute-and-route" : "execute";
-  const criteria = stepState.completionCriteria ?? [];
+  const criteria = stepPlan.gate.criteria;
+  const instructions = frozenStepRows(plan).find((step) => step.stepId === stepState.id)?.instructions;
+  if (instructions === undefined) throw new UsageError(`Step "${stepState.id}" has no frozen instructions.`);
 
   const step: WorkflowBriefStep = {
     stepId: stepState.id,
-    title: stepState.title,
-    sequenceIndex: stepState.sequenceIndex ?? 0,
+    title: stepPlan.title,
+    sequenceIndex: stepPlan.sequenceIndex,
     kind,
-    instructions: stepState.instructions,
+    instructions,
     gate: {
       criteria,
       maxLoops: Math.max(1, stepPlan.gate.maxLoops ?? 1),

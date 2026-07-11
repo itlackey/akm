@@ -2,8 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import path from "node:path";
 import { UsageError } from "../../core/errors";
 import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
+import { HARNESS_BY_ID } from "../../integrations/harnesses";
+import { listReferences, parseTemplate } from "../program/expressions";
+import { PROGRAM_PARAM_NAME_PATTERN, PROGRAM_RETRY_REASONS, PROGRAM_STEP_ID_PATTERN } from "../program/schema";
 import type { SourceRef } from "../schema";
 
 /** The only executable persisted workflow plan format. */
@@ -31,6 +35,9 @@ export interface FrozenLlmEngine {
   kind: "llm";
   provider?: string;
   endpoint: string;
+  /** Exact base model used by SDK fallbacks and inherited LLM invocations. */
+  model: string;
+  timeoutMs: number | null;
   credential?: FrozenCredential;
   temperature?: number;
   maxTokens?: number;
@@ -50,6 +57,7 @@ export interface FrozenAgentEngine {
   args: string[];
   workspace: string | null;
   envPassthrough: string[];
+  commandBuilder: string;
   fallbackLlmEngine: string | null;
 }
 
@@ -139,8 +147,17 @@ export interface WorkflowPlanGraph {
   steps: IrStepPlan[];
 }
 
-const MAX_STEPS = 256;
-const MAX_ENGINES = 64;
+export const WORKFLOW_MAX_STEPS = 256;
+export const WORKFLOW_MAX_ENGINES = 64;
+export const WORKFLOW_MAX_CONCURRENCY = 64;
+export const WORKFLOW_MAX_PARAMS = 256;
+export const WORKFLOW_MAX_GATE_LOOPS = 100;
+export const WORKFLOW_MAX_RETRIES = 100;
+export const WORKFLOW_MAX_UNITS = 1000;
+export const WORKFLOW_MAX_TIMEOUT_MS = 2 ** 31 - 1;
+const MAX_LIST_ITEMS = 1024;
+const MAX_STRING_LENGTH = 1_000_000;
+const ENGINE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /** Strictly decode persisted v3 data before it can drive a workflow. */
 export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
@@ -148,55 +165,80 @@ export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
   assertJson(input);
   const plan = input as unknown as WorkflowPlanGraph;
   assertKeys(input, ["irVersion", "title", "params", "paramSchemas", "budget", "execution", "steps"], "plan");
-  if (typeof plan.title !== "string" || !plan.title) fail("title must be a non-empty string");
+  assertString(plan.title, "title");
+  validateParams(plan.params, plan.paramSchemas);
+  validateBudget(plan.budget);
   if (
     !isRecord(plan.execution) ||
     !Number.isInteger(plan.execution.maxConcurrency) ||
     (plan.execution.maxConcurrency as number) < 1 ||
-    (plan.execution.maxConcurrency as number) > 64
+    (plan.execution.maxConcurrency as number) > WORKFLOW_MAX_CONCURRENCY
   ) {
     fail("execution.maxConcurrency must be an integer from 1 through 64");
   }
+  assertKeys(plan.execution, ["maxConcurrency", "engines"], "execution");
   if (!isRecord(plan.execution.engines)) fail("execution.engines must be an object");
   const engines = plan.execution.engines as Record<string, FrozenEngineSnapshot>;
-  if (Object.keys(engines).length > MAX_ENGINES) fail(`execution.engines exceeds ${MAX_ENGINES} entries`);
+  if (Object.keys(engines).length > WORKFLOW_MAX_ENGINES)
+    fail(`execution.engines exceeds ${WORKFLOW_MAX_ENGINES} entries`);
   const references = new Set<string>();
   for (const [key, engine] of Object.entries(engines)) validateEngine(key, engine, references);
-  if (!Array.isArray(plan.steps) || plan.steps.length === 0 || plan.steps.length > MAX_STEPS)
+  if (!Array.isArray(plan.steps) || plan.steps.length === 0 || plan.steps.length > WORKFLOW_MAX_STEPS)
     fail("steps must contain 1 through 256 entries");
   const stepIds = new Set<string>();
   const nodeIds = new Set<string>();
   for (let index = 0; index < plan.steps.length; index++) {
     const step = plan.steps[index];
-    if (!isRecord(step) || typeof step.stepId !== "string" || !step.stepId || stepIds.has(step.stepId))
+    if (
+      !isRecord(step) ||
+      typeof step.stepId !== "string" ||
+      !PROGRAM_STEP_ID_PATTERN.test(step.stepId) ||
+      stepIds.has(step.stepId)
+    )
       fail("step ids must be unique non-empty strings");
     stepIds.add(step.stepId);
     if (step.sequenceIndex !== index) fail("step sequence indices must be contiguous and unique");
-    if (typeof step.title !== "string" || !step.title) fail(`step ${step.stepId} has no title`);
+    assertString(step.title, `step ${step.stepId} title`);
     if (!!step.root === !!step.route) fail(`step ${step.stepId} must contain exactly one of root or route`);
     assertKeys(
       step,
       ["stepId", "title", "sequenceIndex", "dependsOn", "root", "route", "outputSchema", "gate"],
       `step ${step.stepId}`,
     );
-    if (step.root) validateNode(step.root, references, nodeIds);
+    validateStringArray(step.dependsOn, `step ${step.stepId} dependsOn`, WORKFLOW_MAX_STEPS, true);
+    if (step.outputSchema !== undefined && !isRecord(step.outputSchema))
+      fail(`step ${step.stepId} outputSchema must be an object`);
+    if (step.root) validateNode(step.root, step.stepId, references, nodeIds);
     if (step.route) validateRoute(step.route, step.stepId);
     validateGate(step.gate, step.stepId, references, nodeIds);
   }
-  for (const step of plan.steps) {
+  const stepIndex = new Map(plan.steps.map((step, index) => [step.stepId, index]));
+  for (const [index, step] of plan.steps.entries()) {
     for (const target of step.route
       ? [...Object.values(step.route.when), ...(step.route.defaultStepId ? [step.route.defaultStepId] : [])]
       : []) {
-      if (!stepIds.has(target)) fail(`route target ${target} does not name a step`);
+      const targetIndex = stepIndex.get(target);
+      if (targetIndex === undefined) fail(`route target ${target} does not name a step`);
+      if (targetIndex <= index) fail(`route target ${target} must come after step ${step.stepId}`);
     }
+    const dependencies = new Set<string>();
     for (const dependency of step.dependsOn ?? []) {
-      if (!stepIds.has(dependency) || dependency === step.stepId) fail(`step ${step.stepId} has an invalid dependency`);
+      const dependencyIndex = stepIndex.get(dependency);
+      if (dependencyIndex === undefined || dependencyIndex >= index || dependencies.has(dependency))
+        fail(`step ${step.stepId} has an invalid dependency`);
+      dependencies.add(dependency);
     }
+    validateStepExpressions(step, index, stepIndex);
   }
   for (const name of references) {
     if (!engines[name]) fail(`engine reference ${name} is not in execution.engines`);
   }
   for (const name of Object.keys(engines)) if (!references.has(name)) fail(`engine ${name} is not referenced`);
+  for (const engine of Object.values(engines)) {
+    if (engine.kind !== "agent") continue;
+    if (engine.fallbackLlmEngine !== null && engines[engine.fallbackLlmEngine]?.kind !== "llm")
+      fail(`SDK engine ${engine.name} fallback must name an LLM engine`);
+  }
   for (const step of plan.steps) {
     if (step.root) assertUnitEngineCompatibility(step.root, engines);
     if (step.gate.judge) {
@@ -208,7 +250,13 @@ export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
 }
 
 function validateEngine(key: string, engine: unknown, references: Set<string>): void {
-  if (!isRecord(engine) || engine.name !== key || (engine.kind !== "llm" && engine.kind !== "agent"))
+  if (
+    !ENGINE_NAME_PATTERN.test(key) ||
+    key.length > 63 ||
+    !isRecord(engine) ||
+    engine.name !== key ||
+    (engine.kind !== "llm" && engine.kind !== "agent")
+  )
     fail("catalog keys must equal a valid snapshot name");
   if (engine.kind === "llm") {
     assertKeys(
@@ -218,6 +266,8 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
         "kind",
         "provider",
         "endpoint",
+        "model",
+        "timeoutMs",
         "credential",
         "temperature",
         "maxTokens",
@@ -232,25 +282,60 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
     if (
       typeof engine.endpoint !== "string" ||
       !engine.endpoint ||
+      typeof engine.model !== "string" ||
+      !engine.model ||
+      !(
+        engine.timeoutMs === null ||
+        (Number.isSafeInteger(engine.timeoutMs) &&
+          (engine.timeoutMs as number) >= 1 &&
+          (engine.timeoutMs as number) <= WORKFLOW_MAX_TIMEOUT_MS)
+      ) ||
       !Number.isInteger(engine.concurrency) ||
-      (engine.concurrency as number) < 1
+      (engine.concurrency as number) < 1 ||
+      (engine.concurrency as number) > WORKFLOW_MAX_CONCURRENCY
     )
       fail(`LLM engine ${key} is invalid`);
+    if (engine.provider !== undefined) assertString(engine.provider, `LLM engine ${key} provider`);
+    validateEndpoint(engine.endpoint, key);
+    validateOptionalFiniteNumber(engine.temperature, `LLM engine ${key} temperature`);
+    validateOptionalPositiveInteger(engine.maxTokens, `LLM engine ${key} maxTokens`);
+    validateOptionalPositiveInteger(engine.contextLength, `LLM engine ${key} contextLength`);
+    if (engine.supportsJsonSchema !== undefined && typeof engine.supportsJsonSchema !== "boolean")
+      fail(`LLM engine ${key} supportsJsonSchema must be boolean`);
+    if (engine.enableThinking !== undefined && typeof engine.enableThinking !== "boolean")
+      fail(`LLM engine ${key} enableThinking must be boolean`);
+    if (engine.extraParams !== undefined && !isRecord(engine.extraParams))
+      fail(`LLM engine ${key} extraParams must be an object`);
     if (engine.credential !== undefined) {
       if (
         !isRecord(engine.credential) ||
         !Array.isArray(engine.credential.names) ||
         engine.credential.names.length === 0 ||
-        !engine.credential.names.every((n) => typeof n === "string" && n)
+        engine.credential.names.length > 32 ||
+        !engine.credential.names.every((n) => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)) ||
+        new Set(engine.credential.names).size !== engine.credential.names.length ||
+        typeof engine.credential.required !== "boolean"
       ) {
         fail(`LLM engine ${key} has an invalid credential descriptor`);
       }
+      assertKeys(engine.credential, ["names", "required"], `LLM engine ${key} credential`);
     }
     return;
   }
   assertKeys(
     engine,
-    ["name", "kind", "runnerKind", "platform", "bin", "args", "workspace", "envPassthrough", "fallbackLlmEngine"],
+    [
+      "name",
+      "kind",
+      "runnerKind",
+      "platform",
+      "bin",
+      "args",
+      "workspace",
+      "envPassthrough",
+      "commandBuilder",
+      "fallbackLlmEngine",
+    ],
     `agent engine ${key}`,
   );
   if (
@@ -260,8 +345,17 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
     typeof engine.bin !== "string" ||
     !engine.bin ||
     !Array.isArray(engine.args) ||
-    !engine.args.every((arg) => typeof arg === "string") ||
-    !Array.isArray(engine.envPassthrough)
+    engine.args.length > MAX_LIST_ITEMS ||
+    !engine.args.every((arg) => typeof arg === "string" && arg.length <= MAX_STRING_LENGTH) ||
+    !(typeof engine.workspace === "string" || engine.workspace === null) ||
+    !Array.isArray(engine.envPassthrough) ||
+    engine.envPassthrough.length > MAX_LIST_ITEMS ||
+    !engine.envPassthrough.every((name) => typeof name === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) ||
+    new Set(engine.envPassthrough).size !== engine.envPassthrough.length ||
+    typeof engine.commandBuilder !== "string" ||
+    engine.commandBuilder !== engine.platform ||
+    (engine.workspace !== null && !path.isAbsolute(engine.workspace)) ||
+    !HARNESS_BY_ID.get(engine.platform)?.capabilities.agentDispatch
   )
     fail(`agent engine ${key} is invalid`);
   if ((engine.platform === "opencode-sdk") !== (engine.runnerKind === "sdk"))
@@ -275,7 +369,7 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
   }
 }
 
-function validateNode(node: unknown, references: Set<string>, nodeIds: Set<string>): void {
+function validateNode(node: unknown, stepId: string, references: Set<string>, nodeIds: Set<string>): void {
   if (
     !isRecord(node) ||
     (node.kind !== "unit" && node.kind !== "map") ||
@@ -292,11 +386,15 @@ function validateNode(node: unknown, references: Set<string>, nodeIds: Set<strin
       !node.over ||
       !Number.isInteger(node.concurrency) ||
       (node.concurrency as number) < 1 ||
+      (node.concurrency as number) > WORKFLOW_MAX_CONCURRENCY ||
       (node.reducer !== "collect" && node.reducer !== "vote")
     )
       fail(`map ${node.id} is invalid`);
-    validateNode(node.template, references, nodeIds);
+    if (node.id !== `${stepId}.map`) fail(`map ${node.id} does not match step ${stepId}`);
+    validateSource(node.source, `map ${node.id} source`);
+    validateNode(node.template, stepId, references, nodeIds);
     if (!isRecord(node.template) || node.template.kind !== "unit") fail(`map ${node.id} template must be a unit`);
+    if (node.template.id !== `${stepId}.unit`) fail(`map ${node.id} template id is invalid`);
     return;
   }
   assertKeys(
@@ -324,6 +422,11 @@ function validateNode(node: unknown, references: Set<string>, nodeIds: Set<strin
     (node.isolation !== "none" && node.isolation !== "worktree")
   )
     fail(`unit ${node.id} is invalid`);
+  if (node.id !== stepId && node.id !== `${stepId}.unit`) fail(`unit ${node.id} does not belong to step ${stepId}`);
+  if (node.schema !== undefined && !isRecord(node.schema)) fail(`unit ${node.id} schema must be an object`);
+  validateRetry(node.retry, node.id);
+  validateStringArray(node.env, `unit ${node.id} env`, MAX_LIST_ITEMS, true);
+  validateSource(node.source, `unit ${node.id} source`);
   validateInvocation(node.invocation, references);
 }
 
@@ -334,15 +437,19 @@ function validateGate(gate: unknown, stepId: string, references: Set<string>, no
     gate.id !== `${stepId}.gate` ||
     gate.stepId !== stepId ||
     !Array.isArray(gate.criteria) ||
-    !gate.criteria.every((x) => typeof x === "string") ||
+    gate.criteria.length > MAX_LIST_ITEMS ||
+    !gate.criteria.every((x) => typeof x === "string" && x.length > 0 && x.length <= MAX_STRING_LENGTH) ||
     !Number.isInteger(gate.maxLoops) ||
     (gate.maxLoops as number) < 1 ||
+    (gate.maxLoops as number) > WORKFLOW_MAX_GATE_LOOPS ||
     typeof gate.required !== "boolean"
   )
     fail(`gate for step ${stepId} is invalid`);
   if (nodeIds.has(gate.id)) fail(`gate id ${gate.id} collides with a node`);
   assertKeys(gate, ["kind", "id", "stepId", "criteria", "maxLoops", "required", "judge"], `gate ${stepId}`);
   nodeIds.add(gate.id);
+  if (gate.criteria.length === 0 && gate.judge !== null) fail(`gate ${gate.id} without criteria cannot have a judge`);
+  if (gate.required && gate.criteria.length === 0) fail(`gate ${gate.id} cannot be required without criteria`);
   if (gate.judge !== null) validateInvocation(gate.judge, references);
 }
 
@@ -351,12 +458,18 @@ function validateInvocation(invocation: unknown, references: Set<string>): void 
     !isRecord(invocation) ||
     typeof invocation.engine !== "string" ||
     !invocation.engine ||
-    !(typeof invocation.model === "string" || invocation.model === null) ||
-    !(typeof invocation.timeoutMs === "number" || invocation.timeoutMs === null)
+    !((typeof invocation.model === "string" && invocation.model.length > 0) || invocation.model === null) ||
+    !(
+      invocation.timeoutMs === null ||
+      (Number.isSafeInteger(invocation.timeoutMs) &&
+        (invocation.timeoutMs as number) >= 1 &&
+        (invocation.timeoutMs as number) <= WORKFLOW_MAX_TIMEOUT_MS)
+    )
   )
     fail("invocation is invalid");
   references.add(invocation.engine);
   assertKeys(invocation, ["engine", "model", "timeoutMs", "llm"], "invocation");
+  validateLlmOverrides(invocation.llm);
 }
 
 function validateRoute(route: unknown, stepId: string): void {
@@ -366,15 +479,23 @@ function validateRoute(route: unknown, stepId: string): void {
     !route.input ||
     !isRecord(route.when) ||
     Object.keys(route.when).length === 0 ||
+    Object.keys(route.when).length > MAX_LIST_ITEMS ||
+    !Object.keys(route.when).every((match) => match.length > 0 && match.length <= MAX_STRING_LENGTH) ||
     !Object.values(route.when).every((target) => typeof target === "string" && target)
   )
     fail(`route for step ${stepId} is invalid`);
+  assertKeys(route, ["input", "when", "defaultStepId"], `route ${stepId}`);
+  if (route.defaultStepId !== undefined && (typeof route.defaultStepId !== "string" || !route.defaultStepId))
+    fail(`route for step ${stepId} has an invalid default target`);
 }
 
 function assertUnitEngineCompatibility(node: IrExecNode, engines: Record<string, FrozenEngineSnapshot>): void {
   const unit = node.kind === "map" ? node.template : node;
   const engine = unit.invocation ? engines[unit.invocation.engine] : undefined;
   if (!engine) return;
+  if (engine.kind === "llm" && unit.invocation?.model === null) fail(`LLM unit ${unit.id} has no exact model`);
+  if (engine.kind === "agent" && unit.invocation?.llm !== undefined)
+    fail(`agent unit ${unit.id} cannot carry LLM invocation settings`);
   if (engine.kind === "llm" && ((unit.env?.length ?? 0) > 0 || unit.isolation === "worktree")) {
     fail(`LLM unit ${unit.id} cannot use env injection or worktree isolation`);
   }
@@ -386,7 +507,11 @@ function assertKeys(value: Record<string, unknown>, allowed: readonly string[], 
 
 function assertJson(value: unknown, depth = 0): void {
   if (depth > 64) fail("plan exceeds JSON depth limit");
-  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    if (value.length > MAX_STRING_LENGTH) fail("plan contains an oversized string");
+    return;
+  }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) fail("plan contains a non-finite number");
     return;
@@ -400,6 +525,162 @@ function assertJson(value: unknown, depth = 0): void {
     return;
   }
   fail("plan contains a non-JSON value");
+}
+
+function validateParams(
+  params: string[] | undefined,
+  schemas: Record<string, Record<string, unknown>> | undefined,
+): void {
+  validateStringArray(params, "params", WORKFLOW_MAX_PARAMS, true);
+  if (params?.some((name) => !PROGRAM_PARAM_NAME_PATTERN.test(name))) fail("params contains an invalid name");
+  if (schemas !== undefined) {
+    if (!isRecord(schemas) || Object.keys(schemas).length > WORKFLOW_MAX_PARAMS)
+      fail("paramSchemas must be a bounded object");
+    for (const [name, schema] of Object.entries(schemas)) {
+      if (!PROGRAM_PARAM_NAME_PATTERN.test(name) || !isRecord(schema)) fail(`paramSchemas.${name} is invalid`);
+    }
+  }
+  const names = params ?? [];
+  if (schemas && (names.length !== Object.keys(schemas).length || names.some((name) => !Object.hasOwn(schemas, name))))
+    fail("params and paramSchemas must name the same parameters");
+  if (!schemas && names.length > 0) {
+    // Markdown workflows have named parameters but no schemas, which is valid.
+    return;
+  }
+}
+
+function validateBudget(budget: IrBudget | undefined): void {
+  if (budget === undefined) return;
+  if (!isRecord(budget)) fail("budget must be an object");
+  assertKeys(budget, ["maxTokens", "maxUnits"], "budget");
+  if (budget.maxTokens === undefined && budget.maxUnits === undefined) fail("budget must declare a ceiling");
+  validateOptionalPositiveInteger(budget.maxTokens, "budget.maxTokens");
+  const maxUnits = budget.maxUnits;
+  if (
+    maxUnits !== undefined &&
+    (!Number.isSafeInteger(maxUnits) || (maxUnits as number) < 1 || (maxUnits as number) > WORKFLOW_MAX_UNITS)
+  )
+    fail(`budget.maxUnits must be an integer from 1 through ${WORKFLOW_MAX_UNITS}`);
+}
+
+function validateRetry(retry: unknown, nodeId: string): void {
+  if (retry === undefined) return;
+  if (!isRecord(retry)) fail(`unit ${nodeId} retry must be an object`);
+  assertKeys(retry, ["max", "on"], `unit ${nodeId} retry`);
+  if (!Number.isSafeInteger(retry.max) || (retry.max as number) < 0 || (retry.max as number) > WORKFLOW_MAX_RETRIES)
+    fail(`unit ${nodeId} retry.max is invalid`);
+  validateStringArray(retry.on, `unit ${nodeId} retry.on`, PROGRAM_RETRY_REASONS.length, true);
+  if (
+    retry.on === undefined ||
+    retry.on.length === 0 ||
+    retry.on.some((reason) => !PROGRAM_RETRY_REASONS.includes(reason as never))
+  )
+    fail(`unit ${nodeId} retry.on is invalid`);
+}
+
+function validateLlmOverrides(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) fail("invocation.llm must be an object");
+  assertKeys(
+    value,
+    ["temperature", "maxTokens", "supportsJsonSchema", "extraParams", "contextLength", "enableThinking"],
+    "invocation.llm",
+  );
+  validateOptionalFiniteNumber(value.temperature, "invocation.llm.temperature");
+  validateOptionalPositiveInteger(value.maxTokens, "invocation.llm.maxTokens");
+  validateOptionalPositiveInteger(value.contextLength, "invocation.llm.contextLength");
+  if (value.supportsJsonSchema !== undefined && typeof value.supportsJsonSchema !== "boolean")
+    fail("invocation.llm.supportsJsonSchema must be boolean");
+  if (value.enableThinking !== undefined && typeof value.enableThinking !== "boolean")
+    fail("invocation.llm.enableThinking must be boolean");
+  if (value.extraParams !== undefined && !isRecord(value.extraParams))
+    fail("invocation.llm.extraParams must be an object");
+}
+
+function validateStepExpressions(step: IrStepPlan, index: number, steps: Map<string, number>): void {
+  const validateReferences = (text: string, label: string, itemAllowed: boolean, wholeValue: boolean): void => {
+    const parsed = parseTemplate(text);
+    if (!parsed.ok) fail(`${label} contains an invalid expression`);
+    if (wholeValue && (parsed.segments.length !== 1 || parsed.segments[0]?.kind !== "reference"))
+      fail(`${label} must be one whole-value expression`);
+    for (const reference of listReferences(parsed.segments)) {
+      if ((reference.kind === "item" || reference.kind === "itemIndex") && !itemAllowed)
+        fail(`${label} uses item outside a map unit`);
+      if (reference.kind === "stepOutput") {
+        const referenced = steps.get(reference.stepId);
+        if (referenced === undefined || referenced >= index) fail(`${label} references a non-earlier step`);
+      }
+    }
+  };
+  if (step.root) {
+    const unit = step.root.kind === "map" ? step.root.template : step.root;
+    if (step.root.kind === "map") validateReferences(step.root.over, `map ${step.root.id} over`, false, true);
+    if (unit.templating === "expressions")
+      validateReferences(unit.instructions, `unit ${unit.id} instructions`, step.root.kind === "map", false);
+  }
+  if (step.route) validateReferences(step.route.input, `route ${step.stepId} input`, false, true);
+}
+
+function validateSource(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) fail(`${label} must be an object`);
+  assertKeys(value, ["path", "start", "end"], label);
+  if (
+    typeof value.path !== "string" ||
+    !value.path ||
+    !Number.isSafeInteger(value.start) ||
+    !Number.isSafeInteger(value.end) ||
+    (value.start as number) < 1 ||
+    (value.end as number) < (value.start as number)
+  )
+    fail(`${label} is invalid`);
+}
+
+function validateStringArray(
+  value: unknown,
+  label: string,
+  max: number,
+  unique: boolean,
+): asserts value is string[] | undefined {
+  if (value === undefined) return;
+  if (
+    !Array.isArray(value) ||
+    value.length > max ||
+    !value.every((item) => typeof item === "string" && item.length > 0 && item.length <= MAX_STRING_LENGTH) ||
+    (unique && new Set(value).size !== value.length)
+  )
+    fail(`${label} is invalid`);
+}
+
+function validateOptionalFiniteNumber(value: unknown, label: string): void {
+  if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) fail(`${label} must be finite`);
+}
+
+function validateOptionalPositiveInteger(value: unknown, label: string): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 1))
+    fail(`${label} must be a positive safe integer`);
+}
+
+function validateEndpoint(value: string, engine: string): void {
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !url.pathname.endsWith("/chat/completions")
+    )
+      fail(`LLM engine ${engine} endpoint is not canonical`);
+  } catch {
+    fail(`LLM engine ${engine} endpoint is invalid`);
+  }
+}
+
+function assertString(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_STRING_LENGTH)
+    fail(`${label} must be a non-empty bounded string`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

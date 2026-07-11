@@ -4,6 +4,7 @@ import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflow } from "../../src/workflows/parser";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
 
 export const WORKFLOW_TEST_CONFIG = {
   configVersion: "0.9.0",
@@ -61,6 +62,13 @@ export function storeFrozenWorkflowPlan(
   runId: string,
   plan: WorkflowPlanGraph,
 ): void {
+  for (const step of frozenStepRows(plan)) {
+    db.prepare(
+      `UPDATE workflow_run_steps
+         SET step_title = ?, instructions = ?, completion_json = ?, sequence_index = ?
+         WHERE run_id = ? AND step_id = ?`,
+    ).run(step.stepTitle, step.instructions, step.completionJson, step.sequenceIndex, runId, step.stepId);
+  }
   db.prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = 3 WHERE id = ?").run(
     canonicalPlanJson(plan),
     computePlanHash(plan),

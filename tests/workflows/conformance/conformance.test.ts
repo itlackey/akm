@@ -10,6 +10,7 @@ import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
+import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { freezeMarkdownWorkflow, freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
@@ -58,7 +59,8 @@ function compileMarkdown(markdown: string): WorkflowPlanGraph {
   return freezeMarkdownWorkflow(markdown, "workflows/golden.md");
 }
 
-function seedRun(params: Record<string, unknown>, stepIds: string[]): void {
+function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>): void {
+  const steps = frozenStepRows(plan);
   const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
   try {
     const now = new Date().toISOString();
@@ -67,13 +69,13 @@ function seedRun(params: Record<string, unknown>, stepIds: string[]): void {
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflow:golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?)`,
-    ).run(RUN_ID, JSON.stringify(params), stepIds[0], now, now);
-    stepIds.forEach((id, i) => {
+    ).run(RUN_ID, JSON.stringify(params), steps[0]?.stepId, now, now);
+    steps.forEach((step) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
-         VALUES (?, ?, ?, 'instructions', NULL, ?, 'pending')`,
-      ).run(RUN_ID, id, id, i);
+         VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      ).run(RUN_ID, step.stepId, step.stepTitle, step.instructions, step.completionJson, step.sequenceIndex);
     });
   } finally {
     closeWorkflowDatabase(db);
@@ -93,6 +95,7 @@ const BACKENDS = [
       }
       return runWorkflowSteps({
         target: RUN_ID,
+        summaryJudge: null,
         dispatcher: async (req) =>
           req.schema ? { ok: true, text: '{"verdict": "pass"}' } : { ok: true, text: `did ${req.unitId}` },
         loadPlan: async () => plan,
@@ -123,12 +126,15 @@ const FROZEN_EXECUTION: NonNullable<WorkflowPlanGraph["execution"]> = {
       args: [],
       workspace: null,
       envPassthrough: [],
+      commandBuilder: "opencode-sdk",
       fallbackLlmEngine: "test-llm",
     },
     "test-llm": {
       name: "test-llm",
       kind: "llm",
       endpoint: "http://localhost:1/v1/chat/completions",
+      model: "test-model",
+      timeoutMs: null,
       credential: { names: ["AKM_ENGINE_TEST_LLM_API_KEY", "AKM_LLM_API_KEY"], required: false },
       concurrency: 1,
     },
@@ -144,7 +150,7 @@ function linearGolden(
     id,
     instructions,
     templating,
-    invocation: { engine: "test-agent", model: null, timeoutMs: 600_000 },
+    invocation: { engine: "test-agent", model: null, timeoutMs: null },
     onError: "fail" as const,
     isolation: "none" as const,
     source,
@@ -166,7 +172,7 @@ function linearGolden(
           criteria: ["artifact exists"],
           maxLoops: 1,
           required: false,
-          judge: { engine: "test-llm", model: "test-model", timeoutMs: 600_000 },
+          judge: { engine: "test-llm", model: "test-model", timeoutMs: null },
         },
       },
       {
@@ -217,8 +223,9 @@ describe("conformance — linear workflow", () => {
 
   for (const backend of BACKENDS) {
     test(`${backend.name}: executes the golden unit graph`, async () => {
-      seedRun({}, ["build", "deploy"]);
-      const result = await backend.run(compile(LINEAR));
+      const plan = compile(LINEAR);
+      seedRun(plan, {});
+      const result = await backend.run(plan);
       expect(result.done).toBe(true);
       // Content-derived unit identity (R2): solo units are `<node_id>:solo`.
       expect(await unitGraph()).toEqual([
@@ -261,8 +268,9 @@ describe("conformance — classic linear markdown (stable contract)", () => {
 
   for (const backend of BACKENDS) {
     test(`${backend.name}: executes the golden unit graph`, async () => {
-      seedRun({}, ["build", "deploy"]);
-      const result = await backend.run(compileMarkdown(LINEAR_MD));
+      const plan = compileMarkdown(LINEAR_MD);
+      seedRun(plan, {});
+      const result = await backend.run(plan);
       expect(result.done).toBe(true);
       expect(await unitGraph()).toEqual([
         ["build:solo", "build", null, "completed"],
@@ -311,7 +319,7 @@ describe("conformance — fan-out + schema + vote", () => {
           id: "judge.unit",
           instructions: "Judge ${{ item }}.",
           templating: "expressions",
-          invocation: { engine: "test-agent", model: null, timeoutMs: 600_000 },
+          invocation: { engine: "test-agent", model: null, timeoutMs: null },
           onError: "fail",
           isolation: "none",
           schema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
@@ -335,8 +343,9 @@ describe("conformance — fan-out + schema + vote", () => {
 
   for (const backend of BACKENDS) {
     test(`${backend.name}: executes the golden unit graph with vote evidence`, async () => {
-      seedRun({ attempts: [1, 2, 3] }, ["judge"]);
-      const result = await backend.run(compile(FAN_OUT_VOTE));
+      const plan = compile(FAN_OUT_VOTE);
+      seedRun(plan, { attempts: [1, 2, 3] });
+      const result = await backend.run(plan);
       expect(result.done).toBe(true);
       // Content-derived fan-out identity: `<node_id>:<sha256(canonicalJson(item))[:12]>`
       // for items 1, 2, 3 — position-independent, sorted by unit_id here.
@@ -412,8 +421,9 @@ describe("conformance — routed workflow", () => {
 
   for (const backend of BACKENDS) {
     test(`${backend.name}: selected branch dispatches, unselected is skipped with no units`, async () => {
-      seedRun({}, ["classify", "triage", "ship", "rework"]);
-      const result = await backend.run(compile(ROUTED));
+      const plan = compile(ROUTED);
+      seedRun(plan, {});
+      const result = await backend.run(plan);
       expect(result.done).toBe(true);
       // Neither the route step nor rework may have unit rows — the route
       // dispatches nothing, and rework never ran.

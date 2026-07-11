@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
@@ -24,16 +24,23 @@ import {
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
+import { frozenSummaryJudge } from "../exec/frozen-judge";
 import { detectSecretShapedParams } from "../exec/param-secrets";
 import { collectProgramWarnings } from "../ir/compile";
 import { compileResolveFreezeWorkflow } from "../ir/freeze";
 import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
-import type { FrozenEngineSnapshot } from "../ir/schema";
+import { decodeWorkflowPlanV3, type FrozenEngineSnapshot, WORKFLOW_IR_VERSION } from "../ir/schema";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
-import { classifyWorkflowRunPlan, requireExecutableWorkflowPlan } from "./plan-classifier";
+import {
+  assertWorkflowSpineMatchesPlan,
+  classifyWorkflowRunPlan,
+  frozenStepRows,
+  requireAbandonableWorkflowPlan,
+  requireExecutableWorkflowPlan,
+} from "./plan-classifier";
 import { evaluateStaleUnits, type StaleUnit } from "./unit-checkin";
 import { loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
 
@@ -244,7 +251,7 @@ export async function startWorkflowRun(
   // persist it on the run row in the same transaction as the insert. Every
   // later invocation executes this snapshot — the asset file is never re-read
   // for an in-flight run; re-planning is an explicit new run.
-  const plan = compileResolveFreezeWorkflow(asset, loadConfig()).plan;
+  const plan = decodeWorkflowPlanV3(compileResolveFreezeWorkflow(asset, loadConfig()).plan);
   // Non-fatal WARNINGS (redesign addendum): a YAML program's untyped-step and
   // undeclared-param advisories surface as `warn()` lines at start (stderr,
   // consistent with the repo's other author-facing warnings) without blocking
@@ -273,7 +280,7 @@ export async function startWorkflowRun(
     const now = new Date().toISOString();
     const runId = randomUUID();
     const scopeKey = getCurrentWorkflowScopeKey();
-    const currentStepId = asset.steps[0]?.id ?? null;
+    const currentStepId = plan.steps[0]?.stepId ?? null;
     const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
 
     // Capture the agent harness + session driving this run. Explicit options
@@ -321,19 +328,19 @@ export async function startWorkflowRun(
       });
 
       repo.insertSteps(
-        asset.steps.map((step) => ({
+        frozenStepRows(plan).map((step) => ({
           runId,
-          stepId: step.id,
-          stepTitle: step.title,
+          stepId: step.stepId,
+          stepTitle: step.stepTitle,
           instructions: step.instructions,
-          completionJson: step.completionCriteria ? JSON.stringify(step.completionCriteria) : null,
-          sequenceIndex: step.sequenceIndex ?? 0,
+          completionJson: step.completionJson,
+          sequenceIndex: step.sequenceIndex,
         })),
       );
 
       // Same transaction as the insert: a run row never exists without its
       // frozen plan (rows with NULL plan_json are pre-006 legacy runs).
-      repo.setRunPlan(runId, planJson, planHash, 3);
+      repo.setRunPlan(runId, planJson, planHash, WORKFLOW_IR_VERSION);
     });
 
     const result = await getWorkflowStatus(runId);
@@ -418,6 +425,8 @@ export async function getNextWorkflowStep(
   return withWorkflowRunsRepo(async (repo) => {
     const { run, autoStarted } = await resolveRunSpecifier(repo, specifier, params);
     const steps = readWorkflowRunSteps(repo, run.id);
+    const plan = requireExecutableWorkflowPlan(run);
+    assertWorkflowSpineMatchesPlan(plan, run, steps);
     return { ...projectNextResult(run, steps), ...(autoStarted ? { autoStarted: true as const } : {}) };
   });
 }
@@ -474,6 +483,8 @@ export async function snapshotRunForDriver(runId: string): Promise<{
     repo.transaction(() => {
       const run = readWorkflowRun(repo, runId);
       const steps = readWorkflowRunSteps(repo, run.id);
+      const plan = requireExecutableWorkflowPlan(run);
+      assertWorkflowSpineMatchesPlan(plan, run, steps);
       const units = repo.getUnitsForRun(run.id);
       return { next: projectNextResult(run, steps), run, units };
     }),
@@ -483,12 +494,13 @@ export async function snapshotRunForDriver(runId: string): Promise<{
 export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
-    requireExecutableWorkflowPlan(run);
+    const plan = requireExecutableWorkflowPlan(run);
+    const steps = readWorkflowRunSteps(repo, run.id);
+    assertWorkflowSpineMatchesPlan(plan, run, steps);
     if (run.status === "completed") {
       throw new UsageError(`Workflow run ${run.id} is already completed and cannot be resumed.`);
     }
     if (run.status === "active") {
-      const steps = readWorkflowRunSteps(repo, run.id);
       return buildWorkflowRunDetail(run, steps);
     }
     // blocked or failed → flip back to active and re-open the current step so
@@ -501,8 +513,8 @@ export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetai
       repo.markRunActive(run.id, now);
     });
     const updated: WorkflowRunRow = { ...run, status: "active", updated_at: now };
-    const steps = readWorkflowRunSteps(repo, run.id);
-    return buildWorkflowRunDetail(updated, steps);
+    const refreshedSteps = readWorkflowRunSteps(repo, run.id);
+    return buildWorkflowRunDetail(updated, refreshedSteps);
   });
 }
 
@@ -515,6 +527,10 @@ export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetai
 export async function abandonWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
+    requireAbandonableWorkflowPlan(run);
+    const classified = classifyWorkflowRunPlan(run);
+    const existingSteps = readWorkflowRunSteps(repo, run.id);
+    if (classified.support === "supported") assertWorkflowSpineMatchesPlan(classified.plan, run, existingSteps);
     if (run.status === "completed" || run.status === "failed") {
       throw new UsageError(`Workflow run ${run.id} is already ${run.status}.`);
     }
@@ -550,7 +566,9 @@ export async function completeWorkflowStep(
   // the write transaction — a slow/hung LLM must never hold a db write lock.
   const preflight = await withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, input.runId);
-    requireExecutableWorkflowPlan(run);
+    const plan = requireExecutableWorkflowPlan(run);
+    const steps = readWorkflowRunSteps(repo, run.id);
+    assertWorkflowSpineMatchesPlan(plan, run, steps);
     if (run.status !== "active") {
       throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
     }
@@ -567,7 +585,9 @@ export async function completeWorkflowStep(
         `Step "${input.stepId}" is not the current step for workflow run ${run.id}. Complete "${run.current_step_id}" first.`,
       );
     }
-    return { existing };
+    const stepPlan = plan.steps.find((step) => step.stepId === input.stepId);
+    if (!stepPlan) throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
+    return { existing, plan, stepPlan };
   });
 
   const summary = input.summary?.trim();
@@ -584,10 +604,13 @@ export async function completeWorkflowStep(
   // completionCriteria via the configured LLM. Fail-open when no criteria or no
   // judge. Only a well-formed `complete: false` blocks completion.
   if (input.status === "completed" && summary) {
-    const criteria = parseJsonArray(preflight.existing.completion_json) ?? [];
-    const judge = input.summaryJudge === undefined ? buildDefaultSummaryJudge() : input.summaryJudge;
+    const criteria = preflight.stepPlan.gate.criteria;
+    const judge =
+      input.summaryJudge === undefined
+        ? frozenSummaryJudge(preflight.plan, preflight.stepPlan.gate.judge)
+        : input.summaryJudge;
     const verdict = await validateStepSummary(
-      { stepTitle: preflight.existing.step_title, completionCriteria: criteria, summary },
+      { stepTitle: preflight.stepPlan.title, completionCriteria: criteria, summary },
       judge ?? undefined,
       { required: input.requireGate === true },
     );
@@ -616,6 +639,9 @@ export async function completeWorkflowStep(
 
     repo.transaction(() => {
       const run = readWorkflowRun(repo, input.runId);
+      const plan = requireExecutableWorkflowPlan(run);
+      const spine = readWorkflowRunSteps(repo, run.id);
+      assertWorkflowSpineMatchesPlan(plan, run, spine);
       if (run.status !== "active") {
         throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
       }
@@ -851,33 +877,6 @@ function deriveRunState(steps: WorkflowRunStepRow[]): {
     .sort()
     .at(-1);
   return { status: "completed", currentStepId: null, completedAt: completedAt ?? null };
-}
-
-/**
- * Build the default summary-validation judge from the configured LLM, or return
- * `null` when no LLM is configured (gate is then skipped — fail-open). Lazily
- * imports the client/config so the workflow engine has no hard LLM dependency.
- *
- * Exported for the engine loop (`exec/run-workflow.ts`), which wraps the judge
- * to journal engine-driven gate evaluations as unit rows (addendum R2).
- */
-export function buildDefaultSummaryJudge(): SummaryJudge | null {
-  let llm: import("../../core/config/config").LlmConnectionConfig | undefined;
-  try {
-    const config = loadConfig();
-    llm = getDefaultLlmConfig(config);
-  } catch {
-    return null;
-  }
-  if (!llm) return null;
-  const resolved = llm;
-  return async ({ system, user }) => {
-    const { chatCompletion } = await import("../../llm/client");
-    return chatCompletion(resolved, [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ]);
-  };
 }
 
 function parseJsonObject(value: string | null): Record<string, unknown> | undefined {
