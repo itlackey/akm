@@ -138,7 +138,7 @@ import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
-import type { IrBudget, IrStepPlan } from "../ir/schema";
+import type { FrozenEngineSnapshot, IrBudget, IrInvocation, IrStepPlan } from "../ir/schema";
 import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by both the engine
 // (this module + run-workflow.ts) and, from R3, the brief/report driver
@@ -172,6 +172,10 @@ export interface UnitDispatchRequest {
   /** Fully-assembled prompt: preamble + interpolated instructions (+ schema directive). */
   prompt: string;
   runner: "llm" | "agent" | "sdk" | "inherit";
+  /** Frozen v3 engine snapshot. Presence forbids live config resolution. */
+  engine?: FrozenEngineSnapshot;
+  fallbackEngine?: Extract<FrozenEngineSnapshot, { kind: "llm" }>;
+  invocation?: IrInvocation;
   profile?: string;
   model?: string;
   timeoutMs: number | null;
@@ -254,6 +258,8 @@ export interface StepExecutionContext {
   tokensUsed?: number;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
+  /** Plan-local engine catalog, frozen at run start. */
+  engines?: Record<string, FrozenEngineSnapshot>;
   /**
    * Base directory for `isolation: worktree` units — the git repository the
    * per-attempt detached worktrees are minted from. Defaults to
@@ -453,6 +459,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     runId: ctx.runId,
     params: ctx.params,
     stepOutputs: stepOutputsFromEvidence(ctx.evidence),
+    ...(ctx.engines ? { engines: ctx.engines } : {}),
     ...(ctx.gateLoop !== undefined ? { gateLoop: ctx.gateLoop } : {}),
     ...(ctx.gateFeedback ? { gateFeedback: ctx.gateFeedback } : {}),
   });
@@ -689,6 +696,9 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     nodeId: workUnit.nodeId,
     prompt,
     runner: workUnit.runner,
+    ...(workUnit.engine ? { engine: workUnit.engine } : {}),
+    ...(workUnit.fallbackEngine ? { fallbackEngine: workUnit.fallbackEngine } : {}),
+    ...(workUnit.invocation ? { invocation: workUnit.invocation } : {}),
     ...(workUnit.profile ? { profile: workUnit.profile } : {}),
     ...(workUnit.model ? { model: workUnit.model } : {}),
     timeoutMs: workUnit.timeoutMs,
@@ -833,6 +843,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
         parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
         phase: null,
         runner: workUnit.runner,
+        engine: workUnit.engine?.name ?? null,
         model: workUnit.model ?? null,
         inputHash,
         worktreePath: worktreePath ?? null,
@@ -1050,11 +1061,17 @@ export function buildAgentDispatchRequest(
 }
 
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
-  const { loadConfig } = await import("../../core/config/config.js");
-  const config = loadConfig();
   const prompt = feedback ? `${request.prompt}\n\n${feedback}` : request.prompt;
-
-  const resolved = await resolveUnitRunner(request, config);
+  // v3 requests are self-contained snapshots. The legacy branch remains only
+  // for in-memory test fixtures; persisted v2/null runs are rejected before
+  // reaching this dispatcher.
+  let config: import("../../core/config/config").AkmConfig | undefined;
+  const resolved = request.engine
+    ? frozenUnitRunner(request)
+    : await (async () => {
+        config = (await import("../../core/config/config.js")).loadConfig();
+        return resolveUnitRunner(request, config);
+      })();
 
   // `env` bindings can only reach a child process. The agent (CLI) runner
   // spawns one per call, and the sdk runner now injects them for real via the
@@ -1089,9 +1106,18 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
 
   if (resolved.kind === "llm") {
     const { chatCompletion, LlmCallError } = await import("../../llm/client.js");
-    const { resolveModel } = await import("../../integrations/agent/model-aliases.js");
     const connection = request.model
-      ? { ...resolved.connection, model: resolveModel(request.model, "llm", undefined, config.modelAliases) }
+      ? {
+          ...resolved.connection,
+          model: request.engine
+            ? request.model
+            : (await import("../../integrations/agent/model-aliases.js")).resolveModel(
+                request.model,
+                "llm",
+                undefined,
+                config?.modelAliases,
+              ),
+        }
       : resolved.connection;
     try {
       const text = await chatCompletion(connection, [{ role: "user", content: prompt }], {
@@ -1117,21 +1143,31 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
 
   const { executeRunner } = await import("../../integrations/agent/runner-dispatch.js");
   const profile = request.model ? { ...resolved.profile, model: request.model } : resolved.profile;
-  const result = await executeRunner({ kind: resolved.kind, profile }, prompt, {
-    stdio: "captured",
-    parseOutput: "text",
-    timeoutMs: request.timeoutMs,
-    ...(request.env ? { env: request.env } : {}),
-    // Worktree isolation: the unit's fresh checkout is the child's cwd —
-    // runAgent spawns there; the sdk runner scopes the session to it.
-    ...(request.cwd ? { cwd: request.cwd } : {}),
-    ...(request.signal ? { signal: request.signal } : {}),
-    // Route CLI dispatch through the platform AgentCommandBuilder so model
-    // aliases resolve per-harness (P0.5 model routing) AND the unit's output
-    // schema reaches the harness's structured-output path (see
-    // buildAgentDispatchRequest).
-    ...(resolved.kind === "agent" ? { dispatch: buildAgentDispatchRequest(request, prompt) } : {}),
-  });
+  const result = await executeRunner(
+    resolved.kind === "sdk"
+      ? {
+          kind: "sdk",
+          profile,
+          ...(resolved.fallbackConnection ? { fallbackConnection: resolved.fallbackConnection } : {}),
+        }
+      : { kind: "agent", profile },
+    prompt,
+    {
+      stdio: "captured",
+      parseOutput: "text",
+      timeoutMs: request.timeoutMs,
+      ...(request.env ? { env: request.env } : {}),
+      // Worktree isolation: the unit's fresh checkout is the child's cwd —
+      // runAgent spawns there; the sdk runner scopes the session to it.
+      ...(request.cwd ? { cwd: request.cwd } : {}),
+      ...(request.signal ? { signal: request.signal } : {}),
+      // Route CLI dispatch through the platform AgentCommandBuilder so model
+      // aliases resolve per-harness (P0.5 model routing) AND the unit's output
+      // schema reaches the harness's structured-output path (see
+      // buildAgentDispatchRequest).
+      ...(resolved.kind === "agent" ? { dispatch: buildAgentDispatchRequest(request, prompt) } : {}),
+    },
+  );
 
   // Harness result extraction (P2, plan §"The adapter contract" step 3):
   // when the profile's harness declares a `resultExtractor`, normalize the
@@ -1214,7 +1250,69 @@ async function resolveHarnessExtractor(
 
 type ResolvedUnitRunner =
   | { kind: "llm"; connection: import("../../core/config/config").LlmConnectionConfig }
-  | { kind: "agent" | "sdk"; profile: import("../../integrations/agent/profiles").AgentProfile };
+  | {
+      kind: "agent" | "sdk";
+      profile: import("../../integrations/agent/profiles").AgentProfile;
+      fallbackConnection?: import("../../core/config/config").LlmConnectionConfig;
+    };
+
+/** Reconstruct the existing RunnerSpec substrate from the frozen allowlist only. */
+function frozenUnitRunner(request: UnitDispatchRequest): ResolvedUnitRunner {
+  const snapshot = request.engine;
+  if (!snapshot) throw new Error("frozenUnitRunner requires an engine snapshot");
+  if (snapshot.kind === "llm") {
+    return { kind: "llm", connection: materializeFrozenLlm(snapshot, request.invocation) };
+  }
+  const profile = {
+    name: snapshot.name,
+    platform: snapshot.platform,
+    bin: snapshot.bin,
+    args: snapshot.args,
+    stdio: "captured" as const,
+    envPassthrough: snapshot.envPassthrough,
+    parseOutput: "text" as const,
+    ...(snapshot.workspace ? { workspace: snapshot.workspace } : {}),
+    ...(request.invocation?.model ? { model: request.invocation.model } : {}),
+  };
+  if (snapshot.runnerKind === "agent") return { kind: "agent", profile };
+  // The catalog is supplied transitively by the work-list only for hashing; the
+  // SDK runner receives a frozen fallback copied into the request by its caller.
+  const fallback = request.fallbackEngine
+    ? materializeFrozenLlm(request.fallbackEngine, request.invocation)
+    : undefined;
+  return { kind: "sdk", profile, ...(fallback ? { fallbackConnection: fallback } : {}) };
+}
+
+function materializeFrozenLlm(
+  snapshot: Extract<FrozenEngineSnapshot, { kind: "llm" }>,
+  invocation: IrInvocation | undefined,
+): import("../../core/config/config").LlmConnectionConfig {
+  let apiKey: string | undefined;
+  for (const name of snapshot.credential?.names ?? []) {
+    const candidate = process.env[name]?.trim();
+    if (candidate) {
+      apiKey = candidate;
+      break;
+    }
+  }
+  if (snapshot.credential?.required && !apiKey)
+    throw new ConfigError(
+      `Required engine credential ${snapshot.credential.names[0]} is not set.`,
+      "INVALID_CONFIG_FILE",
+    );
+  return {
+    provider: snapshot.provider,
+    endpoint: snapshot.endpoint,
+    model: invocation?.model ?? "",
+    ...(snapshot.temperature !== undefined ? { temperature: snapshot.temperature } : {}),
+    ...(snapshot.maxTokens !== undefined ? { maxTokens: snapshot.maxTokens } : {}),
+    ...(snapshot.supportsJsonSchema !== undefined ? { supportsJsonSchema: snapshot.supportsJsonSchema } : {}),
+    ...(snapshot.extraParams ? { extraParams: snapshot.extraParams } : {}),
+    ...(snapshot.contextLength !== undefined ? { contextLength: snapshot.contextLength } : {}),
+    ...(snapshot.enableThinking !== undefined ? { enableThinking: snapshot.enableThinking } : {}),
+    ...(apiKey ? { apiKey } : {}),
+  };
+}
 
 async function resolveUnitRunner(
   request: UnitDispatchRequest,

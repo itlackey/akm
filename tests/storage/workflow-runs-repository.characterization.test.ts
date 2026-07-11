@@ -98,6 +98,7 @@ describe("WorkflowRunsRepository reads", () => {
       // Frozen plan + engine lease (migration 006): NULL on seeded legacy rows.
       plan_json: null,
       plan_hash: null,
+      plan_ir_version: null,
       engine_lease_until: null,
       engine_lease_holder: null,
     });

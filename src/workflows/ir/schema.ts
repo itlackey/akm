@@ -2,235 +2,413 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Workflow Plan Graph — the backend-agnostic orchestration IR, version 2
- * (docs/technical/akm-workflows-orchestration-plan.md, Redesign addendum R1).
- *
- * Two frontends compile to this structure (`ir/compile.ts`):
- *
- *   - YAML workflow programs (`program/parser.ts` → `compileWorkflowProgram`)
- *     — the deterministic orchestration program format. Run-level `defaults`
- *     are MERGED into every unit node at compile time (frozen resolution), so
- *     a serialized plan is fully self-contained.
- *   - Classic linear markdown workflows (`parser.ts` → `compileWorkflowPlan`)
- *     — the stable CLI contract: one `agent` node per step, runner inherited.
- *
- * The plan is FROZEN per run: `workflow start` persists the canonical plan
- * JSON plus its hash (`computePlanHash`) on the run row (migration 006), and
- * every subsequent invocation executes that snapshot. The structure must
- * therefore round-trip through plain JSON — templates stay RAW STRINGS here
- * (`${{ … }}` expressions are re-parsed deterministically at execution by
- * `program/expressions.ts`), never pre-parsed ASTs.
- *
- * v2 removes the v1 `parallel`/`pipeline`/`router`/`subworkflow` node kinds:
- * no frontend or backend ever emitted or consumed them, and the YAML program
- * surface has no grammar for them. They can return in a later IR version if a
- * frontend grows a surface that needs them.
- *
- * The organizing principle is unchanged: **steps remain the durable, gated,
- * sequential spine; execution *within* a step fans out.** A
- * {@link WorkflowPlanGraph} is a list of {@link IrStepPlan}s — one per step —
- * each holding an execution subgraph (`root`) or a spine-level `route`, plus
- * the completion `gate` that guards advancement through
- * `completeWorkflowStep`.
- *
- * This module is pure data (no IO, no engine imports) — the DOMAIN layer of
- * the plan's layering diagram.
- */
-
+import { UsageError } from "../../core/errors";
+import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
 import type { SourceRef } from "../schema";
 
-export const WORKFLOW_IR_VERSION = 2;
-
-/** Execution backend for a unit. `inherit` = the run-level default runner. */
-export type IrRunnerKind = "llm" | "agent" | "sdk" | "inherit";
-
-/**
- * Filesystem isolation for parallel file-mutating units. `worktree` (R2,
- * enforced by the native executor): each attempt of an agent/sdk unit runs
- * in a fresh detached git worktree of the engine's working directory —
- * journaled on the unit row (`worktree_path`), removed when left clean,
- * retained when dirty. llm units cannot be isolated (no child process).
- */
-export type IrIsolation = "none" | "worktree";
-
-/** How a `map` node folds its per-item results into one step result. */
-export type IrMapReducer = "collect" | "vote";
-
-/** Failure policy for a unit: fail the step on first failure, or record and go on. */
+/** The only executable persisted workflow plan format. */
+export const WORKFLOW_IR_VERSION = 3;
 export type IrOnError = "fail" | "continue";
+export type IrIsolation = "none" | "worktree";
+export type IrMapReducer = "collect" | "vote";
+export type IrInstructionTemplating = "expressions" | "verbatim";
+export type IrRuntimeKind = "llm" | "agent" | "sdk";
+/** Legacy internal spelling retained for source-level test migration only. */
+export type IrRunnerKind = IrRuntimeKind | "inherit";
 
-/**
- * Bounded retry on transient failures, keyed on the persisted
- * `failure_reason` taxonomy (`AgentFailureReason` in agent/spawn.ts).
- * Enforced by the native executor: a failed unit re-dispatches up to `max`
- * extra times when its failure reason is in `on`, each attempt journaled
- * under `<unitId>~r<attempt>`.
- */
 export interface IrRetry {
   max: number;
   on: string[];
 }
 
-/**
- * How a unit's `instructions` string is interpreted at execution time.
- *
- *   - `"expressions"` — the text is a `${{ … }}` template: re-parsed
- *     deterministically at execution (program/expressions.ts) and resolved in
- *     a single pass. Emitted by the YAML program frontend, whose compiler has
- *     already validated every reference.
- *   - `"verbatim"` (also the default when the field is absent, so pre-marker
- *     frozen plans keep the stable markdown behavior) — the text is opaque
- *     data handed to the agent byte-exact. Emitted by the classic linear
- *     markdown frontend: a literal `${{ github.sha }}` in markdown
- *     instructions is content, never grammar (the stable CLI contract).
- */
-export type IrInstructionTemplating = "expressions" | "verbatim";
+export interface FrozenCredential {
+  names: [string, ...string[]];
+  required: boolean;
+}
 
-/** Run one unit: instructions + runner + model + optional schema. */
-export interface IrAgentNode {
+export interface FrozenLlmEngine {
+  name: string;
+  kind: "llm";
+  provider?: string;
+  endpoint: string;
+  credential?: FrozenCredential;
+  temperature?: number;
+  maxTokens?: number;
+  concurrency: number;
+  supportsJsonSchema?: boolean;
+  extraParams?: Record<string, unknown>;
+  contextLength?: number;
+  enableThinking?: boolean;
+}
+
+export interface FrozenAgentEngine {
+  name: string;
   kind: "agent";
+  runnerKind: "agent" | "sdk";
+  platform: string;
+  bin: string;
+  args: string[];
+  workspace: string | null;
+  envPassthrough: string[];
+  fallbackLlmEngine: string | null;
+}
+
+export type FrozenEngineSnapshot = FrozenLlmEngine | FrozenAgentEngine;
+
+export interface IrInvocation {
+  engine: string;
+  /** Exact model resolved at start, never an alias. */
+  model: string | null;
+  timeoutMs: number | null;
+  llm?: LlmInvocationOverrides;
+}
+
+export interface IrUnitNode {
+  kind: "unit" | "agent";
   id: string;
-  /**
-   * RAW instruction text. Interpretation is governed by {@link templating}:
-   * a `${{ … }}` template for YAML program units, opaque verbatim text for
-   * classic markdown steps. The plan must serialize as plain JSON, so no
-   * parsed AST lives here.
-   */
   instructions: string;
-  /** Instruction interpretation; absent = `"verbatim"` (see {@link IrInstructionTemplating}). */
   templating?: IrInstructionTemplating;
-  runner: IrRunnerKind;
-  /** Agent/LLM profile name overriding the run default. */
+  invocation?: IrInvocation;
+  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
+  runner?: IrRunnerKind;
+  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
   profile?: string;
-  /** Model alias (tier) or exact id; resolved per-harness at dispatch time. */
+  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
   model?: string;
-  /** JSON Schema the unit's output must validate against. */
-  schema?: Record<string, unknown>;
-  /** Per-unit timeout in ms; null = explicitly no timeout; absent = engine default. */
+  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
   timeoutMs?: number | null;
-  /** Bounded retry on transient failures (see {@link IrRetry}). */
+  schema?: Record<string, unknown>;
   retry?: IrRetry;
-  /** Failure policy; compile merges the program default (fail-fast) in. */
   onError: IrOnError;
-  /** Env asset refs resolved into the child env at dispatch. */
   env?: string[];
-  /** Filesystem isolation (see {@link IrIsolation}); absent = `"none"`. */
   isolation?: IrIsolation;
   source?: SourceRef;
 }
 
-/**
- * Fan one agent template out over an item list, with an optional reducer.
- * `over` is the RAW whole-value `${{ … }}` expression string naming the
- * producer of the list (a run param or an earlier step's output) — resolved
- * at execution, never at compile.
- */
 export interface IrMapNode {
   kind: "map";
   id: string;
-  /** Raw whole-value `${{ … }}` expression string addressing the item list. */
   over: string;
-  template: IrAgentNode;
-  /** Per-step concurrency; capped by the engine's global limit. */
+  template: IrUnitNode;
   concurrency?: number;
   reducer: IrMapReducer;
   source?: SourceRef;
 }
 
-/** Every executable node kind (closed set for IR v2). */
-export type IrExecNode = IrAgentNode | IrMapNode;
+export type IrExecNode = IrUnitNode | IrMapNode;
 
-/**
- * Human-review / completion-criteria approval between steps — akm's
- * differentiator, never bypassed by any backend. `maxLoops > 1` expresses
- * the evaluator-optimizer pattern (feedback re-runs the step subgraph).
- * TODO(R2): maxLoops execution is engine-rework scope; carried through now.
- */
 export interface IrGateNode {
   kind: "gate";
   id: string;
   stepId: string;
   criteria: string[];
-  /** Evaluator-feedback loop bound; absent/1 = one-shot gate. */
   maxLoops?: number;
-  /**
-   * Reviewer #18: when true, the gate MUST be judged. If no summary-validation
-   * judge is available (offline / misconfigured LLM), the step BLOCKS for a
-   * human instead of failing open and silently passing — so a workflow that
-   * relies on a gate cannot be bypassed by a misconfigured environment. Absent =
-   * the fail-open default (backward-compatible).
-   */
   required?: boolean;
+  judge?: IrInvocation | null;
 }
 
-/**
- * Spine-level routing on an EXPLICIT input. The engine resolves `input` (a
- * raw whole-value `${{ … }}` expression string), selects `when[value]` (or
- * `defaultStepId`), and skips the unselected targets as the sequential spine
- * reaches them.
- */
 export interface IrRouteSpec {
-  /** Raw whole-value `${{ … }}` expression string naming the value to route on. */
   input: string;
-  /** Match value → target step id. */
   when: Record<string, string>;
   defaultStepId?: string;
 }
 
-/**
- * One step of the gated spine. Exactly one of `root` (execution subgraph) or
- * `route` (spine-level routing) is present: YAML `route` steps dispatch no
- * units of their own, and linear markdown steps always carry a `root`.
- */
 export interface IrStepPlan {
   stepId: string;
   title: string;
   sequenceIndex: number;
-  /**
-   * Reserved: non-linear ordering edges. No frontend emits them today (the
-   * YAML program has no surface for them yet), but the engine honors them in
-   * a frozen plan as a declared ordering contract.
-   */
   dependsOn?: string[];
-  /** Execution subgraph; absent exactly when this is a YAML `route` step. */
   root?: IrExecNode;
-  /** Spine-level routing evaluated when the spine reaches this step. */
   route?: IrRouteSpec;
-  /**
-   * Step artifact schema (JSON Schema) the reducer result must validate
-   * against. TODO(R2): validation is engine-rework scope; carried through now.
-   */
   outputSchema?: Record<string, unknown>;
   gate: IrGateNode;
 }
 
-/**
- * Run-level budget ceilings (YAML `budget:` block), enforced by the engine
- * per RUN: totals are seeded from the journal (`workflow_run_units` row count
- * for `maxUnits`, summed `tokens` for `maxTokens`) and accumulated across this
- * invocation's dispatches. Hitting a ceiling aborts pending dispatches and
- * fails the step hard ("budget exceeded (<which> ceiling)"), regardless of
- * `on_error` — a budget-capped run must never quietly pass its gate.
- */
 export interface IrBudget {
   maxTokens?: number;
   maxUnits?: number;
 }
 
 export interface WorkflowPlanGraph {
-  irVersion: typeof WORKFLOW_IR_VERSION;
+  irVersion: number;
   title: string;
-  /** Declared run parameter names, when the workflow declares any. */
   params?: string[];
-  /**
-   * Reviewer #12 — frozen per-param JSON-Schema-subset declarations (program
-   * path only; Markdown workflows have no param schemas). Name → schema. When
-   * present these are the authority for validating supplied `--params` at
-   * {@link startWorkflowRun} and re-asserting the journaled params row at the
-   * brief/report surfaces. Part of the plan JSON, so the plan hash covers them.
-   */
   paramSchemas?: Record<string, Record<string, unknown>>;
   budget?: IrBudget;
+  execution?: { maxConcurrency: number; engines: Record<string, FrozenEngineSnapshot> };
   steps: IrStepPlan[];
 }
+
+const MAX_STEPS = 256;
+const MAX_ENGINES = 64;
+
+/** Strictly decode persisted v3 data before it can drive a workflow. */
+export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
+  if (!isRecord(input) || input.irVersion !== WORKFLOW_IR_VERSION) fail("irVersion must be 3");
+  assertJson(input);
+  const plan = input as unknown as WorkflowPlanGraph;
+  assertKeys(input, ["irVersion", "title", "params", "paramSchemas", "budget", "execution", "steps"], "plan");
+  if (typeof plan.title !== "string" || !plan.title) fail("title must be a non-empty string");
+  if (
+    !isRecord(plan.execution) ||
+    !Number.isInteger(plan.execution.maxConcurrency) ||
+    (plan.execution.maxConcurrency as number) < 1 ||
+    (plan.execution.maxConcurrency as number) > 64
+  ) {
+    fail("execution.maxConcurrency must be an integer from 1 through 64");
+  }
+  if (!isRecord(plan.execution.engines)) fail("execution.engines must be an object");
+  const engines = plan.execution.engines as Record<string, FrozenEngineSnapshot>;
+  if (Object.keys(engines).length > MAX_ENGINES) fail(`execution.engines exceeds ${MAX_ENGINES} entries`);
+  const references = new Set<string>();
+  for (const [key, engine] of Object.entries(engines)) validateEngine(key, engine, references);
+  if (!Array.isArray(plan.steps) || plan.steps.length === 0 || plan.steps.length > MAX_STEPS)
+    fail("steps must contain 1 through 256 entries");
+  const stepIds = new Set<string>();
+  const nodeIds = new Set<string>();
+  for (let index = 0; index < plan.steps.length; index++) {
+    const step = plan.steps[index];
+    if (!isRecord(step) || typeof step.stepId !== "string" || !step.stepId || stepIds.has(step.stepId))
+      fail("step ids must be unique non-empty strings");
+    stepIds.add(step.stepId);
+    if (step.sequenceIndex !== index) fail("step sequence indices must be contiguous and unique");
+    if (typeof step.title !== "string" || !step.title) fail(`step ${step.stepId} has no title`);
+    if (!!step.root === !!step.route) fail(`step ${step.stepId} must contain exactly one of root or route`);
+    assertKeys(
+      step,
+      ["stepId", "title", "sequenceIndex", "dependsOn", "root", "route", "outputSchema", "gate"],
+      `step ${step.stepId}`,
+    );
+    if (step.root) validateNode(step.root, references, nodeIds);
+    if (step.route) validateRoute(step.route, step.stepId);
+    validateGate(step.gate, step.stepId, references, nodeIds);
+  }
+  for (const step of plan.steps) {
+    for (const target of step.route
+      ? [...Object.values(step.route.when), ...(step.route.defaultStepId ? [step.route.defaultStepId] : [])]
+      : []) {
+      if (!stepIds.has(target)) fail(`route target ${target} does not name a step`);
+    }
+    for (const dependency of step.dependsOn ?? []) {
+      if (!stepIds.has(dependency) || dependency === step.stepId) fail(`step ${step.stepId} has an invalid dependency`);
+    }
+  }
+  for (const name of references) {
+    if (!engines[name]) fail(`engine reference ${name} is not in execution.engines`);
+  }
+  for (const name of Object.keys(engines)) if (!references.has(name)) fail(`engine ${name} is not referenced`);
+  for (const step of plan.steps) {
+    if (step.root) assertUnitEngineCompatibility(step.root, engines);
+    if (step.gate.judge) {
+      const judge = engines[step.gate.judge.engine];
+      if (!judge || judge.kind !== "llm") fail(`gate ${step.gate.id} must reference an LLM engine`);
+    }
+  }
+  return plan;
+}
+
+function validateEngine(key: string, engine: unknown, references: Set<string>): void {
+  if (!isRecord(engine) || engine.name !== key || (engine.kind !== "llm" && engine.kind !== "agent"))
+    fail("catalog keys must equal a valid snapshot name");
+  if (engine.kind === "llm") {
+    assertKeys(
+      engine,
+      [
+        "name",
+        "kind",
+        "provider",
+        "endpoint",
+        "credential",
+        "temperature",
+        "maxTokens",
+        "concurrency",
+        "supportsJsonSchema",
+        "extraParams",
+        "contextLength",
+        "enableThinking",
+      ],
+      `LLM engine ${key}`,
+    );
+    if (
+      typeof engine.endpoint !== "string" ||
+      !engine.endpoint ||
+      !Number.isInteger(engine.concurrency) ||
+      (engine.concurrency as number) < 1
+    )
+      fail(`LLM engine ${key} is invalid`);
+    if (engine.credential !== undefined) {
+      if (
+        !isRecord(engine.credential) ||
+        !Array.isArray(engine.credential.names) ||
+        engine.credential.names.length === 0 ||
+        !engine.credential.names.every((n) => typeof n === "string" && n)
+      ) {
+        fail(`LLM engine ${key} has an invalid credential descriptor`);
+      }
+    }
+    return;
+  }
+  assertKeys(
+    engine,
+    ["name", "kind", "runnerKind", "platform", "bin", "args", "workspace", "envPassthrough", "fallbackLlmEngine"],
+    `agent engine ${key}`,
+  );
+  if (
+    (engine.runnerKind !== "agent" && engine.runnerKind !== "sdk") ||
+    typeof engine.platform !== "string" ||
+    !engine.platform ||
+    typeof engine.bin !== "string" ||
+    !engine.bin ||
+    !Array.isArray(engine.args) ||
+    !engine.args.every((arg) => typeof arg === "string") ||
+    !Array.isArray(engine.envPassthrough)
+  )
+    fail(`agent engine ${key} is invalid`);
+  if ((engine.platform === "opencode-sdk") !== (engine.runnerKind === "sdk"))
+    fail(`agent engine ${key} has incompatible platform and runnerKind`);
+  if (engine.runnerKind === "agent" && engine.fallbackLlmEngine !== null)
+    fail(`agent engine ${key} cannot have an SDK fallback`);
+  if (engine.fallbackLlmEngine !== null) {
+    if (typeof engine.fallbackLlmEngine !== "string" || !engine.fallbackLlmEngine)
+      fail(`agent engine ${key} has an invalid fallback`);
+    references.add(engine.fallbackLlmEngine);
+  }
+}
+
+function validateNode(node: unknown, references: Set<string>, nodeIds: Set<string>): void {
+  if (
+    !isRecord(node) ||
+    (node.kind !== "unit" && node.kind !== "map") ||
+    typeof node.id !== "string" ||
+    !node.id ||
+    nodeIds.has(node.id)
+  )
+    fail("node ids must be unique non-empty strings");
+  nodeIds.add(node.id);
+  if (node.kind === "map") {
+    assertKeys(node, ["kind", "id", "over", "template", "concurrency", "reducer", "source"], `map ${node.id}`);
+    if (
+      typeof node.over !== "string" ||
+      !node.over ||
+      !Number.isInteger(node.concurrency) ||
+      (node.concurrency as number) < 1 ||
+      (node.reducer !== "collect" && node.reducer !== "vote")
+    )
+      fail(`map ${node.id} is invalid`);
+    validateNode(node.template, references, nodeIds);
+    if (!isRecord(node.template) || node.template.kind !== "unit") fail(`map ${node.id} template must be a unit`);
+    return;
+  }
+  assertKeys(
+    node,
+    [
+      "kind",
+      "id",
+      "instructions",
+      "templating",
+      "invocation",
+      "schema",
+      "retry",
+      "onError",
+      "env",
+      "isolation",
+      "source",
+    ],
+    `unit ${node.id}`,
+  );
+  if (
+    typeof node.instructions !== "string" ||
+    !node.instructions ||
+    (node.templating !== "expressions" && node.templating !== "verbatim") ||
+    (node.onError !== "fail" && node.onError !== "continue") ||
+    (node.isolation !== "none" && node.isolation !== "worktree")
+  )
+    fail(`unit ${node.id} is invalid`);
+  validateInvocation(node.invocation, references);
+}
+
+function validateGate(gate: unknown, stepId: string, references: Set<string>, nodeIds: Set<string>): void {
+  if (
+    !isRecord(gate) ||
+    gate.kind !== "gate" ||
+    gate.id !== `${stepId}.gate` ||
+    gate.stepId !== stepId ||
+    !Array.isArray(gate.criteria) ||
+    !gate.criteria.every((x) => typeof x === "string") ||
+    !Number.isInteger(gate.maxLoops) ||
+    (gate.maxLoops as number) < 1 ||
+    typeof gate.required !== "boolean"
+  )
+    fail(`gate for step ${stepId} is invalid`);
+  if (nodeIds.has(gate.id)) fail(`gate id ${gate.id} collides with a node`);
+  assertKeys(gate, ["kind", "id", "stepId", "criteria", "maxLoops", "required", "judge"], `gate ${stepId}`);
+  nodeIds.add(gate.id);
+  if (gate.judge !== null) validateInvocation(gate.judge, references);
+}
+
+function validateInvocation(invocation: unknown, references: Set<string>): void {
+  if (
+    !isRecord(invocation) ||
+    typeof invocation.engine !== "string" ||
+    !invocation.engine ||
+    !(typeof invocation.model === "string" || invocation.model === null) ||
+    !(typeof invocation.timeoutMs === "number" || invocation.timeoutMs === null)
+  )
+    fail("invocation is invalid");
+  references.add(invocation.engine);
+  assertKeys(invocation, ["engine", "model", "timeoutMs", "llm"], "invocation");
+}
+
+function validateRoute(route: unknown, stepId: string): void {
+  if (
+    !isRecord(route) ||
+    typeof route.input !== "string" ||
+    !route.input ||
+    !isRecord(route.when) ||
+    Object.keys(route.when).length === 0 ||
+    !Object.values(route.when).every((target) => typeof target === "string" && target)
+  )
+    fail(`route for step ${stepId} is invalid`);
+}
+
+function assertUnitEngineCompatibility(node: IrExecNode, engines: Record<string, FrozenEngineSnapshot>): void {
+  const unit = node.kind === "map" ? node.template : node;
+  const engine = unit.invocation ? engines[unit.invocation.engine] : undefined;
+  if (!engine) return;
+  if (engine.kind === "llm" && ((unit.env?.length ?? 0) > 0 || unit.isolation === "worktree")) {
+    fail(`LLM unit ${unit.id} cannot use env injection or worktree isolation`);
+  }
+}
+
+function assertKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${label} contains unknown key ${key}`);
+}
+
+function assertJson(value: unknown, depth = 0): void {
+  if (depth > 64) fail("plan exceeds JSON depth limit");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) fail("plan contains a non-finite number");
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) assertJson(item, depth + 1);
+    return;
+  }
+  if (isRecord(value)) {
+    for (const item of Object.values(value)) assertJson(item, depth + 1);
+    return;
+  }
+  fail("plan contains a non-JSON value");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function fail(message: string): never {
+  throw new UsageError(`Invalid frozen workflow plan: ${message}.`);
+}
+
+/** Removed v2 type name retained only as a TypeScript migration aid. */
+export type IrAgentNode = IrUnitNode;

@@ -52,6 +52,7 @@ import {
 import { assertRunParamsSatisfyPlan } from "../ir/params";
 import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
 import { PROGRAM_RETRY_REASONS } from "../program/schema";
+import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -61,6 +62,7 @@ import {
 import { UNIT_STALE_MS } from "../runtime/unit-checkin";
 import type { SummaryJudge } from "../validate-summary";
 import { buildLease, resolveRunId } from "./brief";
+import { frozenSummaryJudge } from "./frozen-judge";
 import {
   activeGateLoop,
   cascadeSkippedRouter,
@@ -68,7 +70,6 @@ import {
   type ExecutedStepOutcome,
   finalizeExecutedStep,
   isRetryEligibleFailure,
-  parseFrozenPlan,
   type RouteSkipInfo,
   recoverGateFeedback,
   reduceEmptyStep,
@@ -198,8 +199,6 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   // #14: read the spine, run row, and unit journal in ONE snapshot so the guards
   // below see a consistent point-in-time state (same fix as `brief`).
   const { next, run: runRow, units } = await snapshotRunForDriver(runId);
-  const planJson = runRow.plan_json;
-  const planHash = runRow.plan_hash;
   const leaseHolder = runRow.engine_lease_holder;
   const leaseUntil = runRow.engine_lease_until;
 
@@ -238,7 +237,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     );
   }
 
-  const plan = loadFrozenPlan(runId, planJson, planHash);
+  const plan = requireExecutableWorkflowPlan(runRow);
   // Reviewer #12: the journaled params row must still satisfy the frozen param
   // schemas before report resolves any unit prompt from it — a violation is
   // post-start corruption, refused loudly (mirrors the frozen-plan hash check
@@ -549,7 +548,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
         byUnit,
         gateLoop,
         priorEvidence,
-        summaryJudge: input.summaryJudge,
+        summaryJudge:
+          input.summaryJudge === undefined ? frozenSummaryJudge(plan, stepPlan.gate.judge) : input.summaryJudge,
         now: nowFn,
         written: { unitId: journalId, status },
         recorded: "written",
@@ -614,7 +614,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     byUnit,
     gateLoop,
     priorEvidence,
-    summaryJudge: input.summaryJudge,
+    summaryJudge: input.summaryJudge === undefined ? frozenSummaryJudge(plan, stepPlan.gate.judge) : input.summaryJudge,
     now: nowFn,
     written: { unitId: journalId, status },
     recorded: idempotent ? "idempotent" : "written",
@@ -681,7 +681,7 @@ export async function settleWorkflowSpine(input: {
     );
   }
 
-  const plan = loadFrozenPlan(runId, runRow.plan_json, runRow.plan_hash);
+  const plan = requireExecutableWorkflowPlan(runRow);
   assertRunParamsSatisfyPlan(runId, plan, next.run.params ?? {});
 
   // A step with resolvable units is settled ONLY when its work-list is FULLY
@@ -834,6 +834,7 @@ function buildStepContext(
     runId,
     params: next.run.params ?? {},
     stepOutputs,
+    ...(plan.execution ? { engines: plan.execution.engines } : {}),
     gateLoop,
     ...(gateFeedback ? { gateFeedback } : {}),
   });
@@ -1326,16 +1327,6 @@ async function settleSpine(args: {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function loadFrozenPlan(runId: string, planJson: string | null, planHash: string | null): WorkflowPlanGraph {
-  if (!planJson) {
-    throw new UsageError(
-      `Workflow run ${runId} predates frozen plans (no plan_json on the run row) and cannot be driven by ` +
-        `\`akm workflow report\`. Use engine-driven mode: \`akm workflow run ${runId}\`.`,
-    );
-  }
-  return parseFrozenPlan(runId, planJson, planHash);
-}
 
 /**
  * Normalize a driver-supplied `--failure-reason` to the persisted taxonomy (PR

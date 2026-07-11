@@ -28,7 +28,6 @@
 
 import os from "node:os";
 import { concurrentMap } from "../../core/concurrent";
-import { loadConfig } from "../../core/config/config";
 
 /**
  * Hard ceiling on an EXPLICIT `workflow.maxConcurrency`. A user value above
@@ -58,12 +57,10 @@ export function clampMaxConcurrency(value: number): number {
  * and defensive: the scheduler must never fail a run because config is unwell.
  */
 function configuredMaxConcurrency(): number | undefined {
-  try {
-    const value = loadConfig().workflow?.maxConcurrency;
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  // Execution receives the frozen per-run policy through ScheduleOptions. This
+  // fallback deliberately never reads live config, which could otherwise alter
+  // a resumed run's dispatch width.
+  return undefined;
 }
 
 /**
