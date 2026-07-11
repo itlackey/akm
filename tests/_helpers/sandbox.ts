@@ -350,6 +350,17 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
   );
 }
 
+/** Install deterministic named engines for tests that freeze workflow plans. */
+export function writeWorkflowTestConfig(): void {
+  writeSandboxConfig({
+    engines: {
+      "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test-model" },
+    },
+    defaults: { engine: "test-agent", llmEngine: "test-llm" },
+  });
+}
+
 // ── Fetch mock ───────────────────────────────────────────────────────────────
 
 /**

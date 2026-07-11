@@ -83,7 +83,7 @@ const TIMEOUT_HINT = `Use "<n>ms", "<n>s", "<n>m" (e.g. "10m"), or "none"`;
  * column 0. Used so the matcher and parser cannot drift.
  */
 export function looksLikeWorkflowProgram(yamlText: string): boolean {
-  return /^version[ \t]*:[ \t]*['"]?\d+['"]?[ \t]*(#.*)?$/m.test(yamlText) && /^steps[ \t]*:/m.test(yamlText);
+  return /^version[ \t]*:[ \t]*['"]?(?:1|2)['"]?[ \t]*(#.*)?$/m.test(yamlText) && /^steps[ \t]*:/m.test(yamlText);
 }
 
 type Path = Array<string | number>;

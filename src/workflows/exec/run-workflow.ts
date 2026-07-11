@@ -168,7 +168,7 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   const next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params);
   // Version/canonical/hash validation precedes every executable mutation,
   // including lease acquisition. Historical rows remain inspectable/abandonable.
-  if (!options.loadPlan) {
+  if (!next.done && !options.loadPlan) {
     await withWorkflowRunsRepo((repo) => {
       const row = repo.getRunById(next.run.id);
       if (!row) throw new UsageError(`Workflow run ${next.run.id} was not found.`);

@@ -15,10 +15,9 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+import { freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
  * `akm workflow brief` (redesign addendum R3, task step 2). Proves brief:
@@ -40,11 +39,7 @@ function dbPath(): string {
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText);
 }
 
 interface SeedStep {
@@ -94,9 +89,9 @@ function seedRun(opts: {
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash,
-          engine_lease_holder, engine_lease_until)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version,
+           engine_lease_holder, engine_lease_until)
+        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       RUN_ID,
       opts.status ?? "active",
@@ -106,6 +101,7 @@ function seedRun(opts: {
       now,
       planJson,
       planHash,
+      frozen?.irVersion ?? null,
       opts.lease?.holder ?? null,
       opts.lease?.until ?? null,
     );
@@ -172,7 +168,7 @@ afterEach(() => {
 
 // ── Workflows ────────────────────────────────────────────────────────────────
 
-const SOLO_WF = `version: 1
+const SOLO_WF = `version: 2
 name: Solo
 steps:
   - id: build
@@ -188,7 +184,7 @@ steps:
       instructions: Wrap up.
 `;
 
-const FANOUT_WF = `version: 1
+const FANOUT_WF = `version: 2
 name: Fanout
 steps:
   - id: review
@@ -204,7 +200,7 @@ steps:
           required: [verdict]
 `;
 
-const LOOP_WF = `version: 1
+const LOOP_WF = `version: 2
 name: Loop
 steps:
   - id: work
@@ -216,7 +212,7 @@ steps:
       max_loops: 3
 `;
 
-const ROUTE_WF = `version: 1
+const ROUTE_WF = `version: 2
 name: Route
 steps:
   - id: judge
@@ -260,7 +256,12 @@ describe("workflow brief — solo step", () => {
 
     const u = brief.workList.units[0];
     // Predicts the engine: unit id + input hash equal computeStepWorkList.
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: { target: "widget" }, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: { target: "widget" },
+      stepOutputs: {},
+      engines: p.execution?.engines,
+    });
     expect(engine.ok).toBe(true);
     if (engine.ok) {
       expect(u.unitId).toBe(engine.list.units[0].unitId);
@@ -274,7 +275,7 @@ describe("workflow brief — solo step", () => {
     // The rest of the required per-unit contract (node id, runner, timeout,
     // on_error) is carried too — a driver needs every one to dispatch.
     expect(u.nodeId).toBe("build");
-    expect(u.runner).toBe("inherit");
+    expect(u.runner).toBe("sdk");
     expect(u.timeoutMs).toBe(600_000);
     expect(u.onError).toBe("fail");
     // #15: an un-journaled unit is `pending` with the completed report command,
@@ -386,6 +387,7 @@ describe("workflow brief — gate loop 2", () => {
       stepOutputs: {},
       gateLoop: 2,
       gateFeedback: { feedback: "Add the analysis.", missing: ["the work is thorough"] },
+      engines: p.execution?.engines,
     });
     expect(engine.ok).toBe(true);
     if (engine.ok && u.resolved.ok && engine.list.units[0].resolved.ok) {
@@ -443,7 +445,7 @@ describe("workflow brief — completed run", () => {
 describe("workflow brief — legacy run (NULL plan_json)", () => {
   test("errors clearly, pointing at engine-driven mode", async () => {
     seedRun({ plan: null, params: { target: "x" }, steps: [{ id: "build" }, { id: "wrap" }] });
-    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/predates frozen plans.*workflow run/s);
+    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/no frozen v3 plan.*inspection-only.*workflow abandon/s);
   });
 });
 
@@ -592,7 +594,7 @@ describe("workflow brief — unit action states (#15)", () => {
 });
 
 describe("workflow brief — fully-terminal step needing finalization (owner finding 3)", () => {
-  const REQUIRED_GATE_WF = `version: 1
+  const REQUIRED_GATE_WF = `version: 2
 name: ReqGate
 steps:
   - id: work
@@ -720,13 +722,13 @@ steps:
 });
 
 describe("workflow brief — worktree isolation warning (#21)", () => {
-  const WORKTREE_WF = `version: 1
+  const WORKTREE_WF = `version: 2
 name: Isolated
 steps:
   - id: build
     title: Build
     unit:
-      runner: agent
+      engine: test-agent
       isolation: worktree
       instructions: Build it.
 `;

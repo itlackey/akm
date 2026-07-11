@@ -135,17 +135,16 @@ describe("scheduleUnits — workflow.maxConcurrency config knob", () => {
     resetConfigCache();
   });
 
-  test("honours a configured cap when no test seam is passed", async () => {
-    // Persist an explicit cap of 2 into the sandbox config, then declare a
-    // wider per-step concurrency with NO maxConcurrency seam: the config cap
-    // must clamp the observed peak to 2.
+  test("does not re-read live config after the execution policy is frozen", async () => {
+    // The scheduler receives the frozen cap from its caller. A live config
+    // change without that frozen value must not alter an in-flight run.
     saveConfig({ workflow: { maxConcurrency: 2 } } as AkmConfig);
     resetConfigCache();
     expect(loadConfig().workflow?.maxConcurrency).toBe(2);
 
     const probe = concurrencyProbe();
     await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, { concurrency: 8 });
-    expect(probe.peak()).toBe(2);
+    expect(probe.peak()).toBe(8);
   });
 
   test("the maxConcurrency test seam still overrides the configured value", async () => {

@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, withEnv, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -61,7 +61,13 @@ function writeWorkflowSource(): string {
 }
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  const { code, stdout, stderr } = await withEnv({ AKM_STASH_DIR: stashDir }, () => runCliCapture(args));
+  const { code, stdout, stderr } = await withEnv(
+    { AKM_STASH_DIR: stashDir, XDG_CONFIG_HOME: path.join(stashDir, ".config") },
+    () => {
+      writeWorkflowTestConfig();
+      return runCliCapture(args);
+    },
+  );
   return { stdout, stderr, status: code };
 }
 

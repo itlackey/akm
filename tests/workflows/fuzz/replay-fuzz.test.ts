@@ -13,7 +13,7 @@ import { canonicalJson, computeStepWorkList, unitIdFor } from "../../../src/work
 import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
 import type { IrStepPlan } from "../../../src/workflows/ir/schema";
 import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { distinctJsonValues, randomJsonValue, reorderKeys } from "./_gen";
 import { fuzzSeeds, Rng, withSeed } from "./_rng";
 
@@ -39,7 +39,7 @@ import { fuzzSeeds, Rng, withSeed } from "./_rng";
  * whole `fuzz/` directory in the fast tier.
  */
 
-const MAP_WF = `version: 1
+const MAP_WF = `version: 2
 name: f
 params: { items: { type: array } }
 steps:
@@ -196,6 +196,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
         let storage: IsolatedAkmStorage | undefined;
         try {
           storage = withIsolatedAkmStorage();
+          writeWorkflowTestConfig();
           await withSeedAsync(seed, async () => {
             const rng = new Rng(seed);
             const items = distinctScalars(rng, rng.range(1, 4));

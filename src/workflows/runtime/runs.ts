@@ -417,7 +417,6 @@ export async function getNextWorkflowStep(
 ): Promise<WorkflowNextResult> {
   return withWorkflowRunsRepo(async (repo) => {
     const { run, autoStarted } = await resolveRunSpecifier(repo, specifier, params);
-    requireExecutableWorkflowPlan(run);
     const steps = readWorkflowRunSteps(repo, run.id);
     return { ...projectNextResult(run, steps), ...(autoStarted ? { autoStarted: true as const } : {}) };
   });

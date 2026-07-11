@@ -43,7 +43,7 @@ function warningsFor(yamlText: string): WorkflowError[] {
 
 describe("warning A — a unit/map step with no output schema", () => {
   test("fires for a unit step lacking a step-level output, with step context", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: untyped-unit
 steps:
   - id: analyze
@@ -59,7 +59,7 @@ steps:
   });
 
   test("fires for a map step lacking a step-level output", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: untyped-map
 params:
   items: { type: array }
@@ -75,7 +75,7 @@ steps:
   });
 
   test("does NOT fire when the step declares a step-level output schema", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: typed-unit
 steps:
   - id: analyze
@@ -89,7 +89,7 @@ steps:
   });
 
   test("still fires when only a per-UNIT output is declared (step artifact stays untyped)", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: unit-only-output
 steps:
   - id: analyze
@@ -103,7 +103,7 @@ steps:
   });
 
   test("does NOT fire for a route-only step (it dispatches no units, produces no artifact)", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: route-step
 steps:
   - id: pick
@@ -126,7 +126,7 @@ steps:
 
 describe("warning B — a reference to an undeclared param", () => {
   test("fires for an undeclared param in unit instructions when a params: block is declared", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: typo-param
 params:
   changed_files: { type: array }
@@ -145,7 +145,7 @@ steps:
   });
 
   test("does NOT fire for a param that IS declared", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: ok-param
 params:
   changed_files: { type: array }
@@ -159,7 +159,7 @@ steps:
   });
 
   test("is SILENT when the program declares NO params block (start-supplied pattern)", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: no-params-block
 steps:
   - id: review
@@ -171,7 +171,7 @@ steps:
   });
 
   test("fires for an undeclared param in a route.input whole-value field", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: route-typo
 params:
   mode: { type: string }
@@ -190,7 +190,7 @@ steps:
   });
 
   test("fires per reference — an undeclared param used twice warns twice", () => {
-    const warnings = warningsFor(`version: 1
+    const warnings = warningsFor(`version: 2
 name: twice
 params:
   a: { type: string }
@@ -207,7 +207,7 @@ steps:
 // ── Clean programs + invariants ──────────────────────────────────────────────
 
 describe("no warnings on a fully-typed, fully-declared program", () => {
-  const CLEAN = `version: 1
+  const CLEAN = `version: 2
 name: clean
 params:
   files: { type: array }
@@ -235,7 +235,7 @@ steps:
 });
 
 describe("warnings never change the plan or its hash", () => {
-  const NOISY = `version: 1
+  const NOISY = `version: 2
 name: noisy
 params:
   files: { type: array }
@@ -280,7 +280,7 @@ Build the artifact. A literal \${{ params.x }} is content here, not grammar.
 
 describe("collectProgramWarnings is a pure, reusable function", () => {
   test("returns the same advisories the compiler attaches to its result", () => {
-    const program = parseProgram(`version: 1
+    const program = parseProgram(`version: 2
 name: shared
 params:
   a: { type: string }

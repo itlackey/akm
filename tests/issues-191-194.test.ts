@@ -34,6 +34,7 @@ import { resetConfigCache } from "../src/core/config/config";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
+import { WORKFLOW_TEST_CONFIG } from "./_helpers/workflow";
 
 const tempDirs: string[] = [];
 
@@ -202,6 +203,10 @@ describe("issue #194 — workflow create --from then start has non-null workflow
   test("imported workflow run carries a real numeric workflowEntryId", async () => {
     const env = makeEnv();
     expect((await runCli(["init"], env)).status).toBe(0);
+
+    const configPath = path.join(env.XDG_CONFIG_HOME as string, "akm", "config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(configPath, `${JSON.stringify({ ...config, ...WORKFLOW_TEST_CONFIG }, null, 2)}\n`, "utf8");
 
     const sourceDir = makeTempDir("akm-issue-194-src-");
     const sourcePath = path.join(sourceDir, "imported.md");

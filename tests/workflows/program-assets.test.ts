@@ -29,25 +29,26 @@ import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../src/workflows/program/project";
 import { workflowProgramRenderer } from "../../src/workflows/renderer";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
 
-// The addendum's v1 sketch, completed with the three route-target steps the
+// The addendum's sketch, migrated to binding YAML v2 and completed with the three route-target steps the
 // sketch references (route targets must exist and come after the router).
-const ADDENDUM_EXAMPLE = `version: 1
+const ADDENDUM_EXAMPLE = `version: 2
 name: review-changes
 description: Review changed files and route the outcome
 params:
   changed_files: { type: array, items: { type: string } }
 defaults:
-  runner: sdk
+  engine: test-agent
   model: balanced
   timeout: 10m
   on_error: fail
@@ -72,8 +73,7 @@ steps:
       concurrency: 8
       reducer: collect
       unit:
-        runner: agent
-        profile: reviewer
+        engine: test-agent
         model: deep
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
@@ -105,7 +105,7 @@ steps:
       instructions: Triage manually.
 `;
 
-const MINIMAL_PROGRAM = `version: 1
+const MINIMAL_PROGRAM = `version: 2
 name: minimal
 steps:
   - id: only
@@ -249,7 +249,7 @@ describe("loadWorkflowAsset over YAML programs", () => {
   });
 
   test("a broken program fails the load with line-anchored errors", async () => {
-    writeStashFile("workflows/broken.yaml", "version: 1\nname: broken\nsteps:\n  - id: a\n");
+    writeStashFile("workflows/broken.yaml", "version: 2\nname: broken\nsteps:\n  - id: a\n");
     await expect(loadWorkflowAsset("workflow:broken")).rejects.toThrow(/exactly one of "unit", "map", or "route"/);
   });
 });
@@ -270,7 +270,7 @@ describe("validateWorkflowProgramSource", () => {
   test("surfaces parse errors with line numbers", () => {
     const file = writeStashFile(
       "workflows/dup.yaml",
-      `version: 1\nname: dup\nsteps:\n  - id: a\n    unit: { instructions: x }\n  - id: a\n    unit: { instructions: y }\n`,
+      `version: 2\nname: dup\nsteps:\n  - id: a\n    unit: { instructions: x }\n  - id: a\n    unit: { instructions: y }\n`,
     );
     const { result } = validateWorkflowProgramSource(file);
     expect(result.ok).toBe(false);
@@ -286,7 +286,7 @@ describe("validateWorkflowProgramSource", () => {
     const file = writeStashFile(
       "workflows/bad-ref.yaml",
       [
-        "version: 1",
+        "version: 2",
         "name: bad-ref",
         "steps:",
         "  - id: fan",
@@ -338,7 +338,7 @@ describe("workflow-program-yaml renderer", () => {
     const discover = steps.find((s) => s.id === "discover");
     expect(discover?.completionCriteria).toEqual(["every target is listed"]);
     // Run-level defaults are merged, mirroring the compiler.
-    expect(discover?.orchestration?.runner).toBe("sdk");
+    expect(discover?.orchestration?.engine).toBe("test-agent");
     expect(discover?.orchestration?.model).toBe("balanced");
     expect(discover?.orchestration?.timeoutMs).toBe(600_000);
     expect(discover?.orchestration?.hasSchema).toBe(true);
@@ -349,8 +349,7 @@ describe("workflow-program-yaml renderer", () => {
       concurrency: 8,
       reducer: "collect",
     });
-    expect(review?.orchestration?.runner).toBe("agent");
-    expect(review?.orchestration?.profile).toBe("reviewer");
+    expect(review?.orchestration?.engine).toBe("test-agent");
     expect(review?.orchestration?.model).toBe("deep");
     expect(review?.orchestration?.timeoutMs).toBe(300_000);
 
@@ -413,7 +412,7 @@ describe("workflowProgramMatcher + indexing", () => {
   });
 
   test("akm index skips a broken YAML program with a warning", async () => {
-    const broken = writeStashFile("workflows/broken.yaml", "version: 1\nname: broken\nsteps: []\n");
+    const broken = writeStashFile("workflows/broken.yaml", "version: 2\nname: broken\nsteps: []\n");
     const originalWarn = console.warn.bind(console);
     console.warn = () => {};
     try {

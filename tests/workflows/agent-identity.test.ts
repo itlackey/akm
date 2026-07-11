@@ -12,6 +12,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   withEnv,
+  writeWorkflowTestConfig,
 } from "../_helpers/sandbox";
 
 /**
@@ -138,6 +139,7 @@ describe("workflow run agent identity persistence", () => {
     sandboxXdgConfigHome(cleanup);
     sandboxXdgDataHome(cleanup);
     sandboxXdgCacheHome(cleanup);
+    writeWorkflowTestConfig();
     fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
   });
 

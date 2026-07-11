@@ -20,7 +20,7 @@ import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 /**
  * R4 chaos tests — adversarial resilience of the frozen-plan engine + the R3
@@ -52,6 +52,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
@@ -88,7 +89,12 @@ function workListFor(
   params: Record<string, unknown>,
   stepOutputs: Record<string, unknown> = {},
 ): Array<{ unitId: string; inputHash: string }> {
-  const computed = computeStepWorkList(plan.steps[stepIndex], { runId, params, stepOutputs });
+  const computed = computeStepWorkList(plan.steps[stepIndex], {
+    runId,
+    params,
+    stepOutputs,
+    engines: plan.execution?.engines,
+  });
   if (!computed.ok) throw new Error(computed.error);
   return computed.list.units.map((u) => {
     if (!u.resolved.ok) throw new Error(`unit ${u.unitId} did not resolve: ${u.resolved.error}`);
@@ -136,7 +142,7 @@ const FAKE_SECRET = "SUPER-SEKRET-VALUE-9f8e7d6c";
 // 1. Crash / resume
 // ═══════════════════════════════════════════════════════════════════════════
 
-const FANOUT_FAIL_WF = `version: 1
+const FANOUT_FAIL_WF = `version: 2
 name: crash-resume
 params:
   files: { type: array, items: { type: string } }
@@ -214,7 +220,7 @@ describe("chaos: crash / resume (durable-row)", () => {
   });
 });
 
-const FANOUT_GATE_WF = `version: 1
+const FANOUT_GATE_WF = `version: 2
 name: crash-completion
 params:
   files: { type: array, items: { type: string } }
@@ -395,7 +401,7 @@ describe("chaos: crash INSIDE the completion path", () => {
 // 2. Lease contention
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SOLO_WF = `version: 1
+const SOLO_WF = `version: 2
 name: leased
 steps:
   - id: only
@@ -404,7 +410,7 @@ steps:
       instructions: Do the leased thing.
 `;
 
-const SOLO_FANOUT_WF = `version: 1
+const SOLO_FANOUT_WF = `version: 2
 name: leased-fanout
 params:
   files: { type: array, items: { type: string } }
@@ -561,7 +567,7 @@ describe("chaos: lease contention", () => {
 // 3. Hostile content
 // ═══════════════════════════════════════════════════════════════════════════
 
-const PRODUCER_CONSUMER_WF = `version: 1
+const PRODUCER_CONSUMER_WF = `version: 2
 name: hostile-flow
 params:
   secret: { type: string }
@@ -615,7 +621,7 @@ describe("chaos: hostile content — single-pass resolution", () => {
   });
 });
 
-const HOSTILE_FANOUT_WF = `version: 1
+const HOSTILE_FANOUT_WF = `version: 2
 name: hostile-fanout
 params:
   files: { type: array, items: { type: string } }
@@ -695,7 +701,7 @@ describe("chaos: hostile content — events, clipping, brief safety", () => {
   });
 
   test("brief JSON stays well-formed with hostile journaled gate feedback recovered from the journal", async () => {
-    const LOOP_WF = `version: 1
+    const LOOP_WF = `version: 2
 name: hostile-loop
 steps:
   - id: work
@@ -747,10 +753,10 @@ steps:
   });
 });
 
-const ENV_SOLO_WF = `version: 1
+const ENV_SOLO_WF = `version: 2
 name: env-bound
 defaults:
-  runner: sdk
+  engine: test-agent
 steps:
   - id: build
     title: Build
@@ -890,7 +896,7 @@ describe("chaos: replay divergence under a tampered journal", () => {
 // loudly (naming the unit) on both the engine resume and the report surface,
 // never silently re-dispatch — exactly like a tampered journal row.
 
-const PARAM_SOLO_WF = `version: 1
+const PARAM_SOLO_WF = `version: 2
 name: param-tamper
 params:
   mode: { type: string }
@@ -968,7 +974,7 @@ describe("chaos: replay divergence via a tampered params row (plan_hash does not
 // on a judge throw / unparseable verdict (offline-safe), and only a well-formed
 // `complete: false` blocks completion.
 
-const JUDGE_GATE_WF = `version: 1
+const JUDGE_GATE_WF = `version: 2
 name: judge-gate
 steps:
   - id: work
