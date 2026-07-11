@@ -107,7 +107,7 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
-  it("preserves ${VAR:-default} reference", () => {
+  it("strips unsupported ${VAR:-default} syntax", () => {
     saveConfig(
       makeConfig({
         embedding: {
@@ -120,31 +120,46 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
     );
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
-    expect(persisted).toContain("${OPENAI_API_KEY:-fallback}");
+    expect(persisted).not.toContain("${OPENAI_API_KEY:-fallback}");
   });
 
-  it("strips literal apiKey across multiple llm profiles", () => {
-    saveConfig(
-      makeConfig({
-        profiles: {
-          llm: {
+  it("rejects literal apiKey and preserves references across llm engines", () => {
+    expect(() =>
+      saveConfig(
+        makeConfig({
+          engines: {
             openai: {
-              endpoint: "https://api.openai.com",
+              kind: "llm",
+              endpoint: "https://api.openai.com/v1/chat/completions",
               model: "gpt-4",
               apiKey: "sk-openai-literal",
             },
-            anthropic: {
-              endpoint: "https://api.anthropic.com",
-              model: "claude-opus-4-7",
-              // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
-              apiKey: "${ANTHROPIC_API_KEY}",
-            },
+          },
+        }),
+      ),
+    ).toThrow(/apiKey must be/);
+
+    saveConfig(
+      makeConfig({
+        engines: {
+          openai: {
+            kind: "llm",
+            endpoint: "https://api.openai.com/v1/chat/completions",
+            model: "gpt-4",
+            apiKey: "$OPENAI_API_KEY",
+          },
+          anthropic: {
+            kind: "llm",
+            endpoint: "https://api.anthropic.com/v1/chat/completions",
+            model: "claude-opus-4-7",
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
+            apiKey: "${ANTHROPIC_API_KEY}",
           },
         },
       }),
     );
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).not.toContain("sk-openai-literal");
+    expect(persisted).toContain("$OPENAI_API_KEY");
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
     expect(persisted).toContain("${ANTHROPIC_API_KEY}");
   });

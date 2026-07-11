@@ -59,6 +59,7 @@ beforeEach(() => {
   // internally). FTS-only keeps indexing fast + deterministic (no embedder).
   resetConfigCache();
   saveConfig({
+    configVersion: "0.9.0",
     semanticSearchMode: "off",
     sources: [{ type: "filesystem", path: stashDir }],
     registries: [],
@@ -89,32 +90,35 @@ const SUMMARY_TEXT =
 
 function configFor(stash: string, indexSessions?: boolean, extractEnabled = true): AkmConfig {
   return {
+    configVersion: "0.9.0",
     // FTS-only keeps the round-trip fast + deterministic (no embedding model
     // download); the summary body is fully searchable via FTS.
     semanticSearchMode: "off",
     stashDir: stash,
     sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
     defaultWriteTarget: "stash",
-    profiles: {
-      llm: {
-        default: {
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
-          supportsJsonSchema: true,
-        },
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test-model",
+        supportsJsonSchema: true,
       },
-      improve: {
-        default: {
+    },
+    improve: {
+      strategies: {
+        session: {
           processes: {
             extract: {
               enabled: extractEnabled,
+              triage: { enabled: false },
               ...(indexSessions === undefined ? {} : { indexSessions }),
             },
           },
         },
       },
     },
-    defaults: { llm: "default" },
+    defaults: { llmEngine: "default", improveStrategy: "session" },
   } as AkmConfig;
 }
 

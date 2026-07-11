@@ -18,7 +18,7 @@ describe("triage improve-process config schema", () => {
           maxAcceptsPerRun: 25,
           maxDiffLines: 200,
           rejectEmpty: true,
-          judgment: { mode: "llm", profile: "fast", timeoutMs: 600000 },
+          judgment: { engine: "fast", timeoutMs: 600000 },
         },
       },
     });
@@ -34,7 +34,7 @@ describe("triage improve-process config schema", () => {
         maxAcceptsPerRun: 10,
         maxDiffLines: 50,
         rejectEmpty: false,
-        judgment: { mode: "agent" },
+        judgment: { engine: "agent" },
       }).success,
     ).toBe(true);
 
@@ -44,9 +44,9 @@ describe("triage improve-process config schema", () => {
     expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
     expect(ImproveProcessConfigSchema.safeParse({ maxDiffLines: -1 }).success).toBe(false);
     // judgment tolerates unknown keys (lenient policy) but still type-checks known ones
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm", bogus: 1 } }).success).toBe(true);
-    // judgment.mode is constrained to llm|agent|sdk
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "human" } }).success).toBe(false);
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } }).success).toBe(true);
+    // judgment.mode is retired in favor of a named engine.
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(false);
     // judgment.timeoutMs accepts null
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
   });
