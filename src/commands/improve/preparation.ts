@@ -788,6 +788,8 @@ export async function runImprovePreparationStage(args: {
   initialCleanupWarnings?: string[];
   /** Active improve profile, resolved from profile name + config. */
   improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  /** Public strategy identity for run-level event metadata. */
+  strategyName: string;
   /** Budget signal forwarded to the consolidation pass for graceful drain on timeout. */
   budgetSignal?: AbortSignal;
 }): Promise<ImprovePreparationResult> {
@@ -804,6 +806,7 @@ export async function runImprovePreparationStage(args: {
     eventsCtx,
     initialCleanupWarnings,
     improveProfile,
+    strategyName,
     budgetSignal,
   } = args;
 
@@ -868,7 +871,7 @@ export async function runImprovePreparationStage(args: {
     {
       eventType: "improve_invoked",
       ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-      metadata: { scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
+      metadata: { strategy: strategyName, scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
     },
     eventsCtx,
   );
@@ -1068,7 +1071,7 @@ export async function runImprovePreparationStage(args: {
       // Has feedback on record but no signal delta since the last proposal —
       // genuinely fully skipped. Counted here; a single aggregated
       // improve_skipped event is emitted after the loop (mirrors
-      // profile_filtered_all_passes) instead of one event per ref.
+      // strategy_filtered_all_passes) instead of one event per ref.
       fullySkippedCount++;
       actions.push({
         ref: r.ref,
@@ -1080,7 +1083,7 @@ export async function runImprovePreparationStage(args: {
 
   // Emit ONE aggregated skip event for the fully-skipped bucket rather than one
   // improve_skipped event per ref (#592 pattern, mirrors
-  // profile_filtered_all_passes above). The per-ref loop previously produced
+  // strategy_filtered_all_passes above). The per-ref loop previously produced
   // ~11K state.db writes per run on a large stash, the dominant contributor to
   // 900 s timeouts. The in-memory `actions` log keeps the per-ref detail for the
   // run summary; no downstream consumer needs a per-ref DB audit trail (health's

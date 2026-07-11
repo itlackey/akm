@@ -31,8 +31,8 @@ let db: Database;
 
 function baselineImproveRunRows(database: Database, since: string, until?: string): unknown[] {
   const sql = until
-    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
-    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
+    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, profile AS legacyProfile, strategy, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
+    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, profile AS legacyProfile, strategy, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
   return until ? database.prepare(sql).all(since, until) : database.prepare(sql).all(since);
 }
 
@@ -58,14 +58,15 @@ function seedImproveRun(id: string, startedAt: string, dryRun: boolean): void {
     completedAt: startedAt,
     stashDir: "/tmp/stash",
     dryRun,
-    profile: null,
+    strategy: "default",
     scopeMode: "all",
     scopeValue: null,
     guidance: null,
     ok: true,
     result: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
+      strategy: "default",
       scope: { mode: "all" },
       dryRun,
       memorySummary: { eligible: 0, derived: 0 },

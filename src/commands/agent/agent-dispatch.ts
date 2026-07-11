@@ -47,7 +47,7 @@ export interface AkmAgentDispatchOptions {
 }
 
 export interface AkmAgentDispatchResult {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: boolean;
   shape: "agent-result";
   engine: string;
@@ -151,7 +151,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
   const result: AgentRunResult = await executeRunner(runner, prompt ?? "", runOptions);
 
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     ok: result.ok,
     shape: "agent-result",
     engine: engineName,

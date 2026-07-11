@@ -25,6 +25,7 @@ import {
   writeImproveResultFile,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
+import { resolveImproveStrategy } from "./improve-strategies";
 
 // R5 — collapse-detector canary set inspection / explicit refresh. The
 // detector NEVER auto-refreshes the canary set (silent re-baselining is how a
@@ -193,6 +194,7 @@ export const improveCommand = defineCommand({
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
+      const selectedStrategyName = resolveImproveStrategy(strategyArg, loadConfig()).name;
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
       // so the resolved profile `sync` block wins by default.
@@ -234,7 +236,7 @@ export const improveCommand = defineCommand({
             scopeMode: inferredScopeMode,
             scopeValue: scopeArg ?? null,
             dryRun: Boolean(dryRun),
-            strategy: strategyArg ?? null,
+            strategy: selectedStrategyName,
             ...(errorMessage ? { errorMessage } : {}),
           });
         } catch (err) {
@@ -324,7 +326,7 @@ export const improveCommand = defineCommand({
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, improveResult.strategy ?? null);
+          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.

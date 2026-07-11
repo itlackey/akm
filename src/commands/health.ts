@@ -378,7 +378,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     }
 
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       ok: !hardFailure,
       status,
       since: topLevelSince,

@@ -53,7 +53,11 @@ beforeEach(() => {
     configVersion: "0.9.0",
     engines: {
       "test-agent": { kind: "agent", platform: "opencode-sdk" },
-      "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test-model" },
+      "test-llm": {
+        kind: "llm",
+        endpoint: "http://127.0.0.1:1/v1/chat/completions",
+        model: "test-model",
+      },
     },
     defaults: { engine: "test-agent", llmEngine: "test-llm" },
   });

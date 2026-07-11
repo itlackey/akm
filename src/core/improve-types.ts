@@ -71,7 +71,7 @@ export type EligibilitySource =
 
 export interface ImproveEligibleRef {
   ref: string;
-  reason: "scope-ref" | "scope-type" | "memory-cleanup" | "profile_filtered_all_passes";
+  reason: "scope-ref" | "scope-type" | "memory-cleanup" | "strategy_filtered_all_passes";
   /**
    * Absolute path on disk, pre-resolved from the index at planning time (#591).
    * Avoids repeated serial async DB lookups in the validation and disk-check
@@ -300,10 +300,10 @@ export interface ProceduralCompilationResult {
 }
 
 export interface AkmImproveResult {
-  schemaVersion: 1;
-  ok: true;
+  schemaVersion: 2;
+  ok: boolean;
   /** Effective 0.9 improve strategy selected for this run. */
-  strategy?: string;
+  strategy: string;
   scope: {
     mode: "all" | "type" | "ref";
     value?: string;
@@ -337,14 +337,14 @@ export interface AkmImproveResult {
    * 2× synthetic skip actions per run. See
    * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
    *
-   * Each ref has its `reason` set to `"profile_filtered_all_passes"`. The
+   * Each ref has its `reason` set to `"strategy_filtered_all_passes"`. The
    * audit trail is also emitted as a single summary `improve_skipped` event
    * with metadata `{reason, count}` (#592) — one event per ref caused O(n)
    * sequential state.db writes on large stashes.
    * Omitted entirely when no refs were filtered (keeps the envelope tidy
    * for stashes whose profile accepts every indexed type).
    */
-  profileFilteredRefs?: ImproveEligibleRef[];
+  strategyFilteredRefs?: ImproveEligibleRef[];
   actions?: ImproveActionResult[];
   /**
    * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
@@ -474,4 +474,13 @@ export interface AkmImproveResult {
    * (a sync failure is non-fatal and never fails the run).
    */
   sync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
+  /** Present only when a started run was persisted after abnormal termination. */
+  terminated?: { reason: string; at: string; errorMessage?: string };
 }
+
+/** Historical improve-result envelope written before the 0.9 strategy cutover. */
+export type LegacyAkmImproveResult = Omit<AkmImproveResult, "schemaVersion" | "strategy" | "strategyFilteredRefs"> & {
+  schemaVersion: 1;
+  profile?: string;
+  profileFilteredRefs?: ImproveEligibleRef[];
+};

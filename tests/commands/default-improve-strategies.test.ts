@@ -19,8 +19,27 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 
 const MINIMAL_CONFIG: AkmConfig = { semanticSearchMode: "off" };
+const BUILTIN_STRATEGIES = [
+  "default",
+  "quick",
+  "thorough",
+  "memory-focus",
+  "graph-refresh",
+  "frequent",
+  "consolidate",
+  "catchup",
+  "synthesize",
+  "reflect-distill",
+  "proactive-maintenance",
+  "recombine-only",
+] as const;
 
-describe("default improve profiles (#552)", () => {
+describe("default improve strategies (#552)", () => {
+  test("complete resolved trees are pinned for all built-ins", () => {
+    for (const name of BUILTIN_STRATEGIES) {
+      expect(resolveImproveStrategy(name, MINIMAL_CONFIG)).toMatchSnapshot(name);
+    }
+  });
   test("default profile ships the sustaining proactiveMaintenance lane ON", () => {
     // Intentional default (deep-tuning 2026-06-29): on a mature stash, reflect is
     // signal-delta-gated to ~0 actionable, so proactiveMaintenance is the lane

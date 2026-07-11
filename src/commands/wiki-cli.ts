@@ -290,6 +290,7 @@ const wikiIngestCommand = defineJsonCommand({
     });
 
     output("wiki-ingest", {
+      schemaVersion: 2,
       wiki: built.wiki,
       path: built.path,
       schemaPath: built.schemaPath,

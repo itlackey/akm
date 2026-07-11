@@ -9,9 +9,10 @@
  */
 
 import type { readEvents } from "../../core/events";
+import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
 import { type ImproveRunSummaryRow, queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
-import type { TaskHistoryRow } from "../../storage/repositories/task-history-repository";
+import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import { summarizeCalibration } from "../improve/calibration";
 import type { ImproveHealthMetrics, ImproveRunSummary } from "./types";
 
@@ -22,13 +23,18 @@ export function roundRate(value: number): number {
 export function parseTaskMetadata(row: TaskHistoryRow): {
   durationMs?: number;
   detail?: Record<string, unknown>;
-  profile?: string;
+  engine?: string | null;
+  legacyProfile?: string;
 } {
-  try {
-    return JSON.parse(row.metadata_json) as { durationMs?: number; detail?: Record<string, unknown>; profile?: string };
-  } catch {
-    return {};
-  }
+  const metadata = decodeTaskHistoryMetadata(row.metadata_json);
+  return {
+    ...(metadata.durationMs !== undefined ? { durationMs: metadata.durationMs } : {}),
+    ...(metadata.detail ? { detail: metadata.detail } : {}),
+    ...(metadata.metadataVersion === 2 && metadata.engine !== undefined ? { engine: metadata.engine } : {}),
+    ...(metadata.metadataVersion === 1 && metadata.legacyProfile !== undefined
+      ? { legacyProfile: metadata.legacyProfile }
+      : {}),
+  };
 }
 
 function createUnknownImproveMetrics(): ImproveHealthMetrics {
@@ -38,7 +44,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     skipped: 0,
     skipReasons: {},
     plannedRefs: 0,
-    profileFilteredRefs: 0,
+    strategyFilteredRefs: 0,
     actions: {
       reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, guardRejected: 0, skippedByReason: {} },
       distill: {
@@ -200,11 +206,11 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   const plannedRefs = result.plannedRefs;
   if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
 
-  // profileFilteredRefs (array of {ref, reason}) — 2026-05-27: pre-filter
+  // strategyFilteredRefs (array of {ref, reason}) — 2026-05-27: pre-filter
   // bucket from `collectEligibleRefs` so the metric reflects work the
   // planner dropped before signal-delta / per-pass dispatch.
-  const profileFilteredRefs = result.profileFilteredRefs;
-  if (Array.isArray(profileFilteredRefs)) metrics.profileFilteredRefs += profileFilteredRefs.length;
+  const strategyFilteredRefs = result.schemaVersion === 1 ? result.profileFilteredRefs : result.strategyFilteredRefs;
+  if (Array.isArray(strategyFilteredRefs)) metrics.strategyFilteredRefs += strategyFilteredRefs.length;
 
   // actions: split reflect / distill by outcome, count others.
   const actions = result.actions;
@@ -516,8 +522,8 @@ function finalizeImproveMetrics(metrics: ImproveHealthMetrics): void {
  */
 function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetrics): void {
   dst.plannedRefs += src.plannedRefs;
-  // profileFilteredRefs is the count of refs the planner drops up-front for the
-  // active profile — recomputed against the (stable) stash every run, so it is a
+  // strategyFilteredRefs is the count of refs the planner drops up-front for the
+  // active strategy — recomputed against the (stable) stash every run, so it is a
   // snapshot, NOT a per-run increment. Summing it re-counts the same refs each
   // run (the ~2.4M bug). Set from the most recent run in summarizeImproveRuns.
   dst.actions.reflect.ok += src.actions.reflect.ok;
@@ -644,15 +650,10 @@ export function summarizeImproveRuns(
   // MOST RECENT run's snapshot (current state) — not a sum across runs.
   let latestStartMs = Number.NEGATIVE_INFINITY;
   let latestMemorySummary: ImproveHealthMetrics["memorySummary"] | undefined;
-  let latestProfileFilteredRefs = 0;
+  let latestStrategyFilteredRefs = 0;
 
   for (const row of rows) {
-    let result: Record<string, unknown>;
-    try {
-      result = JSON.parse(row.result_json) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
+    const result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
     const perRow = projectRunMetrics(result);
     mergeImproveMetrics(accum, perRow);
 
@@ -660,7 +661,7 @@ export function summarizeImproveRuns(
     if (Number.isFinite(startMs) && startMs >= latestStartMs) {
       latestStartMs = startMs;
       latestMemorySummary = perRow.memorySummary;
-      latestProfileFilteredRefs = perRow.profileFilteredRefs;
+      latestStrategyFilteredRefs = perRow.strategyFilteredRefs;
     }
 
     // Collect per-phase durations directly off the envelope. consolidation's
@@ -678,7 +679,7 @@ export function summarizeImproveRuns(
 
   finalizeImproveMetrics(accum);
   if (latestMemorySummary) accum.memorySummary = latestMemorySummary;
-  accum.profileFilteredRefs = latestProfileFilteredRefs;
+  accum.strategyFilteredRefs = latestStrategyFilteredRefs;
   accum.wallTime.byPhase = {
     consolidation: summarizePhaseDurations(phaseDurations.consolidation),
     memoryInference: summarizePhaseDurations(phaseDurations.memoryInference),
@@ -716,12 +717,8 @@ export function summarizePhaseDurations(samples: number[]): {
  * Used by `akm health --detail per-run`.
  */
 export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number, taskId: string): ImproveRunSummary {
-  let result: Record<string, unknown> = {};
-  try {
-    result = JSON.parse(row.result_json) as Record<string, unknown>;
-  } catch {
-    // fall through with empty result so per-stage rollups are zeros
-  }
+  const decoded = decodeImproveResult(row.result_json);
+  const result = decoded.envelope as unknown as Record<string, unknown>;
   const perRow = projectRunMetrics(result);
   finalizeImproveMetrics(perRow);
 
@@ -736,6 +733,8 @@ export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number,
     completedAt: row.completed_at,
     wallTimeMs,
     ok: row.ok === 1,
+    strategy: row.strategy,
+    legacyProfile: row.legacyProfile,
     scope: {
       mode: row.scope_mode,
       ...(row.scope_value ? { value: row.scope_value } : {}),
@@ -789,10 +788,10 @@ export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["e
   //  - Per-occurrence (no `count`): one event per skipped ref → SUM is correct.
   //  - Aggregated snapshot (carries `count`): a single per-run event whose count
   //    is the number of refs that hit a STABLE, whole-stash condition that run
-  //    (`no_new_signal`, `profile_filtered_all_passes`). Each run re-counts the
+  //    (`no_new_signal`, `strategy_filtered_all_passes`). Each run re-counts the
   //    same stable set, so summing across the window re-counts it N times (the
   //    2.7M / 3M inflation). For these we keep the MOST RECENT run's count — the
-  //    current snapshot — matching how memorySummary/profileFilteredRefs are
+  //    current snapshot — matching how memorySummary/strategyFilteredRefs are
   //    handled. Events arrive in chronological (offset) order, so the last
   //    count-bearing event per reason is the latest run's value.
   const summed: Record<string, number> = {};
