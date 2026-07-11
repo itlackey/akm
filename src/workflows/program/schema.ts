@@ -20,12 +20,12 @@
  * existing IR uses.
  */
 
+import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
 import type { AgentFailureReason } from "../../integrations/agent/spawn";
 import type { SourceRef, WorkflowError } from "../schema";
 
-export const WORKFLOW_PROGRAM_VERSION = 1;
-
-/** Execution backend for a unit. `inherit` defers to the run-level default. */
+export const WORKFLOW_PROGRAM_VERSION = 2;
+/** @deprecated source v2 rejects runner; retained for TypeScript migration only. */
 export const PROGRAM_RUNNER_KINDS = ["llm", "agent", "sdk", "inherit"] as const;
 export type ProgramRunnerKind = (typeof PROGRAM_RUNNER_KINDS)[number];
 
@@ -95,12 +95,16 @@ export interface ProgramRetry {
 
 /** A single dispatchable unit: instructions plus dispatch overrides. */
 export interface ProgramUnit {
-  /** Execution backend override. Absent = run default (`defaults.runner`). */
+  /** Named engine override. Absent = workflow then config default. */
+  engine?: string;
+  /** @deprecated v1 source compatibility type only. */
   runner?: ProgramRunnerKind;
-  /** Agent/LLM profile name. */
+  /** @deprecated v1 source compatibility type only. */
   profile?: string;
   /** Model alias (tier) or exact id; resolved per-harness at dispatch. */
   model?: string;
+  /** LLM-only invocation settings; validated after the engine is selected. */
+  llm?: LlmInvocationOverrides;
   /** Parsed per-unit timeout in ms; `null` = explicitly "none"; absent = default. */
   timeoutMs?: number | null;
   retry?: ProgramRetry;
@@ -185,15 +189,18 @@ export interface ProgramBudget {
 
 /** Run-level defaults, overridable per unit. */
 export interface ProgramDefaults {
+  engine?: string;
+  /** @deprecated v1 source compatibility type only. */
   runner?: ProgramRunnerKind;
   model?: string;
+  llm?: LlmInvocationOverrides;
   /** Parsed default timeout in ms; `null` = explicitly "none". */
   timeoutMs?: number | null;
   onError?: ProgramOnError;
 }
 
 export interface WorkflowProgram {
-  version: typeof WORKFLOW_PROGRAM_VERSION;
+  version: number;
   name: string;
   description?: string;
   /** Param name → JSON-Schema-ish declaration (validated as a schema in R1 compile). */

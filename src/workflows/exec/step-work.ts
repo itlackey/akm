@@ -46,9 +46,11 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
-import { computePlanHash } from "../ir/plan-hash";
+import { canonicalJson as canonicalJsonString, decodeCanonicalPlan } from "../ir/plan-hash";
 import type {
+  FrozenEngineSnapshot,
   IrAgentNode,
+  IrInvocation,
   IrIsolation,
   IrMapReducer,
   IrOnError,
@@ -65,12 +67,7 @@ import {
   resolveWholeValue,
   type TemplateSegment,
 } from "../program/expressions";
-import {
-  buildDefaultSummaryJudge,
-  completeWorkflowStep,
-  type SummaryValidationFailure,
-  type WorkflowNextResult,
-} from "../runtime/runs";
+import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
 import type { SummaryJudge } from "../validate-summary";
 import { enqueueUnitWrite } from "./unit-writer";
 
@@ -126,6 +123,8 @@ export interface WorkListInput {
   params: Record<string, unknown>;
   /** Prior steps' promoted artifacts, keyed by step id (`stepOutputsFromEvidence`). */
   stepOutputs: Record<string, unknown>;
+  /** Frozen catalog for v3 dispatch. Undefined only for historical test fixtures. */
+  engines?: Record<string, FrozenEngineSnapshot>;
   /**
    * Gate-loop attempt, 1-based (absent = 1). Attempts >= 2 journal their units
    * under `<unitId>~l<loop>` and thread {@link gateFeedback} into every prompt.
@@ -152,6 +151,10 @@ export interface StepWorkUnit {
   /** Journal id root for attempt 0 (`<unitId>` or `<unitId>~l<loop>` in a gate loop). */
   journalBaseId: string;
   runner: IrRunnerKind;
+  /** Frozen catalog entry used at dispatch. */
+  engine?: FrozenEngineSnapshot;
+  fallbackEngine?: Extract<FrozenEngineSnapshot, { kind: "llm" }>;
+  invocation?: IrInvocation;
   profile?: string;
   model?: string;
   /** Resolved timeout (unit override else engine default); null = no timeout. */
@@ -272,7 +275,18 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
   }
 
   const gateLoop = input.gateLoop ?? 1;
-  const timeoutMs = template.timeoutMs === undefined ? DEFAULT_UNIT_TIMEOUT_MS : template.timeoutMs;
+  const frozenInvocation = template.invocation;
+  const frozenEngine = frozenInvocation && input.engines ? input.engines[frozenInvocation.engine] : undefined;
+  const runner: IrRunnerKind = frozenEngine
+    ? frozenEngine.kind === "llm"
+      ? "llm"
+      : frozenEngine.runnerKind
+    : (template.runner ?? "inherit");
+  const timeoutMs = frozenInvocation
+    ? frozenInvocation.timeoutMs
+    : template.timeoutMs === undefined
+      ? DEFAULT_UNIT_TIMEOUT_MS
+      : template.timeoutMs;
 
   const units: StepWorkUnit[] = items.map((item, index) => {
     const unitId = unitIds[index];
@@ -327,18 +341,31 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
       // process.cwd()) are NOT plan-frozen. The frozen plan is the identity
       // boundary (redesign addendum determinism bar #2): config drift under an
       // in-flight run is out of scope by design.
+      const dispatch = frozenEngine ? transitiveDispatchSnapshot(frozenEngine, input.engines ?? {}) : undefined;
       const inputHash = createHash("sha256")
         .update(
-          JSON.stringify({
-            prompt,
-            runner: template.runner,
-            profile: template.profile ?? null,
-            model: template.model ?? null,
-            schema: template.schema ?? null,
-            timeoutMs,
-            env: template.env ?? null,
-            isolation: template.isolation ?? null,
-          }),
+          canonicalJsonString(
+            frozenEngine
+              ? {
+                  hashVersion: 3,
+                  prompt,
+                  dispatch,
+                  invocation: frozenInvocation,
+                  schema: template.schema ?? null,
+                  env: template.env ?? null,
+                  isolation: template.isolation ?? "none",
+                }
+              : {
+                  prompt,
+                  runner,
+                  profile: template.profile ?? null,
+                  model: template.model ?? null,
+                  schema: template.schema ?? null,
+                  timeoutMs,
+                  env: template.env ?? null,
+                  isolation: template.isolation ?? null,
+                },
+          ),
         )
         .digest("hex");
       resolved = { ok: true, prompt, inputHash };
@@ -351,9 +378,25 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
       item,
       isFanOut,
       journalBaseId,
-      runner: template.runner,
+      runner,
+      ...(frozenEngine ? { engine: frozenEngine } : {}),
+      ...(frozenEngine?.kind === "agent" &&
+      frozenEngine.fallbackLlmEngine &&
+      input.engines?.[frozenEngine.fallbackLlmEngine]?.kind === "llm"
+        ? {
+            fallbackEngine: input.engines[frozenEngine.fallbackLlmEngine] as Extract<
+              FrozenEngineSnapshot,
+              { kind: "llm" }
+            >,
+          }
+        : {}),
+      ...(frozenInvocation ? { invocation: frozenInvocation } : {}),
       ...(template.profile ? { profile: template.profile } : {}),
-      ...(template.model ? { model: template.model } : {}),
+      ...(frozenInvocation?.model
+        ? { model: frozenInvocation.model }
+        : template.model
+          ? { model: template.model }
+          : {}),
       timeoutMs,
       ...(template.schema ? { schema: template.schema } : {}),
       ...(template.env ? { env: template.env } : {}),
@@ -431,6 +474,19 @@ export function unitIdFor(nodeId: string, item: unknown, isFanOut: boolean): str
   if (!isFanOut) return `${nodeId}:solo`;
   const canonical = canonicalJson(item) ?? "null";
   return `${nodeId}:${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`;
+}
+
+/** Include an SDK fallback in v3 call identity without copying catalog entries onto nodes. */
+function transitiveDispatchSnapshot(
+  engine: FrozenEngineSnapshot,
+  engines: Record<string, FrozenEngineSnapshot>,
+): FrozenEngineSnapshot | { engine: FrozenEngineSnapshot; fallback: FrozenEngineSnapshot } {
+  if (engine.kind !== "agent" || !engine.fallbackLlmEngine) return engine;
+  const fallback = engines[engine.fallbackLlmEngine];
+  if (!fallback || fallback.kind !== "llm") {
+    throw new UsageError(`Frozen agent engine "${engine.name}" has no valid LLM fallback snapshot.`);
+  }
+  return { engine, fallback };
 }
 
 // ── Step outputs + reducers + typed artifacts ────────────────────────────────
@@ -1253,8 +1309,8 @@ export interface FinalizeStepInput {
   routeSelected: Set<string>;
   routeUnselected: Map<string, RouteSkipInfo>;
   /**
-   * Completion-criteria judge: `undefined` ⇒ build the default from config;
-   * `null` ⇒ no judge (fail-open); a function ⇒ the injected judge (tests).
+   * Completion-criteria judge from the frozen plan. `undefined` and `null`
+   * both mean no judge; live configuration is never consulted here.
    */
   summaryJudge: SummaryJudge | null | undefined;
   /**
@@ -1318,10 +1374,9 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   }
 
   // Resolve the completion-criteria judge ONCE (reused by the gate below). A
-  // `null` result means NO judge is available: `undefined` builds the default
-  // from config (null when offline / misconfigured), and an explicit `null`
-  // caller override is offline by construction.
-  const innerJudge = input.summaryJudge === undefined ? buildDefaultSummaryJudge() : input.summaryJudge;
+  // A frozen plan either supplies its judge at the dispatch boundary or has no
+  // judge. Re-selecting defaults here would let config drift change a run.
+  const innerJudge = input.summaryJudge ?? null;
 
   // Reviewer #18: a REQUIRED completion gate must actually be judged. When the
   // gate carries criteria but no judge is available, `validateStepSummary` would
@@ -1469,22 +1524,14 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
  * handles a PRESENT plan string.
  */
 export function parseFrozenPlan(runId: string, planJson: string, planHash: string | null): WorkflowPlanGraph {
-  let plan: WorkflowPlanGraph;
   try {
-    plan = JSON.parse(planJson) as WorkflowPlanGraph;
-  } catch {
+    return decodeCanonicalPlan(runId, planJson, planHash);
+  } catch (cause) {
     throw new UsageError(
-      `Workflow run ${runId} has a corrupt frozen plan (plan_json is not valid JSON). ` +
-        `The journaled plan cannot be executed — start a new run.`,
+      `Workflow run ${runId} has a corrupt frozen plan: ${cause instanceof Error ? cause.message : String(cause)}. ` +
+        `The journaled plan cannot be executed — abandon it and start a new run.`,
     );
   }
-  if (computePlanHash(plan) !== planHash) {
-    throw new UsageError(
-      `Workflow run ${runId} failed the frozen-plan integrity check: plan_json does not match plan_hash. ` +
-        `The journaled plan was modified after the run started — refusing to execute it. Start a new run.`,
-    );
-  }
-  return plan;
 }
 
 // ── Small helpers ────────────────────────────────────────────────────────────

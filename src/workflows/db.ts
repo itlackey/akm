@@ -310,6 +310,13 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE workflow_run_units ADD COLUMN claim_expires_at TEXT;
     `,
   },
+  {
+    id: "010-ir-v3-engine",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN plan_ir_version INTEGER;
+      ALTER TABLE workflow_run_units ADD COLUMN engine TEXT;
+    `,
+  },
 ];
 
 /**

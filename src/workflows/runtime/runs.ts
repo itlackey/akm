@@ -26,13 +26,16 @@ import {
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { detectSecretShapedParams } from "../exec/param-secrets";
 import { collectProgramWarnings } from "../ir/compile";
+import { compileResolveFreezeWorkflow } from "../ir/freeze";
 import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
+import type { FrozenEngineSnapshot } from "../ir/schema";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
+import { classifyWorkflowRunPlan, requireExecutableWorkflowPlan } from "./plan-classifier";
 import { evaluateStaleUnits, type StaleUnit } from "./unit-checkin";
-import { compileWorkflowAssetPlan, loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
+import { loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
   run: WorkflowRunSummary;
@@ -105,12 +108,21 @@ export interface WorkflowUnitDiagnostic {
   claimHolder: string | null;
   /** When the `running` claim expires; null when unclaimed. */
   claimExpiresAt: string | null;
+  engine: string | null;
+  /** Planned resolved runtime kind on v3 rows, never inferred for history. */
+  runtimeKind: "llm" | "agent" | "sdk" | null;
+  platform: string | null;
+  legacyRunnerSelector?: string | null;
 }
 
 /** Clip bound for a unit's `result_json` on the `--units` diagnostic surface. */
 const UNIT_DIAGNOSTIC_CLIP = 2000;
 
-function toUnitDiagnostic(row: WorkflowRunUnitRow, stale?: StaleUnit): WorkflowUnitDiagnostic {
+function toUnitDiagnostic(
+  row: WorkflowRunUnitRow,
+  stale?: StaleUnit,
+  plannedEngine?: FrozenEngineSnapshot,
+): WorkflowUnitDiagnostic {
   let diagnostic: string | null = null;
   if (row.result_json !== null) {
     // `result_json` is a JSON-encoded value: a bare JSON string for a free-text
@@ -143,6 +155,11 @@ function toUnitDiagnostic(row: WorkflowRunUnitRow, stale?: StaleUnit): WorkflowU
     staleIdleMs: stale ? (Number.isFinite(stale.idleMs) ? stale.idleMs : null) : null,
     claimHolder: row.claim_holder,
     claimExpiresAt: row.claim_expires_at,
+    engine: row.engine ?? null,
+    runtimeKind:
+      row.engine && (row.runner === "llm" || row.runner === "agent" || row.runner === "sdk") ? row.runner : null,
+    platform: plannedEngine?.kind === "agent" ? plannedEngine.platform : null,
+    ...(!row.engine && row.runner ? { legacyRunnerSelector: row.runner } : {}),
   };
 }
 
@@ -227,7 +244,7 @@ export async function startWorkflowRun(
   // persist it on the run row in the same transaction as the insert. Every
   // later invocation executes this snapshot — the asset file is never re-read
   // for an in-flight run; re-planning is an explicit new run.
-  const plan = compileWorkflowAssetPlan(asset);
+  const plan = compileResolveFreezeWorkflow(asset, loadConfig()).plan;
   // Non-fatal WARNINGS (redesign addendum): a YAML program's untyped-step and
   // undeclared-param advisories surface as `warn()` lines at start (stderr,
   // consistent with the repo's other author-facing warnings) without blocking
@@ -316,7 +333,7 @@ export async function startWorkflowRun(
 
       // Same transaction as the insert: a run row never exists without its
       // frozen plan (rows with NULL plan_json are pre-006 legacy runs).
-      repo.setRunPlan(runId, planJson, planHash);
+      repo.setRunPlan(runId, planJson, planHash, 3);
     });
 
     const result = await getWorkflowStatus(runId);
@@ -358,7 +375,11 @@ export async function getWorkflowStatus(
       // uses (`now` injected for deterministic tests) so a dead driver's claimed
       // `running` unit surfaces as stale here too, not just as raw `running`.
       const staleById = new Map(evaluateStaleUnits(rows, opts.now ?? Date.now()).map((u) => [u.unitId, u]));
-      detail.units = rows.map((row) => toUnitDiagnostic(row, staleById.get(row.unit_id)));
+      const classified = classifyWorkflowRunPlan(run);
+      const engines = classified.support === "supported" ? classified.plan.execution?.engines : undefined;
+      detail.units = rows.map((row) =>
+        toUnitDiagnostic(row, staleById.get(row.unit_id), row.engine ? engines?.[row.engine] : undefined),
+      );
     }
     return detail;
   });
@@ -396,6 +417,7 @@ export async function getNextWorkflowStep(
 ): Promise<WorkflowNextResult> {
   return withWorkflowRunsRepo(async (repo) => {
     const { run, autoStarted } = await resolveRunSpecifier(repo, specifier, params);
+    requireExecutableWorkflowPlan(run);
     const steps = readWorkflowRunSteps(repo, run.id);
     return { ...projectNextResult(run, steps), ...(autoStarted ? { autoStarted: true as const } : {}) };
   });
@@ -462,6 +484,7 @@ export async function snapshotRunForDriver(runId: string): Promise<{
 export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
+    requireExecutableWorkflowPlan(run);
     if (run.status === "completed") {
       throw new UsageError(`Workflow run ${run.id} is already completed and cannot be resumed.`);
     }
@@ -528,6 +551,7 @@ export async function completeWorkflowStep(
   // the write transaction — a slow/hung LLM must never hold a db write lock.
   const preflight = await withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, input.runId);
+    requireExecutableWorkflowPlan(run);
     if (run.status !== "active") {
       throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
     }
@@ -738,6 +762,7 @@ function buildWorkflowRunDetail(run: WorkflowRunRow, steps: WorkflowRunStepRow[]
 }
 
 function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
+  const plan = classifyWorkflowRunPlan(run);
   return {
     id: run.id,
     workflowRef: run.workflow_ref,
@@ -752,6 +777,8 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
     params: parseJsonObject(run.params_json),
     agentHarness: run.agent_harness ?? null,
     agentSessionId: run.agent_session_id ?? null,
+    planIrVersion: plan.irVersion,
+    executionSupport: plan.support,
     // Surface the engine lease (holder id + expiry — never workflow-authored
     // content) so `workflow next`/`status` show who is driving the run.
     ...(run.engine_lease_holder && run.engine_lease_until

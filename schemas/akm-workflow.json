@@ -8,8 +8,8 @@
   "additionalProperties": false,
   "properties": {
     "version": {
-      "const": 1,
-      "description": "Workflow program format version. Only 1 is valid."
+      "const": 2,
+      "description": "Workflow program format version. Only 2 is valid."
     },
     "name": {
       "type": "string",
@@ -63,13 +63,21 @@
         }
       ]
     },
-    "runner": {
-      "description": "Execution backend for a unit; inherit defers to the run-level default.",
-      "enum": ["llm", "agent", "sdk", "inherit"]
-    },
     "onError": {
       "description": "Failure policy: fail the step on the first unit failure (default), or record failures and let the gate decide.",
       "enum": ["fail", "continue"]
+    },
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number" },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "supports_json_schema": { "type": "boolean" },
+        "extra_params": { "type": "object" },
+        "context_length": { "type": "integer", "minimum": 1 },
+        "enable_thinking": { "type": "boolean" }
+      }
     },
     "reducer": {
       "description": "How a map step folds per-item unit results into the step artifact.",
@@ -142,8 +150,9 @@
       "description": "Run-level defaults, overridable per unit.",
       "additionalProperties": false,
       "properties": {
-        "runner": {
-          "$ref": "#/definitions/runner"
+        "engine": {
+          "type": "string",
+          "minLength": 1
         },
         "model": {
           "type": "string",
@@ -155,6 +164,9 @@
         },
         "on_error": {
           "$ref": "#/definitions/onError"
+        },
+        "llm": {
+          "$ref": "#/definitions/llm"
         }
       }
     },
@@ -164,17 +176,17 @@
       "required": ["instructions"],
       "additionalProperties": false,
       "properties": {
-        "runner": {
-          "$ref": "#/definitions/runner"
-        },
-        "profile": {
+        "engine": {
           "type": "string",
           "minLength": 1,
-          "description": "Agent/LLM profile name."
+          "description": "Named engine selected at workflow start."
         },
         "model": {
           "type": "string",
           "minLength": 1
+        },
+        "llm": {
+          "$ref": "#/definitions/llm"
         },
         "timeout": {
           "$ref": "#/definitions/timeout"

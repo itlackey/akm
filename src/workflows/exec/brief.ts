@@ -38,8 +38,9 @@ import type { WorkflowRunUnitStatus } from "../../storage/repositories/workflow-
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { assertRunParamsSatisfyPlan } from "../ir/params";
-import type { IrMapReducer, IrOnError, IrRetry, IrRunnerKind, WorkflowPlanGraph } from "../ir/schema";
+import type { IrMapReducer, IrOnError, IrRetry, IrRunnerKind } from "../ir/schema";
 import type { ExpressionScope } from "../program/expressions";
+import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { snapshotRunForDriver } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
 import { detectSecretShapedParams } from "./param-secrets";
@@ -51,7 +52,6 @@ import {
   GATE_EVALUATION_PHASE,
   type GateFeedback,
   isWorkListFullyTerminal,
-  parseFrozenPlan,
   recoverGateFeedback,
   selectUnitAttemptRow,
   stepOutputsFromEvidence,
@@ -261,8 +261,6 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
   // the active step between the spine read and the unit-journal read. A bare run
   // id never auto-starts (we resolved to a concrete id above).
   const { next, run: runRow, units } = await snapshotRunForDriver(runId);
-  const planJson = runRow.plan_json;
-  const planHash = runRow.plan_hash;
   const leaseHolder = runRow.engine_lease_holder;
   const leaseUntil = runRow.engine_lease_until;
 
@@ -370,7 +368,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
   // Load the FROZEN plan the engine executes (migration 006). A legacy run
   // (NULL plan_json) has no plan for brief to read — point at engine-driven
   // mode, which still handles pre-006 runs by compiling from the asset.
-  const plan = loadFrozenPlanForBrief(run.id, planJson, planHash);
+  const plan = requireExecutableWorkflowPlan(runRow);
   // Reviewer #12: the journaled params row must still satisfy the frozen param
   // schemas — a violation is post-start corruption, loud on the brief surface
   // too (mirrors the frozen-plan hash check and the tampered-params divergence).
@@ -443,6 +441,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
       runId: run.id,
       params: run.params,
       stepOutputs,
+      ...(plan.execution ? { engines: plan.execution.engines } : {}),
       gateLoop,
       ...(gateFeedback ? { gateFeedback } : {}),
     });
@@ -706,22 +705,6 @@ function buildMessage(
     return `Active step "${step.stepId}" dispatches no reportable units${loopNote}.${settleNote}`;
   }
   return `Active step "${step.stepId}" expects ${n} unit(s)${loopNote}. Execute them, then report each result.`;
-}
-
-/**
- * brief-specific frozen-plan loader: unlike the engine's loader, a NULL
- * plan_json is a hard, actionable error rather than a warn-and-compile — brief
- * describes the frozen plan the engine executes, and a legacy run has none.
- */
-function loadFrozenPlanForBrief(runId: string, planJson: string | null, planHash: string | null): WorkflowPlanGraph {
-  if (!planJson) {
-    throw new UsageError(
-      `Workflow run ${runId} predates frozen plans (no plan_json on the run row) and cannot be described by ` +
-        `\`akm workflow brief\`. Drive it with engine-driven mode instead: \`akm workflow run ${runId}\` ` +
-        `(which compiles a legacy run's plan from the live asset).`,
-    );
-  }
-  return parseFrozenPlan(runId, planJson, planHash);
 }
 
 /**

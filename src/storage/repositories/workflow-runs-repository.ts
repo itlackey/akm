@@ -33,6 +33,8 @@ export type WorkflowRunRow = {
   plan_json: string | null;
   /** sha256 (hex) of the canonical plan JSON; integrity-checked on every load. */
   plan_hash: string | null;
+  /** Persisted IR version. Historical rows stay NULL. */
+  plan_ir_version?: number | null;
   /** Run-lease expiry (ISO-8601 UTC; migration 006, enforced since R2). NULL when no engine holds the run. */
   engine_lease_until: string | null;
   /** Random holder id of the engine invocation driving the run. NULL when unleased. */
@@ -65,6 +67,8 @@ export type WorkflowRunUnitRow = {
   parent_unit_id: string | null;
   phase: string | null;
   runner: string | null;
+  /** Public frozen engine identity. NULL on historical rows. */
+  engine?: string | null;
   model: string | null;
   status: WorkflowRunUnitStatus;
   input_hash: string | null;
@@ -119,6 +123,7 @@ export interface InsertUnitInput {
   parentUnitId: string | null;
   phase: string | null;
   runner: string | null;
+  engine?: string | null;
   model: string | null;
   inputHash: string | null;
   /**
@@ -409,10 +414,10 @@ export class WorkflowRunsRepository {
    * `insertRun`, so a run row never exists without its frozen plan. Read back
    * via {@link getRunById} (`plan_json` / `plan_hash` on the row).
    */
-  setRunPlan(runId: string, planJson: string, planHash: string): void {
+  setRunPlan(runId: string, planJson: string, planHash: string, planIrVersion = 3): void {
     this.db
-      .prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ? WHERE id = ?")
-      .run(planJson, planHash, runId);
+      .prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = ? WHERE id = ?")
+      .run(planJson, planHash, planIrVersion, runId);
   }
 
   // ── engine run lease (migration 006 columns, R2 enforcement) ──────────────
@@ -527,15 +532,16 @@ export class WorkflowRunsRepository {
     this.db
       .prepare(
         `INSERT INTO workflow_run_units (
-          run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, model,
+          run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, engine, model,
           status, input_hash, worktree_path, started_at, claim_holder, claim_expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, unit_id) DO UPDATE SET
           step_id          = excluded.step_id,
           node_id          = excluded.node_id,
           parent_unit_id   = excluded.parent_unit_id,
-          phase            = excluded.phase,
-          runner           = excluded.runner,
+           phase            = excluded.phase,
+           runner           = excluded.runner,
+           engine           = excluded.engine,
           model            = excluded.model,
           status           = excluded.status,
           input_hash       = excluded.input_hash,
@@ -559,6 +565,7 @@ export class WorkflowRunsRepository {
         input.parentUnitId,
         input.phase,
         input.runner,
+        input.engine ?? null,
         input.model,
         input.inputHash,
         input.worktreePath ?? null,
