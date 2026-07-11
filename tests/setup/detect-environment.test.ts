@@ -277,7 +277,7 @@ describe("akm setup --detect-only", () => {
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-detect-state-"));
     const configPath = path.join(xdgConfig, "akm", "config.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    const original = JSON.stringify({ stashDir: workDir, archiveRetentionDays: 42 }, null, 2);
+    const original = JSON.stringify({ configVersion: "0.9.0", stashDir: workDir, archiveRetentionDays: 42 }, null, 2);
     fs.writeFileSync(configPath, original, "utf8");
 
     try {
@@ -324,6 +324,7 @@ describe("akm setup --reset-recommended", () => {
       configPath,
       JSON.stringify(
         {
+          configVersion: "0.9.0",
           stashDir: workDir,
           // A pre-existing custom key that must survive the merge.
           archiveRetentionDays: 7,

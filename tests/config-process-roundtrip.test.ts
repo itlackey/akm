@@ -34,8 +34,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
   test("consolidate/extract tuning fields and enabled flags are preserved", () => {
     const config = {
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
+      improve: {
+        strategies: {
           default: {
             processes: {
               consolidate: {
@@ -59,13 +59,13 @@ describe("#598 process-level config fields survive a load→save→load round tr
     resetConfigCache();
     const reloaded = loadConfig();
 
-    const consolidate = reloaded.profiles?.improve?.default?.processes?.consolidate;
+    const consolidate = reloaded.improve?.strategies?.default?.processes?.consolidate;
     expect(consolidate?.enabled).toBe(true);
     expect(consolidate?.incrementalSince).toBe("4h");
     expect(consolidate?.minPoolSize).toBe(50);
     expect(consolidate?.neighborsPerChanged).toBe(3);
 
-    const extract = reloaded.profiles?.improve?.default?.processes?.extract;
+    const extract = reloaded.improve?.strategies?.default?.processes?.extract;
     expect(extract?.enabled).toBe(false);
     expect(extract?.minContentChars).toBe(200);
   });
@@ -73,8 +73,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
   test("a second save (rewrite) does not drop the fields the first save persisted", () => {
     saveConfig({
       semanticSearchMode: "off",
-      profiles: {
-        improve: { default: { processes: { consolidate: { incrementalSince: "6h", minPoolSize: 25 } } } },
+      improve: {
+        strategies: { default: { processes: { consolidate: { incrementalSince: "6h", minPoolSize: 25 } } } },
       },
     } as unknown as AkmConfig);
     resetConfigCache();
@@ -85,7 +85,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     saveConfig({ ...loaded, semanticSearchMode: "auto" });
     resetConfigCache();
 
-    const consolidate = loadConfig().profiles?.improve?.default?.processes?.consolidate;
+    const consolidate = loadConfig().improve?.strategies?.default?.processes?.consolidate;
     expect(consolidate?.incrementalSince).toBe("6h");
     expect(consolidate?.minPoolSize).toBe(25);
   });
@@ -98,13 +98,16 @@ describe("#598 process-level config fields survive a load→save→load round tr
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
-        profiles: { improve: { default: { processes: { consolidate: { incrementalSince: "4h", bogusKey: 1 } } } } },
+        improve: {
+          strategies: { default: { processes: { consolidate: { incrementalSince: "4h", bogusKey: 1 } } } },
+        },
       }),
     );
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
-    const procs = loadConfig().profiles?.improve?.default?.processes?.consolidate as Record<string, unknown>;
+    const procs = loadConfig().improve?.strategies?.default?.processes?.consolidate as Record<string, unknown>;
     expect(procs.incrementalSince).toBe("4h");
     expect(procs.bogusKey).toBe(1); // preserved, not dropped
   });
@@ -115,8 +118,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
     // shipped without it, so enabling it in a real config hard-errored at load.
     const config = {
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
+      improve: {
+        strategies: {
           default: {
             processes: {
               recombine: { enabled: true, minClusterSize: 3, maxClustersPerRun: 5, relatednessSource: "tags" },
@@ -132,7 +135,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     // The bug surfaced as a ConfigError thrown here for the unrecognized key.
     expect(() => loadConfig()).not.toThrow();
 
-    const processes = loadConfig().profiles?.improve?.default?.processes as Record<string, Record<string, unknown>>;
+    const processes = loadConfig().improve?.strategies?.default?.processes as Record<string, Record<string, unknown>>;
     expect(processes.recombine?.enabled).toBe(true);
     expect(processes.recombine?.maxClustersPerRun).toBe(5);
     expect(processes.procedural?.enabled).toBe(true);
@@ -147,8 +150,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
     // a save→load round trip.
     const config = {
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
+      improve: {
+        strategies: {
           default: {
             processes: {
               recombine: { enabled: true, minClusterSize: 3, confirmThreshold: 2 },
@@ -162,7 +165,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
 
-    const processes = loadConfig().profiles?.improve?.default?.processes as Record<string, Record<string, unknown>>;
+    const processes = loadConfig().improve?.strategies?.default?.processes as Record<string, Record<string, unknown>>;
     expect(processes.recombine?.confirmThreshold).toBe(2);
   });
 
@@ -204,6 +207,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
         improve: {
           salience: {
@@ -227,8 +231,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
     // fields round-trip cleanly through load → save → reload.
     const config = {
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
+      improve: {
+        strategies: {
           default: {
             processes: {
               consolidate: {
@@ -250,7 +254,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     resetConfigCache();
     const reloaded = loadConfig();
 
-    const consolidate = reloaded.profiles?.improve?.default?.processes?.consolidate;
+    const consolidate = reloaded.improve?.strategies?.default?.processes?.consolidate;
     expect(consolidate?.p90ChunkSecondsDefault).toBe(45);
     expect(consolidate?.dedup?.cosineCandidateLimit).toBe(300);
     expect(consolidate?.dedup?.cosineThreshold).toBeCloseTo(0.95);
@@ -286,8 +290,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
     // config-types.ts and config-schema.ts and survives the round trip.
     const config = {
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
+      improve: {
+        strategies: {
           default: {
             processes: {
               graphExtraction: { enabled: true, topN: 50 },
@@ -301,7 +305,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
 
-    const processes = loadConfig().profiles?.improve?.default?.processes as Record<string, Record<string, unknown>>;
+    const processes = loadConfig().improve?.strategies?.default?.processes as Record<string, Record<string, unknown>>;
     expect(processes.graphExtraction?.topN).toBe(50);
   });
 
@@ -336,15 +340,16 @@ describe("#598 process-level config fields survive a load→save→load round tr
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
-        profiles: {
-          improve: { default: { processes: { graphExtraction: { topN: 10, bogusGraphKey: 1 } } } },
+        improve: {
+          strategies: { default: { processes: { graphExtraction: { topN: 10, bogusGraphKey: 1 } } } },
         },
       }),
     );
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
-    const gx = loadConfig().profiles?.improve?.default?.processes?.graphExtraction as Record<string, unknown>;
+    const gx = loadConfig().improve?.strategies?.default?.processes?.graphExtraction as Record<string, unknown>;
     expect(gx.topN).toBe(10);
     expect(gx.bogusGraphKey).toBe(1);
   });
@@ -355,6 +360,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
         improve: {
           exploration: {
@@ -371,7 +377,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(exploration.bogus).toBe("tolerated");
   });
 
-  test("#616 profiles.improve.<profile>.maxCycles survives a load→save→load round trip (positiveInt)", () => {
+  test("#616 improve.strategies.<strategy>.maxCycles survives a load→save→load round trip (positiveInt)", () => {
     // RED (#616 bounded multi-cycle phasing): maxCycles is not yet declared on
     // ImproveProfileConfig (config-types.ts) nor ImproveProfileConfigSchema
     // (config-schema.ts, .strict()), so a config carrying it currently
@@ -379,8 +385,8 @@ describe("#598 process-level config fields survive a load→save→load round tr
     // registered in BOTH places and round-trips cleanly.
     const config = {
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
+      improve: {
+        strategies: {
           default: { maxCycles: 3 },
         },
       },
@@ -391,7 +397,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(() => loadConfig()).not.toThrow();
 
     const reloaded = loadConfig();
-    expect((reloaded.profiles?.improve?.default as { maxCycles?: number } | undefined)?.maxCycles).toBe(3);
+    expect((reloaded.improve?.strategies?.default as { maxCycles?: number } | undefined)?.maxCycles).toBe(3);
   });
 
   test("#616 maxCycles=0 is rejected by the schema at load (positiveInt forbids 0/negative)", () => {
@@ -400,8 +406,9 @@ describe("#598 process-level config fields survive a load→save→load round tr
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
-        profiles: { improve: { default: { maxCycles: 0 } } },
+        improve: { strategies: { default: { maxCycles: 0 } } },
       }),
     );
     resetConfigCache();
@@ -420,24 +427,24 @@ describe("config audit 0.9.0: previously-drifted knobs are now schema-validated"
   test("graphExtraction.fullScan round-trips (was TS-only)", () => {
     saveConfig({
       semanticSearchMode: "off",
-      profiles: { improve: { default: { processes: { graphExtraction: { enabled: true, fullScan: true } } } } },
+      improve: { strategies: { default: { processes: { graphExtraction: { enabled: true, fullScan: true } } } } },
     } as unknown as AkmConfig);
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
-    const gx = loadConfig().profiles?.improve?.default?.processes?.graphExtraction;
+    const gx = loadConfig().improve?.strategies?.default?.processes?.graphExtraction;
     expect(gx?.fullScan).toBe(true);
   });
 
   test("extract.triage { enabled, minScore } round-trips (was TS-only)", () => {
     saveConfig({
       semanticSearchMode: "off",
-      profiles: {
-        improve: { default: { processes: { extract: { enabled: true, triage: { enabled: true, minScore: 3 } } } } },
+      improve: {
+        strategies: { default: { processes: { extract: { enabled: true, triage: { enabled: true, minScore: 3 } } } } },
       },
     } as unknown as AkmConfig);
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
-    const extract = loadConfig().profiles?.improve?.default?.processes?.extract;
+    const extract = loadConfig().improve?.strategies?.default?.processes?.extract;
     expect(extract?.triage?.enabled).toBe(true);
     expect(extract?.triage?.minScore).toBe(3);
   });
@@ -451,30 +458,32 @@ describe("config audit 0.9.0: previously-drifted knobs are now schema-validated"
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
-        profiles: { improve: { default: { processes: { extract: { minNewSessions: "lots" } } } } },
+        improve: { strategies: { default: { processes: { extract: { minNewSessions: "lots" } } } } },
       }),
     );
     resetConfigCache();
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 
-  test("profiles.agent.<name>.timeoutMs round-trips (number) and rejects a mistyped value", () => {
+  test("agent engine timeoutMs round-trips (number) and rejects a mistyped value", () => {
     saveConfig({
       semanticSearchMode: "off",
-      profiles: { agent: { opencode: { platform: "opencode", timeoutMs: 120000 } } },
+      engines: { opencode: { kind: "agent", platform: "opencode", timeoutMs: 120000 } },
     } as unknown as AkmConfig);
     resetConfigCache();
     expect(() => loadConfig()).not.toThrow();
-    expect(loadConfig().profiles?.agent?.opencode?.timeoutMs).toBe(120000);
+    expect(loadConfig().engines?.opencode?.timeoutMs).toBe(120000);
 
     // A string timeoutMs must now be rejected (it is a known, typed field).
     const configPath = getConfigPath();
     fs.writeFileSync(
       configPath,
       JSON.stringify({
+        configVersion: "0.9.0",
         semanticSearchMode: "off",
-        profiles: { agent: { opencode: { platform: "opencode", timeoutMs: "soon" } } },
+        engines: { opencode: { kind: "agent", platform: "opencode", timeoutMs: "soon" } },
       }),
     );
     resetConfigCache();
@@ -493,7 +502,7 @@ describe("config audit 0.9.0: saveConfig runs superRefine guards (object-form se
     expect(() =>
       saveConfig({
         semanticSearchMode: "off",
-        profiles: { improve: { default: { processes: { feedbackDistillation: { enabled: true } } } } },
+        improve: { strategies: { default: { processes: { feedbackDistillation: { enabled: true } } } } },
       } as unknown as AkmConfig),
     ).toThrow(/feedbackDistillation was removed/);
   });

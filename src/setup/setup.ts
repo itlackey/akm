@@ -557,11 +557,16 @@ export async function runSetupWithDefaults(opts: {
   noInit?: boolean;
   probe?: boolean;
 }): Promise<SetupSummary> {
+  const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
+  if (explicitStashDir) {
+    assertSetupSandbox(explicitStashDir, true);
+    applyStashIsolationToEnv(explicitStashDir, true);
+  }
   const current = loadUserConfig();
-  const stashDir = opts.dir ? path.resolve(opts.dir) : (current.stashDir ?? getDefaultStashDir());
+  const stashDir = explicitStashDir ?? current.stashDir ?? getDefaultStashDir();
 
-  assertSetupSandbox(stashDir, opts.dir != null);
-  applyStashIsolationToEnv(stashDir, opts.dir != null);
+  assertSetupSandbox(stashDir, explicitStashDir != null);
+  applyStashIsolationToEnv(stashDir, explicitStashDir != null);
 
   // Bootstrap directory structure first
   let initResult: InitResponse | undefined;
@@ -709,6 +714,11 @@ export async function runResetRecommended(opts: {
   noInit?: boolean;
   probe?: boolean;
 }): Promise<SetupSummary> {
+  const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
+  if (explicitStashDir) {
+    assertSetupSandbox(explicitStashDir, true);
+    applyStashIsolationToEnv(explicitStashDir, true);
+  }
   const current = loadUserConfig();
   const env = await detectEnvironment({ existingStashDir: current.stashDir });
   const recommended = deriveRecommendedConfig(env);
@@ -785,14 +795,16 @@ export async function runSetupFromConfig(opts: {
   }
 
   // Phase 3: Merge with existing config
+  const explicitStashDir =
+    opts.dir != null ? path.resolve(opts.dir) : incoming.stashDir != null ? path.resolve(incoming.stashDir) : undefined;
+  if (explicitStashDir) {
+    assertSetupSandbox(explicitStashDir, true);
+    applyStashIsolationToEnv(explicitStashDir, true);
+  }
   const current = loadUserConfig();
-  const stashDir = opts.dir
-    ? path.resolve(opts.dir)
-    : incoming.stashDir
-      ? path.resolve(incoming.stashDir)
-      : (current.stashDir ?? getDefaultStashDir());
+  const stashDir = explicitStashDir ?? current.stashDir ?? getDefaultStashDir();
 
-  const stashDirExplicit = opts.dir != null || incoming.stashDir != null;
+  const stashDirExplicit = explicitStashDir != null;
   assertSetupSandbox(stashDir, stashDirExplicit);
   applyStashIsolationToEnv(stashDir, stashDirExplicit);
 

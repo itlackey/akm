@@ -83,6 +83,7 @@ describe("SQLite migration runner characterization", () => {
         "014-recombine-hypotheses",
         "015-asset-salience-encoding-source",
         "016-collapse-churn-detector",
+        "017-improve-run-strategy",
       ]);
 
       // The set of durable objects the migrations create.
@@ -131,6 +132,7 @@ describe("SQLite migration runner characterization", () => {
         "007-unit-last-checkin",
         "008-unit-attempts",
         "009-unit-claim",
+        "010-ir-v3-engine",
       ]);
 
       const names = snap.schema.map((o) => `${o.type}:${o.name}`);
@@ -196,6 +198,7 @@ describe("SQLite migration runner characterization", () => {
         "007-unit-last-checkin",
         "008-unit-attempts",
         "009-unit-claim",
+        "010-ir-v3-engine",
       ]);
       // The scope_key column must exist exactly once (bootstrap did not re-ALTER).
       const cols = db.prepare<{ name: string }>("PRAGMA table_info(workflow_runs)").all();
