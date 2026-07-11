@@ -168,15 +168,17 @@ function makeConfig(opts?: {
   confidencePenalty?: number;
 }): AkmConfig {
   return {
+    configVersion: "0.9.0",
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
-        default: {
+    improve: {
+      strategies: {
+        schema: {
           processes: {
             consolidate: { enabled: false },
             extract: {
               enabled: true,
               indexSessions: false,
+              triage: { enabled: false },
               ...(opts?.schemaSimilarityEnabled !== undefined
                 ? {
                     schemaSimilarity: {
@@ -190,15 +192,16 @@ function makeConfig(opts?: {
           },
         },
       },
-      llm: {
-        default: {
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test",
-          supportsJsonSchema: true,
-        },
+    },
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test",
+        supportsJsonSchema: true,
       },
     },
-    defaults: { llm: "default" },
+    defaults: { llmEngine: "default", improveStrategy: "schema" },
   } as unknown as AkmConfig;
 }
 

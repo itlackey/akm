@@ -29,7 +29,7 @@ type FeatureKey =
 
 /**
  * Helper: build an AkmConfig where the named features are toggled on/off
- * via the 0.8.0 config shape locations.
+ * via the 0.9.0 config shape locations.
  */
 function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
   const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp/stash" };
@@ -46,10 +46,13 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
         processes.distill = { ...(processes.distill ?? {}), enabled: val };
         break;
       case "memory_inference":
-        processes.memoryInference = { enabled: val };
+        cfg.index = { ...(cfg.index ?? {}), memory: { ...(cfg.index?.memory ?? {}), enabled: val } };
         break;
       case "graph_extraction":
-        processes.graphExtraction = { enabled: val };
+        cfg.index = {
+          ...(cfg.index ?? {}),
+          graph: { ...(cfg.index?.graph ?? {}), enabled: val },
+        };
         break;
       case "metadata_enhance":
         cfg.index = { ...(cfg.index ?? {}), metadataEnhance: { enabled: val } };
@@ -66,9 +69,13 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
     }
   }
   if (Object.keys(processes).length > 0) {
-    cfg.profiles = { improve: { default: { processes: processes as Record<string, never> } } };
+    cfg.improve = { strategies: { default: { processes: processes as Record<string, never> } } };
   }
   return cfg;
+}
+
+function strategyFrom(config: AkmConfig) {
+  return config.improve?.strategies?.default;
 }
 
 describe("isLlmFeatureEnabled", () => {
@@ -92,8 +99,10 @@ describe("isLlmFeatureEnabled", () => {
   });
 
   test("returns true only on literal boolean true", () => {
-    expect(isLlmFeatureEnabled(configWith({ distill: true }), "distill")).toBe(true);
-    expect(isLlmFeatureEnabled(configWith({ distill: false }), "distill")).toBe(false);
+    const enabled = configWith({ distill: true });
+    const disabled = configWith({ distill: false });
+    expect(isLlmFeatureEnabled(enabled, "distill", strategyFrom(enabled))).toBe(true);
+    expect(isLlmFeatureEnabled(disabled, "distill", strategyFrom(disabled))).toBe(false);
   });
 });
 
@@ -176,9 +185,16 @@ describe("tryLlmFeature", () => {
   });
 
   test("returns fn's result when enabled and successful", async () => {
-    const result = await tryLlmFeature("distill", configWith({ distill: true }), async () => ({ ok: true }), {
-      ok: false,
-    });
+    const config = configWith({ distill: true });
+    const result = await tryLlmFeature(
+      "distill",
+      config,
+      async () => ({ ok: true }),
+      {
+        ok: false,
+      },
+      { strategy: strategyFrom(config) },
+    );
     expect(result).toEqual({ ok: true });
   });
 });
@@ -246,13 +262,15 @@ describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)",
     });
 
     test(`${key}: literal true → enabled`, () => {
+      const cfg = configWith({ [key]: true });
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(configWith({ [key]: true }), key as any)).toBe(true);
+      expect(isLlmFeatureEnabled(cfg, key as any, strategyFrom(cfg))).toBe(true);
     });
 
     test(`${key}: literal false → disabled`, () => {
+      const cfg = configWith({ [key]: false });
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(configWith({ [key]: false }), key as any)).toBe(false);
+      expect(isLlmFeatureEnabled(cfg, key as any, strategyFrom(cfg))).toBe(false);
     });
   }
 });
@@ -281,25 +299,29 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
     });
 
     test(`${key}: enabled + happy → returns fn's result`, async () => {
+      const cfg = configWith({ [key]: true });
       const result = await tryLlmFeature(
         // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
         key as any,
-        configWith({ [key]: true }),
+        cfg,
         async () => "real",
         "fallback",
+        { strategy: strategyFrom(cfg) },
       );
       expect(result).toBe("real");
     });
 
     test(`${key}: enabled + throw → returns fallback`, async () => {
+      const cfg = configWith({ [key]: true });
       const result = await tryLlmFeature(
         // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
         key as any,
-        configWith({ [key]: true }),
+        cfg,
         async () => {
           throw new Error("boom");
         },
         "fallback",
+        { strategy: strategyFrom(cfg) },
       );
       expect(result).toBe("fallback");
     });

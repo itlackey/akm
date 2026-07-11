@@ -87,8 +87,8 @@ const noopDistill = (ref: string): AkmDistillResult => ({
 /** Minimal config: disable all expensive processes; keep proactiveMaintenance on. */
 const minimalConfig = (): import("../../../src/core/config/config").AkmConfig => ({
   semanticSearchMode: "off",
-  profiles: {
-    improve: {
+  improve: {
+    strategies: {
       default: {
         processes: {
           consolidate: { enabled: false },

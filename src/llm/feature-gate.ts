@@ -25,7 +25,7 @@
  * lives in the config tree — that mapping is private to this module.
  */
 
-import type { AkmConfig } from "../core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../core/config/config";
 
 /** Locked v1 feature keys, kept for backward-compat at the call-site API level. */
 export type LlmFeatureKey =
@@ -45,14 +45,14 @@ export type LlmFeatureKey =
  */
 // Defaults below mirror the legacy LlmFeatureFlags docstrings so existing
 // behaviour is preserved when a config is silent on a flag.
-const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
+const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig, strategy?: ImproveProfileConfig) => boolean> = {
   // Legacy default: false → memory_consolidation only runs when explicitly enabled.
-  memory_consolidation: (cfg) => cfg.profiles?.improve?.default?.processes?.consolidate?.enabled ?? false,
+  memory_consolidation: (_cfg, strategy) => strategy?.processes?.consolidate?.enabled ?? false,
   // Unified gate: replaces the legacy `feedback_distillation` key.
   // The orchestration gate (planner) and the LLM-call gate now share the same
   // source of truth: `processes.distill.enabled`. Default: true (matches the
   // built-in `default` profile).
-  distill: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.enabled ?? true,
+  distill: (_cfg, strategy) => strategy?.processes?.distill?.enabled ?? true,
   // Legacy default: true
   memory_inference: (cfg) => cfg.index?.memory?.enabled ?? true,
   // Legacy default: true
@@ -64,19 +64,19 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
   // default. The judge fails CLOSED (07 P0-2): no LLM / timeout / parse failure
   // reject the proposal rather than passing it through — an unjudgeable proposal
   // must not slip into the stash. Opt out via
-  // profiles.improve.default.processes.distill.qualityGate.enabled: false.
-  lesson_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.distill?.qualityGate?.enabled ?? true,
+  // improve.strategies.<name>.processes.distill.qualityGate.enabled: false.
+  lesson_quality_gate: (_cfg, strategy) => strategy?.processes?.distill?.qualityGate?.enabled ?? true,
   // Legacy default: false
-  proposal_quality_gate: (cfg) => cfg.profiles?.improve?.default?.processes?.reflect?.qualityGate?.enabled ?? false,
+  proposal_quality_gate: (_cfg, strategy) => strategy?.processes?.reflect?.qualityGate?.enabled ?? false,
   // Legacy default: false
-  memory_contradiction_detection: (cfg) =>
-    cfg.profiles?.improve?.default?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
+  memory_contradiction_detection: (_cfg, strategy) =>
+    strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
   // Always on at the LLM-wrapper level. Enablement is decided ONCE at the
   // extract entry point (`akmExtract`): the `extract.enabled` process toggle
-  // gates extract as a STAGE of `akm improve` (the active improve profile, per
+  // gates extract as a STAGE of `akm improve` (the active improve strategy, per
   // #593/#594), while an explicit `akm extract` command always runs. Gating the
   // inner LLM calls on `default.processes.extract.enabled` here was a footgun —
-  // dropping extract from the daily improve profile silently disabled the
+  // dropping extract from the daily improve strategy silently disabled the
   // standalone `akm extract` command. (cfg unused — kept for resolver signature.)
   session_extraction: (_cfg) => true,
 };
@@ -87,15 +87,21 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig) => boolean> = {
  * Reads from the unified 0.9.0 config shape. Defaults follow the legacy
  * `LlmFeatureFlags` docstring defaults.
  */
-export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmFeatureKey): boolean {
+export function isLlmFeatureEnabled(
+  config: AkmConfig | undefined,
+  feature: LlmFeatureKey,
+  strategy?: ImproveProfileConfig,
+): boolean {
   if (!config) return false;
   const resolver = FEATURE_LOCATION[feature];
   if (!resolver) return false;
-  return resolver(config);
+  return resolver(config, strategy);
 }
 
 /** Optional knobs for `tryLlmFeature`. */
 export interface TryLlmFeatureOptions {
+  /** Active improve strategy for improve-process feature gates. */
+  strategy?: ImproveProfileConfig;
   /**
    * Hard timeout in milliseconds. Defaults to 600_000 (10 minutes) — generous
    * enough for any local model on a single-threaded server. Pass `0` or a
@@ -141,7 +147,7 @@ export async function tryLlmFeature<T>(
   const resolveFallback = async (): Promise<T> =>
     typeof fallback === "function" ? await (fallback as () => Promise<T> | T)() : fallback;
 
-  if (!isLlmFeatureEnabled(config, feature)) {
+  if (!isLlmFeatureEnabled(config, feature, opts?.strategy)) {
     opts?.onFallback?.({ feature, reason: "disabled" });
     return resolveFallback();
   }
@@ -180,24 +186,6 @@ export function isProcessEnabled(section: string, processName: string, config: A
     }
     if (processName === "graph_extraction" || processName === "graphExtraction") {
       return isLlmFeatureEnabled(config, "graph_extraction");
-    }
-  }
-  if (section === "improve") {
-    const processes = config.profiles?.improve?.default?.processes as
-      | Record<string, { enabled?: boolean } | undefined>
-      | undefined;
-    const entry = processes?.[processName];
-    if (entry && typeof entry.enabled === "boolean") return entry.enabled;
-    // Fallback to default-enabled state for known processes.
-    switch (processName) {
-      case "reflect":
-      case "distill":
-      case "consolidate":
-      case "memoryInference":
-      case "graphExtraction":
-        return true;
-      default:
-        return false;
     }
   }
   return false;

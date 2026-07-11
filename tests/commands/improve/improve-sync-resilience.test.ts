@@ -135,9 +135,9 @@ function makePostLoopFn() {
 function baseConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improve: "sync-resilience-test" },
-    profiles: {
-      improve: {
+    defaults: { improveStrategy: "sync-resilience-test" },
+    improve: {
+      strategies: {
         "sync-resilience-test": {
           processes: {
             reflect: { enabled: false },

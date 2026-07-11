@@ -282,10 +282,11 @@ function makeHarness(sessions: Array<{ id: string; events: SessionEvent[] }>): H
 /** Minimal config; triage block included only when provided. */
 function makeConfig(triage?: { enabled?: boolean; minScore?: number }): AkmConfig {
   return {
+    configVersion: "0.9.0",
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
-        default: {
+    improve: {
+      strategies: {
+        triage: {
           processes: {
             consolidate: { enabled: false },
             extract: {
@@ -297,15 +298,16 @@ function makeConfig(triage?: { enabled?: boolean; minScore?: number }): AkmConfi
           },
         },
       },
-      llm: {
-        default: {
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test",
-          supportsJsonSchema: true,
-        },
+    },
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test",
+        supportsJsonSchema: true,
       },
     },
-    defaults: { llm: "default" },
+    defaults: { llmEngine: "default", improveStrategy: "triage" },
   } as unknown as AkmConfig;
 }
 
@@ -352,6 +354,9 @@ describe("akmExtract — triage default-off parity (AC2)", () => {
         type: HARNESS,
         stashDir: storage.stashDir,
         config: makeConfig(), // no triage block
+        improveProfile: {
+          processes: { extract: { enabled: true, indexSessions: false, minContentChars: 1 } },
+        },
         skipTracking: true,
         harnesses: [harness],
         chat: spy.chat as never,
@@ -468,9 +473,9 @@ describe("akmExtract — skip-ordering: too_short preempts triage", () => {
       // (makeConfig sets it to 1; bump it here.)
       (
         config as unknown as {
-          profiles: { improve: { default: { processes: { extract: { minContentChars: number } } } } };
+          improve: { strategies: { triage: { processes: { extract: { minContentChars: number } } } } };
         }
-      ).profiles.improve.default.processes.extract.minContentChars = 10_000;
+      ).improve.strategies.triage.processes.extract.minContentChars = 10_000;
 
       const result = await akmExtract({
         type: HARNESS,
@@ -565,20 +570,22 @@ describe("akmExtract — triage telemetry suppressed when disabled", () => {
 describe("triage config — saveConfig/loadConfig round-trip", () => {
   test("processes.extract.triage survives save → load", () => {
     saveConfig({
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
-      profiles: {
-        improve: {
-          default: {
+      improve: {
+        strategies: {
+          triage: {
             processes: {
               extract: { enabled: true, triage: { enabled: true, minScore: 4 } },
             },
           },
         },
       },
+      defaults: { improveStrategy: "triage" },
     } as unknown as AkmConfig);
 
     const loaded = loadConfig();
-    const triage = loaded.profiles?.improve?.default?.processes?.extract?.triage as
+    const triage = loaded.improve?.strategies?.triage?.processes?.extract?.triage as
       | { enabled?: boolean; minScore?: number }
       | undefined;
     expect(triage?.enabled).toBe(true);

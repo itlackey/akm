@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #593/#594 — the extract gate must respect the ACTIVE improve profile.
+ * #593/#594 — the extract gate must respect the active improve strategy.
  *
  * `isLlmFeatureEnabled(config, "session_extraction")` hardcoded a lookup
  * against `profiles.improve.default.processes.extract.enabled`, so the default
@@ -56,7 +56,7 @@ function fakeHarness(): SessionLogHarness {
  * the candidate counter runs whenever the gate opens) and an optional extra
  * user-defined profile carrying its own extract enabled-state.
  */
-function makeConfig(args: { defaultExtractEnabled: boolean; profile?: { name: string; extractEnabled: boolean } }): {
+function makeConfig(args: { defaultExtractEnabled: boolean; strategy?: { name: string; extractEnabled: boolean } }): {
   config: AkmConfig;
 } {
   const improve: Record<string, unknown> = {
@@ -68,22 +68,29 @@ function makeConfig(args: { defaultExtractEnabled: boolean; profile?: { name: st
       },
     },
   };
-  if (args.profile) {
+  if (args.strategy) {
     // minNewSessions on the ACTIVE profile too, so the count gate's detection
     // seam fires when this profile is active and its extract gate is open.
-    improve[args.profile.name] = {
-      processes: { extract: { enabled: args.profile.extractEnabled, minNewSessions: 1 } },
+    improve[args.strategy.name] = {
+      processes: { extract: { enabled: args.strategy.extractEnabled, minNewSessions: 1 } },
     };
   }
-  return { config: { semanticSearchMode: "off", profiles: { improve } } as unknown as AkmConfig };
+  return {
+    config: {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      improve: { strategies: improve },
+      defaults: { improveStrategy: "default" },
+    } as AkmConfig,
+  };
 }
 
-/** Run improve(memory) with the given active profile; returns how many times the gate opened. */
-async function countGateOpens(config: AkmConfig, profile?: string): Promise<number> {
+/** Run improve(memory) with the given active strategy; returns how many times the gate opened. */
+async function countGateOpens(config: AkmConfig, strategy?: string): Promise<number> {
   let countFnCalls = 0;
   await akmImprove({
     scope: "memory",
-    ...(profile !== undefined ? { profile } : {}),
+    ...(strategy !== undefined ? { strategy } : {}),
     config,
     stashDir,
     minRetrievalCount: 0,
@@ -111,13 +118,13 @@ afterEach(() => {
   stashDir = "";
 });
 
-describe("#593/#594 extract gate respects the active improve profile", () => {
+describe("#593/#594 extract gate respects the active improve strategy", () => {
   test(
     "non-default profile with extract.enabled: false gates the extract pass",
     async () => {
       const { config } = makeConfig({
         defaultExtractEnabled: true,
-        profile: { name: "quick-shredder", extractEnabled: false },
+        strategy: { name: "quick-shredder", extractEnabled: false },
       });
       expect(await countGateOpens(config, "quick-shredder")).toBe(0);
     },
@@ -129,7 +136,7 @@ describe("#593/#594 extract gate respects the active improve profile", () => {
     async () => {
       const { config } = makeConfig({
         defaultExtractEnabled: true,
-        profile: { name: "extractor", extractEnabled: true },
+        strategy: { name: "extractor", extractEnabled: true },
       });
       expect(await countGateOpens(config, "extractor")).toBe(1);
     },
@@ -165,7 +172,7 @@ describe("#593/#594 extract gate respects the active improve profile", () => {
       // that was the "non-default profiles lie" bug this gate fixes.)
       const { config } = makeConfig({
         defaultExtractEnabled: false,
-        profile: { name: "extractor", extractEnabled: true },
+        strategy: { name: "extractor", extractEnabled: true },
       });
       expect(await countGateOpens(config, "extractor")).toBe(1);
     },

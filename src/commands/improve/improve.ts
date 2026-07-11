@@ -50,7 +50,7 @@ import {
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
 import { resolveProcessEnabled } from "./improve-profiles";
-import { resolveImproveStrategy } from "./improve-strategies";
+import { preflightImproveStrategyEngines, resolveImproveStrategy } from "./improve-strategies";
 // #607 per-process lock primitives live in ./locks. Imported for internal use;
 // resetHeldProcessLocks is re-exported (the test seam imports it from here).
 import {
@@ -409,6 +409,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
   const selectedStrategy = resolveImproveStrategy(options.strategy, _earlyConfig);
+  preflightImproveStrategyEngines(selectedStrategy, _earlyConfig);
   const improveProfile = selectedStrategy.config;
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
@@ -556,7 +557,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
       try {
         // Reuse the config resolved at the top of the run instead of a second load.
-        await withLlmStage("memory-contradiction", () => detectAndWriteContradictions(primaryStashDir, _earlyConfig));
+        await withLlmStage("memory-contradiction", () =>
+          detectAndWriteContradictions(primaryStashDir, _earlyConfig, undefined, improveProfile),
+        );
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
         warn(`[improve] contradiction detection failed (non-fatal): ${errMessage(err)}`);
@@ -644,6 +647,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       const result: AkmImproveResult = {
         schemaVersion: 1,
         ok: true,
+        strategy: selectedStrategy.name,
         scope,
         dryRun: true,
         ...(guidance ? { guidance } : {}),
@@ -1087,6 +1091,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const result: AkmImproveResult = {
       schemaVersion: 1,
       ok: true,
+      strategy: selectedStrategy.name,
       scope,
       dryRun: false,
       ...(guidance ? { guidance } : {}),

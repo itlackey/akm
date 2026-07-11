@@ -14,7 +14,7 @@ import profileCatchup from "../../src/assets/improve-strategies/catchup.json";
 import profileConsolidate from "../../src/assets/improve-strategies/consolidate.json";
 import profileFrequent from "../../src/assets/improve-strategies/frequent.json";
 import profileSynthesize from "../../src/assets/improve-strategies/synthesize.json";
-import { resolveImproveProfile } from "../../src/commands/improve/improve-profiles";
+import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 
@@ -26,7 +26,7 @@ describe("default improve profiles (#552)", () => {
     // signal-delta-gated to ~0 actionable, so proactiveMaintenance is the lane
     // that keeps the nightly default-profile cron producing. This pins that the
     // default profile resolves it ON (other built-ins inherit the OFF code default).
-    const p = resolveImproveProfile("default", MINIMAL_CONFIG);
+    const p = resolveImproveStrategy("default", MINIMAL_CONFIG).config;
     expect(p.processes?.proactiveMaintenance?.enabled).toBe(true);
   });
 
@@ -43,7 +43,7 @@ describe("default improve profiles (#552)", () => {
   });
 
   test("frequent resolves with extract + inference on, consolidate/distill off", () => {
-    const p = resolveImproveProfile("frequent", MINIMAL_CONFIG);
+    const p = resolveImproveStrategy("frequent", MINIMAL_CONFIG).config;
     expect(p.description).toContain("Frequent");
     expect(p.processes?.reflect?.enabled).toBe(true);
     expect(p.processes?.distill?.enabled).toBe(false);
@@ -56,7 +56,7 @@ describe("default improve profiles (#552)", () => {
   });
 
   test("consolidate resolves to consolidation-only with maxChunkSize 25 and minPoolSize 500", () => {
-    const p = resolveImproveProfile("consolidate", MINIMAL_CONFIG);
+    const p = resolveImproveStrategy("consolidate", MINIMAL_CONFIG).config;
     expect(p.processes?.consolidate?.enabled).toBe(true);
     expect(p.processes?.consolidate?.allowedTypes).toEqual(["memory"]);
     expect(p.processes?.consolidate?.maxChunkSize).toBe(25);
@@ -72,7 +72,7 @@ describe("default improve profiles (#552)", () => {
   });
 
   test("catchup resolves to consolidate (chunk 50) + triage queue/personal-stash/100", () => {
-    const p = resolveImproveProfile("catchup", MINIMAL_CONFIG);
+    const p = resolveImproveStrategy("catchup", MINIMAL_CONFIG).config;
     expect(p.processes?.consolidate?.enabled).toBe(true);
     expect(p.processes?.consolidate?.maxChunkSize).toBe(50);
     // #553: catchup disables the pool-size guard (drain regardless of pool size).
@@ -102,7 +102,7 @@ describe("default improve profiles (#552)", () => {
   });
 
   test("synthesize resolves to recombine ON, procedural OFF (held until cross-project scoping), all generative/extract passes OFF", () => {
-    const p = resolveImproveProfile("synthesize", MINIMAL_CONFIG);
+    const p = resolveImproveStrategy("synthesize", MINIMAL_CONFIG).config;
     expect(p.processes?.recombine?.enabled).toBe(true);
     // #615 procedural is held OFF everywhere — it over-fits one-off sequences (0% accept, deep-tuning analysis 2026-06-29).
     expect(p.processes?.procedural?.enabled).toBe(false);

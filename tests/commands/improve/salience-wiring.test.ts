@@ -106,8 +106,8 @@ const qualityRejectedDistill = (ref: string): AkmDistillResult => ({
 const minimalConfig = () =>
   ({
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -649,8 +649,9 @@ describe("#608 high-salience admission gate", () => {
       // Disable proactive maintenance so only the high-salience gate can select this ref.
       config: {
         ...minimalConfig(),
-        profiles: {
-          improve: {
+        improve: {
+          ...minimalConfig().improve,
+          strategies: {
             default: {
               processes: {
                 consolidate: { enabled: false },
@@ -661,8 +662,8 @@ describe("#608 high-salience admission gate", () => {
               },
             },
           },
+          salience: { salienceThreshold: 0.75 },
         },
-        improve: { salience: { salienceThreshold: 0.75 } },
       } as import("../../../src/core/config/config").AkmConfig,
       ...noopIndexFns,
       reflectFn: async (opts: AkmReflectOptions) => {
@@ -704,8 +705,9 @@ describe("#608 high-salience admission gate", () => {
       stashDir: stash,
       config: {
         ...minimalConfig(),
-        profiles: {
-          improve: {
+        improve: {
+          ...minimalConfig().improve,
+          strategies: {
             default: {
               processes: {
                 consolidate: { enabled: false },
@@ -716,9 +718,9 @@ describe("#608 high-salience admission gate", () => {
               },
             },
           },
+          // salienceThreshold=1.0 means only a score of exactly 1.0 would qualify — effectively disabled.
+          salience: { salienceThreshold: 1.0 },
         },
-        // salienceThreshold=1.0 means only a score of exactly 1.0 would qualify — effectively disabled.
-        improve: { salience: { salienceThreshold: 1.0 } },
       } as import("../../../src/core/config/config").AkmConfig,
       ...noopIndexFns,
       reflectFn: async (opts: AkmReflectOptions) => {
@@ -760,8 +762,8 @@ function configWithSalience(
   const base = minimalConfig() as unknown as Record<string, unknown>;
   return {
     ...base,
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -774,8 +776,8 @@ function configWithSalience(
           },
         },
       },
+      salience,
     },
-    improve: { salience },
   } as unknown as import("../../../src/core/config/config").AkmConfig;
 }
 

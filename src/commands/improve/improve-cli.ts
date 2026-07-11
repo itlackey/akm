@@ -324,7 +324,7 @@ export const improveCommand = defineCommand({
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, strategyArg ?? null);
+          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, improveResult.strategy ?? null);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.

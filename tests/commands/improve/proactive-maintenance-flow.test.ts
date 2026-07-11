@@ -71,8 +71,8 @@ const noopIndexFns = {
 function enabledConfig(overrides?: Record<string, unknown>): import("../../../src/core/config/config").AkmConfig {
   return {
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             // keep noisy passes out of the way

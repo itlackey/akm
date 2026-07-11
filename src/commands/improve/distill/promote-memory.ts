@@ -20,8 +20,7 @@
 
 import fs from "node:fs";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { type AkmConfig, getDefaultLlmConfig, type LlmConnectionConfig } from "../../../core/config/config";
-import { ConfigError } from "../../../core/errors";
+import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
@@ -43,6 +42,8 @@ export interface PromoteMemoryContext {
   /** Filtered feedback events (only `.metadata` is read by the promotion policy). */
   filteredEvents: readonly { metadata?: Record<string, unknown> }[];
   config: AkmConfig;
+  strategy?: ImproveProfileConfig;
+  llmConfig?: LlmConnectionConfig;
   chat: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
   stash: string;
   lookup: (ref: string) => Promise<string | null>;
@@ -115,7 +116,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
         })()
       : null;
 
-  if (existingKnowledgeContent && config && getDefaultLlmConfig(config)) {
+  if (existingKnowledgeContent && ctx.llmConfig) {
     // Existing content found: call LLM for contradiction-resolution merge.
     const mergePrompt = [
       "You are merging two versions of a knowledge document.",
@@ -135,11 +136,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     ].join("\n");
 
     try {
-      const mergeLlm = getDefaultLlmConfig(config);
-      if (!mergeLlm) {
-        throw new ConfigError("LLM is not configured for distillation merge.", "LLM_NOT_CONFIGURED");
-      }
-      const mergeResponse = await chat(mergeLlm, [
+      const mergeResponse = await chat(ctx.llmConfig, [
         { role: "system", content: "Return only valid JSON. No prose." },
         { role: "user", content: mergePrompt },
       ]);
@@ -179,7 +176,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
       // LLM merge failed — fall through with the original promotion content.
       // The reviewer will see both versions in the proposal diff.
     }
-  } else if (existingKnowledgeContent && config && !getDefaultLlmConfig(config)) {
+  } else if (existingKnowledgeContent) {
     // No LLM configured: include existing content as context in the proposal
     // so the reviewer can do the contradiction resolution manually.
     resolvedPromotionContent = [
@@ -199,7 +196,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   // D-5 / #388: Three-band system — review_needed band queues to proposal
   // queue with review_needed outcome rather than auto-rejecting.
   let knowledgeJudgeConfidence: number | undefined;
-  if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
+  if (isLlmFeatureEnabled(config, "lesson_quality_gate", ctx.strategy)) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(resolvedPromotionContent.slice(0, 500), 3);
     const judgeResult = await runLessonQualityJudge(
@@ -208,6 +205,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
       assetContent ?? "",
       chat,
       similarLessons.length > 0 ? similarLessons : undefined,
+      ctx.llmConfig,
     );
     if (!judgeResult.pass) {
       if (judgeResult.reviewNeeded) {

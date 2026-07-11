@@ -57,6 +57,7 @@ function readImproveRuns(xdgData: string): Array<{
   ok: number;
   scope_mode: string;
   profile: string | null;
+  strategy: string | null;
   result: Record<string, unknown>;
 }> {
   const dbPath = path.join(xdgData, "akm", "state.db");
@@ -65,7 +66,7 @@ function readImproveRuns(xdgData: string): Array<{
   try {
     const rows = db
       .prepare(
-        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, profile, result_json
+        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, profile, strategy, result_json
          FROM improve_runs ORDER BY started_at ASC`,
       )
       .all() as Array<{
@@ -76,6 +77,7 @@ function readImproveRuns(xdgData: string): Array<{
       ok: number;
       scope_mode: string;
       profile: string | null;
+      strategy: string | null;
       result_json: string;
     }>;
     return rows.map((r) => ({
@@ -86,6 +88,7 @@ function readImproveRuns(xdgData: string): Array<{
       ok: r.ok,
       scope_mode: r.scope_mode,
       profile: r.profile,
+      strategy: r.strategy,
       result: JSON.parse(r.result_json) as Record<string, unknown>,
     }));
   } finally {
@@ -150,6 +153,7 @@ describe("writeImproveResultFile", () => {
       expect(rows[0].dry_run).toBe(0);
       expect(rows[0].scope_mode).toBe("all");
       expect(rows[0].profile).toBeNull();
+      expect(rows[0].strategy).toBeNull();
       expect(rows[0].result.ok).toBe(true);
 
       // No legacy on-disk file under .akm/runs/ — the storage swap is complete.
@@ -160,14 +164,9 @@ describe("writeImproveResultFile", () => {
     }
   });
 
-  test("records the passed-through profile on a successful run", () => {
-    // Regression test: previously this writer hardcoded `profile: null` on
-    // EVERY successful run, even when a real `--profile` was passed at the
-    // CLI (only SIGTERM'd/exception-terminated runs recorded their profile,
-    // via recordTerminatedImproveRun). writeImproveResultFile must persist
-    // whatever profile the caller passes through.
+  test("records the passed-through v2 strategy without relabeling it as a profile", () => {
     const stash = makeStashDir();
-    const runId = "test-run-with-profile";
+    const runId = "test-run-with-strategy";
 
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
@@ -175,7 +174,8 @@ describe("writeImproveResultFile", () => {
       writeImproveResultFile(stash, runId, baseResult, undefined, "quick");
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
-      expect(rows[0].profile).toBe("quick");
+      expect(rows[0].profile).toBeNull();
+      expect(rows[0].strategy).toBe("quick");
     } finally {
       dataSb.cleanup();
     }

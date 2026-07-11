@@ -343,7 +343,7 @@ describe("akm improve memory cleanup", () => {
       // contaminated by host-env-dependent extract failures.
       config: {
         semanticSearchMode: "off",
-        profiles: { improve: { default: { processes: { extract: { enabled: false } } } } },
+        improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
       },
       ensureIndexFn: async () => false,
       reindexFn: async ({ stashDir: reindexStashDir }) => {
@@ -1436,13 +1436,15 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         config: {
           semanticSearchMode: "off",
-          profiles: {
-            llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: {
+          engines: {
+            default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+          },
+          improve: {
+            strategies: {
               default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
             },
           },
-          defaults: { llm: "default" },
+          defaults: { llmEngine: "default" },
         },
         ensureIndexFn: async () => false,
         reindexFn: async () => ({
@@ -1461,13 +1463,15 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         config: {
           semanticSearchMode: "off",
-          profiles: {
-            llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: {
+          engines: {
+            default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+          },
+          improve: {
+            strategies: {
               default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
             },
           },
-          defaults: { llm: "default" },
+          defaults: { llmEngine: "default" },
         },
         ensureIndexFn: async () => false,
         reindexFn: async () => ({
@@ -1506,13 +1510,15 @@ describe("akm improve memory cleanup", () => {
       stashDir,
       config: {
         semanticSearchMode: "off",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: {
+        engines: {
+          default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+        },
+        improve: {
+          strategies: {
             default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
           },
         },
-        defaults: { llm: "default" },
+        defaults: { llmEngine: "default" },
       },
       ensureIndexFn: async () => false,
       reindexFn: async () => ({

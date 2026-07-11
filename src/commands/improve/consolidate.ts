@@ -58,7 +58,7 @@ import {
   getNeighborsByEntryId,
   openExistingDatabase,
 } from "../../indexer/db/db";
-import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
+import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
@@ -69,6 +69,7 @@ import {
   upsertConsolidationJudged,
 } from "../../storage/repositories/consolidation-repository";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
+import { resolveImproveStrategy } from "./improve-strategies";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -866,13 +867,13 @@ function archiveMemory(
  *
  * Priority order (mirrors extract / reflect / distill — see
  * `src/commands/extract.ts:421-438` and the canonical
- * `resolveImproveProcessRunnerFromProfile` pattern):
+ * `resolveImproveProcessRunner` pattern):
  *
- *   1. `profiles.improve.default.processes.consolidate.profile` (or `mode`)
- *      via {@link resolveImproveProcessRunnerFromProfile}. Lets the user pin
+ *   1. `improve.strategies.<name>.processes.consolidate.engine`
+ *      via {@link resolveImproveProcessRunner}. Lets the user pin
  *      a dedicated model (e.g. `ministral-3b`) for consolidation instead of
- *      whatever `defaults.llm` happens to be.
- *   2. `getDefaultLlmConfig(config)` — the baseline default LLM profile.
+ *      whatever `defaults.llmEngine` happens to be.
+ *   2. `getDefaultLlmConfig(config)` — the baseline default LLM engine.
  *
  * Regression guard (2026-05-26): before this resolver, `akmConsolidate`
  * called `getDefaultLlmConfig` directly and silently ignored a configured
@@ -882,13 +883,8 @@ function archiveMemory(
  * `/tmp/akm-health-investigations/consolidation-no-op.md`.
  */
 function resolveConsolidateLlmConfig(config: AkmConfig, activeProfile?: ImproveProfileConfig) {
-  const consolidateProcess = getImproveProcessConfig(config, "consolidate", activeProfile);
-  const runnerSpec = resolveImproveProcessRunnerFromProfile(consolidateProcess, config);
-  if (runnerSpec && runnerIsLlm(runnerSpec)) {
-    return runnerSpec.connection;
-  }
-  // Non-LLM runner modes (agent/sdk) don't apply to consolidate's HTTP path;
-  // fall back to the default LLM profile rather than disabling the pass.
+  const runnerSpec = resolveImproveProcessRunner(activeProfile, "consolidate", config);
+  if (runnerSpec) return runnerSpec.connection;
   return getDefaultLlmConfig(config);
 }
 
@@ -955,9 +951,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // standalone `akm consolidate` gets a self-contained token.
   const sourceRun = opts.sourceRun ?? `consolidate-${startMs}`;
   const config = opts.config ?? loadConfig();
+  opts = { ...opts, improveProfile: opts.improveProfile ?? resolveImproveStrategy(undefined, config).config };
   const stashDir = opts.stashDir ?? resolveStashDir();
 
-  if (!isLlmFeatureEnabled(config, "memory_consolidation")) {
+  if (!isLlmFeatureEnabled(config, "memory_consolidation", opts.improveProfile)) {
     return makeConsolidateResult({
       dryRun: opts.dryRun ?? false,
       target: opts.target ?? stashDir,
@@ -1626,6 +1623,7 @@ async function planConsolidation(
           }
         },
         { ok: false as const, error: fallbackError },
+        { strategy: opts.improveProfile },
       );
 
     let raw = await callChunkLlm(`chunk ${chunkIdx + 1} failed`);
@@ -2941,6 +2939,7 @@ async function generateMergedContent(
       }
     },
     { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
+    { strategy: activeProfile },
   );
 
   if (!result.ok) {

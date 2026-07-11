@@ -43,8 +43,8 @@ function writeMemory(name: string, body: string): void {
 function configWithMinPoolSize(minPoolSize: number): AkmConfig {
   return {
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: { consolidate: { enabled: true, minPoolSize }, extract: { enabled: false } },
         },
