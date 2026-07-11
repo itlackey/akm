@@ -24,12 +24,13 @@ import path from "node:path";
 import { createWorkflowAsset, validateWorkflowProgramSource } from "../../src/workflows/authoring/authoring";
 import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
@@ -46,7 +47,7 @@ describe("workflow create with a .yaml/.yml name writes a YAML program", () => {
 
     // The written body is a YAML program, not the markdown template.
     const written = fs.readFileSync(created.path, "utf8");
-    expect(written).toContain("version: 1");
+    expect(written).toContain("version: 2");
     expect(written).toContain("steps:");
     expect(written).not.toContain("# Workflow:");
 

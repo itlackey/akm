@@ -84,7 +84,7 @@ export function projectProgramParameters(program: WorkflowProgram): WorkflowPara
 /**
  * Compact, show-facing orchestration summary for one program step, reusing
  * the existing `WorkflowStepOrchestrationSummary` shape. Field mapping:
- * `runner`/`model`/`timeoutMs` merge the run-level `defaults` exactly like
+ * `engine`/`model`/`timeoutMs` merge the run-level `defaults` exactly like
  * the compiler does (per-unit wins), `fanOut.over` carries the raw `${{ … }}`
  * expression, and `route` carries the explicit input + branch table.
  * Returns undefined when the step declares nothing worth summarizing.
@@ -94,13 +94,12 @@ export function summarizeProgramStepOrchestration(
   defaults: WorkflowProgram["defaults"],
 ): WorkflowStepOrchestrationSummary | undefined {
   const unit = step.unit ?? step.map?.unit;
-  const runner = unit?.runner ?? defaults?.runner;
+  const engine = unit?.engine ?? defaults?.engine;
   const model = unit?.model ?? defaults?.model;
   const timeoutMs = unit?.timeoutMs !== undefined ? unit.timeoutMs : defaults?.timeoutMs;
 
   const summary: WorkflowStepOrchestrationSummary = {
-    ...(runner !== undefined ? { runner } : {}),
-    ...(unit?.profile !== undefined ? { profile: unit.profile } : {}),
+    ...(engine !== undefined ? { engine } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(step.map

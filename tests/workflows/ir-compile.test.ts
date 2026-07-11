@@ -12,7 +12,7 @@ import type { WorkflowProgram } from "../../src/workflows/program/schema";
 import type { WorkflowDocument, WorkflowError } from "../../src/workflows/schema";
 
 /**
- * IR v2 compilers (redesign addendum, R1). Both frontends lower into the same
+ * Pre-freeze compilers. Both frontends lower into the same plan graph before
  * Workflow Plan Graph:
  *
  *   - classic linear markdown → one `agent` node per step, runner inherited,
@@ -77,10 +77,10 @@ Step ID: deploy
 Deploy the artifact.
 `;
 
-describe("compileWorkflowPlan — linear markdown (v2 golden)", () => {
+describe("compileWorkflowPlan — linear markdown pre-freeze golden", () => {
   test("compiles to the golden linear plan: agent per step, runner inherit, fail-fast", () => {
     expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD))).toEqual({
-      irVersion: 2,
+      irVersion: 3,
       title: "Ship it",
       steps: [
         {
@@ -117,9 +117,9 @@ describe("compileWorkflowPlan — linear markdown (v2 golden)", () => {
     });
   });
 
-  test("irVersion is 2", () => {
-    expect(WORKFLOW_IR_VERSION).toBe(2);
-    expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD)).irVersion).toBe(2);
+  test("targets IR version 3", () => {
+    expect(WORKFLOW_IR_VERSION).toBe(3);
+    expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD)).irVersion).toBe(3);
   });
 
   test("compilation is deterministic (same document → same plan)", () => {
@@ -132,13 +132,13 @@ describe("compileWorkflowPlan — linear markdown (v2 golden)", () => {
 // YAML program golden (defaults merging, route shape, typed artifacts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PROGRAM_YAML = `version: 1
+const PROGRAM_YAML = `version: 2
 name: review-changes
 description: Review changed files and route the outcome
 params:
   changed_files: { type: array, items: { type: string } }
 defaults:
-  runner: sdk
+  engine: default-agent
   model: balanced
   timeout: 10m
   on_error: continue
@@ -160,8 +160,7 @@ steps:
       concurrency: 8
       reducer: vote
       unit:
-        runner: agent
-        profile: reviewer
+        engine: reviewer
         model: deep
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
@@ -190,14 +189,14 @@ steps:
 describe("compileWorkflowProgram — YAML program golden", () => {
   test("compiles to the golden plan with defaults merged into every unit", () => {
     const plan = compileProgramOk(PROGRAM_YAML);
-    expect(plan.irVersion).toBe(2);
+    expect(plan.irVersion).toBe(3);
     expect(plan.title).toBe("review-changes");
     expect(plan.params).toEqual(["changed_files"]);
     expect(plan.steps).toHaveLength(5);
 
     const [discover, review, triage, ship, rework] = plan.steps;
 
-    // Step 1: unit step — run defaults (sdk/balanced/10m/continue) merged in.
+    // Step 1: source-independent defaults are merged before engine freezing.
     expect(discover).toEqual({
       stepId: "discover",
       title: "Discover targets",
@@ -207,7 +206,7 @@ describe("compileWorkflowProgram — YAML program golden", () => {
         id: "discover",
         instructions: "List the files that need review for ${{ params.changed_files }}.\n",
         templating: "expressions",
-        runner: "sdk",
+        runner: "inherit",
         model: "balanced",
         schema: { type: "object", properties: { files: { type: "array" } }, required: ["files"] },
         timeoutMs: 600_000,
@@ -231,8 +230,7 @@ describe("compileWorkflowProgram — YAML program golden", () => {
           id: "review.unit",
           instructions: "Review ${{ item }} (#${{ item_index }}) for bugs.\n",
           templating: "expressions",
-          runner: "agent",
-          profile: "reviewer",
+          runner: "inherit",
           model: "deep",
           timeoutMs: 300_000,
           retry: { max: 1, on: ["timeout", "llm_rate_limit"] },
@@ -270,7 +268,7 @@ describe("compileWorkflowProgram — YAML program golden", () => {
     // Steps 4/5: bare units still absorb the run defaults.
     for (const step of [ship, rework]) {
       if (step.root?.kind !== "agent") throw new Error("expected agent root");
-      expect(step.root.runner).toBe("sdk");
+      expect(step.root.runner).toBe("inherit");
       expect(step.root.model).toBe("balanced");
       expect(step.root.timeoutMs).toBe(600_000);
       expect(step.root.onError).toBe("continue");
@@ -278,7 +276,7 @@ describe("compileWorkflowProgram — YAML program golden", () => {
   });
 
   test("without a defaults block, units fall back to inherit + fail-fast", () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 steps:
   - id: a
@@ -294,7 +292,7 @@ steps:
   });
 
   test(`defaults "timeout: none" merges as an explicit null timeout`, () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 defaults:
   timeout: none
@@ -320,7 +318,7 @@ steps:
   });
 
   test("a budget block is carried onto the plan (and absent otherwise)", () => {
-    const withBudget = compileProgramOk(`version: 1
+    const withBudget = compileProgramOk(`version: 2
 name: t
 budget:
   max_tokens: 5000
@@ -332,7 +330,7 @@ steps:
 `);
     expect(withBudget.budget).toEqual({ maxTokens: 5000, maxUnits: 7 });
     // The budget is part of the frozen plan, so it participates in the hash.
-    const withoutBudget = compileProgramOk(`version: 1
+    const withoutBudget = compileProgramOk(`version: 2
 name: t
 steps:
   - id: a
@@ -350,7 +348,7 @@ steps:
 
 describe("compileWorkflowProgram — expression validation", () => {
   test("steps.<id> must reference an EARLIER step (forward reference rejected)", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: a
@@ -366,7 +364,7 @@ steps:
   });
 
   test("steps.<id> naming its own step is rejected", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: a
@@ -378,7 +376,7 @@ steps:
   });
 
   test("steps.<id> naming an unknown step is rejected with a distinct message", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: a
@@ -397,7 +395,7 @@ steps:
   // Compiling would otherwise disagree with the runtime contract. A genuine typo
   // surfaces at run time ("is not defined in the run's params"), never here.
   test("params.<name> outside the declared block compiles — presence is a run-scope concern (instructions)", () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 params:
   changed_files: { type: array }
@@ -412,7 +410,7 @@ steps:
   });
 
   test("undeclared params.<name> in map.over and route.input compiles too (run-scope)", () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 params:
   files: { type: array }
@@ -431,7 +429,7 @@ steps:
   });
 
   test("a declared param reference compiles cleanly", () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 params:
   files: { type: array }
@@ -448,7 +446,7 @@ steps:
   test("with NO params block, any params.<name> reference is accepted (run-scope concern)", () => {
     // Documented: a program that declares no params block keeps the prior
     // behavior — presence is validated at run/start, not compile.
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 steps:
   - id: a
@@ -459,7 +457,7 @@ steps:
   });
 
   test("item / item_index are invalid outside a map unit", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: a
@@ -472,7 +470,7 @@ steps:
   });
 
   test("item / item_index are valid inside a map unit's instructions", () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 params:
   files: { type: array }
@@ -487,7 +485,7 @@ steps:
   });
 
   test("map.over referencing an earlier step's output is valid", () => {
-    const plan = compileProgramOk(`version: 1
+    const plan = compileProgramOk(`version: 2
 name: t
 steps:
   - id: discover
@@ -505,7 +503,7 @@ steps:
   });
 
   test("errors accumulate across steps instead of stopping at the first", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: a
@@ -526,7 +524,7 @@ steps:
   test("grammar violations are caught at compile even when the program bypasses the parser", () => {
     const src = { path: "workflows/t.yaml", start: 3, end: 5 };
     const program: WorkflowProgram = {
-      version: 1,
+      version: 2,
       name: "t",
       steps: [
         { id: "a", unit: { instructions: "Bad ${{ nope() }}", source: src }, source: src },
@@ -549,7 +547,7 @@ steps:
 
 describe("compileWorkflowProgram — whole-value references", () => {
   test("map.over with surrounding literal text is rejected", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 params:
   files: { type: array }
@@ -566,7 +564,7 @@ steps:
   });
 
   test("map.over as a bare name (no expression) is rejected — P1 ambient lookup is gone", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: m
@@ -580,7 +578,7 @@ steps:
   });
 
   test("map.over must not use item (there is no item before the list resolves)", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: m
@@ -594,7 +592,7 @@ steps:
   });
 
   test("route.input with surrounding literal text is rejected", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: a
@@ -614,7 +612,7 @@ steps:
   });
 
   test("route.input referencing a later step is rejected", () => {
-    const errors = compileProgramErrors(`version: 1
+    const errors = compileProgramErrors(`version: 2
 name: t
 steps:
   - id: r

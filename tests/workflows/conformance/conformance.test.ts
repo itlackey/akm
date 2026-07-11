@@ -9,11 +9,9 @@ import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
-import { compileWorkflowPlan, compileWorkflowProgram } from "../../../src/workflows/ir/compile";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
-import { parseWorkflow } from "../../../src/workflows/parser";
-import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
+import { freezeMarkdownWorkflow, freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
  * Conformance suite (orchestration plan, §Anti-drift; conformance goldens
@@ -52,18 +50,12 @@ afterEach(() => {
 
 /** Compile a golden YAML program source (the orchestrated frontend). */
 function compile(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/golden.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText, "workflows/golden.yaml");
 }
 
 /** Compile a golden classic markdown source (the stable linear contract). */
 function compileMarkdown(markdown: string): WorkflowPlanGraph {
-  const result = parseWorkflow(markdown, { path: "workflows/golden.md" });
-  if (!result.ok) throw new Error(result.errors.map((e) => e.message).join(" | "));
-  return compileWorkflowPlan(result.document);
+  return freezeMarkdownWorkflow(markdown, "workflows/golden.md");
 }
 
 function seedRun(params: Record<string, unknown>, stepIds: string[]): void {
@@ -92,13 +84,20 @@ function seedRun(params: Record<string, unknown>, stepIds: string[]): void {
 const BACKENDS = [
   {
     name: "native",
-    run: (plan: WorkflowPlanGraph) =>
-      runWorkflowSteps({
+    run: (plan: WorkflowPlanGraph) => {
+      const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+      try {
+        storeFrozenWorkflowPlan(db, RUN_ID, plan);
+      } finally {
+        closeWorkflowDatabase(db);
+      }
+      return runWorkflowSteps({
         target: RUN_ID,
         dispatcher: async (req) =>
           req.schema ? { ok: true, text: '{"verdict": "pass"}' } : { ok: true, text: `did ${req.unitId}` },
         loadPlan: async () => plan,
-      }),
+      });
+    },
   },
 ] as const;
 
@@ -112,11 +111,86 @@ async function unitGraph(): Promise<Array<[string, string, string | null, string
   );
 }
 
-const GOLDEN_SOURCE = expect.objectContaining({ path: "workflows/golden.yaml" });
+const FROZEN_EXECUTION: NonNullable<WorkflowPlanGraph["execution"]> = {
+  maxConcurrency: 1,
+  engines: {
+    "test-agent": {
+      name: "test-agent",
+      kind: "agent",
+      runnerKind: "sdk",
+      platform: "opencode-sdk",
+      bin: "opencode",
+      args: [],
+      workspace: null,
+      envPassthrough: [],
+      fallbackLlmEngine: "test-llm",
+    },
+    "test-llm": {
+      name: "test-llm",
+      kind: "llm",
+      endpoint: "http://localhost:1/v1/chat/completions",
+      credential: { names: ["AKM_ENGINE_TEST_LLM_API_KEY", "AKM_LLM_API_KEY"], required: false },
+      concurrency: 1,
+    },
+  },
+};
+
+function linearGolden(
+  templating: "expressions" | "verbatim",
+  sources: [{ path: string; start: number; end: number }, { path: string; start: number; end: number }],
+): WorkflowPlanGraph {
+  const unit = (id: string, instructions: string, source: (typeof sources)[number]) => ({
+    kind: "unit" as const,
+    id,
+    instructions,
+    templating,
+    invocation: { engine: "test-agent", model: null, timeoutMs: 600_000 },
+    onError: "fail" as const,
+    isolation: "none" as const,
+    source,
+  });
+  return {
+    irVersion: 3,
+    title: "Golden",
+    execution: FROZEN_EXECUTION,
+    steps: [
+      {
+        stepId: "build",
+        title: "Build",
+        sequenceIndex: 0,
+        root: unit("build", "Build it.", sources[0]),
+        gate: {
+          kind: "gate",
+          id: "build.gate",
+          stepId: "build",
+          criteria: ["artifact exists"],
+          maxLoops: 1,
+          required: false,
+          judge: { engine: "test-llm", model: "test-model", timeoutMs: 600_000 },
+        },
+      },
+      {
+        stepId: "deploy",
+        title: "Deploy",
+        sequenceIndex: 1,
+        root: unit("deploy", "Deploy it.", sources[1]),
+        gate: {
+          kind: "gate",
+          id: "deploy.gate",
+          stepId: "deploy",
+          criteria: [],
+          maxLoops: 1,
+          required: false,
+          judge: null,
+        },
+      },
+    ],
+  };
+}
 
 // ── Golden 1: linear program (behavior identical to the classic step loop) ──
 
-const LINEAR = `version: 1
+const LINEAR = `version: 2
 name: Golden
 steps:
   - id: build
@@ -133,42 +207,12 @@ steps:
 
 describe("conformance — linear workflow", () => {
   test("compiles to the golden plan", () => {
-    expect(compile(LINEAR)).toEqual({
-      irVersion: 2,
-      title: "Golden",
-      steps: [
-        {
-          stepId: "build",
-          title: "Build",
-          sequenceIndex: 0,
-          root: {
-            kind: "agent",
-            id: "build",
-            instructions: "Build it.",
-            templating: "expressions",
-            runner: "inherit",
-            onError: "fail",
-            source: GOLDEN_SOURCE,
-          },
-          gate: { kind: "gate", id: "build.gate", stepId: "build", criteria: ["artifact exists"] },
-        },
-        {
-          stepId: "deploy",
-          title: "Deploy",
-          sequenceIndex: 1,
-          root: {
-            kind: "agent",
-            id: "deploy",
-            instructions: "Deploy it.",
-            templating: "expressions",
-            runner: "inherit",
-            onError: "fail",
-            source: GOLDEN_SOURCE,
-          },
-          gate: { kind: "gate", id: "deploy.gate", stepId: "deploy", criteria: [] },
-        },
-      ],
-    });
+    expect(compile(LINEAR)).toEqual(
+      linearGolden("expressions", [
+        { path: "workflows/golden.yaml", start: 7, end: 7 },
+        { path: "workflows/golden.yaml", start: 13, end: 13 },
+      ]),
+    );
   });
 
   for (const backend of BACKENDS) {
@@ -207,42 +251,12 @@ Deploy it.
 
 describe("conformance — classic linear markdown (stable contract)", () => {
   test("compiles to the same golden plan shape as the linear program", () => {
-    expect(compileMarkdown(LINEAR_MD)).toEqual({
-      irVersion: 2,
-      title: "Golden",
-      steps: [
-        {
-          stepId: "build",
-          title: "Build",
-          sequenceIndex: 0,
-          root: {
-            kind: "agent",
-            id: "build",
-            instructions: "Build it.",
-            templating: "verbatim",
-            runner: "inherit",
-            onError: "fail",
-            source: { path: "workflows/golden.md", start: 7, end: 8 },
-          },
-          gate: { kind: "gate", id: "build.gate", stepId: "build", criteria: ["artifact exists"] },
-        },
-        {
-          stepId: "deploy",
-          title: "Deploy",
-          sequenceIndex: 1,
-          root: {
-            kind: "agent",
-            id: "deploy",
-            instructions: "Deploy it.",
-            templating: "verbatim",
-            runner: "inherit",
-            onError: "fail",
-            source: { path: "workflows/golden.md", start: 16, end: 17 },
-          },
-          gate: { kind: "gate", id: "deploy.gate", stepId: "deploy", criteria: [] },
-        },
-      ],
-    });
+    expect(compileMarkdown(LINEAR_MD)).toEqual(
+      linearGolden("verbatim", [
+        { path: "workflows/golden.md", start: 7, end: 8 },
+        { path: "workflows/golden.md", start: 16, end: 17 },
+      ]),
+    );
   });
 
   for (const backend of BACKENDS) {
@@ -260,7 +274,7 @@ describe("conformance — classic linear markdown (stable contract)", () => {
 
 // ── Golden 2: fan-out + schema + vote reducer ────────────────────────────────
 
-const FAN_OUT_VOTE = `version: 1
+const FAN_OUT_VOTE = `version: 2
 name: Golden
 params:
   attempts: { type: array }
@@ -293,20 +307,29 @@ describe("conformance — fan-out + schema + vote", () => {
         id: "judge.map",
         over: "${{ params.attempts }}",
         template: {
-          kind: "agent",
+          kind: "unit",
           id: "judge.unit",
           instructions: "Judge ${{ item }}.",
           templating: "expressions",
-          runner: "inherit",
+          invocation: { engine: "test-agent", model: null, timeoutMs: 600_000 },
           onError: "fail",
+          isolation: "none",
           schema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
-          source: GOLDEN_SOURCE,
+          source: { path: "workflows/golden.yaml", start: 13, end: 17 },
         },
         concurrency: 2,
         reducer: "vote",
-        source: GOLDEN_SOURCE,
+        source: { path: "workflows/golden.yaml", start: 6, end: 17 },
       },
-      gate: { kind: "gate", id: "judge.gate", stepId: "judge", criteria: [] },
+      gate: {
+        kind: "gate",
+        id: "judge.gate",
+        stepId: "judge",
+        criteria: [],
+        maxLoops: 1,
+        required: false,
+        judge: null,
+      },
     });
   });
 
@@ -337,7 +360,7 @@ describe("conformance — fan-out + schema + vote", () => {
 
 // ── Golden 3: routed workflow (route-only step, explicit input) ─────────────
 
-const ROUTED = `version: 1
+const ROUTED = `version: 2
 name: Golden
 steps:
   - id: classify
@@ -374,7 +397,15 @@ describe("conformance — routed workflow", () => {
         input: "${{ steps.classify.output.verdict }}",
         when: { pass: "ship", fail: "rework" },
       },
-      gate: { kind: "gate", id: "triage.gate", stepId: "triage", criteria: [] },
+      gate: {
+        kind: "gate",
+        id: "triage.gate",
+        stepId: "triage",
+        criteria: [],
+        maxLoops: 1,
+        required: false,
+        judge: null,
+      },
     });
     expect(plan.steps[1].root).toBeUndefined();
   });

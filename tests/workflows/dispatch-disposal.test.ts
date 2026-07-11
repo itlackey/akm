@@ -15,7 +15,12 @@ import {
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+  writeWorkflowTestConfig,
+} from "../_helpers/sandbox";
 
 /**
  * Process-lifecycle disposal (owner finding 4 — a successful engine-driven run
@@ -44,6 +49,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => {
@@ -58,10 +64,10 @@ function writeProgram(name: string, yamlText: string): void {
 
 const oneStep = (name: string, withGate = false): string =>
   [
-    "version: 1",
+    "version: 2",
     `name: ${name}`,
     "defaults:",
-    "  runner: sdk",
+    "  engine: test-agent",
     "steps:",
     "  - id: only",
     "    title: Only",
@@ -267,8 +273,8 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
 
   test("a successful sdk-dispatched run leaves no server open when it resolves", async () => {
     writeSandboxConfig({
-      defaults: { agent: "mysdk" },
-      profiles: { agent: { mysdk: { platform: "opencode-sdk" } } },
+      engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
+      defaults: { engine: "test-agent" },
     });
     writeProgram("sdk-e2e", oneStep("sdk-e2e"));
 

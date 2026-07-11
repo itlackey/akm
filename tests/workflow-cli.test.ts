@@ -37,7 +37,27 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
 function writeConfig(env: NodeJS.ProcessEnv, config: Record<string, unknown>) {
   const configDir = path.join(String(env.XDG_CONFIG_HOME), "akm");
   fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(path.join(configDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    `${JSON.stringify(
+      {
+        configVersion: "0.9.0",
+        engines: {
+          "test-agent": { kind: "agent", platform: "opencode-sdk" },
+          "test-llm": {
+            kind: "llm",
+            endpoint: "http://localhost:1/v1/chat/completions",
+            model: "test-model",
+          },
+        },
+        defaults: { engine: "test-agent", llmEngine: "test-llm" },
+        ...config,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 }
 
 /**

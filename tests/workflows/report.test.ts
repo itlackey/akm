@@ -15,12 +15,11 @@ import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import { normalizeFailureReason, reportWorkflowUnit, settleWorkflowSpine } from "../../src/workflows/exec/report";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
  * `akm workflow report` (redesign addendum R3, task step 3). Proves report:
@@ -45,11 +44,7 @@ function dbPath(): string {
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText);
 }
 
 interface SeedStep {
@@ -97,9 +92,9 @@ function seedRun(opts: {
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash,
-          engine_lease_holder, engine_lease_until)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version,
+           engine_lease_holder, engine_lease_until)
+        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, 3, ?, ?)`,
     ).run(
       RUN_ID,
       opts.status ?? "active",
@@ -185,7 +180,7 @@ afterEach(() => {
 
 // ── Workflows ────────────────────────────────────────────────────────────────
 
-const TWO_STEP_WF = `version: 1
+const TWO_STEP_WF = `version: 2
 name: TwoStep
 steps:
   - id: review
@@ -211,7 +206,7 @@ steps:
       instructions: Summarize the review.
 `;
 
-const LOOP_WF = `version: 1
+const LOOP_WF = `version: 2
 name: Loop
 steps:
   - id: work
@@ -327,7 +322,7 @@ describe("workflow report — gate rejection with loops remaining", () => {
 
 // ── on_error: continue vs fail ───────────────────────────────────────────────
 
-const ONERROR_WF = (mode: "fail" | "continue") => `version: 1
+const ONERROR_WF = (mode: "fail" | "continue") => `version: 2
 name: OnError
 steps:
   - id: review
@@ -552,7 +547,7 @@ describe("workflow report — refusals", () => {
     ).rejects.toThrow(/failed validation against its declared output schema/);
   });
 
-  const BUDGET_MAX_UNITS_WF = `version: 1
+  const BUDGET_MAX_UNITS_WF = `version: 2
 name: Budget
 budget:
   max_units: 2
@@ -644,7 +639,7 @@ steps:
     // Peer review R3, finding 1: a unit's OWN reported tokens crossing the
     // ceiling fails the step on the engine (DispatchBudget.addTokens). The report
     // path journaled the unit then silently completed the step — it must fail it.
-    const BUDGET_TOKENS_WF = `version: 1
+    const BUDGET_TOKENS_WF = `version: 2
 name: BudgetTokens
 budget:
   max_tokens: 100
@@ -683,7 +678,7 @@ steps:
     // The unit is free text but the STEP declares an output schema + max_loops:
     // the engine would gate-loop-retry, but report cannot recover the (un-
     // journaled) schema feedback across invocations, so it fails the step.
-    const SCHEMA_LOOP_WF = `version: 1
+    const SCHEMA_LOOP_WF = `version: 2
 name: SchemaLoop
 steps:
   - id: discover
@@ -737,7 +732,7 @@ steps:
 // ── Non-dispatching steps auto-advance (no stuck runs) ───────────────────────
 
 describe("workflow report — steps with no reportable units auto-advance (engine parity)", () => {
-  const EMPTY_DOWNSTREAM_WF = `version: 1
+  const EMPTY_DOWNSTREAM_WF = `version: 2
 name: EmptyDownstream
 steps:
   - id: discover
@@ -820,7 +815,7 @@ steps:
     // (on_error: fail) fails the step. No `report --unit` can advance such units,
     // so the report path settles it to the SAME failed terminal state instead of
     // leaving the run stuck.
-    const ALL_UNRESOLVABLE_WF = `version: 1
+    const ALL_UNRESOLVABLE_WF = `version: 2
 name: AllUnresolvable
 steps:
   - id: review
@@ -1087,7 +1082,7 @@ describe("workflow report — a FAILED row is idempotence-protected (--rerun for
 // ── Budget admission counts the overwritten row's attempts (review round 2, #4) ─
 
 describe("workflow report — budget admission counts a re-dispatched unit's prior attempts", () => {
-  const BUDGET_WF = `version: 1
+  const BUDGET_WF = `version: 2
 name: Budget
 budget:
   max_units: 2
@@ -1305,7 +1300,7 @@ describe("workflow report — failure-reason normalization (#16)", () => {
 // ── Codex round-3 finding A: run-lifetime token accounting across --rerun ─────
 
 describe("workflow report — a --rerun's tokens accumulate onto the failed attempt's spend (finding A)", () => {
-  const TOKENS_WF = `version: 1
+  const TOKENS_WF = `version: 2
 name: TokenBudget
 budget:
   max_tokens: 100
@@ -1429,7 +1424,7 @@ describe("workflow report — a failed unit fails the step immediately under on_
     // A failure whose reason is in retry.on with attempt budget remaining is not
     // yet terminal (the engine would re-dispatch `~r1`; the driver `--rerun`s), so
     // the step stays active and waits — consistent with what brief advertises.
-    const RETRY_WF = `version: 1
+    const RETRY_WF = `version: 2
 name: RetryFail
 steps:
   - id: review
@@ -1464,7 +1459,7 @@ steps:
   });
 
   test("a failure whose reason is OUTSIDE retry.on fails-fast even when retry is declared", async () => {
-    const RETRY_WF = `version: 1
+    const RETRY_WF = `version: 2
 name: RetryFail
 steps:
   - id: review
@@ -1497,7 +1492,7 @@ steps:
 
 // ── The --settle verb (Codex round-3 finding D) ──────────────────────────────
 
-const ROUTE_FIRST_WF = `version: 1
+const ROUTE_FIRST_WF = `version: 2
 name: RouteFirst
 params:
   mode: { type: string }
@@ -1590,7 +1585,7 @@ describe("report --settle advances a run parked on a non-dispatching step", () =
 
 // ── --settle finalizes a fully-terminal but un-advanced step (owner finding 3) ──
 
-const REQUIRED_GATE_WF = `version: 1
+const REQUIRED_GATE_WF = `version: 2
 name: ReqGate
 steps:
   - id: work
@@ -1668,7 +1663,7 @@ describe("report --settle finalizes a fully-terminal step still needing completi
   });
 
   test("--settle still refuses a step with a retry-eligible FAILED unit (re-run work remains)", async () => {
-    const RETRY_WF = `version: 1
+    const RETRY_WF = `version: 2
 name: RetryGate
 steps:
   - id: work

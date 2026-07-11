@@ -15,6 +15,7 @@ import {
   getWorkflowStatus,
   type SummaryValidationFailure,
 } from "../../src/workflows/runtime/runs";
+import { freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../_helpers/workflow";
 
 /**
  * In-process tests for summary capture + the completion-criteria validation
@@ -27,6 +28,16 @@ let tmpDir = "";
 let prevDataDir: string | undefined;
 
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
+const PLAN = freezeWorkflowProgram(`version: 2
+name: Demo
+steps:
+  - id: step-1
+    title: Do the thing
+    unit:
+      instructions: instructions
+    gate:
+      criteria: [Thing is done, Tests pass]
+`);
 
 function seedRun(dbPath: string): void {
   const db = openWorkflowDatabase(dbPath);
@@ -43,6 +54,7 @@ function seedRun(dbPath: string): void {
          (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
        VALUES (?, 'step-1', 'Do the thing', 'instructions', ?, 0, 'pending')`,
     ).run(RUN_ID, JSON.stringify(["Thing is done", "Tests pass"]));
+    storeFrozenWorkflowPlan(db, RUN_ID, PLAN);
   } finally {
     closeWorkflowDatabase(db);
   }

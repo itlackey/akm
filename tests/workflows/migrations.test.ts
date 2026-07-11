@@ -29,6 +29,7 @@ const FROZEN_PLAN_MIGRATION_ID = "006-frozen-plan-and-lease";
 const UNIT_CHECKIN_MIGRATION_ID = "007-unit-last-checkin";
 const UNIT_ATTEMPTS_MIGRATION_ID = "008-unit-attempts";
 const UNIT_CLAIM_MIGRATION_ID = "009-unit-claim";
+const IR_V3_ENGINE_MIGRATION_ID = "010-ir-v3-engine";
 
 /** Every migration in application order — keep in sync with db.ts MIGRATIONS. */
 const ALL_MIGRATION_IDS = [
@@ -41,6 +42,7 @@ const ALL_MIGRATION_IDS = [
   UNIT_CHECKIN_MIGRATION_ID,
   UNIT_ATTEMPTS_MIGRATION_ID,
   UNIT_CLAIM_MIGRATION_ID,
+  IR_V3_ENGINE_MIGRATION_ID,
 ];
 
 let tmpDir = "";

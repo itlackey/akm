@@ -28,12 +28,13 @@ import { shapeForCommand } from "../../src/output/shapes";
 import { WORKFLOW_SUBCOMMANDS } from "../../src/workflows/cli";
 import { DEFAULT_WATCH_INTERVAL_MS, isWorkflowRunEvent, watchWorkflowRun } from "../../src/workflows/exec/watch";
 import { completeWorkflowStep, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());

@@ -111,8 +111,7 @@ export interface WorkflowParameter {
  * flag to keep show output compact.
  */
 export interface WorkflowStepOrchestrationSummary {
-  runner?: string;
-  profile?: string;
+  engine?: string;
   model?: string;
   timeoutMs?: number | null;
   fanOut?: { over: string; concurrency?: number; reducer?: string };

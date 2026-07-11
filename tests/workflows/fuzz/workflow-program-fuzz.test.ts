@@ -53,7 +53,7 @@ const STEP_IDS = [
 const PARAM_NAMES = ["items", "changed_files", "target", "n", "Flag", "the_input"];
 const IDENT = ["files", "verdict", "x", "count", "a_b", "Result"] as const;
 const TIMEOUTS = ["500ms", "5s", "10m", "none", "300", "1500ms"] as const;
-const RUNNERS = ["llm", "agent", "sdk", "inherit"] as const;
+const ENGINES = ["fast-llm", "reviewer", "default-agent"] as const;
 const REDUCERS = ["collect", "vote"] as const;
 const ON_ERROR = ["fail", "continue"] as const;
 const ISOLATION = ["none", "worktree"] as const;
@@ -113,8 +113,7 @@ function schema(rng: Rng): Yaml {
 
 function unitBlock(rng: Rng, params: string[], earlier: string[], inMap: boolean): Yaml {
   const unit: Yaml = { instructions: instructions(rng, params, earlier, inMap) };
-  if (rng.bool(0.4)) unit.runner = rng.pick(RUNNERS);
-  if (rng.bool(0.3)) unit.profile = "reviewer";
+  if (rng.bool(0.4)) unit.engine = rng.pick(ENGINES);
   if (rng.bool(0.3)) unit.model = rng.pick(["fast", "deep", "balanced"]);
   if (rng.bool(0.3)) unit.timeout = rng.pick(TIMEOUTS);
   if (rng.bool(0.25)) unit.on_error = rng.pick(ON_ERROR);
@@ -187,11 +186,11 @@ function validProgram(rng: Rng): { yaml: Yaml; ids: string[] } {
     return step;
   });
 
-  const program: Yaml = { version: 1, name: `wf-${rng.int(1000)}`, params, steps };
+  const program: Yaml = { version: 2, name: `wf-${rng.int(1000)}`, params, steps };
   if (rng.bool(0.3)) program.description = "a fuzzed workflow";
   if (rng.bool(0.3)) {
     const defaults: Yaml = {};
-    if (rng.bool()) defaults.runner = rng.pick(RUNNERS);
+    if (rng.bool()) defaults.engine = rng.pick(ENGINES);
     if (rng.bool()) defaults.on_error = rng.pick(ON_ERROR);
     if (rng.bool()) defaults.timeout = rng.pick(TIMEOUTS);
     if (Object.keys(defaults).length) program.defaults = defaults;

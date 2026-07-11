@@ -33,13 +33,19 @@ import { _setWarnSinkForTests } from "../../src/core/warn";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { completeWorkflowStep, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { runCliCapture } from "../_helpers/cli";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+  writeWorkflowTestConfig,
+} from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
@@ -262,7 +268,7 @@ describe("akm workflow validate — non-fatal WARNINGS surface additively (ok st
     fs.writeFileSync(
       file,
       [
-        "version: 1",
+        "version: 2",
         `name: ${name}`,
         "params:",
         "  changed_files: { type: array }",
@@ -309,7 +315,7 @@ describe("akm workflow validate — non-fatal WARNINGS surface additively (ok st
     fs.writeFileSync(
       file,
       [
-        "version: 1",
+        "version: 2",
         "name: clean",
         "params:",
         "  changed_files: { type: array }",

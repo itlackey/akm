@@ -5,7 +5,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { _setWarnSinkForTests } from "../../src/core/warn";
 import { resolveStorageLocations } from "../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
@@ -13,8 +12,7 @@ import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
-import { overrideSeam } from "../_helpers/seams";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 /**
  * Frozen-plan contract (redesign addendum R1, migration 006):
@@ -32,6 +30,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
@@ -78,7 +77,9 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
     const plan = JSON.parse(row?.plan_json ?? "") as WorkflowPlanGraph;
     expect(plan.steps.map((s) => s.stepId)).toEqual(["only-step"]);
-    expect(plan.steps[0].root?.kind).toBe("agent");
+    expect(plan.irVersion).toBe(3);
+    expect(plan.steps[0].root?.kind).toBe("unit");
+    expect(plan.execution?.engines["test-agent"]?.kind).toBe("agent");
     expect(computePlanHash(plan)).toBe(row?.plan_hash ?? "");
 
     // Lease columns exist on the row but are unset — enforcement is R2.
@@ -174,29 +175,23 @@ describe("plan freezing at workflow start (migration 006)", () => {
     ).rejects.toThrow(new RegExp(`${started.run.id}.*corrupt frozen plan`));
   });
 
-  test("a legacy run (NULL plan_json) warns and falls back to compile-from-asset", async () => {
+  test("a legacy run (NULL plan_json) is inspection-only and points to abandon", async () => {
     writeWorkflow("legacy", "Do the legacy thing.");
     const started = await startWorkflowRun("workflow:legacy", {});
 
     // Simulate a run created before migration 006: no frozen plan on the row.
     execOnWorkflowDb("UPDATE workflow_runs SET plan_json = NULL, plan_hash = NULL WHERE id = ?", started.run.id);
 
-    const warns: string[] = [];
-    overrideSeam(_setWarnSinkForTests, (level, args) => {
-      if (level === "warn") warns.push(args.map(String).join(" "));
-    });
-
-    const prompts: string[] = [];
-    const result = await runWorkflowSteps({
-      target: started.run.id,
-      dispatcher: async (req) => {
-        prompts.push(req.prompt);
-        return { ok: true, text: "done" };
-      },
-    });
-
-    expect(result.done).toBe(true);
-    expect(prompts[0]).toContain("Do the legacy thing.");
-    expect(warns.some((w) => w.includes(started.run.id) && w.includes("predates frozen plans"))).toBe(true);
+    let dispatches = 0;
+    await expect(
+      runWorkflowSteps({
+        target: started.run.id,
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true, text: "must not run" };
+        },
+      }),
+    ).rejects.toThrow(new RegExp(`${started.run.id}.*inspection-only.*workflow abandon`, "s"));
+    expect(dispatches).toBe(0);
   });
 });

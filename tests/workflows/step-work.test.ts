@@ -31,13 +31,12 @@ import {
   type UnitOutcome,
   unitOutcomeFromRow,
 } from "../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { IrAgentNode, IrRouteSpec, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import type { ExpressionScope } from "../../src/workflows/program/expressions";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { getWorkflowStatus, type WorkflowNextResult } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../_helpers/workflow";
 
 /**
  * The shared step-semantics core (redesign addendum R3, task step 1). Proves:
@@ -467,7 +466,7 @@ describe("evaluateRoute — explicit-input routing, prototype-safe when map", ()
 
 // ── Anti-drift proof: journal-recovered feedback reproduces the engine's loop-2 dispatch ──
 
-const LOOPED_WF = `version: 1
+const LOOPED_WF = `version: 2
 name: Looped
 steps:
   - id: work
@@ -488,14 +487,10 @@ let tmpDir = "";
 let prevDataDir: string | undefined;
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText);
 }
 
-function seedRun(steps: Array<{ id: string; criteria?: string[] }>): void {
+function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: WorkflowPlanGraph): void {
   const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
   try {
     const now = new Date().toISOString();
@@ -505,6 +500,7 @@ function seedRun(steps: Array<{ id: string; criteria?: string[] }>): void {
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', ?, ?, ?)`,
     ).run(RUN_ID, steps[0].id, now, now);
+    storeFrozenWorkflowPlan(db, RUN_ID, frozen);
     steps.forEach((step, i) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -535,7 +531,8 @@ afterEach(() => {
 
 describe("anti-drift — recomputing loop 2 from the journal reproduces the engine's dispatch", () => {
   test("recovered feedback yields the SAME prompt + input hash the engine actually dispatched", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }, { id: "wrap-up" }]);
+    const frozen = plan(LOOPED_WF);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }, { id: "wrap-up" }], frozen);
 
     const workPrompts: string[] = [];
     const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
@@ -553,7 +550,7 @@ describe("anti-drift — recomputing loop 2 from the journal reproduces the engi
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher,
-      loadPlan: async () => plan(LOOPED_WF),
+      loadPlan: async () => frozen,
       summaryJudge: judge,
     });
     expect(result.done).toBe(true);
@@ -568,7 +565,7 @@ describe("anti-drift — recomputing loop 2 from the journal reproduces the engi
     // 2. Recomputing loop 2's work-list from the frozen plan + journal-recovered
     //    feedback reproduces the engine's loop-2 dispatch BYTE-FOR-BYTE — the
     //    guarantee that `brief` predicts exactly what the engine ran.
-    const workStep = plan(LOOPED_WF).steps.find((s) => s.stepId === "work");
+    const workStep = frozen.steps.find((s) => s.stepId === "work");
     expect(workStep).toBeDefined();
     if (!workStep || !recovered) return;
     const list = computeStepWorkList(workStep, {
@@ -577,6 +574,7 @@ describe("anti-drift — recomputing loop 2 from the journal reproduces the engi
       stepOutputs: {},
       gateLoop: 2,
       gateFeedback: recovered,
+      engines: frozen.execution?.engines,
     });
     expect(list.ok).toBe(true);
     if (!list.ok) return;
@@ -668,7 +666,7 @@ describe("buildEvidence — surface-independent unit projection (R4 anti-drift)"
 
 // ── Reviewer #7 — tampered route selection fails loudly (test ask 9) ──────────
 
-const ROUTE_WF = `version: 1
+const ROUTE_WF = `version: 2
 name: Routed
 steps:
   - id: classify
@@ -732,8 +730,8 @@ function seedRouteRunDb(routePlan: WorkflowPlanGraph, selected: string): void {
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash)
-       VALUES (?, 'workflow:routed', 'dir:v1:routed', NULL, 'Routed', 'active', '{}', 'ship', ?, ?, ?, ?)`,
+           params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
+        VALUES (?, 'workflow:routed', 'dir:v1:routed', NULL, 'Routed', 'active', '{}', 'ship', ?, ?, ?, ?, 3)`,
     ).run(RUN_ID, now, now, canonicalPlanJson(routePlan), computePlanHash(routePlan));
     const rows = [
       { id: "classify", status: "completed", evidence: { output: { verdict: "pass" } } },
@@ -868,7 +866,7 @@ function finalizeArgs(overrides: Record<string, unknown>) {
 
 describe("reviewer #6 — the gate-evaluation row is finalized even when completeWorkflowStep throws", () => {
   test("a lease stolen DURING the judge finishes the gate row (failed), never strands it in running", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     // The judge steals the run lease as a side effect, so completeWorkflowStep's
     // write transaction throws AFTER the judge ran (the exact reviewer-#6 window).
     const judge: SummaryJudge = async () => {
@@ -895,7 +893,7 @@ describe("reviewer #6 — the gate-evaluation row is finalized even when complet
 
 // ── Reviewer #18 — a required gate with no judge blocks the step ──────────────
 
-const REQ_WF = `version: 1
+const REQ_WF = `version: 2
 name: Req
 steps:
   - id: work
@@ -908,7 +906,7 @@ steps:
 
 describe("reviewer #18 — a required gate with no judge available blocks the step", () => {
   test("finalizeExecutedStep BLOCKS (not fail-open) when gate.required and no judge is available", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: null }));
     expect(fin.kind).toBe("blocked");
 
@@ -921,7 +919,7 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
   });
 
   test("a required gate WITH a judge available completes normally (no block)", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const judge: SummaryJudge = async () => '{"complete": true, "missing": []}';
     const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: judge }));
     expect(fin.kind).toBe("advanced");
@@ -932,7 +930,7 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
   //    never fail open (the offline/misconfigured-judge bypass required gates exist
   //    to prevent). A CONFIGURED judge that throws is NOT the no-judge case above.
   test("finding A: required gate + a judge that THROWS blocks the step (does not fail open)", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const judge: SummaryJudge = async () => {
       throw new Error("LLM unreachable");
     };
@@ -952,7 +950,7 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
   });
 
   test("finding A: required gate + a judge that returns an UNPARSEABLE verdict blocks the step", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const judge: SummaryJudge = async () => "not json at all";
     const fin = await finalizeExecutedStep(finalizeArgs({ stepPlan: gatedStep(true), summaryJudge: judge }));
     expect(fin.kind).toBe("blocked");
@@ -962,7 +960,7 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
   });
 
   test("finding A: a NON-required gate whose judge throws still fails OPEN (documented offline behavior)", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const judge: SummaryJudge = async () => {
       throw new Error("LLM unreachable");
     };
@@ -972,7 +970,7 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
   });
 
   test("engine --require-gates blocks a NON-required criteria gate with no judge (run-wide override)", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const result = await runWorkflowSteps({
       target: RUN_ID,
       loadPlan: async () => plan(REQ_WF),
@@ -986,7 +984,7 @@ describe("reviewer #18 — a required gate with no judge available blocks the st
   });
 
   test("without --require-gates, a non-required gate with no judge still fails OPEN (offline behavior unchanged)", async () => {
-    seedRun([{ id: "work", criteria: ["the work is thorough"] }]);
+    seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(REQ_WF));
     const result = await runWorkflowSteps({
       target: RUN_ID,
       loadPlan: async () => plan(REQ_WF),

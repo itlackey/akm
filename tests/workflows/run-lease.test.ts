@@ -17,7 +17,7 @@ import {
   getWorkflowStatus,
   startWorkflowRun,
 } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 /**
  * Run-lease enforcement (redesign addendum R2 — single-driver invariant):
@@ -38,6 +38,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
