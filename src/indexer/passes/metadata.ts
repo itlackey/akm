@@ -113,6 +113,15 @@ export interface StashEntry {
   xrefs?: string[];
   /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
   sources?: string[];
+  /**
+   * Asset category, surfaced from the `category:` frontmatter key. Primarily
+   * used by fact assets: `convention` marks house-rule facts delivered via
+   * resolveStashStandards prompt injection; `meta` marks stash-about-itself
+   * canon (e.g. active-projects slug lists). Any non-empty string is accepted
+   * — this is descriptive metadata, not a validated enum. Captured into
+   * entry_json so category-keyed policies (SPEC-6) are implementable.
+   */
+  category?: string;
   beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
   supersededBy?: string[];
   contradictedBy?: string[];
@@ -339,6 +348,12 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (xrefs) result.xrefs = xrefs;
   const sources = normalizeNonEmptyStringList(e.sources);
   if (sources) result.sources = sources;
+  // SPEC-6: `category` must survive the whitelist or .stash.json-declared
+  // facts lose their convention/meta marker on the round-trip. Non-string
+  // values are dropped, not coerced.
+  if (typeof e.category === "string" && e.category.trim().length > 0) {
+    result.category = e.category.trim();
+  }
   if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
     result.beliefState = e.beliefState.trim() as StashEntry["beliefState"];
   }
@@ -484,6 +499,12 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
 
   const quality = asNonEmptyString(fmData.quality);
   if (quality) entry.quality = normalizeQuality(quality);
+
+  // SPEC-6 capture step: the `category:` frontmatter key (e.g. `convention`,
+  // `meta` on facts) must land on the indexed entry so category-keyed
+  // policies can see it. Trimmed; blank/non-string values are ignored.
+  const category = asNonEmptyString(fmData.category);
+  if (category) entry.category = category;
 
   const beliefState = asNonEmptyString(fmData.beliefState);
   if (beliefState) entry.beliefState = beliefState as StashEntry["beliefState"];

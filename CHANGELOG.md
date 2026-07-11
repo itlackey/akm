@@ -208,6 +208,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   query shape that previously returned noise or nothing. A user literally
   keyword-searching for the string `memory:x/` loses the old fuzzy token
   behavior — accepted as negligible.
+- **The `category:` frontmatter key is now captured into the index** as
+  `entry.category` (entry_json only — no schema migration). The key already
+  drives convention-fact prompt injection (`resolveStashStandards`) and the
+  fact linter, but the indexer never captured it, so no category-keyed search
+  or ranking policy was implementable. Captured for all markdown asset types
+  alongside `beliefState` (trimmed; blank/non-string values ignored; no
+  default invented), and whitelisted through the `.stash.json` entry
+  round-trip. Search results and ranking are unchanged — this is capture
+  only (a unit test pins that `category` never enters the FTS search
+  fields). **Requires a reindex to take effect** for existing entries. The
+  companion rank-time demotion of `category: convention` facts on untyped
+  queries was NOT shipped: the prescribed measurement (full skeleton
+  convention facts plus a real `knowledge/auth` asset, untyped `auth` query,
+  semantic off) shows no crowding — FTS is exact-first, so prefix expansion
+  onto the facts' tokens only happens when nothing matches the query exactly,
+  and a real domain asset always outranks the facts. That invariant is pinned
+  by `tests/search-convention-fact-demotion.test.ts`, which becomes the
+  regression guard if a demotion contributor is ever revisited.
 
 ### Changed
 

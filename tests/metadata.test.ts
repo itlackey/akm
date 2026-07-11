@@ -18,6 +18,7 @@ import {
   validateStashEntry,
   writeStashFile,
 } from "../src/indexer/passes/metadata";
+import { buildSearchFields, buildSearchText } from "../src/indexer/search/search-fields";
 
 // Renderers auto-register via ensureBuiltinsRegistered in file-context.ts
 
@@ -656,6 +657,108 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
   expect(result?.whenToUse).toBe("for triage");
   expect(result?.lessonStrength).toBe(4);
   expect(result?.evidenceSources).toEqual(["memory:x"]);
+});
+
+// ── SPEC-6: fact `category` capture into the index ───────────────────────────
+//
+// Convention facts are selected for prompt injection by their `category:`
+// frontmatter (resolveStashStandards), but the indexer never captured that key
+// onto StashEntry — so no rank-time or filter policy can see it. SPEC-6 step 1
+// (docs/design/stash-conventions-code-spec.md) captures it in
+// applyCuratedFrontmatter (alongside beliefState) and whitelists it through
+// validateStashEntry so it survives the .stash.json / entry_json round-trip.
+
+/**
+ * SPEC-6 adds `category?: string` to StashEntry. Read it through a typed
+ * accessor so this file still compiles before the implementation lands; the
+ * dependent tests then go red on the runtime value instead of a compile error.
+ */
+function entryCategory(entry: StashEntry | null | undefined): string | undefined {
+  return (entry as (StashEntry & { category?: string }) | null | undefined)?.category;
+}
+
+test("applyCuratedFrontmatter captures category frontmatter onto the entry (SPEC-6)", () => {
+  const entry: StashEntry = { name: "conventions/backlinks", type: "fact" };
+  applyCuratedFrontmatter(entry, { category: "convention" });
+  expect(entryCategory(entry)).toBe("convention");
+});
+
+test("applyCuratedFrontmatter trims category and ignores blank or non-string values (SPEC-6)", () => {
+  const trimmed: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(trimmed, { category: "  meta  " });
+  expect(entryCategory(trimmed)).toBe("meta");
+
+  const blank: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(blank, { category: "   " });
+  expect(entryCategory(blank)).toBeUndefined();
+
+  const nonString: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(nonString, { category: 42 });
+  expect(entryCategory(nonString)).toBeUndefined();
+
+  const absent: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(absent, {});
+  expect(entryCategory(absent)).toBeUndefined();
+});
+
+test("validateStashEntry whitelists category (SPEC-6)", () => {
+  const result = validateStashEntry({ name: "team/tool-stack", type: "fact", category: "convention" });
+  expect(result).not.toBeNull();
+  expect(entryCategory(result)).toBe("convention");
+
+  // Non-string values are dropped, not coerced.
+  const bad = validateStashEntry({ name: "team/tool-stack", type: "fact", category: ["convention"] });
+  expect(bad).not.toBeNull();
+  expect(entryCategory(bad)).toBeUndefined();
+});
+
+test("loadStashFile preserves category on entries (SPEC-6 whitelist round-trip)", () => {
+  const dir = tmpDir();
+  writeFile(
+    path.join(dir, ".stash.json"),
+    JSON.stringify({
+      entries: [{ name: "active-projects", type: "fact", category: "meta", filename: "active-projects.md" }],
+    }),
+  );
+  const result = loadStashFile(dir);
+  expect(result).not.toBeNull();
+  expect(entryCategory(result?.entries[0])).toBe("meta");
+});
+
+test("generateMetadata populates entry.category from fact frontmatter (SPEC-6 end-to-end)", async () => {
+  const factsRoot = tmpDir();
+  const file = path.join(factsRoot, "conventions", "organization.md");
+  writeFile(
+    file,
+    ["---", "category: convention", "description: House placement rules", "---", "", "# Org", "", "Body.", ""].join(
+      "\n",
+    ),
+  );
+
+  const stash = await generateMetadata(factsRoot, "fact", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].name).toBe("conventions/organization");
+  expect(entryCategory(stash.entries[0])).toBe("convention");
+});
+
+test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin)", () => {
+  // SPEC-6 shipped `category` as capture-only metadata: the CHANGELOG claims
+  // "search results and ranking are unchanged". Pin that claim directly so a
+  // future buildSearchFields edit (e.g. SPEC-8's content-field work) cannot
+  // silently start indexing the category value. The sentinel token appears
+  // nowhere else on the entry, so any leak into a field is unambiguous.
+  const base: StashEntry = {
+    name: "conventions/backlinks",
+    type: "fact",
+    description: "how backlinks are declared",
+    tags: ["conventions"],
+  };
+  const withCategory: StashEntry = { ...base, category: "sentinelcategorytoken" };
+
+  // Adding a category leaves every FTS field byte-identical…
+  expect(buildSearchFields(withCategory)).toEqual(buildSearchFields(base));
+  // …and the value never reaches the concatenated search/embedding text.
+  expect(buildSearchText(withCategory)).not.toContain("sentinelcategorytoken");
 });
 
 // ── SPEC-2: merge path-derived scope/domain tokens into tags ─────────────────
