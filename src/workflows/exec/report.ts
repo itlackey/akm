@@ -43,6 +43,7 @@ import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
+import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText } from "../../core/redaction";
 import type { WorkflowRunStatus } from "../../sources/types";
 import {
   type WorkflowRunUnitRow,
@@ -362,7 +363,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   }
 
   // ── completed / failed: validate, guard, write, maybe finalize ─────────────
-  const { resultJson, failureReason } = prepareResult(input, workUnit);
+  const sensitiveValues = await collectReportedUnitSensitiveValues(workUnit);
+  const { resultJson, failureReason } = prepareResult(input, workUnit, sensitiveValues);
   const thisTokens = input.tokens ?? 0;
 
   // Guarded write: the idempotent re-report / replay-divergence check and the
@@ -1361,10 +1363,14 @@ export function normalizeFailureReason(raw: string | undefined): string {
 function prepareResult(
   input: ReportUnitInput,
   workUnit: StepWorkUnit,
+  sensitiveValues: readonly string[],
 ): { resultJson: string | null; failureReason: string | null } {
   if (input.status === "failed") {
     return {
-      resultJson: input.resultRaw !== undefined && input.resultRaw !== "" ? JSON.stringify(input.resultRaw) : null,
+      resultJson:
+        input.resultRaw !== undefined && input.resultRaw !== ""
+          ? JSON.stringify(redactSensitiveText(input.resultRaw, sensitiveValues))
+          : null,
       failureReason: normalizeFailureReason(input.failureReason),
     };
   }
@@ -1383,20 +1389,21 @@ function prepareResult(
       parsed = JSON.parse(raw);
     } catch (err) {
       throw new UsageError(
-        `Unit "${input.unitId}" result is not valid JSON (its output schema requires a JSON value): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `Unit "${input.unitId}" result is not valid JSON (its output schema requires a JSON value): ${redactSensitiveText(
+          err instanceof Error ? err.message : String(err),
+          sensitiveValues,
+        )}`,
         "INVALID_FLAG_VALUE",
       );
     }
     const errors = validateJsonSchemaSubset(parsed, workUnit.schema);
     if (errors.length > 0) {
       throw new UsageError(
-        `Unit "${input.unitId}" result failed validation against its declared output schema: ${errors.join("; ")}.`,
+        `Unit "${input.unitId}" result failed validation against its declared output schema: ${redactSensitiveText(errors.join("; "), sensitiveValues)}.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    return { resultJson: JSON.stringify(parsed), failureReason: null };
+    return { resultJson: JSON.stringify(redactReportedValue(parsed, sensitiveValues)), failureReason: null };
   }
   // Free-text unit: journal the text as a JSON string EXACTLY as the executor
   // does — `native-executor.ts` finishUnit uses `outcome.text ? JSON.stringify… :
@@ -1404,7 +1411,46 @@ function prepareResult(
   // Matching that keeps the promoted artifact and the dispatch row byte-identical
   // across the engine and report surfaces (the cardinal graph-parity rule), and
   // stays consistent with the FAILED branch above which also maps ""→null.
-  return { resultJson: input.resultRaw ? JSON.stringify(input.resultRaw) : null, failureReason: null };
+  return {
+    resultJson: input.resultRaw ? JSON.stringify(redactSensitiveText(input.resultRaw, sensitiveValues)) : null,
+    failureReason: null,
+  };
+}
+
+async function collectReportedUnitSensitiveValues(workUnit: StepWorkUnit): Promise<string[]> {
+  const values = new Set<string>();
+  for (const ref of workUnit.env ?? []) {
+    const { resolveEnvBinding } = await import("../../commands/env/env-binding.js");
+    for (const value of Object.values(resolveEnvBinding(ref).values)) values.add(value);
+  }
+  const collectEngine = (engine: StepWorkUnit["engine"] | StepWorkUnit["fallbackEngine"]): void => {
+    if (!engine) return;
+    if (engine.kind === "llm") {
+      for (const name of engine.credential?.names ?? []) {
+        const value = process.env[name]?.trim();
+        if (value) values.add(value);
+      }
+      return;
+    }
+    for (const name of engine.envPassthrough) {
+      const value = process.env[name];
+      if (!ENV_PASSTHROUGH_REDACTION_ALLOWLIST.has(name) && value) values.add(value);
+    }
+  };
+  collectEngine(workUnit.engine);
+  collectEngine(workUnit.fallbackEngine);
+  return [...values];
+}
+
+function redactReportedValue(value: unknown, sensitiveValues: readonly string[]): unknown {
+  if (typeof value === "string") return redactSensitiveText(value, sensitiveValues);
+  if (Array.isArray(value)) return value.map((child) => redactReportedValue(child, sensitiveValues));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, redactReportedValue(child, sensitiveValues)]),
+    );
+  }
+  return value;
 }
 
 /** How the guarded unit write resolved inside the SQLite transaction. */

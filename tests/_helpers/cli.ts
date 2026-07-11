@@ -66,6 +66,7 @@ import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { disposeDispatchResources } from "../../src/integrations/agent/runner-dispatch";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
@@ -248,6 +249,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       stderr += `${error instanceof Error ? error.message : String(error)}\n`;
     }
   } finally {
+    await disposeDispatchResources();
     // If the command set process.exitCode without calling process.exit() (deferred
     // exit pattern used to allow stdout flush before terminating), pick it up here
     // so the captured code reflects the intended exit status. Only act when the

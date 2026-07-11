@@ -134,6 +134,7 @@
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
+import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText } from "../../core/redaction";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
@@ -182,6 +183,8 @@ export interface UnitDispatchRequest {
   schema?: Record<string, unknown>;
   /** Resolved env bindings to merge into the child environment. */
   env?: Record<string, string>;
+  /** Exact values that must be removed before output reaches the journal. */
+  sensitiveValues?: readonly string[];
   /**
    * Working directory for the unit's child — set exactly when the unit
    * declares `isolation: worktree` (a fresh detached worktree per attempt,
@@ -689,6 +692,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   // unit id by computeStepWorkList: a retry re-dispatches the SAME input, the
   // `~r<n>` suffix is journal bookkeeping only.
   const { prompt, inputHash } = workUnit.resolved;
+  const sensitiveValues = collectWorkflowDispatchSensitiveValues(workUnit, env);
 
   const request: UnitDispatchRequest = {
     runId: ctx.runId,
@@ -705,6 +709,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     timeoutMs: workUnit.timeoutMs,
     ...(workUnit.schema ? { schema: workUnit.schema } : {}),
     ...(env ? { env } : {}),
+    ...(sensitiveValues.length > 0 ? { sensitiveValues } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
   };
 
@@ -860,7 +865,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     metadata: { runId: ctx.runId, stepId: plan.stepId, unitId: attemptId },
   });
 
-  const outcome = await dispatchUnit(request, dispatcher);
+  const outcome = redactUnitOutcome(await dispatchUnit(request, dispatcher), request.sensitiveValues ?? []);
 
   await enqueueUnitWrite(async () => {
     await withWorkflowRunsRepo((repo) =>
@@ -1122,9 +1127,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       : resolved.connection;
     try {
       const text = await chatCompletion(connection, [{ role: "user", content: prompt }], {
-        // null = author declared `timeout: none` — cap at the max signed
-        // 32-bit delay (setTimeout's ceiling, ~24.8 days ≈ unbounded here).
-        timeoutMs: request.timeoutMs === null ? 2 ** 31 - 1 : request.timeoutMs,
+        timeoutMs: request.timeoutMs,
         ...(request.signal ? { signal: request.signal } : {}),
         // Native structured output where the connection supports it; the
         // executor's subset validator still runs downstream either way.
@@ -1196,6 +1199,47 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
     ...(result.usage ? { usage: result.usage } : {}),
   };
 };
+
+function collectWorkflowDispatchSensitiveValues(
+  workUnit: StepWorkUnit,
+  env: Record<string, string> | undefined,
+): string[] {
+  const values = new Set<string>(Object.values(env ?? {}));
+  const addCredential = (engine: FrozenEngineSnapshot | undefined): void => {
+    if (!engine) return;
+    if (engine.kind === "llm") {
+      for (const name of engine.credential?.names ?? []) {
+        const value = process.env[name]?.trim();
+        if (value) values.add(value);
+      }
+      return;
+    }
+    for (const name of engine.envPassthrough) {
+      const value = process.env[name];
+      if (!ENV_PASSTHROUGH_REDACTION_ALLOWLIST.has(name) && value) values.add(value);
+    }
+  };
+  addCredential(workUnit.engine);
+  addCredential(workUnit.fallbackEngine);
+  return [...values];
+}
+
+function redactUnitOutcome(outcome: UnitOutcome, sensitiveValues: readonly string[]): UnitOutcome {
+  const redactValue = (value: unknown): unknown => {
+    if (typeof value === "string") return redactSensitiveText(value, sensitiveValues);
+    if (Array.isArray(value)) return value.map(redactValue);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redactValue(child)]));
+    }
+    return value;
+  };
+  return {
+    ...outcome,
+    ...(outcome.text !== undefined ? { text: redactSensitiveText(outcome.text, sensitiveValues) } : {}),
+    ...(outcome.error !== undefined ? { error: redactSensitiveText(outcome.error, sensitiveValues) } : {}),
+    ...(outcome.result !== undefined ? { result: redactValue(outcome.result) } : {}),
+  };
+}
 
 /**
  * Map a typed {@link import("../../llm/client").LlmCallErrorCode} into the

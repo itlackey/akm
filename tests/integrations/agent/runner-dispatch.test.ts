@@ -138,4 +138,48 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
 
     await expect(executeRunner(bogus, "p", {}, seams)).rejects.toThrow();
   });
+
+  test("redacts echoed engine, binding, profile-env, and non-allowlisted passthrough values", async () => {
+    const values = {
+      engine: "ENGINE-ECHO-SENTINEL",
+      binding: "BINDING-ECHO-SENTINEL",
+      asset: "ENV-ASSET-ECHO-SENTINEL",
+      passthrough: "PASSTHROUGH-ECHO-SENTINEL",
+      safePath: "/safe/runtime/path",
+    };
+    const profile: AgentProfile = {
+      ...sdkProfile,
+      env: { ENV_ASSET_VALUE: values.asset },
+      envPassthrough: ["PATH", "CUSTOM_AGENT_TOKEN"],
+    };
+    const spec: RunnerSpec = {
+      kind: "sdk",
+      profile,
+      fallbackConnection: { ...llmConnection, apiKey: values.engine },
+    };
+    const echoed = Object.values(values).join(" | ");
+
+    const result = await executeRunner(
+      spec,
+      "p",
+      {
+        env: { BOUND_VALUE: values.binding },
+        envSource: { PATH: values.safePath, CUSTOM_AGENT_TOKEN: values.passthrough },
+      },
+      {
+        runSdk: async () => ({
+          ...okResult(echoed),
+          stderr: echoed,
+          error: echoed,
+          parsed: { echoed },
+        }),
+      },
+    );
+
+    for (const secret of [values.engine, values.binding, values.asset, values.passthrough]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+    }
+    expect(JSON.stringify(result)).toContain(values.safePath);
+    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(4);
+  });
 });

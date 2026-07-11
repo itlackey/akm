@@ -117,6 +117,7 @@ import { UsageError } from "./core/errors";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
+import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
 import { getHyphenatedBoolean, getOutputMode, initOutputMode, parseFlagValue } from "./output/context";
 import { deliverRendered, renderHtml, resolveTemplatePath } from "./output/html-render";
 import { pkgVersion } from "./version";
@@ -666,5 +667,9 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
     );
   })();
 
-  runMain(main);
+  try {
+    await runMain(main);
+  } finally {
+    await disposeDispatchResources();
+  }
 }

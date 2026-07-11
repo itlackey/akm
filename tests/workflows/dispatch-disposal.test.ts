@@ -202,6 +202,30 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
     // The disposal error was swallowed; the run's success is preserved.
     expect(result.done).toBe(true);
   });
+
+  test("awaits asynchronous disposal before resolving the workflow run", async () => {
+    writeProgram("drain-awaited", oneStep("drain-awaited"));
+    const started = await startWorkflowRun("workflow:drain-awaited", {});
+    let release!: () => void;
+    const disposalBlocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let settled = false;
+    const running = runWorkflowSteps({
+      target: started.run.id,
+      summaryJudge: null,
+      dispatcher: async () => ({ ok: true, text: "done" }),
+      disposeDispatchResources: () => disposalBlocked,
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    release();
+    expect((await running).done).toBe(true);
+  });
 });
 
 // ── (B) the disposal seam actually tears down the SDK registry ───────────────
@@ -245,13 +269,56 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
     expect(started).toBe(2);
 
     // The drain the engine calls closes BOTH cached servers synchronously.
-    disposeDispatchResources();
+    await disposeDispatchResources();
     expect(closes.length).toBe(2);
-    expect(closes).toContain("default");
+    expect(closes.every((tag) => tag.startsWith("port-"))).toBe(true);
 
     // Registry emptied: the next dispatch starts a fresh server (start count bumps).
     await runOpencodeSdk(profile, "p", { timeoutMs: null });
     expect(started).toBe(3);
+  });
+
+  test("awaits an in-flight server start and closes the late server before disposal resolves", async () => {
+    let resolveFactory!: (server: never) => void;
+    let factoryStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      factoryStarted = resolve;
+    });
+    let closed = 0;
+    __setServerFactory((() => {
+      factoryStarted();
+      return new Promise((resolve) => {
+        resolveFactory = resolve;
+      });
+    }) as never);
+    const profile = { name: "mysdk", bin: "opencode", args: [], sdkMode: true } as never;
+    const running = runOpencodeSdk(profile, "p", { timeoutMs: null });
+    await started;
+
+    let disposed = false;
+    const disposal = disposeDispatchResources().then(() => {
+      disposed = true;
+    });
+    await Promise.resolve();
+    expect(disposed).toBe(false);
+
+    resolveFactory({
+      client: {
+        session: {
+          create: async () => ({ data: { id: "late" } }),
+          prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
+          delete: async () => ({}),
+        },
+      },
+      server: {
+        close() {
+          closed++;
+        },
+      },
+    } as never);
+    await disposal;
+    await running;
+    expect(closed).toBe(1);
   });
 });
 

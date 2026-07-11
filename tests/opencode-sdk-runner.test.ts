@@ -58,8 +58,10 @@ function makeFakeServer(
   } = {},
 ) {
   let deleted = false;
+  let deleteCount = 0;
   return {
     deletedRef: () => deleted,
+    deleteCountRef: () => deleteCount,
     server: {
       client: {
         session: {
@@ -76,6 +78,7 @@ function makeFakeServer(
           },
           delete: async (args?: { query?: { directory?: string } }) => {
             deleted = true;
+            deleteCount++;
             capture.deleteQuery = args?.query;
             if (overrides.deleteImpl) return overrides.deleteImpl();
             return {};
@@ -378,6 +381,32 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(capture.body).toBeUndefined();
   });
 
+  test("a session that is created after timeout is deleted when it arrives", async () => {
+    const capture: PromptCapture = {};
+    let resolveCreate!: (value: { data: { id: string } }) => void;
+    const fake = makeFakeServer(capture, undefined, {
+      createImpl: () => new Promise((resolve) => (resolveCreate = resolve)),
+    });
+    __setTestServer(fake.server as never);
+    const immediateTimer = ((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    }) as any;
+
+    const result = await runOpencodeSdk(profile, "hi", {
+      timeoutMs: 50,
+      setTimeoutFn: immediateTimer,
+      clearTimeoutFn: (() => {}) as never,
+    });
+    expect(result.reason).toBe("timeout");
+
+    resolveCreate({ data: { id: "late-session" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fake.deleteCountRef()).toBe(1);
+  });
+
   test("prompt rejection returns non_zero_exit and still deletes the session", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture, async () => {
@@ -417,6 +446,33 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(result.stdout).toBe("ok-response");
     expect(fake.deletedRef()).toBe(true);
     expect(result.stderr).toContain("OpenCode session cleanup timed out");
+  });
+
+  test("a prompt that settles after timeout triggers a second session cleanup", async () => {
+    const capture: PromptCapture = {};
+    let resolvePrompt!: (value: { data: { parts: { type: string; text: string }[] } }) => void;
+    const fake = makeFakeServer(capture, () => new Promise((resolve) => (resolvePrompt = resolve)));
+    __setTestServer(fake.server as never);
+    let timers = 0;
+    const promptTimer = ((fn: () => void) => {
+      timers++;
+      if (timers === 2) fn();
+      return timers as unknown as ReturnType<typeof setTimeout>;
+      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    }) as any;
+
+    const result = await runOpencodeSdk(profile, "p", {
+      timeoutMs: 50,
+      setTimeoutFn: promptTimer,
+      clearTimeoutFn: (() => {}) as never,
+    });
+    expect(result.reason).toBe("timeout");
+    expect(fake.deleteCountRef()).toBe(1);
+
+    resolvePrompt({ data: { parts: [{ type: "text", text: "late" }] } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fake.deleteCountRef()).toBe(2);
   });
 });
 
@@ -563,7 +619,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
   // (4096), so coexisting registry entries (default + env-keyed — e.g. an
   // improve run's AKM_EVENT_SOURCE binding alongside env-free sdk calls)
   // contended for the same bind and the second start failed spawn_failed.
-  test("env-keyed servers each get their own free port; the default server keeps the SDK default", async () => {
+  test("every registry server gets its own free port", async () => {
     const ports: (number | undefined)[] = [];
     const capture: PromptCapture = {};
     __setServerFactory(((options: { port?: number }) => {
@@ -575,14 +631,57 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "a" }, timeoutMs: null });
     await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "b" }, timeoutMs: null });
 
-    // Default key: no port override — byte-identical to the pre-R2 singleton.
-    expect(ports[0]).toBeUndefined();
-    // Env-keyed entries: OS-assigned free ports, never the SDK default and
-    // never shared with a coexisting entry.
+    // Every entry uses an OS-assigned port, never the SDK default and never a
+    // port already reserved by another entry in this process.
+    expect(typeof ports[0]).toBe("number");
     expect(typeof ports[1]).toBe("number");
     expect(typeof ports[2]).toBe("number");
+    expect(ports[0]).not.toBe(4096);
     expect(ports[1]).not.toBe(4096);
     expect(ports[2]).not.toBe(4096);
+    expect(ports[0]).not.toBe(ports[1]);
+    expect(ports[0]).not.toBe(ports[2]);
     expect(ports[1]).not.toBe(ports[2]);
+  });
+
+  test("registry identity includes endpoint, materialized key, bin, provider config, and env", async () => {
+    const calls: Array<{ bin?: string; port?: number }> = [];
+    __setServerFactory(((options: { bin?: string; port?: number }) => {
+      calls.push(options);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+    const env = { [ENV_KEY]: "same-env" };
+    const baseConnection = {
+      endpoint: "https://one.test/v1/chat/completions",
+      model: "model-a",
+      provider: "provider-a",
+      apiKey: "materialized-key-a",
+    };
+
+    await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(
+      baseProfile,
+      "p",
+      { env, timeoutMs: null },
+      { ...baseConnection, apiKey: "materialized-key-b" },
+    );
+    await runOpencodeSdk(
+      baseProfile,
+      "p",
+      { env, timeoutMs: null },
+      {
+        ...baseConnection,
+        endpoint: "https://two.test/v1/chat/completions",
+      },
+    );
+    await runOpencodeSdk({ ...baseProfile, bin: "other-opencode" }, "p", { env, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "other-env" }, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, { ...baseConnection, provider: "provider-b" });
+    await runOpencodeSdk({ ...baseProfile, model: "model-b" }, "p", { env, timeoutMs: null }, baseConnection);
+
+    expect(calls).toHaveLength(7);
+    expect(calls.map((call) => call.bin)).toContain("other-opencode");
+    expect(new Set(calls.map((call) => call.port)).size).toBe(7);
   });
 });
