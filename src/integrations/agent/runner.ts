@@ -2,8 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AkmConfig, ImproveProcessConfig, LlmConnectionConfig } from "../../core/config/config";
-import { materializeLlmConnection, resolveEngine, resolveLlmEngineUse } from "./engine-resolution";
+import type {
+  AkmConfig,
+  ImproveProcessConfig,
+  ImproveProfileConfig,
+  LlmConnectionConfig,
+} from "../../core/config/config";
+import { materializeLlmConnection, type ResolvedLlmUse, resolveEngine, resolveLlmEngineUse } from "./engine-resolution";
 import type { AgentProfile } from "./profiles";
 
 export type ProcessSection = "improve" | "index" | "search" | string;
@@ -56,14 +61,47 @@ export function resolveTriageJudgmentRunner(
   return resolveDefaultLlmRunner(config, judgment?.timeoutMs);
 }
 
-/** Resolve one process engine. A missing process engine deliberately leaves selection to its caller. */
-export function resolveImproveProcessRunnerFromProfile(
-  processConfig: ImproveProcessConfig | undefined,
+/** Resolve an improve process through the active strategy and process overlays. */
+export function resolveImproveProcessLlmUse(
   config: AkmConfig,
-): RunnerSpec | null {
-  if (!processConfig?.engine) return null;
-  const runner = resolveEngine(processConfig.engine, config);
-  return processConfig.timeoutMs === undefined ? runner : { ...runner, timeoutMs: processConfig.timeoutMs };
+  strategy: ImproveProfileConfig | undefined,
+  processName: string,
+  options: { optional: true },
+): ResolvedLlmUse | undefined;
+export function resolveImproveProcessLlmUse(
+  config: AkmConfig,
+  strategy: ImproveProfileConfig | undefined,
+  processName: string,
+  options?: { optional?: false },
+): ResolvedLlmUse;
+export function resolveImproveProcessLlmUse(
+  config: AkmConfig,
+  strategy: ImproveProfileConfig | undefined,
+  processName: string,
+  options: { optional?: boolean } = {},
+): ResolvedLlmUse | undefined {
+  const process = (strategy?.processes as Record<string, ImproveProcessConfig | undefined>)?.[processName];
+  const layers = strategy ? [strategy, process ?? {}] : [];
+  return options.optional
+    ? resolveLlmEngineUse(config, layers, { optional: true })
+    : resolveLlmEngineUse(config, layers);
+}
+
+/** Materialize the LLM runner selected by an improve strategy and process. */
+export function resolveImproveProcessRunner(
+  strategy: ImproveProfileConfig | undefined,
+  processName: string,
+  config: AkmConfig,
+): Extract<RunnerSpec, { kind: "llm" }> | null {
+  if (!strategy) return null;
+  const resolved = resolveImproveProcessLlmUse(config, strategy, processName, { optional: true });
+  if (!resolved) return null;
+  return {
+    kind: "llm",
+    engine: resolved.engine,
+    connection: materializeLlmConnection(resolved),
+    timeoutMs: resolved.timeoutMs,
+  };
 }
 
 export function resolveRunner(_mode: "llm" | "agent" | "sdk", engine: string, config: AkmConfig): RunnerSpec {

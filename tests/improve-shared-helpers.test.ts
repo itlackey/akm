@@ -53,9 +53,10 @@ describe("resolveImproveLlmFn", () => {
     expect(fn).toBeUndefined();
   });
 
-  test("returns a callable when a default LLM profile exists", () => {
+  test("returns a callable when defaults.llmEngine exists", () => {
     const config = {
-      profiles: { llm: { default: { baseUrl: "http://localhost:1234", model: "m" } } },
+      engines: { default: { kind: "llm", endpoint: "http://localhost:1234", model: "m" } },
+      defaults: { llmEngine: "default" },
     } as unknown as AkmConfig;
     const fn = resolveImproveLlmFn(config, {
       processKey: "procedural",

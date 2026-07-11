@@ -33,7 +33,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
-import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
+import { resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
+import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 // Imported from the module under test (now shipped).
 import { akmProcedural, normalizeSequence } from "../../src/commands/improve/procedural";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
@@ -133,8 +134,8 @@ const noopIndexFns = {
 function proceduralEnabledConfig(overrides?: Record<string, unknown>): AkmConfig {
   return {
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -178,7 +179,7 @@ describe("procedural — normalizeSequence (unit)", () => {
 
 describe("procedural — opt-in default (AC3)", () => {
   test("resolveProcessEnabled('procedural', defaultProfile) === false", () => {
-    const profile = resolveImproveProfile("default", { semanticSearchMode: "off" } as AkmConfig);
+    const profile = resolveImproveStrategy("default", { semanticSearchMode: "off" } as AkmConfig).config;
     expect(resolveProcessEnabled("procedural", profile)).toBe(false);
   });
 

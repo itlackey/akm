@@ -30,7 +30,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
-import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
+import { resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
+import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 // Imported from the module under test (now shipped).
 import { akmRecombine } from "../../src/commands/improve/recombine";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
@@ -104,8 +105,8 @@ const noopIndexFns = {
 function recombineEnabledConfig(overrides?: Record<string, unknown>): AkmConfig {
   return {
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -128,7 +129,7 @@ afterEach(() => {
 
 describe("recombine — opt-in default (AC3)", () => {
   test("resolveProcessEnabled('recombine', defaultProfile) === false", () => {
-    const profile = resolveImproveProfile("default", { semanticSearchMode: "off" } as AkmConfig);
+    const profile = resolveImproveStrategy("default", { semanticSearchMode: "off" } as AkmConfig).config;
     expect(resolveProcessEnabled("recombine", profile)).toBe(false);
   });
 

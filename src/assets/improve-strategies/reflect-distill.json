@@ -3,12 +3,11 @@
   "processes": {
     "reflect": {
       "enabled": true,
-      "mode": "llm",
       "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"]
     },
-    "distill": { "enabled": true, "mode": "llm", "allowedTypes": ["memory"] },
+    "distill": { "enabled": true, "allowedTypes": ["memory"] },
     "consolidate": { "enabled": false },
-    "memoryInference": { "enabled": true, "mode": "llm" },
+    "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": false },
     "extract": {
       "enabled": false,
@@ -22,7 +21,7 @@
       "policy": "personal-stash",
       "maxAcceptsPerRun": 15,
       "maxDiffLines": 200,
-      "judgment": { "mode": "llm" }
+      "judgment": {}
     },
     "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 }
   },

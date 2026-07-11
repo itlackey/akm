@@ -17,6 +17,9 @@ import thorough from "../../assets/improve-strategies/thorough.json" with { type
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
+import { resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
+import { resolveImproveProcessLlmUse } from "../../integrations/agent/runner";
+import { resolveProcessEnabled } from "./improve-profiles";
 
 /** 0.9 public name for the improve preset configuration. */
 export type ImproveStrategyConfig = ImproveProfileConfig;
@@ -60,8 +63,31 @@ export function resolveImproveStrategy(name: string | undefined, config: AkmConf
 }
 
 export function resolveStrategyProcessEnabled(strategy: SelectedStrategy, processName: string): boolean {
-  const process = (strategy.config.processes as Record<string, { enabled?: boolean } | undefined> | undefined)?.[
-    processName
-  ];
-  return process?.enabled !== false;
+  return resolveProcessEnabled(processName, strategy.config);
+}
+
+const LLM_PROCESS_NAMES = [
+  "reflect",
+  "distill",
+  "consolidate",
+  "memoryInference",
+  "graphExtraction",
+  "extract",
+  "validation",
+  "recombine",
+  "procedural",
+] as const;
+
+/** Validate explicit strategy/process engines before improve performs any work. */
+export function preflightImproveStrategyEngines(strategy: SelectedStrategy, config: AkmConfig): void {
+  for (const processName of LLM_PROCESS_NAMES) {
+    const process = strategy.config.processes?.[processName];
+    if (!resolveProcessEnabled(processName, strategy.config) || (!strategy.config.engine && !process?.engine)) continue;
+    resolveImproveProcessLlmUse(config, strategy.config, processName);
+  }
+
+  const triage = strategy.config.processes?.triage;
+  if (triage?.enabled !== false && triage?.judgment?.engine) {
+    resolveLlmEngineUse(config, [strategy.config, triage.judgment]);
+  }
 }

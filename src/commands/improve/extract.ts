@@ -39,7 +39,7 @@ import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
+import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
@@ -60,6 +60,7 @@ import { createProposal, isProposalSkipped, type ProposalsContext } from "../pro
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import { buildHotProbationFrontmatter } from "./hot-probation";
 import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";
+import { resolveImproveStrategy } from "./improve-strategies";
 import {
   applySchemaSimilarityPenalty,
   loadDerivedLayerEmbeddings,
@@ -804,15 +805,15 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // profile (the explicit `akm extract` path, which has no active profile). This
   // is what stops a non-default profile's `extract.enabled` from being silently
   // overridden by the default profile and vice-versa.
-  const activeProfile = options.improveProfile;
-  const extractProcess = activeProfile ? activeProfile.processes?.extract : getImproveProcessConfig(config, "extract");
+  const activeProfile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
+  const extractProcess = getImproveProcessConfig(config, "extract", activeProfile);
   // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
   // (the activeProfile path) — consistent with #593/#594 where the active profile,
   // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
   // (no activeProfile) is a direct user/cron action and always runs; gating it on
   // the default improve profile's stage toggle was a footgun — dropping extract
   // from the daily improve profile would silently disable the standalone command.
-  const extractEnabled = activeProfile ? resolveProcessEnabled("extract", activeProfile) : true;
+  const extractEnabled = options.improveProfile ? resolveProcessEnabled("extract", activeProfile) : true;
 
   // Feature-gate early so we get a clean "skipped because disabled" envelope.
   if (!extractEnabled) {
@@ -840,21 +841,16 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   //   2. config.defaults.llm (the default LLM profile)
   //   3. throw — extract requires an LLM.
   let llmConfig: LlmProfileConfig | undefined;
-  const runnerSpec = resolveImproveProcessRunnerFromProfile(extractProcess, config);
+  const runnerSpec = resolveImproveProcessRunner(activeProfile, "extract", config);
   if (runnerSpec) {
-    if (!runnerIsLlm(runnerSpec)) {
-      throw new ConfigError(
-        `Extract only supports mode: "llm" (in-tree LLM call). Got mode: "${runnerSpec.kind}" from profiles.improve.default.processes.extract — change it to "llm" or remove the override.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
     llmConfig = runnerSpec.connection;
   } else {
     llmConfig = getDefaultLlmConfig(config) ?? undefined;
   }
   if (!llmConfig) {
     throw new ConfigError(
-      "No LLM connection configured for extract. Set profiles.llm + defaults.llm, or set profiles.improve.default.processes.extract.profile to a configured LLM profile.",
+      "No LLM engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
+      "LLM_NOT_CONFIGURED",
     );
   }
 

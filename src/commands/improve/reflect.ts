@@ -33,7 +33,7 @@ import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
-import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
@@ -58,7 +58,7 @@ import {
 import {
   type RunnerSpec,
   resolveDefaultLlmRunner,
-  resolveImproveProcessRunnerFromProfile,
+  resolveImproveProcessRunner,
   runnerIsLlm,
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
@@ -1065,14 +1065,20 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       runnerSpec = options.runner;
     } else {
       const cfg = options.config ?? loadConfig();
-      const reflectProcess = getImproveProcessConfig(cfg, "reflect", options.improveProfile);
-      // Resolve the runner from the improve profile's reflect entry when present.
-      runnerSpec = resolveImproveProcessRunnerFromProfile(reflectProcess, cfg) ?? undefined;
+      // Resolve through the active improve strategy and reflect process overlays.
+      runnerSpec = resolveImproveProcessRunner(options.improveProfile, "reflect", cfg) ?? undefined;
       if (runnerSpec) {
         if (resolvedTimeoutMs === undefined && runnerSpec.timeoutMs !== undefined) {
           resolvedTimeoutMs = runnerSpec.timeoutMs;
         }
       } else {
+        if (options.eventSource === "improve") {
+          throw new ConfigError(
+            "Unattended improve pins reflect to the tool-less LLM runner, but no LLM engine is configured.",
+            "LLM_NOT_CONFIGURED",
+            "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
+          );
+        }
         if (options.profile) {
           // Explicit --profile flag wins over process config.
           profile = resolveAgentProfile(options);
@@ -1489,8 +1495,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     })();
   const chatFn = options.chat ?? chatCompletion;
   const qualityGateEnabled =
-    isLlmFeatureEnabled(runtimeConfig, "proposal_quality_gate") ||
-    isLlmFeatureEnabled(runtimeConfig, "lesson_quality_gate");
+    isLlmFeatureEnabled(runtimeConfig, "proposal_quality_gate", options.improveProfile) ||
+    isLlmFeatureEnabled(runtimeConfig, "lesson_quality_gate", options.improveProfile);
 
   if (qualityGateEnabled && runtimeConfig) {
     const assetContent: string | null = (() => {
@@ -1510,7 +1516,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       }
     })();
 
-    const judgeResult = await runLessonQualityJudge(runtimeConfig, payload.content, assetContent ?? "", chatFn);
+    const judgeResult = await runLessonQualityJudge(
+      runtimeConfig,
+      payload.content,
+      assetContent ?? "",
+      chatFn,
+      undefined,
+      runnerSpec && runnerIsLlm(runnerSpec) ? runnerSpec.connection : undefined,
+    );
     if (!judgeResult.pass) {
       // Quality gate rejected the proposal — surface as parse_error so the
       // improve orchestrator can log it and move on without crashing.

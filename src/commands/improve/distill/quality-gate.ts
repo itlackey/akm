@@ -138,8 +138,9 @@ export async function runLessonQualityJudge(
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
   /** D-4 / #390: top-3 similar existing lessons for dedup check. */
   similarLessons?: Array<{ ref: string; content: string }>,
+  llmConfigOverride?: LlmConnectionConfig,
 ): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
-  const llmConfig = getDefaultLlmConfig(config);
+  const llmConfig = llmConfigOverride ?? getDefaultLlmConfig(config);
   if (!llmConfig) {
     return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }

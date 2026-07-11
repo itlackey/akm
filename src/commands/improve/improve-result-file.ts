@@ -103,7 +103,7 @@ export function writeImproveResultFile(
       completedAt,
       stashDir,
       dryRun: Boolean(result.dryRun),
-      strategy: strategy ?? null,
+      strategy: strategy ?? result.strategy ?? null,
       scopeMode: result.scope?.mode ?? "all",
       scopeValue: result.scope?.value ?? null,
       guidance: result.guidance ?? null,

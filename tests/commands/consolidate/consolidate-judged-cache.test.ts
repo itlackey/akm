@@ -69,12 +69,17 @@ function writeMemory(name: string, body: string): void {
 // an `akmConsolidate` OPTION — mirroring how improve.ts maps the profile field
 // `processes.consolidate.judgedCache` onto the call.
 const CONFIG = {
+  configVersion: "0.9.0",
   semanticSearchMode: "off",
-  profiles: {
-    llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-    improve: { default: { processes: { consolidate: { enabled: true } } } },
+  engines: {
+    default: {
+      kind: "llm",
+      endpoint: "http://localhost:11434/v1/chat/completions",
+      model: "test-model",
+    },
   },
-  defaults: { llm: "default" },
+  improve: { strategies: { judged: { processes: { consolidate: { enabled: true } } } } },
+  defaults: { llmEngine: "default", improveStrategy: "judged" },
 } as unknown as AkmConfig;
 
 describe("#581 consolidate judged-state cache", () => {

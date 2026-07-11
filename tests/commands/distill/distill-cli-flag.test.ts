@@ -133,14 +133,21 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
   testHappy("LLM stub returns valid lesson → outcome=queued, proposal in queue", async () => {
     const stash = happyStash();
     const config: AkmConfig = {
+      configVersion: "0.9.0",
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      profiles: {
-        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-        improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
+      engines: {
+        default: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "test-model",
+        },
       },
-      defaults: { llm: "default" },
+      improve: {
+        strategies: { test: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
+      },
+      defaults: { llmEngine: "default", improveStrategy: "test" },
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -158,14 +165,21 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
   testHappy("--source-run sourceRun param threads onto the queued proposal", async () => {
     const stash = happyStash();
     const config: AkmConfig = {
+      configVersion: "0.9.0",
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      profiles: {
-        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-        improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
+      engines: {
+        default: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "test-model",
+        },
       },
-      defaults: { llm: "default" },
+      improve: {
+        strategies: { test: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
+      },
+      defaults: { llmEngine: "default", improveStrategy: "test" },
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skill:deploy",

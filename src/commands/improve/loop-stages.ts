@@ -27,7 +27,7 @@ import {
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
-import { resolveImproveProcessRunnerFromProfile } from "../../integrations/agent/runner";
+import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import type { Database } from "../../storage/database";
@@ -277,8 +277,9 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           // dispatch when present. Falls back to akmReflect's own config-based resolution
           // (profiles.improve.<name>.processes.reflect → defaults.llm) when the profile
           // does not specify.
-          const reflectProfileRunner = resolveImproveProcessRunnerFromProfile(
-            improveProfile.processes?.reflect,
+          const reflectProfileRunner = resolveImproveProcessRunner(
+            improveProfile,
+            "reflect",
             options.config ?? loadConfig(),
           );
           const reflectCallArgs = {

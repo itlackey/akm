@@ -302,6 +302,8 @@ export interface ProceduralCompilationResult {
 export interface AkmImproveResult {
   schemaVersion: 1;
   ok: true;
+  /** Effective 0.9 improve strategy selected for this run. */
+  strategy?: string;
   scope: {
     mode: "all" | "type" | "ref";
     value?: string;

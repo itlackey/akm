@@ -1,7 +1,5 @@
 /**
- * Integration test: the AkmConfig loader propagates legacy `agent` blocks
- * through the 0.8.0 auto-migration so they materialize as the new
- * `profiles.agent` + `defaults.agent` shape after load.
+ * Integration test: the AkmConfig loader preserves current engine definitions.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -22,8 +20,8 @@ afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 
-describe("AkmConfig loader — agent block migration", () => {
-  test("legacy agent.default + agent.profiles migrates into profiles.agent + defaults.agent", async () => {
+describe("AkmConfig loader — agent engines", () => {
+  test("loads agent engines and defaults.engine", async () => {
     const { loadUserConfig, resetConfigCache } = await import("../../src/core/config/config");
     const { getConfigPath } = await import("../../src/core/paths");
     const cfgPath = getConfigPath();
@@ -32,15 +30,13 @@ describe("AkmConfig loader — agent block migration", () => {
       cfgPath,
       JSON.stringify(
         {
+          configVersion: "0.9.0",
           semanticSearchMode: "auto",
-          agent: {
-            default: "claude",
-            timeoutMs: 45000,
-            profiles: {
-              claude: { args: ["--print"] },
-              opencode: { bin: "opencode-cli" },
-            },
+          engines: {
+            claude: { kind: "agent", platform: "claude", args: ["--print"], timeoutMs: 45000 },
+            opencode: { kind: "agent", platform: "opencode", bin: "opencode-cli" },
           },
+          defaults: { engine: "claude" },
         },
         null,
         2,
@@ -48,9 +44,9 @@ describe("AkmConfig loader — agent block migration", () => {
     );
     resetConfigCache();
     const cfg = loadUserConfig();
-    expect(cfg.defaults?.agent).toBe("claude");
-    expect(cfg.profiles?.agent?.claude?.args).toEqual(["--print"]);
-    expect(cfg.profiles?.agent?.opencode?.bin).toBe("opencode-cli");
+    expect(cfg.defaults?.engine).toBe("claude");
+    expect(cfg.engines?.claude).toMatchObject({ kind: "agent", platform: "claude", args: ["--print"] });
+    expect(cfg.engines?.opencode).toMatchObject({ kind: "agent", platform: "opencode", bin: "opencode-cli" });
   });
 
   test("agent block absent → no default agent → requireAgentProfile throws", async () => {

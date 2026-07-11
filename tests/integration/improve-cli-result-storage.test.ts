@@ -87,6 +87,7 @@ function readImproveRuns(xdgData: string): Array<{
   ok: number;
   scope_mode: string;
   profile: string | null;
+  strategy: string | null;
   result: Record<string, unknown>;
 }> {
   const dbPath = path.join(xdgData, "akm", "state.db");
@@ -95,7 +96,7 @@ function readImproveRuns(xdgData: string): Array<{
   try {
     const rows = db
       .prepare(
-        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, profile, result_json
+        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, profile, strategy, result_json
          FROM improve_runs ORDER BY started_at ASC`,
       )
       .all() as Array<{
@@ -106,6 +107,7 @@ function readImproveRuns(xdgData: string): Array<{
       ok: number;
       scope_mode: string;
       profile: string | null;
+      strategy: string | null;
       result_json: string;
     }>;
     return rows.map((r) => ({
@@ -116,6 +118,7 @@ function readImproveRuns(xdgData: string): Array<{
       ok: r.ok,
       scope_mode: r.scope_mode,
       profile: r.profile,
+      strategy: r.strategy,
       result: JSON.parse(r.result_json) as Record<string, unknown>,
     }));
   } finally {
@@ -148,6 +151,9 @@ describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape 
     expect(rows[0].dry_run).toBe(1);
     expect(rows[0].result.ok).toBe(true);
     expect(rows[0].result.dryRun).toBe(true);
+    expect(rows[0].profile).toBeNull();
+    expect(rows[0].strategy).toBe("default");
+    expect(rows[0].result.strategy).toBe("default");
     expect(rows[0].result.memorySummary).toBeDefined();
     expect(rows[0].result.plannedRefs).toBeDefined();
 
@@ -168,6 +174,7 @@ describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape 
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
     expect(parsed.ok).toBe(true);
     expect(parsed.dryRun).toBe(true);
+    expect(parsed.strategy).toBe("default");
     expect(parsed.memorySummary).toBeDefined();
     expect(parsed.plannedRefs).toBeDefined();
     // No envelope-only fields in legacy mode.
@@ -207,5 +214,16 @@ describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape 
     expect(aRows[0].id).not.toEqual(bRows[0].id);
     // No legacy directory under either stash root.
     expect(fs.existsSync(path.join(stashDir, ".akm", "runs"))).toBe(false);
+  });
+
+  test("--strategy persists the effective strategy without populating the historical profile column", () => {
+    const result = runCli(["improve", "--dry-run", "--strategy", "quick"], stashDir);
+    expect(result.status).toBe(0);
+
+    const rows = readImproveRuns(result.xdgData);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].profile).toBeNull();
+    expect(rows[0].strategy).toBe("quick");
+    expect(rows[0].result.strategy).toBe("quick");
   });
 });

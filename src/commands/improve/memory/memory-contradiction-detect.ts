@@ -40,7 +40,8 @@ import path from "node:path";
 import contradictionJudgeTemplate from "../../../assets/prompts/contradiction-judge.md" with { type: "text" };
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
-import { getDefaultLlmConfig } from "../../../core/config/config";
+import { getDefaultLlmConfig, type ImproveProfileConfig } from "../../../core/config/config";
+import { resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { tryLlmFeature } from "../../../llm/feature-gate";
 
@@ -219,6 +220,7 @@ export async function detectAndWriteContradictions(
   stashDir: string,
   config: AkmConfig,
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string> = chatCompletion,
+  strategy?: ImproveProfileConfig,
 ): Promise<ContradictionDetectionResult> {
   const result: ContradictionDetectionResult = {
     familiesExamined: 0,
@@ -227,7 +229,8 @@ export async function detectAndWriteContradictions(
     warnings: [],
   };
 
-  const contradictionLlm = getDefaultLlmConfig(config);
+  const contradictionLlm =
+    resolveImproveProcessRunner(strategy, "consolidate", config)?.connection ?? getDefaultLlmConfig(config);
   if (!contradictionLlm) return result;
 
   // Collect derived memories grouped by parent.
@@ -309,6 +312,7 @@ export async function detectAndWriteContradictions(
             ]);
           },
           null, // Fallback: null means "skip" — gate disabled or LLM call failed.
+          { strategy },
         );
 
         totalPairsChecked++;

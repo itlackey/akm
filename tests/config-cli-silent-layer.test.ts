@@ -57,25 +57,25 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 describe("akm config set --silent / --layer (#463)", () => {
   test("--silent suppresses stdout but still writes the value", async () => {
     const { result, getResult } = await withEnv(freshEnv(), async () => {
-      const result = await runCliCapture(["config", "set", "--silent", "defaults.agent", "claude"]);
+      const result = await runCliCapture(["config", "set", "--silent", "semanticSearchMode", "off"]);
       // The write happened — verify by re-reading via `akm config get`.
-      const getResult = await runCliCapture(["config", "get", "defaults.agent"]);
+      const getResult = await runCliCapture(["config", "get", "semanticSearchMode"]);
       return { result, getResult };
     });
     expect(result.code).toBe(0);
     expect(result.stdout).toBe("");
     expect(getResult.code).toBe(0);
-    expect(getResult.stdout).toContain("claude");
+    expect(getResult.stdout).toContain("off");
   });
 
   test("without --silent, the post-write config dump appears on stdout", async () => {
-    const { stdout, status } = await runCli(["config", "set", "defaults.agent", "claude"]);
+    const { stdout, status } = await runCli(["config", "set", "semanticSearchMode", "off"]);
     expect(status).toBe(0);
-    expect(stdout).toContain("claude");
+    expect(stdout).toContain("off");
   });
 
   test("--layer user is accepted (no-op alias for the current user-only model)", async () => {
-    const { status } = await runCli(["config", "set", "--layer", "user", "--silent", "defaults.agent", "opencode"]);
+    const { status } = await runCli(["config", "set", "--layer", "user", "--silent", "semanticSearchMode", "off"]);
     expect(status).toBe(0);
   });
 
@@ -86,8 +86,8 @@ describe("akm config set --silent / --layer (#463)", () => {
       "--layer",
       "project",
       "--silent",
-      "defaults.agent",
-      "claude",
+      "semanticSearchMode",
+      "off",
     ]);
     expect(status).not.toBe(0);
     expect(stderr).toContain("INVALID_FLAG_VALUE");
@@ -95,16 +95,16 @@ describe("akm config set --silent / --layer (#463)", () => {
   });
 
   test("--silent still reports errors (apiKey rejection #454 is visible on stderr)", async () => {
-    const { stderr, status } = await runCli(["config", "set", "--silent", "llm.apiKey", "sk-test"]);
+    const { stderr, status } = await runCli(["config", "set", "--silent", "engines.local.apiKey", "sk-test"]);
     expect(status).not.toBe(0);
-    expect(stderr).toContain("AKM_LLM_API_KEY");
+    expect(stderr).toContain(`apiKey must be $VAR or \${VAR}`);
   });
 
   test("config unset --silent --layer user also suppresses stdout", async () => {
     const { setResult, unsetResult } = await withEnv(freshEnv(), async () => {
       // Set, then unset.
-      const setResult = await runCliCapture(["config", "set", "--silent", "defaults.agent", "claude"]);
-      const unsetResult = await runCliCapture(["config", "unset", "--silent", "--layer", "user", "defaults.agent"]);
+      const setResult = await runCliCapture(["config", "set", "--silent", "search.minScore", "0.5"]);
+      const unsetResult = await runCliCapture(["config", "unset", "--silent", "--layer", "user", "search.minScore"]);
       return { setResult, unsetResult };
     });
     expect(setResult.code).toBe(0);

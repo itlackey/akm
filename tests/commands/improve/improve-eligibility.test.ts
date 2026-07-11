@@ -90,8 +90,8 @@ async function buildIndex(stashDir: string): Promise<void> {
 function configWithoutPoolGuard(): import("../../../src/core/config/config").AkmConfig {
   return {
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: { processes: { consolidate: { minPoolSize: 0 }, proactiveMaintenance: { enabled: false } } },
       },
     },

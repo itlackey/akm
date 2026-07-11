@@ -153,9 +153,9 @@ function makePostLoopFn(opts: { gateAutoAccepted?: number } = {}) {
 function baseConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improve: "multi-cycle-test" },
-    profiles: {
-      improve: {
+    defaults: { improveStrategy: "multi-cycle-test" },
+    improve: {
+      strategies: {
         "multi-cycle-test": {
           processes: {
             reflect: { enabled: false },
