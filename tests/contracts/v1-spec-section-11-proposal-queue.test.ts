@@ -8,7 +8,7 @@ import { akmPropose } from "../../src/commands/proposal/propose";
 import type { AkmConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
-import { makeProfile } from "../_helpers/factories";
+import { quietQualityGateConfig } from "../_helpers/factories";
 import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §11 — Proposal queue (Planned for v1).
@@ -201,21 +201,21 @@ afterEach(() => {
 });
 
 describe("§11 event metadata shape (runtime)", () => {
-  test("reflect_invoked carries `task` + optional `profile` in metadata", async () => {
+  test("reflect_invoked carries `task` + optional `engine` in metadata", async () => {
     const stash = makeStashDir();
     await akmReflect({
       ref: "lesson:rg",
       task: "focus on perf",
-      profile: "claude",
+      engine: "fake-agent",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, 0) },
     });
     const { events } = readEvents({ type: "reflect_invoked" });
     expect(events.length).toBe(1);
     const md = (events[0].metadata ?? {}) as Record<string, unknown>;
     expect(md.task).toBe("focus on perf");
-    expect(md.profile).toBe("claude");
+    expect(md.engine).toBe("fake-agent");
     expect(events[0].ref).toBe("lesson:rg");
   });
 
@@ -226,7 +226,7 @@ describe("§11 event metadata shape (runtime)", () => {
       name: "hello",
       task: "say hi",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, 0) },
     });
     const { events } = readEvents({ type: "propose_invoked" });
@@ -241,18 +241,20 @@ describe("§11 event metadata shape (runtime)", () => {
   test("distill_invoked metadata includes `outcome` (queued|skipped|validation_failed)", async () => {
     const stash = makeStashDir();
     const config: AkmConfig = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      profiles: {
-        llm: {
-          default: {
-            endpoint: "http://localhost:11434/v1/chat/completions",
-            model: "test-model",
-          },
+      engines: {
+        default: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "test-model",
         },
-        improve: {
+      },
+      improve: {
+        strategies: {
           default: {
             // Quality gate OFF: the contract under test is the distill_invoked
             // event metadata shape on the happy path, not the judge. The gate
@@ -261,7 +263,7 @@ describe("§11 event metadata shape (runtime)", () => {
           },
         },
       },
-      defaults: { llm: "default" },
+      defaults: { llmEngine: "default", improveStrategy: "default" },
     };
     await akmDistill({
       ref: "skill:deploy",

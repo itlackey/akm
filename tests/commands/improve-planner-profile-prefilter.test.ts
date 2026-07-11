@@ -58,10 +58,10 @@ async function indexStash(stashDir: string): Promise<void> {
 
 function makeStubReflectResult(ref: string): AkmReflectResult {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     ref,
-    agentProfile: "test-agent",
+    engine: "test-agent",
     durationMs: 1,
     proposal: {
       id: `reflect-${ref.replace(/[^a-z0-9]/gi, "-")}`,

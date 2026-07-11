@@ -2,7 +2,7 @@
  * In-tree CLI argv-coercion tests for `akm reflect` and `akm propose` (#226).
  *
  * The real CLI dispatcher in `src/cli.ts` coerces citty's argv shape
- * (`{ ref?, task?, profile?, "timeout-ms"?, type, name }`) into the
+ * (`{ ref?, task?, engine?, "timeout-ms"?, type, name }`) into the
  * `AkmReflectOptions` / `AkmProposeOptions` shape consumed by
  * `akmReflect` / `akmPropose`. Exercising the live `runMain` here would
  * require spawning the CLI and stubbing PATH-resolved binaries, which is
@@ -20,7 +20,7 @@ import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
-import { makeProfile, quietQualityGateConfig } from "../_helpers/factories";
+import { quietQualityGateConfig } from "../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -122,7 +122,7 @@ afterEach(() => {
 function coerceReflectArgs(args: Record<string, unknown>): {
   ref?: string;
   task?: string;
-  profile?: string;
+  engine?: string;
   timeoutMs?: number;
 } {
   const timeoutRaw = args["timeout-ms"];
@@ -130,7 +130,7 @@ function coerceReflectArgs(args: Record<string, unknown>): {
   return {
     ref: typeof args.ref === "string" && (args.ref as string).trim() ? (args.ref as string) : undefined,
     task: typeof args.task === "string" && (args.task as string).trim() ? (args.task as string) : undefined,
-    profile: typeof args.profile === "string" && (args.profile as string).trim() ? (args.profile as string) : undefined,
+    engine: typeof args.engine === "string" && (args.engine as string).trim() ? (args.engine as string) : undefined,
     ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   };
 }
@@ -139,7 +139,7 @@ function coerceProposeArgs(args: Record<string, unknown>): {
   type: string;
   name: string;
   task: string;
-  profile?: string;
+  engine?: string;
   timeoutMs?: number;
 } {
   const timeoutRaw = args["timeout-ms"];
@@ -148,7 +148,7 @@ function coerceProposeArgs(args: Record<string, unknown>): {
     type: String(args.type),
     name: String(args.name),
     task: String(args.task ?? ""),
-    profile: typeof args.profile === "string" && (args.profile as string).trim() ? (args.profile as string) : undefined,
+    engine: typeof args.engine === "string" && (args.engine as string).trim() ? (args.engine as string) : undefined,
     ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   };
 }
@@ -157,10 +157,10 @@ function coerceProposeArgs(args: Record<string, unknown>): {
 
 describe("citty argv → akmReflect coercion", () => {
   test("string fields trimmed; empty strings → undefined", () => {
-    expect(coerceReflectArgs({ ref: "lesson:foo", task: "  ", profile: "" })).toEqual({
+    expect(coerceReflectArgs({ ref: "lesson:foo", task: "  ", engine: "" })).toEqual({
       ref: "lesson:foo",
       task: undefined,
-      profile: undefined,
+      engine: undefined,
     });
   });
 
@@ -178,12 +178,12 @@ describe("citty argv → akmReflect coercion", () => {
 });
 
 describe("citty argv → akmPropose coercion", () => {
-  test("type/name/task always strings; profile trimmed", () => {
-    expect(coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi", profile: "  " })).toEqual({
+  test("type/name/task always strings; engine trimmed", () => {
+    expect(coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi", engine: "  " })).toEqual({
       type: "skill",
       name: "hello",
       task: "Say hi",
-      profile: undefined,
+      engine: undefined,
     });
   });
 
@@ -191,10 +191,10 @@ describe("citty argv → akmPropose coercion", () => {
     expect(coerceProposeArgs({ type: "skill", name: "x" })).toMatchObject({ task: "" });
   });
 
-  test("--timeout-ms parsed; profile passed through when set", () => {
+  test("--timeout-ms parsed; engine passed through when set", () => {
     expect(
-      coerceProposeArgs({ type: "skill", name: "x", task: "go", "timeout-ms": "9000", profile: "claude" }),
-    ).toMatchObject({ timeoutMs: 9000, profile: "claude" });
+      coerceProposeArgs({ type: "skill", name: "x", task: "go", "timeout-ms": "9000", engine: "claude" }),
+    ).toMatchObject({ timeoutMs: 9000, engine: "claude" });
   });
 });
 
@@ -208,7 +208,6 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
@@ -228,7 +227,6 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("not json", "", 0) },
     });
@@ -243,7 +241,6 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: hangingSpawn(),
@@ -264,16 +261,14 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     expect(result.reason).toBe("timeout");
   });
 
-  test("missing agent config (no `agent` block) → ConfigError surfaces with .code", async () => {
+  test("missing engine config → ConfigError surfaces with .code", async () => {
     const stash = makeStashDir();
     let thrown: unknown;
     try {
       await akmReflect({
         ref: "lesson:rg-over-grep",
         stashDir: stash,
-        agentConfig: undefined, // explicit: no agent block resolved
-        // Note: we deliberately do NOT pass agentProfile so resolveProfile is exercised.
-        // loadAgentConfigFromDisk will load empty config (no XDG_CONFIG_HOME entry exists)
+        // No config file exists under the sandboxed XDG_CONFIG_HOME.
       });
     } catch (err) {
       thrown = err;
@@ -282,7 +277,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     const e = thrown as Error & { code?: string };
     expect(e.name).toBe("ConfigError");
     expect(e.code).toBe("INVALID_CONFIG_FILE");
-    expect(e.message).toContain("agent");
+    expect(e.message).toContain("engine");
   });
 });
 
@@ -295,7 +290,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     const result = await akmPropose({
       ...coerced,
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -309,7 +304,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     const result = await akmPropose({
       ...coerced,
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("garbage {", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -326,8 +321,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
         name: "hello",
         task: "Say hi",
         stashDir: stash,
-        // Do NOT pass agentProfile or agentConfig — exercises the disk path
-        // which resolves to undefined under the empty XDG_CONFIG_HOME above.
+        // Do not pass agentConfig: the sandbox has no defaults.engine.
       });
     } catch (err) {
       thrown = err;
@@ -346,7 +340,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
       await akmPropose({
         ...coerced,
         stashDir: stash,
-        agentProfile: makeProfile(),
+        agentConfig: quietQualityGateConfig(),
         runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
       });
     } catch (err) {

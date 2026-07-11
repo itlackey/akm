@@ -22,13 +22,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
-import {
-  type AgentFailureReason,
-  type AgentProfile,
-  type AgentRunResult,
-  type RunAgentOptions,
-  runAgent,
-} from "../../integrations/agent";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { materializeLlmConnection, resolveEngine } from "../../integrations/agent/engine-resolution";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
 import { executeRunner } from "../../integrations/agent/runner-dispatch";
@@ -48,7 +42,6 @@ export interface AkmProposeOptions {
   engine?: string;
   timeoutMs?: number;
   stashDir?: string;
-  agentProfile?: AgentProfile;
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
@@ -161,52 +154,42 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 4. Dispatch the selected engine.
   // Real agent runs use interactive mode so file tools can write the draft.
   // Injected/custom spawns still need captured stdout for JSON payload tests.
-  // Use callAi for the unified AI dispatch path (agent CLI preferred, LLM HTTP fallback).
+  // All kinds cross the unified RunnerSpec dispatch boundary.
   const useCustomSpawn = Boolean(options.runAgentOptions?.spawn);
   let result: AgentRunResult;
-  if (useCustomSpawn && runner.kind !== "llm") {
-    // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
-    const runOptions: RunAgentOptions = {
-      stdio: "captured",
-      parseOutput: "text",
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.runAgentOptions ?? {}),
-    };
-    result = await runAgent(profile as AgentProfile, prompt, runOptions);
-  } else {
-    const runOptions: RunAgentOptions = {
-      stdio: resolvedDraftPath ? "interactive" : "captured",
-      parseOutput: "text",
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    };
-    result = await executeRunner(runner, prompt, runOptions, {
-      llm: async (spec, llmPrompt) => {
-        const { chatCompletion } = await import("../../llm/client.js");
-        const started = Date.now();
-        try {
-          const stdout = await chatCompletion(
-            materializeLlmConnection({
-              engine: spec.engine ?? engineName,
-              connection: spec.connection,
-              timeoutMs: spec.timeoutMs ?? null,
-            }),
-            [{ role: "user", content: llmPrompt }],
-          );
-          return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
-        } catch (error) {
-          return {
-            ok: false,
-            exitCode: null,
-            stdout: "",
-            stderr: "",
-            durationMs: Date.now() - started,
-            error: String(error),
-            reason: "spawn_failed",
-          };
-        }
-      },
-    });
-  }
+  const runOptions: RunAgentOptions = {
+    stdio: useCustomSpawn ? "captured" : "interactive",
+    parseOutput: "text",
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.runAgentOptions ?? {}),
+  };
+  result = await executeRunner(runner, prompt, runOptions, {
+    llm: async (spec, llmPrompt) => {
+      const { chatCompletion } = await import("../../llm/client.js");
+      const started = Date.now();
+      try {
+        const stdout = await chatCompletion(
+          materializeLlmConnection({
+            engine: spec.engine ?? engineName,
+            connection: spec.connection,
+            timeoutMs: spec.timeoutMs ?? null,
+          }),
+          [{ role: "user", content: llmPrompt }],
+        );
+        return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
+      } catch (error) {
+        return {
+          ok: false,
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          durationMs: Date.now() - started,
+          error: String(error),
+          reason: "spawn_failed",
+        };
+      }
+    },
+  });
 
   if (!result.ok) {
     // B3: ENOENT / not-found gives an actionable hint.

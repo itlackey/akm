@@ -61,10 +61,10 @@ async function indexStash(stashDir: string): Promise<void> {
 
 function makeStubReflectResult(ref: string): AkmReflectResult {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     ref,
-    agentProfile: "test-agent",
+    engine: "test-agent",
     durationMs: 1,
     proposal: {
       id: `reflect-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -249,7 +249,7 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
       // ref with the new `unsupported_type` reason even though the planner
       // dispatched it (an allowed-type skill ref).
       reflectFn: async (options): Promise<AkmReflectResult> => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "unsupported_type",
         error: `Reflect refused: asset type "script" is not supported by reflect.`,
@@ -305,10 +305,10 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
         durationMs: 0,
       }),
       reflectFn: async (options): Promise<AkmReflectResult> => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         ref: options.ref ?? "unknown",
-        agentProfile: "test-agent",
+        engine: "test-agent",
         durationMs: 1,
         proposal: {
           id: `reflect-${(options.ref ?? "x").replace(/[^a-z0-9]/gi, "-")}`,

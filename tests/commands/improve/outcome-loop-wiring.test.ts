@@ -59,7 +59,7 @@ const noopIndexFns = {
 
 /** Reflect stub — returns a pending proposal so the ref is processed. */
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -71,7 +71,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# improved" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 

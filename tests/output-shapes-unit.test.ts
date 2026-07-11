@@ -516,28 +516,29 @@ describe("shapeProposal* — proposal commands", () => {
 
   test("shapeProposalProducerOutput happy: ok=true with shaped proposal", () => {
     const result = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       ref: "lesson:rg",
-      agentProfile: "claude",
+      engine: "claude",
       durationMs: 12,
       proposal: fullProposal,
     };
     const out = shapeProposalProducerOutput(result, "normal");
     expect(out.ok).toBe(true);
     expect(out.ref).toBe("lesson:rg");
-    expect(out.agentProfile).toBe("claude");
+    expect(out.engine).toBe("claude");
     expect(out.durationMs).toBe(12);
     expect((out.proposal as Record<string, unknown>).id).toBe("uuid-1");
   });
 
   test("shapeProposalProducerOutput failure: surfaces reason/error/exitCode; full adds stdout/stderr", () => {
     const failure = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "non_zero_exit",
       error: "agent failed",
       ref: "lesson:rg",
+      engine: "claude",
       exitCode: 7,
       stdout: "captured-out",
       stderr: "captured-err",
@@ -554,7 +555,7 @@ describe("shapeProposal* — proposal commands", () => {
     const full = shapeProposalProducerOutput(failure, "full");
     expect(full.stdout).toBe("captured-out");
     expect(full.stderr).toBe("captured-err");
-    expect(full.schemaVersion).toBe(1);
+    expect(full.schemaVersion).toBe(2);
   });
 
   test("shapeForCommand routes proposal-* arms through their dedicated shapers", () => {
@@ -597,7 +598,7 @@ describe("shapeProposal* — proposal commands", () => {
     expect(diff.isNew).toBe(true);
     const reflect = shapeForCommand(
       "reflect",
-      { schemaVersion: 1, ok: true, ref: "lesson:x", proposal: fullProposal, agentProfile: "p", durationMs: 1 },
+      { schemaVersion: 2, ok: true, ref: "lesson:x", proposal: fullProposal, engine: "p", durationMs: 1 },
       "normal",
     ) as Record<string, unknown>;
     expect(reflect.ok).toBe(true);

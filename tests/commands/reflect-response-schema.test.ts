@@ -215,7 +215,7 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA when dispatching via the llm
     await akmReflect({
       ref: "lesson:akm-reflect-wires-schema",
       stashDir: stash,
-      runner: { kind: "llm", connection: fakeLlmConnection() },
+      runner: { kind: "llm", engine: "test-llm", connection: fakeLlmConnection() },
       // Bypass indexer lookup so the test does not need a built FTS index.
       assetContent: "",
     });

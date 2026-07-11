@@ -22,7 +22,7 @@ import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
-import { makeProfile, quietQualityGateConfig } from "../../_helpers/factories";
+import { quietQualityGateConfig } from "../../_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -134,7 +134,6 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "script:deploy.ts",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spy },
     });
@@ -158,7 +157,6 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "env:default",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
     });
@@ -178,7 +176,6 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "secret:signing-key",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spy },
     });
@@ -196,7 +193,6 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "task:nightly-backup",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
     });
@@ -215,7 +211,6 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "knowledge:foo",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
@@ -255,7 +250,6 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
     const result = await akmReflect({
       ref: "knowledge:policies/release",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -292,7 +286,6 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
     const result = await akmReflect({
       ref: "knowledge:x",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -325,7 +318,6 @@ describe("Reflect size guard — diff-size safety rails", () => {
     const result = await akmReflect({
       ref: "knowledge:shrink",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -351,7 +343,6 @@ describe("Reflect size guard — diff-size safety rails", () => {
     const result = await akmReflect({
       ref: "knowledge:expand",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -377,7 +368,6 @@ describe("Reflect size guard — diff-size safety rails", () => {
     const result = await akmReflect({
       ref: "knowledge:modest",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -398,7 +388,6 @@ describe("Reflect size guard — diff-size safety rails", () => {
     const result = await akmReflect({
       ref: "lesson:tiny",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: "---\ndescription: tiny\n---\nUse rg.\n",
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -444,7 +433,6 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
     const result = await akmReflect({
       ref: "skill:openpalm-stack-diagnostics",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -482,7 +470,6 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
     const result = await akmReflect({
       ref: "knowledge:id-protected",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -507,7 +494,6 @@ describe("Reflect positive control — markdown assets still flow through", () =
     const result = await akmReflect({
       ref: "knowledge:control",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },

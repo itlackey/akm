@@ -190,11 +190,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -359,11 +359,11 @@ describe("akm improve memory cleanup", () => {
       },
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) =>
@@ -485,11 +485,11 @@ describe("akm improve memory cleanup", () => {
       },
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) =>
@@ -669,11 +669,11 @@ describe("akm improve memory cleanup", () => {
       }),
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) =>
@@ -747,11 +747,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "knowledge:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -803,11 +803,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedWithoutSignals.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -847,11 +847,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedWithSignal.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -907,11 +907,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:parent"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -971,11 +971,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -1014,11 +1014,11 @@ describe("akm improve memory cleanup", () => {
       }),
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) => {
@@ -1072,11 +1072,11 @@ describe("akm improve memory cleanup", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:missing"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
@@ -1175,11 +1175,11 @@ describe("akm improve memory cleanup", () => {
         return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
       },
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:missing"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -1255,11 +1255,11 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         ensureIndexFn: async () => false,
         reflectFn: async ({ ref }) => ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }),
         distillFn: async ({ ref }) => ({
@@ -1340,11 +1340,11 @@ describe("akm improve memory cleanup", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:missing"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({

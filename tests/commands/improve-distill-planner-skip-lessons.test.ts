@@ -172,10 +172,10 @@ describe("improve planner: skip distill-refused input types", () => {
       reflectFn: async (options): Promise<AkmReflectResult> => {
         reflectCalls.push(options);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           ref: options.ref ?? "lesson:alpha-lesson",
-          agentProfile: "fake-agent",
+          engine: "fake-agent",
           durationMs: 1,
           proposal: {
             id: `reflect-${reflectCalls.length}`,

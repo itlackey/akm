@@ -488,36 +488,48 @@ describe("resolveModel — global alias tiers", () => {
   });
 });
 
-// ── resolveAgentProfile: modelAliases config wiring (previously dropped) ──────
+// ── resolveEngine: modelAliases config wiring ─────────────────────────────────
 
-describe("resolveAgentProfile — modelAliases from config", () => {
-  test("overrides.modelAliases reaches the resolved profile (bug fix)", async () => {
-    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    const profile = resolveAgentProfile("claude", {
-      platform: "claude",
-      modelAliases: { quick: "claude-haiku-4-5-20251001" },
+describe("resolveEngine — modelAliases from config", () => {
+  test("engine.modelAliases reaches the lowered profile", async () => {
+    const { resolveEngine } = await import("../../src/integrations/agent/engine-resolution");
+    const runner = resolveEngine("reviewer", {
+      engines: {
+        reviewer: {
+          kind: "agent",
+          platform: "claude",
+          modelAliases: { quick: "claude-haiku-4-5-20251001" },
+        },
+      },
     });
-    expect(profile?.modelAliases).toEqual({ quick: "claude-haiku-4-5-20251001" });
+    expect(runner.kind === "agent" && runner.profile.modelAliases).toEqual({
+      quick: "claude-haiku-4-5-20251001",
+    });
   });
 
-  test("globalModelAliases is stamped onto the profile with and without overrides", async () => {
-    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
+  test("global modelAliases is stamped onto the lowered profile", async () => {
+    const { resolveEngine } = await import("../../src/integrations/agent/engine-resolution");
     const global = { fast: { "*": "generic-fast" } };
-    const withOverrides = resolveAgentProfile("claude", { platform: "claude" }, global);
-    expect(withOverrides?.globalModelAliases).toEqual(global);
-    const withoutOverrides = resolveAgentProfile("claude", undefined, global);
-    expect(withoutOverrides?.globalModelAliases).toEqual(global);
+    const runner = resolveEngine("reviewer", {
+      engines: { reviewer: { kind: "agent", platform: "claude" } },
+      modelAliases: global,
+    });
+    expect(runner.kind === "agent" && runner.profile.globalModelAliases).toEqual(global);
   });
 
-  test("resolveProfileFromConfig threads the config-root modelAliases table", async () => {
-    const { resolveProfileFromConfig } = await import("../../src/integrations/agent/config");
-    const config = {
-      modelAliases: { fast: { claude: "claude-haiku-4-5-20251001" } },
-      profiles: { agent: { claude: { platform: "claude" as const } } },
-    };
-    // biome-ignore lint/suspicious/noExplicitAny: partial config shape for the seam under test
-    const profile = resolveProfileFromConfig("claude", config as any);
-    expect(profile?.globalModelAliases).toEqual(config.modelAliases);
+  test("engine model aliases are resolved during lowering", async () => {
+    const { resolveEngine } = await import("../../src/integrations/agent/engine-resolution");
+    const runner = resolveEngine("reviewer", {
+      engines: {
+        reviewer: {
+          kind: "agent",
+          platform: "claude",
+          model: "quick",
+          modelAliases: { quick: "claude-haiku-4-5-20251001" },
+        },
+      },
+    });
+    expect(runner.kind === "agent" && runner.profile.model).toBe("claude-haiku-4-5-20251001");
   });
 });
 

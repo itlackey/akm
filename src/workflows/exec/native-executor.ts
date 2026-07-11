@@ -1322,39 +1322,43 @@ async function resolveUnitRunner(
   const requested = request.runner;
 
   if (requested === "llm") {
-    const connection = request.profile
-      ? config.profiles?.llm?.[request.profile]
-      : await requireDefaultLlm(config, request);
-    if (!connection) {
+    const engineName = request.profile ?? config.defaults?.llmEngine;
+    if (!engineName) {
       throw new ConfigError(
-        `Workflow unit "${request.unitId}" wants llm profile "${request.profile}", which is not in profiles.llm.`,
+        `Workflow unit "${request.unitId}" requires an LLM engine, but none is selected.`,
         "LLM_NOT_CONFIGURED",
       );
     }
-    return { kind: "llm", connection };
-  }
-
-  const profileName = request.profile ?? config.defaults?.agent;
-  if (profileName) {
-    const { resolveProfileFromConfig } = await import("../../integrations/agent/config");
-    const profile = resolveProfileFromConfig(profileName, config);
-    if (!profile) {
+    const { resolveEngine } = await import("../../integrations/agent/engine-resolution");
+    const runner = resolveEngine(engineName, config);
+    if (runner.kind !== "llm") {
       throw new ConfigError(
-        `Workflow unit "${request.unitId}" wants agent profile "${profileName}", which cannot be resolved. ` +
-          `Define profiles.agent."${profileName}" or set defaults.agent.`,
-        "INVALID_CONFIG_FILE",
+        `Workflow unit "${request.unitId}" requires an LLM engine; "${engineName}" is an agent engine.`,
       );
     }
-    const inferred = profile.sdkMode ? "sdk" : "agent";
+    return { kind: "llm", connection: runner.connection };
+  }
+
+  const engineName = request.profile ?? config.defaults?.engine;
+  if (engineName) {
+    const { resolveEngine } = await import("../../integrations/agent/engine-resolution");
+    const runner = resolveEngine(engineName, config);
+    if (runner.kind === "llm") {
+      if (requested === "inherit") return { kind: "llm", connection: runner.connection };
+      throw new ConfigError(
+        `Workflow unit "${request.unitId}" requires an agent engine; "${engineName}" is an LLM engine.`,
+      );
+    }
+    const inferred = runner.kind;
     if (requested !== "inherit" && requested !== inferred) {
       throw new ConfigError(
-        `Workflow unit "${request.unitId}" declares runner "${requested}" but profile "${profileName}" is ${
-          profile.sdkMode ? "an opencode-sdk (sdk) profile" : "a CLI (agent) profile"
+        `Workflow unit "${request.unitId}" declares runner "${requested}" but engine "${engineName}" is ${
+          runner.kind === "sdk" ? "an opencode-sdk engine" : "an agent CLI engine"
         }.`,
         "INVALID_CONFIG_FILE",
       );
     }
-    return { kind: inferred, profile };
+    return { kind: inferred, profile: runner.profile };
   }
 
   if (requested === "inherit") {
