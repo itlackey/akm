@@ -263,7 +263,7 @@ describe("output baseline", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const config = { output: { format: "text", detail: "normal" } };
+    const config = { configVersion: "0.9.0", output: { format: "text", detail: "normal" } };
     const configDriven = runCli(stashDir, ["search", "deploy"], config);
     expect(configDriven).toContain("score:");
 
@@ -315,6 +315,7 @@ describe("output baseline", () => {
         stashDir,
         ["search", "deploy", "--format=json", "--detail=brief", "--source=both"],
         {
+          configVersion: "0.9.0",
           registries: [{ url: `http://127.0.0.1:${address.port}/index.json` }],
         },
       );

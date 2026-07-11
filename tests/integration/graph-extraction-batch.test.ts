@@ -87,14 +87,19 @@ const SAMPLE_LLM: LlmConnectionConfig = {
 };
 
 function makeConfig(overrides?: Partial<AkmConfig>): AkmConfig {
-  return {
+  const base: AkmConfig = {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    profiles: {
-      llm: { default: { ...SAMPLE_LLM } },
-      improve: { default: { processes: { graphExtraction: { enabled: true } } } },
+    engines: {
+      test: { kind: "llm", ...SAMPLE_LLM },
     },
-    defaults: { llm: "default" },
+    defaults: { engine: "test", llmEngine: "test" },
+    index: { defaults: { engine: "test" } },
+  };
+  return {
+    ...base,
     ...overrides,
+    index: { ...base.index, ...overrides?.index },
   };
 }
 

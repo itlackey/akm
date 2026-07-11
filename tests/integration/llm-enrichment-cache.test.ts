@@ -98,19 +98,25 @@ const originalXdgDataHome = process.env.XDG_DATA_HOME;
 const originalXdgStateHome = process.env.XDG_STATE_HOME;
 
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
-  return {
+  const base: AkmConfig = {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    profiles: {
-      llm: {
-        default: {
-          endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-          model: "test-model",
-        },
+    engines: {
+      test: {
+        kind: "llm",
+        endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+        model: "test-model",
       },
-      improve: { default: { processes: { graphExtraction: { enabled: true } } } },
     },
-    defaults: { llm: "default" },
+    defaults: { engine: "test", llmEngine: "test" },
+    index: { defaults: { engine: "test" } },
+  };
+  return {
+    ...base,
     ...overrides,
+    engines: { ...base.engines, ...overrides?.engines },
+    defaults: { ...base.defaults, ...overrides?.defaults },
+    index: { ...base.index, ...overrides?.index },
   };
 }
 
@@ -350,16 +356,13 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
 
     await runGraphExtractionPass({
       config: configWithLlm({
-        profiles: {
-          llm: {
-            default: {
-              endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-              model: "different-model",
-            },
+        engines: {
+          test: {
+            kind: "llm",
+            endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+            model: "different-model",
           },
-          improve: { default: { processes: { graphExtraction: { enabled: true } } } },
         },
-        defaults: { llm: "default" },
       }),
       sources: sources(),
       db,
