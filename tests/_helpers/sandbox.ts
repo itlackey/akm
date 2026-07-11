@@ -343,7 +343,11 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
     }
   }
 
-  fs.writeFileSync(configPath, `${JSON.stringify({ ...existing, ...partial }, null, 2)}\n`, "utf8");
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({ configVersion: "0.9.0", ...existing, ...partial }, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 // ── Fetch mock ───────────────────────────────────────────────────────────────

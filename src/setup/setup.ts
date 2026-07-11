@@ -606,7 +606,7 @@ export async function runSetupWithDefaults(opts: {
   }
 
   // Auto-detect agent CLI if not already configured
-  if (!ctx.config.defaults?.agent) {
+  if (!ctx.config.defaults?.engine) {
     let defaultProfile: string | undefined;
     if (env.harness !== "none") {
       defaultProfile = env.harness;
@@ -746,11 +746,7 @@ export async function runSetupFromConfig(opts: {
   applyDefaults?: boolean;
 }): Promise<SetupSummary> {
   // Phase 1: Parse JSON
-  type IncomingShape = Partial<AkmConfig> & {
-    llm?: LlmConnectionConfig;
-    agent?: LegacyAgentBlockShape;
-  };
-  let incoming: IncomingShape;
+  let incoming: Partial<AkmConfig>;
   try {
     incoming = JSON.parse(opts.configJson);
   } catch (e) {
@@ -759,13 +755,18 @@ export async function runSetupFromConfig(opts: {
 
   // Phase 2: Validate — only allow safe top-level keys
   const ALLOWED_KEYS = new Set([
+    "configVersion",
+    "engines",
+    "defaults",
+    "improve",
+    "modelAliases",
     "stashDir",
-    "llm",
     "embedding",
-    "agent",
     "semanticSearchMode",
     "output",
-    "profiles",
+    "sources",
+    "registries",
+    "defaultWriteTarget",
     "defaults",
     "setup",
   ]);
@@ -777,10 +778,6 @@ export async function runSetupFromConfig(opts: {
   }
 
   // Validate required sub-fields
-  if (incoming.llm) {
-    if (!incoming.llm.endpoint?.trim()) throw new Error("llm.endpoint is required when llm is provided");
-    if (!incoming.llm.model?.trim()) throw new Error("llm.model is required when llm is provided");
-  }
   if (incoming.embedding) {
     if (!incoming.embedding.endpoint?.trim())
       throw new Error("embedding.endpoint is required when embedding is provided");
@@ -800,24 +797,15 @@ export async function runSetupFromConfig(opts: {
   applyStashIsolationToEnv(stashDir, stashDirExplicit);
 
   let merged: AkmConfig = { ...current, stashDir };
-  // Deep-merge non-llm/agent keys: nested objects merge key-by-key so a
+  // Deep-merge canonical keys: nested objects merge key-by-key so a
   // partial `--file` only updates the keys it carries and never drops sibling
   // subkeys (e.g. output.detail survives an output.format-only file). Arrays
   // and scalars replace wholesale.
   for (const key of Object.keys(incoming)) {
-    if (key === "llm" || key === "agent") continue;
     const incomingVal = (incoming as Record<string, unknown>)[key];
     const mergedRec = merged as unknown as Record<string, unknown>;
     mergedRec[key] = deepMergeConfig(mergedRec[key], incomingVal);
   }
-  // Translate legacy llm/agent inputs into the new shape.
-  if (incoming.llm) {
-    merged = { ...merged, ...applyLegacyLlm(merged, incoming.llm) };
-  }
-  if (incoming.agent) {
-    merged = { ...merged, ...applyLegacyAgent(merged, incoming.agent) };
-  }
-
   // With `--yes`, fill keys still missing after the merge with non-interactive
   // defaults. Steps start from `merged` and their nonInteractive path only
   // populates absent values, so nothing the file or existing config supplied
@@ -831,7 +819,7 @@ export async function runSetupFromConfig(opts: {
     });
     await runSetupSteps(steps, ctx);
     if (!ctx.config.stashDir) ctx.apply({ stashDir });
-    if (!ctx.config.defaults?.agent) {
+    if (!ctx.config.defaults?.engine) {
       const detected = detectAgentCliProfiles(undefined);
       const defaultProfile = pickDefaultAgentProfile(detected, undefined);
       if (defaultProfile) {

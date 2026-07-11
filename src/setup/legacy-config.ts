@@ -97,6 +97,9 @@ export function applyLegacyAgent(config: AkmConfig, agent: LegacyAgentBlockShape
       ...(profile.model ? { model: profile.model } : {}),
     };
   }
+  if (agent.default && !engines[agent.default]) {
+    engines[agent.default] = { kind: "agent", platform: agent.default as "claude" };
+  }
   return {
     engines,
     defaults: { ...(config.defaults ?? {}), ...(agent.default ? { engine: agent.default } : {}) },

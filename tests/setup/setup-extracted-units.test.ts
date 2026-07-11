@@ -6,7 +6,7 @@
  * Direct unit tests for the pure functions extracted out of the setup
  * monolith during the setup.ts decomposition:
  *   - `deepMergeConfig` / `isPlainObject`  (src/core/deep-merge.ts)
- *   - the legacy config-shape adapters       (src/setup/legacy-config.ts)
+ *   - the setup engine adapters              (src/setup/legacy-config.ts)
  *   - the cloud provider defaults table      (src/setup/providers.ts)
  *
  * These functions are now independently importable; the point of the move was
@@ -57,23 +57,23 @@ describe("deepMergeConfig", () => {
   });
 });
 
-describe("legacy LLM adapters", () => {
-  test("applyLegacyLlm writes the default profile + defaults.llm", () => {
+describe("setup LLM adapters", () => {
+  test("applyLegacyLlm writes the default engine + defaults.llmEngine", () => {
     const base = {} as AkmConfig;
     const llm: LlmConnectionConfig = { provider: "openai", endpoint: "https://x/v1", model: "gpt-4o-mini" };
     const patch = applyLegacyLlm(base, llm);
-    expect(patch.profiles?.llm?.default).toEqual(llm);
-    expect(patch.defaults?.llm).toBe("default");
+    expect(patch.engines?.default).toEqual({ ...llm, kind: "llm", endpoint: "https://x/v1/chat/completions" });
+    expect(patch.defaults?.llmEngine).toBe("default");
   });
 
-  test("applyLegacyLlm(undefined) clears the default profile and defaults.llm", () => {
+  test("applyLegacyLlm(undefined) clears the default engine and defaults.llmEngine", () => {
     const base = {
-      profiles: { llm: { default: { endpoint: "e", model: "m" } } },
-      defaults: { llm: "default" },
+      engines: { default: { kind: "llm", endpoint: "https://e/v1/chat/completions", model: "m" } },
+      defaults: { llmEngine: "default" },
     } as unknown as AkmConfig;
     const patch = applyLegacyLlm(base, undefined);
-    expect(patch.profiles?.llm?.default).toBeUndefined();
-    expect(patch.defaults?.llm).toBeUndefined();
+    expect(patch.engines?.default).toBeUndefined();
+    expect(patch.defaults?.llmEngine).toBeUndefined();
   });
 
   test("cloneLlmConfig deep-copies capabilities + extraParams", () => {
@@ -91,11 +91,12 @@ describe("legacy LLM adapters", () => {
   });
 });
 
-describe("legacy agent adapters", () => {
+describe("setup agent adapters", () => {
   test("applyLegacyAgent + getCurrentAgentBlock round-trips a CLI default", () => {
     const base = {} as AkmConfig;
     const applied = { ...base, ...applyLegacyAgent(base, { default: "claude" }) } as AkmConfig;
-    expect(applied.defaults?.agent).toBe("claude");
+    expect(applied.defaults?.engine).toBe("claude");
+    expect(applied.engines?.claude).toEqual({ kind: "agent", platform: "claude" });
     const block = getCurrentAgentBlock(applied);
     expect(block?.default).toBe("claude");
   });
@@ -106,8 +107,7 @@ describe("legacy agent adapters", () => {
       default: "default",
       profiles: { default: { sdkMode: true, model: "m", endpoint: "e" } },
     });
-    expect(patch.profiles?.agent?.default?.platform).toBe("opencode-sdk");
-    expect(patch.profiles?.agent?.default?.model).toBe("m");
+    expect(patch.engines?.default).toMatchObject({ kind: "agent", platform: "opencode-sdk", model: "m" });
   });
 
   test("getCurrentAgentBlock returns undefined when no agent config is present", () => {

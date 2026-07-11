@@ -113,9 +113,10 @@ describe("stepAgentCliDetection (setup wizard)", () => {
     const { stepAgentCliDetection } = await import("../../src/setup/steps/platforms");
     const result = stepAgentCliDetection(
       {
+        configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        defaults: { agent: "aider" },
-        profiles: { agent: { aider: { platform: "opencode", args: ["--no-auto-commits"] } } },
+        defaults: { engine: "aider" },
+        engines: { aider: { kind: "agent", platform: "opencode", args: ["--no-auto-commits"] } },
       },
       () => [
         { name: "claude", bin: "claude", available: true },

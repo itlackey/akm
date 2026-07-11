@@ -261,11 +261,13 @@ export function _setSaveConfigForTests(fake?: (config: AkmConfig) => void): void
 }
 
 export function saveConfig(config: AkmConfig): void {
+  // Every lifecycle write produces the only config version this binary can load.
+  const currentConfig = { ...config, configVersion: "0.9.0" } as AkmConfig;
   if (saveConfigOverride) {
-    saveConfigOverride(config);
+    saveConfigOverride(currentConfig);
     return;
   }
-  saveConfigReal(config);
+  saveConfigReal(currentConfig);
 }
 
 function saveConfigReal(config: AkmConfig): void {
