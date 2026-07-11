@@ -2,9 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
-import { parseConfigText } from "../core/config/config-io";
-import { validateConfigShape } from "../core/config/config-schema";
+import { parseConfigText, readConfigText } from "../core/config/config-io";
+import { CURRENT_CONFIG_VERSION, validateConfigShape } from "../core/config/config-schema";
 import { ConfigError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
 
@@ -18,18 +17,18 @@ const MANUAL_GUIDANCE =
  */
 export async function runConfigMigrate(): Promise<void> {
   const configPath = getConfigPath();
-  let text: string;
+  let text: string | undefined;
   try {
-    text = fs.readFileSync(configPath, "utf8");
+    text = readConfigText(configPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      console.log(JSON.stringify({ status: "absent", path: configPath }));
-      return;
-    }
     throw new ConfigError(
       `Could not read config at ${configPath}: ${error instanceof Error ? error.message : String(error)}`,
       "INVALID_CONFIG_FILE",
     );
+  }
+  if (text === undefined) {
+    console.log(JSON.stringify({ status: "absent", path: configPath }));
+    return;
   }
 
   let raw: unknown;
@@ -42,9 +41,9 @@ export async function runConfigMigrate(): Promise<void> {
     );
   }
   const version = (raw as { configVersion?: unknown }).configVersion;
-  if (version !== "0.9.0") {
+  if (version !== CURRENT_CONFIG_VERSION) {
     throw new ConfigError(
-      `Unsupported configVersion at ${configPath}: expected "0.9.0".`,
+      `Unsupported configVersion at ${configPath}: expected "${CURRENT_CONFIG_VERSION}".`,
       "UNSUPPORTED_CONFIG_VERSION",
       MANUAL_GUIDANCE,
     );

@@ -125,6 +125,6 @@ describe("stepAgentCliDetection (setup wizard)", () => {
       ],
     );
     expect(result.agent?.default).toBe("aider");
-    expect(result.agent?.profiles?.aider?.args).toEqual(["--no-auto-commits"]);
+    expect(result.agent?.engines?.aider?.args).toEqual(["--no-auto-commits"]);
   });
 });

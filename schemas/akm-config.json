@@ -1,20 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://itlackey.github.io/akm/schemas/akm-config.0.8.0.json",
+  "$id": "https://itlackey.github.io/akm/schemas/akm-config.0.9.0.json",
   "title": "AKM Configuration",
   "description": "Configuration file for the akm CLI (Agent Knowledge Management). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). Auto-generated from src/core/config-schema.ts by scripts/gen-config-schema.ts — do NOT edit by hand.",
   "type": "object",
   "properties": {
     "configVersion": {
-      "anyOf": [
-        {
-          "type": "string",
-          "minLength": 1
-        },
-        {
-          "type": "number"
-        }
-      ]
+      "type": "string",
+      "const": "0.9.0"
     },
     "engines": {
       "type": "object",
@@ -223,7 +216,8 @@
           "type": "string"
         },
         "apiKey": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^\\$[A-Za-z_][A-Za-z0-9_]*$|^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
         },
         "dimension": {
           "type": "integer",
@@ -5485,21 +5479,17 @@
       "additionalProperties": true
     }
   },
+  "required": [
+    "configVersion"
+  ],
   "additionalProperties": true,
   "$defs": {
     "AkmConfig": {
       "type": "object",
       "properties": {
         "configVersion": {
-          "anyOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "number"
-            }
-          ]
+          "type": "string",
+          "const": "0.9.0"
         },
         "engines": {
           "type": "object",
@@ -5708,7 +5698,8 @@
               "type": "string"
             },
             "apiKey": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^\\$[A-Za-z_][A-Za-z0-9_]*$|^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
             },
             "dimension": {
               "type": "integer",
@@ -10970,6 +10961,9 @@
           "additionalProperties": true
         }
       },
+      "required": [
+        "configVersion"
+      ],
       "additionalProperties": true
     },
     "LlmProfileConfig": {
@@ -11049,7 +11043,8 @@
           "type": "string"
         },
         "apiKey": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^\\$[A-Za-z_][A-Za-z0-9_]*$|^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
         },
         "dimension": {
           "type": "integer",

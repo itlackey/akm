@@ -17,7 +17,14 @@
  */
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 import { resolveStashDir } from "../core/common";
-import { type AkmConfig, DEFAULT_CONFIG, loadConfig, loadUserConfig, saveConfig } from "../core/config/config";
+import {
+  type AkmConfig,
+  DEFAULT_CONFIG,
+  loadConfig,
+  loadUserConfig,
+  mutateConfig,
+  saveConfig,
+} from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { UsageError } from "../core/errors";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
@@ -25,7 +32,6 @@ import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../co
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
-  if (key.split(".").at(-1) === "apiKey") return null;
   return redactConfigValue(configGet(config as unknown as Record<string, unknown>, key));
 }
 
@@ -66,7 +72,12 @@ function redactConfigValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key !== "apiKey") result[key] = redactConfigValue(child);
+    if (
+      key !== "apiKey" ||
+      (typeof child === "string" && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(child))
+    ) {
+      result[key] = redactConfigValue(child);
+    }
   }
   return result;
 }
@@ -221,8 +232,7 @@ export const configCommand = defineGroupCommand({
         // Use loadConfig (not loadUserConfig) so the project-config
         // deprecation warning fires consistently with `akm config get`
         // (#457). Effective merged shape is identical post-0.8.0.
-        const updated = setConfigValue(loadConfig(), args.key, args.value);
-        saveConfig(updated);
+        const updated = mutateConfig((current) => setConfigValue(current, args.key, args.value)).config;
         if (!args.silent) {
           output("config", listConfig(updated));
         }
@@ -250,8 +260,8 @@ export const configCommand = defineGroupCommand({
             "INVALID_FLAG_VALUE",
           );
         }
-        const updated = unsetConfigValue(loadConfig(), args.key);
-        saveConfig(updated);
+        const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });
+        const updated = result.config;
         if (!args.silent) {
           output("config", listConfig(updated));
         }

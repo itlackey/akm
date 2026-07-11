@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createMigrationBackup } from "../../src/core/migration-backup";
+import { withEnvSync } from "../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -74,8 +76,17 @@ describe("akm add website", () => {
       const xdgData = makeTempDir("akm-add-website-data-");
       const xdgState = makeTempDir("akm-add-website-state-");
       const websiteUrl = serveWebsite();
+      const env = {
+        ...process.env,
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: xdgCache,
+        XDG_CONFIG_HOME: xdgConfig,
+        XDG_DATA_HOME: xdgData,
+        XDG_STATE_HOME: xdgState,
+      };
       const configDir = path.join(xdgConfig, "akm");
       fs.mkdirSync(configDir, { recursive: true });
+      withEnvSync(env, () => createMigrationBackup());
       fs.writeFileSync(
         path.join(configDir, "config.json"),
         `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }, null, 2)}\n`,
@@ -83,14 +94,7 @@ describe("akm add website", () => {
 
       const child = spawn("bun", [CLI, "add", websiteUrl, "--name", "docs-site", "--format=json"], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          AKM_STASH_DIR: stashDir,
-          XDG_CACHE_HOME: xdgCache,
-          XDG_CONFIG_HOME: xdgConfig,
-          XDG_DATA_HOME: xdgData,
-          XDG_STATE_HOME: xdgState,
-        },
+        env,
       });
 
       let stdout = "";

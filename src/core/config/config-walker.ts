@@ -154,15 +154,17 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   rejectApiKeyPath(path, dotted);
 
   const schema = resolveSchemaAt(path);
-  const engineApiKey = path[0] === "engines" && path[2] === "apiKey";
-  if (!schema && !engineApiKey) {
+  const symbolicApiKey =
+    (path[0] === "engines" && path[2] === "apiKey") ||
+    (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey");
+  if (!schema && !symbolicApiKey) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
   }
 
   const value =
     path[0] === "engines" && path.length === 2
       ? parseObjectPatch(raw, dotted)
-      : engineApiKey
+      : symbolicApiKey
         ? raw
         : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
 
@@ -173,7 +175,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   const parsed =
     path[0] === "engines" && path.length === 2
       ? EngineConfigSchema.safeParse(value)
-      : engineApiKey
+      : symbolicApiKey
         ? /^\$[A-Za-z_][A-Za-z0-9_]*$|^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(raw)
           ? { success: true as const, data: value }
           : { success: false as const, error: { issues: [{ path: [], message: `apiKey must be $VAR or \${VAR}` }] } }
@@ -241,6 +243,7 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
  */
 function rejectApiKeyPath(path: Path, dotted: string): void {
   if (path[0] === "engines" && path[2] === "apiKey") return;
+  if (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey") return;
   const last = path[path.length - 1];
   if (last !== "apiKey") return;
   const recipe = recipeForApiKey(path, dotted);

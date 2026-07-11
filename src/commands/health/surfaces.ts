@@ -20,7 +20,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { CURRENT_CONFIG_VERSION, compareConfigVersion } from "../../core/config/config-migration";
+import { CURRENT_CONFIG_VERSION } from "../../core/config/config-schema";
+import { compareConfigVersion } from "../../core/config/config-version";
 import type { HealthCheckResult } from "./types";
 
 /** POSIX permission checks are meaningless on Windows. */

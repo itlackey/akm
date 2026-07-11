@@ -10,6 +10,7 @@
 
 import type { Database } from "../../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../../storage/engines/sqlite-migrations";
+import { ensureMigrationBackup } from "../migration-backup";
 
 const MIGRATIONS: Migration[] = [
   // ── Migration 001 — initial schema ──────────────────────────────────────────
@@ -794,6 +795,10 @@ const MIGRATIONS: Migration[] = [
  *
  * Called automatically by `openStateDatabase()`.
  */
-export function runMigrations(db: Database): void {
-  runSqliteMigrations(db, MIGRATIONS);
+export function runMigrations(db: Database, options?: { ensureCutoverBackup?: boolean }): void {
+  runSqliteMigrations(db, MIGRATIONS, {
+    beforeMigration(migration) {
+      if (options?.ensureCutoverBackup && migration.id === "017-improve-run-strategy") ensureMigrationBackup();
+    },
+  });
 }

@@ -5,8 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../errors";
-import { backupExistingConfig, parseConfigText, withConfigLock, writeConfigAtomic } from "./config-io";
-import { AkmConfigSchema } from "./config-schema";
+import { ensureMigrationBackupWithConfigLockHeld } from "../migration-backup";
+import { backupExistingConfig, parseConfigText, readConfigText, withConfigLock, writeConfigAtomic } from "./config-io";
+import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
 import type {
   AkmConfig,
   ImproveProcessConfig,
@@ -32,6 +33,7 @@ export type {
   AkmConfig,
   ConfiguredSource,
   EmbeddingConnectionConfig,
+  EngineConfig,
   HarnessId,
   ImproveConfig,
   ImproveProcessConfig,
@@ -154,7 +156,7 @@ export function loadUserConfig(): AkmConfig {
     return { ...DEFAULT_CONFIG };
   }
 
-  const finalConfig = parseAndValidate(text, configPath);
+  const finalConfig = parseAndValidateConfigText(text, configPath);
 
   // Re-stat after potential write-back so the cache key reflects the new mtime.
   let finalStat = stat;
@@ -180,11 +182,11 @@ export function loadUserConfig(): AkmConfig {
  * boolean→string coercions, openviking rename); the schema then validates
  * the canonical shape and throws on anything it doesn't recognise.
  */
-function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
+export function parseAndValidateConfigText(text: string, sourcePath?: string): AkmConfig {
   const raw = parseConfigText(text, sourcePath);
-  if (raw.configVersion !== "0.9.0") {
+  if (raw.configVersion !== CURRENT_CONFIG_VERSION) {
     throw new ConfigError(
-      `Unsupported configVersion${sourcePath ? ` at ${sourcePath}` : ""}: expected "0.9.0".`,
+      `Unsupported configVersion${sourcePath ? ` at ${sourcePath}` : ""}: expected "${CURRENT_CONFIG_VERSION}".`,
       "UNSUPPORTED_CONFIG_VERSION",
       "Recreate engines and improve.strategies manually for AKM 0.9.0; profile-based configuration is not translated automatically.",
     );
@@ -195,7 +197,16 @@ function parseAndValidate(text: string, sourcePath?: string): AkmConfig {
     const where = sourcePath ? ` at ${sourcePath}` : "";
     throw new ConfigError(`Invalid config${where}:\n${lines}`, "INVALID_CONFIG_FILE");
   }
-  return deepMergeConfig(DEFAULT_CONFIG, parsed.data as Partial<AkmConfig>) as AkmConfig;
+  const merged = deepMergeConfig(DEFAULT_CONFIG, parsed.data as Partial<AkmConfig>) as AkmConfig;
+  const finalResult = AkmConfigSchema.safeParse(merged);
+  if (!finalResult.success) {
+    const lines = finalResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+    throw new ConfigError(
+      `Invalid merged config${sourcePath ? ` at ${sourcePath}` : ""}:\n${lines}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return finalResult.data;
 }
 
 export function getSources(config: AkmConfig): SourceConfigEntry[] {
@@ -237,14 +248,6 @@ export function getImproveProcessConfig(
   return selected?.processes?.[processName];
 }
 
-/**
- * Run `migrateConfigShape` on the raw text and — unless `AKM_NO_AUTO_MIGRATE=1`
- * is set — persist the migrated result. Returns the (possibly migrated) text
- * for the caller to feed into `parseAndValidate`.
- *
- * If the on-disk config is newer than this binary's known version, the bytes
- * are left untouched (we won't silently strip fields on downgrade).
- */
 export function loadConfig(): AkmConfig {
   // Single-layer load: only the user-level config file is read. Project-level
   // .akm/config.json files discovered under cwd-ancestors emit a one-time
@@ -262,7 +265,7 @@ export function _setSaveConfigForTests(fake?: (config: AkmConfig) => void): void
 
 export function saveConfig(config: AkmConfig): void {
   // Every lifecycle write produces the only config version this binary can load.
-  const currentConfig = { ...config, configVersion: "0.9.0" } as AkmConfig;
+  const currentConfig = { ...config, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
   if (saveConfigOverride) {
     saveConfigOverride(currentConfig);
     return;
@@ -275,31 +278,54 @@ function saveConfigReal(config: AkmConfig): void {
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
-
-  // Final validation gate before bytes hit disk. Runs the FULL schema —
-  // including the cross-field superRefine guards (removed `feedbackDistillation`
-  // process key, `defaultWriteTarget` resolution, writable npm/website sources)
-  // and all type/enum/range checks — so an `akm config set` (leaf OR object
-  // form) cannot persist a guard-violating or mistyped value. NOTE: unknown
-  // keys are intentionally NOT rejected here — object schemas are `.passthrough()`
-  // so cross-version skew round-trips (see config-schema.ts header); the lenient
-  // tolerance is by design, not an oversight.
-  const parseResult = AkmConfigSchema.safeParse(config);
-  if (!parseResult.success) {
-    const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    throw new ConfigError(
-      `Refusing to save invalid config:\n${lines}`,
-      "INVALID_CONFIG_FILE",
-      "Fix the listed fields, or undo the offending `akm config set`. " +
-        "If this looks like an akm bug, re-run with --debug to attach the traceback.",
-    );
-  }
-
-  // WS-3: acquire the config write lock so concurrent `akm config set`
-  // invocations do not interleave their backup+atomic-write cycles.
   withConfigLock(() => {
+    const validated = validateCompleteConfig(config);
+    ensureMigrationBackupWithConfigLockHeld();
     backupExistingConfig(configPath);
-    writeConfigAtomic(configPath, sanitizeConfigForWrite(config));
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(validated));
+  });
+}
+
+function validateCompleteConfig(config: AkmConfig): AkmConfig {
+  const parseResult = AkmConfigSchema.safeParse(config);
+  if (parseResult.success) return parseResult.data;
+  const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+  throw new ConfigError(
+    `Refusing to save invalid config:\n${lines}`,
+    "INVALID_CONFIG_FILE",
+    "Fix the listed fields, or undo the offending `akm config set`. " +
+      "If this looks like an akm bug, re-run with --debug to attach the traceback.",
+  );
+}
+
+export interface ConfigMutationResult {
+  config: AkmConfig;
+  written: boolean;
+}
+
+/**
+ * Mutate config under one fail-closed lock spanning read, merge, validation,
+ * migration backup, ordinary backup, and atomic write.
+ */
+export function mutateConfig(
+  mutate: (current: AkmConfig) => AkmConfig,
+  options?: { absentNoop?: boolean },
+): ConfigMutationResult {
+  cachedConfig = undefined;
+  const configPath = getConfigPath();
+  return withConfigLock(() => {
+    const text = readConfigText(configPath);
+    if (text === undefined && options?.absentNoop) {
+      return { config: { ...DEFAULT_CONFIG }, written: false };
+    }
+    const current =
+      text === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : parseAndValidateConfigText(text, configPath);
+    const next = validateCompleteConfig({ ...mutate(current), configVersion: CURRENT_CONFIG_VERSION });
+    ensureMigrationBackupWithConfigLockHeld();
+    if (text !== undefined) backupExistingConfig(configPath);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(next));
+    return { config: next, written: true };
   });
 }
 
@@ -365,10 +391,7 @@ function isEnvReference(value: string): boolean {
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
-  const current = loadUserConfig();
-  const merged = deepMergeConfig(current, partial) as AkmConfig;
-  saveConfig(merged);
-  return merged;
+  return mutateConfig((current) => deepMergeConfig(current, partial) as AkmConfig).config;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

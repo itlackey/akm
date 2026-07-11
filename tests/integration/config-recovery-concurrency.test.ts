@@ -1,0 +1,119 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { shouldBypassConfigStartup } from "../../src/cli";
+import { getConfigPath } from "../../src/core/paths";
+import { assertSetupConfigPreflight, runSetupWithDefaults } from "../../src/setup/setup";
+import { runCliCapture } from "../_helpers/cli";
+import {
+  type Cleanup,
+  sandboxHome,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "../_helpers/sandbox";
+
+let cleanup: Cleanup | undefined;
+
+beforeEach(() => {
+  const home = sandboxHome();
+  const config = sandboxXdgConfigHome(home.cleanup);
+  const cache = sandboxXdgCacheHome(config.cleanup);
+  cleanup = sandboxXdgDataHome(cache.cleanup).cleanup;
+});
+
+afterEach(() => {
+  cleanup?.();
+  cleanup = undefined;
+});
+
+describe("raw recovery startup", () => {
+  test("validate/migrate/path/backup/setup bypass normal config startup", () => {
+    for (const args of [
+      ["bun", "cli.ts", "config", "validate"],
+      ["bun", "cli.ts", "config", "migrate"],
+      ["bun", "cli.ts", "config", "path"],
+      ["bun", "cli.ts", "backup", "create", "--for", "0.9.0"],
+      ["bun", "cli.ts", "setup", "--detect-only"],
+      ["bun", "cli.ts", "workflow", "--help"],
+    ]) {
+      expect(shouldBypassConfigStartup(args)).toBe(true);
+    }
+  });
+
+  test("raw validate and migrate diagnose a legacy config without rewriting it", async () => {
+    const original = '{"configVersion":"0.8.0","profiles":{}}\n';
+    fs.writeFileSync(getConfigPath(), original);
+    const validate = await runCliCapture(["config", "validate"]);
+    const migrate = await runCliCapture(["config", "migrate"]);
+    expect(validate.code).toBe(78);
+    expect(migrate.code).toBe(78);
+    expect(validate.stderr).toContain("UNSUPPORTED_CONFIG_VERSION");
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(original);
+  });
+
+  test("setup rejects legacy config before creating the stash or backup", async () => {
+    fs.writeFileSync(getConfigPath(), '{"configVersion":"0.8.0","profiles":{}}\n');
+    const stash = path.join(process.env.HOME as string, "akm");
+    expect(() => assertSetupConfigPreflight()).toThrow(/Unsupported configVersion/);
+    await expect(runSetupWithDefaults({ noInit: false })).rejects.toThrow(/Unsupported configVersion/);
+    expect(fs.existsSync(stash)).toBe(false);
+    expect(fs.existsSync(path.join(process.env.XDG_CACHE_HOME as string, "akm", "migration-backups"))).toBe(false);
+  });
+});
+
+describe("locked config mutation", () => {
+  test("concurrent config set processes preserve every independent engine", async () => {
+    const first = await runCliCapture([
+      "config",
+      "set",
+      "--silent",
+      "engines.seed",
+      '{"kind":"llm","endpoint":"http://localhost:1/v1/chat/completions","model":"seed"}',
+    ]);
+    expect(first.code).toBe(0);
+    const env = { ...process.env };
+    const children = Array.from({ length: 8 }, (_, index) =>
+      Bun.spawn(
+        [
+          "bun",
+          "src/cli.ts",
+          "config",
+          "set",
+          "--silent",
+          `engines.worker-${index}`,
+          JSON.stringify({
+            kind: "llm",
+            endpoint: `http://localhost:${8100 + index}/v1/chat/completions`,
+            model: `model-${index}`,
+          }),
+        ],
+        { cwd: path.resolve(import.meta.dir, "../.."), env, stdout: "pipe", stderr: "pipe" },
+      ),
+    );
+    const exits = await Promise.all(children.map((child) => child.exited));
+    expect(exits).toEqual(new Array(8).fill(0));
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { engines: Record<string, unknown> };
+    expect(Object.keys(written.engines).sort()).toEqual([
+      "seed",
+      "worker-0",
+      "worker-1",
+      "worker-2",
+      "worker-3",
+      "worker-4",
+      "worker-5",
+      "worker-6",
+      "worker-7",
+    ]);
+  }, 20_000);
+
+  test("unset against absent config is a true no-op", async () => {
+    const result = await runCliCapture(["config", "unset", "--silent", "embedding"]);
+    expect(result.code).toBe(0);
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+  });
+});

@@ -28,7 +28,7 @@ afterAll(() => {
 });
 
 describe("config command apiKey redaction", () => {
-  test("config list/show/get omit env-sourced apiKey values and fields", async () => {
+  test("config list/show/get show symbolic refs but never env-sourced values", async () => {
     const secretLlm = "sk-llm-secret-123";
     const secretEmbed = "sk-embed-secret-456";
     const env = freshEnv({ AKM_LLM_API_KEY: secretLlm, AKM_EMBED_API_KEY: secretEmbed });
@@ -40,6 +40,7 @@ describe("config command apiKey redaction", () => {
         embedding: {
           endpoint: "https://emb.example.test/v1/embeddings",
           model: "embed-model",
+          apiKey: "$AKM_EMBED_API_KEY",
         },
         engines: {
           default: {
@@ -75,11 +76,11 @@ describe("config command apiKey redaction", () => {
     const engines = JSON.parse(outputs.engines.stdout) as Record<string, unknown>;
     const llmApiKey = JSON.parse(outputs.llmApiKey.stdout);
 
-    expect(JSON.stringify(list)).not.toContain("apiKey");
-    expect(JSON.stringify(show)).not.toContain("apiKey");
-    expect(JSON.stringify(embedding)).not.toContain("apiKey");
-    expect(JSON.stringify(llm)).not.toContain("apiKey");
-    expect(JSON.stringify(engines)).not.toContain("apiKey");
-    expect(llmApiKey).toBeNull();
+    expect(JSON.stringify(list)).toContain("$AKM_LLM_API_KEY");
+    expect(JSON.stringify(show)).toContain("$AKM_EMBED_API_KEY");
+    expect(embedding.apiKey).toBe("$AKM_EMBED_API_KEY");
+    expect(llm.apiKey).toBe("$AKM_LLM_API_KEY");
+    expect(JSON.stringify(engines)).toContain("$AKM_LLM_API_KEY");
+    expect(llmApiKey).toBe("$AKM_LLM_API_KEY");
   });
 });

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs, type TaskLogRow } from "../src/core/logs-db";
+import { createMigrationBackup } from "../src/core/migration-backup";
 import type { AgentRunResult } from "../src/integrations/agent";
 import { resolveAkmInvocation } from "../src/tasks/resolve-akm-bin";
 import { exitCodeForStatus, readTaskHistory, runTask } from "../src/tasks/runner";
@@ -52,9 +53,12 @@ beforeEach(() => {
   fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
   // Point state.db to an isolated data dir so tests don't share history.
   process.env.AKM_DATA_DIR = dataDir;
+  process.env.AKM_CONFIG_DIR = configDir;
+  process.env.AKM_CACHE_DIR = cacheDir;
   // Pair AKM_STASH_DIR with AKM_STATE_DIR so the test-isolation guard in
   // src/core/paths.ts (getDataDir) stays inert.
   process.env.AKM_STATE_DIR = stateDir;
+  createMigrationBackup();
 });
 
 afterEach(() => {

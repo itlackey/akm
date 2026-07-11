@@ -470,15 +470,15 @@ describe("embedding config", () => {
     });
   });
 
-  test("loads embedding config with apiKey", () => {
+  test("loads embedding config with a symbolic apiKey", () => {
     writeCurrentConfig({
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
-        apiKey: "sk-test123",
+        apiKey: "$OPENAI_API_KEY",
       },
     });
-    expect(loadConfig().embedding?.apiKey).toBe("sk-test123");
+    expect(loadConfig().embedding?.apiKey).toBe("$OPENAI_API_KEY");
   });
 
   test("loads embedding config with provider and dimension", () => {

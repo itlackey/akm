@@ -59,10 +59,10 @@
  */
 
 import { renderUsage, runCommand } from "citty";
-import { main } from "../../src/cli";
+import { main, shouldBypassConfigStartup } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
 import { normalizeShowArgv } from "../../src/commands/read/show";
-import { loadConfig, resetConfigCache } from "../../src/core/config/config";
+import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
@@ -233,7 +233,10 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       // `health --detail verbose` produces the same JSON the spawn version
       // asserted on, rather than the bare exception message.
       try {
-        initOutputMode(argv, loadConfig().output ?? {});
+        initOutputMode(
+          argv,
+          shouldBypassConfigStartup(argv) ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}),
+        );
       } catch (initError) {
         emitJsonError(initError); // JSON envelope to stderr, then process.exit → ExitSignal
       }

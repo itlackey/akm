@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
-import { loadConfig, saveConfig } from "../src/core/config/config";
+import { saveConfig } from "../src/core/config/config";
 
 const tempDirs: string[] = [];
 let stashDir = "";
@@ -59,20 +59,19 @@ afterEach(() => {
 });
 
 describe("sanitizeConfigForWrite — secret handling (#474)", () => {
-  it("strips literal embedding.apiKey", () => {
-    saveConfig(
-      makeConfig({
-        embedding: {
-          endpoint: "https://example.com",
-          model: "text-embedding-3-small",
-          apiKey: "sk-LITERAL-SECRET",
-        },
-      }),
-    );
-    const reloaded = loadConfig();
-    expect(reloaded.embedding?.endpoint).toBe("https://example.com");
-    expect(reloaded.embedding?.model).toBe("text-embedding-3-small");
-    expect(reloaded.embedding?.apiKey).toBeUndefined();
+  it("rejects literal embedding.apiKey before defensive sanitization", () => {
+    expect(() =>
+      saveConfig(
+        makeConfig({
+          embedding: {
+            endpoint: "https://example.com",
+            model: "text-embedding-3-small",
+            apiKey: "sk-LITERAL-SECRET",
+          },
+        }),
+      ),
+    ).toThrow(/apiKey must be \$VAR/);
+    expect(fs.existsSync(path.join(configDir, "config.json"))).toBe(false);
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
@@ -107,20 +106,19 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
-  it("strips unsupported ${VAR:-default} syntax", () => {
-    saveConfig(
-      makeConfig({
-        embedding: {
-          endpoint: "https://example.com",
-          model: "x",
-          // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
-          apiKey: "${OPENAI_API_KEY:-fallback}",
-        },
-      }),
-    );
-    const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
-    expect(persisted).not.toContain("${OPENAI_API_KEY:-fallback}");
+  it("rejects unsupported ${VAR:-default} syntax", () => {
+    expect(() =>
+      saveConfig(
+        makeConfig({
+          embedding: {
+            endpoint: "https://example.com",
+            model: "x",
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
+            apiKey: "${OPENAI_API_KEY:-fallback}",
+          },
+        }),
+      ),
+    ).toThrow(/apiKey must be \$VAR/);
   });
 
   it("rejects literal apiKey and preserves references across llm engines", () => {

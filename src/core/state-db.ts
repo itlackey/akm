@@ -103,7 +103,10 @@ export function getStateDbPath(): string {
  *     narrow when a post-inference reindex overlapped a parallel event write.
  */
 export function openStateDatabase(dbPath?: string): Database {
-  return openManagedDatabase({ path: dbPath ?? getStateDbPath(), init: runMigrations });
+  return openManagedDatabase({
+    path: dbPath ?? getStateDbPath(),
+    init: (db) => runMigrations(db, { ensureCutoverBackup: dbPath === undefined }),
+  });
 }
 
 /**

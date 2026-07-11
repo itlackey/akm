@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { ensureMigrationBackup } from "../core/migration-backup";
 import { getWorkflowDbPath } from "../core/paths";
 import { type Database, openDatabase } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
@@ -57,7 +58,7 @@ export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
   // SQLITE_BUSY. #628: journal_mode is configurable via AKM_SQLITE_JOURNAL_MODE.
   applyStandardPragmas(db, { dataDir: dir });
   ensureBaseSchema(db);
-  runMigrations(db);
+  runMigrations(db, { ensureCutoverBackup: dbPath === getWorkflowDbPath() });
   return db;
 }
 
@@ -366,6 +367,11 @@ function bootstrapPreVersioningDb(db: Database): void {
  *
  * Called automatically by {@link openWorkflowDatabase}.
  */
-export function runMigrations(db: Database): void {
-  runSqliteMigrations(db, MIGRATIONS, { bootstrap: bootstrapPreVersioningDb });
+export function runMigrations(db: Database, options?: { ensureCutoverBackup?: boolean }): void {
+  runSqliteMigrations(db, MIGRATIONS, {
+    bootstrap: bootstrapPreVersioningDb,
+    beforeMigration(migration) {
+      if (options?.ensureCutoverBackup && migration.id === "010-ir-v3-engine") ensureMigrationBackup();
+    },
+  });
 }

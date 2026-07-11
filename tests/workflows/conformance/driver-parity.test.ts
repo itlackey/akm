@@ -64,15 +64,24 @@ const RUN_ID = "77777777-7777-4777-8777-777777777777";
 
 let rootDir = "";
 let prevDataDir: string | undefined;
+let prevCacheDir: string | undefined;
+
+function selectSurfaceDir(dir: string): void {
+  process.env.AKM_DATA_DIR = dir;
+  process.env.AKM_CACHE_DIR = path.join(dir, "cache");
+}
 
 beforeEach(() => {
   rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-parity-"));
   prevDataDir = process.env.AKM_DATA_DIR;
+  prevCacheDir = process.env.AKM_CACHE_DIR;
 });
 
 afterEach(() => {
   if (prevDataDir === undefined) delete process.env.AKM_DATA_DIR;
   else process.env.AKM_DATA_DIR = prevDataDir;
+  if (prevCacheDir === undefined) delete process.env.AKM_CACHE_DIR;
+  else process.env.AKM_CACHE_DIR = prevCacheDir;
   try {
     fs.rmSync(rootDir, { recursive: true, force: true });
   } catch {
@@ -871,7 +880,7 @@ describe("conformance — engine/driver cross-surface parity", () => {
       // (a) engine-driven, in its own database.
       const engineDir = path.join(rootDir, "engine");
       fs.mkdirSync(engineDir, { recursive: true });
-      process.env.AKM_DATA_DIR = engineDir;
+      selectSurfaceDir(engineDir);
       seedRun(plan, golden.params, golden.steps);
       await runEngineSurface(golden);
       const engineGraph = await canonicalGraph();
@@ -883,7 +892,7 @@ describe("conformance — engine/driver cross-surface parity", () => {
       // (b) brief/report-driven, in a SEPARATE database, same plan + fixtures.
       const driverDir = path.join(rootDir, "driver");
       fs.mkdirSync(driverDir, { recursive: true });
-      process.env.AKM_DATA_DIR = driverDir;
+      selectSurfaceDir(driverDir);
       seedRun(plan, golden.params, golden.steps);
       await runDriverSurface(golden);
       const driverGraph = await canonicalGraph();
@@ -932,7 +941,7 @@ steps:
     // (a) engine surface: seed the crashed pre-state, then resume once.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, {}, steps);
     await seedCrashedLoop1(plan, feedback);
     const engineGateBefore = await unitRow("work.gate:l1");
@@ -945,7 +954,7 @@ steps:
     // (b) brief/report surface: same crashed pre-state, resume via the driver loop.
     const driverDir = path.join(rootDir, "driver");
     fs.mkdirSync(driverDir, { recursive: true });
-    process.env.AKM_DATA_DIR = driverDir;
+    selectSurfaceDir(driverDir);
     seedRun(plan, {}, steps);
     await seedCrashedLoop1(plan, feedback);
     await runDriverSurface(golden);
@@ -1038,7 +1047,7 @@ steps:
     // (a) engine surface.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, {}, steps);
     await seedCompletedUnit();
     await runEngineSurface(golden);
@@ -1048,7 +1057,7 @@ steps:
     // command and settles, running the same completion path.
     const driverDir = path.join(rootDir, "driver");
     fs.mkdirSync(driverDir, { recursive: true });
-    process.env.AKM_DATA_DIR = driverDir;
+    selectSurfaceDir(driverDir);
     seedRun(plan, {}, steps);
     await seedCompletedUnit();
     await runDriverSurface(golden);
@@ -1139,7 +1148,7 @@ steps:
     // (a) engine surface: resume — A is reused from ~r1, B is dispatched.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, params, steps);
     await seedCrashedRetry();
     await runWorkflowSteps({
@@ -1152,7 +1161,7 @@ steps:
     // (b) brief/report surface: same pre-state, driven through the driver loop.
     const driverDir = path.join(rootDir, "driver");
     fs.mkdirSync(driverDir, { recursive: true });
-    process.env.AKM_DATA_DIR = driverDir;
+    selectSurfaceDir(driverDir);
     seedRun(plan, params, steps);
     await seedCrashedRetry();
     const golden: Golden = {
@@ -1197,7 +1206,7 @@ steps:
     // (a) engine surface.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, bad, FAN_OUT_COLLECT.steps);
     await expect(
       runWorkflowSteps({
@@ -1210,14 +1219,14 @@ steps:
     // (b) brief surface, separate database, same plan + bad params row.
     const briefDir = path.join(rootDir, "brief");
     fs.mkdirSync(briefDir, { recursive: true });
-    process.env.AKM_DATA_DIR = briefDir;
+    selectSurfaceDir(briefDir);
     seedRun(plan, bad, FAN_OUT_COLLECT.steps);
     await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/integrity check/);
 
     // (c) report surface, separate database, same plan + bad params row.
     const reportDir = path.join(rootDir, "report");
     fs.mkdirSync(reportDir, { recursive: true });
-    process.env.AKM_DATA_DIR = reportDir;
+    selectSurfaceDir(reportDir);
     seedRun(plan, bad, FAN_OUT_COLLECT.steps);
     await expect(
       reportWorkflowUnit({

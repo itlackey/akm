@@ -3,8 +3,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
+import { createMigrationBackup } from "../../src/core/migration-backup";
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, withEnvSync } from "../_helpers/sandbox";
 
 // Helpers.
 //
@@ -256,6 +257,16 @@ describe("registry remove", () => {
 
     const userConfigPath = path.join(xdgConfig.dir, "akm", "config.json");
     const projectConfigPath = path.join(project.dir, ".akm", "config.json");
+
+    withEnvSync(
+      {
+        HOME: home.dir,
+        XDG_CONFIG_HOME: xdgConfig.dir,
+        XDG_CACHE_HOME: xdgCache.dir,
+        XDG_DATA_HOME: xdgData.dir,
+      },
+      () => createMigrationBackup(),
+    );
 
     fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
     fs.writeFileSync(

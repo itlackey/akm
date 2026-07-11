@@ -617,16 +617,19 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 describe("Scenario: CLI subprocess execution", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioConfigDir: string;
   let scenarioDataDir: string;
   let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s3-"));
+    scenarioConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-config-s3-"));
     scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s3-"));
     scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s3-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_CONFIG_HOME = scenarioConfigDir;
     process.env.XDG_DATA_HOME = scenarioDataDir;
     process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
@@ -635,6 +638,7 @@ describe("Scenario: CLI subprocess execution", () => {
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_CONFIG_HOME = scenarioConfigDir;
     process.env.XDG_DATA_HOME = scenarioDataDir;
     process.env.XDG_STATE_HOME = scenarioStateDir;
   });
@@ -642,6 +646,7 @@ describe("Scenario: CLI subprocess execution", () => {
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioConfigDir, { recursive: true, force: true });
     fs.rmSync(scenarioDataDir, { recursive: true, force: true });
     fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });

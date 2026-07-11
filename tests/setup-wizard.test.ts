@@ -292,7 +292,10 @@ describe("agent and output setup steps", () => {
       ],
     );
 
-    expect(result).toEqual({ default: "codex", profiles: { claude: {} } });
+    expect(result).toEqual({
+      default: "codex",
+      engines: { claude: { kind: "agent", platform: "claude" } },
+    });
   });
 
   test("stepAgentSelection allows disabling the default agent", async () => {
@@ -311,7 +314,10 @@ describe("agent and output setup steps", () => {
       ],
     );
 
-    expect(result).toEqual({ default: undefined, profiles: { claude: {} } });
+    expect(result).toEqual({
+      default: undefined,
+      engines: { claude: { kind: "agent", platform: "claude" } },
+    });
   });
 
   test("stepLlm keep current preserves the existing endpoint", async () => {
