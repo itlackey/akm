@@ -20,7 +20,7 @@ import { akmReflect } from "../../../src/commands/improve/reflect";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { readEvents } from "../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
-import { makeProfile } from "../../_helpers/factories";
+import { quietQualityGateConfig } from "../../_helpers/factories";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -102,7 +102,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "script:dangerous",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("ignored", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -125,7 +125,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "lesson:any",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
     });
     expect(result.ok).toBe(false);
@@ -147,7 +147,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "lesson:bad",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
     });
     expect(result.ok).toBe(false);
@@ -172,7 +172,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
       // body that doesn't match the markdown-fallback heuristic either.
       ref: "memory:nope",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("{not valid json", "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -201,7 +201,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "lesson:original-target",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(retargetedPayload, "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -224,19 +224,19 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     await akmReflect({
       ref: "lesson:fail-1",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
     });
     await akmReflect({
       ref: "lesson:fail-2",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
     });
     await akmReflect({
       ref: "script:fail-3",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("ignored", "", 0) },
     });
 

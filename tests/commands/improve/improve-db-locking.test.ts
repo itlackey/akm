@@ -129,10 +129,10 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
       stashDir: stash,
       ensureIndexFn: async () => undefined,
       reflectFn: async (o) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         ref: o.ref ?? "unknown",
-        agentProfile: "test-agent",
+        engine: "test-agent",
         durationMs: 1,
         proposal: {
           id: `reflect-${(o.ref ?? "unknown").replace(/[^a-z0-9]/gi, "-")}`,

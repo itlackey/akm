@@ -58,11 +58,11 @@ async function buildIndex(stashDir: string): Promise<void> {
 }
 
 const reflectFn = async ({ ref }: { ref?: string }): Promise<AkmReflectResult> => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: makeProposal(ref ?? "lesson:unknown"),
   ref: ref ?? "",
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 

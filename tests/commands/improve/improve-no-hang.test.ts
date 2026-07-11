@@ -55,7 +55,7 @@ async function buildIndex(stashDir: string): Promise<void> {
 }
 
 const stubReflect = async ({ ref }: { ref?: string }): Promise<AkmReflectResult> => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `proposal-${ref?.replace(/[^a-z0-9-]/gi, "-") ?? "stub"}`,
@@ -67,7 +67,7 @@ const stubReflect = async ({ ref }: { ref?: string }): Promise<AkmReflectResult>
     payload: { content: "# stub proposal" },
   },
   ref: ref ?? "",
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 

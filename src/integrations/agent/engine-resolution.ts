@@ -8,7 +8,7 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { HARNESS_BY_ID } from "../harnesses";
 import { resolveModel } from "./model-aliases";
-import type { AgentProfile } from "./profiles";
+import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
 
 export interface LlmInvocationOverrides {
@@ -211,18 +211,24 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     );
   }
   const sdk = engine.platform === "opencode-sdk";
+  const builtin = getBuiltinAgentProfile(engine.platform);
   const profile: AgentProfile = {
     name,
     platform: engine.platform,
-    bin: engine.bin ?? (sdk ? "opencode" : engine.platform),
-    args: engine.args ?? [],
+    bin: engine.bin ?? builtin?.bin ?? (sdk ? "opencode" : engine.platform),
+    args: engine.args ?? builtin?.args ?? [],
     stdio: "captured",
-    envPassthrough: [],
+    ...(builtin?.env ? { env: builtin.env } : {}),
+    envPassthrough: builtin?.envPassthrough ?? [],
     parseOutput: "text",
+    commandBuilder: builtin?.commandBuilder ?? engine.platform,
+    ...(sdk ? { sdkMode: true } : {}),
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model
       ? { model: resolveModel(engine.model, engine.platform, engine.modelAliases, config.modelAliases) }
       : {}),
+    ...(engine.modelAliases ? { modelAliases: engine.modelAliases } : {}),
+    ...(config.modelAliases ? { globalModelAliases: config.modelAliases } : {}),
   };
   if (!sdk) return { kind: "agent", engine: name, profile, timeoutMs: engine.timeoutMs };
   const fallback = resolveLlmEngineUse(config, [{ engine: engine.llmEngine ?? config.defaults?.llmEngine }]);

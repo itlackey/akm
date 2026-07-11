@@ -49,24 +49,23 @@ describe("v1 spec §12 — agent CLI integration", () => {
   });
 });
 
-describe("v1 spec §12 — configuration.md mirrors the agent block", () => {
-  // v2: agent.profiles moved to profiles.agent under "Profile types" section.
+describe("v1 spec §12 — configuration.md mirrors agent engines", () => {
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## Profile types");
+  const block = extractSection(config, "## Engines");
 
-  test("configuration.md has the agent profiles section", () => {
+  test("configuration.md has the engine section", () => {
     expect(block).not.toBe("");
-    expect(block).toContain("profiles.agent");
+    expect(block).toContain("`engines`");
   });
 
-  test("configuration.md declares the three platform values for agent profiles", () => {
-    expect(block).toContain("opencode");
-    expect(block).toContain("claude");
+  test("configuration.md declares LLM and agent engine kinds", () => {
+    expect(block).toContain("`llm`");
+    expect(block).toContain("`agent`");
     expect(block).toContain("opencode-sdk");
   });
 
-  test("configuration.md documents the platform field for agent profiles", () => {
+  test("configuration.md documents the platform field for agent engines", () => {
     expect(block).toMatch(/platform/i);
-    expect(block).toMatch(/profiles\.agent/);
+    expect(block).toMatch(/agent engine/i);
   });
 });

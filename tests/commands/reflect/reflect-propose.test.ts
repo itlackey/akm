@@ -21,7 +21,7 @@ import { akmPropose } from "../../../src/commands/proposal/propose";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
-import { makeProfile, quietQualityGateConfig } from "../../_helpers/factories";
+import { quietQualityGateConfig } from "../../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
@@ -142,7 +142,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:rg-over-grep",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
@@ -166,7 +165,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:rg-over-grep",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
       eligibilitySource: "proactive",
@@ -190,7 +188,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:rg-over-grep",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
@@ -212,7 +209,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:bad",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
     });
@@ -231,7 +227,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:any",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
     });
@@ -246,7 +241,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:any",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("not a json object", "", 0) },
     });
@@ -261,7 +255,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:any",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("# Title\n\nUse rg for recursive search.\n", "", 0) },
     });
@@ -296,7 +289,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lesson:any",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       timeoutMs: 5,
       runAgentOptions: { spawn: hangingSpawn(), setTimeoutFn, clearTimeoutFn },
@@ -319,7 +311,6 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       stashDir: stash,
       task: "Focus on the highest-value recent signal",
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
@@ -351,7 +342,6 @@ describe("akm reflect", () => {
       ref: "lesson:rg-over-grep",
       stashDir: stash,
       task: "Tighten the guidance",
-      agentProfile: makeProfile({ stdio: "interactive" }),
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: (cmd, opts) => {
@@ -381,7 +371,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi politely",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -406,7 +396,7 @@ describe("akm propose", () => {
         name: "anything",
         task: "do a thing",
         stashDir: stash,
-        agentProfile: makeProfile(),
+        agentConfig: quietQualityGateConfig(),
         runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
       });
     } catch (err) {
@@ -425,7 +415,7 @@ describe("akm propose", () => {
         name: "x",
         task: "",
         stashDir: stash,
-        agentProfile: makeProfile(),
+        agentConfig: quietQualityGateConfig(),
         runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
       });
     } catch (err) {
@@ -441,7 +431,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "agent failed", 3) },
     });
     expect(result.ok).toBe(false);
@@ -461,7 +451,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn('{"ref": "skill:hello"}', "", 0) }, // missing content
     });
     expect(result.ok).toBe(false);
@@ -481,7 +471,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(mismatchedPayload, "", 0) },
     });
     expect(result.ok).toBe(false);
@@ -498,7 +488,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
     });
     expect(result.ok).toBe(false);
@@ -528,7 +518,7 @@ describe("akm propose", () => {
         name: "gear",
         task: "Build a gear widget",
         stashDir: stash,
-        agentProfile: makeProfile(),
+        agentConfig: quietQualityGateConfig(),
         runAgentOptions: { spawn: fakeSpawn(widgetPayload, "", 0) },
       });
       expect(result.ok).toBe(true);
@@ -546,7 +536,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi politely",
       stashDir: stash,
-      agentProfile: makeProfile(),
+      agentConfig: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);

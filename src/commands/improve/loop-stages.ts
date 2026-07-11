@@ -289,7 +289,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             ...(improveProfile ? { improveProfile } : {}),
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
-            agentProcess: options.agentProcess ?? "reflect",
             eventSource: "improve" as const,
             // #639 — resolve the low-value filter from the ACTIVE improve profile
             // (default off when unset), so the running profile decides instead of
@@ -331,11 +330,12 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               });
               reflectResult = isProposalSkipped(persistResult)
                 ? {
-                    schemaVersion: 1,
+                    schemaVersion: 2,
                     ok: false,
                     reason: "cooldown" as const,
                     error: `SC proposal skipped: ${persistResult.message}`,
                     ref: winner.ref,
+                    engine: winner.engine,
                     exitCode: null,
                   }
                 : { ...winner, proposal: persistResult };
@@ -398,7 +398,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               metadata: {
                 ok: reflectResult.ok,
                 durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
-                agentProfile: reflectResult.ok ? reflectResult.agentProfile : undefined,
+                engine: reflectResult.engine,
                 reason: reflectResult.ok ? undefined : reflectResult.reason,
               },
             },

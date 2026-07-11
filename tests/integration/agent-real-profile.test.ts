@@ -16,7 +16,6 @@ import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
 import { listProposals } from "../../src/commands/proposal/repository";
-import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const REAL_AGENT_TESTS = process.env.AKM_REAL_AGENT_TESTS === "1" || process.env.AKM_REAL_AGENT_TESTS === "true";
@@ -55,16 +54,18 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
   });
 
   test("opencode profile produces a queued proposal via akm propose", async () => {
-    const profile = getBuiltinAgentProfile("opencode");
-    expect(profile).toBeDefined();
-    if (!profile) return;
     const stash = makeStashDir();
     const result = await akmPropose({
       type: "skill",
       name: "real-profile-hello",
       task: "Author a one-line skill that says hello.",
       stashDir: stash,
-      agentProfile: { ...profile, stdio: "captured" },
+      agentConfig: {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { opencode: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "opencode" },
+      },
       timeoutMs: 60_000,
     });
     expect(result.ok).toBe(true);
@@ -74,14 +75,19 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
   });
 
   test("claude profile produces a queued proposal via akm reflect", async () => {
-    const profile = getBuiltinAgentProfile("claude");
-    expect(profile).toBeDefined();
-    if (!profile) return;
     const stash = makeStashDir();
     const result = await akmReflect({
       ref: "lesson:real-profile-tip",
       stashDir: stash,
-      agentProfile: { ...profile, stdio: "captured" },
+      config: {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { claude: { kind: "agent", platform: "claude" } },
+        defaults: { engine: "claude", improveStrategy: "default" },
+        improve: {
+          strategies: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+        },
+      },
       timeoutMs: 60_000,
     });
     expect(result.ok).toBe(true);

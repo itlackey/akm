@@ -163,25 +163,17 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         improveProfile: strategy,
         runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
       }),
-    ).rejects.toThrow(/tool-less LLM runner/);
+    ).rejects.toThrow(/requires an LLM engine/);
     expect(spawned).toBe(false);
   });
 
-  test("interactive reflect (no eventSource) still dispatches the injected agent profile", async () => {
+  test("interactive reflect (no eventSource) dispatches the configured agent engine", async () => {
     const stash = makeStashDir();
     let spawned = false;
 
     await akmReflect({
       ref: "memory:alpha",
       stashDir: stash,
-      agentProfile: {
-        name: "fake-agent",
-        bin: "fake-agent",
-        args: [],
-        stdio: "captured",
-        envPassthrough: ["PATH"],
-        parseOutput: "text",
-      },
       config: agentModeConfig(),
       runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
     });

@@ -81,11 +81,11 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -119,11 +119,11 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -160,11 +160,11 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       reflectFn: async (opts) => {
         capturedTimeouts.push(opts.timeoutMs);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(opts.ref ?? "memory:budget-test"),
           ref: opts.ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -197,11 +197,11 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(opts.ref ?? "memory:timer-test"),
         ref: opts.ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -239,11 +239,11 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:auth-tips"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
@@ -285,11 +285,11 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:auth-tips"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
@@ -587,11 +587,11 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     appendFeedbackEvent({ eventType: "feedback", ref: "lesson:no-description", metadata: { signal: "positive" } });
 
     const reflectFn = async ({ ref }: { ref?: string }): Promise<AkmReflectResult> => ({
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       proposal: makeProposal(ref ?? "lesson:no-description"),
       ref: ref ?? "",
-      agentProfile: "test",
+      engine: "test",
       durationMs: 1,
     });
     const distillFn = async ({ ref }: { ref: string }): Promise<AkmDistillResult> => ({
@@ -692,11 +692,11 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
       reindexFn,
       graphExtractionFn,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:auth-guide"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -758,11 +758,11 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
       reflectFn: async ({ ref }) => {
         reflected.push(ref ?? "");
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:mem-1"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         };
       },
@@ -793,11 +793,11 @@ describe("new 0.8.0 improve metrics", () => {
       stashDir,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:alpha"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -835,7 +835,7 @@ describe("new 0.8.0 improve metrics", () => {
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "cooldown" as const,
         error: "Dedup signal from test",
@@ -875,11 +875,11 @@ describe("new 0.8.0 improve metrics", () => {
       stashDir,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:real-asset"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -935,11 +935,11 @@ describe("new 0.8.0 improve metrics", () => {
         });
         if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: created,
           ref: created.ref,
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -1000,11 +1000,11 @@ describe("new 0.8.0 improve metrics", () => {
         });
         if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: created,
           ref: created.ref,
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -1070,7 +1070,7 @@ describe("new 0.8.0 improve metrics", () => {
       autoAccept: undefined,
       // Default config.archiveRetentionDays is 90; 200 days old > 90 → expire.
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "cooldown" as const,
         error: "test-suppressed",

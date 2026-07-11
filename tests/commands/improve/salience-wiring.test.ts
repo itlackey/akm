@@ -53,7 +53,7 @@ const noopIndexFns = {
 
 /** Reflect stub that returns no_change (LLM found nothing to improve). */
 const noChangeReflect = (_ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: false,
   reason: "no_change",
   error: "no change detected",
@@ -63,7 +63,7 @@ const noChangeReflect = (_ref: string): AkmReflectResult => ({
 
 /** Reflect stub that returns a successful proposal. */
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -75,7 +75,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# improved" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 

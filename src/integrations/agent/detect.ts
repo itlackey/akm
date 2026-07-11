@@ -17,8 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
-import { listResolvedAgentProfiles } from "./config";
-import type { AgentProfile } from "./profiles";
+import { type AgentProfile, getBuiltinAgentProfile, listBuiltinAgentProfiles } from "./profiles";
 
 /** Function signature for a binary lookup probe. */
 export type WhichFn = (bin: string) => string | undefined;
@@ -93,7 +92,21 @@ export function _setAgentDetectForTests(fakes?: AgentDetectOverridesForTests): v
  */
 export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = defaultWhich): AgentDetectionResult[] {
   if (detectOverrides?.detectAgentCliProfiles) return detectOverrides.detectAgentCliProfiles(agent, whichFn);
-  const profiles = listResolvedAgentProfiles(agent);
+  const profilesByName = new Map(Object.values(listBuiltinAgentProfiles()).map((profile) => [profile.name, profile]));
+  for (const [name, engine] of Object.entries(agent?.engines ?? {})) {
+    if (engine.kind !== "agent") continue;
+    const builtin = getBuiltinAgentProfile(engine.platform);
+    profilesByName.set(name, {
+      name,
+      platform: engine.platform,
+      bin: engine.bin ?? builtin?.bin ?? (engine.platform === "opencode-sdk" ? "opencode" : engine.platform),
+      args: engine.args ?? builtin?.args ?? [],
+      stdio: "captured",
+      envPassthrough: builtin?.envPassthrough ?? [],
+      parseOutput: "text",
+    });
+  }
+  const profiles = [...profilesByName.values()];
   return profiles.map((profile) => probeProfile(profile, whichFn));
 }
 

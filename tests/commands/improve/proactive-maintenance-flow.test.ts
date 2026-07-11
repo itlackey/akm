@@ -39,7 +39,7 @@ async function buildIndex(stashDir: string): Promise<void> {
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -51,7 +51,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# proposal" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 
