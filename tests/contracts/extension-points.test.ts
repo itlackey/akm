@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 
 describe("current provider boundary contract", () => {
   const architecture = readDoc(ARCHITECTURE_PATH);

@@ -351,7 +351,6 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
     kind: "llm",
     endpoint: "http://localhost:1/v1/chat/completions",
     model: "test-model",
-    timeoutMs: null,
     concurrency: 1,
   };
 

@@ -56,7 +56,6 @@ function materialize(engine: FrozenLlmEngine, invocation: IrInvocation): LlmConn
     ...(engine.extraParams ? { extraParams: engine.extraParams } : {}),
     ...(engine.contextLength !== undefined ? { contextLength: engine.contextLength } : {}),
     ...(engine.enableThinking !== undefined ? { enableThinking: engine.enableThinking } : {}),
-    ...(engine.timeoutMs !== null ? { timeoutMs: engine.timeoutMs } : {}),
     ...(apiKey ? { apiKey } : {}),
   };
   return (

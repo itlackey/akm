@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../core/file-lock";
+import { tryAcquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDbPath, getIndexWriterLockPath } from "../core/paths";
 
 const INDEX_WRITER_LOCK_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
@@ -76,29 +77,35 @@ export async function acquireIndexWriterLease(
   const maxWaitMs = options.maxWaitMs ?? DEFAULT_INDEX_WRITER_MAX_WAIT_MS;
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
-  if (heldLocks.has(lockPath)) {
-    options.onAcquired?.({ waitedMs: 0 });
-    return retainHeldLock(lockPath);
-  }
-
   let lastWaitNoticeMs = 0;
 
   while (true) {
     throwIfAborted(options.signal);
 
-    if (tryAcquireLockSync(lockPath, buildPayload(options.purpose))) {
-      options.onAcquired?.({ waitedMs: Date.now() - startedAt });
-      return retainHeldLock(lockPath);
-    }
+    const releaseBarrier = tryAcquireMaintenanceBarrier();
+    if (releaseBarrier) {
+      try {
+        if (heldLocks.has(lockPath)) {
+          options.onAcquired?.({ waitedMs: Date.now() - startedAt });
+          return retainHeldLock(lockPath);
+        }
+        if (tryAcquireLockSync(lockPath, buildPayload(options.purpose))) {
+          options.onAcquired?.({ waitedMs: Date.now() - startedAt });
+          return retainHeldLock(lockPath);
+        }
 
-    const probe = probeLock(lockPath, { staleAfterMs: INDEX_WRITER_LOCK_STALE_AFTER_MS });
-    if (probe.state === "held" && probe.holderPid === process.pid) {
-      options.onAcquired?.({ waitedMs: Date.now() - startedAt });
-      return retainHeldLock(lockPath);
-    }
-    if (probe.state === "stale") {
-      releaseLock(lockPath);
-      continue;
+        const probe = probeLock(lockPath, { staleAfterMs: INDEX_WRITER_LOCK_STALE_AFTER_MS });
+        if (probe.state === "held" && probe.holderPid === process.pid) {
+          options.onAcquired?.({ waitedMs: Date.now() - startedAt });
+          return retainHeldLock(lockPath);
+        }
+        if (probe.state === "stale") {
+          releaseLock(lockPath);
+          continue;
+        }
+      } finally {
+        releaseBarrier();
+      }
     }
     if (mode === "try") return undefined;
 

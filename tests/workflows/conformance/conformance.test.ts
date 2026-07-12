@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
+import { cpuDerivedUnitConcurrency } from "../../../src/workflows/concurrency-policy";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
@@ -115,7 +116,7 @@ async function unitGraph(): Promise<Array<[string, string, string | null, string
 }
 
 const FROZEN_EXECUTION: NonNullable<WorkflowPlanGraph["execution"]> = {
-  maxConcurrency: 1,
+  maxConcurrency: cpuDerivedUnitConcurrency(),
   engines: {
     "test-agent": {
       name: "test-agent",
@@ -134,7 +135,6 @@ const FROZEN_EXECUTION: NonNullable<WorkflowPlanGraph["execution"]> = {
       kind: "llm",
       endpoint: "http://localhost:1/v1/chat/completions",
       model: "test-model",
-      timeoutMs: 600_000,
       credential: { names: ["AKM_ENGINE_TEST_LLM_API_KEY", "AKM_LLM_API_KEY"], required: false },
       concurrency: 1,
     },

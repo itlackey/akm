@@ -173,6 +173,42 @@ describe("runTask — workflow target", () => {
 });
 
 describe("runTask — prompt target", () => {
+  test("resolves agent model aliases once and marks the dispatched model exact", async () => {
+    writeTask(
+      "aliased",
+      ["version: 2", 'schedule: "@daily"', "prompt: review", "engine: reviewer", "model: premium", ""].join("\n"),
+    );
+    process.env.AKM_CONFIG_DIR = configDir;
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          reviewer: {
+            kind: "agent",
+            platform: "opencode",
+            modelAliases: { premium: "provider/exact-model" },
+          },
+        },
+        defaults: { engine: "reviewer" },
+      }),
+    );
+    let dispatched: { model?: string; modelIsExact?: boolean } | undefined;
+
+    await runTask("aliased", {
+      stashDir,
+      logDir,
+      runAgentImpl: async (profile) => {
+        dispatched = { model: profile.model, modelIsExact: profile.modelIsExact };
+        return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
+      },
+      now: () => new Date("2025-01-01T00:00:00Z"),
+    });
+
+    expect(dispatched).toEqual({ model: "provider/exact-model", modelIsExact: true });
+  });
+
   test("dispatches an LLM prompt task through its selected engine", async () => {
     writeTask(
       "llm",

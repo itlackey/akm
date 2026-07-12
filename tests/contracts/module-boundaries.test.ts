@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 
 const REQUIRED_FILES = [
   "src/cli.ts",

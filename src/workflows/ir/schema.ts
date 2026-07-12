@@ -51,7 +51,6 @@ export interface FrozenLlmEngine {
   endpoint: string;
   /** Exact base model used by SDK fallbacks and inherited LLM invocations. */
   model: string;
-  timeoutMs: number | null;
   credential?: FrozenCredential;
   temperature?: number;
   maxTokens?: number;
@@ -288,7 +287,6 @@ function validateEngine(
         "provider",
         "endpoint",
         "model",
-        "timeoutMs",
         "credential",
         "temperature",
         "maxTokens",
@@ -305,12 +303,6 @@ function validateEngine(
       !engine.endpoint ||
       typeof engine.model !== "string" ||
       !engine.model ||
-      !(
-        engine.timeoutMs === null ||
-        (Number.isSafeInteger(engine.timeoutMs) &&
-          (engine.timeoutMs as number) >= 1 &&
-          (engine.timeoutMs as number) <= WORKFLOW_MAX_TIMEOUT_MS)
-      ) ||
       !Number.isInteger(engine.concurrency) ||
       (engine.concurrency as number) < 1 ||
       (engine.concurrency as number) > WORKFLOW_MAX_CONCURRENCY

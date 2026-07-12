@@ -17,7 +17,7 @@
  *   1. An LLM profile must be configured (no provider = no extraction). When
  *      absent, `resolveIndexPassLLM("graph", config)` returns `undefined`
  *      and the pass short-circuits.
- *   2. `profiles.improve.default.processes.graphExtraction.enabled !== false`
+ *   2. The selected strategy's `processes.graphExtraction.enabled !== false`
  *      — the feature-gate layer (historically v1 spec §14, since superseded by
  *      the 0.8.0 profile shape). Set to `false` to block the pass at the
  *      feature-gate layer (no network call may ever issue).
@@ -443,7 +443,7 @@ function reuseGraphNode(
  *   1. **Provider configured** — an LLM profile must be selectable. Without a
  *      configured provider, `resolveIndexPassLLM("graph", config)` returns
  *      `undefined` (the pass cannot run because there is no model to call).
- *   2. **Feature gate** — `profiles.improve.default.processes.graphExtraction.enabled`
+ *   2. **Feature gate** — the selected strategy's `processes.graphExtraction.enabled`
  *      (defaults to `true`). When `false`, no network call may issue regardless
  *      of per-pass settings.
  *   3. **Per-pass gate** — `index.graph.llm` (defaults to `true`). When
@@ -461,7 +461,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
   const invocationOwnsConnection = Object.hasOwn(ctx, "llmConfig");
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
-  // (profiles.improve.default.processes.graphExtraction.enabled). Defaults to
+  // (selected strategy's processes.graphExtraction.enabled). Defaults to
   // enabled when the key is absent.
   if (!invocationOwnsConnection && !isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
 

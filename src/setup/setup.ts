@@ -19,13 +19,14 @@ import { promises as dnsPromises } from "node:dns";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import * as p from "../cli/clack";
 import { akmInit, type InitResponse } from "../commands/sources/init";
 import type { AkmConfig, EmbeddingConnectionConfig, HarnessId, LlmConnectionConfig } from "../core/config/config";
 import {
   DEFAULT_CONFIG,
   loadUserConfig,
-  mutateConfig,
+  mutateConfigWithPrecommit,
   parseAndValidateConfigText,
   validateCompleteConfig,
 } from "../core/config/config";
@@ -155,7 +156,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function sameConfigValue(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return isDeepStrictEqual(left, right);
 }
 
 function configArrayItemKey(value: unknown): string {
@@ -169,10 +170,24 @@ function configArrayItemKey(value: unknown): string {
   return `value:${JSON.stringify(value)}`;
 }
 
-/** Reapply only setup's changes to a freshly read config under the final lock. */
-function rebaseSetupChanges(original: unknown, desired: unknown, latest: unknown): unknown {
+function setupConflict(pathParts: readonly string[]): never {
+  const field = pathParts.length > 0 ? pathParts.join(".") : "(root)";
+  throw new ConfigError(
+    `Setup config conflict at ${field}: another process changed the same field after setup started. Rerun setup against the latest config.`,
+    "INVALID_CONFIG_FILE",
+  );
+}
+
+/** Reapply setup's changes while rejecting concurrent edits to the same field. */
+export function rebaseSetupChanges(
+  original: unknown,
+  desired: unknown,
+  latest: unknown,
+  pathParts: readonly string[] = [],
+): unknown {
   if (sameConfigValue(original, desired)) return latest;
   if (Array.isArray(original) && Array.isArray(desired)) {
+    if (latest !== undefined && !Array.isArray(latest)) setupConflict(pathParts);
     const latestItems = Array.isArray(latest) ? latest : [];
     const originalByKey = new Map(original.map((item) => [configArrayItemKey(item), item]));
     const desiredByKey = new Map(desired.map((item) => [configArrayItemKey(item), item]));
@@ -180,11 +195,19 @@ function rebaseSetupChanges(original: unknown, desired: unknown, latest: unknown
     const result: unknown[] = [];
     for (const [key, desiredItem] of desiredByKey) {
       const originalItem = originalByKey.get(key);
-      result.push(
-        originalByKey.has(key)
-          ? rebaseSetupChanges(originalItem, desiredItem, latestByKey.get(key))
-          : (latestByKey.get(key) ?? desiredItem),
-      );
+      const latestItem = latestByKey.get(key);
+      if (originalByKey.has(key)) {
+        if (!latestByKey.has(key)) setupConflict([...pathParts, key]);
+        result.push(rebaseSetupChanges(originalItem, desiredItem, latestItem, [...pathParts, key]));
+      } else if (!latestByKey.has(key) || sameConfigValue(latestItem, desiredItem)) {
+        result.push(desiredItem);
+      } else {
+        setupConflict([...pathParts, key]);
+      }
+    }
+    for (const [key, originalItem] of originalByKey) {
+      if (desiredByKey.has(key) || !latestByKey.has(key)) continue;
+      if (!sameConfigValue(latestByKey.get(key), originalItem)) setupConflict([...pathParts, key]);
     }
     for (const item of latestItems) {
       const key = configArrayItemKey(item);
@@ -192,20 +215,34 @@ function rebaseSetupChanges(original: unknown, desired: unknown, latest: unknown
     }
     return result;
   }
-  if (!isPlainRecord(original) || !isPlainRecord(desired)) return desired;
+  if (!isPlainRecord(original) || !isPlainRecord(desired)) {
+    if (!sameConfigValue(latest, original) && !sameConfigValue(latest, desired)) setupConflict(pathParts);
+    return desired;
+  }
+  if (latest !== undefined && !isPlainRecord(latest)) setupConflict(pathParts);
   const result: Record<string, unknown> = isPlainRecord(latest) ? { ...latest } : {};
   for (const key of new Set([...Object.keys(original), ...Object.keys(desired)])) {
     if (!Object.hasOwn(desired, key)) {
+      if (Object.hasOwn(result, key) && !sameConfigValue(result[key], original[key]))
+        setupConflict([...pathParts, key]);
       delete result[key];
       continue;
     }
-    result[key] = rebaseSetupChanges(original[key], desired[key], result[key]);
+    result[key] = rebaseSetupChanges(original[key], desired[key], result[key], [...pathParts, key]);
   }
   return result;
 }
 
-function saveSetupConfig(original: AkmConfig, desired: AkmConfig): AkmConfig {
-  return mutateConfig((latest) => rebaseSetupChanges(original, desired, latest) as AkmConfig).config;
+async function saveSetupConfig<T>(
+  original: AkmConfig,
+  desired: AkmConfig,
+  precommit: (config: AkmConfig) => Promise<T>,
+): Promise<{ config: AkmConfig; precommit: T }> {
+  const result = await mutateConfigWithPrecommit(
+    (latest) => rebaseSetupChanges(original, desired, latest) as AkmConfig,
+    precommit,
+  );
+  return { config: result.config, precommit: result.precommit };
 }
 
 /**
@@ -497,10 +534,9 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   if (!shouldSave) bail();
 
   validateCompleteConfig(newConfig);
-  if (!opts?.noInit) {
-    await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
-  }
-  const savedConfig = saveSetupConfig(current, newConfig);
+  const { config: savedConfig } = await saveSetupConfig(current, newConfig, async () => {
+    if (!opts?.noInit) await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
+  });
 
   if (semanticSearchMode.mode === "off") {
     clearSemanticStatus();
@@ -672,11 +708,10 @@ export async function runSetupWithDefaults(opts: {
   }
 
   validateCompleteConfig(ctx.config as AkmConfig);
-  let initResult: InitResponse | undefined;
-  if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  }
-  saveSetupConfig(current, ctx.config as AkmConfig);
+  const { precommit: initResult } = await saveSetupConfig(current, ctx.config as AkmConfig, async () => {
+    if (opts.noInit) return undefined;
+    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+  });
 
   return {
     configPath: getConfigPath(),
@@ -936,11 +971,10 @@ export async function runSetupFromConfig(opts: {
   }
 
   validateCompleteConfig(merged);
-  let initResult: InitResponse | undefined;
-  if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  }
-  saveSetupConfig(current, merged);
+  const { precommit: initResult } = await saveSetupConfig(current, merged, async () => {
+    if (opts.noInit) return undefined;
+    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+  });
 
   return {
     configPath: getConfigPath(),

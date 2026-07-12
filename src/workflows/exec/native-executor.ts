@@ -1034,8 +1034,8 @@ async function resolveEnvBindings(refs: string[]): Promise<Record<string, string
  *   agent → `executeRunner` → `runAgent` (per-harness AgentCommandBuilder)
  *   sdk   → `executeRunner` → `runOpencodeSdk`
  *
- * `inherit` resolves against config: the node/step profile, else
- * `defaults.agent` (sdk when the profile is opencode-sdk), else `defaults.llm`.
+ * Every v3 invocation names a frozen engine; no live profile/default fallback
+ * is consulted during dispatch.
  */
 /**
  * Build the platform-agnostic {@link import("../../integrations/agent/builder-shared").AgentDispatchRequest}
@@ -1331,7 +1331,6 @@ function materializeFrozenLlm(
     ...(snapshot.extraParams ? { extraParams: snapshot.extraParams } : {}),
     ...(snapshot.contextLength !== undefined ? { contextLength: snapshot.contextLength } : {}),
     ...(snapshot.enableThinking !== undefined ? { enableThinking: snapshot.enableThinking } : {}),
-    ...(snapshot.timeoutMs !== null ? { timeoutMs: snapshot.timeoutMs } : {}),
     ...(apiKey ? { apiKey } : {}),
   };
   return invocation?.llm ? (deepMergeConfig(base, invocation.llm as Record<string, unknown>) as typeof base) : base;

@@ -15,7 +15,7 @@
  * `mock.module("../src/llm/memory-infer", ...)` without hitting a network.
  *
  * Locked v1 contract (#208): the LLM connection always comes from the
- * shared `akm.llm` block — never from a per-pass override. Callers obtain
+ * selected named LLM engine. Callers obtain
  * the connection via `resolveIndexPassLLM("memory", config)` and pass it
  * straight through.
  */

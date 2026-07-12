@@ -144,7 +144,7 @@ export async function runLessonQualityJudge(
   if (!llmConfig) {
     return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }
-  const judgeLlmConfig = llmConfig.judgeModel ? { ...llmConfig, model: llmConfig.judgeModel } : llmConfig;
+  const judgeLlmConfig = llmConfig;
   const JUDGE_TIMEOUT_MS = 8_000;
   try {
     const raw = await Promise.race([

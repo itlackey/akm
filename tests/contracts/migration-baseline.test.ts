@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractSection, MIGRATION_PATH, readDoc } from "./spec-helpers";
+import { extractSection, MIGRATION_PATH, readDoc } from "./contract-helpers";
 
 describe("0.8 to 0.9 engine migration contract", () => {
   const doc = readDoc(MIGRATION_PATH);

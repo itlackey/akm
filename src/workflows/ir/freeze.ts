@@ -15,6 +15,7 @@ import {
 import { resolveModel } from "../../integrations/agent/model-aliases";
 import { getBuiltinAgentProfile } from "../../integrations/agent/profiles";
 import { HARNESS_BY_ID } from "../../integrations/harnesses";
+import { workflowMaxConcurrency } from "../concurrency-policy";
 import type { ProgramUnit } from "../program/schema";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
 import { compileWorkflowPlan, compileWorkflowProgram, type WorkflowProgramCompileResult } from "./compile";
@@ -215,7 +216,6 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
       kind: "llm",
       endpoint: engine.endpoint,
       model: exactModel(config, name, engine, []) as string,
-      timeoutMs: resolved.timeoutMs,
       concurrency: engine.concurrency ?? 1,
       ...(engine.provider ? { provider: engine.provider } : {}),
       ...(resolved.credential ? { credential: resolved.credential } : {}),
@@ -272,7 +272,5 @@ function freezeGateJudge(
 
 function frozenConcurrency(config: AkmConfig): number {
   const configured = config.workflow?.maxConcurrency;
-  if (typeof configured === "number" && Number.isFinite(configured))
-    return Math.min(64, Math.max(1, Math.floor(configured)));
-  return 1;
+  return workflowMaxConcurrency(typeof configured === "number" && Number.isFinite(configured) ? configured : undefined);
 }

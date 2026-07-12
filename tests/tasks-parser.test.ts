@@ -1,8 +1,23 @@
 import { describe, expect, test } from "bun:test";
+import graphRefreshWeekly from "../src/assets/tasks/graph-refresh-weekly.yml" with { type: "text" };
 import { UsageError } from "../src/core/errors";
 import { parseTaskDocument } from "../src/tasks/parser";
 
 describe("parseTaskDocument", () => {
+  test("bundled graph refresh task is strict v2 and uses the strategy CLI", () => {
+    const task = parseTaskDocument({
+      yaml: graphRefreshWeekly,
+      filePath: "/bundle/tasks/graph-refresh-weekly.yml",
+      id: "graph-refresh-weekly",
+    });
+    expect(task.version).toBe(2);
+    expect(task.target).toEqual({
+      kind: "command",
+      cmd: ["akm", "improve", "--strategy", "graph-refresh"],
+    });
+    expect(task.timeoutMs).toBe(3_600_000);
+  });
+
   test("parses a strict v2 workflow task", () => {
     const yaml = [
       "version: 2",

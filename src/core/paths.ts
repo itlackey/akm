@@ -253,6 +253,10 @@ export function getIndexWriterLockPath(): string {
   return path.join(getDataDir(), "index.db.write.lock");
 }
 
+export function getMaintenanceBarrierPath(): string {
+  return path.join(getDataDir(), "maintenance.barrier.lock");
+}
+
 export function getWorkflowDbPath(): string {
   return path.join(getDataDir(), "workflow.db");
 }

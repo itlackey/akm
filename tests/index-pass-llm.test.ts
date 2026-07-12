@@ -224,6 +224,17 @@ describe("config loader: `index` block parsing", () => {
     expect(() => loadUserConfig()).toThrow(/typed invocation|object/i);
   });
 
+  test("accepts typed per-pass llm invocation overrides", () => {
+    writeUserConfig({
+      configVersion: "0.9.0",
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      defaults: { llmEngine: "index" },
+      index: { enrichment: { llm: { temperature: 0.2, maxTokens: 64 } } },
+    });
+    const resolved = resolveIndexPassLLM("enrichment", loadUserConfig());
+    expect(resolved).toMatchObject({ temperature: 0.2, maxTokens: 64 });
+  });
+
   test("rejects unknown keys under a pass entry", () => {
     writeUserConfig({
       configVersion: "0.9.0",

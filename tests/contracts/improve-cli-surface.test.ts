@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLI_DOC_PATH, extractSection, readDoc } from "./spec-helpers";
+import { CLI_DOC_PATH, extractSection, readDoc } from "./contract-helpers";
 
 // Pins the current documented improvement command surface.
 

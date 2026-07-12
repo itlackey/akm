@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { acquireMaintenanceBarrier } from "../src/core/maintenance-barrier";
 import {
   createMigrationBackup,
   getMigrationBackupDir,
@@ -14,6 +15,7 @@ import {
 } from "../src/core/migration-backup";
 import { getConfigPath, getDataDir, getStateDbPathInDataDir, getWorkflowDbPath } from "../src/core/paths";
 import { openStateDatabase } from "../src/core/state-db";
+import { acquireIndexWriterLease } from "../src/indexer/index-writer-lock";
 import { openWorkflowDatabase } from "../src/workflows/db";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 
@@ -147,6 +149,20 @@ describe("0.9 migration backup", () => {
     update.close();
     restoreMigrationBackup(true);
     expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+  });
+
+  test("maintenance barrier excludes new lock starts and restore contenders", async () => {
+    createMigrationBackup();
+    const release = acquireMaintenanceBarrier();
+    try {
+      expect(
+        await acquireIndexWriterLease({ mode: "try", purpose: "restore-barrier-test", maxWaitMs: 0 }),
+      ).toBeUndefined();
+      expect(() => restoreMigrationBackup(true)).toThrow(/maintenance is in progress/);
+    } finally {
+      release();
+    }
+    restoreMigrationBackup(true);
   });
 
   test("canonical database opens capture both historical databases before migrations 017 and 010", () => {

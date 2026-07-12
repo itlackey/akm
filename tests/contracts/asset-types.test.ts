@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ASSET_SPECS } from "../../src/core/asset/asset-spec";
 import { ASSET_TYPES, isAssetType } from "../../src/core/common";
-import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 
 describe("current asset type registry contract", () => {
   const section = extractSection(readDoc(ARCHITECTURE_PATH), "## Asset Types");

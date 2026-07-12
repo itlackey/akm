@@ -26,9 +26,15 @@
  * dispatches consumes the cap.
  */
 
-import os from "node:os";
 import { concurrentMap } from "../../core/concurrent";
+import { workflowMaxConcurrency } from "../concurrency-policy";
 import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
+
+export {
+  clampMaxConcurrency,
+  cpuDerivedUnitConcurrency,
+  WORKFLOW_MAX_CONCURRENCY_CEILING,
+} from "../concurrency-policy";
 
 /**
  * Hard ceiling on an EXPLICIT `workflow.maxConcurrency`. A user value above
@@ -37,33 +43,6 @@ import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
  * 64 is deliberately far above any sane fan-out width — it exists only to keep
  * a fat-fingered `100000` from spawning a runaway pool.
  */
-export const WORKFLOW_MAX_CONCURRENCY_CEILING = 64;
-
-/**
- * CPU-derived engine cap used when `workflow.maxConcurrency` is unset — the
- * original `min(16, cores−2)` formula (matching Claude Code), floored at 1.
- */
-export function cpuDerivedUnitConcurrency(cpuCount = os.cpus()?.length ?? 4): number {
-  return Math.min(16, Math.max(1, cpuCount - 2));
-}
-
-/** Clamp an explicit configured value into `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`. */
-export function clampMaxConcurrency(value: number): number {
-  return Math.min(WORKFLOW_MAX_CONCURRENCY_CEILING, Math.max(1, Math.floor(value)));
-}
-
-/**
- * Read `workflow.maxConcurrency` from config, fail-open to `undefined` (use the
- * CPU default) on any load error or a non-numeric value. Kept side-effect-free
- * and defensive: the scheduler must never fail a run because config is unwell.
- */
-function configuredMaxConcurrency(): number | undefined {
-  // Execution receives the frozen per-run policy through ScheduleOptions. This
-  // fallback deliberately never reads live config, which could otherwise alter
-  // a resumed run's dispatch width.
-  return undefined;
-}
-
 /**
  * Engine-wide ceiling on concurrent units. Precedence:
  *   1. An explicit `workflow.maxConcurrency` config value, clamped to
@@ -76,9 +55,8 @@ function configuredMaxConcurrency(): number | undefined {
  * @param configured Explicit config value seam (defaults to reading config);
  *                   pass `undefined` explicitly to force the CPU path in a test.
  */
-export function maxUnitConcurrency(cpuCount = os.cpus()?.length ?? 4, configured = configuredMaxConcurrency()): number {
-  if (configured !== undefined) return clampMaxConcurrency(configured);
-  return cpuDerivedUnitConcurrency(cpuCount);
+export function maxUnitConcurrency(cpuCount?: number, configured?: number): number {
+  return workflowMaxConcurrency(configured, cpuCount);
 }
 
 /** Lifetime unit cap per run — a runaway-loop backstop, far above real use. */

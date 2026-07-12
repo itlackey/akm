@@ -415,10 +415,6 @@
             },
             "minItems": 1
           },
-          "memoryInferenceBatchSize": {
-            "type": "integer",
-            "exclusiveMinimum": 0
-          },
           "lazyGraphExtraction": {
             "type": "boolean"
           }
@@ -5905,10 +5901,6 @@
                 },
                 "minItems": 1
               },
-              "memoryInferenceBatchSize": {
-                "type": "integer",
-                "exclusiveMinimum": 0
-              },
               "lazyGraphExtraction": {
                 "type": "boolean"
               }
@@ -11028,10 +11020,6 @@
         "contextLength": {
           "type": "integer",
           "exclusiveMinimum": 0
-        },
-        "judgeModel": {
-          "type": "string",
-          "minLength": 1
         },
         "enableThinking": {
           "type": "boolean"

@@ -44,10 +44,10 @@ export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
 /** OpenAI-compatible embedding connection config. */
 export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema>;
 
-/** LLM connection config (top-level `llm` after migration + `profiles.llm[*]`). */
+/** OpenAI-compatible LLM connection materialized from a named engine. */
 export type LlmConnectionConfig = z.infer<typeof import("./config-schema").LlmConnectionConfigSchema>;
 
-/** A named LLM profile (`profiles.llm.<name>`). */
+/** Internal LLM call shape including structured-output capability metadata. */
 export type LlmProfileConfig = z.infer<typeof import("./config-schema").LlmProfileConfigSchema>;
 
 /** A named 0.9 engine (LLM connection or agent platform). */
@@ -60,7 +60,7 @@ export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfig
 export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentProfileConfigSchema>;
 
 /**
- * Per-process config (`profiles.improve.<profile>.processes.<process>`). Most
+ * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
  * fields are process-specific — see the field comments in config-schema.ts for
  * which process each knob applies to and its default (e.g.
  * `dedup`/`judgedCache`/`minPoolSize` = consolidate;
@@ -68,13 +68,10 @@ export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentP
  * graphExtraction; `minClusterSize`/`relatednessSource` = recombine;
  * `minRecurrence`/`emitAs` = procedural).
  */
-export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema> & {
-  /** @deprecated Compile-time aid for removed pre-0.9 tests; runtime rejects it. */
-  llm?: z.infer<typeof import("./config-schema").LlmInvocationOverridesSchema> | boolean;
-};
+export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
 
 /**
- * A named improve profile (`profiles.improve.<name>`). Holds the per-process
+ * A named improve strategy (`improve.strategies.<name>`). Holds the per-process
  * `processes` map plus profile-level knobs (`autoAccept`, `limit`, `maxCycles`,
  * `symmetricValence`, `sync`). See config-schema.ts for per-field docs.
  */
@@ -135,14 +132,10 @@ export type SourceConfigEntry = z.infer<typeof import("./config-schema").SourceC
 export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfigSchema>;
 
 /**
- * Per-pass index configuration. Each named pass that uses an LLM defaults to
- * the default LLM profile; setting `llm: false` opts a single pass out. Read
- * pass-named entries via `getIndexPassConfig()`.
+ * Per-pass index configuration. Each named pass can select an engine and apply
+ * bounded invocation overrides; `enabled: false` opts a pass out.
  */
-export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema> & {
-  /** @deprecated Compile-time aid for removed pre-0.9 tests; runtime rejects it. */
-  llm?: z.infer<typeof import("./config-schema").LlmInvocationOverridesSchema> | boolean;
-};
+export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
 
 /**
  * Index-time configuration. Combines well-known feature sections
@@ -162,13 +155,4 @@ export type WorkflowConfig = z.infer<typeof import("./config-schema").WorkflowCo
  * is no parallel hand-written interface to keep in sync.
  */
 export type AkmConfig = Partial<import("./config-schema").AkmConfigParsed> &
-  Pick<import("./config-schema").AkmConfigParsed, "semanticSearchMode"> & {
-    /** @deprecated Internal migration aid. Persisted configs reject this key. */
-    profiles?: z.infer<typeof import("./config-schema").ProfilesSchema>;
-    /** @deprecated Internal migration aid. Persisted configs reject these keys. */
-    defaults?: import("./config-schema").AkmConfigParsed["defaults"] & {
-      llm?: string;
-      agent?: string;
-      improve?: string;
-    };
-  };
+  Pick<import("./config-schema").AkmConfigParsed, "semanticSearchMode">;

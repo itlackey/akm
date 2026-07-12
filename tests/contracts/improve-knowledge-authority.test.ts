@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLI_DOC_PATH, extractSection, readDoc } from "./spec-helpers";
+import { CLI_DOC_PATH, extractSection, readDoc } from "./contract-helpers";
 
 describe("issue #315 docs contract — knowledge authority over memories", () => {
   test("cli docs describe knowledge as outranking memory and derived memory when evidence is comparable", () => {

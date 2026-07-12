@@ -34,6 +34,7 @@ import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
@@ -159,6 +160,8 @@ function getExtractSessionLockPath(harness: string, sessionId: string, stateDbPa
  * extraction outright.
  */
 function acquireExtractSessionLock(lockPath: string): boolean {
+  const releaseBarrier = tryAcquireMaintenanceBarrier();
+  if (!releaseBarrier) return false;
   try {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     if (tryAcquireLockSync(lockPath, String(process.pid))) return true;
@@ -169,6 +172,8 @@ function acquireExtractSessionLock(lockPath: string): boolean {
     return tryAcquireLockSync(lockPath, String(process.pid));
   } catch {
     return true;
+  } finally {
+    releaseBarrier();
   }
 }
 
