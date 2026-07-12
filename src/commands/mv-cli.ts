@@ -316,15 +316,17 @@ export const mvCommand = defineJsonCommand({
   args: {
     ref: {
       type: "positional",
-      description: "Current asset ref, e.g. memory:projectA/old-note",
+      description: "Current asset ref (required), e.g. memory:projectA/old-note",
       // Optional in citty so run() is invoked even when omitted; re-validated
       // below to surface a structured UsageError (exit 2) instead of citty's
-      // unstructured missing-argument failure.
+      // unstructured missing-argument failure. The "(required)" note in the
+      // description keeps the rendered help honest about that contract.
       required: false,
     },
     newName: {
       type: "positional",
-      description: "New name (subdirectories allowed, e.g. projectA/new-note), or a same-type ref like memory:new-note",
+      description:
+        "New name (required; subdirectories allowed, e.g. projectA/new-note), or a same-type ref like memory:new-note",
       required: false,
     },
   },

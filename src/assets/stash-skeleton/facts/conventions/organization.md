@@ -87,7 +87,9 @@ cross-project reuse.
   vocabulary in `fact:conventions/domains`.
 - **Off-axis facets go in `tags:`, not a bare field.** The indexed FTS fields are
   name, description, tags, hints, and content (headings only — body prose is
-  not indexed) — there is **no `project` field**, so `project: projectA` in
+  not indexed by default; the opt-in `index.indexBodyOpening` flag adds just
+  the first body paragraph, at the lowest weight) — there is **no `project`
+  field**, so `project: projectA` in
   frontmatter is invisible to search. Put the off-axis facet in `tags` instead
   (a project-scoped memory adds `tags: [auth]`; a domain-scoped asset genuinely
   tied to a project adds `tags: [projectA]` sparingly).
@@ -99,14 +101,19 @@ cross-project reuse.
 
 ## Renames and evolution
 
-- **A ref is chosen once. Default to not renaming.** A rename dangles inbound
-  xrefs silently at write time — nothing catches the breakage until the next
-  `akm lint` run flags the dead frontmatter refs (`missing-ref`) — while the
-  dead ref string keeps scoring in FTS, and a renamed file is a new index
-  entry, so the asset's accumulated usage-ranking history resets.
-- If a rename is truly unavoidable, treat it as an xref-fixing operation: grep
-  the stash for the old ref string and fix every inbound reference in the same
-  pass.
+- **A ref is chosen once. Default to not renaming.** A manual rename dangles
+  inbound xrefs silently at write time — nothing catches the breakage until
+  the next `akm lint` run flags the dead frontmatter refs (`missing-ref`) —
+  while the dead ref string keeps scoring in FTS, and a manually renamed file
+  is a new index entry, so the asset's accumulated usage-ranking history
+  resets.
+- If a rename is truly unavoidable, prefer `akm mv <ref> <new-name>`
+  (Experimental): it moves the file, rewrites inbound references across the
+  writable stash in the same pass, and keeps the asset's usage-ranking
+  history. Citing files in read-only sources are reported for manual
+  follow-up. On an older CLI without `akm mv`, treat the rename as an
+  xref-fixing operation: grep the stash for the old ref string and fix every
+  inbound reference in the same pass.
 - When a project-scoped note turns out to be domain-general, **append, don't
   promote**: write a new `knowledge:<domain>/…` asset that xrefs the originating
   memory. Never rename the memory up a rung — that breaks its ref. The atomic

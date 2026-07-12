@@ -237,8 +237,11 @@ search — resolving a single ref is `akm show`'s job — and an explicit
 
 **Recommendation:** use physical subdirectories now to organize multi-project
 or multi-team stashes. They sort cleanly on disk and require no configuration.
-Treat the resulting ref as permanent — a rename breaks inbound refs and resets
-the asset's usage-ranking history.
+Treat the resulting ref as permanent — a raw file rename breaks inbound refs
+and resets the asset's usage-ranking history. When a rename is unavoidable,
+use `akm mv <ref> <new-name>` (Experimental): it rewrites inbound refs across
+the writable stash and re-keys the index row in place so the learned ranking
+history survives. See [cli.md](cli.md#mv-experimental).
 
 **Which subdirectory?** Choose the partition axis by asset **type**:
 scope-born types (`memory`, `lesson`, `task`, `env`, `secret`) take the current

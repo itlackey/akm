@@ -70,8 +70,11 @@ xrefs:
 ## Self-situating headers and canonical naming
 
 Put the one-line orientation in `description:` and the trigger conditions in
-`when_to_use:` — those are indexed fields; body prose is not (only headings
-reach the index). Then open the body with a plain title plus a one-line
+`when_to_use:` — those are indexed fields; body prose is not indexed by
+default (only headings reach the index; the opt-in `index.indexBodyOpening`
+flag adds just the first body paragraph, at the lowest weight —
+`description:`/`when_to_use:` remain the primary orientation channel). Then
+open the body with a plain title plus a one-line
 orientation naming what it is, its scope/domain, and its key entities in
 canonical spelling (`Postgres`, `OAuth`, `TLS`, `Acme`) — the entity/relation
 graph is extracted from body prose, and readers land here from `akm show`.

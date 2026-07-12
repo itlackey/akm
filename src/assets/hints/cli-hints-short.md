@@ -25,6 +25,7 @@ and `workflow list` operate within the current scope only.
 akm search "<query>"                          # Search all sources
 akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type workflow          # Filter to workflow assets
+akm search "memory:projectA/"                 # List a typed subtree (ref-prefix query; trailing slash required)
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm workflow next <ref>                       # Start or resume a workflow

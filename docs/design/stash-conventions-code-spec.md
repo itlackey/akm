@@ -1,6 +1,6 @@
 # Spec: code changes for the stash organization & back-linking conventions
 
-Status: proposed (specs only — no implementation in this change)
+Status: implemented (SPEC-1..8 landed 2026-07-11/12; SPEC-6 shipped capture-only — the rank-time demotion was dropped after the spec's own prescribed curate-golden measurement showed no crowding, with tests/search-convention-fact-demotion.test.ts pinning that invariant; see CHANGELOG.md for per-spec outcomes)
 Author: akm
 Date: 2026-07-11
 Companion: [stash-organization-conventions.md](stash-organization-conventions.md)

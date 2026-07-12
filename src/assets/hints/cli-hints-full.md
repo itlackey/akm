@@ -12,6 +12,8 @@ akm search "<query>" --source both            # Also search registries
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
+akm search "memory:projectA/"                 # Enumerate a typed subtree (ref-prefix; trailing slash required)
+akm search "knowledge:"                       # List every asset of a type
 ```
 
 | Flag | Values | Default |
@@ -22,6 +24,12 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
 | `--detail` | `brief`, `normal`, `full` | `brief` |
 | `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
+
+Ref-prefix queries (`"<type>:<prefix>/"` or a bare `"<type>:"`) return a
+deterministic listing, not a relevance ranking. A full ref without the
+trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword search —
+resolving a single ref is `akm show`'s job — and an explicit `--type` flag
+wins over the type parsed from the query.
 
 ## Curate
 
