@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "./errors";
-import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "./file-lock";
+import { probeLock, reclaimStaleLock, releaseLockIfOwned, tryAcquireLockSync } from "./file-lock";
 import { getMaintenanceBarrierPath } from "./paths";
 
 /**
@@ -21,8 +21,8 @@ export function tryAcquireMaintenanceBarrier(): (() => void) | undefined {
     if (tryAcquireLockSync(lockPath, JSON.stringify({ pid: process.pid, purpose: "maintenance-start" }))) {
       return () => releaseLockIfOwned(lockPath, process.pid);
     }
-    if (probeLock(lockPath).state !== "stale") return undefined;
-    releaseLock(lockPath);
+    const probe = probeLock(lockPath);
+    if (probe.state !== "stale" || !reclaimStaleLock(lockPath, probe)) return undefined;
   }
   return undefined;
 }
@@ -67,6 +67,19 @@ export async function withMaintenanceStartBarrierAsync<T>(run: () => Promise<T>)
 /** Register a long-lived operation atomically with restore's blocker scan. */
 export async function acquireMaintenanceActivity(name: string): Promise<() => void> {
   return withMaintenanceStartBarrierAsync(async () => {
+    const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);
+    if (!tryAcquireLockSync(lockPath, JSON.stringify({ pid: process.pid, purpose: name }))) {
+      throw new ConfigError(`Could not register AKM maintenance activity at ${lockPath}.`, "INVALID_CONFIG_FILE");
+    }
+    return () => releaseLockIfOwned(lockPath, process.pid);
+  });
+}
+
+/** Synchronous activity registration for synchronous database handle lifetimes. */
+export function acquireMaintenanceActivitySync(name: string): () => void {
+  return withMaintenanceStartBarrier(() => {
     const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);

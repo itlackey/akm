@@ -31,6 +31,7 @@ export type LockProbeResult =
       holderPid: number;
       ageMs: number;
       rawContent: string;
+      identity: LockFileIdentity;
     }
   | {
       state: "stale";
@@ -38,7 +39,39 @@ export type LockProbeResult =
       holderPid?: number;
       ageMs?: number;
       rawContent?: string;
+      identity?: LockFileIdentity;
     };
+
+interface LockFileIdentity {
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+}
+
+function readLockSnapshot(lockPath: string): { rawContent: string; identity: LockFileIdentity } | undefined {
+  let fd: number;
+  try {
+    fd = fs.openSync(lockPath, "r");
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+  try {
+    const rawContent = fs.readFileSync(fd, "utf8");
+    const stat = fs.fstatSync(fd);
+    return {
+      rawContent,
+      identity: { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs },
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function sameIdentity(left: LockFileIdentity, right: LockFileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
 
 /**
  * Atomically create a sentinel at `lockPath` with `payload` as the body.
@@ -72,33 +105,52 @@ export function tryAcquireLockSync(lockPath: string, payload: string): boolean {
  * Does NOT remove the file. Callers decide recovery policy.
  */
 export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeResult {
-  let rawContent: string;
-  let ageMs: number;
+  let snapshot: ReturnType<typeof readLockSnapshot>;
   try {
-    rawContent = fs.readFileSync(lockPath, "utf8");
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
+    snapshot = readLockSnapshot(lockPath);
+  } catch {
     return { state: "stale", reason: "unreadable" };
   }
-  try {
-    const stat = fs.statSync(lockPath);
-    ageMs = Date.now() - stat.mtimeMs;
-  } catch {
-    // Stat failed even though read succeeded — race-y removal in flight.
-    return { state: "stale", reason: "unreadable", rawContent };
-  }
+  if (!snapshot) return { state: "absent" };
+  const { rawContent, identity } = snapshot;
+  const ageMs = Date.now() - identity.mtimeMs;
 
   const holderPid = extractHolderPid(rawContent);
   if (holderPid === undefined) {
-    return { state: "stale", reason: "invalid_pid", ageMs, rawContent };
+    return { state: "stale", reason: "invalid_pid", ageMs, rawContent, identity };
   }
   if (!isProcessAlive(holderPid)) {
-    return { state: "stale", reason: "pid_dead", holderPid, ageMs, rawContent };
+    return { state: "stale", reason: "pid_dead", holderPid, ageMs, rawContent, identity };
   }
   if (opts?.staleAfterMs !== undefined && ageMs > opts.staleAfterMs) {
-    return { state: "stale", reason: "age_exceeded", holderPid, ageMs, rawContent };
+    return { state: "stale", reason: "age_exceeded", holderPid, ageMs, rawContent, identity };
   }
-  return { state: "held", holderPid, ageMs, rawContent };
+  return { state: "held", holderPid, ageMs, rawContent, identity };
+}
+
+/**
+ * Reclaim a stale sentinel only when the path still names the exact file that
+ * was probed. A stale decision never authorizes deleting a lock that another
+ * process installed in the probe/delete window.
+ */
+export function reclaimStaleLock(lockPath: string, probe: Extract<LockProbeResult, { state: "stale" }>): boolean {
+  if (probe.rawContent === undefined || probe.identity === undefined) return false;
+  let current: ReturnType<typeof readLockSnapshot>;
+  try {
+    current = readLockSnapshot(lockPath);
+  } catch {
+    return false;
+  }
+  if (!current || current.rawContent !== probe.rawContent || !sameIdentity(current.identity, probe.identity)) {
+    return false;
+  }
+  try {
+    fs.unlinkSync(lockPath);
+    return true;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
 }
 
 /**

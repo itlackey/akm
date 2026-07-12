@@ -29,7 +29,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../../core/common";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
 import { sleepSync } from "../../runtime";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
@@ -46,8 +46,7 @@ export function withSecretLock<T>(secretPath: string, fn: () => T): T {
 
   while (!tryAcquireLockSync(lockPath, String(process.pid))) {
     const probe = probeLock(lockPath);
-    if (probe.state === "stale") {
-      releaseLock(lockPath);
+    if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) {
       continue;
     }
     if (Date.now() > deadline) {

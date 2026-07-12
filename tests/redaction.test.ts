@@ -48,6 +48,14 @@ describe("environment passthrough redaction policy", () => {
         ),
         name,
       ).toBe(false);
+      for (const url of [
+        "https://example.test/oauth/callback?client_secret=secret",
+        "https://example.test/oauth/callback?session_token=secret",
+        "https://example.test/oauth/callback?code=authorization-code&state=public-state",
+        "https://example.test/oauth/callback#access_token=secret&token_type=bearer",
+      ]) {
+        expect(isEnvPassthroughValueSafeToExpose(name, url), `${name}: ${url}`).toBe(false);
+      }
     }
   });
 
@@ -55,6 +63,12 @@ describe("environment passthrough redaction policy", () => {
     expect(isEnvPassthroughValueSafeToExpose("LLM_BASE_URL", "https://example.test/v1?api-version=2026-01-01")).toBe(
       true,
     );
+    expect(
+      isEnvPassthroughValueSafeToExpose(
+        "LLM_BASE_URL",
+        "https://example.test/public/docs?api-version=2026-01-01&language=en#authentication",
+      ),
+    ).toBe(true);
     expect(isEnvPassthroughValueSafeToExpose("CUSTOM_VALUE", "ordinary-runtime-value")).toBe(false);
   });
 });

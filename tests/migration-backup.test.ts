@@ -213,6 +213,20 @@ describe("0.9 migration backup", () => {
     }
   });
 
+  test("restore refuses for the full lifetime of a state.db handle", () => {
+    createMigrationBackup();
+    const state = openStateDatabase();
+    try {
+      state
+        .prepare("INSERT INTO events(event_type, ts, metadata_json) VALUES (?, ?, ?)")
+        .run("test_event", new Date().toISOString(), "{}");
+      expect(() => restoreMigrationBackup(true)).toThrow(/maintenance-activities.*state-db/);
+    } finally {
+      state.close();
+    }
+    restoreMigrationBackup(true);
+  });
+
   test("canonical database opens capture both historical databases before migrations 017 and 010", () => {
     seedLegacyConfig();
     fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });

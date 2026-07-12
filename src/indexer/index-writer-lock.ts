@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../core/file-lock";
+import { probeLock, reclaimStaleLock, releaseLockIfOwned, tryAcquireLockSync } from "../core/file-lock";
 import { tryAcquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDbPath, getIndexWriterLockPath } from "../core/paths";
 
@@ -100,8 +100,7 @@ export async function acquireIndexWriterLease(
           return retainHeldLock(lockPath);
         }
         if (probe.state === "stale") {
-          releaseLock(lockPath);
-          continue;
+          if (reclaimStaleLock(lockPath, probe)) continue;
         }
       } finally {
         releaseBarrier();

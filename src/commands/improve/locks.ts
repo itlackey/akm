@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
+import { probeLock, reclaimStaleLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
 import { withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
 import { warn } from "../../core/warn";
 
@@ -45,9 +45,20 @@ export function tryAcquireProcessLock(
   skipIfLocked: boolean | undefined,
   lockLabel: string,
 ): "acquired" | "skipped" {
-  return withMaintenanceStartBarrier(() =>
-    tryAcquireProcessLockUnlocked(lockPath, staleAfterMs, skipIfLocked, lockLabel),
+  let recoveryEvent: Parameters<typeof appendEvent>[0] | undefined;
+  const result = withMaintenanceStartBarrier(() =>
+    tryAcquireProcessLockUnlocked(lockPath, staleAfterMs, skipIfLocked, lockLabel, (event) => {
+      recoveryEvent = event;
+    }),
   );
+  if (recoveryEvent) {
+    try {
+      appendEvent(recoveryEvent);
+    } catch {
+      /* event emission is best-effort; never block lock recovery */
+    }
+  }
+  return result;
 }
 
 function tryAcquireProcessLockUnlocked(
@@ -55,6 +66,7 @@ function tryAcquireProcessLockUnlocked(
   staleAfterMs: number,
   skipIfLocked: boolean | undefined,
   lockLabel: string,
+  onRecovered: (event: Parameters<typeof appendEvent>[0]) => void,
 ): "acquired" | "skipped" {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
@@ -90,22 +102,27 @@ function tryAcquireProcessLockUnlocked(
     : null;
 
   if (probe.state === "stale") {
-    try {
-      appendEvent({
-        eventType: "improve_lock_recovered",
-        metadata: {
-          lockName: lockLabel,
-          stalePid: lock?.pid ?? null,
-          lockedAt: lock?.startedAt ?? null,
-          recoveredAt: new Date().toISOString(),
-          lockAgeMs: probe.ageMs ?? null,
-          reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
-        },
-      });
-    } catch {
-      /* event emission is best-effort; never block lock recovery */
+    if (!reclaimStaleLock(lockPath, probe)) {
+      if (skipIfLocked) {
+        warn(`[improve] ${lockLabel} lock changed ownership during stale recovery; skipping (--skip-if-locked)`);
+        return "skipped";
+      }
+      throw new ConfigError(
+        `akm improve ${lockLabel} is already running. Delete ${lockPath} to force.`,
+        "INVALID_CONFIG_FILE",
+      );
     }
-    releaseLock(lockPath);
+    onRecovered({
+      eventType: "improve_lock_recovered",
+      metadata: {
+        lockName: lockLabel,
+        stalePid: lock?.pid ?? null,
+        lockedAt: lock?.startedAt ?? null,
+        recoveredAt: new Date().toISOString(),
+        lockAgeMs: probe.ageMs ?? null,
+        reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
+      },
+    });
     if (tryAcquireLockSync(lockPath, lockPayload())) {
       heldProcessLocks.add(lockPath);
       return "acquired";

@@ -2268,6 +2268,32 @@ steps:
     expect(JSON.stringify(rows)).toContain("[REDACTED]");
   });
 
+  test("redacts a credential-bearing URL from an allowlisted engine passthrough", async () => {
+    const credentialUrl = "https://example.test/oauth/callback?client_secret=WORKFLOW-URL-SENTINEL";
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const frozen = plan(ENV_SOLO_WF);
+    const stepPlan = frozen.steps[0];
+    const engine = frozen.execution?.engines["test-agent"];
+    if (!engine || engine.kind !== "agent") throw new Error("expected frozen agent engine");
+    engine.envPassthrough = ["LLM_BASE_URL"];
+
+    const result = await withEnv({ LLM_BASE_URL: credentialUrl }, () =>
+      executeStepPlan(stepPlan, {
+        runId: RUN_ID,
+        workflowRef: "workflow:demo",
+        params: {},
+        evidence: {},
+        resolveEnv: async () => ({}),
+        dispatcher: async () => ({ ok: true, text: `echo ${credentialUrl}` }),
+      }),
+    );
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
+
+    expect(JSON.stringify(result)).not.toContain(credentialUrl);
+    expect(JSON.stringify(rows)).not.toContain(credentialUrl);
+    expect(JSON.stringify(rows)).toContain("[REDACTED]");
+  });
+
   test("a fully-journaled step resumes to completion with a DELETED env asset — the env resolver is never invoked", async () => {
     seedRun({ steps: [{ id: "build", title: "Build" }] });
     const stepPlan = plan(ENV_SOLO_WF).steps[0];

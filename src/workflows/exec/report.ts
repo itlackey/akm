@@ -44,7 +44,7 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { acquireMaintenanceActivity } from "../../core/maintenance-barrier";
-import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
+import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import type { WorkflowRunStatus } from "../../sources/types";
 import {
   type WorkflowRunUnitRow,
@@ -1467,7 +1467,7 @@ async function collectReportedUnitSensitiveValues(workUnit: StepWorkUnit): Promi
     }
     for (const name of engine.envPassthrough) {
       const value = process.env[name];
-      if (!ENV_PASSTHROUGH_REDACTION_ALLOWLIST.has(name) && value) values.add(value);
+      if (!isEnvPassthroughValueSafeToExpose(name, value) && value) values.add(value);
     }
   };
   collectEngine(workUnit.engine);

@@ -310,6 +310,7 @@ describe("workflow report — sensitive output", () => {
     const engineSentinel = "MANUAL-REPORT-ENGINE-SENTINEL";
     const envSentinel = "MANUAL-REPORT-ENV-SENTINEL";
     const secretSentinel = "MANUAL-REPORT-SECRET-SENTINEL";
+    const allowlistedUrl = "https://example.test/oauth/callback#session_token=MANUAL-REPORT-URL-SENTINEL";
     const stash = makeStashDir();
     fs.mkdirSync(path.join(stash.dir, "secrets"), { recursive: true });
     fs.mkdirSync(path.join(stash.dir, "env"), { recursive: true });
@@ -330,22 +331,27 @@ steps:
     const fallback = p.execution?.engines["test-llm"];
     if (!fallback || fallback.kind !== "llm") throw new Error("expected frozen fallback LLM");
     fallback.credential = { names: ["MANUAL_REPORT_TEST_KEY"], required: true };
+    const agent = p.execution?.engines["test-agent"];
+    if (!agent || agent.kind !== "agent") throw new Error("expected frozen agent engine");
+    agent.envPassthrough = ["LLM_BASE_URL"];
     seedRun({ plan: p, steps: [{ id: "work" }] });
     const unitId = unitIds(p, 0, {})[0];
 
     try {
-      await withEnv({ AKM_STASH_DIR: stash.dir, MANUAL_REPORT_TEST_KEY: engineSentinel }, () =>
-        reportWorkflowUnit({
-          target: RUN_ID,
-          unitId,
-          status: "completed",
-          resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel}`,
-          summaryJudge: null,
-        }),
+      await withEnv(
+        { AKM_STASH_DIR: stash.dir, MANUAL_REPORT_TEST_KEY: engineSentinel, LLM_BASE_URL: allowlistedUrl },
+        () =>
+          reportWorkflowUnit({
+            target: RUN_ID,
+            unitId,
+            status: "completed",
+            resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrl}`,
+            summaryJudge: null,
+          }),
       );
       const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
 
-      for (const sentinel of [engineSentinel, envSentinel, secretSentinel]) {
+      for (const sentinel of [engineSentinel, envSentinel, secretSentinel, allowlistedUrl]) {
         expect(JSON.stringify(rows)).not.toContain(sentinel);
       }
       expect(JSON.stringify(rows)).toContain("[REDACTED]");
