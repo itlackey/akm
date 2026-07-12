@@ -100,7 +100,15 @@ export async function indexWrittenAssets(stashDir: string, filePaths: string[]):
         } catch {
           // stat raced a delete — index without the size, like the full walk does.
         }
-        const entryId = upsertEntry(db, entryKey, path.dirname(file), file, stashDir, entryWithSize, buildSearchText(entry));
+        const entryId = upsertEntry(
+          db,
+          entryKey,
+          path.dirname(file),
+          file,
+          stashDir,
+          entryWithSize,
+          buildSearchText(entry),
+        );
         if (entry.type === "workflow") {
           // Same contract as the full walk (indexer.ts): the renderer cached
           // the parsed document during metadata generation; persist it so the

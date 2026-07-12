@@ -138,9 +138,10 @@ describe("indexWrittenAssets", () => {
 
     const db = openExistingDatabase(getDbPath());
     try {
-      const row = db
-        .prepare("SELECT id, entry_json FROM entries WHERE file_path = ?")
-        .get(filePath) as { id: number; entry_json: string } | null;
+      const row = db.prepare("SELECT id, entry_json FROM entries WHERE file_path = ?").get(filePath) as {
+        id: number;
+        entry_json: string;
+      } | null;
       expect(row).not.toBeNull();
       expect((JSON.parse((row as { entry_json: string }).entry_json) as { type: string }).type).toBe("workflow");
       const doc = db
