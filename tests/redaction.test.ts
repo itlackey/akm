@@ -141,4 +141,9 @@ describe("collectSensitiveValues", () => {
       }
     }
   });
+
+  test("handles long malformed percent sequences without rescanning suffixes", () => {
+    const malformed = "%FF".repeat(10_000);
+    expect(redactSensitiveText(malformed, ["not-present"])).toBe(malformed);
+  });
 });

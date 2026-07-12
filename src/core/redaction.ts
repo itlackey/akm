@@ -229,6 +229,14 @@ interface NormalizedText {
   sourceLength: number;
 }
 
+function utf8SequenceLength(firstByte: number): number {
+  if (firstByte <= 0x7f) return 1;
+  if (firstByte >= 0xc2 && firstByte <= 0xdf) return 2;
+  if (firstByte >= 0xe0 && firstByte <= 0xef) return 3;
+  if (firstByte >= 0xf0 && firstByte <= 0xf4) return 4;
+  return 0;
+}
+
 function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedText {
   let text = "";
   const starts = new Int32Array(value.length);
@@ -244,25 +252,30 @@ function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedTe
   for (let index = 0; index < value.length; ) {
     if (value[index] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(index + 1, index + 3))) {
       const start = index;
-      let cursor = index;
-      const bytes: number[] = [];
-      let decoded: string | undefined;
-      while (value[cursor] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(cursor + 1, cursor + 3))) {
-        bytes.push(Number.parseInt(value.slice(cursor + 1, cursor + 3), 16));
-        cursor += 3;
-        try {
-          decoded = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
-          break;
-        } catch {
-          // Continue until a complete UTF-8 code point has been collected.
+      const firstByte = Number.parseInt(value.slice(index + 1, index + 3), 16);
+      const sequenceLength = utf8SequenceLength(firstByte);
+      if (sequenceLength > 0) {
+        const bytes = [firstByte];
+        let cursor = index + 3;
+        while (
+          bytes.length < sequenceLength &&
+          value[cursor] === "%" &&
+          /^[0-9a-f]{2}$/i.test(value.slice(cursor + 1, cursor + 3))
+        ) {
+          bytes.push(Number.parseInt(value.slice(cursor + 1, cursor + 3), 16));
+          cursor += 3;
+        }
+        if (bytes.length === sequenceLength) {
+          try {
+            const decoded = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
+            index = cursor;
+            append(decoded, start);
+            continue;
+          } catch {
+            // Treat invalid UTF-8 percent sequences as literal text.
+          }
         }
       }
-      if (decoded !== undefined) {
-        index = cursor;
-        append(decoded, start);
-        continue;
-      }
-      index = start;
     }
 
     const start = index;
