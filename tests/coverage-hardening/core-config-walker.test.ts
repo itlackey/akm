@@ -45,6 +45,70 @@ describe("configSet — z.record descent (engines.<name>)", () => {
     const next = configSet({}, "engines.my-engine.model", "gpt-4o");
     expect(next).toEqual({ engines: { "my-engine": { model: "gpt-4o" } } });
   });
+
+  test("selects agent and LLM union branches from the raw discriminator", () => {
+    expect(configSet({}, "engines.my-agent.kind", "agent")).toEqual({
+      engines: { "my-agent": { kind: "agent" } },
+    });
+    expect(configSet({}, "engines.my-llm.kind", "llm")).toEqual({
+      engines: { "my-llm": { kind: "llm" } },
+    });
+  });
+
+  test("uses an existing agent discriminator for branch-specific leaves", () => {
+    const agent = { engines: { reviewer: { kind: "agent", platform: "opencode" } } };
+    expect(configSet(agent, "engines.reviewer.workspace", "/workspace")).toEqual({
+      engines: { reviewer: { kind: "agent", platform: "opencode", workspace: "/workspace" } },
+    });
+    expect(() => configSet(agent, "engines.reviewer.endpoint", "https://example.test")).toThrow(/Unknown config key/);
+  });
+
+  test("uses an existing LLM discriminator for branch-specific leaves", () => {
+    const llm = {
+      engines: {
+        fast: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "old" },
+      },
+    };
+    expect(configSet(llm, "engines.fast.temperature", "0.4")).toEqual({
+      engines: {
+        fast: {
+          kind: "llm",
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "old",
+          temperature: 0.4,
+        },
+      },
+    });
+    expect(() => configSet(llm, "engines.fast.workspace", "/workspace")).toThrow(/Unknown config key/);
+  });
+
+  test("raw discriminators take precedence during engine-kind transitions", () => {
+    const llm = {
+      engines: {
+        engine: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "old" },
+      },
+    };
+    expect(configSet(llm, "engines.engine.kind", "agent")).toEqual({
+      engines: {
+        engine: { kind: "agent", endpoint: "https://example.test/v1/chat/completions", model: "old" },
+      },
+    });
+
+    const agent = { engines: { engine: { kind: "agent", platform: "opencode", model: "old" } } };
+    expect(configSet(agent, "engines.engine.kind", "llm")).toEqual({
+      engines: { engine: { kind: "llm", platform: "opencode", model: "old" } },
+    });
+  });
+
+  test("shared non-discriminator leaves retain their normal coercion", () => {
+    const agent = { engines: { reviewer: { kind: "agent", platform: "opencode" } } };
+    expect(configSet(agent, "engines.reviewer.model", "claude-sonnet")).toEqual({
+      engines: { reviewer: { kind: "agent", platform: "opencode", model: "claude-sonnet" } },
+    });
+    expect(configSet(agent, "engines.reviewer.timeoutMs", "120000")).toEqual({
+      engines: { reviewer: { kind: "agent", platform: "opencode", timeoutMs: 120000 } },
+    });
+  });
 });
 
 describe("configSet — boolean coercion is strictly 'true' | 'false'", () => {
