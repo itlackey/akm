@@ -7,13 +7,12 @@
  *
  * A thin policy layer over `core/concurrent.ts` (`concurrentMap`) — the
  * existing semaphore-bounded pool is generalized, not forked. The scheduler
- * owns the engine-wide limits the plan requires:
+ * owns the limits the plan requires:
  *
- *   - Engine-wide concurrency cap, applied on top of whatever per-step
- *     concurrency the workflow declares. The cap is the `workflow.maxConcurrency`
- *     akm config setting when set (clamped to
- *     `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`), else the CPU-derived default
- *     `min(16, cores − 2)` (the original Claude-Code-matching formula).
+ *   - The effective width is the minimum of the map request, the frozen
+ *     workflow cap, the selected LLM engine's frozen cap (when applicable),
+ *     and the current host's CPU-derived safety cap. Reapplying host safety at
+ *     dispatch matters when a frozen run resumes on a smaller machine.
  *   - Cooperative cancellation via AbortSignal (workers stop claiming items;
  *     the same signal is passed into each dispatch so in-flight units can be
  *     preempted too).
@@ -27,7 +26,7 @@
  */
 
 import { concurrentMap } from "../../core/concurrent";
-import { workflowMaxConcurrency } from "../concurrency-policy";
+import { cpuDerivedUnitConcurrency, workflowMaxConcurrency } from "../concurrency-policy";
 import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
 
 export {
@@ -87,6 +86,10 @@ export interface ScheduleOptions {
    * (config → CPU default) decides.
    */
   maxConcurrency?: number;
+  /** Frozen concurrency limit of the selected LLM engine, when one is used. */
+  llmConcurrency?: number;
+  /** Test seam for the current host's CPU-derived safety limit. */
+  hostConcurrency?: number;
 }
 
 /**
@@ -102,7 +105,14 @@ export async function scheduleUnits<T, R>(
   dispatch: (item: T, index: number) => Promise<R>,
   options: ScheduleOptions = {},
 ): Promise<Array<R | undefined>> {
-  const cap = options.maxConcurrency ?? maxUnitConcurrency();
-  const concurrency = Math.max(1, Math.min(options.concurrency ?? 1, cap));
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      options.concurrency ?? 1,
+      options.maxConcurrency ?? Number.POSITIVE_INFINITY,
+      options.llmConcurrency ?? Number.POSITIVE_INFINITY,
+      options.hostConcurrency ?? cpuDerivedUnitConcurrency(),
+    ),
+  );
   return concurrentMap(items, dispatch, concurrency, { signal: options.signal });
 }

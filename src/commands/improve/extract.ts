@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig, LlmProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -60,8 +60,7 @@ import {
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/repository";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import { buildHotProbationFrontmatter } from "./hot-probation";
-import { type ImproveProfileConfig, resolveProcessEnabled } from "./improve-profiles";
-import { resolveImproveStrategy } from "./improve-strategies";
+import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import {
   applySchemaSimilarityPenalty,
   loadDerivedLayerEmbeddings,

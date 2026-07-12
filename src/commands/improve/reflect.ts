@@ -57,7 +57,6 @@ import {
 } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
-import { isLlmFeatureEnabled } from "../../llm/feature-gate";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -473,17 +472,17 @@ function isStructuredCooldownSignal(stdout: string): boolean {
  * as valid proposals. Anthropic agent best practices recommend structured
  * output when the SDK supports it; this tighter fallback is the safety net.
  *
- * When `sdkMode === true`, structured output (tool-call schema) should be used
+ * For SDK runners, structured output (tool-call schema) should be used
  * instead of this fallback. That wiring is tracked separately (full SDK
  * structured-output integration); for now this tighter parser applies to all
  * modes and is the primary R-6 deliverable.
  */
-function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, sdkMode = false) {
+function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, sdkRunner = false) {
   if (!ref) return undefined;
   const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
   const targetType = ref.split(":")[0];
-  if (!looksLikeAssetContent(trimmed, sdkMode, targetType)) return undefined;
+  if (!looksLikeAssetContent(trimmed, sdkRunner, targetType)) return undefined;
   return { ref, content: trimmed };
 }
 
@@ -497,10 +496,10 @@ function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, 
  *   blocks and pure delimiter sequences as valid payloads.
  * - Heading start (`#`): must have at least 3 non-blank lines after the heading,
  *   to ensure there is actual body content and not just a title stub.
- * - In SDK mode (`sdkMode === true`): additionally requires `when_to_use:` for
+ * - For SDK runners: additionally requires `when_to_use:` for
  *   lesson types (full structured output will replace this in a future PR).
  */
-function looksLikeAssetContent(value: string, sdkMode = false, targetType?: string): boolean {
+function looksLikeAssetContent(value: string, sdkRunner = false, targetType?: string): boolean {
   if (value.startsWith("---")) {
     // YAML frontmatter must contain at least a description field.
     const fmEnd = value.indexOf("\n---", 4);
@@ -510,7 +509,7 @@ function looksLikeAssetContent(value: string, sdkMode = false, targetType?: stri
     if (!hasDescription) return false;
     // In SDK mode, lesson assets additionally require a when_to_use field.
     // Use the target ref type rather than frontmatter type: (which is non-standard).
-    if (sdkMode && targetType === "lesson") {
+    if (sdkRunner && targetType === "lesson") {
       return /^when_to_use\s*:/m.test(fmBlock);
     }
     return true;
@@ -1360,9 +1359,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Mirrors the lesson quality gate on distill proposals. The gate uses
   // `runLessonQualityJudge` from distill.ts and is gated behind either
   // `processes.reflect.qualityGate.enabled` or
-  // `processes.distill.qualityGate.enabled` on the selected strategy (the
-  // `lesson_quality_gate` flag name is the legacy alias still accepted by
-  // `isLlmFeatureEnabled`). Fail-CLOSED (07 P0-2): a judge error / no-LLM /
+  // `processes.distill.qualityGate.enabled` on the selected strategy.
+  // Fail-CLOSED (07 P0-2): a judge error / no-LLM /
   // parse failure rejects the proposal rather than passing it through.
   // G-Eval (arXiv:2303.16634) — quality judgment before admission.
   const runtimeConfig =
@@ -1376,8 +1374,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     })();
   const chatFn = options.chat ?? chatCompletion;
   const qualityGateEnabled =
-    isLlmFeatureEnabled(runtimeConfig, "proposal_quality_gate", activeStrategy) ||
-    isLlmFeatureEnabled(runtimeConfig, "lesson_quality_gate", activeStrategy);
+    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
+    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
 
   if (qualityGateEnabled && runtimeConfig) {
     const assetContent: string | null = (() => {

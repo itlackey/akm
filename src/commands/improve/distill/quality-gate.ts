@@ -121,10 +121,8 @@ export function buildJudgePrompt(
  * Run the LLM-as-judge quality gate on a proposal's content.
  *
  * Exported so reflect.ts can apply the same gate to reflect proposals (R-5 / #374).
- * Gated by the flag name `lesson_quality_gate` (or its alias
- * `proposal_quality_gate`) via {@link isLlmFeatureEnabled} — which reads
- * the selected strategy's `processes.distill.qualityGate.enabled` (and the
- * corresponding `.reflect.qualityGate.enabled` for proposals).
+ * The selected strategy's distill/reflect quality-gate setting is resolved by
+ * the caller before this function runs.
  *
  * Fail-CLOSED (07 P0-2): returns `pass: false` (score -1) on timeout, parse
  * failure, or missing LLM. Minted content that cannot be judged is rejected,

@@ -264,7 +264,7 @@ describe("workflow brief — solo step", () => {
       runId: RUN_ID,
       params: { target: "widget" },
       stepOutputs: {},
-      engines: p.execution?.engines,
+      engines: p.execution.engines,
     });
     expect(engine.ok).toBe(true);
     if (engine.ok) {
@@ -335,7 +335,12 @@ describe("workflow brief — fan-out with mixed journaled statuses", () => {
   test("surfaces per-unit journaled status and predicts every content-derived id", async () => {
     const p = plan(FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts"] };
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params,
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     expect(engine.ok).toBe(true);
     if (!engine.ok) return;
     const [ua, ub, uc] = engine.list.units;
@@ -542,7 +547,12 @@ describe("workflow brief — secret-shaped params (#13)", () => {
 describe("workflow brief — unit action states (#15)", () => {
   test("a live-claimed running unit is `claimed`; a live engine lease makes it `do_not_run`", async () => {
     const p = plan(LOOP_WF);
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -573,7 +583,12 @@ describe("workflow brief — unit action states (#15)", () => {
 
   test("a running unit silent past the window is `stale` and reclaimable", async () => {
     const p = plan(LOOP_WF);
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     const old = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -642,7 +657,12 @@ steps:
    *  but its only unit already ran to completion — the fully-terminal recovery
    *  state a required-gate block + resume (or a crash before completion) leaves. */
   function seedResumedFullyTerminal(p: WorkflowPlanGraph): { unitId: string; nodeId: string } {
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -689,7 +709,12 @@ steps:
 
   test("a non-required fully-terminal gate omits the re-block note but still emits settle", async () => {
     const p = plan(LOOP_WF); // gate criteria, not `required`
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -729,7 +754,12 @@ steps:
 
   test("a live engine lease suppresses the settle command even on a fully-terminal list", async () => {
     const p = plan(REQUIRED_GATE_WF);
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({

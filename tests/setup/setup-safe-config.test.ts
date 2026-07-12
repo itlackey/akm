@@ -209,6 +209,39 @@ describe("runSetupFromConfig — backup guarantees", () => {
     expect(entries.some((n) => /^config-.*\.json$/.test(n) && n !== "config.latest.json")).toBe(true);
     expect(entries).toContain("config.latest.json");
   });
+
+  test("creates the mandatory backup before stash initialization", async () => {
+    seedFullConfig();
+    let backupExistedAtInit = false;
+    _setAkmInitForTests(async () => {
+      backupExistedAtInit = fs.existsSync(path.join(backupDir(), "config.latest.json"));
+      return { stashDir: "/unused", created: true, configPath: getConfigPath(), defaultStashUpdated: false };
+    });
+
+    await runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }) });
+
+    expect(backupExistedAtInit).toBe(true);
+  });
+
+  test("refuses stash initialization when the mandatory backup cannot be created", async () => {
+    seedFullConfig();
+    const unusableCacheRoot = path.join(process.env.HOME as string, "cache-root-file");
+    fs.writeFileSync(unusableCacheRoot, "not a directory");
+    let initCalls = 0;
+    _setAkmInitForTests(async () => {
+      initCalls++;
+      return { stashDir: "/unused", created: true, configPath: getConfigPath(), defaultStashUpdated: false };
+    });
+
+    await withEnv({ XDG_CACHE_HOME: unusableCacheRoot }, async () => {
+      await expect(
+        runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }) }),
+      ).rejects.toThrow();
+    });
+
+    expect(initCalls).toBe(0);
+    expect((readWrittenConfig().output as Record<string, unknown>).format).toBe("json");
+  });
 });
 
 describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () => {

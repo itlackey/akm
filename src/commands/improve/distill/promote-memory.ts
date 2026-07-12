@@ -24,7 +24,6 @@ import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../..
 import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
-import { isLlmFeatureEnabled } from "../../../llm/feature-gate";
 import { createProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
 import type { AkmDistillResult } from "../distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../distill-promotion-policy";
@@ -196,7 +195,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   // D-5 / #388: Three-band system — review_needed band queues to proposal
   // queue with review_needed outcome rather than auto-rejecting.
   let knowledgeJudgeConfidence: number | undefined;
-  if (isLlmFeatureEnabled(config, "lesson_quality_gate", ctx.strategy)) {
+  if (ctx.strategy?.processes?.distill?.qualityGate?.enabled ?? true) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(resolvedPromotionContent.slice(0, 500), 3);
     const judgeResult = await runLessonQualityJudge(

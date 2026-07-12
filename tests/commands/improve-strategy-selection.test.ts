@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_ALLOWED_TYPES,
+  resolveImprovePlan,
+  resolveImproveStrategy,
   resolveProcessEnabled,
   shouldSkipRef,
-} from "../../src/commands/improve/improve-profiles";
-import { resolveImprovePlan, resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
+} from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { ConfigError } from "../../src/core/errors";

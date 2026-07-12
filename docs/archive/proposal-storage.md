@@ -120,7 +120,7 @@ The dead code path removed: the fs read/write primitives, `getProposalsRoot`,
 
 ## Knock-on notes
 
-- `docs/technical/v1-architecture-spec.md` §11.1 and `docs/migration/v1.md`
+- `docs/archive/v1-architecture-spec.md` §11.1 and `docs/archive/pre-1.0-migration.md`
   now describe the table as the store and the legacy layout as import-only;
   the contract tests pinning those sections were updated in lockstep.
 - `scripts/akm-eval` retains a read-only filesystem fallback

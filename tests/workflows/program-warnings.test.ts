@@ -4,7 +4,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { collectProgramWarnings, compileWorkflowPlan, compileWorkflowProgram } from "../../src/workflows/ir/compile";
-import { computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { parseWorkflow } from "../../src/workflows/parser";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import type { WorkflowProgram } from "../../src/workflows/program/schema";
@@ -253,8 +252,8 @@ steps:
     // Warnings are present but live on the RESULT, never on the frozen plan.
     expect(a.warnings.length).toBeGreaterThan(0);
     expect(a.plan).not.toHaveProperty("warnings");
-    // Deterministic + hash-stable regardless of the advisory channel.
-    expect(computePlanHash(a.plan)).toBe(computePlanHash(b.plan));
+    // Deterministic regardless of the advisory channel.
+    expect(a.plan).toEqual(b.plan);
   });
 });
 

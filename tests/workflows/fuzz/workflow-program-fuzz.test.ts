@@ -5,7 +5,6 @@
 import { describe, expect, test } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
 import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
-import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
 import { PROGRAM_RETRY_REASONS } from "../../../src/workflows/program/schema";
 import { fuzzSeeds, Rng, withSeed } from "./_rng";
@@ -26,7 +25,7 @@ import { fuzzSeeds, Rng, withSeed } from "./_rng";
  *   - the parser NEVER throws (returns errors);
  *   - the compiler NEVER throws on parse-ok input;
  *   - compilation is DETERMINISTIC — same program ⇒ same canonical plan JSON
- *     and the same `computePlanHash`;
+ *     and the same serialized structural draft;
  *   - the plan ROUND-TRIPS through plain JSON unchanged;
  *   - every invalid variant produces at least one validation error, and (where
  *     the category has a distinctive message) names the problem.
@@ -290,9 +289,9 @@ describe("workflow-program fuzz — valid programs parse, compile, are determini
         expect(second.ok).toBe(true);
         if (!second.ok) return;
 
-        // Determinism: identical canonical plan JSON + identical hash.
-        expect(canonicalPlanJson(second.plan)).toBe(canonicalPlanJson(first.plan));
-        expect(computePlanHash(second.plan)).toBe(computePlanHash(first.plan));
+        // Determinism: identical structural drafts across compiles.
+        expect(JSON.stringify(second.plan)).toBe(JSON.stringify(first.plan));
+        expect(second.plan).toEqual(first.plan);
 
         // Round-trip: the plan is plain JSON and survives serialize → parse.
         expect(JSON.parse(JSON.stringify(first.plan))).toEqual(first.plan);

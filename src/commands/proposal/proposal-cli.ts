@@ -458,7 +458,7 @@ const proposalDrainCommand = defineJsonCommand({
 
     // Phase 3: resolve the judgment runner when --judgment is set. Default
     // mode is llm; falls back to defaults.llm when the triage block sets
-    // neither mode nor profile (mirrors resolveValidationRunner). null when
+    // no explicit engine selection. null when
     // nothing is configured → the engine leaves deferred items unresolved and
     // emits triage_deferred.
     const judgment = args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg) : null;

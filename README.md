@@ -129,7 +129,7 @@ akm wiki create ops
 akm wiki create research                   # scaffold wikis/research/ with schema/index/log/raw/
 akm wiki stash research https://arxiv.org/abs/2404.01744  # fetch raw source into raw/
 akm wiki stash research ./notes/meeting.md # stash local notes as immutable raw
-akm wiki ingest research                   # dispatch defaults.agent to run the ingest workflow end-to-end
+akm wiki ingest research                   # dispatch defaults.engine to run the ingest workflow end-to-end
 ```
 
 akm implements [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: raw sources live in `raw/` (immutable), the agent writes synthesized pages alongside them, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. akm surfaces paths and invariants; your agent does the writing. See [docs/wikis.md](docs/wikis.md).
@@ -184,7 +184,7 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 | Feature | Description |
 | --- | --- |
 | [Search & Discovery](docs/features/search-discovery.md) | Build the index, search, curate a shortlist, and load assets by ref |
-| [Knowledge Management](docs/features/knowledge-management.md) | Capture memories, import docs, manage wikis, and store config in vaults |
+| [Knowledge Management](docs/features/knowledge-management.md) | Capture memories, import docs, manage wikis, and store protected env/secret assets |
 | [Sources & Registries](docs/features/sources-registries.md) | Connect local dirs, git repos, npm packages, and websites; browse the registry |
 | [Workflows](docs/features/workflows.md) | Structured multi-step procedures with resumable run state |
 | [The Improvement Loop](docs/features/improvement-loop.md) | Feedback, history, proposals, and automated asset improvement |

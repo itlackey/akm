@@ -60,8 +60,7 @@ import type {
   ImproveScope,
 } from "./improve";
 import { makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
-import { resolveProcessEnabled, shouldSkipRef } from "./improve-profiles";
-import type { ResolvedImprovePlan } from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveProcessEnabled, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 // The pre-loop preparation pipeline lives in ./preparation.
 import { maybeAutoTuneThreshold } from "./preparation";
@@ -722,7 +721,7 @@ export async function runImprovePostLoopStage(args: {
   /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
   budgetSignal?: AbortSignal;
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
   /**
    * #551: whether the consolidation pass (now run in the preparation stage,
@@ -935,7 +934,7 @@ export async function runImproveMaintenancePasses(args: {
   budgetSignal?: AbortSignal;
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
 }): Promise<ImproveMaintenanceResult> {
   const {

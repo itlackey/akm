@@ -32,7 +32,14 @@ import {
   unitOutcomeFromRow,
 } from "../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
-import type { IrAgentNode, IrRouteSpec, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import type {
+  FrozenEngineSnapshot,
+  IrInvocation,
+  IrRouteSpec,
+  IrStepPlan,
+  IrUnitNode,
+  WorkflowPlanGraph,
+} from "../../src/workflows/ir/schema";
 import type { ExpressionScope } from "../../src/workflows/program/expressions";
 import { getWorkflowStatus, type WorkflowNextResult } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
@@ -53,12 +60,48 @@ import { freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../_helpers/work
 
 // ── Hand-built plans for the pure work-list tests ────────────────────────────
 
+const FROZEN_ENGINES: Record<string, FrozenEngineSnapshot> = {
+  sdk: {
+    name: "sdk",
+    kind: "agent",
+    runnerKind: "sdk",
+    platform: "opencode-sdk",
+    bin: "opencode",
+    args: [],
+    workspace: null,
+    envPassthrough: [],
+    commandBuilder: "opencode-sdk",
+    fallbackLlmEngine: "llm",
+  },
+  agent: {
+    name: "agent",
+    kind: "agent",
+    runnerKind: "agent",
+    platform: "opencode",
+    bin: "opencode",
+    args: [],
+    workspace: null,
+    envPassthrough: [],
+    commandBuilder: "opencode",
+    fallbackLlmEngine: null,
+  },
+  llm: {
+    name: "llm",
+    kind: "llm",
+    endpoint: "https://example.test/v1/chat/completions",
+    model: "test-model",
+    concurrency: 1,
+  },
+};
+
+const SDK_INVOCATION: IrInvocation = { engine: "sdk", model: null, timeoutMs: 600_000 };
+
 function soloStep(instructions: string, templating: "expressions" | "verbatim" = "expressions"): IrStepPlan {
   return {
     stepId: "s1",
     title: "S1",
     sequenceIndex: 0,
-    root: { kind: "agent", id: "s1", instructions, templating, runner: "sdk", onError: "fail" },
+    root: { kind: "unit", id: "s1", instructions, templating, invocation: SDK_INVOCATION, onError: "fail" },
     gate: { kind: "gate", id: "s1.gate", stepId: "s1", criteria: [] },
   };
 }
@@ -74,11 +117,11 @@ function mapStep(instructions: string, over = "${{ params.files }}"): IrStepPlan
       over,
       reducer: "collect",
       template: {
-        kind: "agent",
+        kind: "unit",
         id: "review",
         instructions,
         templating: "expressions",
-        runner: "sdk",
+        invocation: SDK_INVOCATION,
         onError: "fail",
       },
     },
@@ -95,20 +138,28 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
     title: "S1",
     sequenceIndex: 0,
     root: {
-      kind: "agent",
+      kind: "unit",
       id: "s1",
       instructions: "Build it.",
       templating: "verbatim",
-      runner: "sdk",
+      invocation: SDK_INVOCATION,
       onError: "fail",
     },
     gate: { kind: "gate", id: "s1.gate", stepId: "s1", criteria: [] },
   };
-  const input = { runId: "run-1", params: {}, stepOutputs: {} };
+  const input = { runId: "run-1", params: {}, stepOutputs: {}, engines: FROZEN_ENGINES };
 
-  function hashOf(root: Partial<IrAgentNode>): string {
-    const step: IrStepPlan = { ...base, root: { ...(base.root as IrAgentNode), ...root } };
-    const wl = computeStepWorkList(step, input);
+  function hashOf(
+    root: Partial<IrUnitNode>,
+    invocation: Partial<IrInvocation> = {},
+    engines: Record<string, FrozenEngineSnapshot> = FROZEN_ENGINES,
+  ): string {
+    const baseRoot = base.root as IrUnitNode;
+    const step: IrStepPlan = {
+      ...base,
+      root: { ...baseRoot, ...root, invocation: { ...SDK_INVOCATION, ...invocation } },
+    };
+    const wl = computeStepWorkList(step, { ...input, engines });
     if (!wl.ok) throw new Error(wl.error);
     const u = wl.list.units[0];
     if (!u.resolved.ok) throw new Error(u.resolved.error);
@@ -117,15 +168,19 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
 
   const baseline = hashOf({});
 
-  test("profile is part of the hash", () => {
-    expect(hashOf({ profile: "reviewer" })).not.toBe(baseline);
+  test("the frozen dispatch snapshot is part of the hash", () => {
+    const engines = structuredClone(FROZEN_ENGINES);
+    const sdk = engines.sdk;
+    if (!sdk || sdk.kind !== "agent") throw new Error("expected SDK fixture");
+    sdk.workspace = "/tmp/reviewer";
+    expect(hashOf({}, {}, engines)).not.toBe(baseline);
   });
 
   test("resolved timeout is part of the hash (a unit override AND `timeout: none` both move it)", () => {
-    expect(hashOf({ timeoutMs: 5_000 })).not.toBe(baseline);
+    expect(hashOf({}, { timeoutMs: 5_000 })).not.toBe(baseline);
     // null = author's `timeout: none`, distinct from the engine default.
-    expect(hashOf({ timeoutMs: null })).not.toBe(baseline);
-    expect(hashOf({ timeoutMs: 5_000 })).not.toBe(hashOf({ timeoutMs: 9_000 }));
+    expect(hashOf({}, { timeoutMs: null })).not.toBe(baseline);
+    expect(hashOf({}, { timeoutMs: 5_000 })).not.toBe(hashOf({}, { timeoutMs: 9_000 }));
   });
 
   test("env ref NAMES are part of the hash (order-sensitive), never resolved values", () => {
@@ -140,9 +195,9 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
     expect(hashOf({ isolation: "worktree" })).not.toBe(baseline);
   });
 
-  test("runner and model remain part of the hash", () => {
-    expect(hashOf({ runner: "agent" })).not.toBe(baseline);
-    expect(hashOf({ model: "deep" })).not.toBe(baseline);
+  test("runtime kind and exact model remain part of the hash", () => {
+    expect(hashOf({}, { engine: "agent" })).not.toBe(baseline);
+    expect(hashOf({}, { model: "deep" })).not.toBe(baseline);
   });
 
   test("retry and on_error are DELIBERATELY excluded — a completed unit stays reusable across policy changes", () => {
@@ -156,7 +211,7 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
 describe("computeStepWorkList — purity + content-derived identity", () => {
   test("same inputs ⇒ byte-identical unit ids, input hashes, and prompts", () => {
     const step = soloStep("Do ${{ params.x }} for ${{ params.y }}.");
-    const input = { runId: "run-1", params: { x: "alpha", y: "beta" }, stepOutputs: {} };
+    const input = { runId: "run-1", params: { x: "alpha", y: "beta" }, stepOutputs: {}, engines: FROZEN_ENGINES };
 
     const a = computeStepWorkList(step, input);
     const b = computeStepWorkList(step, input);
@@ -179,8 +234,18 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
 
   test("fan-out identity is content-derived — independent of item order", () => {
     const step = mapStep("Review ${{ item }}.");
-    const forward = computeStepWorkList(step, { runId: "r", params: { files: ["a.ts", "b.ts"] }, stepOutputs: {} });
-    const reversed = computeStepWorkList(step, { runId: "r", params: { files: ["b.ts", "a.ts"] }, stepOutputs: {} });
+    const forward = computeStepWorkList(step, {
+      runId: "r",
+      params: { files: ["a.ts", "b.ts"] },
+      stepOutputs: {},
+      engines: FROZEN_ENGINES,
+    });
+    const reversed = computeStepWorkList(step, {
+      runId: "r",
+      params: { files: ["b.ts", "a.ts"] },
+      stepOutputs: {},
+      engines: FROZEN_ENGINES,
+    });
     expect(forward.ok && reversed.ok).toBe(true);
     if (!forward.ok || !reversed.ok) return;
 
@@ -196,14 +261,24 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
 
   test("duplicate fan-out items are a whole-list failure naming the collision", () => {
     const step = mapStep("Review ${{ item }}.");
-    const result = computeStepWorkList(step, { runId: "r", params: { files: ["dup", "dup"] }, stepOutputs: {} });
+    const result = computeStepWorkList(step, {
+      runId: "r",
+      params: { files: ["dup", "dup"] },
+      stepOutputs: {},
+      engines: FROZEN_ENGINES,
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("duplicate items (indices 0 and 1");
   });
 
   test("a non-array `over` is a whole-list failure", () => {
     const step = mapStep("Review ${{ item }}.");
-    const result = computeStepWorkList(step, { runId: "r", params: { files: "not-a-list" }, stepOutputs: {} });
+    const result = computeStepWorkList(step, {
+      runId: "r",
+      params: { files: "not-a-list" },
+      stepOutputs: {},
+      engines: FROZEN_ENGINES,
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("not an array");
   });
@@ -213,7 +288,12 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
     // referenced producer isn't in scope, so it fails at RESOLUTION — carried
     // per unit (the engine's `expression_error` outcome), never a step failure.
     const step = mapStep("Review ${{ steps.prior.output.name }} for ${{ item }}.");
-    const result = computeStepWorkList(step, { runId: "r", params: { files: ["a", "b"] }, stepOutputs: {} });
+    const result = computeStepWorkList(step, {
+      runId: "r",
+      params: { files: ["a", "b"] },
+      stepOutputs: {},
+      engines: FROZEN_ENGINES,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.list.units).toHaveLength(2);
@@ -225,7 +305,7 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
 
   test("verbatim instructions pass `${{ … }}` through as literal content (no parse, no failure)", () => {
     const step = soloStep("Literal ${{ not.parsed }} here.", "verbatim");
-    const result = computeStepWorkList(step, { runId: "r", params: {}, stepOutputs: {} });
+    const result = computeStepWorkList(step, { runId: "r", params: {}, stepOutputs: {}, engines: FROZEN_ENGINES });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const u = result.list.units[0];
@@ -235,7 +315,7 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
 
   test("gate feedback changes the prompt AND the input hash (natural re-dispatch), and the journal id", () => {
     const step = soloStep("Do the work.");
-    const base = { runId: "r", params: {}, stepOutputs: {} };
+    const base = { runId: "r", params: {}, stepOutputs: {}, engines: FROZEN_ENGINES };
     const loop1 = computeStepWorkList(step, base);
     const loop2 = computeStepWorkList(step, {
       ...base,
@@ -798,10 +878,16 @@ describe("reviewer #7 — a tampered route selection fails loudly on every surfa
   });
 
   test("report fails loudly on tampered route evidence when it finalizes the active step", async () => {
-    seedRouteRunDb(plan(ROUTE_WF), "ghost");
-    const shipStep = plan(ROUTE_WF).steps.find((s) => s.stepId === "ship");
+    const routePlan = plan(ROUTE_WF);
+    seedRouteRunDb(routePlan, "ghost");
+    const shipStep = routePlan.steps.find((s) => s.stepId === "ship");
     if (!shipStep) throw new Error("fixture: ship step missing");
-    const wl = computeStepWorkList(shipStep, { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const wl = computeStepWorkList(shipStep, {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: routePlan.execution.engines,
+    });
     if (!wl.ok) throw new Error(wl.error);
     await expect(
       reportWorkflowUnit({
@@ -824,11 +910,11 @@ function gatedStep(required = false): IrStepPlan {
     title: "Work",
     sequenceIndex: 0,
     root: {
-      kind: "agent",
+      kind: "unit",
       id: "work",
       instructions: "Do the work.",
       templating: "expressions",
-      runner: "sdk",
+      invocation: SDK_INVOCATION,
       onError: "fail",
     },
     gate: {

@@ -45,8 +45,7 @@ import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./
 import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
 import type { AkmImproveOptions, ConsolidationPassResult, ImprovePreparationResult, ImproveScope } from "./improve";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
-import { resolveProcessEnabled } from "./improve-profiles";
-import type { ResolvedImprovePlan } from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveProcessEnabled } from "./improve-strategies";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
   computeProxyAdequacy,
@@ -208,7 +207,7 @@ export async function runConsolidationPass(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
-  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   /** Budget signal forwarded to akmConsolidate for graceful drain on timeout. */
@@ -504,7 +503,7 @@ export async function runConsolidationPass(args: {
 async function runSessionExtractPass(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
-  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   seedGateAccepted: number;
@@ -789,7 +788,7 @@ export async function runImprovePreparationStage(args: {
   /** Warnings accumulated in akmImprove() prior to this stage (e.g. from the hoisted ensureIndex call). */
   initialCleanupWarnings?: string[];
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   /** Public strategy identity for run-level event metadata. */
   strategyName: string;

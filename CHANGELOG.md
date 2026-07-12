@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   contract (`start`/`next`/`complete`/`status`/`list`) are unchanged**. What
   ships:
   - **Authoring.** Orchestrated workflows are YAML programs
-    (`workflows/*.yaml`, `version: 1`) validated against a published JSON
+    (`workflows/*.yaml`, `version: 2`) validated against a published JSON
     Schema (`schemas/akm-workflow.json`) by `akm workflow validate`; scaffold
     one with `akm workflow template --yaml` or `akm workflow create
     <name>.yaml`. A closed `${{ … }}` expression language (exactly
@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     into a backend-agnostic Workflow Plan Graph IR (`src/workflows/ir/`) and
     freezes it on the run row (`plan_json` + `plan_hash`); a run executes the
     plan compiled at start, and edits to the source file require a new run.
-  - **Per-step orchestration.** A step can declare a runner, model, timeout,
+  - **Per-step orchestration.** A step can declare an engine, model, timeout,
     fan-out (`map`/`over` with a `concurrency` cap and a `collect` | `vote`
     reducer), a typed `output` JSON Schema (validated via a `runStructured`
     retry-with-feedback loop), `env` bindings (resolved through the existing
@@ -46,9 +46,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `workflow_run_units` table behind a serialized writer queue.
   - **Execution (`akm workflow run`).** A semaphore-bounded scheduler fans a
     step's units out (concurrency defaults to 1 per the local-model
-    LLM-defaults rule, capped by the engine-wide `workflow.maxConcurrency`
-    config knob — unset = `min(16, max(1, cores − 2))`, explicit values
-    clamped to `[1, 64]`), enforces per-unit
+    LLM-defaults rule and is the minimum of the map request, frozen workflow
+    limit, selected frozen LLM engine limit, and current host safety limit),
+    enforces per-unit
     timeouts (default 10 m) and run **budget ceilings** (`budget.max_tokens` /
     `budget.max_units`, seeded from the journal so they span resumes), and
     advances the run **strictly through `completeWorkflowStep`** so completion
@@ -105,14 +105,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     result extractor; agent-identity detection and the session-log provider
     list are derived from the registry, and harness-native session ids are
     journaled opportunistically for future session reuse.
-  - **Storage.** Additive `workflow.db` migrations 004–009 (unit journal,
+  - **Storage.** Additive `workflow.db` migrations 004–010 (unit journal,
     harness session ids, frozen plans + run leases, check-in heartbeats,
     attempt counter, unit claims); migrations 001–003 are untouched and linear
     workflows behave exactly as before.
 
   See "Orchestrated steps" and "Driving a run from any agent" in
   `docs/features/workflows.md`, the redesign addendum in
-  `docs/technical/akm-workflows-orchestration-plan.md`, and `STABILITY.md`
+  `docs/archive/akm-workflows-orchestration-plan.md`, and `STABILITY.md`
   (Experimental).
 - **`fable` built-in model alias** — resolves to `claude-fable-5`
   (`opencode/claude-fable-5` on opencode); recommended resolution target for
@@ -1798,7 +1798,7 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Migration
 
-- See [`docs/migration/release-notes/0.7.0.md`](docs/migration/release-notes/0.7.0.md) for the operator summary and [`docs/migration/v1.md`](docs/migration/v1.md) for the canonical per-surface delta from any 0.6.x baseline.
+- See [`docs/migration/release-notes/0.7.0.md`](docs/migration/release-notes/0.7.0.md) for the operator summary and the [archived pre-1.0 plan](docs/archive/pre-1.0-migration.md) for the historical per-surface delta from any 0.6.x baseline.
 
 ## [0.6.0] - 2026-04-23
 
@@ -1817,7 +1817,7 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Changed (breaking)
 
-- **v1 architecture refactor.** The internal architecture was rebuilt around a single minimal `SourceProvider` interface (`{ name, kind, init, path, sync? }`), a unified FTS5 index that owns search and show, and a single `writeAssetToSource` helper that owns all writes. The CLI command surface and all user-visible config keys are unchanged. See `docs/migration/v1.md` for the full guide.
+- **v1 architecture refactor.** The internal architecture was rebuilt around a single minimal `SourceProvider` interface (`{ name, kind, init, path, sync? }`), a unified FTS5 index that owns search and show, and a single `writeAssetToSource` helper that owns all writes. The CLI command surface and all user-visible config keys are unchanged. See `docs/archive/pre-1.0-migration.md` for the historical guide.
 - **Config key `stashes[]` renamed to `sources[]`.** Configs with the legacy key load with one deprecation warning and are auto-migrated in memory; the new key is persisted on the next `akm config` write. New configs should use `sources[]`. Configs that contain both keys are rejected with `ConfigError`.
 - **Error hints surface without `--verbose`.** Error classes own their `hint()` text; the regex-on-message hint chain in `cli.ts` is removed. Hints print to stderr inline alongside the error message.
 - **Registry providers loop through a uniform interface.** Context Hub is no longer a special-cased provider type. Add it as a regular git source (`akm add github:andrewyng/context-hub`) or include it as a kit in your registry index. Legacy `type: "context-hub"` entries normalize to `type: "git"` at load time.

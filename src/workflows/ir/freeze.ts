@@ -18,7 +18,13 @@ import { HARNESS_BY_ID } from "../../integrations/harnesses";
 import { workflowMaxConcurrency } from "../concurrency-policy";
 import type { ProgramUnit } from "../program/schema";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
-import { compileWorkflowPlan, compileWorkflowProgram, type WorkflowProgramCompileResult } from "./compile";
+import {
+  compileWorkflowPlan,
+  compileWorkflowProgram,
+  type WorkflowPlanDraft,
+  type WorkflowProgramCompileResult,
+  type WorkflowUnitDraft,
+} from "./compile";
 import type {
   FrozenAgentEngine,
   FrozenEngineSnapshot,
@@ -46,12 +52,8 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, config: AkmCo
   const maxConcurrency = frozenConcurrency(config);
   const programDefaults = asset.program?.defaults;
 
-  const freezeInvocation = (unit: ProgramUnit | undefined, fallbackEngine?: string): IrInvocation => {
-    const layers: EngineUseConfig[] = [
-      ...(programDefaults ? [programDefaults] : []),
-      ...(unit ? [unit] : []),
-      ...(fallbackEngine ? [{ engine: fallbackEngine }] : []),
-    ];
+  const freezeInvocation = (unit: ProgramUnit | undefined): IrInvocation => {
+    const layers: EngineUseConfig[] = [...(programDefaults ? [programDefaults] : []), ...(unit ? [unit] : [])];
     const name = selectedEngine(config, layers);
     if (!name)
       throw new ConfigError(
@@ -72,12 +74,12 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, config: AkmCo
     return { engine: name, model, timeoutMs, ...(llm ? { llm } : {}) };
   };
 
-  const freezeUnit = (node: IrUnitNode, unit?: ProgramUnit): IrUnitNode => ({
+  const freezeUnit = (node: WorkflowUnitDraft, unit?: ProgramUnit): IrUnitNode => ({
     kind: "unit",
     id: node.id,
     instructions: node.instructions,
     templating: node.templating ?? "verbatim",
-    invocation: freezeInvocation(unit, node.invocation?.engine),
+    invocation: freezeInvocation(unit),
     ...(node.schema ? { schema: node.schema } : {}),
     ...(node.retry ? { retry: node.retry } : {}),
     onError: node.onError,
@@ -139,7 +141,7 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, config: AkmCo
   };
 }
 
-function compileProgram(asset: WorkflowAsset): WorkflowPlanGraph & { warnings: import("../schema").WorkflowError[] } {
+function compileProgram(asset: WorkflowAsset): WorkflowPlanDraft & { warnings: import("../schema").WorkflowError[] } {
   if (!asset.program) throw new UsageError(`Workflow asset ${asset.ref} has no YAML program.`);
   const compiled: WorkflowProgramCompileResult = compileWorkflowProgram(asset.program);
   if (!compiled.ok)
@@ -147,7 +149,7 @@ function compileProgram(asset: WorkflowAsset): WorkflowPlanGraph & { warnings: i
   return { ...compiled.plan, warnings: compiled.warnings };
 }
 
-function compileMarkdown(asset: WorkflowAsset): WorkflowPlanGraph & { warnings: import("../schema").WorkflowError[] } {
+function compileMarkdown(asset: WorkflowAsset): WorkflowPlanDraft & { warnings: import("../schema").WorkflowError[] } {
   if (!asset.document) throw new UsageError(`Workflow asset ${asset.ref} has no source document.`);
   return { ...compileWorkflowPlan(asset.document), warnings: [] };
 }

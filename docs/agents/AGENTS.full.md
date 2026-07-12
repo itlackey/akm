@@ -134,7 +134,7 @@ akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug
 akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index, broken sources
-akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
+akm wiki ingest research                       # Dispatch defaults.engine to run the ingest workflow on this wiki
 akm wiki ingest research --engine claude --model sonnet  # Override agent engine and model
 akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout
 akm wiki remove research -y                    # Delete pages/schema/index/log; preserves raw/
@@ -259,8 +259,8 @@ akm hints                                     # Print this reference
 
 ## Tasks — Per-task timeoutMs
 
-Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
-(set under `profiles.agent.<name>.timeoutMs`) for a single task:
+Task YAML v2 supports `timeoutMs` to override the selected engine's timeout for
+a single task. Prompt tasks select a named `engine`:
 
 - `timeoutMs: null` — disable the agent kill timer (useful for long-running local-model tasks)
 - `timeoutMs: 120000` — override with a specific value in milliseconds

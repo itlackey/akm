@@ -51,7 +51,7 @@ steps:
 
 const PLAN = freezeWorkflowProgram(MAP_WF, "workflows/f.yaml");
 const STEP = PLAN.steps[0];
-const ENGINES = PLAN.execution?.engines;
+const ENGINES = PLAN.execution.engines;
 const NODE_ID = "work.unit"; // STEP.root (map).template.id
 
 // ── Pure identity properties ─────────────────────────────────────────────────
@@ -82,8 +82,18 @@ describe("replay fuzz — item-list reorder yields the same id SET", () => {
         const items = distinctJsonValues(rng, rng.range(1, 8));
         const shuffled = rng.shuffle(items);
 
-        const original = computeStepWorkList(STEP, { runId: "r", params: { items }, stepOutputs: {} });
-        const reordered = computeStepWorkList(STEP, { runId: "r", params: { items: shuffled }, stepOutputs: {} });
+        const original = computeStepWorkList(STEP, {
+          runId: "r",
+          params: { items },
+          stepOutputs: {},
+          engines: ENGINES,
+        });
+        const reordered = computeStepWorkList(STEP, {
+          runId: "r",
+          params: { items: shuffled },
+          stepOutputs: {},
+          engines: ENGINES,
+        });
         expect(original.ok).toBe(true);
         expect(reordered.ok).toBe(true);
         if (!original.ok || !reordered.ok) return;
@@ -126,7 +136,12 @@ describe("replay fuzz — duplicate canonical items fail before dispatch", () =>
         const withDup = [...base];
         withDup.splice(rng.int(withDup.length + 1), 0, dup);
 
-        const result = computeStepWorkList(STEP, { runId: "r", params: { items: withDup }, stepOutputs: {} });
+        const result = computeStepWorkList(STEP, {
+          runId: "r",
+          params: { items: withDup },
+          stepOutputs: {},
+          engines: ENGINES,
+        });
         expect(result.ok).toBe(false);
         if (!result.ok) expect(result.error).toContain("duplicate items");
       });

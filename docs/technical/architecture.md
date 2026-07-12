@@ -278,8 +278,10 @@ its symbolic credential until dispatch.
 `executeRunner()` is the sole exhaustive switch over `RunnerSpec`. Callers pass
 their own LLM handler for the LLM arm; agent and SDK arms use the harness runner.
 An explicit missing or incompatible engine is an error and never falls through to
-another configured engine. Workflow v3 plans freeze the CPU-derived or configured
-`maxConcurrency` cap, exact models, symbolic credentials, and effective timeout.
+another configured engine. Workflow v3 plans freeze the configured workflow cap,
+exact models, symbolic credentials, selected LLM-engine concurrency, and effective
+timeout. Dispatch uses the minimum of map width, frozen workflow cap, frozen
+LLM-engine cap, and the current host's CPU-derived safety cap.
 Timeout authority lives on each frozen invocation, not in engine catalog entries;
 an SDK invocation still derives its default timeout from its fallback LLM engine
 when the SDK engine does not set one.
@@ -386,10 +388,10 @@ while starting, so no operation can enter between the check and restore.
 | `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
-| `src/integrations/agent/sdk-runner.ts` | embedded SDK runner (`runAgentSdk`); no CLI binary needed when `sdkMode` is true |
-| `src/integrations/agent/pipeline.ts` | shared proposal-agent pipeline; routes to spawn or SDK based on `profile.sdkMode` |
-| `src/integrations/agent/profiles.ts` | built-in agent CLI profile registry |
-| `src/integrations/agent/config.ts` | agent config parsing and profile resolution |
+| `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded SDK runner selected by an SDK `RunnerSpec` |
+| `src/integrations/agent/runner-dispatch.ts` | exhaustive `RunnerSpec` dispatch to LLM, spawn, or SDK |
+| `src/integrations/agent/profiles.ts` | internal spawn descriptors used after agent-engine lowering |
+| `src/integrations/agent/engine-resolution.ts` | named engine resolution and `RunnerSpec` lowering |
 | `src/integrations/agent/detect.ts` | PATH-based agent CLI detection for `akm setup` |
 
 ---

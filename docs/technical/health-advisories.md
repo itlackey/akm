@@ -12,7 +12,7 @@ and whether to act. Some `warn`s below are *adjudicated, expected* states — tr
 | `state-db-round-trip` | Append/read probe against state.db failed. | Check disk/permissions on the state.db path; the store is unwritable. |
 | `task-log-backing` | task_history rows reference log files missing on disk. | Logs were pruned/moved out from under the DB; safe to ignore if intentional, else restore the log dir. |
 | `active-runs` | A task run has exceeded the stale threshold (>15 min). | Inspect with `akm tasks list`; a lane is likely wedged — kill/re-run it. |
-| `agent-profile` | Configured agent CLI is missing on PATH or `--version` fails. | Install/fix the agent binary, or correct `defaults.agent` / `profiles.agent` in config. |
+| `agent-profile` | Configured agent CLI is missing on PATH or `--version` fails. | Install/fix the agent binary, or correct `defaults.engine` / `engines` in config. |
 | `task-fail-rate` | ≥5% of scheduled task runs failed in the window (exit 143/70 recurring). | Triage as a bug: `akm tasks doctor`, inspect failing lane logs; exit-143 = killed/timeout, exit-70 = internal error. |
 | `stash-git-exposure` | `env/` or `secrets/` assets are git-tracked **and** a remote is set — `git push` can leak keys. | `git rm --cached` the files, add `env/`+`secrets/` to `.gitignore` (a rule alone does not untrack). |
 | `semantic-search-runtime` | Semantic search is blocked; often a configured remote embedding endpoint is down. | Restore the endpoint, or set `semanticSearchMode` to `off`, or drop `embedding.endpoint` to use the local model. |

@@ -446,7 +446,7 @@ export async function buildWorkflowBrief(target: string): Promise<WorkflowBrief>
       runId: run.id,
       params: run.params,
       stepOutputs,
-      ...(plan.execution ? { engines: plan.execution.engines } : {}),
+      engines: plan.execution.engines,
       gateLoop,
       ...(gateFeedback ? { gateFeedback } : {}),
     });
@@ -566,7 +566,7 @@ function toBriefUnit(
   journaled: WorkflowRunUnitRow | undefined,
   ctx: { stale: boolean; leaseLive: boolean },
 ): WorkflowBriefUnit {
-  if (!unit.engine || !unit.invocation || unit.runner === "inherit") {
+  if (!unit.engine || !unit.invocation) {
     throw new UsageError(`Unit "${unit.unitId}" has no complete frozen engine attribution.`);
   }
   const action = deriveUnitAction(unit, journaled, ctx);

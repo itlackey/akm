@@ -14,8 +14,6 @@ import { resolveAssetPath } from "../../sources/resolve";
 import type { WorkflowParameter, WorkflowStepDefinition } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
 import { formatWorkflowErrors } from "../authoring/authoring";
-import { compileWorkflowPlan, compileWorkflowProgram } from "../ir/compile";
-import type { WorkflowPlanGraph } from "../ir/schema";
 import { parseWorkflow } from "../parser";
 import { parseWorkflowProgram } from "../program/parser";
 import { isWorkflowProgramPath, projectProgramParameters, projectProgramStepDefinitions } from "../program/project";
@@ -42,34 +40,11 @@ export type WorkflowAsset = {
   /**
    * Parsed YAML workflow *program* (redesign addendum, R1). Present when the
    * asset is a YAML orchestration program under `workflows/`; undefined for
-   * markdown workflows. `startWorkflowRun` compiles it via
-   * `compileWorkflowProgram` (falling back to `compileWorkflowPlan(document)`)
-   * when freezing the run's plan — see {@link compileWorkflowAssetPlan}.
+   * markdown workflows. The freeze boundary compiles and resolves it when a
+   * run starts.
    */
   program?: WorkflowProgram;
 };
-
-/**
- * Compile a loaded workflow asset into the plan graph that gets frozen on the
- * run row. YAML programs compile via `compileWorkflowProgram` with full
- * expression validation; markdown documents compile via `compileWorkflowPlan`
- * (linear workflows — the stable contract — produce the same linear plan as
- * today). Exactly one of `program` / `document` is set by this loader.
- */
-export function compileWorkflowAssetPlan(asset: WorkflowAsset): WorkflowPlanGraph {
-  if (asset.program) {
-    const compiled = compileWorkflowProgram(asset.program);
-    if (!compiled.ok) {
-      throw new UsageError(formatWorkflowErrors(asset.path, compiled.errors));
-    }
-    return compiled.plan;
-  }
-  if (asset.document) {
-    return compileWorkflowPlan(asset.document);
-  }
-  // Unreachable for assets produced by loadWorkflowAsset; guards hand-built ones.
-  throw new UsageError(`Workflow asset ${asset.ref} carries neither a parsed document nor a program to compile.`);
-}
 
 /**
  * Resolve a `workflow:<name>` ref to a fully-projected {@link WorkflowAsset}.

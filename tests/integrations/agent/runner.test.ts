@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { resolveProcessEnabled } from "../../../src/commands/improve/improve-profiles";
+import { resolveProcessEnabled } from "../../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../../src/core/config/config";
 import {
   isProcessEnabled,
+  resolveDefaultLlmRunner,
   resolveImproveProcessRunner,
   resolveRunner,
-  resolveValidationRunner,
 } from "../../../src/integrations/agent/runner";
 
 function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
@@ -119,10 +119,10 @@ describe("resolveRunner", () => {
   });
 });
 
-describe("resolveValidationRunner", () => {
+describe("validation engine selection", () => {
   test("falls back to defaults.llmEngine when no validation process is configured", () => {
     const config = makeEngineConfig();
-    const spec = resolveValidationRunner(config);
+    const spec = resolveDefaultLlmRunner(config);
     expect(spec?.kind).toBe("llm");
     if (spec?.kind === "llm") {
       expect(spec.connection.model).toBe("gpt-4o-mini");

@@ -25,7 +25,7 @@
  * lives in the config tree — that mapping is private to this module.
  */
 
-import type { AkmConfig, ImproveProfileConfig } from "../core/config/config";
+import type { AkmConfig } from "../core/config/config";
 
 /** Locked v1 feature keys, kept for backward-compat at the call-site API level. */
 export type LlmFeatureKey =
@@ -45,32 +45,13 @@ export type LlmFeatureKey =
  */
 // Defaults below mirror the legacy LlmFeatureFlags docstrings so existing
 // behaviour is preserved when a config is silent on a flag.
-const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig, strategy?: ImproveProfileConfig) => boolean> = {
-  // Legacy default: false → memory_consolidation only runs when explicitly enabled.
-  memory_consolidation: (_cfg, strategy) => strategy?.processes?.consolidate?.enabled ?? false,
-  // Unified gate: replaces the legacy `feedback_distillation` key.
-  // The orchestration gate (planner) and the LLM-call gate now share the same
-  // source of truth: `processes.distill.enabled`. Default: true (matches the
-  // built-in `default` profile).
-  distill: (_cfg, strategy) => strategy?.processes?.distill?.enabled ?? true,
+const FEATURE_LOCATION: Partial<Record<LlmFeatureKey, (cfg: AkmConfig) => boolean>> = {
   // Legacy default: true
   memory_inference: (cfg) => cfg.index?.memory?.enabled ?? true,
   // Legacy default: true
   graph_extraction: (cfg) => cfg.index?.graph?.enabled ?? true,
   // Legacy default: false
   metadata_enhance: (cfg) => cfg.index?.metadataEnhance?.enabled ?? false,
-  // Default ON since R3 (docs/design/improve-self-learning-analysis.md G5):
-  // distill is a primary acquisition path, so the gate guards minted content by
-  // default. The judge fails CLOSED (07 P0-2): no LLM / timeout / parse failure
-  // reject the proposal rather than passing it through — an unjudgeable proposal
-  // must not slip into the stash. Opt out via
-  // improve.strategies.<name>.processes.distill.qualityGate.enabled: false.
-  lesson_quality_gate: (_cfg, strategy) => strategy?.processes?.distill?.qualityGate?.enabled ?? true,
-  // Legacy default: false
-  proposal_quality_gate: (_cfg, strategy) => strategy?.processes?.reflect?.qualityGate?.enabled ?? false,
-  // Legacy default: false
-  memory_contradiction_detection: (_cfg, strategy) =>
-    strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
   // Always on at the LLM-wrapper level. Enablement is decided ONCE at the
   // extract entry point (`akmExtract`): the `extract.enabled` process toggle
   // gates extract as a STAGE of `akm improve` (the active improve strategy, per
@@ -90,18 +71,21 @@ const FEATURE_LOCATION: Record<LlmFeatureKey, (cfg: AkmConfig, strategy?: Improv
 export function isLlmFeatureEnabled(
   config: AkmConfig | undefined,
   feature: LlmFeatureKey,
-  strategy?: ImproveProfileConfig,
+  improveEnabled?: boolean,
 ): boolean {
   if (!config) return false;
+  // Improve resolves enablement from its selected strategy and passes the
+  // decision in. This module does not own a second improve config lookup.
+  if (improveEnabled !== undefined) return improveEnabled;
   const resolver = FEATURE_LOCATION[feature];
   if (!resolver) return false;
-  return resolver(config, strategy);
+  return resolver(config);
 }
 
 /** Optional knobs for `tryLlmFeature`. */
 export interface TryLlmFeatureOptions {
-  /** Active improve strategy for improve-process feature gates. */
-  strategy?: ImproveProfileConfig;
+  /** Enablement already resolved by the owning command (notably improve). */
+  enabled?: boolean;
   /**
    * Hard timeout in milliseconds. Defaults to 600_000 (10 minutes) — generous
    * enough for any local model on a single-threaded server. Pass `0` or a
@@ -147,7 +131,7 @@ export async function tryLlmFeature<T>(
   const resolveFallback = async (): Promise<T> =>
     typeof fallback === "function" ? await (fallback as () => Promise<T> | T)() : fallback;
 
-  if (!isLlmFeatureEnabled(config, feature, opts?.strategy)) {
+  if (!isLlmFeatureEnabled(config, feature, opts?.enabled)) {
     opts?.onFallback?.({ feature, reason: "disabled" });
     return resolveFallback();
   }

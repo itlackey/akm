@@ -282,7 +282,7 @@ scripts/akm-eval/bin/akm-eval-run --suite judge-calibration \
   --akm /path/to/akm/dist/cli.js --format md
 ```
 
-When `profiles.improve.default.processes.distill.enabled` is
+When `improve.strategies.default.processes.distill.enabled` is
 disabled in the test env the judge returns `skipped` for every probe —
 that's expected; the case scores low but the runner machinery and the
 metrics block still work.
@@ -330,8 +330,8 @@ two-sandbox ablation against the same source stash — graph extraction on
 vs. off — and reports per-metric deltas (retrieval hit@K, precision@K,
 contradiction precision/recall, latency, and a proxy token-cost). The off
 side is gated via a planted `config.json` that sets both
-`profiles.improve.default.processes.graphExtraction.enabled: false` and
-`index.graph.llm: false`.
+`improve.strategies.default.processes.graphExtraction.enabled: false` and
+`index.graph.enabled: false`.
 
 Outputs land under `<stash>/.akm/evals/ablations/<eval-run-id>/` so they
 never collide with the main `runs/` namespace. See

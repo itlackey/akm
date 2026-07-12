@@ -30,8 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
-import { resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
-import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
+import { resolveImproveStrategy, resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 // Imported from the module under test (now shipped).
 import { akmRecombine } from "../../src/commands/improve/recombine";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";

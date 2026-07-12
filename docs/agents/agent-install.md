@@ -43,15 +43,14 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 
 # Initialize and configure in one step (no prompts)
 akm setup --config '{
-  "profiles": {
-    "llm": {
-      "default": {
-        "endpoint": "http://localhost:11434/v1/chat/completions",
-        "model": "llama3.2"
-      }
+  "engines": {
+    "default": {
+      "kind": "llm",
+      "endpoint": "http://localhost:11434/v1/chat/completions",
+      "model": "llama3.2"
     }
   },
-  "defaults": { "llm": "default" }
+  "defaults": { "llmEngine": "default" }
 }'
 
 akm index
@@ -111,33 +110,31 @@ akm setup --yes
 akm setup --yes --dir /path/to/stash
 
 # Pre-configure with known settings (no prompts)
-akm setup --config '{"profiles":{"llm":{"default":{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}}},"defaults":{"llm":"default"}}'
+akm setup --config '{"engines":{"default":{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}},"defaults":{"llmEngine":"default"}}'
 
 # Pre-configure LLM + agent connection in one step
 akm setup --config '{
-  "profiles": {
-    "llm": {
-      "default": {
-        "endpoint": "https://api.openai.com/v1/chat/completions",
-        "model": "gpt-4o-mini",
-        "apiKey": "'$OPENAI_API_KEY'"
-      }
+  "engines": {
+    "default": {
+      "kind": "llm",
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o-mini",
+      "apiKey": "$OPENAI_API_KEY"
     },
-    "agent": {
-      "opencode": { "platform": "opencode-sdk", "model": "gpt-4o" }
-    }
+    "opencode": { "kind": "agent", "platform": "opencode-sdk", "model": "gpt-4o", "llmEngine": "default" }
   },
-  "defaults": { "llm": "default", "agent": "opencode" }
+  "defaults": { "llmEngine": "default", "engine": "opencode" }
 }'
 
 # Probe the configured endpoint after writing (verifies connectivity)
-akm setup --config '{"profiles":{"llm":{"default":{...}}}}' --probe
+akm setup --config '{"engines":{"default":{"kind":"llm",...}}}' --probe
 ```
 
 The `--config` flag accepts a JSON object with any of these top-level keys:
-`stashDir`, `profiles`, `defaults`, `embedding`, `semanticSearchMode`, `output`.
-(Agent and LLM profiles live under `profiles.agent.*` and `profiles.llm.*`;
-the selected defaults live under `defaults.agent` / `defaults.llm`.)
+`stashDir`, `engines`, `defaults`, `improve`, `embedding`,
+`semanticSearchMode`, `output`, `sources`, and `registries`. Agent and LLM
+engines share `engines.*`; selections live under `defaults.engine`,
+`defaults.llmEngine`, and `defaults.improveStrategy`.
 It **merges** with the existing config rather than replacing it, so
 subsequent runs are safe to use in idempotent scripts.
 
@@ -145,7 +142,7 @@ Verify:
 
 ```sh
 akm config get stashDir
-akm config get profiles.llm.default
+akm config get engines.default
 ```
 
 ## 4. Configure Semantic Search (Local Embeddings)

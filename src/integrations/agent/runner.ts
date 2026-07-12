@@ -46,11 +46,6 @@ export function resolveDefaultLlmRunner(config: AkmConfig, timeoutMs?: number | 
   };
 }
 
-/** Structural validation is engine-free; this compatibility-free helper only selects an LLM when one exists. */
-export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
-  return resolveDefaultLlmRunner(config);
-}
-
 /** Resolve a triage judgment's final engine selection. Explicit wrong engines never fall back. */
 export function resolveTriageJudgmentRunner(
   judgment: Pick<ImproveProcessConfig, "engine" | "model" | "timeoutMs" | "llm"> | undefined,

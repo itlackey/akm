@@ -59,6 +59,19 @@ describe("scheduleUnits", () => {
     expect(probe.peak()).toBe(2);
   });
 
+  test("applies the minimum of map, frozen workflow, selected LLM, and current host limits", async () => {
+    for (const [expected, options] of [
+      [2, { concurrency: 2, maxConcurrency: 8, llmConcurrency: 7, hostConcurrency: 6 }],
+      [3, { concurrency: 8, maxConcurrency: 3, llmConcurrency: 7, hostConcurrency: 6 }],
+      [4, { concurrency: 8, maxConcurrency: 7, llmConcurrency: 4, hostConcurrency: 6 }],
+      [5, { concurrency: 8, maxConcurrency: 7, llmConcurrency: 6, hostConcurrency: 5 }],
+    ] as const) {
+      const probe = concurrencyProbe();
+      await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, options);
+      expect(probe.peak()).toBe(expected);
+    }
+  });
+
   test("concurrency wider than the item list never over-schedules — peak is capped at the item count", async () => {
     // A declared/cap concurrency far above the number of items must not spin up
     // more in-flight dispatches than there are items to dispatch.
@@ -143,7 +156,10 @@ describe("scheduleUnits — workflow.maxConcurrency config knob", () => {
     expect(loadConfig().workflow?.maxConcurrency).toBe(2);
 
     const probe = concurrencyProbe();
-    await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, { concurrency: 8 });
+    await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, {
+      concurrency: 8,
+      hostConcurrency: 8,
+    });
     expect(probe.peak()).toBe(8);
   });
 

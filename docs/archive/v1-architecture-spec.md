@@ -390,7 +390,7 @@ field. The contract is:
   pipeline.
 - The legacy registry boolean `curated` is removed in v1. Legacy registry
   JSON containing `curated` parses and ignores the key (see §3.3 and
-  `docs/migration/v1.md`).
+  `docs/archive/pre-1.0-migration.md`).
 
 ```ts
 // src/core/types.ts

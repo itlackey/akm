@@ -155,7 +155,7 @@ function stepUnitIds(plan: WorkflowPlanGraph, stepIndex: number, params: Record<
   if (!computed.ok) throw new Error(computed.error);
   // Only the fields the parity harness reads.
   return computed.list.units.map((u) => {
-    if (!u.engine || !u.invocation || u.runner === "inherit") throw new Error("fixture requires frozen attribution");
+    if (!u.engine || !u.invocation) throw new Error("fixture requires frozen attribution");
     return {
       unitId: u.unitId,
       nodeId: u.nodeId,
@@ -340,7 +340,13 @@ async function seedCrashedLoop1(
   plan: WorkflowPlanGraph,
   feedback: { feedback: string; missing: string[] },
 ): Promise<void> {
-  const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+  const computed = computeStepWorkList(plan.steps[0], {
+    runId: RUN_ID,
+    params: {},
+    stepOutputs: {},
+    engines: plan.execution.engines,
+    gateLoop: 1,
+  });
   if (!computed.ok) throw new Error(computed.error);
   const unit = computed.list.units[0];
   if (!unit.resolved.ok) throw new Error(unit.resolved.error);

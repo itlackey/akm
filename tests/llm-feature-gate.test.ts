@@ -1,5 +1,5 @@
 /**
- * Per-feature LLM gate seam (v1 spec §14, #227).
+ * Per-feature bounded LLM-call seam (#227).
  *
  * Locks:
  *   - `isLlmFeatureEnabled` honours per-feature defaults: currently
@@ -14,6 +14,7 @@
  *     `"disabled" | "timeout" | "error"`.
  */
 import { describe, expect, test } from "bun:test";
+import { resolveProcessEnabled } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { isLlmFeatureEnabled, LlmFeatureTimeoutError, tryLlmFeature } from "../src/llm/feature-gate";
 
@@ -78,6 +79,11 @@ function strategyFrom(config: AkmConfig) {
   return config.improve?.strategies?.default;
 }
 
+function improveEnabled(config: AkmConfig, key: FeatureKey): boolean | undefined {
+  if (key !== "distill") return undefined;
+  return resolveProcessEnabled("distill", strategyFrom(config) ?? {});
+}
+
 describe("isLlmFeatureEnabled", () => {
   test("returns false when no llm config is present", () => {
     expect(isLlmFeatureEnabled(undefined, "metadata_enhance")).toBe(false);
@@ -89,7 +95,7 @@ describe("isLlmFeatureEnabled", () => {
     // 0.8.0 unified `feedback_distillation` into the `distill` gate (default true).
     expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
-    expect(isLlmFeatureEnabled(cfg, "distill")).toBe(true);
+    expect(resolveProcessEnabled("distill", {})).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "metadata_enhance")).toBe(false);
   });
 
@@ -101,8 +107,8 @@ describe("isLlmFeatureEnabled", () => {
   test("returns true only on literal boolean true", () => {
     const enabled = configWith({ distill: true });
     const disabled = configWith({ distill: false });
-    expect(isLlmFeatureEnabled(enabled, "distill", strategyFrom(enabled))).toBe(true);
-    expect(isLlmFeatureEnabled(disabled, "distill", strategyFrom(disabled))).toBe(false);
+    expect(resolveProcessEnabled("distill", strategyFrom(enabled) ?? {})).toBe(true);
+    expect(resolveProcessEnabled("distill", strategyFrom(disabled) ?? {})).toBe(false);
   });
 });
 
@@ -193,7 +199,7 @@ describe("tryLlmFeature", () => {
       {
         ok: false,
       },
-      { strategy: strategyFrom(config) },
+      { enabled: improveEnabled(config, "distill") },
     );
     expect(result).toEqual({ ok: true });
   });
@@ -263,25 +269,25 @@ describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)",
     test(`${key}: defaults correctly when no profile is configured`, () => {
       const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp" };
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });
 
     test(`${key}: defaults correctly when key is absent`, () => {
       const cfg = configWith({});
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });
 
     test(`${key}: literal true → enabled`, () => {
       const cfg = configWith({ [key]: true });
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any, strategyFrom(cfg))).toBe(true);
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(true);
     });
 
     test(`${key}: literal false → disabled`, () => {
       const cfg = configWith({ [key]: false });
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any, strategyFrom(cfg))).toBe(false);
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(false);
     });
   }
 });
@@ -299,6 +305,7 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
           return "real";
         },
         "fallback",
+        key === "distill" ? { enabled: true } : undefined,
       );
       if (DEFAULT_ENABLED_KEYS.has(key)) {
         expect(result).toBe("real");
@@ -317,7 +324,7 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
         cfg,
         async () => "real",
         "fallback",
-        { strategy: strategyFrom(cfg) },
+        { enabled: improveEnabled(cfg, key) },
       );
       expect(result).toBe("real");
     });
@@ -332,7 +339,7 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
           throw new Error("boom");
         },
         "fallback",
-        { strategy: strategyFrom(cfg) },
+        { enabled: improveEnabled(cfg, key) },
       );
       expect(result).toBe("fallback");
     });

@@ -3,26 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { compileWorkflowPlan, compileWorkflowProgram } from "../../src/workflows/ir/compile";
+import { compileWorkflowPlan, compileWorkflowProgram, type WorkflowPlanDraft } from "../../src/workflows/ir/compile";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { WORKFLOW_IR_VERSION, type WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflow } from "../../src/workflows/parser";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import type { WorkflowProgram } from "../../src/workflows/program/schema";
 import type { WorkflowDocument, WorkflowError } from "../../src/workflows/schema";
+import { freezeMarkdownWorkflow, freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
- * Pre-freeze compilers. Both frontends lower into the same plan graph before
- * Workflow Plan Graph:
+ * Pre-freeze compilers. Both frontends lower into the same structural draft:
  *
- *   - classic linear markdown → one `agent` node per step, runner inherited,
- *     fail-fast (the stable CLI contract, golden-pinned below);
+ *   - classic linear markdown -> one fail-fast unit per step;
  *   - YAML workflow programs → full expression validation (closed grammar,
  *     earlier-step references, whole-value contexts, item scoping) with
- *     compile-time `defaults` merging so the frozen plan is self-contained.
- *
- * Plus `computePlanHash`: the sha256 of the plan's canonical JSON that
- * `workflow start` freezes onto the run row (migration 006).
+ *     source selectors retained for the single resolve/freeze boundary.
  */
 
 function parseMarkdown(markdown: string): WorkflowDocument {
@@ -41,7 +37,7 @@ function parseProgram(yamlText: string): WorkflowProgram {
   return result.program;
 }
 
-function compileProgramOk(yamlText: string): WorkflowPlanGraph {
+function compileProgramOk(yamlText: string): WorkflowPlanDraft {
   const result = compileWorkflowProgram(parseProgram(yamlText));
   if (!result.ok) {
     throw new Error(`compile failed: ${result.errors.map((e) => `${e.line}: ${e.message}`).join(" | ")}`);
@@ -78,9 +74,8 @@ Deploy the artifact.
 `;
 
 describe("compileWorkflowPlan — linear markdown pre-freeze golden", () => {
-  test("compiles to the golden linear plan: agent per step, runner inherit, fail-fast", () => {
+  test("compiles to the golden linear structural plan", () => {
     expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD))).toEqual({
-      irVersion: 3,
       title: "Ship it",
       steps: [
         {
@@ -88,11 +83,10 @@ describe("compileWorkflowPlan — linear markdown pre-freeze golden", () => {
           title: "Build",
           sequenceIndex: 0,
           root: {
-            kind: "agent",
+            kind: "unit",
             id: "build",
             instructions: "Build the artifact.",
             templating: "verbatim",
-            runner: "inherit",
             onError: "fail",
             source: { path: "workflows/test.md", start: 7, end: 8 },
           },
@@ -103,11 +97,10 @@ describe("compileWorkflowPlan — linear markdown pre-freeze golden", () => {
           title: "Deploy",
           sequenceIndex: 1,
           root: {
-            kind: "agent",
+            kind: "unit",
             id: "deploy",
             instructions: "Deploy the artifact.",
             templating: "verbatim",
-            runner: "inherit",
             onError: "fail",
             source: { path: "workflows/test.md", start: 16, end: 17 },
           },
@@ -117,9 +110,9 @@ describe("compileWorkflowPlan — linear markdown pre-freeze golden", () => {
     });
   });
 
-  test("targets IR version 3", () => {
+  test("keeps executable versioning out of the unresolved draft", () => {
     expect(WORKFLOW_IR_VERSION).toBe(3);
-    expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD)).irVersion).toBe(3);
+    expect(compileWorkflowPlan(parseMarkdown(LINEAR_MD))).not.toHaveProperty("irVersion");
   });
 
   test("compilation is deterministic (same document → same plan)", () => {
@@ -187,29 +180,25 @@ steps:
 `;
 
 describe("compileWorkflowProgram — YAML program golden", () => {
-  test("compiles to the golden plan with defaults merged into every unit", () => {
+  test("compiles the structural plan without executable engine fields", () => {
     const plan = compileProgramOk(PROGRAM_YAML);
-    expect(plan.irVersion).toBe(3);
     expect(plan.title).toBe("review-changes");
     expect(plan.params).toEqual(["changed_files"]);
     expect(plan.steps).toHaveLength(5);
 
     const [discover, review, triage, ship, rework] = plan.steps;
 
-    // Step 1: source-independent defaults are merged before engine freezing.
+    // Step 1: selectors remain on the parsed source until engine freezing.
     expect(discover).toEqual({
       stepId: "discover",
       title: "Discover targets",
       sequenceIndex: 0,
       root: {
-        kind: "agent",
+        kind: "unit",
         id: "discover",
         instructions: "List the files that need review for ${{ params.changed_files }}.\n",
         templating: "expressions",
-        runner: "inherit",
-        model: "balanced",
         schema: { type: "object", properties: { files: { type: "array" } }, required: ["files"] },
-        timeoutMs: 600_000,
         onError: "continue",
         source: expect.objectContaining({ path: "workflows/test.yaml" }),
       },
@@ -226,13 +215,10 @@ describe("compileWorkflowProgram — YAML program golden", () => {
         id: "review.map",
         over: "${{ steps.discover.output.files }}",
         template: {
-          kind: "agent",
+          kind: "unit",
           id: "review.unit",
           instructions: "Review ${{ item }} (#${{ item_index }}) for bugs.\n",
           templating: "expressions",
-          runner: "inherit",
-          model: "deep",
-          timeoutMs: 300_000,
           retry: { max: 1, on: ["timeout", "llm_rate_limit"] },
           onError: "fail",
           source: expect.objectContaining({ path: "workflows/test.yaml" }),
@@ -265,17 +251,14 @@ describe("compileWorkflowProgram — YAML program golden", () => {
     });
     expect(triage.root).toBeUndefined();
 
-    // Steps 4/5: bare units still absorb the run defaults.
+    // Steps 4/5: policy defaults are structural; execution settings freeze later.
     for (const step of [ship, rework]) {
-      if (step.root?.kind !== "agent") throw new Error("expected agent root");
-      expect(step.root.runner).toBe("inherit");
-      expect(step.root.model).toBe("balanced");
-      expect(step.root.timeoutMs).toBe(600_000);
+      if (step.root?.kind !== "unit") throw new Error("expected unit root");
       expect(step.root.onError).toBe("continue");
     }
   });
 
-  test("without a defaults block, units fall back to inherit + fail-fast", () => {
+  test("without a defaults block, units are fail-fast", () => {
     const plan = compileProgramOk(`version: 2
 name: t
 steps:
@@ -284,14 +267,12 @@ steps:
       instructions: Do the thing.
 `);
     const root = plan.steps[0].root;
-    if (root?.kind !== "agent") throw new Error("expected agent root");
-    expect(root.runner).toBe("inherit");
+    if (root?.kind !== "unit") throw new Error("expected unit root");
     expect(root.onError).toBe("fail");
-    expect(root.model).toBeUndefined();
-    expect(root.timeoutMs).toBeUndefined();
+    expect(root).not.toHaveProperty("invocation");
   });
 
-  test(`defaults "timeout: none" merges as an explicit null timeout`, () => {
+  test(`defaults "timeout: none" remains source configuration until freeze`, () => {
     const plan = compileProgramOk(`version: 2
 name: t
 defaults:
@@ -302,8 +283,8 @@ steps:
       instructions: Do the thing.
 `);
     const root = plan.steps[0].root;
-    if (root?.kind !== "agent") throw new Error("expected agent root");
-    expect(root.timeoutMs).toBeNull();
+    if (root?.kind !== "unit") throw new Error("expected unit root");
+    expect(root).not.toHaveProperty("timeoutMs");
   });
 
   test("node ids are unique and stable across the plan", () => {
@@ -311,7 +292,7 @@ steps:
     const ids: string[] = [];
     for (const step of plan.steps) {
       ids.push(step.gate.id);
-      if (step.root?.kind === "agent") ids.push(step.root.id);
+      if (step.root?.kind === "unit") ids.push(step.root.id);
       if (step.root?.kind === "map") ids.push(step.root.id, step.root.template.id);
     }
     expect(new Set(ids).size).toBe(ids.length);
@@ -329,7 +310,7 @@ steps:
       instructions: Do the thing.
 `);
     expect(withBudget.budget).toEqual({ maxTokens: 5000, maxUnits: 7 });
-    // The budget is part of the frozen plan, so it participates in the hash.
+    // The budget is retained for the freeze boundary.
     const withoutBudget = compileProgramOk(`version: 2
 name: t
 steps:
@@ -338,7 +319,7 @@ steps:
       instructions: Do the thing.
 `);
     expect(withoutBudget.budget).toBeUndefined();
-    expect(computePlanHash(withBudget)).not.toBe(computePlanHash(withoutBudget));
+    expect(withBudget).not.toEqual(withoutBudget);
   });
 });
 
@@ -633,35 +614,34 @@ steps:
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("computePlanHash", () => {
+  const executableProgram = PROGRAM_YAML.replace("default-agent", "test-agent").replace(
+    "engine: reviewer",
+    "engine: test-agent",
+  );
+
   test("same program → same hash (deterministic across compiles)", () => {
-    const a = compileProgramOk(PROGRAM_YAML);
-    const b = compileProgramOk(PROGRAM_YAML);
+    const a = freezeWorkflowProgram(executableProgram);
+    const b = freezeWorkflowProgram(executableProgram);
     const hash = computePlanHash(a);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
     expect(computePlanHash(b)).toBe(hash);
   });
 
   test("hash is key-order independent (canonical sorted-keys JSON)", () => {
-    const plan = compileProgramOk(PROGRAM_YAML);
-    const reordered = {
-      steps: plan.steps,
-      title: plan.title,
-      paramSchemas: plan.paramSchemas,
-      params: plan.params,
-      irVersion: plan.irVersion,
-    };
+    const plan = freezeWorkflowProgram(executableProgram);
+    const reordered = Object.fromEntries(Object.entries(plan).reverse()) as WorkflowPlanGraph;
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(plan));
-    expect(computePlanHash(reordered as WorkflowPlanGraph)).toBe(computePlanHash(plan));
+    expect(computePlanHash(reordered)).toBe(computePlanHash(plan));
   });
 
   test("a different program → a different hash", () => {
-    const a = compileProgramOk(PROGRAM_YAML);
-    const b = compileProgramOk(PROGRAM_YAML.replace("Ship it.", "Ship it now."));
+    const a = freezeWorkflowProgram(executableProgram);
+    const b = freezeWorkflowProgram(executableProgram.replace("Ship it.", "Ship it now."));
     expect(computePlanHash(b)).not.toBe(computePlanHash(a));
   });
 
   test("both frontends hash through the same function (markdown plan hashes too)", () => {
-    const plan = compileWorkflowPlan(parseMarkdown(LINEAR_MD));
-    expect(computePlanHash(plan)).toBe(computePlanHash(compileWorkflowPlan(parseMarkdown(LINEAR_MD))));
+    const plan = freezeMarkdownWorkflow(LINEAR_MD);
+    expect(computePlanHash(plan)).toBe(computePlanHash(freezeMarkdownWorkflow(LINEAR_MD)));
   });
 });

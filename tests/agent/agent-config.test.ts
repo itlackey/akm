@@ -67,7 +67,7 @@ describe("built-in agent harness profiles", () => {
     );
     expect(runner.kind).toBe("sdk");
     if (runner.kind !== "sdk") throw new Error("expected SDK runner");
-    expect(runner.profile.sdkMode).toBe(true);
+    expect(runner.kind).toBe("sdk");
     expect(runner.profile.model).toBe("gpt-4o");
     expect(runner.fallbackConnection?.model).toBe("fallback");
   });

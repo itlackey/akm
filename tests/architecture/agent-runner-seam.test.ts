@@ -1,75 +1,59 @@
 import { describe, expect, test } from "bun:test";
-
+import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
-import type { AgentRunResult } from "../../src/integrations/agent/spawn";
+import type { RunnerSpec } from "../../src/integrations/agent/runner";
+import { executeRunner } from "../../src/integrations/agent/runner-dispatch";
 
-function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
-  return {
-    name: "runner-test-agent",
-    bin: "runner-test-agent",
-    args: [],
-    stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
-    ...overrides,
-  };
-}
+const profile: AgentProfile = {
+  name: "runner-test-agent",
+  bin: "runner-test-agent",
+  args: [],
+  stdio: "captured",
+  envPassthrough: ["PATH"],
+  parseOutput: "text",
+};
 
-function makeResult(name: string): AgentRunResult {
-  return {
-    ok: true,
-    exitCode: 0,
-    stdout: name,
-    stderr: "",
-    durationMs: 1,
-  };
-}
+const result = (stdout: string) => ({ ok: true, exitCode: 0, stdout, stderr: "", durationMs: 1 });
 
-/**
- * Inline dispatch helper — mirrors the pattern now used at each call site.
- * When sdkMode is true, routes to an "sdk" runner; otherwise to "spawn".
- */
-async function inlineDispatch(
-  profile: AgentProfile,
-  _prompt: string,
-  spawnFn: () => Promise<AgentRunResult>,
-  sdkFn: () => Promise<AgentRunResult>,
-): Promise<AgentRunResult> {
-  return profile.sdkMode ? sdkFn() : spawnFn();
-}
-
-describe("Agent inline dispatch (replaces AgentRunner seam)", () => {
-  test("routes sdkMode profiles through the sdk path", async () => {
-    const profile = makeProfile({ sdkMode: true });
-    const result = await inlineDispatch(
-      profile,
+describe("RunnerSpec dispatch authority", () => {
+  test("routes an sdk spec through the SDK path", async () => {
+    const spec: RunnerSpec = { kind: "sdk", profile };
+    const actual = await executeRunner(
+      spec,
       "hello",
-      async () => makeResult("spawn"),
-      async () => makeResult("sdk"),
+      {},
+      {
+        runAgent: async () => result("spawn"),
+        runSdk: async () => result("sdk"),
+      },
     );
-    expect(result.stdout).toBe("sdk");
+    expect(actual.stdout).toBe("sdk");
   });
 
-  test("routes normal profiles through the spawn path", async () => {
-    const profile = makeProfile({ name: "claude" });
-    const result = await inlineDispatch(
-      profile,
+  test("routes an agent spec through the spawn path", async () => {
+    const spec: RunnerSpec = { kind: "agent", profile };
+    const actual = await executeRunner(
+      spec,
       "hello",
-      async () => makeResult("spawn"),
-      async () => makeResult("sdk"),
+      {},
+      {
+        runAgent: async () => result("spawn"),
+        runSdk: async () => result("sdk"),
+      },
     );
-    expect(result.stdout).toBe("spawn");
+    expect(actual.stdout).toBe("spawn");
   });
 
-  test("sdkMode undefined is treated as spawn path", async () => {
-    const profile = makeProfile();
-    // sdkMode is not set — should go to spawn
-    const result = await inlineDispatch(
-      profile,
-      "hello",
-      async () => makeResult("spawn"),
-      async () => makeResult("sdk"),
-    );
-    expect(result.stdout).toBe("spawn");
+  test("engine lowering, not profile fields, selects SDK versus spawn", () => {
+    const config = {
+      engines: {
+        agent: { kind: "agent" as const, platform: "opencode" },
+        sdk: { kind: "agent" as const, platform: "opencode-sdk", llmEngine: "llm" },
+        llm: { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "test" },
+      },
+      defaults: { engine: "agent", llmEngine: "llm" },
+    };
+    expect(resolveEngine("agent", config).kind).toBe("agent");
+    expect(resolveEngine("sdk", config).kind).toBe("sdk");
   });
 });
