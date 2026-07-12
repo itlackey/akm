@@ -20,6 +20,7 @@ import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeSkill } from "../../_helpers/assets";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const cleanups: Array<() => void> = [];
@@ -34,7 +35,7 @@ function isolatedStash(): string {
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -69,7 +70,7 @@ const noopIndexFns = {
 };
 
 function enabledConfig(overrides?: Record<string, unknown>): import("../../../src/core/config/config").AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
     improve: {
       strategies: {
@@ -85,7 +86,7 @@ function enabledConfig(overrides?: Record<string, unknown>): import("../../../sr
         },
       },
     },
-  } as import("../../../src/core/config/config").AkmConfig;
+  } as import("../../../src/core/config/config").AkmConfig);
 }
 
 afterEach(() => {

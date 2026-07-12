@@ -40,7 +40,7 @@ import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { resolveEngine } from "../../integrations/agent/engine-resolution";
+import { materializeLlmConnection, resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
 import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
@@ -273,6 +273,7 @@ export interface AkmExtractOptions {
 
 export interface ResolvedExtractPlan {
   strategy: string;
+  engine: string;
   enabled: boolean;
   process: Readonly<ImproveProcessConfig>;
   llmConfig: Readonly<LlmProfileConfig> | null;
@@ -301,35 +302,27 @@ export function resolveStandaloneExtractPlan(
   }
   const selected = resolveImproveStrategy(selection.strategy, config);
   const process = cloneAndFreeze(getImproveProcessConfig(config, "extract", selected.config) ?? {});
-  let llmConfig: LlmProfileConfig | undefined;
-  if (selection.engine) {
-    const runner = resolveEngine(selection.engine, config);
-    if (runner.kind !== "llm") {
-      throw new ConfigError(`Engine "${selection.engine}" is not an LLM engine.`, "INVALID_CONFIG_FILE");
-    }
-    llmConfig = runner.connection;
-  } else {
-    llmConfig = resolveImproveProcessRunner(selected.config, "extract", config)?.connection;
-  }
-  if (!llmConfig) {
+  const invocation = {
+    ...(selection.engine ? { engine: selection.engine } : {}),
+    ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
+  };
+  const resolved = resolveLlmEngineUse(config, [selected.config, process, invocation], { optional: true });
+  if (!resolved) {
     throw new ConfigError(
       "No LLM engine configured for extract. Set defaults.llmEngine, pass --engine, or select an improve strategy with processes.extract.engine.",
       "LLM_NOT_CONFIGURED",
     );
   }
-  const timeoutMs = Object.hasOwn(selection, "timeoutMs")
-    ? (selection.timeoutMs ?? null)
-    : Object.hasOwn(llmConfig, "timeoutMs")
-      ? (llmConfig.timeoutMs ?? null)
-      : 600_000;
+  const llmConfig = materializeLlmConnection(resolved);
   return Object.freeze({
     strategy: selected.name,
+    engine: resolved.engine,
     // `akm extract` is an explicit operation. The strategy supplies behavior,
     // but its improve-stage enablement gate does not disable this command.
     enabled: true,
     process,
     llmConfig: cloneAndFreeze(llmConfig),
-    timeoutMs,
+    timeoutMs: resolved.timeoutMs,
     embeddingConfig: cloneAndFreeze(config.embedding),
   });
 }

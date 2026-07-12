@@ -25,6 +25,13 @@ describe("current engine and runtime boundary", () => {
     expect(section).toContain("executeRunner()");
   });
 
+  test("documents the current OpenCode SDK module and exported runner", () => {
+    expect(section).toContain("src/integrations/harnesses/opencode-sdk/sdk-runner.ts");
+    expect(section).toContain("runOpencodeSdk(profile, prompt, opts, llmConfig?)");
+    expect(section).not.toContain("src/integrations/agent/sdk-runner.ts");
+    expect(section).not.toContain("runAgentSdk(");
+  });
+
   test("in-tree LLM calls remain bounded, single-shot, and stateless", () => {
     expect(section).toMatch(/bounded/i);
     expect(section).toMatch(/single-shot/i);

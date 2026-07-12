@@ -25,6 +25,7 @@ import { appendEvent, readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeSkill } from "../../_helpers/assets";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ afterEach(() => {
 });
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -104,7 +105,7 @@ const qualityRejectedDistill = (ref: string): AkmDistillResult => ({
  * and into the salience map / plasticity wiring.
  */
 const minimalConfig = () =>
-  ({
+  withTestImproveLlm({
     semanticSearchMode: "off",
     improve: {
       strategies: {
@@ -119,7 +120,7 @@ const minimalConfig = () =>
         },
       },
     },
-  }) as import("../../../src/core/config/config").AkmConfig;
+  } as import("../../../src/core/config/config").AkmConfig);
 
 // ── Test 1: first run emits improve_salience_first_run ────────────────────────
 

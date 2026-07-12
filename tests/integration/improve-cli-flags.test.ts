@@ -15,8 +15,9 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
-import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -33,13 +34,28 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
  * Passes env to spawnSync rather than mutating process.env. */
 function spawnImprove(args: string[], stashDir: string): { status: number; stdout: string; stderr: string } {
   const data = sandboxMakeStashDir();
-  disposers.push(data);
+  const config = makeSandboxDir("akm-improve-cli-config");
+  disposers.push(data, config);
+  const configPath = path.join(config.dir, "akm", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: {
+        test: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test" },
+      },
+      defaults: { llmEngine: "test" },
+    }),
+  );
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     env: {
       ...process.env,
       AKM_STASH_DIR: stashDir,
+      XDG_CONFIG_HOME: config.dir,
       XDG_DATA_HOME: data.dir,
     },
   });

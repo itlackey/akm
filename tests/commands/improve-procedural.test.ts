@@ -43,6 +43,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
 import { parseWorkflow } from "../../src/workflows/parser";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -79,7 +80,7 @@ function writeOrderedActionsAsset(
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -131,7 +132,7 @@ const noopIndexFns = {
 
 /** Improve config with procedural enabled (and noisy passes silenced). */
 function proceduralEnabledConfig(overrides?: Record<string, unknown>): AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
     improve: {
       strategies: {
@@ -146,7 +147,7 @@ function proceduralEnabledConfig(overrides?: Record<string, unknown>): AkmConfig
         },
       },
     },
-  } as unknown as AkmConfig;
+  } as unknown as AkmConfig);
 }
 
 afterEach(() => {

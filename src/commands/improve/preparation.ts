@@ -9,7 +9,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { daysToMs } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { rethrowIfTestIsolationError } from "../../core/errors";
+import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { EligibilitySource, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
 import { openStateDatabase, withStateDb } from "../../core/state-db";
@@ -574,8 +574,12 @@ async function runSessionExtractPass(args: {
   // `akmExtract` re-checks the same active profile internally via `improveProfile`.
   if (resolvedPlan.processes.extract.enabled) {
     const extractRunner = resolvedPlan.processes.extract.runner;
+    if (!extractRunner?.engine) {
+      throw new ConfigError("Resolved improve plan has no runner for enabled extract process.", "LLM_NOT_CONFIGURED");
+    }
     const extractPlan: ResolvedExtractPlan = Object.freeze({
       strategy: resolvedPlan.strategy.name,
+      engine: extractRunner.engine,
       enabled: true,
       process: resolvedPlan.processes.extract.config,
       llmConfig: extractRunner?.connection ?? null,

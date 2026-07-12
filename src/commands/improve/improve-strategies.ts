@@ -168,20 +168,10 @@ function materializeImprovePlan(
       runner = resolveImproveProcessRunner(strategy.config, processName, config);
     }
     if (!runner && !(processName === "validation" && options.repairValidationFailures === false)) {
-      const hasModelIntent =
-        strategy.config.engine !== undefined ||
-        strategy.config.model !== undefined ||
-        strategy.config.llm !== undefined ||
-        processConfig.engine !== undefined ||
-        processConfig.model !== undefined ||
-        processConfig.llm !== undefined ||
-        config.defaults?.llmEngine !== undefined;
-      if (hasModelIntent) {
-        throw new ConfigError(
-          `Enabled improve process "${processName}" requires an LLM engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.${processName}.engine.`,
-          "LLM_NOT_CONFIGURED",
-        );
-      }
+      throw new ConfigError(
+        `Enabled improve process "${processName}" requires an LLM engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.${processName}.engine.`,
+        "LLM_NOT_CONFIGURED",
+      );
     }
     if (runner) runner = cloneAndFreeze(runner) as ImproveLlmRunner;
     processes[processName] = Object.freeze({ enabled, config: processConfig, runner });

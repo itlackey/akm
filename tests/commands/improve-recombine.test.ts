@@ -41,6 +41,7 @@ import { readEvents } from "../../src/core/events";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { insertGraphEntities } from "../_helpers/graph-store";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -61,7 +62,7 @@ function writeMemory(stashDir: string, name: string, tags: string[], body: strin
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -102,7 +103,7 @@ const noopIndexFns = {
 
 /** Improve config with recombine enabled (and noisy passes silenced). */
 function recombineEnabledConfig(overrides?: Record<string, unknown>): AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
     improve: {
       strategies: {
@@ -117,7 +118,7 @@ function recombineEnabledConfig(overrides?: Record<string, unknown>): AkmConfig 
         },
       },
     },
-  } as unknown as AkmConfig;
+  } as unknown as AkmConfig);
 }
 
 afterEach(() => {
