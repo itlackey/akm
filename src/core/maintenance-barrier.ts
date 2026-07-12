@@ -2,12 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "./errors";
 import { probeLock, reclaimStaleLock, releaseLockIfOwned, tryAcquireLockSync } from "./file-lock";
 import { getMaintenanceBarrierPath } from "./paths";
+
+const heldBarrierContext = new AsyncLocalStorage<{ active: boolean }>();
 
 /**
  * Serialize restore with the short critical section that creates every
@@ -37,10 +40,13 @@ export function acquireMaintenanceBarrier(): () => void {
 }
 
 export function withMaintenanceStartBarrier<T>(run: () => T): T {
+  if (heldBarrierContext.getStore()?.active) return run();
   const release = acquireMaintenanceBarrier();
+  const ownership = { active: true };
   try {
-    return run();
+    return heldBarrierContext.run(ownership, run);
   } finally {
+    ownership.active = false;
     release();
   }
 }
@@ -56,10 +62,31 @@ async function acquireMaintenanceBarrierAsync(): Promise<() => void> {
 }
 
 export async function withMaintenanceStartBarrierAsync<T>(run: () => Promise<T>): Promise<T> {
+  if (heldBarrierContext.getStore()?.active) return run();
   const release = await acquireMaintenanceBarrierAsync();
+  const ownership = { active: true };
   try {
-    return await run();
+    return await heldBarrierContext.run(ownership, run);
   } finally {
+    ownership.active = false;
+    release();
+  }
+}
+
+function withMaintenanceStartBarrierSyncWait<T>(run: () => T): T {
+  if (heldBarrierContext.getStore()?.active) return run();
+  const deadline = Date.now() + 5_000;
+  let release = tryAcquireMaintenanceBarrier();
+  while (!release && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    release = tryAcquireMaintenanceBarrier();
+  }
+  if (!release) release = acquireMaintenanceBarrier();
+  const ownership = { active: true };
+  try {
+    return heldBarrierContext.run(ownership, run);
+  } finally {
+    ownership.active = false;
     release();
   }
 }
@@ -79,7 +106,7 @@ export async function acquireMaintenanceActivity(name: string): Promise<() => vo
 
 /** Synchronous activity registration for synchronous database handle lifetimes. */
 export function acquireMaintenanceActivitySync(name: string): () => void {
-  return withMaintenanceStartBarrier(() => {
+  return withMaintenanceStartBarrierSyncWait(() => {
     const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);

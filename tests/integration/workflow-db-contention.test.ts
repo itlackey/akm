@@ -109,6 +109,7 @@ describe.skipIf(!BUN)("cross-process reader vs fan-out writer", () => {
 
     const code = await driver.done();
     await reader;
+    expect(driver.stderr()).toBe("");
     expect(code).toBe(0);
 
     // Reads genuinely raced the writer and never saw a malformed row/state.
