@@ -7,13 +7,12 @@
  *
  * A thin policy layer over `core/concurrent.ts` (`concurrentMap`) — the
  * existing semaphore-bounded pool is generalized, not forked. The scheduler
- * owns the engine-wide limits the plan requires:
+ * owns the limits the plan requires:
  *
- *   - Engine-wide concurrency cap, applied on top of whatever per-step
- *     concurrency the workflow declares. The cap is the `workflow.maxConcurrency`
- *     akm config setting when set (clamped to
- *     `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`), else the CPU-derived default
- *     `min(16, cores − 2)` (the original Claude-Code-matching formula).
+ *   - The effective width is the minimum of the map request, the frozen
+ *     workflow cap, the selected LLM engine's frozen cap (when applicable),
+ *     and the current host's CPU-derived safety cap. Reapplying host safety at
+ *     dispatch matters when a frozen run resumes on a smaller machine.
  *   - Cooperative cancellation via AbortSignal (workers stop claiming items;
  *     the same signal is passed into each dispatch so in-flight units can be
  *     preempted too).
@@ -26,9 +25,15 @@
  * dispatches consumes the cap.
  */
 
-import os from "node:os";
 import { concurrentMap } from "../../core/concurrent";
-import { loadConfig } from "../../core/config/config";
+import { cpuDerivedUnitConcurrency, workflowMaxConcurrency } from "../concurrency-policy";
+import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
+
+export {
+  clampMaxConcurrency,
+  cpuDerivedUnitConcurrency,
+  WORKFLOW_MAX_CONCURRENCY_CEILING,
+} from "../concurrency-policy";
 
 /**
  * Hard ceiling on an EXPLICIT `workflow.maxConcurrency`. A user value above
@@ -37,35 +42,6 @@ import { loadConfig } from "../../core/config/config";
  * 64 is deliberately far above any sane fan-out width — it exists only to keep
  * a fat-fingered `100000` from spawning a runaway pool.
  */
-export const WORKFLOW_MAX_CONCURRENCY_CEILING = 64;
-
-/**
- * CPU-derived engine cap used when `workflow.maxConcurrency` is unset — the
- * original `min(16, cores−2)` formula (matching Claude Code), floored at 1.
- */
-export function cpuDerivedUnitConcurrency(cpuCount = os.cpus()?.length ?? 4): number {
-  return Math.min(16, Math.max(1, cpuCount - 2));
-}
-
-/** Clamp an explicit configured value into `[1, WORKFLOW_MAX_CONCURRENCY_CEILING]`. */
-export function clampMaxConcurrency(value: number): number {
-  return Math.min(WORKFLOW_MAX_CONCURRENCY_CEILING, Math.max(1, Math.floor(value)));
-}
-
-/**
- * Read `workflow.maxConcurrency` from config, fail-open to `undefined` (use the
- * CPU default) on any load error or a non-numeric value. Kept side-effect-free
- * and defensive: the scheduler must never fail a run because config is unwell.
- */
-function configuredMaxConcurrency(): number | undefined {
-  try {
-    const value = loadConfig().workflow?.maxConcurrency;
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Engine-wide ceiling on concurrent units. Precedence:
  *   1. An explicit `workflow.maxConcurrency` config value, clamped to
@@ -78,13 +54,12 @@ function configuredMaxConcurrency(): number | undefined {
  * @param configured Explicit config value seam (defaults to reading config);
  *                   pass `undefined` explicitly to force the CPU path in a test.
  */
-export function maxUnitConcurrency(cpuCount = os.cpus()?.length ?? 4, configured = configuredMaxConcurrency()): number {
-  if (configured !== undefined) return clampMaxConcurrency(configured);
-  return cpuDerivedUnitConcurrency(cpuCount);
+export function maxUnitConcurrency(cpuCount?: number, configured?: number): number {
+  return workflowMaxConcurrency(configured, cpuCount);
 }
 
 /** Lifetime unit cap per run — a runaway-loop backstop, far above real use. */
-export const LIFETIME_UNIT_CAP = 1000;
+export const LIFETIME_UNIT_CAP = WORKFLOW_MAX_MAP_EXPANSION;
 
 export class UnitCapExceededError extends Error {
   constructor(cap: number) {
@@ -111,6 +86,10 @@ export interface ScheduleOptions {
    * (config → CPU default) decides.
    */
   maxConcurrency?: number;
+  /** Frozen concurrency limit of the selected LLM engine, when one is used. */
+  llmConcurrency?: number;
+  /** Test seam for the current host's CPU-derived safety limit. */
+  hostConcurrency?: number;
 }
 
 /**
@@ -126,7 +105,14 @@ export async function scheduleUnits<T, R>(
   dispatch: (item: T, index: number) => Promise<R>,
   options: ScheduleOptions = {},
 ): Promise<Array<R | undefined>> {
-  const cap = options.maxConcurrency ?? maxUnitConcurrency();
-  const concurrency = Math.max(1, Math.min(options.concurrency ?? 1, cap));
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      options.concurrency ?? 1,
+      options.maxConcurrency ?? Number.POSITIVE_INFINITY,
+      options.llmConcurrency ?? Number.POSITIVE_INFINITY,
+      options.hostConcurrency ?? cpuDerivedUnitConcurrency(),
+    ),
+  );
   return concurrentMap(items, dispatch, concurrency, { signal: options.signal });
 }

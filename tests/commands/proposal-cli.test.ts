@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [cliPath, ...]) to the in-process
 // harness (tests/_helpers/cli.ts). Proposals are seeded in-process via
@@ -46,6 +46,57 @@ async function runCli(
 }
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n`;
+
+describe("akm proposal drain strategy selector", () => {
+  test("accepts --strategy and rejects the retired --profile flag", async () => {
+    const stashDir = makeStashDir();
+    const selected = await runCli(["proposal", "drain", "--strategy", "default", "--dry-run", "--format=json"], {
+      stashDir,
+    });
+    expect(selected.status).toBe(0);
+    expect(JSON.parse(selected.stdout).strategy).toBe("default");
+
+    const retired = await runCli(["proposal", "drain", "--profile", "default", "--dry-run", "--format=json"], {
+      stashDir,
+    });
+    expect(retired.status).toBe(2);
+  });
+
+  test("uses defaults.improveStrategy and reports the effective strategy/output buckets", async () => {
+    const stashDir = makeStashDir();
+    writeSandboxConfig({
+      configVersion: "0.9.0",
+      stashDir,
+      defaults: { improveStrategy: "queue-only" },
+      improve: {
+        strategies: {
+          "queue-only": {
+            processes: {
+              reflect: { enabled: false },
+              distill: { enabled: false },
+              consolidate: { enabled: false },
+              memoryInference: { enabled: false },
+              graphExtraction: { enabled: false },
+              extract: { enabled: false },
+              validation: { enabled: false },
+              triage: { enabled: true, policy: "manual", applyMode: "queue" },
+            },
+          },
+        },
+      },
+    });
+    const result = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      strategy: "queue-only",
+      policy: "manual",
+      applyMode: "queue",
+      judgmentEngine: null,
+      judgmentKind: null,
+      staged: [],
+    });
+  });
+});
 
 function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
   const result = createProposal(stash, {

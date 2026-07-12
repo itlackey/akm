@@ -713,17 +713,18 @@ test("akmIndex metadata enrichment progress events include visible per-entry pro
 
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
+    configVersion: "0.9.0",
     semanticSearchMode: "off",
-    profiles: {
-      llm: {
-        default: {
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "demo-chat",
-          concurrency: 1,
-        },
+    engines: {
+      test: {
+        kind: "llm",
+        endpoint: "https://example.test/v1/chat/completions",
+        model: "demo-chat",
+        concurrency: 1,
       },
     },
-    defaults: { llm: "default" },
+    defaults: { engine: "test", llmEngine: "test" },
+    index: { defaults: { engine: "test" } },
   });
 
   const metadataEnhance = await import("../../src/llm/metadata-enhance");
@@ -796,17 +797,18 @@ test("akmIndex does not run slow passes", async () => {
 
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
+    configVersion: "0.9.0",
     semanticSearchMode: "off",
-    profiles: {
-      llm: {
-        default: {
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "demo-chat",
-          concurrency: 1,
-        },
+    engines: {
+      test: {
+        kind: "llm",
+        endpoint: "https://example.test/v1/chat/completions",
+        model: "demo-chat",
+        concurrency: 1,
       },
     },
-    defaults: { llm: "default" },
+    defaults: { engine: "test", llmEngine: "test" },
+    index: { defaults: { engine: "test" } },
   });
 
   const memoryInfer = await import("../../src/indexer/passes/memory-inference");
@@ -1588,11 +1590,17 @@ test("enhanceDirsWithLlm does not call LLM for entries that are already complete
   // Configure an LLM endpoint so resolveIndexPassLLM would normally return a config.
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
+    configVersion: "0.9.0",
     semanticSearchMode: "off",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } },
+    engines: {
+      test: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "llama3.2",
+      },
     },
-    defaults: { llm: "default" },
+    defaults: { engine: "test", llmEngine: "test" },
+    index: { defaults: { engine: "test" } },
   });
 
   // Track whether any LLM/fetch call was made. The LLM client calls globalThis.fetch

@@ -27,8 +27,9 @@ let storage: IsolatedAkmStorage;
 
 function buildMinimalResult(overrides: Partial<AkmImproveResult> = {}): AkmImproveResult {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
+    strategy: "default",
     scope: { mode: "all" },
     dryRun: false,
     memorySummary: { eligible: 0, derived: 0 },
@@ -76,6 +77,7 @@ describe("migration 003 — improve_runs", () => {
         "stash_dir",
         "dry_run",
         "profile",
+        "strategy",
         "scope_mode",
         "scope_value",
         "guidance",
@@ -86,6 +88,8 @@ describe("migration 003 — improve_runs", () => {
       ]) {
         expect(colNames.has(required)).toBe(true);
       }
+
+      expect(indexNames).toContain("idx_improve_runs_strategy_started");
 
       // schema_migrations records the migration id so subsequent opens skip it.
       const applied = db.prepare("SELECT id FROM schema_migrations WHERE id = '003-improve-runs'").all() as Array<{
@@ -131,7 +135,7 @@ describe("recordImproveRun", () => {
         completedAt: "2026-05-23T12:01:00.000Z",
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: "default",
+        legacyProfile: "default",
         scopeMode: "type",
         scopeValue: "lesson",
         guidance: "focus on tier 1 cleanup",
@@ -178,6 +182,33 @@ describe("recordImproveRun", () => {
     }
   });
 
+  test("writes the selected 0.9 strategy without relabeling legacy profile rows", () => {
+    const db = openStateDatabase();
+    try {
+      const result = buildMinimalResult();
+      recordImproveRun(db, {
+        id: "run-strategy",
+        startedAt: "2026-07-11T12:00:00.000Z",
+        completedAt: "2026-07-11T12:01:00.000Z",
+        stashDir: "/tmp/test-stash",
+        dryRun: false,
+        strategy: "quick",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result,
+      });
+      const row = db.prepare("SELECT profile, strategy FROM improve_runs WHERE id = 'run-strategy'").get() as {
+        profile: string | null;
+        strategy: string | null;
+      };
+      expect(row).toEqual({ profile: null, strategy: "quick" });
+    } finally {
+      db.close();
+    }
+  });
+
   test("writes a dry-run row with dry_run=1 (closes the dry-run artifact-trap)", () => {
     const db = openStateDatabase();
     try {
@@ -188,7 +219,7 @@ describe("recordImproveRun", () => {
         completedAt: "2026-05-23T12:00:00.000Z",
         stashDir: "/tmp/test-stash",
         dryRun: true,
-        profile: null,
+        strategy: "default",
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -232,7 +263,7 @@ describe("recordImproveRun", () => {
         completedAt: "2026-05-23T12:00:00.000Z",
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -346,7 +377,7 @@ describe("recordImproveRun", () => {
         completedAt: "2026-07-05T12:00:00.000Z",
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -386,7 +417,7 @@ describe("purgeOldImproveRuns", () => {
         completedAt: oldStarted,
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -399,7 +430,7 @@ describe("purgeOldImproveRuns", () => {
         completedAt: recentStarted,
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -430,7 +461,7 @@ describe("purgeOldImproveRuns", () => {
         completedAt: oldStarted,
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -458,7 +489,7 @@ describe("purgeOldImproveRuns", () => {
         completedAt: recentStarted,
         stashDir: "/tmp/test-stash",
         dryRun: false,
-        profile: null,
+        legacyProfile: null,
         scopeMode: "all",
         scopeValue: null,
         guidance: null,
@@ -488,7 +519,7 @@ describe("recordTerminatedImproveRun", () => {
       recordTerminatedImproveRun("/tmp/test-stash", runId, startedAt, "SIGTERM", {
         scopeMode: "all",
         dryRun: false,
-        profile: null,
+        strategy: "default",
       });
 
       const row = db
@@ -530,6 +561,7 @@ describe("recordTerminatedImproveRun", () => {
         scopeMode: "type",
         scopeValue: "memory",
         dryRun: false,
+        strategy: "default",
         errorMessage: "LLM provider returned 503",
       });
 

@@ -13,11 +13,13 @@ git (the 08-F1 recovery pattern — see step 3).
    `~/.config/akm/config.json` (`%APPDATA%\akm\config.json` on Windows;
    override with `AKM_CONFIG_DIR`). This file is gitignored on the host, so the
    recovery source is the ONE versioned copy committed to the stash git
-   (08-F1 pattern). Copy that file into place — it carries the cron-load-bearing
-   improve profiles that are otherwise unrecoverable.
+   (08-F1 pattern). Copy that file into place; it carries named `engines`,
+   `defaults.engine` / `defaults.llmEngine`, and cron-load-bearing improve
+   strategies that are otherwise unrecoverable.
 4. **Provide secrets/env.** `config.json` references API keys via `${VAR}`
    placeholders; export those environment variables (or restore your env/secret
-   assets) so LLM/embedding profiles resolve. Never commit the resolved values.
+   assets) so named engines and the embedding connection resolve. Never commit
+   the resolved values.
 5. **Restore the working stash.** Clone your stash git remote to the `stashDir`
    named in the restored config (default `~/akm`). If starting clean instead,
    run `akm setup --yes` to scaffold it.

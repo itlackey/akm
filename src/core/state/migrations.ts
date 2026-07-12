@@ -10,6 +10,7 @@
 
 import type { Database } from "../../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../../storage/engines/sqlite-migrations";
+import { ensureMigrationBackup } from "../migration-backup";
 
 const MIGRATIONS: Migration[] = [
   // ── Migration 001 — initial schema ──────────────────────────────────────────
@@ -774,6 +775,15 @@ const MIGRATIONS: Migration[] = [
         ON improve_cycle_metrics(ts);
     `,
   },
+  // Keep the historical profile column untouched. New 0.9 runs identify the
+  // selected improve strategy in this additive column.
+  {
+    id: "017-improve-run-strategy",
+    up: `
+      ALTER TABLE improve_runs ADD COLUMN strategy TEXT;
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
+    `,
+  },
 ];
 
 /**
@@ -784,6 +794,10 @@ const MIGRATIONS: Migration[] = [
  *
  * Called automatically by `openStateDatabase()`.
  */
-export function runMigrations(db: Database): void {
-  runSqliteMigrations(db, MIGRATIONS);
+export function runMigrations(db: Database, options?: { ensureCutoverBackup?: boolean }): void {
+  runSqliteMigrations(db, MIGRATIONS, {
+    beforeMigration(migration) {
+      if (options?.ensureCutoverBackup && migration.id === "017-improve-run-strategy") ensureMigrationBackup();
+    },
+  });
 }

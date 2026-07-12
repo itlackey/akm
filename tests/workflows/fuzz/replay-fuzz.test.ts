@@ -10,10 +10,8 @@ import {
   type UnitDispatchResult,
 } from "../../../src/workflows/exec/native-executor";
 import { canonicalJson, computeStepWorkList, unitIdFor } from "../../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
-import type { IrStepPlan } from "../../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
+import { freezeWorkflowProgram } from "../../_helpers/workflow";
 import { distinctJsonValues, randomJsonValue, reorderKeys } from "./_gen";
 import { fuzzSeeds, Rng, withSeed } from "./_rng";
 
@@ -39,7 +37,7 @@ import { fuzzSeeds, Rng, withSeed } from "./_rng";
  * whole `fuzz/` directory in the fast tier.
  */
 
-const MAP_WF = `version: 1
+const MAP_WF = `version: 2
 name: f
 params: { items: { type: array } }
 steps:
@@ -51,15 +49,9 @@ steps:
         instructions: Do \${{ item }}.
 `;
 
-function mapStep(): IrStepPlan {
-  const parsed = parseWorkflowProgram(MAP_WF, { path: "workflows/f.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => e.message).join("; "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => e.message).join("; "));
-  return compiled.plan.steps[0];
-}
-
-const STEP = mapStep();
+const PLAN = freezeWorkflowProgram(MAP_WF, "workflows/f.yaml");
+const STEP = PLAN.steps[0];
+const ENGINES = PLAN.execution.engines;
 const NODE_ID = "work.unit"; // STEP.root (map).template.id
 
 // ── Pure identity properties ─────────────────────────────────────────────────
@@ -90,8 +82,18 @@ describe("replay fuzz — item-list reorder yields the same id SET", () => {
         const items = distinctJsonValues(rng, rng.range(1, 8));
         const shuffled = rng.shuffle(items);
 
-        const original = computeStepWorkList(STEP, { runId: "r", params: { items }, stepOutputs: {} });
-        const reordered = computeStepWorkList(STEP, { runId: "r", params: { items: shuffled }, stepOutputs: {} });
+        const original = computeStepWorkList(STEP, {
+          runId: "r",
+          params: { items },
+          stepOutputs: {},
+          engines: ENGINES,
+        });
+        const reordered = computeStepWorkList(STEP, {
+          runId: "r",
+          params: { items: shuffled },
+          stepOutputs: {},
+          engines: ENGINES,
+        });
         expect(original.ok).toBe(true);
         expect(reordered.ok).toBe(true);
         if (!original.ok || !reordered.ok) return;
@@ -134,7 +136,12 @@ describe("replay fuzz — duplicate canonical items fail before dispatch", () =>
         const withDup = [...base];
         withDup.splice(rng.int(withDup.length + 1), 0, dup);
 
-        const result = computeStepWorkList(STEP, { runId: "r", params: { items: withDup }, stepOutputs: {} });
+        const result = computeStepWorkList(STEP, {
+          runId: "r",
+          params: { items: withDup },
+          stepOutputs: {},
+          engines: ENGINES,
+        });
         expect(result.ok).toBe(false);
         if (!result.ok) expect(result.error).toContain("duplicate items");
       });
@@ -196,6 +203,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
         let storage: IsolatedAkmStorage | undefined;
         try {
           storage = withIsolatedAkmStorage();
+          writeWorkflowTestConfig();
           await withSeedAsync(seed, async () => {
             const rng = new Rng(seed);
             const items = distinctScalars(rng, rng.range(1, 4));
@@ -215,6 +223,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
               params: { items },
               evidence: {},
               dispatcher,
+              engines: ENGINES,
             });
             expect(first.ok).toBe(true);
             expect(dispatches).toBe(items.length);
@@ -229,6 +238,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
                 dispatches++;
                 return { ok: true, text: "must-not-run" };
               },
+              engines: ENGINES,
             });
             expect(second.ok).toBe(true);
             expect(dispatches).toBe(items.length); // zero re-dispatch
@@ -241,6 +251,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
               params: { items, tamper: `v-${seed}` },
               evidence: {},
               dispatcher,
+              engines: ENGINES,
             });
             expect(diverged.ok).toBe(false);
             expect(diverged.summary).toContain("replay divergence");
@@ -264,6 +275,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
                 dupDispatches++;
                 return { ok: true, text: "must-not-run" };
               },
+              engines: ENGINES,
             });
             expect(dupResult.ok).toBe(false);
             expect(dupDispatches).toBe(0);

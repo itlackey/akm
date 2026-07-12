@@ -111,8 +111,7 @@ export interface WorkflowParameter {
  * flag to keep show output compact.
  */
 export interface WorkflowStepOrchestrationSummary {
-  runner?: string;
-  profile?: string;
+  engine?: string;
   model?: string;
   timeoutMs?: number | null;
   fanOut?: { over: string; concurrency?: number; reducer?: string };
@@ -165,6 +164,9 @@ export interface WorkflowRunSummary {
    * expiry; an expired lease may still be surfaced here (claimable, not live).
    */
   engineLease?: { holder: string; until: string };
+  /** Frozen workflow plan format on this row; null for historical rows. */
+  planIrVersion?: number | null;
+  executionSupport?: "supported" | "unsupported-version" | "missing-plan" | "corrupt-plan";
 }
 
 export interface AddResponse {

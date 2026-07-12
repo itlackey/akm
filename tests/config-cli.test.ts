@@ -9,10 +9,10 @@ import {
 import type { AkmConfig } from "../src/core/config/config";
 
 describe("config CLI helpers", () => {
-  test("listConfig omits unconfigured embedding and llm", () => {
-    const config = listConfig({ semanticSearchMode: "auto" });
+  test("listConfig omits unconfigured embedding and engines", () => {
+    const config = listConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });
     expect(config.embedding).toBeUndefined();
-    expect(config.llm).toBeUndefined();
+    expect(config.engines).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
@@ -36,33 +36,29 @@ describe("config CLI helpers", () => {
     });
   });
 
-  test("parseConfigValue supports llm JSON with sampling fields", () => {
+  test("parseConfigValue supports an LLM engine JSON with sampling fields", () => {
     expect(
       parseConfigValue(
-        "llm",
-        '{"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-4o-mini","temperature":0.6,"maxTokens":300}',
+        "engines.fast",
+        '{"kind":"llm","endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-4o-mini","temperature":0.6,"maxTokens":300}',
       ),
     ).toEqual({
-      profiles: {
-        llm: {
-          default: {
-            endpoint: "https://api.openai.com/v1/chat/completions",
-            model: "gpt-4o-mini",
-            temperature: 0.6,
-            maxTokens: 300,
-          },
+      engines: {
+        fast: {
+          kind: "llm",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o-mini",
+          temperature: 0.6,
+          maxTokens: 300,
         },
       },
-      defaults: { llm: "default" },
     });
   });
 
-  test("parseConfigValue rejects llm JSON with endpoint and omitted model", () => {
-    // Post-rewrite: profile shape is enforced. Setting the whole llm block
-    // requires the full required shape; partial setup must use subkey paths.
-    expect(() => parseConfigValue("llm", '{"endpoint":"http://localhost:11434/v1/chat/completions"}')).toThrow(
-      /model.*Required/,
-    );
+  test("parseConfigValue rejects an LLM engine JSON with endpoint and omitted model", () => {
+    expect(() =>
+      parseConfigValue("engines.fast", '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions"}'),
+    ).toThrow(/Invalid input/);
   });
 
   test("parseConfigValue rejects writable website sources through config CLI", () => {
@@ -78,7 +74,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue sets embedding via JSON", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "embedding",
@@ -90,67 +86,67 @@ describe("config CLI helpers", () => {
     });
   });
 
-  test("setConfigValue sets llm via JSON (writes to profiles.llm.default)", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+  test("setConfigValue sets an LLM engine via JSON", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
-      "llm",
-      '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3}',
+      "engines.local",
+      '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3}',
     );
-    expect(updated.profiles?.llm?.default).toMatchObject({
+    expect(updated.engines?.local).toMatchObject({
+      kind: "llm",
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
       temperature: 0.3,
     });
-    expect(updated.defaults?.llm).toBe("default");
   });
 
-  test("getConfigValue returns null for unconfigured embedding/llm", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+  test("getConfigValue returns null for unconfigured embedding/engine", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(getConfigValue(base, "embedding")).toBeNull();
-    expect(getConfigValue(base, "llm")).toBeNull();
+    expect(getConfigValue(base, "engines.default")).toBeNull();
   });
 
-  test("getConfigValue returns configured embedding/llm objects", () => {
+  test("getConfigValue returns configured embedding/engine objects", () => {
     const llm = {
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
       temperature: 0.3,
     };
     const base: AkmConfig = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
       },
-      profiles: { llm: { default: llm } },
-      defaults: { llm: "default" },
+      engines: { default: { kind: "llm", ...llm } },
+      defaults: { llmEngine: "default" },
     };
     expect(getConfigValue(base, "embedding")).toEqual(base.embedding);
-    expect(getConfigValue(base, "llm")).toEqual(llm);
+    expect(getConfigValue(base, "engines.default")).toEqual({ kind: "llm", ...llm });
   });
 
-  test("unsetConfigValue clears embedding and llm", () => {
+  test("unsetConfigValue clears embedding and an engine", () => {
     const base: AkmConfig = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
       },
-      profiles: {
-        llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } },
-      },
-      defaults: { llm: "default" },
+      engines: { default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } },
+      defaults: { llmEngine: "default" },
     };
     const noEmbed = unsetConfigValue(base, "embedding");
     expect(noEmbed.embedding).toBeUndefined();
 
-    const noLlm = unsetConfigValue(base, "llm");
-    expect(noLlm.profiles?.llm?.default).toBeUndefined();
+    const noLlm = unsetConfigValue(base, "engines.default");
+    expect(noLlm.engines?.default).toBeUndefined();
   });
 
   test("setConfigValue merges output format and detail", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const withFormat = setConfigValue(base, "output.format", "text");
     const withDetail = setConfigValue(withFormat, "output.detail", "full");
 
@@ -159,6 +155,7 @@ describe("config CLI helpers", () => {
 
   test("getConfigValue reads output keys", () => {
     const base: AkmConfig = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       output: { format: "yaml", detail: "normal" },
     };
@@ -168,6 +165,7 @@ describe("config CLI helpers", () => {
 
   test("unsetConfigValue clears individual output keys", () => {
     const base: AkmConfig = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       output: { format: "yaml", detail: "normal" },
     };
@@ -176,15 +174,15 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue accepts previously hand-listed sub-keys now that the schema is the source of truth (#455)", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const withProvider = setConfigValue(base, "embedding.provider", "ollama");
     expect(withProvider.embedding?.provider).toBe("ollama");
-    const withTemp = setConfigValue(base, "llm.temperature", "0.5");
-    expect(withTemp.profiles?.llm?.default?.temperature).toBe(0.5);
+    const withTemp = setConfigValue(base, "engines.local.temperature", "0.5");
+    expect(withTemp.engines?.local?.temperature).toBe(0.5);
   });
 
   test("setConfigValue rejects keys not in the schema", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "totally.unknown.path", "x")).toThrow("Unknown config key");
   });
 
@@ -202,14 +200,12 @@ describe("config CLI helpers", () => {
     expect(() => parseConfigValue("output.detail", "max")).toThrow(/Expected 'brief' \| 'normal' \| 'full'/);
   });
 
-  test("parseConfigValue coerces 'true' to 'auto' for semanticSearchMode", () => {
-    const result = parseConfigValue("semanticSearchMode", "true");
-    expect(result).toEqual({ semanticSearchMode: "auto" });
+  test("parseConfigValue rejects retired boolean semanticSearchMode values", () => {
+    expect(() => parseConfigValue("semanticSearchMode", "true")).toThrow(/Invalid value for semanticSearchMode/);
   });
 
-  test("parseConfigValue coerces 'false' to 'off' for semanticSearchMode", () => {
-    const result = parseConfigValue("semanticSearchMode", "false");
-    expect(result).toEqual({ semanticSearchMode: "off" });
+  test("parseConfigValue rejects retired boolean semanticSearchMode values", () => {
+    expect(() => parseConfigValue("semanticSearchMode", "false")).toThrow(/Invalid value for semanticSearchMode/);
   });
 
   test("parseConfigValue accepts 'auto' for semanticSearchMode", () => {
@@ -231,40 +227,43 @@ describe("config CLI helpers", () => {
 
 describe("apiKey rejection (#454)", () => {
   test("setConfigValue rejects llm.apiKey and points at AKM_LLM_API_KEY", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "llm.apiKey", "sk-test")).toThrow(/AKM_LLM_API_KEY/);
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    expect(() => setConfigValue(base, "engines.fast.apiKey", "sk-test")).toThrow(/apiKey must be \$VAR/);
   });
 
-  test("setConfigValue rejects embedding.apiKey and points at AKM_EMBED_API_KEY", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "embedding.apiKey", "sk-test")).toThrow(/AKM_EMBED_API_KEY/);
+  test("setConfigValue accepts symbolic embedding apiKey and rejects literals", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    expect(setConfigValue(base, "embedding.apiKey", "$AKM_EMBED_API_KEY").embedding?.apiKey).toBe("$AKM_EMBED_API_KEY");
+    expect(() => setConfigValue(base, "embedding.apiKey", "sk-test")).toThrow(/apiKey must be \$VAR/);
   });
 
-  test("setConfigValue rejects profiles.llm.<name>.apiKey with per-profile env hint", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "profiles.llm.local.apiKey", "sk-test")).toThrow(/AKM_PROFILE_LOCAL_API_KEY/);
+  test("setConfigValue accepts symbolic engine apiKey values only", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    expect(setConfigValue(base, "engines.local.apiKey", "$LOCAL_API_KEY").engines?.local?.apiKey).toBe(
+      "$LOCAL_API_KEY",
+    );
   });
 });
 
 // ── #455: every nested schema key is settable ───────────────────────────────
 
 describe("nested schema keys are all settable via zod walker (#455)", () => {
-  test("defaults.agent / defaults.improve are settable", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
-    const withAgent = setConfigValue(base, "defaults.agent", "claude");
-    expect(withAgent.defaults?.agent).toBe("claude");
-    const withImprove = setConfigValue(base, "defaults.improve", "fast");
-    expect(withImprove.defaults?.improve).toBe("fast");
+  test("canonical defaults are settable", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const withAgent = setConfigValue(base, "defaults.engine", "claude");
+    expect(withAgent.defaults?.engine).toBe("claude");
+    const withImprove = setConfigValue(base, "defaults.improveStrategy", "fast");
+    expect(withImprove.defaults?.improveStrategy).toBe("fast");
   });
 
   test("search.minScore is settable", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const withMinScore = setConfigValue(base, "search.minScore", "0.42");
     expect(withMinScore.search?.minScore).toBe(0.42);
   });
 
   test("feedback.requireReason / archiveRetentionDays / improve.eventRetentionDays settable", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const a = setConfigValue(base, "feedback.requireReason", "false");
     expect(a.feedback?.requireReason).toBe(false);
     const b = setConfigValue(base, "archiveRetentionDays", "90");
@@ -273,35 +272,32 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
     expect(c.improve?.eventRetentionDays).toBe(180);
   });
 
-  test("llm.temperature / llm.timeoutMs / llm.maxTokens settable via the legacy llm.* alias", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
-    const c1 = setConfigValue(base, "llm.temperature", "0.7");
-    expect(c1.profiles?.llm?.default?.temperature).toBe(0.7);
-    const c2 = setConfigValue(base, "llm.timeoutMs", "30000");
-    expect(c2.profiles?.llm?.default?.timeoutMs).toBe(30000);
+  test("LLM engine invocation fields are settable", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const c1 = setConfigValue(base, "engines.local.temperature", "0.7");
+    expect(c1.engines?.local?.temperature).toBe(0.7);
+    const c2 = setConfigValue(base, "engines.local.timeoutMs", "30000");
+    expect(c2.engines?.local?.timeoutMs).toBe(30000);
   });
 });
 
 // ── #460: unknown-key hint references current schema (no legacy `agent`) ────
 
 describe("unknown-key hint stays in sync with schema (#460)", () => {
-  test("unknown top-level key error lists schema-derived keys and does not mention legacy 'agent'", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+  test("unknown top-level key error lists schema-derived keys and does not mention retired profiles", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     try {
       setConfigValue(base, "totally.unknown.path", "x");
       throw new Error("should have thrown");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // The new schema-driven hint must include `defaults` and `profiles` and
-      // MUST NOT list the removed top-level `agent` as a valid key.
+      // The schema-driven hint must include `defaults` and `engines`, but not
+      // the retired top-level profile vocabulary.
       // Hint may be on .hint() if it's a UsageError; concatenate everything.
       const combined = `${message} ${(err as { hint?: () => string }).hint?.() ?? ""}`;
       expect(combined).toContain("defaults");
-      expect(combined).toContain("profiles");
-      // The removed legacy top-level `agent` key must NOT appear as a
-      // standalone valid key in the hint. Word-boundary regex avoids matching
-      // `agent.default` / `agents` substrings that legitimately appear.
-      expect(combined).not.toMatch(/\bagent\b(?!s?\.|s)/);
+      expect(combined).toContain("engines");
+      expect(combined).not.toContain("profiles");
     }
   });
 });
@@ -313,7 +309,7 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
 // preserved rather than rejected. Known fields are still type-validated.
 describe("registries/sources tolerate unknown fields at set time (lenient policy)", () => {
   test("set sources tolerates and preserves an unknown field on a source entry", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "sources",
@@ -325,7 +321,7 @@ describe("registries/sources tolerate unknown fields at set time (lenient policy
   });
 
   test("set registries tolerates and preserves an unknown field on a registry entry", () => {
-    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "registries",
@@ -341,7 +337,7 @@ describe("registries/sources tolerate unknown fields at set time (lenient policy
 
 describe("semanticSearchMode is unsettable (#464.b)", () => {
   test("unsetConfigValue removes semanticSearchMode entirely (falls back to DEFAULT_CONFIG at load)", () => {
-    const base: AkmConfig = { semanticSearchMode: "off" };
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
     const cleared = unsetConfigValue(base, "semanticSearchMode");
     expect(cleared.semanticSearchMode).toBeUndefined();
   });

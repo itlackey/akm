@@ -6,7 +6,7 @@
  * #609 — recombine / synthesize pass.
  *
  * A whole-corpus synthesis stage that runs AFTER consolidation and is OPT-IN
- * (default disabled via `IMPROVE_PROCESS_DEFAULTS.recombine`). It clusters
+ * (the built-in default strategy sets `processes.recombine.enabled: false`). It clusters
  * memories by RELATEDNESS (shared tags / graph entities — NEVER embedding
  * similarity), issues ONE bounded LLM call per cluster to induce a single
  * cross-episodic generalization, and emits the result as a NORMAL pending
@@ -124,6 +124,8 @@ export interface AkmRecombineOptions {
   config: AkmConfig;
   /** Active improve profile, so the LLM runner selection honors `--profile`. */
   improveProfile?: ImproveProfileConfig;
+  /** Pre-resolved connection supplied by the improve invocation plan. */
+  llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
   /** PROV-DM run token stamped on every emitted proposal. */
   sourceRun?: string;
   /** Caller budget signal; an aborted signal short-circuits before any LLM call. */
@@ -661,6 +663,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
       tag: "[recombine]",
       signal: opts.signal,
       activeProfile: opts.improveProfile,
+      llmConfig: opts.llmConfig,
     });
   if (!llmFn) {
     warnings.push("recombine: no LLM configured — skipping");

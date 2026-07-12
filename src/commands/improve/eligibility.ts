@@ -7,16 +7,22 @@ import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AkmAssetType, isAssetType } from "../../core/common";
+import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import type { ImproveEligibleRef } from "../../core/improve-types";
-import { closeDatabase, getAllEntries, getUtilityScoresByIds, openExistingDatabase } from "../../indexer/db/db";
+import {
+  closeDatabase,
+  getAllEntries,
+  getUtilityScoresByIds,
+  openExistingDatabase,
+  openReadonlyExistingDatabase,
+} from "../../indexer/db/db";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
 import { isDistillRefusedInputType } from "./distill";
-import type { ImproveProfileConfig } from "./improve-profiles";
-import { isProfileFilteredForAllPasses } from "./improve-profiles";
+import { isStrategyFilteredForAllPasses } from "./improve-strategies";
 
 // Eligibility / candidate-selection predicates for improve. Free functions
 // (no akmImprove closure state) extracted from improve.ts to shrink the
@@ -74,15 +80,33 @@ export async function collectEligibleRefs(
    * dominating the metric stream (62 539 `distill-skipped` events in 7d;
    * 99.07% of `actions[]`). Excluding them at the planner moves the audit
    * trail to a single `improve_skipped` event per ref with reason
-   * `profile_filtered_all_passes`, emitted by the caller once `eventsCtx` is
+   * `strategy_filtered_all_passes`, emitted by the caller once `eventsCtx` is
    * available.
    *
    * Empty when scope.mode === "ref" (user explicitly named the ref — intent
    * overrides profile-eligibility) or when no profile was passed (legacy
    * callers).
    */
-  profileFilteredRefs: ImproveEligibleRef[];
+  strategyFilteredRefs: ImproveEligibleRef[];
 }> {
+  return collectEligibleRefsFromIndex(scope, stashDir, improveProfile, false);
+}
+
+/** Dry-run planner path: query an existing index without creating or mutating it. */
+export async function collectEligibleRefsReadOnly(
+  scope: { mode: "all" | "type" | "ref"; value?: string },
+  stashDir?: string,
+  improveProfile?: ImproveProfileConfig,
+): ReturnType<typeof collectEligibleRefs> {
+  return collectEligibleRefsFromIndex(scope, stashDir, improveProfile, true);
+}
+
+async function collectEligibleRefsFromIndex(
+  scope: { mode: "all" | "type" | "ref"; value?: string },
+  stashDir: string | undefined,
+  improveProfile: ImproveProfileConfig | undefined,
+  readOnly: boolean,
+): ReturnType<typeof collectEligibleRefs> {
   if (scope.mode === "ref" && scope.value) {
     const parsed = parseAssetRef(scope.value);
     const writableDirs = new Set(getWritableStashDirs(stashDir).map((dir) => path.resolve(dir)));
@@ -91,7 +115,7 @@ export async function collectEligibleRefs(
       return {
         plannedRefs: [],
         memorySummary: { eligible: 0, derived: 0 },
-        profileFilteredRefs: [],
+        strategyFilteredRefs: [],
       };
     }
     return {
@@ -100,7 +124,7 @@ export async function collectEligibleRefs(
         eligible: parsed.type === "memory" ? 1 : 0,
         derived: parsed.type === "memory" && parsed.name.endsWith(".derived") ? 1 : 0,
       },
-      profileFilteredRefs: [],
+      strategyFilteredRefs: [],
     };
   }
 
@@ -108,10 +132,10 @@ export async function collectEligibleRefs(
   try {
     sources = resolveSourceEntries(stashDir);
   } catch {
-    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
+    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
   }
   if (sources.length === 0) {
-    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
+    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
   }
 
   // Only operate on writable sources — never mutate read-only registry caches
@@ -126,7 +150,10 @@ export async function collectEligibleRefs(
 
   let db: Database | undefined;
   try {
-    db = openExistingDatabase();
+    db = readOnly ? openReadonlyExistingDatabase() : openExistingDatabase();
+    if (!db) {
+      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+    }
     const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) => {
       // First apply the existing stashDir-scope filter (no-op when stashDir is unset).
       if (!isEntryInScope(indexed.stashDir, indexed.filePath, stashDir)) return false;
@@ -151,14 +178,14 @@ export async function collectEligibleRefs(
         // 2026-05-27: extend the .derived precedent to profile-incompatible
         // refs. If every per-ref pass (reflect + distill) on the active
         // profile would refuse this ref, drop it from `plannedRefs`. The
-        // caller emits `improve_skipped { reason: profile_filtered_all_passes }`
+        // caller emits `improve_skipped { reason: strategy_filtered_all_passes }`
         // once `eventsCtx` is available so the audit trail is preserved in a
         // single event per ref instead of 2× synthetic actions per run.
         // Background: see /tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md
-        if (improveProfile && isProfileFilteredForAllPasses(ref, improveProfile)) {
+        if (improveProfile && isStrategyFilteredForAllPasses(ref, improveProfile)) {
           profileFiltered.set(ref, {
             ref,
-            reason: "profile_filtered_all_passes",
+            reason: "strategy_filtered_all_passes",
             filePath: indexed.filePath,
           });
         } else {
@@ -178,13 +205,13 @@ export async function collectEligibleRefs(
     return {
       plannedRefs: [...planned.values()],
       memorySummary: { eligible: memoryEligible, derived: memoryDerived },
-      profileFilteredRefs: [...profileFiltered.values()],
+      strategyFilteredRefs: [...profileFiltered.values()],
     };
   } catch (error) {
     // The bun-test isolation guard must never be downgraded to "empty plan".
     rethrowIfTestIsolationError(error);
     if (error instanceof NotFoundError || error instanceof Error) {
-      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, profileFilteredRefs: [] };
+      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
     }
     throw error;
   } finally {

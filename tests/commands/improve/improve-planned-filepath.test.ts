@@ -28,6 +28,7 @@ import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -50,15 +51,15 @@ function writeLesson(stashDir: string, name: string): string {
 }
 
 async function indexStash(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
 const stubReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   ref,
-  agentProfile: "test-agent",
+  engine: "test-agent",
   durationMs: 1,
   proposal: {
     id: `reflect-${ref.replace(/[^a-z0-9]/gi, "-")}`,

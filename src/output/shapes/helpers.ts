@@ -24,6 +24,7 @@ export function shapeProposalProducerOutput(
       ...(result.ref !== undefined ? { ref: result.ref } : {}),
       ...(result.type !== undefined ? { type: result.type } : {}),
       ...(result.name !== undefined ? { name: result.name } : {}),
+      ...(result.engine !== undefined ? { engine: result.engine } : {}),
       ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
     };
     if (detail === "full") {
@@ -40,7 +41,7 @@ export function shapeProposalProducerOutput(
   const base: Record<string, unknown> = {
     ok: true,
     ref: result.ref,
-    ...(result.agentProfile !== undefined ? { agentProfile: result.agentProfile } : {}),
+    ...(result.engine !== undefined ? { engine: result.engine } : {}),
     ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };

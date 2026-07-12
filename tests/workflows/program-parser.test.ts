@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { EXTRA_PARAMS_CREDENTIAL_KEYS, EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS } from "../../src/core/extra-params";
 import { looksLikeWorkflowProgram, parseWorkflowProgram } from "../../src/workflows/program/parser";
 import {
   PROGRAM_ISOLATION_KINDS,
@@ -12,7 +13,6 @@ import {
   PROGRAM_PARAM_NAME_PATTERN,
   PROGRAM_REDUCERS,
   PROGRAM_RETRY_REASONS,
-  PROGRAM_RUNNER_KINDS,
   PROGRAM_STEP_ID_PATTERN,
   type WorkflowProgram,
 } from "../../src/workflows/program/schema";
@@ -44,10 +44,10 @@ function parseErrors(yamlText: string): string[] {
 
 /** Minimal valid program with the given steps block. */
 function withSteps(stepsYaml: string): string {
-  return `version: 1\nname: t\nsteps:\n${stepsYaml}`;
+  return `version: 2\nname: t\nsteps:\n${stepsYaml}`;
 }
 
-const LINEAR = `version: 1
+const LINEAR = `version: 2
 name: linear
 steps:
   - id: first
@@ -60,13 +60,13 @@ steps:
 
 // The addendum's v1 sketch, completed with the three route-target steps the
 // sketch references (route targets must exist and come after the router).
-const ADDENDUM_EXAMPLE = `version: 1
+const ADDENDUM_EXAMPLE = `version: 2
 name: review-changes
 description: Review changed files and route the outcome
 params:
   changed_files: { type: array, items: { type: string } }
 defaults:
-  runner: sdk
+  engine: default-agent
   model: balanced
   timeout: 10m
   on_error: fail
@@ -91,8 +91,7 @@ steps:
       concurrency: 8
       reducer: collect
       unit:
-        runner: agent
-        profile: reviewer
+        engine: reviewer
         model: deep
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
@@ -128,13 +127,18 @@ describe("parseWorkflowProgram — happy paths", () => {
   test("the addendum's full example parses", () => {
     const program = parseOk(ADDENDUM_EXAMPLE);
 
-    expect(program.version).toBe(1);
+    expect(program.version).toBe(2);
     expect(program.name).toBe("review-changes");
     expect(program.description).toBe("Review changed files and route the outcome");
     expect(program.source).toEqual({ path: "workflows/test.yaml" });
     expect(Object.keys(program.params ?? {})).toEqual(["changed_files"]);
     expect(program.params?.changed_files).toEqual({ type: "array", items: { type: "string" } });
-    expect(program.defaults).toEqual({ runner: "sdk", model: "balanced", timeoutMs: 600_000, onError: "fail" });
+    expect(program.defaults).toEqual({
+      engine: "default-agent",
+      model: "balanced",
+      timeoutMs: 600_000,
+      onError: "fail",
+    });
 
     expect(program.steps.map((s) => s.id)).toEqual(["discover", "review", "triage", "ship", "rework", "manual-triage"]);
 
@@ -151,8 +155,7 @@ describe("parseWorkflowProgram — happy paths", () => {
     expect(review.map?.concurrency).toBe(8);
     expect(review.map?.reducer).toBe("collect");
     expect(review.map?.unit).toMatchObject({
-      runner: "agent",
-      profile: "reviewer",
+      engine: "reviewer",
       model: "deep",
       timeoutMs: 300_000,
       retry: { max: 1, on: ["timeout", "llm_rate_limit"] },
@@ -233,68 +236,87 @@ describe("parseWorkflowProgram — happy paths", () => {
   });
 });
 
+describe("parseWorkflowProgram — extra_params security", () => {
+  test("rejects protected request fields and normalized credentials inside arrays", () => {
+    const protectedErrors = parseErrors(
+      withSteps(
+        "  - id: review\n    unit:\n      instructions: Review\n      llm:\n        extra_params:\n          max_tokens: 1\n",
+      ),
+    );
+    expect(protectedErrors.join(" ")).toContain("protected by AKM");
+
+    const credentialErrors = parseErrors(
+      withSteps(
+        "  - id: review\n    unit:\n      instructions: Review\n      llm:\n        extra_params:\n          provider:\n            - auth:\n                - API-Key: leak\n",
+      ),
+    );
+    expect(credentialErrors.join(" ")).toContain("cannot carry credentials");
+  });
+});
+
 describe("parseWorkflowProgram — top-level validation", () => {
   test("non-mapping document is rejected without crashing", () => {
     expect(parseErrors("just a string")).toEqual([
-      `A workflow program must be a YAML mapping with "version: 1", "name", and "steps".`,
+      `A workflow program must be a YAML mapping with "version: 2", "name", and "steps".`,
     ]);
     expect(parseErrors("- a\n- b")).toHaveLength(1);
   });
 
-  test("version must be the number 1", () => {
+  test("version must be the number 2 and v1 is retired", () => {
     expect(parseErrors(`name: t\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
-      '"version: 1" is required',
+      '"version: 2" is required',
     );
-    expect(parseErrors(`version: 2\nname: t\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
-      "got 2",
+    expect(parseErrors(`version: 1\nname: t\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
+      "version 1 retired",
     );
-    expect(parseErrors(`version: "1"\nname: t\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
-      'got "1"',
+    expect(parseErrors(`version: "2"\nname: t\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
+      'got "2"',
     );
   });
 
   test("name is required and non-empty", () => {
-    expect(parseErrors(`version: 1\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
+    expect(parseErrors(`version: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
       '"name" is required',
     );
-    expect(parseErrors(`version: 1\nname: ""\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
+    expect(parseErrors(`version: 2\nname: ""\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" ")).toContain(
       '"name" is required',
     );
   });
 
   test("steps must be a non-empty list", () => {
-    expect(parseErrors(`version: 1\nname: t`).join(" ")).toContain('"steps" is required');
-    expect(parseErrors(`version: 1\nname: t\nsteps: []`).join(" ")).toContain("at least one step");
-    expect(parseErrors(`version: 1\nname: t\nsteps: not-a-list`).join(" ")).toContain('"steps" is required');
+    expect(parseErrors(`version: 2\nname: t`).join(" ")).toContain('"steps" is required');
+    expect(parseErrors(`version: 2\nname: t\nsteps: []`).join(" ")).toContain("at least one step");
+    expect(parseErrors(`version: 2\nname: t\nsteps: not-a-list`).join(" ")).toContain('"steps" is required');
   });
 
   test("unknown top-level keys are rejected", () => {
-    const errors = parseErrors(`version: 1\nname: t\nbogus: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`);
+    const errors = parseErrors(`version: 2\nname: t\nbogus: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`);
     expect(errors.join(" ")).toContain('Unknown top-level key "bogus"');
   });
 
   test("params must map identifier names to schema objects", () => {
     expect(
-      parseErrors(`version: 1\nname: t\nparams: nope\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" "),
+      parseErrors(`version: 2\nname: t\nparams: nope\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" "),
     ).toContain('"params" must be a mapping');
     expect(
       parseErrors(
-        `version: 1\nname: t\nparams:\n  bad-name: { type: string }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+        `version: 2\nname: t\nparams:\n  bad-name: { type: string }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
       ).join(" "),
     ).toContain('Param name "bad-name" is invalid');
     expect(
       parseErrors(
-        `version: 1\nname: t\nparams:\n  files: string\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+        `version: 2\nname: t\nparams:\n  files: string\nsteps:\n  - id: a\n    unit: { instructions: x }`,
       ).join(" "),
     ).toContain('Param "files" must be a JSON Schema object');
   });
 
-  test("defaults are validated (runner, timeout, on_error, unknown keys)", () => {
+  test("defaults are validated (engine, timeout, on_error, retired selectors, unknown keys)", () => {
     const errors = parseErrors(
-      `version: 1\nname: t\ndefaults:\n  runner: cloud\n  timeout: 10h\n  on_error: retry\n  concurrency: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      `version: 2\nname: t\ndefaults:\n  engine: ""\n  runner: cloud\n  timeout: 10h\n  on_error: retry\n  concurrency: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`,
     );
     const joined = errors.join(" | ");
-    expect(joined).toContain('"defaults.runner" must be one of: llm | agent | sdk | inherit');
+    expect(joined).toContain('"defaults.engine" must be a non-empty engine name');
+    expect(joined).toContain('Unknown "defaults" key "runner"');
     expect(joined).toContain('invalid timeout "10h"');
     expect(joined).toContain('"defaults.on_error" must be one of: fail | continue');
     expect(joined).toContain('Unknown "defaults" key "concurrency"');
@@ -302,36 +324,42 @@ describe("parseWorkflowProgram — top-level validation", () => {
 
   test("budget: max_tokens/max_units parse into camelCase ceilings", () => {
     const program = parseOk(
-      `version: 1\nname: t\nbudget:\n  max_tokens: 50000\n  max_units: 20\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      `version: 2\nname: t\nbudget:\n  max_tokens: 50000\n  max_units: 20\nsteps:\n  - id: a\n    unit: { instructions: x }`,
     );
     expect(program.budget).toEqual({ maxTokens: 50000, maxUnits: 20 });
 
     const only = parseOk(
-      `version: 1\nname: t\nbudget: { max_units: 3 }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      `version: 2\nname: t\nbudget: { max_units: 3 }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
     );
     expect(only.budget).toEqual({ maxUnits: 3 });
 
     // An empty budget block declares no ceilings — same treatment as an
     // empty defaults block (omitted from the parsed program).
-    const empty = parseOk(`version: 1\nname: t\nbudget: {}\nsteps:\n  - id: a\n    unit: { instructions: x }`);
+    const empty = parseOk(`version: 2\nname: t\nbudget: {}\nsteps:\n  - id: a\n    unit: { instructions: x }`);
     expect(empty.budget).toBeUndefined();
   });
 
   test("budget is validated (mapping shape, integer >= 1 ceilings, unknown keys)", () => {
     expect(
-      parseErrors(`version: 1\nname: t\nbudget: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" "),
+      parseErrors(`version: 2\nname: t\nbudget: 4\nsteps:\n  - id: a\n    unit: { instructions: x }`).join(" "),
     ).toContain('"budget" must be a mapping with any of: max_tokens, max_units');
 
     const joined = parseErrors(
-      `version: 1\nname: t\nbudget:\n  max_tokens: 0\n  max_units: 1.5\n  max_dollars: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      `version: 2\nname: t\nbudget:\n  max_tokens: 0\n  max_units: 1.5\n  max_dollars: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`,
     ).join(" | ");
     expect(joined).toContain('"budget.max_tokens" must be an integer >= 1');
-    expect(joined).toContain('"budget.max_units" must be an integer >= 1');
+    expect(joined).toContain('"budget.max_units" must be an integer from 1 through 10000');
+
+    expect(
+      parseErrors(
+        `version: 2\nname: t\nbudget: { max_units: 10001 }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      ).join(" | "),
+    ).toContain('"budget.max_units" must be an integer from 1 through 10000');
     expect(joined).toContain('Unknown "budget" key "max_dollars"');
 
     expect(
       parseErrors(
-        `version: 1\nname: t\nbudget: { max_tokens: many }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+        `version: 2\nname: t\nbudget: { max_tokens: many }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
       ).join(" "),
     ).toContain('"budget.max_tokens" must be an integer >= 1');
   });
@@ -411,13 +439,14 @@ describe("parseWorkflowProgram — step validation", () => {
     );
   });
 
-  test("unit enums: runner, on_error, isolation; env entries; output shape", () => {
+  test("unit fields: engine, on_error, isolation, retired runner, env entries, output shape", () => {
     const joined = parseErrors(
       withSteps(
         [
           "  - id: a",
           "    unit:",
           "      instructions: x",
+          '      engine: ""',
           "      runner: gpu",
           "      on_error: explode",
           "      isolation: chroot",
@@ -426,7 +455,8 @@ describe("parseWorkflowProgram — step validation", () => {
         ].join("\n"),
       ),
     ).join(" | ");
-    expect(joined).toContain('"runner" must be one of: llm | agent | sdk | inherit');
+    expect(joined).toContain('"engine" must be a non-empty engine name');
+    expect(joined).toContain('Unknown Step "a" "unit" key "runner"');
     expect(joined).toContain('"on_error" must be one of: fail | continue');
     expect(joined).toContain('"isolation" must be one of: none | worktree');
     expect(joined).toContain('"env" must be a list of non-empty env asset refs');
@@ -526,7 +556,7 @@ describe("parseWorkflowProgram — step validation", () => {
 
   test("errors carry best-effort line numbers", () => {
     const result = parseWorkflowProgram(
-      `version: 1\nname: t\nsteps:\n  - id: a\n    unit:\n      instructions: x\n      runner: gpu\n`,
+      `version: 2\nname: t\nsteps:\n  - id: a\n    unit:\n      instructions: x\n      engine: ""\n`,
       SOURCE,
     );
     if (result.ok) throw new Error("expected failure");
@@ -670,7 +700,7 @@ describe("parseWorkflowProgram — hostile input", () => {
   });
 
   test("YAML syntax errors are reported, not thrown", () => {
-    const result = parseWorkflowProgram("version: 1\nname: [unclosed", SOURCE);
+    const result = parseWorkflowProgram("version: 2\nname: [unclosed", SOURCE);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors.length).toBeGreaterThan(0);
   });
@@ -678,7 +708,7 @@ describe("parseWorkflowProgram — hostile input", () => {
   test("deeply nested input does not crash", () => {
     const depth = 200;
     const nested = `${Array.from({ length: depth }, (_, i) => `${"  ".repeat(i + 2)}n:`).join("\n")} 1`;
-    const yamlText = `version: 1\nname: t\nparams:\n  deep:\n${nested}\nsteps:\n  - id: a\n    unit: { instructions: x }`;
+    const yamlText = `version: 2\nname: t\nparams:\n  deep:\n${nested}\nsteps:\n  - id: a\n    unit: { instructions: x }`;
     const result = parseWorkflowProgram(yamlText, SOURCE);
     expect(typeof result.ok).toBe("boolean");
   });
@@ -686,10 +716,10 @@ describe("parseWorkflowProgram — hostile input", () => {
   test("type-confused input does not crash", () => {
     const cases = [
       "version: [1]\nname: {}\nsteps: 3",
-      "version: 1\nname: t\nsteps:\n  - 42\n  - [list, step]",
-      "version: 1\nname: t\nsteps:\n  - id: a\n    unit: [not, a, map]\n    gate: 9",
-      "version: 1\nname: t\ndefaults: [1, 2]\nsteps:\n  - id: a\n    route: yes",
-      "version: 1\nname: t\nsteps:\n  - id: a\n    route:\n      input: x\n      when: [pass, fail]",
+      "version: 2\nname: t\nsteps:\n  - 42\n  - [list, step]",
+      "version: 2\nname: t\nsteps:\n  - id: a\n    unit: [not, a, map]\n    gate: 9",
+      "version: 2\nname: t\ndefaults: [1, 2]\nsteps:\n  - id: a\n    route: yes",
+      "version: 2\nname: t\nsteps:\n  - id: a\n    route:\n      input: x\n      when: [pass, fail]",
     ];
     for (const yamlText of cases) {
       const result = parseWorkflowProgram(yamlText, SOURCE);
@@ -699,7 +729,7 @@ describe("parseWorkflowProgram — hostile input", () => {
 
   test("alias-expansion bombs do not crash", () => {
     const bomb = [
-      "version: 1",
+      "version: 2",
       "name: t",
       "a: &a [x, x, x, x, x, x, x, x, x]",
       "b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a]",
@@ -717,19 +747,19 @@ describe("parseWorkflowProgram — hostile input", () => {
 });
 
 describe("looksLikeWorkflowProgram", () => {
-  test("matches version: 1 plus steps: at column 0", () => {
+  test("matches version: 2 plus steps: at column 0", () => {
     expect(looksLikeWorkflowProgram(LINEAR)).toBe(true);
     expect(looksLikeWorkflowProgram(ADDENDUM_EXAMPLE)).toBe(true);
-    expect(looksLikeWorkflowProgram(`version: "1"\nsteps:\n  - id: a`)).toBe(true);
-    expect(looksLikeWorkflowProgram("version: 1  # program\nsteps: []")).toBe(true);
+    expect(looksLikeWorkflowProgram(`version: "2"\nsteps:\n  - id: a`)).toBe(true);
+    expect(looksLikeWorkflowProgram("version: 2  # program\nsteps: []")).toBe(true);
   });
 
   test("rejects non-program text", () => {
     expect(looksLikeWorkflowProgram("# Workflow: classic markdown\n\n## Step: one")).toBe(false);
-    expect(looksLikeWorkflowProgram("version: 2\nsteps:\n  - id: a")).toBe(false);
-    expect(looksLikeWorkflowProgram("version: 1\nno_steps: true")).toBe(false);
-    expect(looksLikeWorkflowProgram("  version: 1\n  steps:\n")).toBe(false);
-    expect(looksLikeWorkflowProgram("version: 10\nsteps:\n")).toBe(false);
+    expect(looksLikeWorkflowProgram("version: 1\nsteps:\n  - id: a")).toBe(true);
+    expect(looksLikeWorkflowProgram("version: 2\nno_steps: true")).toBe(false);
+    expect(looksLikeWorkflowProgram("  version: 2\n  steps:\n")).toBe(false);
+    expect(looksLikeWorkflowProgram("version: 20\nsteps:\n")).toBe(false);
   });
 });
 
@@ -741,7 +771,6 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   };
 
   test("enum vocabularies match the exported constants", () => {
-    expect(schema.definitions.runner.enum).toEqual([...PROGRAM_RUNNER_KINDS]);
     expect(schema.definitions.onError.enum).toEqual([...PROGRAM_ON_ERROR]);
     expect(schema.definitions.reducer.enum).toEqual([...PROGRAM_REDUCERS]);
     expect(schema.definitions.isolation.enum).toEqual([...PROGRAM_ISOLATION_KINDS]);
@@ -756,5 +785,15 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   test("budget block keys match the parser's vocabulary", () => {
     expect(Object.keys(schema.definitions.budget.properties ?? {}).sort()).toEqual(["max_tokens", "max_units"]);
     expect("budget" in schema.properties).toBe(true);
+  });
+
+  test("extra_params documents top-level protection and recursive credential semantics", () => {
+    const schema = JSON.parse(
+      fs.readFileSync(path.resolve(import.meta.dir, "../../schemas/akm-workflow.json"), "utf8"),
+    );
+    const extraParams = schema.definitions.extraParams;
+    expect(extraParams["x-akm-protectedTopLevelNormalizedKeys"]).toEqual(EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS);
+    expect(extraParams["x-akm-recursivelyForbiddenNormalizedKeys"]).toEqual(EXTRA_PARAMS_CREDENTIAL_KEYS);
+    expect(schema.definitions.extraParamValue.anyOf[1].items.$ref).toBe("#/definitions/extraParamValue");
   });
 });

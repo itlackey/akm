@@ -40,16 +40,20 @@ describe("installLlmUsagePersistence", () => {
     const dispose = installLlmUsagePersistence();
     expect(hasLlmUsageSink()).toBe(true);
 
-    withLlmStage("reflect", () => {
-      emitLlmUsage({
-        durationMs: 100,
-        model: "m",
-        finishReason: "stop",
-        promptTokens: 10,
-        completionTokens: 5,
-        totalTokens: 15,
-      });
-    });
+    withLlmStage(
+      "reflect",
+      () => {
+        emitLlmUsage({
+          durationMs: 100,
+          model: "m",
+          finishReason: "stop",
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+        });
+      },
+      { engine: "fast", process: "reflect" },
+    );
     emitLlmUsage({ durationMs: 50, model: "m" }); // unattributed, absent tokens
 
     dispose();
@@ -61,6 +65,8 @@ describe("installLlmUsagePersistence", () => {
     const reflect = events.find((e) => e.metadata?.stage === "reflect");
     expect(reflect?.metadata).toMatchObject({
       stage: "reflect",
+      engine: "fast",
+      process: "reflect",
       durationMs: 100,
       promptTokens: 10,
       completionTokens: 5,
@@ -104,13 +110,21 @@ describe("installLlmUsagePersistenceIfAbsent", () => {
 describe("akmHealth llmUsage aggregate", () => {
   test("aggregates per-stage token + time totals from llm_usage events", () => {
     const dispose = installLlmUsagePersistence();
-    withLlmStage("reflect", () => {
-      emitLlmUsage({ durationMs: 100, promptTokens: 10, completionTokens: 5, totalTokens: 15, reasoningTokens: 2 });
-      emitLlmUsage({ durationMs: 200, promptTokens: 20, completionTokens: 10, totalTokens: 30, reasoningTokens: 3 });
-    });
-    withLlmStage("distill", () => {
-      emitLlmUsage({ durationMs: 40, promptTokens: 4, completionTokens: 2, totalTokens: 6 });
-    });
+    withLlmStage(
+      "reflect",
+      () => {
+        emitLlmUsage({ durationMs: 100, promptTokens: 10, completionTokens: 5, totalTokens: 15, reasoningTokens: 2 });
+        emitLlmUsage({ durationMs: 200, promptTokens: 20, completionTokens: 10, totalTokens: 30, reasoningTokens: 3 });
+      },
+      { engine: "fast", process: "reflect" },
+    );
+    withLlmStage(
+      "distill",
+      () => {
+        emitLlmUsage({ durationMs: 40, promptTokens: 4, completionTokens: 2, totalTokens: 6 });
+      },
+      { engine: "careful", process: "distill" },
+    );
     emitLlmUsage({ durationMs: 10 }); // unattributed, no tokens
     dispose();
 
@@ -137,6 +151,10 @@ describe("akmHealth llmUsage aggregate", () => {
     });
     expect(usage.byStage.distill).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
     expect(usage.byStage.unattributed).toMatchObject({ calls: 1, totalDurationMs: 10, totalTokens: 0 });
+    expect(usage.byProcess.reflect).toMatchObject({ calls: 2, totalDurationMs: 300, totalTokens: 45 });
+    expect(usage.byProcess.distill).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
+    expect(usage.byEngine.fast).toMatchObject({ calls: 2, totalDurationMs: 300, totalTokens: 45 });
+    expect(usage.byEngine.careful).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
   });
 
   test("reports an empty aggregate when no llm_usage events exist", () => {

@@ -135,9 +135,9 @@ function makePostLoopFn() {
 function baseConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improve: "sync-resilience-test" },
-    profiles: {
-      improve: {
+    defaults: { improveStrategy: "sync-resilience-test" },
+    improve: {
+      strategies: {
         "sync-resilience-test": {
           processes: {
             reflect: { enabled: false },
@@ -145,7 +145,12 @@ function baseConfig(): AkmConfig {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
             graphExtraction: { enabled: false },
+            extract: { enabled: false },
+            validation: { enabled: false },
             triage: { enabled: false },
+            proactiveMaintenance: { enabled: false },
+            recombine: { enabled: false },
+            procedural: { enabled: false },
           },
         },
       },

@@ -18,7 +18,7 @@ import path from "node:path";
 import { sleepSync } from "../../runtime";
 import { writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../file-lock";
+import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
 import { getCacheDir, getConfigDir } from "../paths";
 
 /**
@@ -108,7 +108,7 @@ export interface ConfigBackupResult {
   latest: string;
 }
 
-export function backupExistingConfig(configPath: string): ConfigBackupResult | undefined {
+export function backupExistingConfig(configPath: string, now = new Date()): ConfigBackupResult | undefined {
   if (!fs.existsSync(configPath)) return undefined;
 
   const backupDir = path.join(getCacheDir(), "config-backups");
@@ -118,10 +118,20 @@ export function backupExistingConfig(configPath: string): ConfigBackupResult | u
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(backupDir, 0o700);
 
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const timestamped = path.join(backupDir, `config-${timestamp}.json`);
+  const timestamp = now.toISOString().replace(/[.:]/g, "-");
+  let sequence = 0;
+  let timestamped: string;
+  while (true) {
+    timestamped = path.join(backupDir, `config-${timestamp}${sequence === 0 ? "" : `-${sequence}`}.json`);
+    try {
+      fs.copyFileSync(configPath, timestamped, fs.constants.COPYFILE_EXCL);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      sequence++;
+    }
+  }
   const latest = path.join(backupDir, "config.latest.json");
-  fs.copyFileSync(configPath, timestamped);
   fs.copyFileSync(configPath, latest);
   // 08-F4: a config backup carries the same sensitive fields as the live config
   // (endpoints, tokens). `copyFileSync` inherits the source's (often 0644) mode,
@@ -172,7 +182,7 @@ function pruneOldBackups(backupDir: string): void {
  * predictable for debugging. Uses $CONFIG (not $DATA) because config.json
  * itself lives in $CONFIG — they should fail together if the dir is read-only.
  */
-function getConfigLockPath(): string {
+export function getConfigLockPath(): string {
   return path.join(getConfigDir(), "config.json.lck");
 }
 
@@ -191,8 +201,8 @@ function sleepSyncMs(ms: number): void {
 /**
  * Acquire an exclusive sentinel around config writes.
  *
- * Returns a release function. Best-effort: when all retries are exhausted the
- * write proceeds unlocked rather than erroring (same posture as lockfile.ts).
+ * Returns a release function. Acquisition is fail-closed: config mutation may
+ * never continue without owning the lock that protects its read/merge/write.
  */
 export function acquireConfigLock(): () => void {
   const lockPath = getConfigLockPath();
@@ -204,15 +214,18 @@ export function acquireConfigLock(): () => void {
 
   for (let attempt = 0; attempt < CONFIG_LOCK_MAX_RETRIES; attempt++) {
     try {
-      if (tryAcquireLockSync(lockPath, String(process.pid))) {
-        return () => releaseLock(lockPath);
+      const ownership = tryAcquireLockSync(lockPath, createLockPayload());
+      if (ownership) {
+        return () => releaseLock(ownership);
       }
-    } catch {
-      // Non-EEXIST error (permissions, etc.) — bail out and proceed unlocked.
-      break;
+    } catch (error) {
+      throw new ConfigError(
+        `Unable to acquire config lock at ${lockPath}: ${error instanceof Error ? error.message : String(error)}`,
+        "INVALID_CONFIG_FILE",
+      );
     }
-    if (probeLock(lockPath).state === "stale") {
-      releaseLock(lockPath);
+    const probe = probeLock(lockPath);
+    if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) {
       continue; // Reclaimed — retry immediately.
     }
     if (attempt < CONFIG_LOCK_MAX_RETRIES - 1) {
@@ -228,8 +241,10 @@ export function acquireConfigLock(): () => void {
       sleepSyncMs(CONFIG_LOCK_RETRY_DELAY_MS);
     }
   }
-  // Best-effort: proceed without lock.
-  return () => {};
+  throw new ConfigError(
+    `Timed out waiting for config lock at ${lockPath}. Another AKM process may be updating config.`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
 /**

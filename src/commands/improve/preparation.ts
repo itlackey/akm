@@ -8,14 +8,15 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { daysToMs } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, loadConfig } from "../../core/config/config";
-import { rethrowIfTestIsolationError } from "../../core/errors";
+import { loadConfig } from "../../core/config/config";
+import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { EligibilitySource, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
 import { openStateDatabase, withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, getRetrievalCounts, getZeroResultSearches, openExistingDatabase } from "../../indexer/db/db";
 import { countUsageEventsByType } from "../../indexer/usage/usage-events";
+import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import { persistPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
@@ -41,11 +42,11 @@ import {
   isLessonCandidate,
   isSignalDeltaEligible,
 } from "./eligibility";
-import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./extract";
+import { type AkmExtractResult, akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
 import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
 import type { AkmImproveOptions, ConsolidationPassResult, ImprovePreparationResult, ImproveScope } from "./improve";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
-import { resolveProcessEnabled } from "./improve-profiles";
+import type { ResolvedImprovePlan } from "./improve-strategies";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
   computeProxyAdequacy,
@@ -207,45 +208,31 @@ export async function runConsolidationPass(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
-  improveProfile?: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
+  resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   /** Budget signal forwarded to akmConsolidate for graceful drain on timeout. */
   budgetSignal?: AbortSignal;
   /** Total run budget in ms, forwarded to akmConsolidate for WS-5 perf telemetry. */
   runBudgetMs?: number;
 }): Promise<ConsolidationPassResult> {
-  const { options, primaryStashDir, memorySummary, improveProfile, eventsCtx, budgetSignal, runBudgetMs } = args;
+  const {
+    options,
+    primaryStashDir,
+    memorySummary,
+    improveProfile,
+    resolvedPlan,
+    eventsCtx,
+    budgetSignal,
+    runBudgetMs,
+  } = args;
 
   const baseConfig = options.config ?? loadConfig();
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
-  const hasLlm = !!(baseConfig.defaults?.llm || baseConfig.defaults?.agent);
+  const hasLlm = resolvedPlan.processes.consolidate.runner !== null;
   const volumeTriggered =
     typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
-  // When volume triggers a consolidation pass, force-enable the consolidate
-  // process on the default improve profile so the gate accepts the run even
-  // if the user's config disabled it. We synthesise a new profile override
-  // rather than mutating connection settings.
-  const consolidationConfig: AkmConfig = volumeTriggered
-    ? {
-        ...baseConfig,
-        profiles: {
-          ...(baseConfig.profiles ?? {}),
-          improve: {
-            ...(baseConfig.profiles?.improve ?? {}),
-            default: {
-              ...(baseConfig.profiles?.improve?.default ?? {}),
-              processes: {
-                ...(baseConfig.profiles?.improve?.default?.processes ?? {}),
-                consolidate: {
-                  ...(baseConfig.profiles?.improve?.default?.processes?.consolidate ?? {}),
-                  enabled: true,
-                },
-              },
-            },
-          },
-        },
-      }
-    : baseConfig;
+  const consolidationConfig = baseConfig;
 
   // 0.8.0 pool-delta gate for consolidate: re-eligible iff at least one
   // memory file has been updated since the most recent successful
@@ -385,49 +372,55 @@ export async function runConsolidationPass(args: {
     );
     info(`[improve] consolidation skipped (pool ${eligiblePoolSize} < minPoolSize ${minPoolSize})`);
   } else if (!consolidationOnCooldown) {
-    consolidation = await withLlmStage("consolidate", () =>
-      akmConsolidate({
-        ...options.consolidateOptions,
-        config: consolidationConfig,
-        stashDir: options.stashDir,
-        // Active profile for this improve run — lets consolidate's secondary
-        // process-config reads honor `--profile <name>` instead of `default`.
-        improveProfile,
-        autoTriggered: volumeTriggered,
-        // Tie consolidate proposals back to this improve invocation so
-        // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
-        sourceRun: `consolidate-${Date.now()}`,
-        // Pass profile-configured options. incrementalSince narrows the pool to
-        // recently-changed memories + graph neighbours — use this for frequent
-        // passes (quick-shredder). Leave absent in the nightly default profile for
-        // a full-pool sweep that catches stale-but-unmerged duplicates.
-        incrementalSince: improveProfile?.processes?.consolidate?.incrementalSince,
-        limit: improveProfile?.processes?.consolidate?.limit,
-        neighborsPerChanged: improveProfile?.processes?.consolidate?.neighborsPerChanged,
-        maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
-        // #617 — deterministic near-duplicate dedup pre-pass. DEFAULT OFF; only
-        // runs when the profile explicitly sets `consolidate.dedup.enabled`.
-        dedup: improveProfile?.processes?.consolidate?.dedup,
-        // #581 — judged-state cache. DEFAULT OFF; only engages when the profile
-        // explicitly sets `consolidate.judgedCache.enabled`. Skips memories
-        // judged-unchanged since their last judge so one run sweeps the full
-        // corpus instead of narrowing to a time-window slice.
-        judgedCache: improveProfile?.processes?.consolidate?.judgedCache,
-        // Honor profile.autoAccept (already merged into options.autoAccept at the
-        // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
-        // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
-        // (which maps to undefined) from disabling consolidation auto-accept.
-        // options.consolidateOptions.autoAccept (if explicitly provided by caller)
-        // still wins because the spread above runs first.
-        autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
-        // WS-3a: forward budget signal for graceful abort on timeout, and pass
-        // the profile's p90 estimate for cold-start budget reduction.
-        signal: budgetSignal,
-        p90ChunkSecondsDefault: improveProfile?.processes?.consolidate?.p90ChunkSecondsDefault,
-        // WS-5: pass total run budget so perfTelemetry.estimatedBudgetFractionUsed
-        // can flag when consolidation alone exceeded the budget.
-        runBudgetMs,
-      }),
+    consolidation = await withLlmStage(
+      "consolidate",
+      () =>
+        akmConsolidate({
+          ...options.consolidateOptions,
+          config: consolidationConfig,
+          stashDir: options.stashDir,
+          // Active profile for this improve run — lets consolidate's secondary
+          // process-config reads honor `--profile <name>` instead of `default`.
+          improveProfile,
+          llmConfig: resolvedPlan.processes.consolidate.runner
+            ? materializeLlmRunnerConnection(resolvedPlan.processes.consolidate.runner)
+            : null,
+          autoTriggered: volumeTriggered,
+          // Tie consolidate proposals back to this improve invocation so
+          // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
+          sourceRun: `consolidate-${Date.now()}`,
+          // Pass profile-configured options. incrementalSince narrows the pool to
+          // recently-changed memories + graph neighbours — use this for frequent
+          // passes (quick-shredder). Leave absent in the nightly default profile for
+          // a full-pool sweep that catches stale-but-unmerged duplicates.
+          incrementalSince: improveProfile?.processes?.consolidate?.incrementalSince,
+          limit: improveProfile?.processes?.consolidate?.limit,
+          neighborsPerChanged: improveProfile?.processes?.consolidate?.neighborsPerChanged,
+          maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
+          // #617 — deterministic near-duplicate dedup pre-pass. DEFAULT OFF; only
+          // runs when the profile explicitly sets `consolidate.dedup.enabled`.
+          dedup: improveProfile?.processes?.consolidate?.dedup,
+          // #581 — judged-state cache. DEFAULT OFF; only engages when the profile
+          // explicitly sets `consolidate.judgedCache.enabled`. Skips memories
+          // judged-unchanged since their last judge so one run sweeps the full
+          // corpus instead of narrowing to a time-window slice.
+          judgedCache: improveProfile?.processes?.consolidate?.judgedCache,
+          // Honor profile.autoAccept (already merged into options.autoAccept at the
+          // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
+          // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
+          // (which maps to undefined) from disabling consolidation auto-accept.
+          // options.consolidateOptions.autoAccept (if explicitly provided by caller)
+          // still wins because the spread above runs first.
+          autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
+          // WS-3a: forward budget signal for graceful abort on timeout, and pass
+          // the profile's p90 estimate for cold-start budget reduction.
+          signal: budgetSignal,
+          p90ChunkSecondsDefault: improveProfile?.processes?.consolidate?.p90ChunkSecondsDefault,
+          // WS-5: pass total run budget so perfTelemetry.estimatedBudgetFractionUsed
+          // can flag when consolidation alone exceeded the budget.
+          runBudgetMs,
+        }),
+      { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
     );
     {
       const consolidateGr = await runAutoAcceptGate(
@@ -513,7 +506,8 @@ export async function runConsolidationPass(args: {
 async function runSessionExtractPass(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
-  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
+  resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   seedGateAccepted: number;
   seedGateFailed: number;
@@ -524,7 +518,7 @@ async function runSessionExtractPass(args: {
   warnings: string[];
   extractGateCfg: ReturnType<typeof makeGateConfig>;
 }> {
-  const { options, primaryStashDir, improveProfile, eventsCtx, seedGateAccepted, seedGateFailed } = args;
+  const { options, primaryStashDir, improveProfile, resolvedPlan, eventsCtx, seedGateAccepted, seedGateFailed } = args;
   const warnings: string[] = [];
   // Phase 0.4 — session-extract pass.
   //
@@ -579,11 +573,22 @@ async function runSessionExtractPass(args: {
   // #593/#594: the ACTIVE resolved improve profile is the single source of
   // truth for whether extract runs. (Previously this also ANDed in the legacy
   // `session_extraction` feature flag, which only reads
-  // `profiles.improve.default.processes.extract.enabled`; that made the default
-  // profile a global kill switch, so a non-default profile enabling extract was
-  // silently overridden. The default profile is now just another profile.)
+  // a retired global feature path; the selected strategy is authoritative.)
   // `akmExtract` re-checks the same active profile internally via `improveProfile`.
-  if (resolveProcessEnabled("extract", improveProfile)) {
+  if (resolvedPlan.processes.extract.enabled) {
+    const extractRunner = resolvedPlan.processes.extract.runner;
+    if (!extractRunner?.engine) {
+      throw new ConfigError("Resolved improve plan has no runner for enabled extract process.", "LLM_NOT_CONFIGURED");
+    }
+    const extractPlan: ResolvedExtractPlan = Object.freeze({
+      strategy: resolvedPlan.strategy.name,
+      engine: extractRunner.engine,
+      enabled: true,
+      process: resolvedPlan.processes.extract.config,
+      runner: extractRunner,
+      timeoutMs: extractRunner.timeoutMs === undefined ? 600_000 : extractRunner.timeoutMs,
+      embeddingConfig: Object.freeze(structuredClone(extractConfig.embedding)),
+    });
     const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
     // The guard engages only when minNewSessions > 0; 0 disables it entirely.
     let belowMinNewSessions = false;
@@ -623,19 +628,20 @@ async function runSessionExtractPass(args: {
       extractResults = [];
       for (const h of availableHarnesses) {
         try {
-          const result = await withLlmStage("session-extraction", () =>
-            akmExtract({
-              type: h.name,
-              ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
-              config: extractConfig,
-              // Thread the ACTIVE profile so extract's internal gate + per-process
-              // config read the running profile, not always `default`.
-              improveProfile,
-              dryRun: options.dryRun ?? false,
-              ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
-              // C2: pin extract's skip-tracking state.db open to the boundary path.
-              ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
-            }),
+          const result = await withLlmStage(
+            "session-extraction",
+            () =>
+              akmExtract({
+                type: h.name,
+                ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
+                config: extractConfig,
+                resolvedPlan: extractPlan,
+                dryRun: options.dryRun ?? false,
+                ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
+                // C2: pin extract's skip-tracking state.db open to the boundary path.
+                ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
+              }),
+            { engine: resolvedPlan.processes.extract.runner?.engine, process: "extract" },
           );
           extractResults.push(result);
 
@@ -692,75 +698,96 @@ async function runSessionExtractPass(args: {
  * with structural problems (missing file, missing lesson description), attempts
  * LLM schema repair, and returns the still-failing ref set + the repair records.
  */
-async function runValidationAndRepairPass(args: {
+export async function runValidationAndRepairPass(args: {
   postCleanupRefs: ImproveEligibleRef[];
   options: AkmImproveOptions;
   startMs: number;
   budgetMs: number;
   primaryStashDir?: string;
+  resolvedPlan: ResolvedImprovePlan;
+  repairValidationFailures: boolean;
+  schemaRepairFn?: typeof runSchemaRepairPass;
 }): Promise<{
   validationFailures: Array<{ ref: string; reason: string }>;
   validationFailureRefs: Set<string>;
   schemaRepairs: ImprovePreparationResult["schemaRepairs"];
 }> {
-  const { postCleanupRefs, options, startMs, budgetMs, primaryStashDir } = args;
-  const validationFailures: Array<{ ref: string; reason: string }> = [];
-  for (const candidate of postCleanupRefs) {
+  const {
+    postCleanupRefs,
+    options,
+    startMs,
+    budgetMs,
+    primaryStashDir,
+    resolvedPlan,
+    repairValidationFailures,
+    schemaRepairFn = runSchemaRepairPass,
+  } = args;
+  const validateCandidate = async (candidate: ImproveEligibleRef): Promise<string | undefined> => {
     try {
-      // #591: use the path pre-resolved at planning time when it is still on
-      // disk — a serial async DB lookup per ref cost ~500 s on a 9 000-ref
-      // stash. Fall back to findAssetFilePath only for refs that bypassed
-      // collectEligibleRefs' index scan or whose file moved since planning.
       const filePath =
         candidate.filePath && fs.existsSync(candidate.filePath)
           ? candidate.filePath
           : await findAssetFilePath(candidate.ref, options.stashDir);
-      if (!filePath) {
-        validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
-        continue;
-      }
-      if (path.extname(filePath).toLowerCase() !== ".md") {
-        continue;
-      }
+      if (!filePath) return "file not found on disk";
+      if (path.extname(filePath).toLowerCase() !== ".md") return undefined;
       if (isLessonCandidate(candidate.ref)) {
-        const raw = fs.readFileSync(filePath, "utf8");
-        const fm = parseFrontmatter(raw).data;
-        if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
+        const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8")).data;
+        if (!fm.description) return "missing description";
       }
-    } catch (e) {
-      validationFailures.push({ ref: candidate.ref, reason: String(e) });
+      return undefined;
+    } catch (error) {
+      return String(error);
     }
+  };
+  const validationFailures: Array<{ ref: string; reason: string }> = [];
+  for (const candidate of postCleanupRefs) {
+    const reason = await validateCandidate(candidate);
+    if (reason) validationFailures.push({ ref: candidate.ref, reason });
   }
   if (validationFailures.length > 0) {
-    info(`[improve] ${validationFailures.length} assets have validation issues (will attempt schema repair):`);
+    info(
+      `[improve] ${validationFailures.length} assets have validation issues${repairValidationFailures ? " (will attempt schema repair)" : ""}:`,
+    );
     for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
   }
 
   let schemaRepairs: ImprovePreparationResult["schemaRepairs"] = [];
-  let repairedRefs = new Set<string>();
+  const repairedRefs = new Set<string>();
 
   // Schema repair pass: attempt to fix validation failures via LLM before skipping.
-  if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
-    const baseConfigForRepair = options.config ?? loadConfig();
-    const llmCfg = getDefaultLlmConfig(baseConfigForRepair);
+  if (validationFailures.length > 0) {
+    const validationRunner = resolvedPlan.processes.validation.runner;
+    const llmCfg = validationRunner ? materializeLlmRunnerConnection(validationRunner) : undefined;
     if (llmCfg) {
-      const result = await runSchemaRepairPass(validationFailures, {
-        startMs,
-        budgetMs,
-        llmConfig: llmCfg,
-        // #591/#379 regression: options.stashDir is the raw, unresolved CLI
-        // flag (only set when --stash-dir is passed explicitly — never true
-        // for the scheduled tasks). primaryStashDir is the already-resolved
-        // source path and is what runSchemaRepairPass's `stashDir` param
-        // documents itself as needing ("proposal-queue writes"). Passing
-        // options.stashDir here made every schema-repair attempt throw
-        // `runSchemaRepairPass requires stashDir` on every cron invocation.
-        stashDir: primaryStashDir,
-        findFilePath: findAssetFilePath,
-        isLessonCandidateFn: isLessonCandidate,
-      });
+      const result = await withLlmStage(
+        "validation",
+        () =>
+          schemaRepairFn(validationFailures, {
+            startMs,
+            budgetMs,
+            llmConfig: llmCfg,
+            // #591/#379 regression: options.stashDir is the raw, unresolved CLI
+            // flag (only set when --stash-dir is passed explicitly — never true
+            // for the scheduled tasks). primaryStashDir is the already-resolved
+            // source path and is what runSchemaRepairPass's `stashDir` param
+            // documents itself as needing ("proposal-queue writes"). Passing
+            // options.stashDir here made every schema-repair attempt throw
+            // `runSchemaRepairPass requires stashDir` on every cron invocation.
+            stashDir: primaryStashDir,
+            findFilePath: findAssetFilePath,
+            isLessonCandidateFn: isLessonCandidate,
+          }),
+        { engine: resolvedPlan.processes.validation.runner?.engine, process: "validation" },
+      );
       schemaRepairs = result.repairs;
-      repairedRefs = result.repairedRefs;
+      // A repair result is advisory. Only a fresh structural read of the live
+      // asset can remove it from the failure set; queued content is not live.
+      const failedRefs = new Set(validationFailures.map((failure) => failure.ref));
+      const candidatesByRef = new Map(postCleanupRefs.map((candidate) => [candidate.ref, candidate]));
+      for (const ref of failedRefs) {
+        const candidate = candidatesByRef.get(ref);
+        if (candidate && !(await validateCandidate(candidate))) repairedRefs.add(ref);
+      }
     }
   }
 
@@ -787,7 +814,10 @@ export async function runImprovePreparationStage(args: {
   /** Warnings accumulated in akmImprove() prior to this stage (e.g. from the hoisted ensureIndex call). */
   initialCleanupWarnings?: string[];
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
+  resolvedPlan: ResolvedImprovePlan;
+  /** Public strategy identity for run-level event metadata. */
+  strategyName: string;
   /** Budget signal forwarded to the consolidation pass for graceful drain on timeout. */
   budgetSignal?: AbortSignal;
 }): Promise<ImprovePreparationResult> {
@@ -804,6 +834,8 @@ export async function runImprovePreparationStage(args: {
     eventsCtx,
     initialCleanupWarnings,
     improveProfile,
+    resolvedPlan,
+    strategyName,
     budgetSignal,
   } = args;
 
@@ -843,6 +875,7 @@ export async function runImprovePreparationStage(args: {
     primaryStashDir,
     memorySummary,
     improveProfile,
+    resolvedPlan,
     eventsCtx,
     budgetSignal,
     runBudgetMs: budgetMs,
@@ -853,6 +886,7 @@ export async function runImprovePreparationStage(args: {
     options,
     primaryStashDir,
     improveProfile,
+    resolvedPlan,
     eventsCtx,
     seedGateAccepted: consolidationPass.gateAutoAcceptedCount,
     seedGateFailed: consolidationPass.gateAutoAcceptFailedCount,
@@ -868,7 +902,7 @@ export async function runImprovePreparationStage(args: {
     {
       eventType: "improve_invoked",
       ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-      metadata: { scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
+      metadata: { strategy: strategyName, scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
     },
     eventsCtx,
   );
@@ -919,6 +953,8 @@ export async function runImprovePreparationStage(args: {
     startMs,
     budgetMs,
     primaryStashDir,
+    resolvedPlan,
+    repairValidationFailures: resolvedPlan.processes.validation.enabled && options.repairValidationFailures !== false,
   });
 
   // Phase 0.5 — structural hygiene pass
@@ -1068,7 +1104,7 @@ export async function runImprovePreparationStage(args: {
       // Has feedback on record but no signal delta since the last proposal —
       // genuinely fully skipped. Counted here; a single aggregated
       // improve_skipped event is emitted after the loop (mirrors
-      // profile_filtered_all_passes) instead of one event per ref.
+      // strategy_filtered_all_passes) instead of one event per ref.
       fullySkippedCount++;
       actions.push({
         ref: r.ref,
@@ -1080,7 +1116,7 @@ export async function runImprovePreparationStage(args: {
 
   // Emit ONE aggregated skip event for the fully-skipped bucket rather than one
   // improve_skipped event per ref (#592 pattern, mirrors
-  // profile_filtered_all_passes above). The per-ref loop previously produced
+  // strategy_filtered_all_passes above). The per-ref loop previously produced
   // ~11K state.db writes per run on a large stash, the dominant contributor to
   // 900 s timeouts. The in-memory `actions` log keeps the per-ref detail for the
   // run summary; no downstream consumer needs a per-ref DB audit trail (health's
@@ -1252,7 +1288,7 @@ export async function runImprovePreparationStage(args: {
   // runs rotate through the due pool rather than re-selecting the same heads.
   let proactiveRefs: ImproveEligibleRef[] = [];
   let proactiveMaintenanceSummary: { selected: number; dueTotal: number; neverReflected: number } | undefined;
-  const proactiveEnabled = scope.mode !== "ref" && resolveProcessEnabled("proactiveMaintenance", improveProfile);
+  const proactiveEnabled = scope.mode !== "ref" && resolvedPlan.processes.proactiveMaintenance.enabled;
   if (proactiveEnabled) {
     const pmCfg = improveProfile.processes?.proactiveMaintenance;
     const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;

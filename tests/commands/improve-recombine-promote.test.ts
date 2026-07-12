@@ -82,8 +82,8 @@ const GOOD_GENERALIZATION = () =>
 function promoteConfig(confirmThreshold: number, overrides?: Record<string, unknown>): AkmConfig {
   return {
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },

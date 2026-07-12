@@ -643,16 +643,19 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 describe("Scenario: CLI subprocess execution", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioConfigDir: string;
   let scenarioDataDir: string;
   let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s3-"));
+    scenarioConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-config-s3-"));
     scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s3-"));
     scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s3-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_CONFIG_HOME = scenarioConfigDir;
     process.env.XDG_DATA_HOME = scenarioDataDir;
     process.env.XDG_STATE_HOME = scenarioStateDir;
     await akmIndex({ stashDir });
@@ -661,6 +664,7 @@ describe("Scenario: CLI subprocess execution", () => {
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_CONFIG_HOME = scenarioConfigDir;
     process.env.XDG_DATA_HOME = scenarioDataDir;
     process.env.XDG_STATE_HOME = scenarioStateDir;
   });
@@ -668,6 +672,7 @@ describe("Scenario: CLI subprocess execution", () => {
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioConfigDir, { recursive: true, force: true });
     fs.rmSync(scenarioDataDir, { recursive: true, force: true });
     fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
@@ -908,20 +913,21 @@ describe("Scenario: CLI subprocess execution", () => {
     }
   });
 
-  test("cli: akm config set/get manages llm settings via JSON", async () => {
+  test("cli: akm config set/get manages an LLM engine via JSON", async () => {
     const setResult = runCli(
       "config",
       "set",
-      "llm",
-      '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","maxTokens":256}',
+      "engines.local",
+      '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","maxTokens":256}',
     );
     expect(setResult.exitCode).toBe(0);
 
-    const getResult = runCli("config", "get", "llm");
+    const getResult = runCli("config", "get", "engines.local");
     expect(getResult.exitCode).toBe(0);
 
     const json = parseJson(getResult.stdout);
     expect(json).toMatchObject({
+      kind: "llm",
       endpoint: "http://localhost:11434/v1/chat/completions",
       model: "llama3.2",
       maxTokens: 256,
@@ -931,17 +937,17 @@ describe("Scenario: CLI subprocess execution", () => {
   test("cli: startup applies --quiet before config-load warnings", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      profiles: { llm: { default: { endpoint: "http://localhost/v1", model: "gpt-4" } } },
-      defaults: { llm: "default" },
+      engines: { local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "gpt-4" } },
+      defaults: { llmEngine: "local" },
     });
 
-    const result = runCli("config", "get", "llm", "--quiet");
+    const result = runCli("config", "get", "engines.local", "--quiet");
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
 
     const json = parseJson(result.stdout);
     expect(json).toMatchObject({
-      endpoint: "http://localhost/v1",
+      endpoint: "http://localhost/v1/chat/completions",
       model: "gpt-4",
     });
   });

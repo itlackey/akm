@@ -59,7 +59,11 @@ function writePage(wikiDir: string, relPath: string, body: string): string {
 function writeConfig(configDir: string, body: Record<string, unknown>): void {
   const akmDir = path.join(configDir, "akm");
   fs.mkdirSync(akmDir, { recursive: true });
-  fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(body, null, 2), "utf8");
+  fs.writeFileSync(
+    path.join(akmDir, "config.json"),
+    JSON.stringify({ configVersion: "0.9.0", ...body }, null, 2),
+    "utf8",
+  );
 }
 
 /**

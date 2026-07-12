@@ -278,11 +278,11 @@ Replaces per-task JSONL files. Indexed on `task_id`, `started_at`.
 | `task_id` | TEXT NOT NULL | Task identifier |
 | `status` | TEXT NOT NULL | |
 | `started_at` | TEXT NOT NULL | ISO-8601 |
-| `finished_at` | TEXT | ISO-8601; NULL while running |
-| `duration_ms` | INTEGER | |
-| `log` | TEXT | |
-| `target` | TEXT | |
-| `detail` | TEXT | JSON blob for extra fields |
+| `completed_at` | TEXT | ISO-8601; NULL while incomplete |
+| `failed_at` | TEXT | ISO-8601; NULL unless failed |
+| `log_path` | TEXT | Transitional flat log path |
+| `target_kind` / `target_ref` | TEXT | Task target identity |
+| `metadata_json` | TEXT | Versioned metadata: v2 records `durationMs`, `detail`, and prompt `engine`; unversioned historical metadata keeps `profile` as `legacyProfile` |
 
 Indexes: `idx_task_history_task` on `task_id`, `idx_task_history_started` on `started_at`.
 
@@ -336,16 +336,16 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
 | `promoted` | `akm proposal accept` | `proposalId`, `source`, `assetPath` |
 | `rejected` | `akm proposal reject` | `proposalId`, `source`, `reason` |
-| `reflect_invoked` | reflect pass inside `akm improve` | `task`, `profile` |
-| `propose_invoked` | `akm propose` | `type`, `name`, `task`, `profile` |
+| `reflect_invoked` | reflect pass inside `akm improve` | `task`, `engine`, `eligibilitySource` |
+| `propose_invoked` | `akm propose` | `type`, `name`, `task`, `engine` |
 | `distill_invoked` | distill pass inside `akm improve` | `outcome` (queued\|skipped\|validation_failed\|quality_rejected), `lessonRef`, `score`, `reason` |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `show` | `akm show` | `type`, `name` |
 | `select` | `akm show` (when preceded by search within 60s) | `query`, `searchTs`, `rankPosition` |
-| `improve_invoked` | `akm improve` | `scope`, `dryRun`, `assetCount` |
+| `improve_invoked` | `akm improve` | `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_skipped` | `akm improve` (cooldown guards) | `reason` (reflect_cooldown\|distill_cooldown\|consolidation_cooldown\|budget_exhausted), `cooldownDays`, `lastEventTs` |
 | `consolidate_completed` | `akm improve` (post-consolidation) | `processed`, `merged` |
-| `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (written\|error), `reason`, `error?` |
+| `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (queued\|error), `reason`, `proposalId?`, `error?` |
 | `reflect_completed` | reflect pass inside `akm improve` (after proposal created) | `proposalId`, `source` |
 | `workflow_started` | workflow engine | `runId` |
 | `workflow_step_completed` | workflow engine (genuine `completed` transition only) | `runId`, `stepId`, `status` |
@@ -419,7 +419,7 @@ All asset files live under `$STASH/` in type-specific subdirectories defined by 
 | `secrets/<name>` | secret | raw secret bytes |
 | `wikis/<name>/` | wiki | See wiki structure below |
 | `lessons/<name>.md` | lesson | YAML-FM + Markdown (required: `description`, `when_to_use`) |
-| `tasks/<name>.yml` | task | pure YAML (see `docs/migration/v0.7-to-v0.8.md` for the `.md` → `.yml` conversion) |
+| `tasks/<name>.yml` | task | strict YAML with root `version: 2`; prompt tasks select `engine` (see `docs/migration/v0.8-to-v0.9.md#engine-and-task-assets`) |
 
 ### Wiki File Structure
 

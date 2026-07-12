@@ -17,7 +17,7 @@
  *   1. An LLM profile must be configured (no provider = no extraction). When
  *      absent, `resolveIndexPassLLM("graph", config)` returns `undefined`
  *      and the pass short-circuits.
- *   2. `profiles.improve.default.processes.graphExtraction.enabled !== false`
+ *   2. The selected strategy's `processes.graphExtraction.enabled !== false`
  *      — the feature-gate layer (historically v1 spec §14, since superseded by
  *      the 0.8.0 profile shape). Set to `false` to block the pass at the
  *      feature-gate layer (no network call may ever issue).
@@ -172,6 +172,10 @@ export interface GraphExtractionResult {
 
 export interface GraphExtractionPassOptions {
   candidatePaths?: ReadonlySet<string>;
+  /** Invocation-owned asset types. Falls back to index.graph only for standalone index calls. */
+  includeTypes?: string[];
+  /** Invocation-owned batch size. Falls back to index.graph only for standalone index calls. */
+  batchSize?: number;
   /**
    * When set (>= 0) and a DB is available, rank eligible files by
    * `utility_scores` DESC and process only the top-N per run (incremental
@@ -443,7 +447,7 @@ function reuseGraphNode(
  *   1. **Provider configured** — an LLM profile must be selectable. Without a
  *      configured provider, `resolveIndexPassLLM("graph", config)` returns
  *      `undefined` (the pass cannot run because there is no model to call).
- *   2. **Feature gate** — `profiles.improve.default.processes.graphExtraction.enabled`
+ *   2. **Feature gate** — the selected strategy's `processes.graphExtraction.enabled`
  *      (defaults to `true`). When `false`, no network call may issue regardless
  *      of per-pass settings.
  *   3. **Per-pass gate** — `index.graph.llm` (defaults to `true`). When
@@ -459,22 +463,26 @@ function reuseGraphNode(
  */
 export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): Promise<GraphExtractionResult> {
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
+  const invocationOwnsConnection = Object.hasOwn(ctx, "llmConfig");
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
-  // (profiles.improve.default.processes.graphExtraction.enabled). Defaults to
+  // (selected strategy's processes.graphExtraction.enabled). Defaults to
   // enabled when the key is absent.
-  if (!isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
+  if (!invocationOwnsConnection && !isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
-  const llmConfig = resolveIndexPassLLM("graph", config);
+  const llmConfig = Object.hasOwn(ctx, "llmConfig") ? ctx.llmConfig : resolveIndexPassLLM("graph", config);
   if (!llmConfig) {
     const reason =
-      getIndexPassConfig(config.index, "graph")?.llm === false
-        ? "index.graph.llm is false"
-        : "no default LLM profile is configured";
+      getIndexPassConfig(config.index, "graph")?.enabled === false
+        ? "index.graph.enabled is false"
+        : "no LLM engine is configured";
     warnVerbose(`graph extraction: skipped because ${reason}.`);
     return { ...EMPTY_RESULT };
   }
+  const featureConfig = invocationOwnsConnection
+    ? { ...config, index: { ...config.index, graph: { ...config.index?.graph, enabled: true } } }
+    : config;
 
   // The pass only writes to the primary (working) stash. Read-only caches
   // (git, npm, website) are deliberately untouched — the graph artifact for
@@ -494,11 +502,15 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     const drained = drainExtractionQueue(db, primary.path, GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT);
     for (const queued of drained) {
       if (signal?.aborted) break;
-      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, { config, signal });
+      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, {
+        config: featureConfig,
+        signal,
+        llmConfig,
+      });
     }
   }
 
-  const includeTypes = getGraphExtractionIncludeTypes(config);
+  const includeTypes = options.includeTypes ?? getGraphExtractionIncludeTypes(config);
   let eligible = collectEligibleFiles(primary.path, includeTypes).filter(
     (candidate) => !options.candidatePaths || options.candidatePaths.has(candidate.absPath),
   );
@@ -551,7 +563,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   // DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE (4) when unset, and clamps against
   // `llm.contextLength` if the model's context window is configured.
   const batchSize = resolveBatchSize(
-    getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
+    options.batchSize ?? getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
     llmConfig.contextLength,
   );
   const extractionRunId = crypto.randomUUID();
@@ -645,7 +657,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
             llmConfig,
             candidate.body,
             signal,
-            config,
+            featureConfig,
             onFallback,
             { batchState, telemetry: runtimeTelemetry },
           );
@@ -782,7 +794,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
           llmConfig,
           bodies,
           signal,
-          config,
+          featureConfig,
           onFallback,
           { batchState, telemetry: runtimeTelemetry },
         );
@@ -954,7 +966,12 @@ export async function extractGraphForSingleFile(
   stashRoot: string,
   filePath: string,
   bodyHash?: string,
-  opts?: { llmOverride?: SingleFileLlmOverride; signal?: AbortSignal; config?: AkmConfig },
+  opts?: {
+    llmOverride?: SingleFileLlmOverride;
+    llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
+    signal?: AbortSignal;
+    config?: AkmConfig;
+  },
 ): Promise<boolean> {
   try {
     // Re-read from disk — never trust a stale queued body.
@@ -982,10 +999,14 @@ export async function extractGraphForSingleFile(
       };
     } else {
       const config = opts?.config ?? loadConfig();
-      if (!isProcessEnabled("index", "graph_extraction", config)) return false;
-      const llmConfig = resolveIndexPassLLM("graph", config);
+      const invocationOwnsConnection = Object.hasOwn(opts ?? {}, "llmConfig");
+      if (!invocationOwnsConnection && !isProcessEnabled("index", "graph_extraction", config)) return false;
+      const llmConfig = Object.hasOwn(opts ?? {}, "llmConfig") ? opts?.llmConfig : resolveIndexPassLLM("graph", config);
       if (!llmConfig) return false; // model-available guard
-      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, config);
+      const featureConfig = invocationOwnsConnection
+        ? { ...config, index: { ...config.index, graph: { ...config.index?.graph, enabled: true } } }
+        : config;
+      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, featureConfig);
       extraction = {
         entities: result.entities,
         relations: result.relations,

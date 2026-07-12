@@ -27,6 +27,22 @@ function writeConfig(configDir: string, config: Record<string, unknown>): void {
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function ensureFreshRecoveryBundle(stashDir: string, dirs: Required<CliEnvDirs>): void {
+  const result = spawnSync("bun", [CLI, "backup", "create", "--for", "0.9.0"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      AKM_STASH_DIR: stashDir,
+      XDG_CACHE_HOME: dirs.xdgCache,
+      XDG_CONFIG_HOME: dirs.xdgConfig,
+      XDG_DATA_HOME: dirs.xdgData,
+      XDG_STATE_HOME: dirs.xdgState,
+    },
+  });
+  expect(result.status).toBe(0);
+}
+
 interface CliEnvDirs {
   xdgCache: string;
   xdgConfig: string;
@@ -48,6 +64,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
   const xdgConfig = envDirs?.xdgConfig ?? makeTempDir("akm-output-config-");
   const xdgData = envDirs?.xdgData ?? makeTempDir("akm-output-data-");
   const xdgState = envDirs?.xdgState ?? makeTempDir("akm-output-state-");
+  const dirs = { xdgCache, xdgConfig, xdgData, xdgState };
+  if (config) ensureFreshRecoveryBundle(stashDir, dirs);
   if (config) writeConfig(xdgConfig, config);
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -70,12 +88,14 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   const xdgConfig = makeTempDir("akm-output-config-");
   const xdgData = makeTempDir("akm-output-data-");
   const xdgState = makeTempDir("akm-output-state-");
+  const dirs = { xdgCache, xdgConfig, xdgData, xdgState };
   // Semantic off keeps auto-index stderr deterministic: with the default
   // ("auto") the local embedder fetches its model from huggingface.co and a
   // blocked/offline fetch emits "Embedding generation failed" on stderr,
   // tripping the stderr-cleanliness check below. This test suite pins output
   // shapes, not semantic ranking.
-  writeConfig(xdgConfig, { semanticSearchMode: "off", ...(config ?? {}) });
+  ensureFreshRecoveryBundle(stashDir, dirs);
+  writeConfig(xdgConfig, { configVersion: "0.9.0", semanticSearchMode: "off", ...(config ?? {}) });
 
   const child = spawn("bun", [CLI, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -268,7 +288,7 @@ describe("output baseline", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const config = { output: { format: "text", detail: "normal" } };
+    const config = { configVersion: "0.9.0", output: { format: "text", detail: "normal" } };
     const configDriven = runCli(stashDir, ["search", "deploy"], config);
     expect(configDriven).toContain("score:");
 
@@ -320,6 +340,7 @@ describe("output baseline", () => {
         stashDir,
         ["search", "deploy", "--format=json", "--detail=brief", "--source=both"],
         {
+          configVersion: "0.9.0",
           registries: [{ url: `http://127.0.0.1:${address.port}/index.json` }],
         },
       );

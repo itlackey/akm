@@ -70,8 +70,12 @@
  * `resume`). Exported standalone so that task only adds a registry entry.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, assertNotFlag } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
+import {
+  type AgentCommandBuilder,
+  type AgentDispatchRequest,
+  assertNotFlag,
+  resolveDispatchModel,
+} from "../../agent/builder-shared";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const OPENHANDS_PLATFORM = "openhands";
@@ -124,7 +128,7 @@ export const openhandsBuilder: AgentCommandBuilder = {
     args.push(`--task=${buildTaskPayload(req)}`);
     let env: Record<string, string> | undefined;
     if (req.model) {
-      const resolved = resolveModel(req.model, OPENHANDS_PLATFORM, profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, OPENHANDS_PLATFORM) as string;
       // Model travels via env, not argv — OpenHands' documented channel.
       env = { [OPENHANDS_MODEL_ENV]: resolved };
     }

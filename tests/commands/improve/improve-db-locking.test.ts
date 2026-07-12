@@ -34,6 +34,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -49,7 +50,7 @@ afterEach(() => {
 });
 
 async function indexStash(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -129,10 +130,10 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
       stashDir: stash,
       ensureIndexFn: async () => undefined,
       reflectFn: async (o) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         ref: o.ref ?? "unknown",
-        agentProfile: "test-agent",
+        engine: "test-agent",
         durationMs: 1,
         proposal: {
           id: `reflect-${(o.ref ?? "unknown").replace(/[^a-z0-9]/gi, "-")}`,

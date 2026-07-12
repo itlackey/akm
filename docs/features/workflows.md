@@ -165,7 +165,7 @@ Alongside the stable linear markdown format above, a workflow can be written
 as a **YAML orchestration program** and executed engine-driven with
 `akm workflow run <run-id|workflow:ref>`: akm compiles the program into a
 plan graph, freezes that plan on the run, dispatches each step's units to the
-configured runner (fan-out runs units concurrently), records every unit in
+configured engine (fan-out runs units concurrently), records every unit in
 `workflow_run_units`, and advances the run through the normal completion
 gates. Linear markdown workflows are unaffected — they keep compiling to a
 linear plan exactly as before, and the manual `next`/`complete` loop keeps
@@ -187,13 +187,13 @@ starter with **`akm workflow template --yaml`**, and lint with
 published JSON Schema at `schemas/akm-workflow.json`.
 
 ```yaml
-version: 1
+version: 2
 name: review-changes
 description: Review changed files and route the outcome
 params:
   changed_files: { type: array, items: { type: string } }
 defaults:            # run-level defaults, overridable per unit
-  runner: sdk        # llm | agent | sdk | inherit
+  engine: reviewer
   model: balanced
   timeout: 10m
   on_error: fail
@@ -221,8 +221,7 @@ steps:
       concurrency: 8
       reducer: collect             # step output = array of per-file verdicts
       unit:
-        runner: agent
-        profile: reviewer
+        engine: reviewer
         model: deep
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
@@ -265,17 +264,17 @@ steps:
       instructions: Summarize the ambiguous verdict for a human to triage.
 ```
 
-**Format rules.** Top-level keys: `version: 1` (required), `name`,
+**Format rules.** Top-level keys: `version: 2` (required), `name`,
 `description?`, `params?` (name → JSON-Schema declaration), `defaults?`
-(`runner`, `model`, `timeout`, `on_error`), `budget?` (`max_tokens`,
+(`engine`, `model`, `timeout`, `on_error`, `llm`), `budget?` (`max_tokens`,
 `max_units` — run-lifetime ceilings, see below), and `steps`. Each step has
 an `id`, an optional `title`, and **exactly one of** `unit` (single
 dispatch), `map` (fan a unit template out over `over:` with optional
 `concurrency` and a `collect` | `vote` reducer), or `route`. A unit carries
-`instructions` (required) plus optional `runner`, `profile`, `model`,
+`instructions` (required) plus optional `engine`, `model`, `llm`,
 `timeout`, `retry`, `on_error`, `output` (JSON Schema for the unit's
 structured result), `env` (env asset refs injected via the `akm env run`
-machinery — works on the agent and sdk runners; llm units fail loudly), and
+machinery — works on agent engines; LLM units fail loudly), and
 `isolation` (`none` | `worktree`, see below). Timeouts are
 `"<n>ms" | "<n>s" | "<n>m" | "none"`. Steps may also declare `output` (the
 step-artifact schema) and `gate` (`criteria`, `max_loops`, `required`).
@@ -523,7 +522,7 @@ brief reports the run is done.
 1. **`brief`** the run. The output lists the active step and, for each unit
    the step expects, a `WorkflowBriefUnit` with:
    - `unitId` — the content-derived id you pass back verbatim to `report`;
-   - `nodeId`, `runner`, `profile`, `model`, `timeoutMs`, `retry`, `onError`;
+   - `nodeId`, `engine`, `runtimeKind`, `platform`, `model`, `timeoutMs`, `retry`, `onError`;
    - `resolved.instructions` — the fully-assembled prompt (engine preamble +
      interpolated instructions + any gate feedback + schema directive),
      **byte-identical** to what the engine would dispatch — and
@@ -681,17 +680,15 @@ Because both surfaces share one implementation, the R4 conformance suite runs
 every golden program twice — engine-driven, then brief/report-driven — and
 asserts the two unit graphs are identical.
 
-#### Legacy runs (no frozen plan) are engine-only
+#### Historical runs without an executable frozen plan
 
 `brief` and `report` describe and ingest against a run's **frozen plan**
 (migration 006). A run started before frozen plans exist (`plan_json` is NULL —
 a pre-006 legacy run) has no plan for the driver protocol to read, so both
-commands **refuse it with a clear error**. Such a run is still fully drivable —
-just by the **engine**: `akm workflow run <run-id>` compiles a legacy run's
-plan from the live asset and executes it. (`akm workflow next`/`complete` also
-continue to work for manual advancement.) Use engine-driven mode for any legacy
-run; the harness-neutral brief/report protocol applies only to frozen-plan
-runs.
+commands **refuse it with a clear error**. The engine never recompiles
+historical rows from a mutable source asset. They remain available to
+inspection and abandonment surfaces; start a new run to execute the current
+workflow source.
 
 #### Worked example
 
@@ -716,7 +713,8 @@ akm workflow brief r1
     "units": [
       {
         "unitId": "discover:solo",
-        "runner": "sdk",
+        "engine": "reviewer",
+        "runtimeKind": "sdk",
         "action": "pending",
         "outputSchema": { "type": "object", "properties": { "files": { "type": "array" } }, "required": ["files"] },
         "resolved": { "ok": true, "instructions": "…List the files that need review…", "inputHash": "9f2c…" },
@@ -738,7 +736,7 @@ akm workflow report r1 --unit discover:solo --status completed \
 
 akm workflow brief r1
 # → active step "review" is a fan-out (map over ["a.ts"]): one unit
-#   "review:<hash>" with the reviewer profile and the per-file schema.
+#   "review:<hash>" with the reviewer engine and the per-file schema.
 
 # Claim it while you work, then report:
 akm workflow report r1 --unit review:1f3a… --status running --note "reviewing a.ts"
@@ -810,12 +808,15 @@ hardcoded) via the config-root `modelAliases` key:
 ```jsonc
 {
   "modelAliases": {
-    "fast":     { "*": "claude-haiku-4-5" },
-    "balanced": { "*": "claude-sonnet-4-6" },
+    "fast":     { "llm": "claude-haiku-4-5", "*": "claude-haiku-4-5" },
+    "balanced": { "llm": "claude-sonnet-4-6", "*": "claude-sonnet-4-6" },
     "deep":     { "claude": "claude-fable-5", "opencode": "opencode/claude-fable-5", "*": "claude-fable-5" }
   }
 }
 ```
+
+For an LLM engine, resolution checks its engine-name column, then `llm`, then
+`*`. Agent engines check their harness platform and then `*`.
 
 The built-in aliases `fable`, `opus`, `sonnet`, and `haiku` resolve per
 platform with no config. Point `deep` work (review, verification, judging) at
@@ -827,20 +828,21 @@ one — the security section below applies with multiplied blast radius. The
 engine enforces a concurrency cap, a lifetime unit cap per run, per-unit
 timeouts, and (when the program declares them) run budget ceilings.
 
-The concurrency cap is the engine-wide ceiling on how many units run at once
-during native fan-out (`akm workflow run`). A step's declared `concurrency:` is
-always clamped to it. The cap comes from the `workflow.maxConcurrency` akm
-config setting:
+Native fan-out (`akm workflow run`) uses the minimum of four limits: the map's
+declared `concurrency`, the run's frozen `workflow.maxConcurrency`, the
+selected frozen LLM engine's `concurrency` (including an SDK engine's fallback
+LLM), and the current host's CPU-derived safety limit. Reapplying host safety
+keeps a run safe when it resumes on a smaller machine.
 
 - **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a
   conservative default that leaves headroom on the host and matches the
   original Claude-Code cap.
-- **Set:** an explicit positive integer, clamped at read time to `[1, 64]`
+- **Set:** an explicit positive integer, clamped when frozen to `[1, 64]`
   (values above 64 are clamped down, never rejected, so one config shared
   across machines with different core counts never hard-fails).
 
 ```console
-$ akm config set workflow.maxConcurrency 8   # raise the engine ceiling to 8
+$ akm config set workflow.maxConcurrency 8   # raise the frozen workflow limit
 $ akm config get workflow.maxConcurrency
 8
 ```

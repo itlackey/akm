@@ -3,8 +3,8 @@
 
 # akm v1 — Architecture Specification
 
-**Status:** Draft for implementation (rev. 2026-04-27 — proposal/agent/lesson surfaces declared)
-**Target:** v1.0 freeze
+**Status:** Archived historical draft (rev. 2026-04-27)
+**Former target:** v1.0 freeze
 **Audience:** akm core contributors
 
 > **Note (0.8.0):** Some configuration examples below — particularly
@@ -14,10 +14,10 @@
 > non-improve features. See [`docs/configuration.md`](../configuration.md)
 > for the current keys and
 > [`docs/migration/v0.7-to-v0.8.md`](../migration/v0.7-to-v0.8.md) for the
-> full old → new mapping. The spec sections below are retained for
-> historical context and the v1.0 contract framing.
+> full old → new mapping. The spec sections below are retained only for
+> historical context and do not define current or future contracts.
 
-> **Reading guide.** This spec defines the v1.0 contract. It mixes shipped pre-release surfaces (sources, indexer, search, show, write-source, registry providers, vault, wiki, workflow, agent CLI integration, LLM/agent boundary) with **planned v1 surfaces** (proposal queue, `quality: "proposed"`, `lesson` asset type, `llm.features.*`). Planned surfaces are explicitly marked **`Planned for v1`** in their section heading and in §9. Implementation tracks against these declarations via `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md`. Anything in §9 — shipped or planned — is part of the locked contract once v1.0 ships.
+> **Historical reading guide.** This draft mixed then-shipped pre-release surfaces with planned v1 surfaces. Labels such as **`Planned for v1`**, "locked contract," and "authority" below describe the abandoned proposal at that time; they have no present authority. Use the current-truth documents named in the archive banner above.
 
 ---
 
@@ -390,7 +390,7 @@ field. The contract is:
   pipeline.
 - The legacy registry boolean `curated` is removed in v1. Legacy registry
   JSON containing `curated` parses and ignores the key (see §3.3 and
-  `docs/migration/v1.md`).
+  `docs/archive/pre-1.0-migration.md`).
 
 ```ts
 // src/core/types.ts
@@ -654,11 +654,10 @@ What plugin authors can add at v1:
 
 ---
 
-## 9. Locked contracts for v1
+## 9. Historical proposed contracts for v1
 
-Any change to the following requires a major version bump after v1.0. Items
-marked **`Planned for v1`** are not yet implemented but are part of the
-v1.0 freeze surface and must ship before v1.0 GA.
+This section recorded the draft's proposed freeze surface. It is not a live
+versioning contract or implementation requirement.
 
 ### 9.1 Interfaces and core types (shipped)
 
@@ -667,8 +666,8 @@ v1.0 freeze surface and must ship before v1.0 GA.
 - Asset ref grammar (`[origin//]type:name`) and install ref grammar (distinct).
 - Score range for `SearchHit.score`: `[0, 1]`, higher = better. One scoring
   pipeline (FTS5 + boosts) for all indexed content.
-- Asset *type* is an open string set (§4.1); the renderer registry is the
-  authority for "is this type well-known?".
+- Asset *type* was proposed as an open string set (§4.1), with the renderer
+  registry as the then-proposed authority for "is this type well-known?".
 - Asset *quality* is an open string set (§4.2); `"proposed"` is excluded from
   default search; `"generated"`, `"curated"`, and `"enriched"` are included by
   default; unknown values parse-warn-include.

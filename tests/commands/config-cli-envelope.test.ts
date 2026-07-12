@@ -38,20 +38,22 @@ afterEach(() => {
 });
 
 describe("akm config — JSON envelope snapshot (WS6)", () => {
-  test("config list: success envelope carries semanticSearchMode + sources", async () => {
+  test("config list: success envelope carries config v2 engine/strategy semantics", async () => {
     const { stdout, status } = await runCli(["--json", "config", "list"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.semanticSearchMode).toBe("off");
-    expect(Array.isArray(env.sources)).toBe(true);
+    expect(env.configVersion).toBe("0.9.0");
+    expect(env.profiles).toBeUndefined();
   });
 
-  test("config show: alias of list — same payload shape", async () => {
+  test("config show: alias of list uses the same v2 payload shape", async () => {
     const { stdout, status } = await runCli(["--json", "config", "show"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.semanticSearchMode).toBe("off");
-    expect(Array.isArray(env.sources)).toBe(true);
+    expect(env.configVersion).toBe("0.9.0");
+    expect(env.profiles).toBeUndefined();
   });
 
   test("config get: returns the requested key value", async () => {

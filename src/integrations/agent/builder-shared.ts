@@ -17,6 +17,7 @@
 
 import { UsageError } from "../../core/errors";
 import type { ShowResponse } from "../../sources/types";
+import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
 import type { AgentRunResult } from "./spawn";
 
@@ -37,14 +38,10 @@ export interface AgentDispatchRequest {
    * resolveModel() — never resolved before reaching the builder.
    */
   model?: string;
+  /** Bypass alias resolution because `model` was frozen/lowered already. */
+  modelIsExact?: boolean;
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
-  /**
-   * Working directory for the subprocess. Consumed by `runAgent` (as the
-   * fallback when `RunAgentOptions.cwd` is absent), not by builders — argv
-   * never encodes a working directory.
-   */
-  cwd?: string;
   /**
    * Reasoning-effort hint for harnesses that accept one (reserved for the
    * workflow engine's IR `effort` field; no builder consumes it yet).
@@ -57,6 +54,16 @@ export interface AgentDispatchRequest {
    * get it injected into the prompt. No builder consumes it yet.
    */
   schema?: Record<string, unknown>;
+}
+
+/** Resolve a raw dispatch model once, while preserving frozen/lowered models verbatim. */
+export function resolveDispatchModel(
+  request: Pick<AgentDispatchRequest, "model" | "modelIsExact">,
+  profile: AgentProfile,
+  platform: string,
+): string | undefined {
+  if (!request.model || request.modelIsExact) return request.model;
+  return resolveModel(request.model, platform, profile.modelAliases, profile.globalModelAliases);
 }
 
 /** Concrete command ready to hand to the spawn wrapper. */
@@ -99,7 +106,7 @@ export type AgentResultExtractor = (result: AgentRunResult) => AgentResultExtrac
 
 /** Strategy for building the argv for one agent CLI platform. */
 export interface AgentCommandBuilder {
-  /** Platform identifier — matches profile.name or profile.commandBuilder. */
+  /** Canonical harness platform identifier. */
   readonly platform: string;
   /**
    * Build the concrete command for this platform.

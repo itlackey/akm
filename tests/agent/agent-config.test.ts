@@ -1,22 +1,15 @@
-/**
- * Agent profile resolution tests (0.8.0 shape).
- *
- * Verifies `requireAgentProfile`, `resolveAgentProfile`, and
- * `listAgentProfileNames` against the unified AkmConfig shape (
- * `profiles.agent` + `defaults.agent`).
- */
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
+import { ConfigError } from "../../src/core/errors";
+import { resolveDefaultEngine, resolveEngine } from "../../src/integrations/agent/engine-resolution";
+import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 
-function mkConfig(over: Partial<AkmConfig> = {}): AkmConfig {
-  return { semanticSearchMode: "auto", ...over };
+function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
+  return { configVersion: "0.9.0", semanticSearchMode: "auto", ...overrides };
 }
 
-describe("built-in profile resolution", () => {
-  test("resolves the built-in agent CLIs out of the box", async () => {
-    const { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } = await import(
-      "../../src/integrations/agent/profiles"
-    );
+describe("built-in agent harness profiles", () => {
+  test("all built-in agent CLIs remain available to engine lowering", () => {
     expect(BUILTIN_AGENT_PROFILE_NAMES).toEqual([
       "aider",
       "amazonq",
@@ -28,94 +21,78 @@ describe("built-in profile resolution", () => {
       "openhands",
       "pi",
     ]);
-    for (const name of ["opencode", "claude", "codex", "gemini", "aider", "copilot", "pi", "amazonq", "openhands"]) {
+    for (const name of BUILTIN_AGENT_PROFILE_NAMES) {
       const profile = getBuiltinAgentProfile(name);
-      expect(profile).toBeDefined();
       expect(profile?.bin).toBeTruthy();
       expect(profile?.envPassthrough).toContain("PATH");
     }
   });
 
-  test("user override merges on top of built-in", async () => {
-    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    const merged = resolveAgentProfile("opencode", { platform: "opencode", args: ["--scripted"] });
-    expect(merged?.bin).toBe("opencode"); // built-in default
-    expect(merged?.args).toEqual(["--scripted"]); // override
-    expect(merged?.envPassthrough).toContain("PATH"); // built-in retained
+  test("an agent engine inherits platform defaults and applies overrides", () => {
+    const runner = resolveEngine(
+      "reviewer",
+      makeConfig({
+        engines: {
+          reviewer: { kind: "agent", platform: "opencode", args: ["--scripted"], timeoutMs: 6_000_000 },
+        },
+      }),
+    );
+    expect(runner.kind).toBe("agent");
+    if (runner.kind !== "agent") throw new Error("expected agent runner");
+    expect(runner.profile.name).toBe("reviewer");
+    expect(runner.profile.bin).toBe("opencode");
+    expect(runner.profile.platform).toBe("opencode");
+    expect(runner.profile.envPassthrough).toContain("PATH");
+    expect(runner.profile.args).toEqual(["--scripted"]);
+    expect(runner.timeoutMs).toBe(6_000_000);
   });
 
-  test("user-configured timeoutMs override is honored (config-only timeout, no CLI flag)", async () => {
-    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    // profiles.agent.<name>.timeoutMs must flow onto the resolved profile so
-    // runAgent (spawn.ts) picks it up when no per-call timeout is passed —
-    // e.g. `akm wiki ingest` without `--timeout-ms`.
-    const merged = resolveAgentProfile("opencode", { platform: "opencode", timeoutMs: 6_000_000 });
-    expect(merged?.timeoutMs).toBe(6_000_000);
+  test("a custom engine bin is honored", () => {
+    const runner = resolveEngine(
+      "rover",
+      makeConfig({ engines: { rover: { kind: "agent", platform: "opencode", bin: "rover-cli" } } }),
+    );
+    expect(runner.kind === "agent" && runner.profile.bin).toBe("rover-cli");
   });
 
-  test("user-defined profile (no built-in) requires bin", async () => {
-    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    expect(resolveAgentProfile("rover", undefined)).toBeUndefined();
-    const ok = resolveAgentProfile("rover", { platform: "opencode", bin: "rover-cli", args: ["--silent"] });
-    expect(ok?.bin).toBe("rover-cli");
-    expect(ok?.args).toEqual(["--silent"]);
-  });
-
-  test("user-defined opencode-sdk profile resolves without bin", async () => {
-    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
-    const profile = resolveAgentProfile("custom", { platform: "opencode-sdk", model: "gpt-4o" });
-    expect(profile?.name).toBe("custom");
-    expect(profile?.sdkMode).toBe(true);
-    expect(profile?.model).toBe("gpt-4o");
-  });
-
-  test("listAgentProfileNames includes built-ins plus user-defined", async () => {
-    const { listAgentProfileNames } = await import("../../src/integrations/agent/config");
-    const cfg = mkConfig({ profiles: { agent: { rover: { platform: "opencode", bin: "rover" } } } });
-    const names = listAgentProfileNames(cfg);
-    expect(names).toContain("rover");
-    expect(names).toContain("opencode");
-    expect(names).toContain("claude");
+  test("opencode-sdk resolves through its named LLM fallback", () => {
+    const runner = resolveEngine(
+      "sdk",
+      makeConfig({
+        engines: {
+          sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "local", model: "gpt-4o" },
+          local: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "fallback" },
+        },
+      }),
+    );
+    expect(runner.kind).toBe("sdk");
+    if (runner.kind !== "sdk") throw new Error("expected SDK runner");
+    expect(runner.kind).toBe("sdk");
+    expect(runner.profile.model).toBe("gpt-4o");
+    expect(runner.fallbackConnection?.model).toBe("fallback");
   });
 });
 
-describe("requireAgentProfile", () => {
-  test("throws ConfigError when the agent block is missing", async () => {
-    const { requireAgentProfile } = await import("../../src/integrations/agent/config");
-    const { ConfigError } = await import("../../src/core/errors");
-    let caught: unknown;
-    try {
-      requireAgentProfile(undefined);
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ConfigError);
-    expect((caught as Error).message).toContain("agent commands are disabled");
+describe("default engine resolution", () => {
+  test("throws when no default engine is selected", () => {
+    expect(() => resolveDefaultEngine(makeConfig())).toThrow(ConfigError);
   });
 
-  test("throws when no default and no requested name", async () => {
-    const { requireAgentProfile } = await import("../../src/integrations/agent/config");
-    const { ConfigError } = await import("../../src/core/errors");
-    let caught: unknown;
-    try {
-      requireAgentProfile(mkConfig());
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ConfigError);
-    expect((caught as Error).message).toContain("require a profile");
+  test("resolves defaults.engine exactly", () => {
+    const runner = resolveDefaultEngine(
+      makeConfig({
+        engines: { claude: { kind: "agent", platform: "claude" } },
+        defaults: { engine: "claude" },
+      }),
+    );
+    expect(runner.engine).toBe("claude");
   });
 
-  test("resolves the requested profile when valid", async () => {
-    const { requireAgentProfile } = await import("../../src/integrations/agent/config");
-    const profile = requireAgentProfile(mkConfig({ defaults: { agent: "claude" } }));
-    expect(profile.name).toBe("claude");
-    expect(profile.bin).toBe("claude");
-  });
-
-  test("explicit requested name beats config default", async () => {
-    const { requireAgentProfile } = await import("../../src/integrations/agent/config");
-    const profile = requireAgentProfile(mkConfig({ defaults: { agent: "claude" } }), "codex");
-    expect(profile.name).toBe("codex");
+  test("a missing requested engine does not fall back to defaults.engine", () => {
+    const config = makeConfig({
+      engines: { claude: { kind: "agent", platform: "claude" } },
+      defaults: { engine: "claude" },
+    });
+    expect(() => resolveEngine("codex", config)).toThrow('Engine "codex" is not configured.');
   });
 });

@@ -77,7 +77,7 @@ my-stash/
   knowledge/      # Reference documents (.md)
   env/            # Environment files (.env) — groups of related config, loaded whole
   secrets/        # Secrets — one sensitive value per file (auth tokens, keys, certs)
-  workflows/      # Step-by-step workflow documents (.md)
+  workflows/      # Workflow documents (.md) and YAML v2 programs (.yaml/.yml)
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
    lessons/        # Distilled lessons (.md, see akm improve / proposals)
   memories/       # Recalled context fragments (.md)

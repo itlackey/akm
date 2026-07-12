@@ -25,6 +25,7 @@ import { appendEvent, readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeSkill } from "../../_helpers/assets";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ afterEach(() => {
 });
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -53,7 +54,7 @@ const noopIndexFns = {
 
 /** Reflect stub that returns no_change (LLM found nothing to improve). */
 const noChangeReflect = (_ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: false,
   reason: "no_change",
   error: "no change detected",
@@ -63,7 +64,7 @@ const noChangeReflect = (_ref: string): AkmReflectResult => ({
 
 /** Reflect stub that returns a successful proposal. */
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -75,7 +76,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# improved" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 
@@ -104,10 +105,10 @@ const qualityRejectedDistill = (ref: string): AkmDistillResult => ({
  * and into the salience map / plasticity wiring.
  */
 const minimalConfig = () =>
-  ({
+  withTestImproveLlm({
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -119,7 +120,7 @@ const minimalConfig = () =>
         },
       },
     },
-  }) as import("../../../src/core/config/config").AkmConfig;
+  } as import("../../../src/core/config/config").AkmConfig);
 
 // ── Test 1: first run emits improve_salience_first_run ────────────────────────
 
@@ -649,8 +650,9 @@ describe("#608 high-salience admission gate", () => {
       // Disable proactive maintenance so only the high-salience gate can select this ref.
       config: {
         ...minimalConfig(),
-        profiles: {
-          improve: {
+        improve: {
+          ...minimalConfig().improve,
+          strategies: {
             default: {
               processes: {
                 consolidate: { enabled: false },
@@ -661,8 +663,8 @@ describe("#608 high-salience admission gate", () => {
               },
             },
           },
+          salience: { salienceThreshold: 0.75 },
         },
-        improve: { salience: { salienceThreshold: 0.75 } },
       } as import("../../../src/core/config/config").AkmConfig,
       ...noopIndexFns,
       reflectFn: async (opts: AkmReflectOptions) => {
@@ -704,8 +706,9 @@ describe("#608 high-salience admission gate", () => {
       stashDir: stash,
       config: {
         ...minimalConfig(),
-        profiles: {
-          improve: {
+        improve: {
+          ...minimalConfig().improve,
+          strategies: {
             default: {
               processes: {
                 consolidate: { enabled: false },
@@ -716,9 +719,9 @@ describe("#608 high-salience admission gate", () => {
               },
             },
           },
+          // salienceThreshold=1.0 means only a score of exactly 1.0 would qualify — effectively disabled.
+          salience: { salienceThreshold: 1.0 },
         },
-        // salienceThreshold=1.0 means only a score of exactly 1.0 would qualify — effectively disabled.
-        improve: { salience: { salienceThreshold: 1.0 } },
       } as import("../../../src/core/config/config").AkmConfig,
       ...noopIndexFns,
       reflectFn: async (opts: AkmReflectOptions) => {
@@ -760,8 +763,8 @@ function configWithSalience(
   const base = minimalConfig() as unknown as Record<string, unknown>;
   return {
     ...base,
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -774,8 +777,8 @@ function configWithSalience(
           },
         },
       },
+      salience,
     },
-    improve: { salience },
   } as unknown as import("../../../src/core/config/config").AkmConfig;
 }
 

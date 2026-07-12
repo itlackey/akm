@@ -29,13 +29,13 @@ Chosen model — **batch-at-boundaries with decoupled recognition**:
 - **Push is gated on `config.writable` + a configured remote** (the existing
   `saveGitStash` push logic). `writableOverride` mirrors `akm sync`
   (`cfg.writable === true ? true : undefined`).
-- **Default ON for git-backed stashes.** The built-in `default` and `thorough`
-  improve profiles ship `sync: { enabled: true, push: true }`; `quick` /
-  `memory-focus` inherit/omit it. Config shape is the top-level improve-profile
+- **Default ON for git-backed stashes.** The built-in improve strategies inherit
+  `sync: { enabled: true, push: true }` from `default` unless they explicitly
+  disable it. Config shape is the top-level improve-strategy
   `sync: { enabled?, push?, message? }` block. Disable via
-  `profiles.improve.<name>.sync.enabled = false`.
+  `improve.strategies.<name>.sync.enabled = false`.
 - **CLI flags:** `akm improve --no-sync` disables the end-of-run sync;
-  `--no-push` commits but does not push. CLI overrides the profile (only the
+  `--no-push` commits but does not push. CLI overrides the strategy (only the
   passed keys are threaded, so config defaults win otherwise).
 - **Non-fatal:** a sync/push failure is surfaced as a warning and recorded on
   `result.sync` (`{ committed:false, pushed:false, skipped:true, reason }`); it
@@ -48,10 +48,10 @@ end-of-run improve boundary only.
 
 ## 1. Goal
 
-Add a **top-level improve-profile option** so that, when `akm improve` finishes,
+Add a **top-level improve-strategy option** so that, when `akm improve` finishes,
 it can **automatically commit (and optionally push) the primary stash to git** —
 the same operation `akm sync` performs manually today. The option is a sibling of
-`autoAccept` / `limit` on the improve profile (not a `processes.<proc>` entry),
+`autoAccept` / `limit` on the improve strategy (not a `processes.<proc>` entry),
 enable/disable-able like other profile-level settings, with a **separate toggle
 to disable pushing** (commit-only vs commit-and-push).
 
@@ -163,7 +163,7 @@ computed.
 
 ## 3. Recommended config shape
 
-Top-level on the improve profile (sibling of `autoAccept`/`limit`), **not** a
+Top-level on the improve strategy (sibling of `autoAccept`/`limit`), **not** a
 process. It is not per-ref and not a pipeline stage; it is a post-run side-effect
 of the whole run — structurally like `autoAccept`/`limit`.
 
@@ -220,26 +220,20 @@ export const ImproveProfileConfigSchema = z
 
 ### 3.3 Resolution
 
-`resolveImproveProfile` → `deepMerge(builtin, userOverride)`
-(`src/commands/improve-profiles.ts:133-154`). `deepMerge` (`:112-131`) already
+`resolveImproveStrategy` → `deepMergeConfig(default, builtin, userOverride)`
+(`src/commands/improve/improve-strategies.ts`). `deepMergeConfig` already
 recurses into nested objects and treats `null` as `undefined`, so a user override
 like `{ sync: { push: false } }` merges field-wise over a built-in `{ sync: {
 enabled: true, push: true } }`. No `deepMerge` change needed.
 
-**Built-in defaults: OFF.** All four `BUILTIN_PROFILES` (`improve-profiles.ts:21-70`)
-either omit `sync` or set `sync: { enabled: false }`. This matches the opt-in
-safety posture of `validation` (`IMPROVE_PROCESS_DEFAULTS.validation = false`,
-`:86`) and `triage` (`:93`). A run only syncs when the user explicitly opts in via
-`profiles.improve.<name>.sync.enabled = true` (or `--sync`, below). Add a helper
-mirroring `resolveProcessEnabled`:
+**Built-in default: ON.** The `default` strategy supplies `sync: { enabled: true,
+push: true }`; selected strategies inherit it unless they explicitly disable
+sync. Users can override it at `improve.strategies.<name>.sync.enabled` or with
+the CLI flags below. The invocation computes the effective value with CLI fields
+overlaid on the resolved strategy:
 
 ```ts
-export function resolveSyncEnabled(profile: ImproveProfileConfig): boolean {
-  return profile.sync?.enabled === true;   // default false
-}
-export function resolveSyncPush(profile: ImproveProfileConfig): boolean {
-  return profile.sync?.push !== false;     // default true
-}
+const effectiveSync = { ...resolvedStrategy.sync, ...options.sync };
 ```
 
 ### 3.4 CLI flags
@@ -252,8 +246,8 @@ Add to `improveCommand.args` (`src/commands/improve-cli.ts:30-75`):
   syncing).
 
 These thread into `AkmImproveOptions` as `sync?: { enabled?: boolean; push?: boolean }`
-and override the resolved profile value (CLI > profile > built-in). Pattern matches
-how `--auto-accept`/`--limit` already override profile values.
+and override the resolved strategy value (CLI > strategy > built-in). Pattern matches
+how `--auto-accept`/`--limit` already override strategy values.
 
 ## 4. Integration seam (concrete)
 
@@ -388,8 +382,8 @@ reindex (`:1566`) → **sync** → `return`.
 1. **Schema + types:** add `ImproveSyncConfig` to `config-types.ts` and
    `ImproveSyncConfigSchema` to the `.strict()` `ImproveProfileConfigSchema`
    (`config-schema.ts:216`).
-2. **Resolvers:** add `resolveSyncEnabled`/`resolveSyncPush` to
-   `improve-profiles.ts`; leave built-in profiles defaulting OFF.
+2. **Resolution:** merge the selected strategy in `improve-strategies.ts`; keep
+   built-in strategy defaults in `src/assets/improve-strategies/*.json`.
 3. **Result type + event:** add `sync?` to `AkmImproveResult`; add `stash_synced`
    to the `events.ts` event-type union.
 4. **Seam:** insert the §4 block before `return result` (`improve.ts:1231`),
@@ -400,7 +394,7 @@ reindex (`:1566`) → **sync** → `return`.
    the recorded run / optional stderr line.
 6. **Tests:** filesystem stash with dirty tree → committed, not pushed; clean tree
    → skipped(no-op); no-remote → commit-only; non-akm dirty → warning, run still
-   `ok:true`; dry-run → no sync; `--no-sync` overrides an enabled profile;
+   `ok:true`; dry-run → no sync; `--no-sync` overrides an enabled strategy;
    `sync.push:false` → commit-only even with remote+writable.
 7. **Docs:** README/improve-workflow note + config reference.
 
@@ -587,7 +581,7 @@ primary stash, per-asset for named/`--target` writable git sources.**
 
 ## Commit message templates (`sync.message`)
 
-`profiles.improve.<name>.sync.message` accepts `{token}` placeholders, expanded
+`improve.strategies.<name>.sync.message` accepts `{token}` placeholders, expanded
 at the end of the run by `renderSyncCommitMessage` (src/commands/improve.ts)
 before the string is handed to `saveGitStash` (which still sanitizes it to a
 single line). Unknown tokens pass through verbatim, so templates are
@@ -612,8 +606,8 @@ pre-pass `DrainResult` and threading the CLI-minted `runId` onto the result):
 Example:
 
 ```yaml
-profiles:
-  improve:
+improve:
+  strategies:
     default:
       sync:
         enabled: true

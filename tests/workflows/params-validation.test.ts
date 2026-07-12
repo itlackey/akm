@@ -12,7 +12,7 @@ import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import { reportWorkflowUnit } from "../../src/workflows/exec/report";
 import { listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 /**
  * Reviewer #12: a program can declare `params.files: { type: array }`, but a
@@ -26,11 +26,12 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
 
-const PARAM_GUARD_WF = `version: 1
+const PARAM_GUARD_WF = `version: 2
 name: param-guard
 params:
   files: { type: array }

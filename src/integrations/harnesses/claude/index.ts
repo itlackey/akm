@@ -44,7 +44,6 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
     detection: false,
     configImport: false,
     runtimeIdentity: false,
-    v1Migration: false,
     ...c,
   };
 }
@@ -92,6 +91,5 @@ export class ClaudeHarness extends BaseHarness {
     detection: true,
     configImport: true,
     runtimeIdentity: true,
-    v1Migration: true,
   });
 }

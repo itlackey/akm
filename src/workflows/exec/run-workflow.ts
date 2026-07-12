@@ -64,15 +64,17 @@
 
 import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
+import { withMaintenanceStartBarrierAsync } from "../../core/maintenance-barrier";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { assertRunParamsSatisfyPlan } from "../ir/params";
-import type { WorkflowPlanGraph } from "../ir/schema";
+import { computePlanHash } from "../ir/plan-hash";
+import { decodeWorkflowPlanV3, type WorkflowPlanGraph } from "../ir/schema";
+import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
-import { compileWorkflowAssetPlan, loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
+import { frozenSummaryJudge } from "./frozen-judge";
 import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
 // Shared step semantics — route evaluation + cascaded-skip bookkeeping,
 // gate-evaluation journaling, and the whole step-completion path
@@ -84,7 +86,6 @@ import {
   finalizeExecutedStep,
   GATE_EVALUATION_PHASE,
   type GateFeedback,
-  parseFrozenPlan,
   type RouteSkipInfo,
   recoverGateFeedback,
   seedJournaledRouteDecisions,
@@ -145,7 +146,7 @@ export interface RunWorkflowOptions {
    * no-op when no SDK server was ever started, so the agent/llm paths pay
    * nothing). Injected by tests to assert the drain fires on each path.
    */
-  disposeDispatchResources?: () => void;
+  disposeDispatchResources?: () => void | Promise<void>;
 }
 
 export interface ExecutedStepReport {
@@ -167,6 +168,15 @@ export interface RunWorkflowResult {
 
 export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<RunWorkflowResult> {
   const next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params);
+  // Version/canonical/hash validation precedes every executable mutation,
+  // including lease acquisition. Historical rows remain inspectable/abandonable.
+  if (!next.done && !options.loadPlan) {
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getRunById(next.run.id);
+      if (!row) throw new UsageError(`Workflow run ${next.run.id} was not found.`);
+      requireExecutableWorkflowPlan(row);
+    });
+  }
 
   // Refuse non-active runs BEFORE any dispatch — completeWorkflowStep would
   // reject the completion anyway, but only after the units already ran (and
@@ -221,7 +231,7 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
       // hanging on the leaked handle. Runs even if lease release itself fails;
       // a teardown-time repository error must not skip dispatch cleanup.
       try {
-        (options.disposeDispatchResources ?? disposeDispatchResources)();
+        await (options.disposeDispatchResources ?? disposeDispatchResources)();
       } catch {
         /* disposal is best-effort; never let cleanup mask the run outcome */
       }
@@ -243,15 +253,17 @@ function leaseExpiry(): string {
  * arbiter — two racing invocations cannot both win.
  */
 async function acquireRunLease(runId: string, holder: string): Promise<void> {
-  await withWorkflowRunsRepo((repo) => {
-    if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
-    const row = repo.getRunById(runId);
-    throw new UsageError(
-      `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
-        `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
-        `wait for that invocation to finish or for the lease to expire.`,
-    );
-  });
+  await withMaintenanceStartBarrierAsync(() =>
+    withWorkflowRunsRepo((repo) => {
+      if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
+      const row = repo.getRunById(runId);
+      throw new UsageError(
+        `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
+          `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
+          `wait for that invocation to finish or for the lease to expire.`,
+      );
+    }),
+  );
 }
 
 /**
@@ -458,11 +470,14 @@ async function driveRun(
   let unitsDispatched = journaledDispatches.reduce((sum, row) => sum + row.attempts, 0);
   let tokensUsed = journaledDispatches.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
 
-  // One plan per invocation: the test seam receives the workflow ref; the
-  // default reads the run's frozen plan and never touches the asset file.
-  const plan = options.loadPlan
-    ? await options.loadPlan(next.run.workflowRef)
-    : await loadFrozenPlan(next.run.id, next.run.workflowRef);
+  // The decoded/hash-verified row plan is the sole execution authority. The
+  // loader seam may assert an expected plan in tests, but can never replace it.
+  const plan = await loadFrozenPlan(next.run.id, next.run.workflowRef);
+  if (options.loadPlan) {
+    const expected = decodeWorkflowPlanV3(await options.loadPlan(next.run.workflowRef));
+    if (computePlanHash(expected) !== computePlanHash(plan))
+      throw new UsageError(`Injected workflow plan for run ${next.run.id} differs from its frozen plan.`);
+  }
 
   // Reviewer #12: the journaled params row must still satisfy the frozen param
   // schemas before the engine resolves any unit prompt from it. Applied on ALL
@@ -616,13 +631,17 @@ async function driveRun(
               // Budget ceilings ride the FROZEN plan (addendum R2): a mid-run
               // asset edit can never loosen or tighten a run's budget.
               ...(plan.budget ? { budget: plan.budget } : {}),
+              ...(plan.execution ? { engines: plan.execution.engines } : {}),
               gateLoop,
               ...(gateFeedback ? { gateFeedback } : {}),
               // The heartbeat's signal is the effective dispatch signal: a lost
               // lease (or a caller abort) aborts in-flight units promptly.
               ...(dispatchSignal ? { signal: dispatchSignal } : {}),
               ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
-              ...(options.maxConcurrency !== undefined ? { maxConcurrency: options.maxConcurrency } : {}),
+              maxConcurrency: Math.min(
+                options.maxConcurrency ?? Number.POSITIVE_INFINITY,
+                plan.execution?.maxConcurrency ?? 1,
+              ),
             });
       // If the heartbeat lost the lease WHILE this step dispatched, another
       // engine now owns the run — stop loudly BEFORE finalizing the step
@@ -652,7 +671,7 @@ async function driveRun(
         workflowRef: next.run.workflowRef,
         stepId: step.id,
         stepPlan,
-        completionCriteria: step.completionCriteria ?? [],
+        completionCriteria: stepPlan.gate.criteria,
         gateLoop,
         loopsRemaining: gateLoop < maxLoops,
         result,
@@ -660,7 +679,8 @@ async function driveRun(
         params: next.run.params ?? {},
         routeSelected,
         routeUnselected,
-        summaryJudge: options.summaryJudge,
+        summaryJudge:
+          options.summaryJudge === undefined ? frozenSummaryJudge(plan, stepPlan.gate.judge) : options.summaryJudge,
         ...(options.requireGates ? { requireGates: true } : {}),
         leaseHolder,
       });
@@ -724,23 +744,14 @@ async function driveRun(
  *     canonical JSON). A mismatch means the journaled plan was tampered with
  *     or corrupted — fail loudly, never silently recompile. The workflow
  *     asset file is NEVER touched on this path.
- *   - `plan_json` NULL → the run predates frozen plans (created before
- *     migration 006). Warn and fall back to compiling from the live asset,
- *     preserving pre-006 behavior for in-flight legacy runs.
+ * Historical v2/null rows are inspection-only in the engine cutover. They are
+ * never recompiled from a mutable source asset.
  */
-async function loadFrozenPlan(runId: string, workflowRef: string): Promise<WorkflowPlanGraph> {
+async function loadFrozenPlan(runId: string, _workflowRef: string): Promise<WorkflowPlanGraph> {
   const row = await withWorkflowRunsRepo((repo) => {
     const run = repo.getRunById(runId);
-    return run ? { planJson: run.plan_json, planHash: run.plan_hash } : undefined;
+    return run;
   });
-
-  if (row?.planJson) {
-    return parseFrozenPlan(runId, row.planJson, row.planHash);
-  }
-
-  warn(
-    `Workflow run ${runId} predates frozen plans (no plan_json on the run row); ` +
-      `compiling the plan from the live asset ${workflowRef}. New runs freeze their plan at start.`,
-  );
-  return compileWorkflowAssetPlan(await loadWorkflowAsset(workflowRef));
+  if (!row) throw new UsageError(`Workflow run ${runId} was not found.`);
+  return requireExecutableWorkflowPlan(row);
 }

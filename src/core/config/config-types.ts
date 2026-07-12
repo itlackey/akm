@@ -27,16 +27,16 @@ import type { z } from "zod";
 // is the single source of truth replacing the previously-disconnected
 // registries. config ← harnesses is the only import direction (harnesses/ is a
 // dependency-graph leaf), so there is no cycle.
-import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
+import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "../../integrations/harnesses";
 
 /**
  * Canonical list of valid agent harness / platform ids. Re-exported from the
  * unified harness registry (#562) so the Zod `AgentPlatformSchema` enum, the
- * `AgentProfileConfig` platform union, and setup's `DetectedHarness` union all
+ * agent-engine platform union, and setup's `DetectedHarness` union all
  * derive from one place and cannot drift. Add a harness in
  * `src/integrations/harnesses/index.ts`.
  */
-export { VALID_HARNESS_IDS };
+export { HARNESS_BY_ID, VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
@@ -44,20 +44,17 @@ export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
 /** OpenAI-compatible embedding connection config. */
 export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema>;
 
-/** LLM connection config (top-level `llm` after migration + `profiles.llm[*]`). */
+/** OpenAI-compatible LLM connection materialized from a named engine. */
 export type LlmConnectionConfig = z.infer<typeof import("./config-schema").LlmConnectionConfigSchema>;
 
-/** A named LLM profile (`profiles.llm.<name>`). */
+/** Internal LLM call shape including structured-output capability metadata. */
 export type LlmProfileConfig = z.infer<typeof import("./config-schema").LlmProfileConfigSchema>;
 
-/**
- * Per-agent-profile config (`profiles.agent.<name>`). Fields: `platform`,
- * `bin`, `args`, `workspace`, `model`, `timeoutMs` (null = no timeout).
- */
-export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentProfileConfigSchema>;
+/** A named 0.9 engine (LLM connection or agent platform). */
+export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfigSchema>;
 
 /**
- * Per-process config (`profiles.improve.<profile>.processes.<process>`). Most
+ * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
  * fields are process-specific — see the field comments in config-schema.ts for
  * which process each knob applies to and its default (e.g.
  * `dedup`/`judgedCache`/`minPoolSize` = consolidate;
@@ -68,7 +65,7 @@ export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentP
 export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
 
 /**
- * A named improve profile (`profiles.improve.<name>`). Holds the per-process
+ * A named improve strategy (`improve.strategies.<name>`). Holds the per-process
  * `processes` map plus profile-level knobs (`autoAccept`, `limit`, `maxCycles`,
  * `symmetricValence`, `sync`). See config-schema.ts for per-field docs.
  */
@@ -129,9 +126,8 @@ export type SourceConfigEntry = z.infer<typeof import("./config-schema").SourceC
 export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfigSchema>;
 
 /**
- * Per-pass index configuration. Each named pass that uses an LLM defaults to
- * the default LLM profile; setting `llm: false` opts a single pass out. Read
- * pass-named entries via `getIndexPassConfig()`.
+ * Per-pass index configuration. Each named pass can select an engine and apply
+ * bounded invocation overrides; `enabled: false` opts a pass out.
  */
 export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
 
@@ -153,4 +149,5 @@ export type WorkflowConfig = z.infer<typeof import("./config-schema").WorkflowCo
  * The full on-disk config shape. This IS the Zod schema's output type — there
  * is no parallel hand-written interface to keep in sync.
  */
-export type AkmConfig = import("./config-schema").AkmConfigParsed;
+export type AkmConfig = Partial<import("./config-schema").AkmConfigParsed> &
+  Pick<import("./config-schema").AkmConfigParsed, "semanticSearchMode">;

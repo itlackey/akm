@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AkmConfig } from "../../core/config/config";
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import type { Database } from "../../storage/database";
 import type { SearchSource } from "../search/search-source";
 
@@ -26,6 +26,8 @@ export interface PassContext {
   sources: SearchSource[];
   signal?: AbortSignal;
   db?: Database;
+  /** Invocation-owned LLM connection. Omit only for standalone index passes. */
+  llmConfig?: LlmConnectionConfig | null;
 }
 
 /**

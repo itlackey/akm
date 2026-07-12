@@ -72,6 +72,7 @@ function initStateDb(dataDir: string): void {
         stash_dir     TEXT    NOT NULL,
         dry_run       INTEGER NOT NULL DEFAULT 0,
         profile       TEXT,
+        strategy      TEXT,
         scope_mode    TEXT    NOT NULL,
         scope_value   TEXT,
         guidance      TEXT,
@@ -116,14 +117,23 @@ function startedAtFromRunId(runId: string): string {
 function writeImproveRun(stashRoot: string, runId: string, actions: PlannerActionInput[]): void {
   const dataDir = process.env.AKM_DATA_DIR;
   if (!dataDir) throw new Error("writeImproveRun: AKM_DATA_DIR not set (call makeTmpStash first)");
-  const envelope = { schemaVersion: 1, ok: true, actions };
+  const envelope = {
+    schemaVersion: 2,
+    ok: true,
+    strategy: "default",
+    scope: { mode: "all" },
+    dryRun: false,
+    memorySummary: { eligible: 0, derived: 0 },
+    plannedRefs: [],
+    actions,
+  };
   const db = new Database(path.join(dataDir, "state.db"));
   try {
     db.prepare(
       `INSERT INTO improve_runs
-         (id, started_at, completed_at, stash_dir, dry_run, profile,
-          scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
-       VALUES (?, ?, NULL, ?, 0, NULL, 'all', NULL, NULL, 1, ?, NULL, '{}')`,
+         (id, started_at, completed_at, stash_dir, dry_run, profile, strategy,
+           scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+       VALUES (?, ?, NULL, ?, 0, NULL, 'default', 'all', NULL, NULL, 1, ?, NULL, '{}')`,
     ).run(runId, startedAtFromRunId(runId), stashRoot, JSON.stringify(envelope));
   } finally {
     db.close();
@@ -137,9 +147,9 @@ function writeBadImproveRun(stashRoot: string, runId: string, raw: string): void
   try {
     db.prepare(
       `INSERT INTO improve_runs
-         (id, started_at, completed_at, stash_dir, dry_run, profile,
-          scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
-       VALUES (?, ?, NULL, ?, 0, NULL, 'all', NULL, NULL, 1, ?, NULL, '{}')`,
+         (id, started_at, completed_at, stash_dir, dry_run, profile, strategy,
+           scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+       VALUES (?, ?, NULL, ?, 0, NULL, 'default', 'all', NULL, NULL, 1, ?, NULL, '{}')`,
     ).run(runId, startedAtFromRunId(runId), stashRoot, raw);
   } finally {
     db.close();

@@ -15,6 +15,7 @@
 import { parse as yamlParse } from "yaml";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
+import { utf8Bytes, WORKFLOW_MAX_SOURCE_BYTES } from "./resource-limits";
 import {
   type SourceRef,
   WORKFLOW_SCHEMA_VERSION,
@@ -68,6 +69,12 @@ function stripFencedCodeBlocks(body: string): string {
 }
 
 export function parseWorkflow(markdown: string, source: { path: string }): WorkflowParseResult {
+  if (utf8Bytes(markdown) > WORKFLOW_MAX_SOURCE_BYTES) {
+    return {
+      ok: false,
+      errors: [{ line: 1, message: "Workflow source exceeds the 1 MiB resource limit." }],
+    };
+  }
   const errors: WorkflowError[] = [];
   const path = source.path;
   const lines = markdown.split(/\r?\n/);

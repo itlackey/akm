@@ -202,7 +202,15 @@ function loadBunSqlite(): typeof import("bun:sqlite") {
 }
 
 interface BetterSqlite3Ctor {
-  new (path: string, options?: { readonly?: boolean; fileMustExist?: boolean }): Database;
+  new (path: string, options?: { readonly?: boolean; fileMustExist?: boolean }): BetterSqliteDatabase;
+}
+
+interface BetterSqliteDatabase {
+  prepare<Row = unknown>(sql: string): Statement<Row>;
+  exec(sql: string): void;
+  transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R;
+  readonly inTransaction: boolean;
+  close(): void;
 }
 
 let betterSqlite3Ctor: BetterSqlite3Ctor | undefined;
@@ -241,5 +249,17 @@ function openNodeDatabase(path: string, opts?: OpenDatabaseOptions): Database {
   if (opts?.readonly !== undefined) options.readonly = opts.readonly;
   if (opts?.create === false) options.fileMustExist = true;
   const db = opts ? new BetterSqlite3(path, options) : new BetterSqlite3(path);
-  return db as unknown as Database;
+  return {
+    prepare: db.prepare.bind(db),
+    exec: db.exec.bind(db),
+    // better-sqlite3 exposes mutations on prepared statements, while
+    // bun:sqlite also provides db.run(). Normalize the latter at the provider
+    // boundary so callers and maintenance wrappers can rely on one contract.
+    run: (sql, ...params) => db.prepare(sql).run(...params),
+    transaction: db.transaction.bind(db),
+    get inTransaction() {
+      return db.inTransaction;
+    },
+    close: db.close.bind(db),
+  };
 }

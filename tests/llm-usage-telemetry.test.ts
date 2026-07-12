@@ -8,6 +8,7 @@ import { chatCompletion } from "../src/llm/client";
 import {
   clearLlmUsageSink,
   currentLlmStage,
+  decodeLlmUsageRecord,
   emitLlmUsage,
   extractUsageTokens,
   hasLlmUsageSink,
@@ -119,6 +120,21 @@ describe("withLlmStage ambient attribution", () => {
     });
     expect(records[0]?.stage).toBe("explicit");
   });
+
+  test("stamps durable engine and process attribution", () => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((r) => records.push(r));
+    withLlmStage("graph-extraction", () => emitLlmUsage({ durationMs: 7 }), {
+      engine: "local-graph",
+      process: "graphExtraction",
+    });
+    expect(records[0]).toMatchObject({
+      stage: "graph-extraction",
+      engine: "local-graph",
+      process: "graphExtraction",
+      durationMs: 7,
+    });
+  });
 });
 
 describe("extractUsageTokens", () => {
@@ -142,6 +158,22 @@ describe("extractUsageTokens", () => {
   test("returns empty object for null / undefined usage", () => {
     expect(extractUsageTokens(null)).toEqual({});
     expect(extractUsageTokens(undefined)).toEqual({});
+  });
+});
+
+describe("decodeLlmUsageRecord", () => {
+  test("decodes shared durable metadata and rejects records without a valid duration", () => {
+    expect(
+      decodeLlmUsageRecord({
+        durationMs: 12,
+        engine: "fast",
+        process: "reflect",
+        stage: "reflect",
+        totalTokens: 9,
+      }),
+    ).toEqual({ durationMs: 12, engine: "fast", process: "reflect", stage: "reflect", totalTokens: 9 });
+    expect(decodeLlmUsageRecord({ engine: "fast" })).toBeUndefined();
+    expect(decodeLlmUsageRecord({ durationMs: -1 })).toBeUndefined();
   });
 });
 

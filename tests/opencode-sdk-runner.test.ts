@@ -28,7 +28,6 @@ const baseProfile: AgentProfile = {
   stdio: "captured",
   envPassthrough: [],
   parseOutput: "text",
-  sdkMode: true,
 };
 
 /** Records the body/query passed to the session calls so tests can assert forwarding. */
@@ -58,8 +57,10 @@ function makeFakeServer(
   } = {},
 ) {
   let deleted = false;
+  let deleteCount = 0;
   return {
     deletedRef: () => deleted,
+    deleteCountRef: () => deleteCount,
     server: {
       client: {
         session: {
@@ -76,6 +77,7 @@ function makeFakeServer(
           },
           delete: async (args?: { query?: { directory?: string } }) => {
             deleted = true;
+            deleteCount++;
             capture.deleteQuery = args?.query;
             if (overrides.deleteImpl) return overrides.deleteImpl();
             return {};
@@ -211,6 +213,119 @@ describe("runOpencodeSdk — #564 bug fix (3): timeout enforcement", () => {
   });
 });
 
+describe("runOpencodeSdk — one end-to-end deadline", () => {
+  afterEach(async () => {
+    __setServerFactory(null);
+    await closeServer();
+  });
+
+  test("the deadline includes managed server startup", async () => {
+    __setServerFactory((async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return makeFakeServer({}).server as never;
+    }) as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: 10 });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(result.error).toContain("server startup");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  test("concurrent callers share startup without inheriting the first caller deadline", async () => {
+    let resolveFactory!: (server: ReturnType<typeof makeFakeServer>["server"]) => void;
+    let factoryStarted!: () => void;
+    const started = new Promise<void>((resolve) => (factoryStarted = resolve));
+    let startupSignal: AbortSignal | undefined;
+    let starts = 0;
+    __setServerFactory(((options: { startupSignal: AbortSignal }) => {
+      starts++;
+      startupSignal = options.startupSignal;
+      factoryStarted();
+      return new Promise((resolve) => (resolveFactory = resolve)) as never;
+    }) as never);
+
+    const short = runOpencodeSdk(baseProfile, "short", { timeoutMs: 15 });
+    const unlimited = runOpencodeSdk(baseProfile, "unlimited", { timeoutMs: null });
+    await started;
+
+    const timedOut = await short;
+    expect(timedOut.reason).toBe("timeout");
+    expect(starts).toBe(1);
+    expect(startupSignal?.aborted).toBe(false);
+
+    resolveFactory(makeFakeServer({}).server);
+    const completed = await unlimited;
+    expect(completed.ok).toBe(true);
+    expect(completed.stdout).toBe("ok-response");
+  });
+
+  test("cancels an unresolved shared startup after its last caller times out", async () => {
+    let factoryStarted!: () => void;
+    const started = new Promise<void>((resolve) => (factoryStarted = resolve));
+    let startupSignal: AbortSignal | undefined;
+    __setServerFactory(((options: { startupSignal: AbortSignal }) => {
+      startupSignal = options.startupSignal;
+      factoryStarted();
+      return new Promise(() => {}) as never;
+    }) as never);
+
+    const pending = runOpencodeSdk(baseProfile, "only", { timeoutMs: 15 });
+    await started;
+    const result = await pending;
+
+    expect(result.reason).toBe("timeout");
+    expect(startupSignal?.aborted).toBe(true);
+  });
+
+  test("session creation and prompt share the remaining deadline", async () => {
+    const fake = makeFakeServer(
+      {},
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return { data: { parts: [{ type: "text", text: "too-late" }] } };
+      },
+      {
+        createImpl: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return { data: { id: "sess-cumulative" } };
+        },
+      },
+    );
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: 60 });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+  });
+
+  test("null leaves startup, session creation, and prompting unbounded", async () => {
+    __setServerFactory((async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return makeFakeServer(
+        {},
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return { data: { parts: [{ type: "text", text: "unbounded-ok" }] } };
+        },
+        {
+          createImpl: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return { data: { id: "sess-unbounded" } };
+          },
+        },
+      ).server as never;
+    }) as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("unbounded-ok");
+  });
+});
+
 // ── buildSdkConfig — model alias resolution on the SDK path ──────────────────
 
 describe("buildSdkConfig — model alias resolution", () => {
@@ -221,7 +336,6 @@ describe("buildSdkConfig — model alias resolution", () => {
     stdio: "captured",
     envPassthrough: [],
     parseOutput: "text",
-    sdkMode: true,
   };
 
   test("profile.modelAliases resolves before the SDK config is built", async () => {
@@ -254,19 +368,42 @@ describe("buildSdkConfig — model alias resolution", () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
     const plain = buildSdkConfig({ ...baseProfile, model: "anthropic/claude-sonnet-4-6" });
     expect(plain.model).toBe("anthropic/claude-sonnet-4-6");
-    const prefixed = buildSdkConfig({ ...baseProfile, model: "my-local-model", endpoint: "http://localhost:1234/v1" });
+    const prefixed = buildSdkConfig(
+      { ...baseProfile, model: "my-local-model" },
+      { endpoint: "http://localhost:1234/v1/chat/completions", model: "fallback" },
+    );
     expect(prefixed.model).toBe("akm-custom/my-local-model");
   });
 
   test("alias resolving to an unqualified string still gets akm-custom prefix with endpoint", async () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-    const cfg = buildSdkConfig({
-      ...baseProfile,
-      model: "fast",
-      modelAliases: { fast: "qwen3-30b-a3b" },
-      endpoint: "http://localhost:1234/v1",
-    });
+    const cfg = buildSdkConfig(
+      {
+        ...baseProfile,
+        model: "fast",
+        modelAliases: { fast: "qwen3-30b-a3b" },
+      },
+      { endpoint: "http://localhost:1234/v1/chat/completions", model: "fallback" },
+    );
     expect(cfg.model).toBe("akm-custom/qwen3-30b-a3b");
+  });
+
+  test("slash-qualified profile models still route through akm-custom", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const cfg = buildSdkConfig(
+      { ...baseProfile, model: "openrouter/anthropic/claude-sonnet-4" },
+      { endpoint: "http://localhost:1234/v1/chat/completions", model: "fallback" },
+    );
+    expect(cfg.model).toBe("akm-custom/openrouter/anthropic/claude-sonnet-4");
+  });
+
+  test("inherits the fallback LLM model and routes it through akm-custom", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const cfg = buildSdkConfig(baseProfile, {
+      endpoint: "http://localhost:1234/v1/chat/completions",
+      model: "fallback/provider/model",
+    });
+    expect(cfg.model).toBe("akm-custom/fallback/provider/model");
   });
 });
 
@@ -280,7 +417,6 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     stdio: "captured",
     envPassthrough: [],
     parseOutput: "text",
-    sdkMode: true,
   };
 
   test("token usage from the AssistantMessage is surfaced (previously discarded)", async () => {
@@ -378,6 +514,32 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(capture.body).toBeUndefined();
   });
 
+  test("a session that is created after timeout is deleted when it arrives", async () => {
+    const capture: PromptCapture = {};
+    let resolveCreate!: (value: { data: { id: string } }) => void;
+    const fake = makeFakeServer(capture, undefined, {
+      createImpl: () => new Promise((resolve) => (resolveCreate = resolve)),
+    });
+    __setTestServer(fake.server as never);
+    const immediateTimer = ((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    }) as any;
+
+    const result = await runOpencodeSdk(profile, "hi", {
+      timeoutMs: 50,
+      setTimeoutFn: immediateTimer,
+      clearTimeoutFn: (() => {}) as never,
+    });
+    expect(result.reason).toBe("timeout");
+
+    resolveCreate({ data: { id: "late-session" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fake.deleteCountRef()).toBe(1);
+  });
+
   test("prompt rejection returns non_zero_exit and still deletes the session", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture, async () => {
@@ -417,6 +579,33 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(result.stdout).toBe("ok-response");
     expect(fake.deletedRef()).toBe(true);
     expect(result.stderr).toContain("OpenCode session cleanup timed out");
+  });
+
+  test("a prompt that settles after timeout triggers a second session cleanup", async () => {
+    const capture: PromptCapture = {};
+    let resolvePrompt!: (value: { data: { parts: { type: string; text: string }[] } }) => void;
+    const fake = makeFakeServer(capture, () => new Promise((resolve) => (resolvePrompt = resolve)));
+    __setTestServer(fake.server as never);
+    let timers = 0;
+    const promptTimer = ((fn: () => void) => {
+      timers++;
+      if (timers === 2) fn();
+      return timers as unknown as ReturnType<typeof setTimeout>;
+      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
+    }) as any;
+
+    const result = await runOpencodeSdk(profile, "p", {
+      timeoutMs: 50,
+      setTimeoutFn: promptTimer,
+      clearTimeoutFn: (() => {}) as never,
+    });
+    expect(result.reason).toBe("timeout");
+    expect(fake.deleteCountRef()).toBe(1);
+
+    resolvePrompt({ data: { parts: [{ type: "text", text: "late" }] } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fake.deleteCountRef()).toBe(2);
   });
 });
 
@@ -464,19 +653,16 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
   const ENV_KEY = "OPENCODE_SDK_TEST_INJECTED";
 
   interface FactoryCall {
-    /** process.env[ENV_KEY] snapshotted in the factory's SYNCHRONOUS prefix. */
+    /** Exact child environment supplied to the factory. */
     injectedValue: string | undefined;
   }
 
   /**
-   * Fake `createOpencode`. Snapshots the injected env var SYNCHRONOUSLY —
-   * exactly where the real SDK's `spawn` reads `process.env` — so the test
-   * proves injection reaches the child-spawn window and nothing later.
+   * Fake managed factory. Reads the exact child env passed to production spawn.
    */
   function makeFactory(calls: FactoryCall[], capture: PromptCapture) {
-    return (_options: { config?: Record<string, unknown> }) => {
-      // Synchronous prefix: the real createOpencodeServer spawns here.
-      calls.push({ injectedValue: process.env[ENV_KEY] });
+    return (options: { config?: Record<string, unknown>; env: Record<string, string> }) => {
+      calls.push({ injectedValue: options.env[ENV_KEY] });
       return Promise.resolve(makeFakeServer(capture).server as never) as never;
     };
   }
@@ -491,9 +677,29 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
 
     expect(res.ok).toBe(true);
     expect(calls).toHaveLength(1);
-    // The injection was live exactly when the SDK snapshots the child env…
+    // The immutable environment given to the child contains the binding...
     expect(calls[0].injectedValue).toBe("reached-the-child");
-    // …and the overlay never leaked out of the synchronous window.
+    // ...without ever mutating process-wide state.
+    expect(process.env[ENV_KEY]).toBeUndefined();
+  });
+
+  test("an async factory receives the dispatch env after yielding without a process.env overlay", async () => {
+    const calls: FactoryCall[] = [];
+    __setServerFactory((async (options: { env: Record<string, string> }) => {
+      await Promise.resolve();
+      calls.push({ injectedValue: options.env[ENV_KEY] });
+      return makeFakeServer({}).server as never;
+    }) as never);
+
+    const pending = runOpencodeSdk(baseProfile, "p", {
+      env: { [ENV_KEY]: "async-child-value" },
+      timeoutMs: null,
+    });
+    expect(process.env[ENV_KEY]).toBeUndefined();
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([{ injectedValue: "async-child-value" }]);
     expect(process.env[ENV_KEY]).toBeUndefined();
   });
 
@@ -563,7 +769,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
   // (4096), so coexisting registry entries (default + env-keyed — e.g. an
   // improve run's AKM_EVENT_SOURCE binding alongside env-free sdk calls)
   // contended for the same bind and the second start failed spawn_failed.
-  test("env-keyed servers each get their own free port; the default server keeps the SDK default", async () => {
+  test("every registry server gets its own free port", async () => {
     const ports: (number | undefined)[] = [];
     const capture: PromptCapture = {};
     __setServerFactory(((options: { port?: number }) => {
@@ -575,14 +781,107 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "a" }, timeoutMs: null });
     await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "b" }, timeoutMs: null });
 
-    // Default key: no port override — byte-identical to the pre-R2 singleton.
-    expect(ports[0]).toBeUndefined();
-    // Env-keyed entries: OS-assigned free ports, never the SDK default and
-    // never shared with a coexisting entry.
+    // Every entry uses an OS-assigned port, never the SDK default and never a
+    // port already reserved by another entry in this process.
+    expect(typeof ports[0]).toBe("number");
     expect(typeof ports[1]).toBe("number");
     expect(typeof ports[2]).toBe("number");
+    expect(ports[0]).not.toBe(4096);
     expect(ports[1]).not.toBe(4096);
     expect(ports[2]).not.toBe(4096);
+    expect(ports[0]).not.toBe(ports[1]);
+    expect(ports[0]).not.toBe(ports[2]);
     expect(ports[1]).not.toBe(ports[2]);
+  });
+
+  test("registry identity matches the executable and exact canonical child env", async () => {
+    const calls: Array<{ bin?: string; port?: number }> = [];
+    __setServerFactory(((options: { bin?: string; port?: number }) => {
+      calls.push(options);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+    const env = { [ENV_KEY]: "same-env" };
+    const baseConnection = {
+      endpoint: "https://one.test/v1/chat/completions",
+      model: "model-a",
+      provider: "provider-a",
+      apiKey: "materialized-key-a",
+    };
+
+    await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(
+      baseProfile,
+      "p",
+      { env, timeoutMs: null },
+      { ...baseConnection, apiKey: "materialized-key-b" },
+    );
+    await runOpencodeSdk(
+      baseProfile,
+      "p",
+      { env, timeoutMs: null },
+      {
+        ...baseConnection,
+        endpoint: "https://two.test/v1/chat/completions",
+      },
+    );
+    await runOpencodeSdk({ ...baseProfile, bin: "other-opencode" }, "p", { env, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "other-env" }, timeoutMs: null }, baseConnection);
+    await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, { ...baseConnection, provider: "provider-b" });
+    await runOpencodeSdk({ ...baseProfile, model: "model-b" }, "p", { env, timeoutMs: null }, baseConnection);
+
+    // provider is SDK metadata only and does not alter the spawned child; it
+    // therefore reuses the base server rather than inventing a false identity.
+    expect(calls).toHaveLength(6);
+    expect(calls.map((call) => call.bin)).toContain("other-opencode");
+    expect(new Set(calls.map((call) => call.port)).size).toBe(6);
+  });
+
+  test("only baseline, profile passthrough, and dispatch bindings reach the child", async () => {
+    const environments: Record<string, string>[] = [];
+    __setServerFactory(((options: { env: Record<string, string> }) => {
+      environments.push(options.env);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+    const profile = {
+      ...baseProfile,
+      envPassthrough: ["PROFILE_SECRET"],
+      env: { PROFILE_CONFIGURED: "must-not-reach-sdk" },
+    };
+
+    await runOpencodeSdk(profile, "p", {
+      env: { DISPATCH_BINDING: "binding" },
+      envSource: {
+        HOME: "/safe/home",
+        PATH: "/safe/bin",
+        PROFILE_SECRET: "inherited-secret",
+        AMBIENT_CLOUD_TOKEN: "must-not-leak",
+      },
+      timeoutMs: null,
+    });
+
+    expect(environments).toHaveLength(1);
+    expect(environments[0]).toEqual({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      PROFILE_SECRET: "inherited-secret",
+      DISPATCH_BINDING: "binding",
+      OPENCODE_CONFIG_CONTENT: "{}",
+    });
+  });
+
+  test("only explicit passthrough values participate in child materialization and registry identity", async () => {
+    const values: Array<string | undefined> = [];
+    __setServerFactory(((options: { env: Record<string, string> }) => {
+      values.push(options.env.SOURCE_ONLY);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+
+    const profile = { ...baseProfile, envPassthrough: ["SOURCE_ONLY"] };
+    await runOpencodeSdk(profile, "p", { envSource: { SOURCE_ONLY: "one" }, timeoutMs: null });
+    await runOpencodeSdk(profile, "p", { envSource: { SOURCE_ONLY: "one" }, timeoutMs: null });
+    await runOpencodeSdk(profile, "p", { envSource: { SOURCE_ONLY: "two" }, timeoutMs: null });
+
+    expect(values).toEqual(["one", "two"]);
   });
 });

@@ -52,23 +52,32 @@ function makeStashDir(): string {
   return stash;
 }
 
+function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmConfig {
+  return {
+    configVersion: "0.9.0",
+    semanticSearchMode: "auto",
+    stashDir,
+    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    defaultWriteTarget: "stash",
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test-model",
+      },
+    },
+    improve: { strategies: { test: { processes: { distill } } } },
+    defaults: { llmEngine: "default", improveStrategy: "test" },
+  } as AkmConfig;
+}
+
 function configAbsentFeature(stashDir: string): AkmConfig {
   // No distill process binding → distill defaults to true per 0.8.0. The
   // quality gate is explicitly OFF: these callers exercise the benchmark-scored
   // / merge-resolution mechanics with non-judge chat stubs, and after 07 P0-2
   // the fail-CLOSED gate would otherwise reject them (and its chat call would
   // trip the "chat must not be called" guards).
-  return {
-    semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-    defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
-    },
-    defaults: { llm: "default" },
-  } as AkmConfig;
+  return distillConfig(stashDir, { qualityGate: { enabled: false } });
 }
 
 function configEnabled(stashDir: string): AkmConfig {
@@ -79,17 +88,7 @@ function configEnabled(stashDir: string): AkmConfig {
   // would now reject every proposal. Turn the gate OFF here so these tests
   // stay focused on distill mechanics; the dedicated judge tests below use
   // `configJudgeEnabled` and supply real judge verdicts.
-  return {
-    semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-    defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
-    },
-    defaults: { llm: "default" },
-  } as AkmConfig;
+  return distillConfig(stashDir, { enabled: true, qualityGate: { enabled: false } });
 }
 
 function configJudgeEnabled(stashDir: string): AkmConfig {
@@ -97,31 +96,11 @@ function configJudgeEnabled(stashDir: string): AkmConfig {
   // exercise judge-verdict routing. Callers MUST supply a judge-aware chat
   // stub (returns JSON `{score,reason}` when the prompt asks to "Score this
   // lesson"), or the fail-CLOSED gate (07 P0-2) rejects the proposal.
-  return {
-    semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-    defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: true } } } } },
-    },
-    defaults: { llm: "default" },
-  } as AkmConfig;
+  return distillConfig(stashDir, { enabled: true, qualityGate: { enabled: true } });
 }
 
 function configDisabled(stashDir: string): AkmConfig {
-  return {
-    semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-    defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { distill: { enabled: false } } } },
-    },
-    defaults: { llm: "default" },
-  } as AkmConfig;
+  return distillConfig(stashDir, { enabled: false });
 }
 
 const VALID_LESSON = `---
@@ -1180,9 +1159,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
       stashDir: stash,
       sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
       defaultWriteTarget: "stash",
-      profiles: {
-        improve: { default: { processes: { distill: { enabled: true } } } },
-      },
+      improve: { strategies: { default: { processes: { distill: { enabled: true } } } } },
     };
     const result = await akmDistill({
       ref: "skill:deploy",
@@ -1279,17 +1256,7 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
       ref: "memory:auth-guide",
       proposalKind: "auto",
       stashDir: stash,
-      config: {
-        stashDir: stash,
-        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
-        defaultWriteTarget: "stash",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
-          // Quality gate OFF — D-1 merge mechanics test, non-judge chat stub (07 P0-2).
-          improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
-        },
-        defaults: { llm: "default" },
-      } as unknown as import("../src/core/config/config").AkmConfig,
+      config: distillConfig(stash, { qualityGate: { enabled: false } }),
       lookupFn: async (ref: string) => {
         if (ref === "memory:auth-guide") return memPath1;
         if (ref.includes("auth-guide")) return existingKnowledgePath;
@@ -1337,17 +1304,7 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
       ref: "memory:auth-guide2",
       proposalKind: "auto",
       stashDir: stash,
-      config: {
-        stashDir: stash,
-        sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
-        defaultWriteTarget: "stash",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
-          // Quality gate OFF — D-1 merge mechanics test, non-judge chat stub (07 P0-2).
-          improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
-        },
-        defaults: { llm: "default" },
-      } as unknown as import("../src/core/config/config").AkmConfig,
+      config: distillConfig(stash, { qualityGate: { enabled: false } }),
       lookupFn: async (ref: string) => {
         if (ref === "memory:auth-guide2") return memPath2;
         if (ref.includes("auth-guide2")) return existingKnowledgePath;

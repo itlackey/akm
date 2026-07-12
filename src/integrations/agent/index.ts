@@ -10,22 +10,14 @@
  * Surface:
  *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
- *   • Config: resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
+ *   • Engine lowering lives in engine-resolution.ts; public config has no profile aliases.
  *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
 
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
 export { getCommandBuilder } from "./builders";
-export {
-  DEFAULT_AGENT_TIMEOUT_MS,
-  listAgentProfileNames,
-  listResolvedAgentProfiles,
-  requireAgentProfile,
-  resolveAgentProfile,
-  resolveDefaultProfileName,
-  resolveProfileFromConfig,
-} from "./config";
+export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 export type {
   AgentDetectionResult,
   WhichFn,
@@ -58,4 +50,3 @@ export type {
   SpawnedSubprocess,
   SpawnFn,
 } from "./spawn";
-export { runAgent } from "./spawn";

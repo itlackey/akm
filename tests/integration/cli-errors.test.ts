@@ -3,8 +3,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
+import { createMigrationBackup } from "../../src/core/migration-backup";
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, withEnvSync } from "../_helpers/sandbox";
 
 // Helpers.
 //
@@ -169,7 +170,7 @@ describe("error class hints", () => {
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
     expect(new ConfigError("no embedding", "EMBEDDING_NOT_CONFIGURED").hint()).toContain("akm config set embedding");
-    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("akm config set profiles.llm");
+    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("defaults.llmEngine");
   });
 
   test("ConfigError without a code-mapped hint returns undefined", () => {
@@ -257,11 +258,22 @@ describe("registry remove", () => {
     const userConfigPath = path.join(xdgConfig.dir, "akm", "config.json");
     const projectConfigPath = path.join(project.dir, ".akm", "config.json");
 
+    withEnvSync(
+      {
+        HOME: home.dir,
+        XDG_CONFIG_HOME: xdgConfig.dir,
+        XDG_CACHE_HOME: xdgCache.dir,
+        XDG_DATA_HOME: xdgData.dir,
+      },
+      () => createMigrationBackup(),
+    );
+
     fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
     fs.writeFileSync(
       userConfigPath,
       `${JSON.stringify(
         {
+          configVersion: "0.9.0",
           registries: [{ url: "https://user.example/index.json", name: "user" }],
         },
         null,
@@ -274,6 +286,7 @@ describe("registry remove", () => {
       projectConfigPath,
       `${JSON.stringify(
         {
+          configVersion: "0.9.0",
           registries: [{ url: "https://project.example/index.json", name: "project" }],
         },
         null,

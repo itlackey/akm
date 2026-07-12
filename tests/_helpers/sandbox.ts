@@ -25,6 +25,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createMigrationBackup, getMigrationBackupDir } from "../../src/core/migration-backup";
 
 export type Cleanup = () => void;
 
@@ -81,6 +82,26 @@ export async function withEnv<T>(overrides: Record<string, string | undefined>, 
       else process.env[key] = value;
     }
     return await fn();
+  } finally {
+    for (const key of keys) {
+      if (prev[key] === undefined) delete process.env[key];
+      else process.env[key] = prev[key];
+    }
+  }
+}
+
+/** Synchronous counterpart for production helpers that must run before fixture writes. */
+export function withEnvSync<T>(overrides: Record<string, string | undefined>, fn: () => T): T {
+  const keys = Object.keys(overrides);
+  const prev: Record<string, string | undefined> = {};
+  for (const key of keys) prev[key] = process.env[key];
+  try {
+    for (const key of keys) {
+      const value = overrides[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    return fn();
   } finally {
     for (const key of keys) {
       if (prev[key] === undefined) delete process.env[key];
@@ -334,6 +355,10 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
   const configPath = path.join(xdgConfigHome, "akm", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
+  // Model the production first-write contract: capture the absent/pre-cutover
+  // state before a test fixture writes a current-version config directly.
+  if (!fs.existsSync(configPath) && !fs.existsSync(getMigrationBackupDir())) createMigrationBackup();
+
   let existing: Record<string, unknown> = {};
   if (fs.existsSync(configPath)) {
     try {
@@ -343,7 +368,22 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
     }
   }
 
-  fs.writeFileSync(configPath, `${JSON.stringify({ ...existing, ...partial }, null, 2)}\n`, "utf8");
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({ configVersion: "0.9.0", ...existing, ...partial }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+/** Install deterministic named engines for tests that freeze workflow plans. */
+export function writeWorkflowTestConfig(): void {
+  writeSandboxConfig({
+    engines: {
+      "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test-model" },
+    },
+    defaults: { engine: "test-agent", llmEngine: "test-llm" },
+  });
 }
 
 // ── Fetch mock ───────────────────────────────────────────────────────────────

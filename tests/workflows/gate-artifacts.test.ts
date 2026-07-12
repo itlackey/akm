@@ -14,12 +14,11 @@ import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type GateFeedback } from "../../src/workflows/exec/step-work";
-import { compileWorkflowPlan, compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflow } from "../../src/workflows/parser";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { freezeMarkdownWorkflow, freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../_helpers/workflow";
 
 /**
  * R2: typed artifacts + artifact-judging gates + bounded gate loops.
@@ -72,11 +71,21 @@ function seedRun(opts: {
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText);
+}
+
+function usePlan(yamlText: string): () => Promise<WorkflowPlanGraph> {
+  return useFrozenPlan(plan(yamlText));
+}
+
+function useFrozenPlan(frozen: WorkflowPlanGraph): () => Promise<WorkflowPlanGraph> {
+  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  try {
+    storeFrozenWorkflowPlan(db, RUN_ID, frozen);
+  } finally {
+    closeWorkflowDatabase(db);
+  }
+  return async () => frozen;
 }
 
 beforeEach(() => {
@@ -97,7 +106,7 @@ afterEach(() => {
 
 // ── Typed artifacts: IrStepPlan.outputSchema ─────────────────────────────────
 
-const TYPED_WF = `version: 1
+const TYPED_WF = `version: 2
 name: Typed
 steps:
   - id: discover
@@ -120,7 +129,7 @@ describe("typed artifacts — outputSchema validates the promoted artifact befor
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"files": ["a.ts", "b.ts"]}' }),
-      loadPlan: async () => plan(TYPED_WF),
+      loadPlan: usePlan(TYPED_WF),
       summaryJudge: null,
     });
     expect(result.done).toBe(true);
@@ -150,7 +159,7 @@ describe("typed artifacts — outputSchema validates the promoted artifact befor
         dispatches++;
         return { ok: true, text: "just some prose, not the contract" };
       },
-      loadPlan: async () => plan(INVALID_WF),
+      loadPlan: usePlan(INVALID_WF),
       summaryJudge: null,
     });
     expect(dispatches).toBe(1);
@@ -164,7 +173,7 @@ describe("typed artifacts — outputSchema validates the promoted artifact befor
   });
 
   test("a fan-out collect artifact is validated as a whole (array schema)", async () => {
-    const MAP_TYPED_WF = `version: 1
+    const MAP_TYPED_WF = `version: 2
 name: Typed
 params:
   files: { type: array }
@@ -184,7 +193,7 @@ steps:
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: "fine" }),
-      loadPlan: async () => plan(MAP_TYPED_WF),
+      loadPlan: usePlan(MAP_TYPED_WF),
       summaryJudge: null,
     });
     // Two items < minItems: 3 → the collect artifact fails its schema.
@@ -195,7 +204,7 @@ steps:
 
 // ── Artifact-judging gates ───────────────────────────────────────────────────
 
-const GATED_WF = `version: 1
+const GATED_WF = `version: 2
 name: Gated
 steps:
   - id: extract
@@ -210,6 +219,8 @@ steps:
       criteria: [a fact was extracted]
 `;
 
+const UNGATED_WF = GATED_WF.replace("    gate:\n      criteria: [a fact was extracted]\n", "");
+
 describe("artifact-judging gates — the judge receives the artifact, not machine prose", () => {
   test("the judged summary is built from the artifact: unit-count line + canonical JSON", async () => {
     seedRun({ steps: [{ id: "extract", criteria: ["a fact was extracted"] }] });
@@ -221,7 +232,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
-      loadPlan: async () => plan(GATED_WF),
+      loadPlan: usePlan(GATED_WF),
       summaryJudge: judge,
     });
     expect(result.done).toBe(true);
@@ -247,7 +258,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: `{"fact": "${huge}"}` }),
-      loadPlan: async () => plan(GATED_WF),
+      loadPlan: usePlan(GATED_WF),
       summaryJudge: judge,
     });
     expect(judged).toHaveLength(1);
@@ -266,7 +277,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
-      loadPlan: async () => plan(GATED_WF),
+      loadPlan: usePlan(UNGATED_WF),
       summaryJudge: judge,
     });
     expect(result.done).toBe(true);
@@ -285,7 +296,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
-      loadPlan: async () => plan(GATED_WF),
+      loadPlan: usePlan(GATED_WF),
       summaryJudge: judge,
     });
     await withWorkflowRunsRepo((repo) => {
@@ -303,7 +314,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
-      loadPlan: async () => plan(GATED_WF),
+      loadPlan: usePlan(GATED_WF),
       summaryJudge: null,
     });
     expect(result.done).toBe(true);
@@ -317,7 +328,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
 
 // ── Bounded gate loops (gate.max_loops) ──────────────────────────────────────
 
-const LOOPED_WF = `version: 1
+const LOOPED_WF = `version: 2
 name: Looped
 steps:
   - id: work
@@ -354,7 +365,7 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher,
-      loadPlan: async () => plan(LOOPED_WF),
+      loadPlan: usePlan(LOOPED_WF),
       summaryJudge: judge,
     });
 
@@ -419,7 +430,7 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher,
-      loadPlan: async () => plan(LOOPED_WF),
+      loadPlan: usePlan(LOOPED_WF),
       summaryJudge: judge,
     });
 
@@ -454,7 +465,7 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
         dispatches++;
         return { ok: true, text: "meh" };
       },
-      loadPlan: async () => plan(LOOPED_WF),
+      loadPlan: usePlan(LOOPED_WF),
       summaryJudge: judge,
     });
 
@@ -487,7 +498,7 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
         dispatches++;
         return { ok: true, text: "meh" };
       },
-      loadPlan: async () => plan(ONE_SHOT_WF),
+      loadPlan: usePlan(ONE_SHOT_WF),
       summaryJudge: async () => '{"complete": false, "missing": ["the work is thorough"], "feedback": "Nope."}',
     });
     expect(dispatches).toBe(1);
@@ -495,7 +506,7 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
   });
 
   test("fan-out gate loops re-dispatch every item with feedback under ~l2 ids", async () => {
-    const LOOPED_MAP_WF = `version: 1
+    const LOOPED_MAP_WF = `version: 2
 name: Looped
 params:
   files: { type: array }
@@ -528,7 +539,7 @@ steps:
         prompts.push(req.prompt);
         return { ok: true, text: `did ${req.unitId}` };
       },
-      loadPlan: async () => plan(LOOPED_MAP_WF),
+      loadPlan: usePlan(LOOPED_MAP_WF),
       summaryJudge: judge,
     });
     expect(result.done).toBe(true);
@@ -562,7 +573,7 @@ steps:
 // pre-state directly, then drive one RESUME invocation and assert loop-2
 // semantics + that the l1 rows are byte-identical afterwards.
 
-const RESUME_WF = `version: 1
+const RESUME_WF = `version: 2
 name: Looped
 steps:
   - id: work
@@ -617,7 +628,13 @@ async function journalRow(row: {
 
 /** The loop-1 solo unit's content-derived input hash (what the engine journals). */
 function loop1Hash(p: WorkflowPlanGraph): string {
-  const c = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+  const c = computeStepWorkList(p.steps[0], {
+    runId: RUN_ID,
+    params: {},
+    stepOutputs: {},
+    gateLoop: 1,
+    engines: p.execution?.engines,
+  });
   if (!c.ok) throw new Error(c.error);
   const r = c.list.units[0].resolved;
   if (!r.ok) throw new Error(r.error);
@@ -626,7 +643,14 @@ function loop1Hash(p: WorkflowPlanGraph): string {
 
 /** The loop-2 solo unit id + hash brief/report would compute for the recovered feedback. */
 function loop2Unit(p: WorkflowPlanGraph, gateFeedback: GateFeedback): { unitId: string; inputHash: string } {
-  const c = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 2, gateFeedback });
+  const c = computeStepWorkList(p.steps[0], {
+    runId: RUN_ID,
+    params: {},
+    stepOutputs: {},
+    gateLoop: 2,
+    gateFeedback,
+    engines: p.execution?.engines,
+  });
   if (!c.ok) throw new Error(c.error);
   const u = c.list.units[0];
   if (!u.resolved.ok) throw new Error(u.resolved.error);
@@ -670,7 +694,7 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
         if (req.nodeId === "work") prompts.push(req.prompt);
         return { ok: true, text: `did ${req.unitId}` };
       },
-      loadPlan: async () => p,
+      loadPlan: useFrozenPlan(p),
       summaryJudge: async () => {
         judgeCalls++;
         return '{"complete": true, "missing": []}';
@@ -778,7 +802,7 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
         dispatches++;
         return { ok: true, text: "x" };
       },
-      loadPlan: async () => p,
+      loadPlan: useFrozenPlan(p),
       summaryJudge: async () => {
         judgeCalls++;
         return '{"complete": true, "missing": []}';
@@ -820,7 +844,7 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
         if (req.nodeId === "work") prompts.push(req.prompt);
         return { ok: true, text: `did ${req.unitId}` };
       },
-      loadPlan: async () => p,
+      loadPlan: useFrozenPlan(p),
       summaryJudge: async () => {
         judgeCalls++;
         return judgeCalls === 1
@@ -852,7 +876,7 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
 // validation errors as feedback — and only kill the run when the FINAL loop's
 // artifact still violates the schema.
 
-const TYPED_LOOP_WF = `version: 1
+const TYPED_LOOP_WF = `version: 2
 name: TypedLoop
 steps:
   - id: work
@@ -891,7 +915,7 @@ describe("typed artifacts + gate max_loops — schema mismatches are retryable b
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher,
-      loadPlan: async () => plan(TYPED_LOOP_WF),
+      loadPlan: usePlan(TYPED_LOOP_WF),
       summaryJudge: judge,
     });
 
@@ -942,7 +966,7 @@ describe("typed artifacts + gate max_loops — schema mismatches are retryable b
         dispatches++;
         return { ok: true, text: '{"notes": "never the contract"}' };
       },
-      loadPlan: async () => plan(TYPED_LOOP_WF),
+      loadPlan: usePlan(TYPED_LOOP_WF),
       summaryJudge: async () => {
         judgeCalls++;
         return '{"complete": true, "missing": []}';
@@ -982,7 +1006,7 @@ describe("classic linear markdown path (stable contract)", () => {
   test("verbatim instructions pass through byte-exact and steps keep machine summaries", async () => {
     const parsed = parseWorkflow(LINEAR_MD, { path: "workflows/classic.md" });
     if (!parsed.ok) throw new Error(parsed.errors.map((e) => e.message).join(" | "));
-    const mdPlan = compileWorkflowPlan(parsed.document);
+    const mdPlan = freezeMarkdownWorkflow(LINEAR_MD, "workflows/classic.md");
 
     seedRun({ params: { secret: "LEAKED" }, steps: [{ id: "build" }, { id: "deploy" }] });
     const prompts: string[] = [];
@@ -992,7 +1016,7 @@ describe("classic linear markdown path (stable contract)", () => {
         prompts.push(req.prompt);
         return { ok: true, text: "done" };
       },
-      loadPlan: async () => mdPlan,
+      loadPlan: useFrozenPlan(mdPlan),
       summaryJudge: null,
     });
     expect(result.done).toBe(true);

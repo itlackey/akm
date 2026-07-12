@@ -121,10 +121,8 @@ export function buildJudgePrompt(
  * Run the LLM-as-judge quality gate on a proposal's content.
  *
  * Exported so reflect.ts can apply the same gate to reflect proposals (R-5 / #374).
- * Gated by the flag name `lesson_quality_gate` (or its alias
- * `proposal_quality_gate`) via {@link isLlmFeatureEnabled} — which reads
- * `profiles.improve.default.processes.distill.qualityGate.enabled` (and the
- * corresponding `.reflect.qualityGate.enabled` for proposals).
+ * The selected strategy's distill/reflect quality-gate setting is resolved by
+ * the caller before this function runs.
  *
  * Fail-CLOSED (07 P0-2): returns `pass: false` (score -1) on timeout, parse
  * failure, or missing LLM. Minted content that cannot be judged is rejected,
@@ -138,12 +136,13 @@ export async function runLessonQualityJudge(
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
   /** D-4 / #390: top-3 similar existing lessons for dedup check. */
   similarLessons?: Array<{ ref: string; content: string }>,
+  llmConfigOverride?: LlmConnectionConfig,
 ): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
-  const llmConfig = getDefaultLlmConfig(config);
+  const llmConfig = llmConfigOverride ?? getDefaultLlmConfig(config);
   if (!llmConfig) {
     return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }
-  const judgeLlmConfig = llmConfig.judgeModel ? { ...llmConfig, model: llmConfig.judgeModel } : llmConfig;
+  const judgeLlmConfig = llmConfig;
   const JUDGE_TIMEOUT_MS = 8_000;
   try {
     const raw = await Promise.race([

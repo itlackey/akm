@@ -1,5 +1,5 @@
 /**
- * Per-feature LLM gate seam (v1 spec §14, #227).
+ * Per-feature bounded LLM-call seam (#227).
  *
  * Locks:
  *   - `isLlmFeatureEnabled` honours per-feature defaults: currently
@@ -14,6 +14,7 @@
  *     `"disabled" | "timeout" | "error"`.
  */
 import { describe, expect, test } from "bun:test";
+import { resolveImproveStrategy, resolveProcessEnabled } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { isLlmFeatureEnabled, LlmFeatureTimeoutError, tryLlmFeature } from "../src/llm/feature-gate";
 
@@ -29,7 +30,7 @@ type FeatureKey =
 
 /**
  * Helper: build an AkmConfig where the named features are toggled on/off
- * via the 0.8.0 config shape locations.
+ * via the 0.9.0 config shape locations.
  */
 function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
   const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp/stash" };
@@ -46,10 +47,13 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
         processes.distill = { ...(processes.distill ?? {}), enabled: val };
         break;
       case "memory_inference":
-        processes.memoryInference = { enabled: val };
+        cfg.index = { ...(cfg.index ?? {}), memory: { ...(cfg.index?.memory ?? {}), enabled: val } };
         break;
       case "graph_extraction":
-        processes.graphExtraction = { enabled: val };
+        cfg.index = {
+          ...(cfg.index ?? {}),
+          graph: { ...(cfg.index?.graph ?? {}), enabled: val },
+        };
         break;
       case "metadata_enhance":
         // Cast: IndexConfig mixes reserved scalar keys (indexBodyOpening,
@@ -69,9 +73,18 @@ function configWith(features: Partial<Record<FeatureKey, boolean>>): AkmConfig {
     }
   }
   if (Object.keys(processes).length > 0) {
-    cfg.profiles = { improve: { default: { processes: processes as Record<string, never> } } };
+    cfg.improve = { strategies: { default: { processes: processes as Record<string, never> } } };
   }
   return cfg;
+}
+
+function strategyFrom(config: AkmConfig) {
+  return config.improve?.strategies?.default;
+}
+
+function improveEnabled(config: AkmConfig, key: FeatureKey): boolean | undefined {
+  if (key !== "distill") return undefined;
+  return resolveProcessEnabled("distill", resolveImproveStrategy(undefined, config).config);
 }
 
 describe("isLlmFeatureEnabled", () => {
@@ -85,7 +98,7 @@ describe("isLlmFeatureEnabled", () => {
     // 0.8.0 unified `feedback_distillation` into the `distill` gate (default true).
     expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
-    expect(isLlmFeatureEnabled(cfg, "distill")).toBe(true);
+    expect(resolveProcessEnabled("distill", {})).toBe(false);
     expect(isLlmFeatureEnabled(cfg, "metadata_enhance")).toBe(false);
   });
 
@@ -95,8 +108,10 @@ describe("isLlmFeatureEnabled", () => {
   });
 
   test("returns true only on literal boolean true", () => {
-    expect(isLlmFeatureEnabled(configWith({ distill: true }), "distill")).toBe(true);
-    expect(isLlmFeatureEnabled(configWith({ distill: false }), "distill")).toBe(false);
+    const enabled = configWith({ distill: true });
+    const disabled = configWith({ distill: false });
+    expect(resolveProcessEnabled("distill", strategyFrom(enabled) ?? {})).toBe(true);
+    expect(resolveProcessEnabled("distill", strategyFrom(disabled) ?? {})).toBe(false);
   });
 });
 
@@ -179,9 +194,16 @@ describe("tryLlmFeature", () => {
   });
 
   test("returns fn's result when enabled and successful", async () => {
-    const result = await tryLlmFeature("distill", configWith({ distill: true }), async () => ({ ok: true }), {
-      ok: false,
-    });
+    const config = configWith({ distill: true });
+    const result = await tryLlmFeature(
+      "distill",
+      config,
+      async () => ({ ok: true }),
+      {
+        ok: false,
+      },
+      { enabled: improveEnabled(config, "distill") },
+    );
     expect(result).toEqual({ ok: true });
   });
 });
@@ -225,6 +247,17 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
   expect(events).toHaveLength(0);
 });
 
+test("explicit timeoutMs null disables the wrapper timer instead of selecting the default", async () => {
+  const result = await tryLlmFeature(
+    "graph_extraction",
+    configWith({ graph_extraction: true }),
+    () => new Promise<string>((resolve) => setTimeout(() => resolve("completed"), 20)),
+    "fallback",
+    { timeoutMs: null },
+  );
+  expect(result).toBe("completed");
+});
+
 // ── #284 GAP-LOW: parametrise over the stable feature keys ─────────────────
 //
 // Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`
@@ -239,23 +272,25 @@ describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)",
     test(`${key}: defaults correctly when no profile is configured`, () => {
       const cfg: AkmConfig = { semanticSearchMode: "auto", stashDir: "/tmp" };
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });
 
     test(`${key}: defaults correctly when key is absent`, () => {
       const cfg = configWith({});
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });
 
     test(`${key}: literal true → enabled`, () => {
+      const cfg = configWith({ [key]: true });
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(configWith({ [key]: true }), key as any)).toBe(true);
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(true);
     });
 
     test(`${key}: literal false → disabled`, () => {
+      const cfg = configWith({ [key]: false });
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(configWith({ [key]: false }), key as any)).toBe(false);
+      expect(isLlmFeatureEnabled(cfg, key as any, improveEnabled(cfg, key))).toBe(false);
     });
   }
 });
@@ -273,6 +308,7 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
           return "real";
         },
         "fallback",
+        key === "distill" ? { enabled: true } : undefined,
       );
       if (DEFAULT_ENABLED_KEYS.has(key)) {
         expect(result).toBe("real");
@@ -284,25 +320,29 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
     });
 
     test(`${key}: enabled + happy → returns fn's result`, async () => {
+      const cfg = configWith({ [key]: true });
       const result = await tryLlmFeature(
         // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
         key as any,
-        configWith({ [key]: true }),
+        cfg,
         async () => "real",
         "fallback",
+        { enabled: improveEnabled(cfg, key) },
       );
       expect(result).toBe("real");
     });
 
     test(`${key}: enabled + throw → returns fallback`, async () => {
+      const cfg = configWith({ [key]: true });
       const result = await tryLlmFeature(
         // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
         key as any,
-        configWith({ [key]: true }),
+        cfg,
         async () => {
           throw new Error("boom");
         },
         "fallback",
+        { enabled: improveEnabled(cfg, key) },
       );
       expect(result).toBe("fallback");
     });

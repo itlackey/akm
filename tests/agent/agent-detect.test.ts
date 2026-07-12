@@ -32,8 +32,9 @@ describe("detectAgentCliProfiles", () => {
   test("includes user-defined profiles via the resolver", () => {
     const results = detectAgentCliProfiles(
       {
+        configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        profiles: { agent: { rover: { platform: "opencode", bin: "rover-cli" } } },
+        engines: { rover: { kind: "agent", platform: "opencode", bin: "rover-cli" } },
       },
       whichOnly(["rover-cli"]),
     );
@@ -113,9 +114,10 @@ describe("stepAgentCliDetection (setup wizard)", () => {
     const { stepAgentCliDetection } = await import("../../src/setup/steps/platforms");
     const result = stepAgentCliDetection(
       {
+        configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        defaults: { agent: "aider" },
-        profiles: { agent: { aider: { platform: "opencode", args: ["--no-auto-commits"] } } },
+        defaults: { engine: "aider" },
+        engines: { aider: { kind: "agent", platform: "opencode", args: ["--no-auto-commits"] } },
       },
       () => [
         { name: "claude", bin: "claude", available: true },
@@ -123,6 +125,6 @@ describe("stepAgentCliDetection (setup wizard)", () => {
       ],
     );
     expect(result.agent?.default).toBe("aider");
-    expect(result.agent?.profiles?.aider?.args).toEqual(["--no-auto-commits"]);
+    expect(result.agent?.engines?.aider?.args).toEqual(["--no-auto-commits"]);
   });
 });

@@ -56,9 +56,15 @@ const { overrideSeam } = await import("../_helpers/seams");
 // Minimal config that opens the `memory_inference` gate. The gate default is
 // `?? true`, so a config that is merely non-undefined is sufficient; we set the
 // flag explicitly for clarity and robustness against a default flip.
-const ENABLED_CONFIG = {
-  profiles: { improve: { default: { processes: { memoryInference: { enabled: true } } } } },
-} as unknown as AkmConfig;
+const ENABLED_CONFIG: AkmConfig = {
+  configVersion: "0.9.0",
+  semanticSearchMode: "auto",
+  engines: {
+    test: { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test" },
+  },
+  defaults: { engine: "test", llmEngine: "test" },
+  index: { defaults: { engine: "test" }, memory: { enabled: true } },
+};
 
 const LLM_CONFIG = { timeoutMs: 5_000 } as unknown as LlmConnectionConfig;
 

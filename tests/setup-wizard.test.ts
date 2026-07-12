@@ -279,23 +279,45 @@ describe("agent and output setup steps", () => {
   test("stepAgentSelection lets the user choose a detected default agent", async () => {
     q.selects.push("codex");
 
-    const result = await stepAgentSelection({ semanticSearchMode: "auto", agent: { default: "claude" } } as never, [
-      { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
-      { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/bin/codex" },
-    ]);
+    const result = await stepAgentSelection(
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { claude: { kind: "agent", platform: "claude" } },
+        defaults: { engine: "claude" },
+      } as never,
+      [
+        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
+        { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/bin/codex" },
+      ],
+    );
 
-    expect(result).toEqual({ default: "codex" });
+    expect(result).toEqual({
+      default: "codex",
+      engines: { claude: { kind: "agent", platform: "claude" } },
+    });
   });
 
   test("stepAgentSelection allows disabling the default agent", async () => {
     q.selects.push("disabled");
 
-    const result = await stepAgentSelection({ semanticSearchMode: "auto", agent: { default: "claude" } } as never, [
-      { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
-      { name: "opencode", bin: "opencode", available: true, resolvedPath: "/usr/bin/opencode" },
-    ]);
+    const result = await stepAgentSelection(
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { claude: { kind: "agent", platform: "claude" } },
+        defaults: { engine: "claude" },
+      } as never,
+      [
+        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
+        { name: "opencode", bin: "opencode", available: true, resolvedPath: "/usr/bin/opencode" },
+      ],
+    );
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({
+      default: undefined,
+      engines: { claude: { kind: "agent", platform: "claude" } },
+    });
   });
 
   test("stepLlm keep current preserves the existing endpoint", async () => {
@@ -308,14 +330,15 @@ describe("agent and output setup steps", () => {
       capabilities: { structuredOutput: true },
     };
     const current = {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      profiles: { llm: { default: existingLlm } },
-      defaults: { llm: "default" },
+      engines: { default: { kind: "llm", ...existingLlm, supportsJsonSchema: true } },
+      defaults: { llmEngine: "default" },
     };
 
     const result = await stepLlm(current as never, "http://localhost:11434", ["llama3.2"]);
 
-    expect(result).toEqual(existingLlm);
+    expect(result).toMatchObject({ endpoint: existingLlm.endpoint, model: existingLlm.model });
     expect(result).not.toBe(existingLlm);
   });
 

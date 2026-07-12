@@ -46,8 +46,12 @@
  * registry entry.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, assertNotFlag } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
+import {
+  type AgentCommandBuilder,
+  type AgentDispatchRequest,
+  assertNotFlag,
+  resolveDispatchModel,
+} from "../../agent/builder-shared";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const COPILOT_PLATFORM = "copilot";
@@ -101,7 +105,7 @@ export const copilotBuilder: AgentCommandBuilder = {
     assertNotFlag(req.model, "model");
     const args: string[] = [...profile.args];
     if (req.model) {
-      const resolved = resolveModel(req.model, COPILOT_PLATFORM, profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, COPILOT_PLATFORM) as string;
       args.push("--model", resolved);
     }
     if (req.tools) {

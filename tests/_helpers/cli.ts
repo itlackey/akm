@@ -59,13 +59,14 @@
  */
 
 import { renderUsage, runCommand } from "citty";
-import { main } from "../../src/cli";
+import { main, shouldBypassConfigStartup } from "../../src/cli";
 import { emitJsonError } from "../../src/cli/shared";
 import { normalizeShowArgv } from "../../src/commands/read/show";
-import { loadConfig, resetConfigCache } from "../../src/core/config/config";
+import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
+import { disposeDispatchResources } from "../../src/integrations/agent/runner-dispatch";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
@@ -232,7 +233,10 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       // `health --detail verbose` produces the same JSON the spawn version
       // asserted on, rather than the bare exception message.
       try {
-        initOutputMode(argv, loadConfig().output ?? {});
+        initOutputMode(
+          argv,
+          shouldBypassConfigStartup(argv) ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}),
+        );
       } catch (initError) {
         emitJsonError(initError); // JSON envelope to stderr, then process.exit → ExitSignal
       }
@@ -248,6 +252,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       stderr += `${error instanceof Error ? error.message : String(error)}\n`;
     }
   } finally {
+    await disposeDispatchResources();
     // If the command set process.exitCode without calling process.exit() (deferred
     // exit pattern used to allow stdout flush before terminating), pick it up here
     // so the captured code reflects the intended exit status. Only act when the

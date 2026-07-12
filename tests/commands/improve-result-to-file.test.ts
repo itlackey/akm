@@ -57,6 +57,7 @@ function readImproveRuns(xdgData: string): Array<{
   ok: number;
   scope_mode: string;
   profile: string | null;
+  strategy: string | null;
   result: Record<string, unknown>;
 }> {
   const dbPath = path.join(xdgData, "akm", "state.db");
@@ -65,7 +66,7 @@ function readImproveRuns(xdgData: string): Array<{
   try {
     const rows = db
       .prepare(
-        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, profile, result_json
+        `SELECT id, started_at, completed_at, dry_run, ok, scope_mode, profile, strategy, result_json
          FROM improve_runs ORDER BY started_at ASC`,
       )
       .all() as Array<{
@@ -76,6 +77,7 @@ function readImproveRuns(xdgData: string): Array<{
       ok: number;
       scope_mode: string;
       profile: string | null;
+      strategy: string | null;
       result_json: string;
     }>;
     return rows.map((r) => ({
@@ -86,6 +88,7 @@ function readImproveRuns(xdgData: string): Array<{
       ok: r.ok,
       scope_mode: r.scope_mode,
       profile: r.profile,
+      strategy: r.strategy,
       result: JSON.parse(r.result_json) as Record<string, unknown>,
     }));
   } finally {
@@ -119,8 +122,9 @@ describe("relativeImproveResultPath", () => {
 
 describe("writeImproveResultFile", () => {
   const baseResult: AkmImproveResult = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
+    strategy: "default",
     scope: { mode: "all" },
     dryRun: false,
     memorySummary: { eligible: 1, derived: 0 },
@@ -150,6 +154,7 @@ describe("writeImproveResultFile", () => {
       expect(rows[0].dry_run).toBe(0);
       expect(rows[0].scope_mode).toBe("all");
       expect(rows[0].profile).toBeNull();
+      expect(rows[0].strategy).toBe("default");
       expect(rows[0].result.ok).toBe(true);
 
       // No legacy on-disk file under .akm/runs/ — the storage swap is complete.
@@ -160,22 +165,37 @@ describe("writeImproveResultFile", () => {
     }
   });
 
-  test("records the passed-through profile on a successful run", () => {
-    // Regression test: previously this writer hardcoded `profile: null` on
-    // EVERY successful run, even when a real `--profile` was passed at the
-    // CLI (only SIGTERM'd/exception-terminated runs recorded their profile,
-    // via recordTerminatedImproveRun). writeImproveResultFile must persist
-    // whatever profile the caller passes through.
+  test("records the passed-through v2 strategy without relabeling it as a profile", () => {
     const stash = makeStashDir();
-    const runId = "test-run-with-profile";
+    const runId = "test-run-with-strategy";
 
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
     try {
-      writeImproveResultFile(stash, runId, baseResult, undefined, "quick");
+      writeImproveResultFile(stash, runId, { ...baseResult, strategy: "quick" });
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
-      expect(rows[0].profile).toBe("quick");
+      expect(rows[0].profile).toBeNull();
+      expect(rows[0].strategy).toBe("quick");
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
+  test("redacts even a one-character engine secret before durable result persistence", () => {
+    const stash = makeStashDir();
+    const dataSb = sandboxXdgDataHome();
+    try {
+      writeImproveResultFile(
+        stash,
+        "test-run-redacted",
+        { ...baseResult, guidance: "credential x echoed" },
+        undefined,
+        ["x"],
+      );
+      const persisted = JSON.stringify(readImproveRuns(dataSb.dir));
+      expect(persisted).not.toContain("credential x echoed");
+      expect(persisted).toContain("credential [REDACTED] echoed");
     } finally {
       dataSb.cleanup();
     }

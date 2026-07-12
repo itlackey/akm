@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { getWorkflowStatus, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 import {
   allDispatchPids,
   bunAvailable,
@@ -50,14 +50,20 @@ let markerDir: string;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeSandboxConfig({
+    configVersion: "0.9.0",
+    engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
+    defaults: { engine: "test-agent" },
+  });
   markerDir = path.join(storage.root, "markers");
   fs.mkdirSync(markerDir, { recursive: true });
 });
 
 afterEach(() => storage.cleanup());
 
-const FANOUT_WF = `version: 1
+const FANOUT_WF = `version: 2
 name: lease-xproc
+defaults: { engine: test-agent }
 params:
   files: { type: array, items: { type: string } }
 steps:
@@ -75,6 +81,7 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
     writeProgram(storage.stashDir, "lease-xproc", FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
     const started = await startWorkflowRun("workflow:lease-xproc", params);
+    expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [ua, ub, uc, ud] = await unitIds(runId, params);
 

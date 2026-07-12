@@ -100,11 +100,11 @@ describe("health checks characterization (WS9)", () => {
         message: "No active task runs exceeded the stale threshold.",
       },
       {
-        name: "agent-profile",
+        name: "default-engine",
         kind: "deterministic",
         status: "unknown",
         confidence: "high",
-        message: "No agent config present.",
+        message: "No default engine is configured.",
       },
     ]);
 
@@ -174,7 +174,7 @@ describe("health checks characterization (WS9)", () => {
 
     expect(result.ok).toBe(true);
     expect(result.status).toBe("pass");
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
   });
 
   test("seeded failure stash: ordered structure with a hard fail + advisory warn", () => {
@@ -196,7 +196,12 @@ describe("health checks characterization (WS9)", () => {
         })(),
         target_kind: "prompt",
         target_ref: null,
-        metadata_json: JSON.stringify({ durationMs: 10, detail: { exitCode: 0 }, profile: "opencode" }),
+        metadata_json: JSON.stringify({
+          metadataVersion: 2,
+          durationMs: 10,
+          detail: { exitCode: 0 },
+          engine: "opencode",
+        }),
       });
       upsertTaskHistory(db, {
         task_id: "failed-task",
@@ -208,9 +213,10 @@ describe("health checks characterization (WS9)", () => {
         target_kind: "prompt",
         target_ref: null,
         metadata_json: JSON.stringify({
+          metadataVersion: 2,
           durationMs: 20,
           detail: { exitCode: 2, reason: "non_zero_exit", error: "boom" },
-          profile: "opencode",
+          engine: "opencode",
         }),
       });
     } finally {
@@ -231,7 +237,7 @@ describe("health checks characterization (WS9)", () => {
       "task-history-read",
       "task-log-backing",
       "active-runs",
-      "agent-profile",
+      "default-engine",
     ]);
     expect(result.advisories.map((c) => c.name)).toEqual([
       "collapse-churn-detector",

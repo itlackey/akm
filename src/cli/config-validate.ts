@@ -9,30 +9,35 @@
  * prints "All checks passed." or a list of structured errors (path + message).
  * Exits non-zero on errors so it composes well in CI hooks.
  */
-import fs from "node:fs";
-import { parseConfigText } from "../core/config/config-io";
-import { validateConfigShape } from "../core/config/config-schema";
+import { parseConfigText, readConfigText } from "../core/config/config-io";
+import { CURRENT_CONFIG_VERSION, validateConfigShape } from "../core/config/config-schema";
 import { ConfigError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
 
 export async function runConfigValidate(): Promise<void> {
   const configPath = getConfigPath();
 
-  if (!fs.existsSync(configPath)) {
-    console.log(`No config file at ${configPath} — nothing to validate.`);
-    return;
-  }
-
-  let text: string;
+  let text: string | undefined;
   try {
-    text = fs.readFileSync(configPath, "utf8");
+    text = readConfigText(configPath);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new ConfigError(`Could not read config at ${configPath}: ${detail}`, "INVALID_CONFIG_FILE");
   }
+  if (text === undefined) {
+    console.log(`No config file at ${configPath} — nothing to validate.`);
+    return;
+  }
 
   // parseConfigText throws ConfigError on malformed JSON (#458). Surface as-is.
   const raw = parseConfigText(text, configPath);
+  if (raw.configVersion !== CURRENT_CONFIG_VERSION) {
+    throw new ConfigError(
+      `Unsupported configVersion at ${configPath}: expected "${CURRENT_CONFIG_VERSION}".`,
+      "UNSUPPORTED_CONFIG_VERSION",
+      "Recreate engines and improve.strategies manually; AKM 0.9 never translates profile-based configuration.",
+    );
+  }
 
   const result = validateConfigShape(raw);
   if (result.ok) {

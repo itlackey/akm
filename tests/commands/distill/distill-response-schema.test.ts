@@ -58,18 +58,27 @@ function makeStashDir(): string {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      // Quality gate OFF: these tests exercise the structured-output chat seam
-      // round-trip, not the LLM-as-judge. The gate defaults ON and fails CLOSED
-      // (07 P0-2) with a non-judge chat stub.
-      improve: { default: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test-model",
+      },
     },
-    defaults: { llm: "default" },
+    improve: {
+      strategies: {
+        // Quality gate OFF: these tests exercise the structured-output chat seam
+        // round-trip, not the LLM-as-judge. The gate defaults ON and fails CLOSED
+        // (07 P0-2) with a non-judge chat stub.
+        test: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } },
+      },
+    },
+    defaults: { llmEngine: "default", improveStrategy: "test" },
   };
 }
 

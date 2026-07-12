@@ -50,7 +50,7 @@ import ingestWorkflowTemplate from "../assets/wiki/ingest-workflow-template.md" 
 import { akmSearch } from "../commands/read/search";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { isWithin, todayIso } from "../core/common";
-import { getSources, loadUserConfig, saveConfig } from "../core/config/config";
+import { getSources, mutateConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import type { SearchResponse, SourceSearchHit } from "../sources/types";
@@ -524,13 +524,14 @@ export function removeWiki(stashDir: string, name: string, options: RemoveOption
   const external = registeredWikiSources(stashDir).find((source) => source.name === name);
   const isStashWiki = fs.existsSync(wikiDir) && isRecognizedStashWiki(wikiDir);
   if (!isStashWiki && external) {
-    const config = loadUserConfig();
-    const filteredSources = getSources(config).filter((entry) => entry.wikiName !== name);
-    const installed = (config.installed ?? []).filter((entry) => entry.wikiName !== name);
-    saveConfig({
-      ...config,
-      sources: filteredSources.length > 0 ? filteredSources : undefined,
-      installed: installed.length > 0 ? installed : undefined,
+    mutateConfig((config) => {
+      const filteredSources = getSources(config).filter((entry) => entry.wikiName !== name);
+      const installed = (config.installed ?? []).filter((entry) => entry.wikiName !== name);
+      return {
+        ...config,
+        sources: filteredSources.length > 0 ? filteredSources : undefined,
+        installed: installed.length > 0 ? installed : undefined,
+      };
     });
     return {
       name,

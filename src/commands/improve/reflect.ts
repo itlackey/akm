@@ -12,7 +12,7 @@
  *      content. Pull recent feedback (`feedback` events for that ref) and
  *      lesson-lint findings to surface as schema hints.
  *   3. Build the prompt via {@link buildReflectPrompt}.
- *   4. Spawn the configured agent profile via {@link runAgent}.
+ *   4. Dispatch the selected named engine via {@link executeRunner}.
  *   5. Parse the agent's stdout into a {@link AgentProposalPayload}.
  *   6. Insert into the proposal queue via {@link createProposal} with
  *      `source: "reflect"`.
@@ -32,23 +32,17 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
-import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
+import type { ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
+import { ConfigError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
+import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
-import { warn } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
-import {
-  type AgentFailureReason,
-  type AgentProfile,
-  type AgentRunResult,
-  type RunAgentOptions,
-  runAgent,
-} from "../../integrations/agent";
-import { resolveProcessAgentProfile } from "../../integrations/agent/config";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
+import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import {
   buildReflectPrompt,
   extractDraftConfidence,
@@ -56,23 +50,15 @@ import {
   type RejectedProposalContext,
 } from "../../integrations/agent/prompts";
 import {
+  materializeLlmRunnerConnection,
   type RunnerSpec,
-  resolveDefaultLlmRunner,
-  resolveImproveProcessRunnerFromProfile,
+  resolveImproveProcessRunner,
   runnerIsLlm,
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
-import { executeRunner } from "../../integrations/agent/runner-dispatch";
-import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
+import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
-import { isLlmFeatureEnabled } from "../../llm/feature-gate";
-import {
-  baseFailureFields,
-  enoentHintMessage,
-  isEnoentFailure,
-  loadAgentConfigFromDisk,
-  resolveAgentProfile,
-} from "../agent/agent-support";
+import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
   createProposal,
@@ -96,18 +82,14 @@ export interface AkmReflectOptions {
   ref?: string;
   /** Optional task hint passed through to the reflection prompt. */
   task?: string;
-  /** Override the agent profile name (defaults to `agent.default`). */
-  profile?: string;
+  /** Override the named engine (defaults to `defaults.engine`). */
+  engine?: string;
   /** Override the spawn timeout. */
   timeoutMs?: number;
   /** Test seam: override the stash dir. */
   stashDir?: string;
-  /** Test seam: override the resolved agent profile (skips config lookup). */
-  agentProfile?: AgentProfile;
   /** Test seam: forwarded to runAgent for fake spawn / timers. */
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
-  /** Test seam: pre-resolved AkmConfig (skips config load). */
-  agentConfig?: AkmConfig;
   /** Test seam: stable id / clock for proposal creation. */
   ctx?: ProposalsContext;
   /**
@@ -120,23 +102,13 @@ export interface AkmReflectOptions {
    * Optional chat seam for the proposal quality gate (R-5 / #374).
    * Defaults to {@link chatCompletion}. Injected in tests to avoid real LLM calls.
    */
-  chat?: (
-    config: import("../../core/config/config").LlmConnectionConfig,
-    messages: import("../../llm/client").ChatMessage[],
-  ) => Promise<string>;
+  chat?: typeof chatCompletion;
   /**
    * Override the loaded AkmConfig (test seam + for the quality gate).
-   * Needed by R-5 to access the proposal quality gate (now stored at
-   * `profiles.improve.default.processes.reflect.qualityGate.enabled`) without
-   * a real config file in tests.
+   * Needed by R-5 to access the selected strategy's proposal quality gate
+   * without a real config file in tests.
    */
   config?: import("../../core/config/config").AkmConfig;
-  /**
-   * Named process to use for per-process agent config lookup. Defaults to
-   * `"reflect"`. When an explicit `--profile` flag is given, the process
-   * lookup is skipped and the flag value wins.
-   */
-  agentProcess?: string;
   /**
    * Event source for usage logging. Set to `"improve"` when called from
    * `akm improve` so agent subprocess events are tagged and can be
@@ -148,9 +120,8 @@ export interface AkmReflectOptions {
    * 2-3 changed-token prose micro-rewrite with no code/frontmatter/structural/
    * negation/decision signal (see classifyReflectChange) — are deferred like
    * noop/cosmetic instead of becoming proposals. The improve loop resolves this
-   * from the ACTIVE profile's `processes.reflect.lowValueFilter.enabled`; the
-   * standalone `akm reflect` command leaves it off. (Previously read from a
-   * hardcoded `profiles.improve.default` path that ignored the active profile.)
+   * from the active strategy's `processes.reflect.lowValueFilter.enabled`; the
+   * standalone `akm reflect` command leaves it off.
    */
   lowValueFilter?: boolean;
   /**
@@ -175,7 +146,7 @@ export interface AkmReflectOptions {
    * llm/sdk/agent dispatch paths without real config. When set, skips
    * config-based runner resolution entirely.
    */
-  runner?: RunnerSpec;
+  runner?: RunnerSpec | null;
   /**
    * Test seam: pre-loaded source asset content. When set, bypasses the
    * indexer `lookup()` step so the safety-rail / sanitizer tests can pin
@@ -197,22 +168,23 @@ export interface AkmReflectOptions {
 }
 
 export interface AkmReflectFailure {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: false;
   reason: AgentFailureReason;
   error: string;
   ref?: string;
+  engine?: string;
   exitCode: number | null;
   stdout?: string;
   stderr?: string;
 }
 
 export interface AkmReflectSuccess {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: true;
   proposal: Proposal;
   ref: string;
-  agentProfile: string;
+  engine: string;
   durationMs: number;
 }
 
@@ -324,8 +296,8 @@ function readRejectedProposals(stash: string, ref?: string): RejectedProposalCon
  * The path lives under {@link os.tmpdir} and embeds the (sanitized) ref +
  * timestamp + random suffix so concurrent reflect calls cannot collide.
  *
- * Returns `undefined` for the LLM HTTP runner — the chat-completion transport
- * has no filesystem access (see warning at `src/llm/call-ai.ts:64-71`).
+ * The LLM HTTP runner cannot use this path because chat-completion transport
+ * has no filesystem access.
  */
 function synthesizeReflectDraftPath(ref: string | undefined): string {
   const safeRef = (ref ?? "no-ref").replace(/[^a-z0-9_-]/gi, "_");
@@ -501,17 +473,17 @@ function isStructuredCooldownSignal(stdout: string): boolean {
  * as valid proposals. Anthropic agent best practices recommend structured
  * output when the SDK supports it; this tighter fallback is the safety net.
  *
- * When `sdkMode === true`, structured output (tool-call schema) should be used
+ * For SDK runners, structured output (tool-call schema) should be used
  * instead of this fallback. That wiring is tracked separately (full SDK
  * structured-output integration); for now this tighter parser applies to all
  * modes and is the primary R-6 deliverable.
  */
-function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, sdkMode = false) {
+function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, sdkRunner = false) {
   if (!ref) return undefined;
   const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
   const targetType = ref.split(":")[0];
-  if (!looksLikeAssetContent(trimmed, sdkMode, targetType)) return undefined;
+  if (!looksLikeAssetContent(trimmed, sdkRunner, targetType)) return undefined;
   return { ref, content: trimmed };
 }
 
@@ -525,10 +497,10 @@ function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, 
  *   blocks and pure delimiter sequences as valid payloads.
  * - Heading start (`#`): must have at least 3 non-blank lines after the heading,
  *   to ensure there is actual body content and not just a title stub.
- * - In SDK mode (`sdkMode === true`): additionally requires `when_to_use:` for
+ * - For SDK runners: additionally requires `when_to_use:` for
  *   lesson types (full structured output will replace this in a future PR).
  */
-function looksLikeAssetContent(value: string, sdkMode = false, targetType?: string): boolean {
+function looksLikeAssetContent(value: string, sdkRunner = false, targetType?: string): boolean {
   if (value.startsWith("---")) {
     // YAML frontmatter must contain at least a description field.
     const fmEnd = value.indexOf("\n---", 4);
@@ -538,7 +510,7 @@ function looksLikeAssetContent(value: string, sdkMode = false, targetType?: stri
     if (!hasDescription) return false;
     // In SDK mode, lesson assets additionally require a when_to_use field.
     // Use the target ref type rather than frontmatter type: (which is non-standard).
-    if (sdkMode && targetType === "lesson") {
+    if (sdkRunner && targetType === "lesson") {
       return /^when_to_use\s*:/m.test(fmBlock);
     }
     return true;
@@ -866,7 +838,7 @@ export interface RunReflectViaLlmOptions {
   /** LLM connection config. `supportsJsonSchema` controls structured-output mode. */
   connection: LlmProfileConfig;
   /** Hard timeout for the LLM request in ms. */
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   /** Prior draft for Self-Refine critique (injected on iterations > 0). */
   priorDraft?: string;
   /** Current refinement iteration (0-based). */
@@ -877,7 +849,7 @@ export interface RunReflectViaLlmOptions {
    */
   responseSchema?: Record<string, unknown>;
   /** Test seam: override the chat function (avoids real LLM calls in tests). */
-  chat?: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+  chat?: typeof chatCompletion;
   /**
    * Hard output-token cap forwarded directly to `chatCompletion` as `max_tokens`.
    * Derived from the same blended-bound formula used by {@link checkReflectSize}
@@ -893,7 +865,6 @@ export interface RunReflectViaLlmOptions {
    * so it cannot honour a file-write contract. The reflect dispatcher must NEVER
    * synthesize a draft path when the runner kind is `llm` — the prompt builder
    * is also called WITHOUT `draftFilePath` so it emits the JSON contract instead.
-   * Mirrors the warning at `src/llm/call-ai.ts:64-71`.
    */
   draftFilePath?: string;
 }
@@ -916,18 +887,11 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
   }
 
   try {
-    let stdout: string;
-    if (opts.chat) {
-      // Test seam: injected chat function (two-arg signature, no responseSchema).
-      stdout = await opts.chat(opts.connection, messages);
-    } else {
-      // Production path: full chatCompletion with optional structured-output schema
-      // and optional hard max_tokens cap (derived from source body size).
-      stdout = await chatCompletion(opts.connection, messages, {
-        ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
-        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-      });
-    }
+    const stdout = await (opts.chat ?? chatCompletion)(opts.connection, messages, {
+      ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
+      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    });
     return {
       ok: true,
       stdout,
@@ -952,11 +916,14 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
 function failureEnvelope(
   result: AgentRunResult,
   ref: string | undefined,
+  engine?: string,
   fallbackReason: AgentFailureReason = "non_zero_exit",
 ): AkmReflectFailure {
   return {
     ...baseFailureFields(result, fallbackReason),
+    schemaVersion: 2,
     ...(ref ? { ref } : {}),
+    ...(engine ? { engine } : {}),
   };
 }
 
@@ -970,7 +937,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(options.ref ? { ref: options.ref } : {}),
     metadata: {
       ...(options.task ? { task: options.task } : {}),
-      ...(options.profile ? { profile: options.profile } : {}),
+      ...(options.engine ? { engine: options.engine } : {}),
       // Attribution tagging: stamp the eligibility lane so reflect_invoked can be
       // sliced by lane downstream. See EligibilitySource.
       ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
@@ -1023,7 +990,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // ("Reflect refused asset type" — ~9% of reflect-failed events).
       emitReflectFailed("unsupported_type", "unsupported_type", options.ref, { type: parsedRef.type });
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "unsupported_type" as AgentFailureReason,
         error: `Reflect refused: asset type "${parsedRef.type}" is not supported by reflect (only markdown-canonical types are allowed: ${[...REFLECT_ALLOWED_TYPES].sort().join(", ")}). Use \`akm propose\` or edit the file directly.`,
@@ -1047,95 +1014,51 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     }
   }
 
-  // 3. Resolve agent profile. ConfigError surfaces as a thrown error so the
-  // CLI dispatcher renders the standard envelope.
-  //
-  // When an explicit --profile flag is given, honour it directly (existing
-  // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
-  // agent config (agent.processes["reflect"]) is picked up automatically.
-  let profile: AgentProfile | undefined;
-  let resolvedTimeoutMs: number | null | undefined = options.timeoutMs;
-  let runnerSpec: RunnerSpec | undefined;
-  try {
-    if (options.agentProfile) {
-      // Test seam: injected profile bypasses all config.
-      profile = options.agentProfile;
-    } else if (options.runner) {
-      // Caller-provided RunnerSpec (used in tests and --dry-run-resolve).
-      runnerSpec = options.runner;
-    } else {
-      const cfg = options.config ?? loadConfig();
-      const reflectProcess = getImproveProcessConfig(cfg, "reflect", options.improveProfile);
-      // Resolve the runner from the improve profile's reflect entry when present.
-      runnerSpec = resolveImproveProcessRunnerFromProfile(reflectProcess, cfg) ?? undefined;
-      if (runnerSpec) {
-        if (resolvedTimeoutMs === undefined && runnerSpec.timeoutMs !== undefined) {
-          resolvedTimeoutMs = runnerSpec.timeoutMs;
-        }
-      } else {
-        if (options.profile) {
-          // Explicit --profile flag wins over process config.
-          profile = resolveAgentProfile(options);
-        } else {
-          // Use per-process config resolution (falls back to defaults.agent).
-          const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-          const processName = options.agentProcess ?? "reflect";
-          const resolved = resolveProcessAgentProfile(processName, agent);
-          profile = resolved.profile;
-          // Only apply process-resolved timeoutMs when caller didn't supply one.
-          if (resolvedTimeoutMs === undefined) {
-            resolvedTimeoutMs = resolved.timeoutMs;
-          }
-        }
-      }
-    }
-  } catch (err) {
-    if (err instanceof ConfigError || err instanceof UsageError) throw err;
-    throw err;
-  }
-  // P1.3 (meta-review 07, Chain G): unattended `akm improve` must never hand
-  // reflect a tool-capable runner. Agent-CLI/SDK runners have filesystem
-  // access, so a poisoned asset body flowing through the scheduled reflect
-  // prompt could steer an agent with tools; the tool-less LLM HTTP runner
-  // corrupts output text at worst (src/llm/call-ai.ts). An llm RunnerSpec
-  // resolved from the process block is honored; anything else — an agent/sdk
-  // spec, a resolved agent profile, or the default-agent fallback below — is
-  // pinned to `defaults.llm`, failing CLOSED when that is unset.
-  // `options.agentProfile` stays exempt: it is a direct-injection test seam
-  // the cron path (loop-stages) never sets.
-  if (options.eventSource === "improve" && !options.agentProfile && (!runnerSpec || !runnerIsLlm(runnerSpec))) {
-    const cfg = options.config ?? loadConfig();
-    const pinned = resolveDefaultLlmRunner(cfg, resolvedTimeoutMs);
-    if (!pinned) {
+  // 3. Resolve exactly one named engine. Standalone reflect uses --engine or
+  // defaults.engine; improve resolves its LLM-only strategy/process overlay.
+  // An incompatible explicit engine is an error and never falls through.
+  const config = options.config ?? loadConfig();
+  const activeStrategy =
+    options.improveProfile ?? config.improve?.strategies?.[config.defaults?.improveStrategy ?? "default"];
+  let runnerSpec: RunnerSpec;
+  if (options.runner) {
+    runnerSpec = options.runner;
+  } else if (Object.hasOwn(options, "runner")) {
+    throw new ConfigError(
+      "Reflect requires an LLM engine for the active improve invocation.",
+      "LLM_NOT_CONFIGURED",
+      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
+    );
+  } else if (options.engine) {
+    runnerSpec = resolveEngine(options.engine, config);
+  } else if (options.improveProfile) {
+    const processRunner = resolveImproveProcessRunner(activeStrategy, "reflect", config);
+    if (!processRunner) {
       throw new ConfigError(
-        "Unattended improve pins reflect to the tool-less LLM runner, but the config resolves a tool-capable runner and no defaults.llm profile exists to pin to.",
+        "Reflect requires an LLM engine for the active improve strategy.",
         "LLM_NOT_CONFIGURED",
-        'Set processes.reflect.mode to "llm" on the active improve profile, or configure defaults.llm.',
+        "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
       );
     }
-    warn(
-      runnerSpec
-        ? `[akm] reflect: unattended improve resolved a tool-capable "${runnerSpec.kind}" runner — pinned to the tool-less LLM runner (07 Chain-G).`
-        : "[akm] reflect: unattended improve would have fallen back to an agent profile — pinned to the tool-less LLM runner (07 Chain-G).",
+    runnerSpec = processRunner;
+  } else {
+    const defaultEngine = config.defaults?.engine;
+    if (!defaultEngine) {
+      throw new ConfigError("reflect requires --engine or defaults.engine.", "INVALID_CONFIG_FILE");
+    }
+    runnerSpec = resolveEngine(defaultEngine, config);
+  }
+  if (options.eventSource === "improve" && !runnerIsLlm(runnerSpec)) {
+    throw new ConfigError(
+      `Unattended improve requires an LLM engine for reflect; engine "${runnerSpec.engine ?? options.engine ?? "unknown"}" is tool-capable.`,
+      "INVALID_CONFIG_FILE",
+      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine to an LLM engine.",
     );
-    runnerSpec = pinned;
-    profile = undefined;
   }
-
-  // Ensure profile is set for agent/sdk runners that don't use runnerSpec
-  if (!runnerSpec && !profile) {
-    const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-    profile = resolveAgentProfile({ ...options, agentConfig: agent });
+  const engineName = runnerSpec.engine ?? options.engine;
+  if (!engineName) {
+    throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
   }
-
-  // Derive a display name for logging — either from the resolved profile or the runnerSpec.
-  const resolvedProfileName: string =
-    profile?.name ??
-    (runnerSpec && runnerIsLlm(runnerSpec)
-      ? `llm:${runnerSpec.connection.model}`
-      : runnerSpec
-        ? `${runnerSpec.kind}:${runnerSpec.profile.name ?? "unknown"}`
-        : "unknown");
 
   // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
   // proposals. These are stable across refinement iterations; only the
@@ -1162,14 +1085,17 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const MAX_REFINE_ITERS = 3;
   const maxRefineIters = Math.min(Math.max(1, options.maxRefineIters ?? 1), MAX_REFINE_ITERS);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
+  const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
+    ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+    ...(options.runAgentOptions ?? {}),
+  });
 
   // Determine whether this dispatch can honour the file-write contract.
   // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
-  // LLM HTTP runner does NOT (see `src/llm/call-ai.ts:64-71`). The v1
-  // `profile.sdkMode` fallback also runs the SDK so it counts as file-writable.
+  // LLM HTTP runner does NOT.
   // Test seams (`options.runAgentOptions.spawn`) emulate agent CLI behaviour so
   // they participate as well — tests opt out by simply not writing the file.
-  const canRunnerWriteFile = runnerSpec ? runnerSupportsFileWrite(runnerSpec) : true;
+  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
 
   // Initialized to a sentinel; always overwritten in the first loop iteration
   // (maxRefineIters is clamped to >= 1 above). TypeScript cannot prove a
@@ -1237,75 +1163,30 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // JSON wrapper and frontmatter block that surround the body in the response.
       const maxTokensForLlm = maxOutputChars !== undefined ? Math.ceil((maxOutputChars + 500) / 3) : undefined;
 
-      let iterResult: AgentRunResult;
-      if (options.runAgentOptions?.spawn) {
-        // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
-        const resolvedProfile = profile;
-        if (!resolvedProfile) {
-          throw new Error("internal: reflect test-seam path requires a resolved agent profile");
-        }
-        const runOptions: RunAgentOptions = {
-          stdio: "captured",
-          parseOutput: "text",
-          ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-          ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-          ...(options.runAgentOptions ?? {}),
-        };
-        iterResult = await runAgent(resolvedProfile, prompt, runOptions);
-      } else if (runnerSpec) {
-        // v2: dispatch through the unified RunnerSpec seam (X3). The `agent` /
-        // `sdk` arms route to the default profile runners; the `llm` arm is
-        // reflect-specific (wraps `runReflectViaLlm` — its bespoke iteration
-        // shape) so it is supplied as the `llm` handler.
-        const runOptions: RunAgentOptions = {
-          stdio: "captured",
-          parseOutput: "text",
-          ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-        };
-        iterResult = await executeRunner(runnerSpec, prompt ?? "", runOptions, {
-          llm: async (spec) =>
-            // LLM HTTP path — `draftFilePath` is accepted for type symmetry
-            // (see `RunReflectViaLlmOptions.draftFilePath` docstring) but is
-            // intentionally a no-op. The prompt builder above also did not
-            // include the file-write contract for this kind, so the LLM is
-            // still asked for JSON via stdout.
-            runReflectViaLlm({
-              prompt,
-              connection: spec.connection,
-              timeoutMs: spec.timeoutMs ?? (typeof resolvedTimeoutMs === "number" ? resolvedTimeoutMs : undefined),
-              priorDraft,
-              iteration: iter,
-              responseSchema: REFLECT_JSON_SCHEMA,
-              chat: options.chat,
-              ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
-            }),
-          // The `agent` arm (and only the agent arm — preserving prior behavior)
-          // overlays `spec.timeoutMs` onto the base run options.
-          runAgent: (profile, p, opts) =>
-            runAgent(profile, p, {
-              ...opts,
-              ...(runnerSpec.timeoutMs !== undefined ? { timeoutMs: runnerSpec.timeoutMs } : {}),
-            }),
-        });
-      } else {
-        // Production path (v1): dispatch directly to the appropriate runner.
-        // The fallback at the end of step 3 guarantees `profile` is set whenever
-        // `runnerSpec` is undefined, but TS can't prove that across the loop +
-        // await boundary — narrow into a const.
-        const resolvedProfile = profile;
-        if (!resolvedProfile) {
-          throw new Error("internal: reflect v1 dispatch reached without a resolved agent profile or runnerSpec");
-        }
-        const runOptions: RunAgentOptions = {
-          stdio: "captured",
-          parseOutput: "text",
-          ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-          ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-        };
-        iterResult = resolvedProfile.sdkMode
-          ? await runOpencodeSdk(resolvedProfile, prompt ?? "", runOptions)
-          : await runAgent(resolvedProfile, prompt, runOptions);
-      }
+      // Every engine kind crosses the same dispatch seam. Injected spawn/timer
+      // functions remain ordinary run options for deterministic tests.
+      const runOptions: RunAgentOptions = {
+        stdio: "captured",
+        parseOutput: "text",
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+        ...(options.runAgentOptions ?? {}),
+      };
+      const iterResult = await executeRunner(runnerSpec, prompt ?? "", runOptions, {
+        llm: async (spec, _prompt, opts) =>
+          // LLM HTTP runners cannot honor the file-write contract, so they
+          // return structured JSON through stdout.
+          runReflectViaLlm({
+            prompt,
+            connection: spec.connection,
+            ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+            priorDraft,
+            iteration: iter,
+            responseSchema: REFLECT_JSON_SCHEMA,
+            chat: options.chat,
+            ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
+          }),
+      });
 
       result = iterResult;
 
@@ -1330,11 +1211,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           ...(finalResult.exitCode !== undefined ? { exitCode: finalResult.exitCode } : {}),
         });
         return {
-          ...failureEnvelope(finalResult, options.ref),
-          error: enoentHintMessage(profile?.bin ?? resolvedProfileName),
+          ...failureEnvelope(finalResult, options.ref, engineName),
+          error: enoentHintMessage(runnerIsLlm(runnerSpec) ? engineName : runnerSpec.profile.bin),
         };
       }
-      const envelope = failureEnvelope(finalResult, options.ref);
+      const envelope = failureEnvelope(finalResult, options.ref, engineName);
       emitReflectFailed(envelope.reason, "agent_crash", options.ref, {
         ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
       });
@@ -1368,11 +1249,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
       });
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "parse_error",
         error: `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
         ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
         exitCode: result.exitCode,
         stdout: result.stdout,
         ...(result.stderr ? { stderr: result.stderr } : {}),
@@ -1383,7 +1265,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       // Happy path: agent wrote the body to disk. Use the ref the caller
       // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
       // below has no effect when there is no expected ref).
-      const fileContent = fs.readFileSync(lastDraftPath, "utf8");
+      const fileContent = redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues);
       // Phase 6A: file-write contract carries self-rated confidence on the
       // `DRAFT_WRITTEN confidence=<n>` sentinel line. Extract it so the
       // file-write path is on equal footing with the JSON-stdout path for
@@ -1402,7 +1284,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       try {
         payload = parseAgentProposalPayload(result.stdout ?? "");
       } catch (err) {
-        const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, profile?.sdkMode ?? false);
+        const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, runnerSpec.kind === "sdk");
         if (fallback) {
           payload = fallback;
         } else {
@@ -1416,11 +1298,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
             ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
           });
           return {
-            schemaVersion: 1,
+            schemaVersion: 2,
             ok: false,
             reason,
             error: err instanceof Error ? err.message : String(err),
             ...(options.ref ? { ref: options.ref } : {}),
+            engine: engineName,
             exitCode: result.exitCode,
             stdout: result.stdout,
             ...(result.stderr ? { stderr: result.stderr } : {}),
@@ -1435,6 +1318,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // draft paths.
     cleanupDrafts();
   }
+
+  payload = { ...payload, content: redactSensitiveText(payload.content, sensitiveValues) };
 
   // 6b. Validate payload.ref === options.ref (R-3 / #366).
   // A hallucinating agent can silently retarget proposals to a different ref.
@@ -1453,11 +1338,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
         });
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: false,
           reason: "parse_error" as const,
           error: `Agent retargeted proposal: expected ref "${options.ref}" but got "${payload.ref}". Proposal rejected to prevent silent ref hallucination.`,
           ref: options.ref,
+          engine: engineName,
           exitCode: result.exitCode,
           stdout: result.stdout,
           ...(result.stderr ? { stderr: result.stderr } : {}),
@@ -1472,10 +1358,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // 7. R-5 / #374: Apply the proposal quality gate when enabled.
   // Mirrors the lesson quality gate on distill proposals. The gate uses
   // `runLessonQualityJudge` from distill.ts and is gated behind either
-  // `profiles.improve.default.processes.reflect.qualityGate.enabled` or
-  // `profiles.improve.default.processes.distill.qualityGate.enabled` (the
-  // `lesson_quality_gate` flag name is the legacy alias still accepted by
-  // `isLlmFeatureEnabled`). Fail-CLOSED (07 P0-2): a judge error / no-LLM /
+  // `processes.reflect.qualityGate.enabled` or
+  // `processes.distill.qualityGate.enabled` on the selected strategy.
+  // Fail-CLOSED (07 P0-2): a judge error / no-LLM /
   // parse failure rejects the proposal rather than passing it through.
   // G-Eval (arXiv:2303.16634) — quality judgment before admission.
   const runtimeConfig =
@@ -1489,8 +1374,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     })();
   const chatFn = options.chat ?? chatCompletion;
   const qualityGateEnabled =
-    isLlmFeatureEnabled(runtimeConfig, "proposal_quality_gate") ||
-    isLlmFeatureEnabled(runtimeConfig, "lesson_quality_gate");
+    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
+    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
 
   if (qualityGateEnabled && runtimeConfig) {
     const assetContent: string | null = (() => {
@@ -1510,7 +1395,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       }
     })();
 
-    const judgeResult = await runLessonQualityJudge(runtimeConfig, payload.content, assetContent ?? "", chatFn);
+    const judgeResult = await runLessonQualityJudge(
+      runtimeConfig,
+      payload.content,
+      assetContent ?? "",
+      chatFn,
+      undefined,
+      runnerIsLlm(runnerSpec) ? materializeLlmRunnerConnection(runnerSpec) : undefined,
+    );
     if (!judgeResult.pass) {
       // Quality gate rejected the proposal — surface as parse_error so the
       // improve orchestrator can log it and move on without crashing.
@@ -1525,11 +1417,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         },
       });
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "parse_error" as const,
         error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
         ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
         exitCode: result.exitCode,
       };
     }
@@ -1563,11 +1456,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       },
     });
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: sanitizeOutcome.reject.reason,
       error: sanitizeOutcome.reject.error,
       ...(options.ref ? { ref: options.ref } : {}),
+      engine: engineName,
       exitCode: result.exitCode,
     };
   }
@@ -1588,9 +1482,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     const changeKind = classifyReflectChange(assetContent, payload.content);
     // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
     // pre-#639 behaviour (low-value treated the same as substantive). Resolved
-    // by the caller from the ACTIVE improve profile's
+    // by the caller from the active improve strategy's
     // `processes.reflect.lowValueFilter.enabled` and passed via options, so the
-    // running profile (not a hardcoded `profiles.improve.default`) decides.
+    // running strategy decides.
     const lowValueFilterEnabled = options.lowValueFilter === true;
     const isDeferred =
       changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);
@@ -1603,7 +1497,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
             : "reflect_skipped_cosmetic";
       emitReflectFailed("no_change", subreason, options.ref, { changeKind });
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "no_change" as const,
         error:
@@ -1613,6 +1507,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
               ? `Reflect skipped: proposed content for ${payload.ref} is a low-value prose micro-rewrite (few changed tokens, no structural changes); no proposal created.`
               : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
         ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
         exitCode: result.exitCode,
       };
     }
@@ -1661,11 +1556,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
     };
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       proposal: draftProposal,
       ref: draftProposal.ref,
-      agentProfile: resolvedProfileName,
+      engine: engineName,
       durationMs: result.durationMs,
     };
   }
@@ -1698,11 +1593,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       proposalSkipReason: proposalResult.reason,
     });
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "cooldown" as const,
       error: `Proposal skipped (${proposalResult.reason}): ${proposalResult.message}`,
       ...(options.ref ? { ref: options.ref } : {}),
+      engine: engineName,
       exitCode: null,
     };
   }
@@ -1715,16 +1611,16 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     metadata: {
       proposalId: proposal.id,
       source: "reflect",
-      agentProfile: resolvedProfileName,
+      engine: engineName,
     },
   });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     proposal,
     ref: proposal.ref,
-    agentProfile: resolvedProfileName,
+    engine: engineName,
     durationMs: result.durationMs,
   };
 }

@@ -4,7 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
 import { runCliCapture } from "./_helpers/cli";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withEnv,
+  writeSandboxConfig,
+} from "./_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
 // (tests/_helpers/cli.ts). Each runCli call pins a fresh isolated set of XDG
@@ -213,8 +220,6 @@ describe("curate command", () => {
     // from huggingface.co during auto-index, and an offline/blocked fetch
     // prepends an "Embedding generation failed" warning to stderr.
     const xdgConfig = makeTempDir("akm-curate-config-");
-    fs.mkdirSync(path.join(xdgConfig, "akm"), { recursive: true });
-    fs.writeFileSync(path.join(xdgConfig, "akm", "config.json"), JSON.stringify({ semanticSearchMode: "off" }));
     const res = await withEnv(
       {
         AKM_STASH_DIR: stashDir,
@@ -223,6 +228,7 @@ describe("curate command", () => {
         XDG_DATA_HOME: makeTempDir("akm-curate-data-"),
       },
       async () => {
+        writeSandboxConfig({ semanticSearchMode: "off" });
         resetConfigCache();
         return runCliCapture(["curate", "release", "--format=json", "--shape=summary"]);
       },

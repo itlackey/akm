@@ -6,7 +6,7 @@
  * #615 — procedural-compilation pass (src/commands/improve/procedural.ts).
  *
  * The procedural pass is an OPT-IN post-loop improve stage (default disabled
- * via IMPROVE_PROCESS_DEFAULTS.procedural). It reads assets that carry an
+ * by the built-in default strategy). It reads assets that carry an
  * `orderedActions` frontmatter list (captured by #619), detects RECURRING
  * successful action sequences across sessions (the SAME normalized ordered
  * step list appearing >= `minRecurrence` times with a non-failure
@@ -33,7 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
-import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
+import { resolveImproveStrategy, resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 // Imported from the module under test (now shipped).
 import { akmProcedural, normalizeSequence } from "../../src/commands/improve/procedural";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
@@ -43,6 +43,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
 import { parseWorkflow } from "../../src/workflows/parser";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -79,7 +80,7 @@ function writeOrderedActionsAsset(
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -100,7 +101,7 @@ function deployWorkflowJson(): string {
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -112,7 +113,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# proposal" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 
@@ -131,10 +132,10 @@ const noopIndexFns = {
 
 /** Improve config with procedural enabled (and noisy passes silenced). */
 function proceduralEnabledConfig(overrides?: Record<string, unknown>): AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -146,7 +147,7 @@ function proceduralEnabledConfig(overrides?: Record<string, unknown>): AkmConfig
         },
       },
     },
-  } as unknown as AkmConfig;
+  } as unknown as AkmConfig);
 }
 
 afterEach(() => {
@@ -178,7 +179,7 @@ describe("procedural — normalizeSequence (unit)", () => {
 
 describe("procedural — opt-in default (AC3)", () => {
   test("resolveProcessEnabled('procedural', defaultProfile) === false", () => {
-    const profile = resolveImproveProfile("default", { semanticSearchMode: "off" } as AkmConfig);
+    const profile = resolveImproveStrategy("default", { semanticSearchMode: "off" } as AkmConfig).config;
     expect(resolveProcessEnabled("procedural", profile)).toBe(false);
   });
 

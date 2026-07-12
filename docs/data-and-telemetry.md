@@ -26,7 +26,7 @@ AKM writes to these locations on your machine. All paths follow [XDG Base Direct
 
 | Path | Contents | Safe to delete? |
 |---|---|---|
-| `config.json` | Your AKM configuration: LLM endpoints, stash paths, feature flags, profiles | **No** — deleting resets all settings |
+| `config.json` | Your AKM configuration: engines, strategies, stash paths, and feature settings | **No** — deleting resets all settings |
 
 Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 
@@ -109,7 +109,7 @@ An append-only log of every mutating action you perform with AKM. Events are sto
 | `select` | `akm show` after a search returning the same ref | `ref`, `entryId` |
 | `promoted` | `akm proposal accept <id>` | `ref` |
 | `rejected` | `akm proposal reject <id>` | `ref` |
-| `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, profile |
+| `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, engine |
 | `reflect_completed` | Reflect phase produced a proposal | `ref` |
 | `improve_reflect_outcome` | Per-asset reflect result | `ref`, `ok`, `durationMs`, `reason` |
 | `propose_invoked` | `akm propose` | `ref` |

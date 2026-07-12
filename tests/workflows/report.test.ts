@@ -9,18 +9,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { acquireMaintenanceBarrier } from "../../src/core/maintenance-barrier";
 import type { WorkflowRunStatus } from "../../src/sources/types";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import { normalizeFailureReason, reportWorkflowUnit, settleWorkflowSpine } from "../../src/workflows/exec/report";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
 import { getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { makeStashDir, withEnv } from "../_helpers/sandbox";
+import { freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
  * `akm workflow report` (redesign addendum R3, task step 3). Proves report:
@@ -45,11 +47,7 @@ function dbPath(): string {
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText);
 }
 
 interface SeedStep {
@@ -97,9 +95,9 @@ function seedRun(opts: {
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash,
-          engine_lease_holder, engine_lease_until)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version,
+           engine_lease_holder, engine_lease_until)
+        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, 3, ?, ?)`,
     ).run(
       RUN_ID,
       opts.status ?? "active",
@@ -112,17 +110,20 @@ function seedRun(opts: {
       opts.lease?.holder ?? null,
       opts.lease?.until ?? null,
     );
+    const plannedSteps = new Map(frozenStepRows(opts.plan).map((step) => [step.stepId, step]));
     opts.steps.forEach((step, i) => {
+      const planned = plannedSteps.get(step.id);
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status, evidence_json)
-         VALUES (?, ?, ?, 'instructions', ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         RUN_ID,
         step.id,
-        step.id,
-        step.criteria ? JSON.stringify(step.criteria) : null,
-        i,
+        planned?.stepTitle ?? step.id,
+        planned?.instructions ?? "instructions",
+        planned?.completionJson ?? (step.criteria ? JSON.stringify(step.criteria) : null),
+        planned?.sequenceIndex ?? i,
         step.status ?? "pending",
         step.evidence ? JSON.stringify(step.evidence) : null,
       );
@@ -160,7 +161,12 @@ function seedRun(opts: {
 
 /** The content-derived unit ids the engine (and brief) would compute for a step. */
 function unitIds(p: WorkflowPlanGraph, stepIndex: number, params: Record<string, unknown>): string[] {
-  const computed = computeStepWorkList(p.steps[stepIndex], { runId: RUN_ID, params, stepOutputs: {} });
+  const computed = computeStepWorkList(p.steps[stepIndex], {
+    runId: RUN_ID,
+    params,
+    stepOutputs: {},
+    engines: p.execution.engines,
+  });
   if (!computed.ok) throw new Error(computed.error);
   return computed.list.units.map((u) => u.unitId);
 }
@@ -185,7 +191,7 @@ afterEach(() => {
 
 // ── Workflows ────────────────────────────────────────────────────────────────
 
-const TWO_STEP_WF = `version: 1
+const TWO_STEP_WF = `version: 2
 name: TwoStep
 steps:
   - id: review
@@ -211,7 +217,7 @@ steps:
       instructions: Summarize the review.
 `;
 
-const LOOP_WF = `version: 1
+const LOOP_WF = `version: 2
 name: Loop
 steps:
   - id: work
@@ -265,10 +271,19 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
 
     // The gate was judged and journaled as a unit row (llm runner, l1).
     await withWorkflowRunsRepo((repo) => {
-      const gate = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.node_id === "review.gate");
+      const rows = repo.getUnitsForStep(RUN_ID, "review");
+      const dispatchRows = rows.filter((u) => u.phase !== "gate");
+      expect(dispatchRows.every((row) => row.engine === "test-agent" && row.runner === "sdk")).toBe(true);
+      expect(
+        dispatchRows.every((row) => row.model === "test-model" && /^[0-9a-f]{64}$/.test(row.input_hash ?? "")),
+      ).toBe(true);
+      const gate = rows.filter((u) => u.node_id === "review.gate");
       expect(gate).toHaveLength(1);
       expect(gate[0].unit_id).toBe("review.gate:l1");
       expect(gate[0].runner).toBe("llm");
+      expect(gate[0].engine).toBe("test-llm");
+      expect(gate[0].model).toBe("test-model");
+      expect(gate[0].input_hash).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.parse(gate[0].result_json ?? "null")).toEqual({ complete: true, missing: [] });
     });
 
@@ -287,6 +302,81 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
     const done = await getWorkflowStatus(RUN_ID);
     expect(done.run.status).toBe("completed");
     expect(done.workflow.steps.every((s) => s.status === "completed")).toBe(true);
+  });
+});
+
+describe("workflow report — sensitive output", () => {
+  test("redacts echoed values and outcome metadata before manual report persistence", async () => {
+    const engineSentinel = "MANUAL-REPORT-ENGINE-SENTINEL";
+    const envSentinel = "MANUAL-REPORT-ENV-SENTINEL";
+    const secretSentinel = "MANUAL-REPORT-SECRET-SENTINEL";
+    const allowlistedUrls = [
+      "https://example.test/oauth/callback?refresh_token=MANUAL%20REPORT%20REFRESH%20SENTINEL",
+      "https://example.test/oauth/callback#id_token=MANUAL%2BREPORT%2BID%2BSENTINEL",
+      "https://example.test/#/oauth/callback?client_secret=MANUAL-REPORT-CLIENT-SENTINEL",
+    ];
+    const partialCredentials = [
+      "MANUAL REPORT REFRESH SENTINEL",
+      "MANUAL+REPORT+ID+SENTINEL",
+      "MANUAL-REPORT-CLIENT-SENTINEL",
+    ];
+    const stash = makeStashDir();
+    fs.mkdirSync(path.join(stash.dir, "secrets"), { recursive: true });
+    fs.mkdirSync(path.join(stash.dir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stash.dir, "secrets", "report-token"), secretSentinel);
+    fs.writeFileSync(
+      path.join(stash.dir, "env", "report.env"),
+      `PLAIN=${envSentinel}\nTOKEN=\${secret:report-token}\n`,
+    );
+    const p = plan(`version: 2
+name: ManualRedaction
+steps:
+  - id: work
+    title: Work
+    unit:
+      env: [env:report]
+      instructions: Do the work.
+`);
+    const fallback = p.execution?.engines["test-llm"];
+    if (!fallback || fallback.kind !== "llm") throw new Error("expected frozen fallback LLM");
+    fallback.credential = { names: ["MANUAL_REPORT_TEST_KEY"], required: true };
+    const agent = p.execution?.engines["test-agent"];
+    if (!agent || agent.kind !== "agent") throw new Error("expected frozen agent engine");
+    agent.envPassthrough = ["LLM_BASE_URL", "OPENCODE_CONFIG", "CLAUDE_CONFIG"];
+    seedRun({ plan: p, steps: [{ id: "work" }] });
+    const unitId = unitIds(p, 0, {})[0];
+
+    try {
+      await withEnv(
+        {
+          AKM_STASH_DIR: stash.dir,
+          MANUAL_REPORT_TEST_KEY: engineSentinel,
+          LLM_BASE_URL: allowlistedUrls[0],
+          OPENCODE_CONFIG: allowlistedUrls[1],
+          CLAUDE_CONFIG: allowlistedUrls[2],
+        },
+        () =>
+          reportWorkflowUnit({
+            target: RUN_ID,
+            unitId,
+            status: "failed",
+            resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrls.join(" ")} ${partialCredentials.join(" ")}`,
+            failureReason: `provider-${partialCredentials[0]}`,
+            sessionId: `session-${partialCredentials[1]}`,
+            summaryJudge: null,
+          }),
+      );
+      const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
+
+      for (const sentinel of [engineSentinel, envSentinel, secretSentinel, ...allowlistedUrls, ...partialCredentials]) {
+        expect(JSON.stringify(rows)).not.toContain(sentinel);
+      }
+      expect(JSON.stringify(rows)).toContain("[REDACTED]");
+      expect(rows[0].failure_reason).toBe("reported_failure");
+      expect(rows[0].session_id).toBe("session-[REDACTED]");
+    } finally {
+      stash.cleanup();
+    }
   });
 });
 
@@ -327,7 +417,7 @@ describe("workflow report — gate rejection with loops remaining", () => {
 
 // ── on_error: continue vs fail ───────────────────────────────────────────────
 
-const ONERROR_WF = (mode: "fail" | "continue") => `version: 1
+const ONERROR_WF = (mode: "fail" | "continue") => `version: 2
 name: OnError
 steps:
   - id: review
@@ -435,6 +525,26 @@ describe("workflow report — re-report semantics", () => {
 // ── Unit check-in (running) + stale surfacing ────────────────────────────────
 
 describe("workflow report — running claim + stale surfacing", () => {
+  test("report waits at the maintenance barrier before creating an external claim", async () => {
+    const p = plan(ONERROR_WF("fail"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+    const release = acquireMaintenanceBarrier();
+    let settled = false;
+    const pending = reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" }).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      expect(settled).toBe(false);
+    } finally {
+      release();
+    }
+    expect((await pending).status).toBe("running");
+    await withWorkflowRunsRepo((repo) => expect(repo.getUnit(RUN_ID, ua)?.status).toBe("running"));
+  });
+
   test("--status running claims a unit (started_at + last_checkin_at) without advancing the spine", async () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
@@ -552,7 +662,7 @@ describe("workflow report — refusals", () => {
     ).rejects.toThrow(/failed validation against its declared output schema/);
   });
 
-  const BUDGET_MAX_UNITS_WF = `version: 1
+  const BUDGET_MAX_UNITS_WF = `version: 2
 name: Budget
 budget:
   max_units: 2
@@ -644,7 +754,7 @@ steps:
     // Peer review R3, finding 1: a unit's OWN reported tokens crossing the
     // ceiling fails the step on the engine (DispatchBudget.addTokens). The report
     // path journaled the unit then silently completed the step — it must fail it.
-    const BUDGET_TOKENS_WF = `version: 1
+    const BUDGET_TOKENS_WF = `version: 2
 name: BudgetTokens
 budget:
   max_tokens: 100
@@ -683,7 +793,7 @@ steps:
     // The unit is free text but the STEP declares an output schema + max_loops:
     // the engine would gate-loop-retry, but report cannot recover the (un-
     // journaled) schema feedback across invocations, so it fails the step.
-    const SCHEMA_LOOP_WF = `version: 1
+    const SCHEMA_LOOP_WF = `version: 2
 name: SchemaLoop
 steps:
   - id: discover
@@ -737,7 +847,7 @@ steps:
 // ── Non-dispatching steps auto-advance (no stuck runs) ───────────────────────
 
 describe("workflow report — steps with no reportable units auto-advance (engine parity)", () => {
-  const EMPTY_DOWNSTREAM_WF = `version: 1
+  const EMPTY_DOWNSTREAM_WF = `version: 2
 name: EmptyDownstream
 steps:
   - id: discover
@@ -820,7 +930,7 @@ steps:
     // (on_error: fail) fails the step. No `report --unit` can advance such units,
     // so the report path settles it to the SAME failed terminal state instead of
     // leaving the run stuck.
-    const ALL_UNRESOLVABLE_WF = `version: 1
+    const ALL_UNRESOLVABLE_WF = `version: 2
 name: AllUnresolvable
 steps:
   - id: review
@@ -1087,7 +1197,7 @@ describe("workflow report — a FAILED row is idempotence-protected (--rerun for
 // ── Budget admission counts the overwritten row's attempts (review round 2, #4) ─
 
 describe("workflow report — budget admission counts a re-dispatched unit's prior attempts", () => {
-  const BUDGET_WF = `version: 1
+  const BUDGET_WF = `version: 2
 name: Budget
 budget:
   max_units: 2
@@ -1305,7 +1415,7 @@ describe("workflow report — failure-reason normalization (#16)", () => {
 // ── Codex round-3 finding A: run-lifetime token accounting across --rerun ─────
 
 describe("workflow report — a --rerun's tokens accumulate onto the failed attempt's spend (finding A)", () => {
-  const TOKENS_WF = `version: 1
+  const TOKENS_WF = `version: 2
 name: TokenBudget
 budget:
   max_tokens: 100
@@ -1429,7 +1539,7 @@ describe("workflow report — a failed unit fails the step immediately under on_
     // A failure whose reason is in retry.on with attempt budget remaining is not
     // yet terminal (the engine would re-dispatch `~r1`; the driver `--rerun`s), so
     // the step stays active and waits — consistent with what brief advertises.
-    const RETRY_WF = `version: 1
+    const RETRY_WF = `version: 2
 name: RetryFail
 steps:
   - id: review
@@ -1464,7 +1574,7 @@ steps:
   });
 
   test("a failure whose reason is OUTSIDE retry.on fails-fast even when retry is declared", async () => {
-    const RETRY_WF = `version: 1
+    const RETRY_WF = `version: 2
 name: RetryFail
 steps:
   - id: review
@@ -1497,7 +1607,7 @@ steps:
 
 // ── The --settle verb (Codex round-3 finding D) ──────────────────────────────
 
-const ROUTE_FIRST_WF = `version: 1
+const ROUTE_FIRST_WF = `version: 2
 name: RouteFirst
 params:
   mode: { type: string }
@@ -1590,7 +1700,7 @@ describe("report --settle advances a run parked on a non-dispatching step", () =
 
 // ── --settle finalizes a fully-terminal but un-advanced step (owner finding 3) ──
 
-const REQUIRED_GATE_WF = `version: 1
+const REQUIRED_GATE_WF = `version: 2
 name: ReqGate
 steps:
   - id: work
@@ -1668,7 +1778,7 @@ describe("report --settle finalizes a fully-terminal step still needing completi
   });
 
   test("--settle still refuses a step with a retry-eligible FAILED unit (re-run work remains)", async () => {
-    const RETRY_WF = `version: 1
+    const RETRY_WF = `version: 2
 name: RetryGate
 steps:
   - id: work

@@ -15,6 +15,7 @@ import type { MemoryInferenceResult } from "../../src/indexer/passes/memory-infe
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
 import { writeMemory } from "../_helpers/assets";
 import { makeProposal } from "../_helpers/factories";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 
@@ -26,7 +27,7 @@ function makeTempDir(prefix: string): string {
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -190,11 +191,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -341,10 +342,10 @@ describe("akm improve memory cleanup", () => {
       // extract" because this test does not configure an LLM. Disable extract
       // here so the test's `memoryCleanup?.warnings` assertion is not
       // contaminated by host-env-dependent extract failures.
-      config: {
+      config: withTestImproveLlm({
         semanticSearchMode: "off",
-        profiles: { improve: { default: { processes: { extract: { enabled: false } } } } },
-      },
+        improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
+      }),
       ensureIndexFn: async () => false,
       reindexFn: async ({ stashDir: reindexStashDir }) => {
         await akmIndex({ stashDir: reindexStashDir, full: true });
@@ -359,11 +360,11 @@ describe("akm improve memory cleanup", () => {
       },
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) =>
@@ -485,11 +486,11 @@ describe("akm improve memory cleanup", () => {
       },
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) =>
@@ -669,11 +670,11 @@ describe("akm improve memory cleanup", () => {
       }),
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) =>
@@ -710,13 +711,15 @@ describe("akm improve memory cleanup", () => {
       "utf8",
     );
 
-    saveConfig({
-      semanticSearchMode: "off",
-      sources: [
-        { type: "filesystem", name: "local", path: stashDir, writable: true },
-        { type: "website", name: "docs-site", url: websiteUrl },
-      ],
-    });
+    saveConfig(
+      withTestImproveLlm({
+        semanticSearchMode: "off",
+        sources: [
+          { type: "filesystem", name: "local", path: stashDir, writable: true },
+          { type: "website", name: "docs-site", url: websiteUrl },
+        ],
+      }),
+    );
 
     const reflectedRefs: string[] = [];
     const distilledRefs: string[] = [];
@@ -725,9 +728,7 @@ describe("akm improve memory cleanup", () => {
       scope: "knowledge:skills/remote-deploy/references/gates",
       dryRun: true,
       stashDir,
-      // Avoid hitting the live website mirror — the URL is a placeholder.
-      // #339 hoisted ensureIndex above the dry-run early return so the index
-      // is fresh before collectEligibleRefs; the stub keeps the test offline.
+      // Dry-run uses the existing index and never invokes this writer seam.
       ensureIndexFn: async () => false,
     });
     expect(dryRun.plannedRefs).toEqual([]);
@@ -747,11 +748,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "knowledge:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -803,11 +804,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedWithoutSignals.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -847,11 +848,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedWithSignal.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -907,11 +908,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:parent"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -971,11 +972,11 @@ describe("akm improve memory cleanup", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -1014,11 +1015,11 @@ describe("akm improve memory cleanup", () => {
       }),
       reflectFn: async ({ ref }) =>
         ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }) satisfies AkmReflectResult,
       distillFn: async ({ ref }) => {
@@ -1072,11 +1073,11 @@ describe("akm improve memory cleanup", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:missing"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
@@ -1175,11 +1176,11 @@ describe("akm improve memory cleanup", () => {
         return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
       },
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:missing"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -1255,11 +1256,11 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         ensureIndexFn: async () => false,
         reflectFn: async ({ ref }) => ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         }),
         distillFn: async ({ ref }) => ({
@@ -1340,11 +1341,11 @@ describe("akm improve memory cleanup", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:missing"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -1436,13 +1437,15 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         config: {
           semanticSearchMode: "off",
-          profiles: {
-            llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: {
+          engines: {
+            default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+          },
+          improve: {
+            strategies: {
               default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
             },
           },
-          defaults: { llm: "default" },
+          defaults: { llmEngine: "default" },
         },
         ensureIndexFn: async () => false,
         reindexFn: async () => ({
@@ -1461,13 +1464,15 @@ describe("akm improve memory cleanup", () => {
         stashDir,
         config: {
           semanticSearchMode: "off",
-          profiles: {
-            llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-            improve: {
+          engines: {
+            default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+          },
+          improve: {
+            strategies: {
               default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
             },
           },
-          defaults: { llm: "default" },
+          defaults: { llmEngine: "default" },
         },
         ensureIndexFn: async () => false,
         reindexFn: async () => ({
@@ -1506,13 +1511,15 @@ describe("akm improve memory cleanup", () => {
       stashDir,
       config: {
         semanticSearchMode: "off",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: {
+        engines: {
+          default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+        },
+        improve: {
+          strategies: {
             default: { processes: { consolidate: { enabled: true, minPoolSize: 0 }, extract: { enabled: false } } },
           },
         },
-        defaults: { llm: "default" },
+        defaults: { llmEngine: "default" },
       },
       ensureIndexFn: async () => false,
       reindexFn: async () => ({

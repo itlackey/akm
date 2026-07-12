@@ -35,7 +35,6 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
     detection: false,
     configImport: false,
     runtimeIdentity: false,
-    v1Migration: false,
     ...c,
   };
 }
@@ -52,10 +51,6 @@ export class OpencodeHarness extends BaseHarness {
   // Home-relative config dir scanned by `akm setup` (#567). OpenCode has a
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
-  // Decorated v1 profile names like "opencode-fast" still belong to OpenCode.
-  // `v1ProfilePlatform()` resolves most-specific-id-first, so "opencode-sdk-*"
-  // is claimed by OpencodeSdkHarness before this prefix can over-match it.
-  protected readonly v1ProfilePrefixes = ["opencode"] as const;
   readonly agentBuilder = opencodeBuilder;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // This entry is the CLI spawn path (`opencode run …`): akm launches the
@@ -77,6 +72,5 @@ export class OpencodeHarness extends BaseHarness {
     detection: true,
     configImport: true,
     runtimeIdentity: true,
-    v1Migration: true,
   });
 }

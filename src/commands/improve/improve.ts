@@ -21,6 +21,7 @@ import type {
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
+import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../indexer/db/db";
@@ -29,7 +30,8 @@ import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexe
 import { akmIndex } from "../../indexer/indexer";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
+import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
+import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -43,13 +45,14 @@ import { type AkmDistillResult, akmDistill } from "./distill";
 import {
   buildLatestProposalTsMap,
   collectEligibleRefs,
+  collectEligibleRefsReadOnly,
   memoryCleanupParentRef,
   resolveImproveScope,
   shouldAnalyzeMemoryCleanup,
 } from "./eligibility";
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
-import { resolveImproveProfile, resolveProcessEnabled } from "./improve-profiles";
+import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 // #607 per-process lock primitives live in ./locks. Imported for internal use;
 // resetHeldProcessLocks is re-exported (the test seam imports it from here).
 import {
@@ -94,6 +97,8 @@ export interface AkmImproveOptions {
   autoAccept?: number;
   stashDir?: string;
   config?: AkmConfig;
+  /** Invocation plan preflighted by the public CLI before any side effects. */
+  resolvedPlan?: ResolvedImprovePlan;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`). Threaded onto the
    * result so health/run records and sync-commit templates (`{runId}`) can read
@@ -113,8 +118,8 @@ export interface AkmImproveOptions {
    * is in progress. Default: false (preserve hard error per lock).
    */
   skipIfLocked?: boolean;
-  /** Named improve profile from profiles.improve or built-in profile names (default, quick, thorough, memory-focus). */
-  profile?: string;
+  /** Named improve strategy from improve.strategies or built-in strategy names. */
+  strategy?: string;
   /**
    * #616 — bounded multi-cycle phasing override (CLI/programmatic). Takes
    * precedence over `profile.maxCycles`. Number of prep->loop->post-loop cycles
@@ -151,6 +156,8 @@ export interface AkmImproveOptions {
    */
   proceduralFn?: typeof akmProcedural;
   graphExtractionFn?: typeof runGraphExtractionPass;
+  /** Injectable contradiction-detection seam for invocation-plan boundary tests. */
+  contradictionDetectionFn?: typeof detectAndWriteContradictions;
   /**
    * #554 minNewSessions gate: injectable counter for the number of NEW (unseen,
    * in-window) extract candidate sessions. Defaults to the real
@@ -166,7 +173,7 @@ export interface AkmImproveOptions {
   extractHarnesses?: SessionLogHarness[];
   ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
-  /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
+  /** Attempt LLM-driven repair after the unconditional structural validation sweep. Default true. */
   repairValidationFailures?: boolean;
   /**
    * When true, only assets with recent feedback signals are eligible.
@@ -400,19 +407,30 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const reindexFn = options.reindexFn ?? akmIndex;
   const drainProposalsFn = options.drainProposalsFn ?? drainProposals;
   // #616 multi-cycle test seams. Default to the real module-local fns.
-  const collectEligibleRefsImpl = options.collectEligibleRefsFn ?? collectEligibleRefs;
+  const collectEligibleRefsImpl =
+    options.collectEligibleRefsFn ?? (options.dryRun ? collectEligibleRefsReadOnly : collectEligibleRefs);
   const runImprovePreparationStageImpl = options.runImprovePreparationStageFn ?? runImprovePreparationStage;
   const runImproveLoopStageImpl = options.runImproveLoopStageFn ?? runImproveLoopStage;
   const runImprovePostLoopStageImpl = options.runImprovePostLoopStageFn ?? runImprovePostLoopStage;
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
-  const improveProfile = resolveImproveProfile(options.profile, _earlyConfig);
+  const resolvedPlan =
+    options.resolvedPlan ??
+    resolveImprovePlan(options.strategy, _earlyConfig, {
+      repairValidationFailures: options.repairValidationFailures,
+    });
+  const selectedStrategy = resolvedPlan.strategy;
+  const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
+  const improveProfile = selectedStrategy.config;
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
   // automatically pick up the profile-driven defaults.
   options = {
     ...options,
+    // Pin nested calls and quality gates to the same config snapshot as the
+    // invocation plan. They must never reload a changed config mid-run.
+    config: _earlyConfig,
     autoAccept: options.autoAccept ?? improveProfile.autoAccept,
     // Profile-level limit, then process-level reflect.limit as fallback.
     // CLI --limit takes precedence over both.
@@ -473,7 +491,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // (cycle 1, in the first try) always overwrites them before any read.
   let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"] = [];
   let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"] = { eligible: 0, derived: 0 };
-  let profileFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["profileFilteredRefs"] = [];
+  let strategyFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["strategyFilteredRefs"] = [];
   let memoryCleanupPlan: ReturnType<typeof analyzeMemoryCleanup> | undefined;
   let guidance: string | undefined;
   let triageDrain: DrainResult | undefined;
@@ -483,7 +501,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // first try) and is re-run at the top of each subsequent multi-cycle cycle.
   // Re-running ensureIndex between cycles makes cycle N's gate-promoted
   // proposals visible to cycle N+1's collectEligibleRefs. Mutates the
-  // outer-scope plannedRefs/memorySummary/profileFilteredRefs/memoryCleanupPlan/
+  // outer-scope plannedRefs/memorySummary/strategyFilteredRefs/memoryCleanupPlan/
   // guidance so for maxCycles:1 the body is byte-identical to pre-#616.
   const runIndexAndCollect = async (): Promise<void> => {
     // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
@@ -491,7 +509,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // table (or the index is otherwise empty), the prior run order silently
     // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
     // here repopulates the index first so the subsequent query sees fresh data.
-    if (primaryStashDir) {
+    if (primaryStashDir && !options.dryRun) {
       // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
       // Best-effort: a missing DB / unreadable schema is the fresh-install case
       // and not a bug — we silently skip the probe.
@@ -541,20 +559,38 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
-    ({ plannedRefs, memorySummary, profileFilteredRefs } = await collectEligibleRefsImpl(
-      scope,
-      options.stashDir,
-      improveProfile,
-    ));
+    ({
+      plannedRefs,
+      memorySummary,
+      strategyFilteredRefs = [],
+    } = await collectEligibleRefsImpl(scope, options.stashDir, improveProfile));
     const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
 
     // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
     // the SCC resolver in resolveFamilyContradictions has edges to work on.
     // Best-effort: failures are warnings, never fatal.
-    if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
+    if (
+      !options.dryRun &&
+      primaryStashDir &&
+      shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
+    ) {
       try {
         // Reuse the config resolved at the top of the run instead of a second load.
-        await withLlmStage("memory-contradiction", () => detectAndWriteContradictions(primaryStashDir, _earlyConfig));
+        const contradictionDetectionFn = options.contradictionDetectionFn ?? detectAndWriteContradictions;
+        await withLlmStage(
+          "memory-contradiction",
+          () =>
+            contradictionDetectionFn(
+              primaryStashDir,
+              _earlyConfig,
+              undefined,
+              improveProfile,
+              resolvedPlan.processes.consolidate.runner
+                ? materializeLlmRunnerConnection(resolvedPlan.processes.consolidate.runner)
+                : null,
+            ),
+          { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
+        );
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
         warn(`[improve] contradiction detection failed (non-fatal): ${errMessage(err)}`);
@@ -582,7 +618,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (!options.dryRun) {
       // Backstop release on process.exit() (signal handler / budget watchdog),
       // which skips the finally below. Removed in that finally on the normal path.
-      const releaseAllOnExit = (): void => releaseHeldLocksIfOwned(process.pid);
+      const releaseAllOnExit = (): void => releaseHeldLocksIfOwned();
       exitBackstop = releaseAllOnExit;
       process.on("exit", releaseAllOnExit);
 
@@ -591,7 +627,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // a cleared queue (no `duplicate_pending` collisions) and ensureIndex
       // absorbs triage's promotions for free. Release immediately after —
       // triage.lock is not needed again until the next improve run.
-      if (primaryStashDir && resolveProcessEnabled("triage", improveProfile)) {
+      if (primaryStashDir && resolvedPlan.processes.triage.enabled) {
         if (scope.mode === "ref") {
           warn("[improve] triage pre-pass skipped (single-ref scope never drains the whole queue)");
         } else {
@@ -602,7 +638,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             options.skipIfLocked,
             "triage",
           );
-          if (triageResult === "skipped") {
+          if (triageResult.state === "skipped") {
             triageDrain = undefined;
           } else {
             try {
@@ -610,9 +646,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               const policy = resolveDrainPolicy(triageConfig?.policy);
               const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
               const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
-              const judgment = triageConfig?.judgment
-                ? resolveTriageJudgmentRunner(triageConfig.judgment, _earlyConfig)
-                : null;
               triageDrain = await drainProposalsFn({
                 stashDir: primaryStashDir,
                 policy,
@@ -621,12 +654,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 dryRun: false,
                 excludeIds: new Set<string>(),
                 ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
-                judgment,
+                judgment: resolvedPlan.triageJudgment,
               });
             } catch (err) {
               warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
             } finally {
-              releaseProcessLock(triageLPath);
+              releaseProcessLock(triageResult.ownership);
             }
           }
         }
@@ -640,15 +673,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
     if (options.dryRun) {
       const result: AkmImproveResult = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
+        strategy: selectedStrategy.name,
         scope,
         dryRun: true,
         ...(guidance ? { guidance } : {}),
         memorySummary,
         ...(memoryCleanupPlan ? { memoryCleanup: shapeMemoryCleanup(memoryCleanupPlan) } : {}),
         plannedRefs,
-        ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
+        ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
       };
       return result;
     }
@@ -796,15 +830,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // event per ref (#592) — the per-ref loop caused O(n) sequential state.db
     // writes that consumed ~500 s on a 9 000-ref stash. No downstream consumer
     // needs the per-ref audit trail: health's skip histogram reads the
-    // `profile_filtered_all_passes` counters from `improve_completed` metadata.
-    if (profileFilteredRefs.length > 0) {
+    // `strategy_filtered_all_passes` counters from `improve_completed` metadata.
+    if (strategyFilteredRefs.length > 0) {
       appendEvent(
         {
           eventType: "improve_skipped",
           ref: undefined,
           metadata: {
-            reason: "profile_filtered_all_passes",
-            count: profileFilteredRefs.length,
+            strategy: selectedStrategy.name,
+            reason: "strategy_filtered_all_passes",
+            count: strategyFilteredRefs.length,
           },
         },
         eventsCtx,
@@ -878,12 +913,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       if (cycleIndex > 0) {
         await runIndexAndCollect();
         // Re-emit the profile-filtered audit summary for this cycle's selection.
-        if (profileFilteredRefs.length > 0) {
+        if (strategyFilteredRefs.length > 0) {
           appendEvent(
             {
               eventType: "improve_skipped",
               ref: undefined,
-              metadata: { reason: "profile_filtered_all_passes", count: profileFilteredRefs.length },
+              metadata: {
+                strategy: selectedStrategy.name,
+                reason: "strategy_filtered_all_passes",
+                count: strategyFilteredRefs.length,
+              },
             },
             eventsCtx,
           );
@@ -914,6 +953,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             eventsCtx,
             initialCleanupWarnings: preEnsureCleanupWarnings,
             improveProfile,
+            resolvedPlan,
+            strategyName: selectedStrategy.name,
             budgetSignal: budgetAbortController.signal,
           }),
       );
@@ -989,6 +1030,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             budgetMs,
             eventsCtx,
             improveProfile,
+            resolvedPlan,
             budgetSignal: budgetAbortController.signal,
           });
         },
@@ -1026,6 +1068,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             eventsCtx,
             budgetSignal: budgetAbortController.signal,
             improveProfile,
+            resolvedPlan,
             consolidationRan: preparation.consolidationRan,
             // R5: floor violations from this run's consolidate pass + the
             // auto-accepted volume so far (prep + loop gates) for churn detection.
@@ -1083,8 +1126,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
 
     const result: AkmImproveResult = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
+      strategy: selectedStrategy.name,
       scope,
       dryRun: false,
       ...(guidance ? { guidance } : {}),
@@ -1111,7 +1155,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         : {}),
       plannedRefs: preparation.actionableRefs,
-      ...(profileFilteredRefs.length > 0 ? { profileFilteredRefs } : {}),
+      ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
       actions: persistedActions,
       ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),
       ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),
@@ -1206,7 +1250,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         eventType: "improve_failed",
         ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
         metadata: {
-          error: errMessage(err),
+          strategy: selectedStrategy.name,
+          error: redactSensitiveText(errMessage(err), improveSensitiveValues),
           durationMs: Date.now() - startMs,
         },
       },
@@ -1337,6 +1382,7 @@ function emitImproveCompletedEvent(
           ? result.scope.value
           : `improve:${result.scope.mode}:${result.scope.value ?? "all"}`,
       metadata: {
+        strategy: result.strategy,
         plannedRefs: result.plannedRefs.length,
         reflectActions: actionCounts.reflect,
         distillActions: actionCounts.distill,
@@ -1434,7 +1480,9 @@ export interface ImproveRunContext {
   budgetMs: number;
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
+  /** Engine/materialized-connection snapshot shared by every process in this run. */
+  resolvedPlan: ResolvedImprovePlan;
   /**
    * #616 — run-budget abort signal (also carries a live `remainingBudgetMs`
    * getter). Threaded in so the loop stage participates in the same cooperative

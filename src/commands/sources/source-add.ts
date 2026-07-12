@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry, SourceSpec } from "../../core/config/config";
-import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config/config";
+import { getSources, loadConfig, mutateConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
 import { upsertLockEntry } from "../../integrations/lockfile";
@@ -104,38 +104,32 @@ async function addLocalSource(
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
-  const config = loadUserConfig();
-
   // Derive the canonical name: explicit --name wins, then wiki name, then readable path.
   const derivedName = explicitName ?? wikiName ?? toReadableId(resolvedPath);
-
-  // Check for duplicates in sources[]
-  const sources = [...getSources(config)];
-  const existing = sources.find((s) => s.type === "filesystem" && s.path && path.resolve(s.path) === resolvedPath);
-  let persistedEntry: SourceConfigEntry;
-  if (!existing) {
-    persistedEntry = {
-      type: "filesystem",
-      path: resolvedPath,
-      name: derivedName,
-      ...(wikiName ? { wikiName } : {}),
-    };
-    sources.push(persistedEntry);
-    saveConfig({ ...config, sources });
-  } else {
-    let changed = false;
-    // If --name was explicitly supplied, update the persisted name.
-    if (explicitName && existing.name !== explicitName) {
-      existing.name = explicitName;
-      changed = true;
+  let persistedEntry: SourceConfigEntry | undefined;
+  mutateConfig((config) => {
+    const sources = [...getSources(config)];
+    const index = sources.findIndex(
+      (source) => source.type === "filesystem" && source.path && path.resolve(source.path) === resolvedPath,
+    );
+    if (index < 0) {
+      persistedEntry = {
+        type: "filesystem",
+        path: resolvedPath,
+        name: derivedName,
+        ...(wikiName ? { wikiName } : {}),
+      };
+      sources.push(persistedEntry);
+      return { ...config, sources };
     }
-    if (wikiName && existing.wikiName !== wikiName) {
-      existing.wikiName = wikiName;
-      changed = true;
-    }
-    if (changed) saveConfig({ ...config, sources });
+    const existing = { ...sources[index] };
+    if (explicitName) existing.name = explicitName;
+    if (wikiName) existing.wikiName = wikiName;
     persistedEntry = existing;
-  }
+    if (JSON.stringify(existing) === JSON.stringify(sources[index])) return config;
+    sources[index] = existing;
+    return { ...config, sources };
+  });
 
   const index = await akmIndex({ stashDir });
   const updatedConfig = loadConfig();
@@ -147,9 +141,9 @@ async function addLocalSource(
     sourceAdded: {
       type: "filesystem",
       path: resolvedPath,
-      name: persistedEntry.name ?? toReadableId(resolvedPath),
+      name: persistedEntry?.name ?? toReadableId(resolvedPath),
       stashRoot: resolvedPath,
-      ...(persistedEntry.wikiName ? { wiki: persistedEntry.wikiName } : {}),
+      ...(persistedEntry?.wikiName ? { wiki: persistedEntry.wikiName } : {}),
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
@@ -174,36 +168,31 @@ async function addWebsiteSource(
 ): Promise<AddResponse> {
   const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(ref);
   const normalizedUrl = validateWebsiteInputUrl(ref, { allowPrivateHosts });
-  const config = loadUserConfig();
-  const sources = [...getSources(config)];
-  let entry = sources.find(
-    (stash): stash is SourceConfigEntry => stash.type === "website" && stash.url === normalizedUrl,
-  );
-
-  if (!entry) {
-    entry = {
-      type: "website",
-      url: normalizedUrl,
-      name: name ?? toWebsiteName(normalizedUrl),
-      ...(options && Object.keys(options).length > 0 ? { options } : {}),
-      ...(wikiName ? { wikiName } : {}),
-    };
-    sources.push(entry);
-    saveConfig({ ...config, sources });
-  } else {
-    let changed = false;
-    if (options && Object.keys(options).length > 0) {
-      entry.options = { ...entry.options, ...options };
-      changed = true;
+  let entry: SourceConfigEntry | undefined;
+  mutateConfig((config) => {
+    const sources = [...getSources(config)];
+    const index = sources.findIndex((source) => source.type === "website" && source.url === normalizedUrl);
+    if (index < 0) {
+      entry = {
+        type: "website",
+        url: normalizedUrl,
+        name: name ?? toWebsiteName(normalizedUrl),
+        ...(options && Object.keys(options).length > 0 ? { options } : {}),
+        ...(wikiName ? { wikiName } : {}),
+      };
+      sources.push(entry);
+      return { ...config, sources };
     }
-    if (wikiName && entry.wikiName !== wikiName) {
-      entry.wikiName = wikiName;
-      changed = true;
-    }
-    if (changed) saveConfig({ ...config, sources });
-  }
+    const existing = { ...sources[index] };
+    if (options && Object.keys(options).length > 0) existing.options = { ...existing.options, ...options };
+    if (wikiName) existing.wikiName = wikiName;
+    entry = existing;
+    if (JSON.stringify(existing) === JSON.stringify(sources[index])) return config;
+    sources[index] = existing;
+    return { ...config, sources };
+  });
 
-  const cachePaths = await ensureWebsiteMirror(entry, {
+  const cachePaths = await ensureWebsiteMirror(entry as SourceConfigEntry, {
     requireStashDir: true,
     ...(allowPrivateHosts ? { allowPrivateHosts: true } : {}),
   });
@@ -217,9 +206,9 @@ async function addWebsiteSource(
     sourceAdded: {
       type: "website",
       url: normalizedUrl,
-      name: entry.name,
+      name: entry?.name,
       stashRoot: cachePaths.stashDir,
-      ...(entry.wikiName ? { wiki: entry.wikiName } : {}),
+      ...(entry?.wikiName ? { wiki: entry.wikiName } : {}),
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
@@ -319,28 +308,20 @@ async function addRegistryStash(
 
 /** Persist or replace an installed stash entry in the user config. */
 export function upsertInstalledRegistryEntry(entry: InstalledStashEntry) {
-  const current = loadUserConfig();
-  const currentInstalled = current.installed ?? [];
-  const withoutExisting = currentInstalled.filter((item) => item.id !== entry.id);
-  const nextInstalled = [...withoutExisting, normalizeInstalledEntry(entry)];
-
-  const nextConfig = { ...current, installed: nextInstalled };
-  saveConfig(nextConfig);
-  return nextConfig;
+  return mutateConfig((current) => {
+    const withoutExisting = (current.installed ?? []).filter((item) => item.id !== entry.id);
+    return { ...current, installed: [...withoutExisting, normalizeInstalledEntry(entry)] };
+  }).config;
 }
 
 /** Remove an installed stash entry from the user config. */
 export function removeInstalledRegistryEntry(id: string) {
-  const current = loadUserConfig();
-  const currentInstalled = current.installed ?? [];
-  const nextInstalled = currentInstalled.filter((item) => item.id !== id);
-
-  const nextConfig = {
-    ...current,
-    installed: nextInstalled.length > 0 ? nextInstalled : undefined,
-  };
-  saveConfig(nextConfig);
-  return nextConfig;
+  return mutateConfig((current) => {
+    const currentInstalled = current.installed ?? [];
+    const nextInstalled = currentInstalled.filter((item) => item.id !== id);
+    if (nextInstalled.length === currentInstalled.length) return current;
+    return { ...current, installed: nextInstalled.length > 0 ? nextInstalled : undefined };
+  }).config;
 }
 
 function normalizeInstalledEntry(entry: InstalledStashEntry): InstalledStashEntry {

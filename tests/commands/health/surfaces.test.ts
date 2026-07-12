@@ -138,7 +138,10 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
         { type: "git", url: "https://github.com/x/y.git", name: "team" },
         { type: "filesystem", path: "/stash", name: "local" },
       ],
-      profiles: { llm: { judge: { endpoint: "http://127.0.0.1:1234/v1" } } },
+      engines: {
+        judge: { kind: "llm", endpoint: "http://127.0.0.1:1234/v1/chat/completions" },
+        agent: { kind: "agent" },
+      },
       embedding: { endpoint: "http://127.0.0.1:8080" },
     });
     expect(adv?.name).toBe("egress-endpoints");
@@ -146,7 +149,7 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
     const endpoints = adv?.evidence?.endpoints as string[];
     expect(endpoints).toContain("registry reg: https://example.com/index.json");
     expect(endpoints).toContain("source team (git): https://github.com/x/y.git");
-    expect(endpoints).toContain("llm judge: http://127.0.0.1:1234/v1");
+    expect(endpoints).toContain("llm judge: http://127.0.0.1:1234/v1/chat/completions");
     expect(endpoints).toContain("embedding: http://127.0.0.1:8080");
     expect(endpoints.some((e) => e.includes("disabled.example.com"))).toBe(false);
     expect(endpoints.some((e) => e.includes("/stash"))).toBe(false);

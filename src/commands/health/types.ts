@@ -47,6 +47,10 @@ export interface LlmUsageAggregate {
   reasoningTokens: number;
   /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
   byStage: Record<string, LlmUsageStageAggregate>;
+  /** Per-process breakdown using durable improve/runtime attribution. */
+  byProcess: Record<string, LlmUsageStageAggregate>;
+  /** Per-engine breakdown using the selected public engine name. */
+  byEngine: Record<string, LlmUsageStageAggregate>;
 }
 
 /** LLM usage totals for one pipeline stage. */
@@ -67,12 +71,12 @@ export interface ImproveHealthMetrics {
   plannedRefs: number;
   /**
    * Refs the planner dropped up-front because no enabled pass on the active
-   * profile would accept them (e.g. `script:*` for reflect+distill). Sourced
-   * from `improve_runs.result_json.profileFilteredRefs[]`. Wired 2026-05-27
+   * strategy would accept them (e.g. `script:*` for reflect+distill). Sourced
+   * from `improve_runs.result_json.strategyFilteredRefs[]` for v2 rows.
    * after the planner pre-filter at improve.ts:collectEligibleRefs landed
    * in commit 0e9f283 but the metric reader was missed.
    */
-  profileFilteredRefs: number;
+  strategyFilteredRefs: number;
   actions: {
     /**
      * Reflect action outcomes split by mode. Sourced from improve_runs.result_json
@@ -614,6 +618,8 @@ export interface ImproveRunSummary {
   completedAt: string;
   wallTimeMs: number;
   ok: boolean;
+  strategy: string | null;
+  legacyProfile: string | null;
   scope: { mode: string; value?: string };
   /**
    * The scheduled task that launched this improve run (e.g.
@@ -658,7 +664,7 @@ export interface DeltaEntry {
 }
 
 export interface AkmHealthResult {
-  schemaVersion: 2;
+  schemaVersion: 3;
   ok: boolean;
   status: "pass" | "warn" | "fail";
   since: string;

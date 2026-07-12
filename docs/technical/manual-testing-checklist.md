@@ -135,10 +135,10 @@ Fixture refs worth using throughout this doc:
 - [ ] `akm setup --yes` runs without prompts, writes config with sandbox paths,
       and exits zero.
 - [ ] `akm setup --yes | jq '.stashDir'` returns a path under `$AKM_SANDBOX`.
-- [ ] `akm setup --config '{"llm":{"endpoint":"http://localhost:1234/v1","model":"test-model"}}'`
+- [ ] `akm setup --config '{"engines":{"local":{"kind":"llm","endpoint":"http://localhost:1234/v1/chat/completions","model":"test-model"}},"defaults":{"llmEngine":"local"}}'`
       applies the JSON blob non-interactively and exits zero.
-- [ ] `akm config get llm.endpoint` after the above returns
-      `http://localhost:1234/v1`.
+- [ ] `akm config get engines.local.endpoint` after the above returns
+      `http://localhost:1234/v1/chat/completions`.
 - [ ] `akm setup --config 'not-json'` fails with a structured usage error and
       exits non-zero.
 
@@ -415,10 +415,10 @@ Workflows now include authoring, validation, execution, and recovery flows.
       writes converted markdown into `wikis/my-wiki/raw/` without crawling.
 - [ ] Re-running the same explicit slug with `--as raw-source` fails rather than
       overwriting.
-- [ ] `akm wiki ingest my-wiki` dispatches the configured agent profile (from
-      `defaults.agent` or `--profile`) to execute the ingest workflow. Without
-      an accessible profile it fails with a clear `UsageError` pointing at
-      `profiles.agent`.
+- [ ] `akm wiki ingest my-wiki` dispatches the configured agent engine (from
+      `defaults.engine` or `--engine`) to execute the ingest workflow. Without
+      an accessible engine it fails with a clear `UsageError` pointing at
+      `engines`.
 - [ ] `akm wiki lint my-wiki` returns deterministic findings or a clean pass;
       findings may exit non-zero but should still be structured and not crash.
 - [ ] `akm show wiki:my-wiki` returns the same summary class as
@@ -481,7 +481,7 @@ These are core auditability flows to validate in `0.9.x`.
 
 ## 15. Proposal Queue and Agent-Backed Commands
 
-These require configured external agent profiles and, for `distill`, LLM config.
+These require configured engines and, for `distill`, an LLM engine.
 Run only inside the sandbox.
 
 ### 15.1 Proposal queue (no external agent required if seeded by prior steps)
@@ -499,7 +499,7 @@ Run only inside the sandbox.
 
 - [ ] `akm improve skill:k8s-deploy --task "tighten the description"` either
       queues a proposal successfully or fails with a structured config/usage
-      envelope if no agent profile is configured.
+      envelope if no engine is configured.
 - [ ] `akm improve skill qa-generated-skill --task "simple review helper"`
       either queues a proposal successfully or fails structurally if the agent
       runtime is not configured.
@@ -508,7 +508,7 @@ Run only inside the sandbox.
 ### 15.3 improve / lesson
 
 - [ ] `akm improve skill:k8s-deploy` returns `outcome: "skipped"` when
-      `profiles.improve.default.processes.distill.enabled` is
+      `improve.strategies.default.processes.distill.enabled` is
       `false`, or queues a lesson proposal when enabled.
 - [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
       accepts valid refs.
@@ -521,12 +521,12 @@ Run only inside the sandbox.
 ## 16. Config and Migration
 
 - [ ] `akm config list` reports current state.
-- [ ] `akm config set profiles.llm.default '{"endpoint":"http://localhost:1234/v1"}'`
-      persists the whole named LLM profile entry.
-- [ ] `akm config set profiles.llm.default.endpoint http://localhost:1234/v1`
+- [ ] `akm config set engines.default '{"kind":"llm","endpoint":"http://localhost:1234/v1/chat/completions","model":"qwen3"}'`
+      persists the whole named LLM engine entry.
+- [ ] `akm config set engines.default.endpoint http://localhost:1234/v1/chat/completions`
       updates the subkey.
-- [ ] `akm config get profiles.llm.default.endpoint` reads it back.
-- [ ] `akm config unset profiles.llm.default.apiKey` removes the subkey cleanly.
+- [ ] `akm config get engines.default.endpoint` reads it back.
+- [ ] `akm config unset engines.default.apiKey` removes the subkey cleanly.
 - [ ] `akm config set defaultWriteTarget <source-name>` now works.
 - [ ] `akm help migrate 0.6.0` prints bundled migration notes.
 - [ ] `akm help migrate v0.6.0-rc1` normalizes to the stable note.
@@ -562,17 +562,18 @@ checklist did not exercise.
       reports the missing artifact with a structured envelope.
 - [ ] `akm health --since 24h` filters telemetry to the last 24 hours.
 
-#### `akm config migrate` + `AKM_NO_AUTO_MIGRATE=1`
+#### `akm config migrate` diagnosis
 
-- [ ] Drop in a pre-0.8.0 `config.json` (legacy top-level `llm` / `agent` /
-      `features` blocks). `akm config migrate --dry-run` prints the
-      transformed shape without writing.
-- [ ] `akm config migrate` rewrites the file, writes a timestamped backup to
-      `$DATA/config-backups/`, and sets `configVersion: "0.8.0"`.
-- [ ] `AKM_NO_AUTO_MIGRATE=1 akm config list` loads a legacy config for the
-      current run without touching the file on disk (no backup written).
-- [ ] `akm config migrate --no-wait` fails immediately rather than blocking
-      when another migrate holds the lock.
+- [ ] With no config file, `akm config migrate` reports `status: "absent"` and
+      does not create one.
+- [ ] With a valid 0.9 config, `akm config migrate` reports `status: "current"`
+      and leaves the file byte-for-byte unchanged.
+- [ ] With a pre-0.9 profile config, `akm config migrate` fails with
+      `UNSUPPORTED_CONFIG_VERSION`, explains that profile-to-engine conversion
+      is manual, and does not rewrite or back up the file.
+- [ ] `AKM_NO_AUTO_MIGRATE=1 akm config list` behaves exactly like the command
+      without that retired variable: legacy config is rejected and disk is not
+      modified.
 
 #### Task `.md` → `.yml` migration verification
 

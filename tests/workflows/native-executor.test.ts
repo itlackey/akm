@@ -15,22 +15,23 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import {
   buildAgentDispatchRequest,
-  executeStepPlan,
+  executeStepPlan as executeFrozenStepPlan,
   llmFailureReasonFor,
+  type StepExecutionContext,
+  type StepExecutionResult,
   type UnitDispatchRequest,
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
-import type { IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+import type { FrozenAgentEngine, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { PROGRAM_RETRY_REASONS } from "../../src/workflows/program/schema";
 import { completeWorkflowStep, getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import { makeSandboxDir, withEnv, withMockedFetch, writeSandboxConfig } from "../_helpers/sandbox";
+import { freezeWorkflowProgram, storeFrozenWorkflowPlan } from "../_helpers/workflow";
 
 /**
- * Native executor over IR v2 (redesign addendum, R1): fan-out via `${{ … }}`
+ * Native executor over frozen IR v3: fan-out via `${{ … }}`
  * expressions through the scheduler, schema-validated structured output with
  * retry, the explicit failure policy (`on_error` / `retry`), per-unit
  * persistence, and the engine loop that advances the gated step spine
@@ -71,11 +72,29 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  const frozen = freezeWorkflowProgram(yamlText);
+  for (const step of frozen.steps) catalogs.set(step, frozen.execution?.engines ?? {});
+  return frozen;
+}
+
+const catalogs = new WeakMap<IrStepPlan, NonNullable<WorkflowPlanGraph["execution"]>["engines"]>();
+
+function executeStepPlan(step: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
+  return executeFrozenStepPlan(step, { ...ctx, engines: ctx.engines ?? catalogs.get(step) });
+}
+
+function usePlan(yamlText: string): () => Promise<WorkflowPlanGraph> {
+  return useFrozenPlan(plan(yamlText));
+}
+
+function useFrozenPlan(frozen: WorkflowPlanGraph): () => Promise<WorkflowPlanGraph> {
+  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  try {
+    storeFrozenWorkflowPlan(db, RUN_ID, frozen);
+  } finally {
+    closeWorkflowDatabase(db);
+  }
+  return async () => frozen;
 }
 
 beforeEach(() => {
@@ -94,7 +113,7 @@ afterEach(() => {
   }
 });
 
-const FAN_OUT_WF = `version: 1
+const FAN_OUT_WF = `version: 2
 name: Review
 params:
   files: { type: array }
@@ -109,6 +128,31 @@ steps:
 `;
 
 describe("executeStepPlan — fan-out", () => {
+  test("caps SDK fan-out by the frozen fallback LLM engine concurrency", async () => {
+    seedRun({ params: { files: ["a", "b", "c", "d"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let inFlight = 0;
+    let peak = 0;
+
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b", "c", "d"] },
+      evidence: {},
+      maxConcurrency: 4,
+      dispatcher: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { ok: true, text: "reviewed" };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(peak).toBe(1);
+  });
+
   test("dispatches one unit per item over ${{ params.files }}, resolves ${{ item }}, persists unit rows", async () => {
     seedRun({ params: { files: ["a.ts", "b.ts", "c.ts"] }, steps: [{ id: "review", title: "Review files" }] });
     const prompts: string[] = [];
@@ -435,7 +479,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
   });
 });
 
-const SCHEMA_WF = `version: 1
+const SCHEMA_WF = `version: 2
 name: Extract
 steps:
   - id: extract
@@ -509,7 +553,7 @@ describe("executeStepPlan — structured output", () => {
 // (the EMPTY_OUTPUT driver-parity golden pins the cross-surface identity).
 // These engine-side tests lock the three consequences the module doc states.
 
-const EMPTY_WF = `version: 1
+const EMPTY_WF = `version: 2
 name: Build
 steps:
   - id: build
@@ -518,7 +562,7 @@ steps:
       instructions: Build it.
 `;
 
-const EMPTY_DOWNSTREAM_WF = `version: 1
+const EMPTY_DOWNSTREAM_WF = `version: 2
 name: Empty downstream
 steps:
   - id: build
@@ -615,7 +659,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
   });
 });
 
-const VOTE_WF = `version: 1
+const VOTE_WF = `version: 2
 name: Vote
 params:
   attempts: { type: array }
@@ -655,8 +699,8 @@ describe("executeStepPlan — vote reducer", () => {
   });
 });
 
-describe("executeStepPlan — failure policy (IR v2)", () => {
-  const CONTINUE_WF = `version: 1
+describe("executeStepPlan — failure policy (IR v3)", () => {
+  const CONTINUE_WF = `version: 2
 name: Review
 params:
   files: { type: array }
@@ -696,7 +740,7 @@ steps:
     });
   });
 
-  const RETRY_WF = `version: 1
+  const RETRY_WF = `version: 2
 name: Flaky
 steps:
   - id: fetch
@@ -941,7 +985,7 @@ describe("executeStepPlan — content-derived unit identity (R2)", () => {
   // between invocations without touching params (params are frozen per run
   // and appear in the unit preamble — changing them changes every input
   // hash, which is the replay-divergence case below, not the reorder case).
-  const REORDER_WF = `version: 1
+  const REORDER_WF = `version: 2
 name: Review
 steps:
   - id: discover
@@ -1019,7 +1063,7 @@ steps:
     });
   });
 
-  const DIVERGENCE_WF = `version: 1
+  const DIVERGENCE_WF = `version: 2
 name: Review
 params:
   files: { type: array }
@@ -1196,7 +1240,7 @@ describe("executeStepPlan — lifetime unit cap counts actual dispatches only (p
 });
 
 describe("step output promotion — ${{ steps.<id>.output }} addresses real results (peer review R1)", () => {
-  const DOCS_SHAPE_WF = `version: 1
+  const DOCS_SHAPE_WF = `version: 2
 name: Review
 steps:
   - id: discover
@@ -1239,7 +1283,7 @@ steps:
         if (req.nodeId === "discover") return { ok: true, text: '{"files": ["a.ts", "b.ts"]}' };
         return { ok: true, text: `verdict:${req.unitId}` };
       },
-      loadPlan: async () => plan(DOCS_SHAPE_WF),
+      loadPlan: usePlan(DOCS_SHAPE_WF),
     });
 
     expect(result.done).toBe(true);
@@ -1253,7 +1297,7 @@ steps:
     expect(summarizePrompt).toContain("First: verdict:review.unit:8b3148685648");
   });
 
-  const VOTE_ROUTE_WF = `version: 1
+  const VOTE_ROUTE_WF = `version: 2
 name: VoteRoute
 params:
   attempts: { type: array }
@@ -1301,7 +1345,7 @@ steps:
         dispatched.push(req.nodeId);
         return req.nodeId === "judge.unit" ? { ok: true, text: '{"verdict": "pass"}' } : { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(VOTE_ROUTE_WF),
+      loadPlan: usePlan(VOTE_ROUTE_WF),
     });
     expect(result.done).toBe(true);
     expect(dispatched).toEqual(["judge.unit", "judge.unit", "judge.unit", "ship"]);
@@ -1313,7 +1357,7 @@ steps:
 });
 
 describe("runWorkflowSteps — engine loop over the gated spine", () => {
-  const TWO_STEP_WF = `version: 1
+  const TWO_STEP_WF = `version: 2
 name: Demo
 params:
   flavor: { type: string }
@@ -1343,7 +1387,7 @@ steps:
         prompts.push(req.prompt);
         return { ok: true, text: `did ${req.nodeId}` };
       },
-      loadPlan: async () => plan(TWO_STEP_WF),
+      loadPlan: usePlan(TWO_STEP_WF),
     });
 
     expect(result.executed.map((s) => s.stepId)).toEqual(["first", "second"]);
@@ -1371,7 +1415,7 @@ steps:
         req.nodeId === "first"
           ? { ok: false, text: "", failureReason: "non_zero_exit", error: "exit 1" }
           : { ok: true, text: "unreachable" },
-      loadPlan: async () => plan(TWO_STEP_WF),
+      loadPlan: usePlan(TWO_STEP_WF),
     });
 
     expect(result.executed).toHaveLength(1);
@@ -1382,7 +1426,12 @@ steps:
   });
 
   test("refuses a non-active run BEFORE dispatching any unit (peer review #2)", async () => {
-    seedRun({ steps: [{ id: "first", title: "First" }] });
+    seedRun({
+      steps: [
+        { id: "first", title: "First" },
+        { id: "second", title: "Second" },
+      ],
+    });
     const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
     try {
       db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
@@ -1397,7 +1446,7 @@ steps:
           dispatches++;
           return { ok: true, text: "must not run" };
         },
-        loadPlan: async () => plan(TWO_STEP_WF),
+        loadPlan: usePlan(TWO_STEP_WF),
       }),
     ).rejects.toThrow(/failed and cannot be executed/);
     expect(dispatches).toBe(0);
@@ -1423,14 +1472,20 @@ steps:
           dispatches++;
           return { ok: true, text: "must not run" };
         },
-        loadPlan: async () => outOfOrder,
+        loadPlan: useFrozenPlan(outOfOrder),
       }),
-    ).rejects.toThrow(/depends on step "second"/);
+    ).rejects.toThrow(/invalid dependency/);
     expect(dispatches).toBe(0);
   });
 
   test("the lifetime unit cap is seeded from the run's journal (peer review #4)", async () => {
-    seedRun({ params: { flavor: "vanilla" }, steps: [{ id: "first", title: "First" }] });
+    seedRun({
+      params: { flavor: "vanilla" },
+      steps: [
+        { id: "first", title: "First" },
+        { id: "second", title: "Second" },
+      ],
+    });
     const { LIFETIME_UNIT_CAP } = await import("../../src/workflows/exec/scheduler");
     await withWorkflowRunsRepo((repo) => {
       for (let i = 0; i < LIFETIME_UNIT_CAP; i++) {
@@ -1451,14 +1506,14 @@ steps:
     const result = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: "should be blocked by the cap" }),
-      loadPlan: async () => plan(TWO_STEP_WF),
+      loadPlan: usePlan(TWO_STEP_WF),
     });
     expect(result.executed[0].ok).toBe(false);
     expect(result.executed[0].summary).toContain("lifetime unit cap");
     expect(result.run.status).toBe("failed");
   });
 
-  const ROUTED_WF = `version: 1
+  const ROUTED_WF = `version: 2
 name: Router
 steps:
   - id: classify
@@ -1505,7 +1560,7 @@ steps:
         dispatchedNodes.push(req.nodeId);
         return req.nodeId === "classify" ? { ok: true, text: '{"kind": "bug"}' } : { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(ROUTED_WF),
+      loadPlan: usePlan(ROUTED_WF),
     });
 
     expect(result.done).toBe(true);
@@ -1528,7 +1583,7 @@ steps:
   });
 
   test("routing: falls back to default, and an unroutable value fails the step", async () => {
-    const DEFAULTED_WF = `version: 1
+    const DEFAULTED_WF = `version: 2
 name: Router
 steps:
   - id: classify
@@ -1568,7 +1623,7 @@ steps:
       target: RUN_ID,
       dispatcher: async (req) =>
         req.nodeId === "classify" ? { ok: true, text: '{"kind": "question"}' } : { ok: true, text: "done" },
-      loadPlan: async () => plan(DEFAULTED_WF),
+      loadPlan: usePlan(DEFAULTED_WF),
     });
     expect(result.done).toBe(true);
     const status = await getWorkflowStatus(RUN_ID);
@@ -1593,7 +1648,7 @@ steps:
     const failed = await runWorkflowSteps({
       target: RUN_ID,
       dispatcher: async () => ({ ok: true, text: '{"kind": "question"}' }),
-      loadPlan: async () => plan(NO_DEFAULT_WF),
+      loadPlan: usePlan(NO_DEFAULT_WF),
     });
     const triageReport = failed.executed.find((s) => s.stepId === "triage");
     expect(triageReport?.ok).toBe(false);
@@ -1623,7 +1678,7 @@ steps:
         firstNodes.push(req.nodeId);
         return req.nodeId === "classify" ? { ok: true, text: '{"kind": "bug"}' } : { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(ROUTED_WF),
+      loadPlan: usePlan(ROUTED_WF),
     });
     expect(first.executed.map((s) => s.stepId)).toEqual(["classify", "triage"]);
     expect(firstNodes).toEqual(["classify"]); // the route step dispatches nothing
@@ -1638,7 +1693,7 @@ steps:
         resumedNodes.push(req.nodeId);
         return { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(ROUTED_WF),
+      loadPlan: usePlan(ROUTED_WF),
     });
     expect(resumed.done).toBe(true);
     expect(resumedNodes).toEqual(["fix-bug", "wrap-up"]);
@@ -1657,7 +1712,7 @@ steps:
       target: RUN_ID,
       maxSteps: 1,
       dispatcher: async () => ({ ok: true, text: '{"kind": "bug"}' }),
-      loadPlan: async () => plan(ROUTED_WF),
+      loadPlan: usePlan(ROUTED_WF),
     });
     // triage advanced by hand via the manual loop — no evidence.route written.
     await completeWorkflowStep({
@@ -1675,7 +1730,7 @@ steps:
         resumedNodes.push(req.nodeId);
         return { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(ROUTED_WF),
+      loadPlan: usePlan(ROUTED_WF),
     });
     // Deterministic re-derivation from the frozen plan + journaled evidence:
     // classify's journaled output still says "bug", so fix-bug runs.
@@ -1685,6 +1740,7 @@ steps:
 
   test("resume fails loudly when a completed route step's decision is unrecoverable (never runs every branch)", async () => {
     seedRun({ steps: ROUTED_STEPS });
+    const loadPlan = usePlan(ROUTED_WF);
     // Both classify and triage completed manually: no journaled decision and
     // no evidence to re-derive it from.
     await completeWorkflowStep({
@@ -1710,13 +1766,13 @@ steps:
           dispatches++;
           return { ok: true, text: "must not run" };
         },
-        loadPlan: async () => plan(ROUTED_WF),
+        loadPlan,
       }),
     ).rejects.toThrow(/route step "triage" with no journaled route/);
     expect(dispatches).toBe(0);
   });
 
-  const CASCADE_WF = `version: 1
+  const CASCADE_WF = `version: 2
 name: Cascade
 params:
   pick: { type: string }
@@ -1768,7 +1824,7 @@ steps:
         dispatched.push(req.nodeId);
         return { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(CASCADE_WF),
+      loadPlan: usePlan(CASCADE_WF),
     });
 
     expect(result.done).toBe(true);
@@ -1792,7 +1848,7 @@ steps:
       target: RUN_ID,
       maxSteps: 2,
       dispatcher: async () => ({ ok: true, text: "done" }),
-      loadPlan: async () => plan(CASCADE_WF),
+      loadPlan: usePlan(CASCADE_WF),
     });
     expect(first.executed.map((s) => s.stepId)).toEqual(["classify", "branch-router"]);
 
@@ -1803,7 +1859,7 @@ steps:
         dispatched.push(req.nodeId);
         return { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(CASCADE_WF),
+      loadPlan: usePlan(CASCADE_WF),
     });
     expect(resumed.done).toBe(true);
     expect(dispatched).toEqual(["safe"]);
@@ -1826,7 +1882,7 @@ steps:
         req.prompt.includes("Review f3")
           ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
           : { ok: true, text: "done" },
-      loadPlan: async () => plan(FAN_OUT_WF),
+      loadPlan: usePlan(FAN_OUT_WF),
     });
     expect(failing.run.status).toBe("failed");
 
@@ -1840,7 +1896,7 @@ steps:
         dispatches++;
         return { ok: true, text: "done" };
       },
-      loadPlan: async () => plan(FAN_OUT_WF),
+      loadPlan: usePlan(FAN_OUT_WF),
     });
     expect(dispatches).toBe(1);
     expect(resumed.done).toBe(true);
@@ -1858,7 +1914,7 @@ steps:
       target: RUN_ID,
       maxSteps: 1,
       dispatcher: async () => ({ ok: true, text: "ok" }),
-      loadPlan: async () => plan(TWO_STEP_WF),
+      loadPlan: usePlan(TWO_STEP_WF),
     });
     expect(result.executed).toHaveLength(1);
     const status = await getWorkflowStatus(RUN_ID);
@@ -1891,10 +1947,10 @@ describe("defaultUnitDispatcher — llm failures map into the retry taxonomy (pe
     }
   });
 
-  const LLM_RETRY_WF = `version: 1
+  const LLM_RETRY_WF = `version: 2
 name: Flaky
 defaults:
-  runner: llm
+  engine: test-llm
 steps:
   - id: fetch
     title: Fetch
@@ -1912,7 +1968,10 @@ steps:
     try {
       await withEnv({ XDG_CONFIG_HOME: cfgDir.dir }, async () => {
         writeSandboxConfig({
-          profiles: { llm: { default: { endpoint: "http://localhost:1/v1/chat/completions", model: "test" } } },
+          engines: {
+            "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test" },
+          },
+          defaults: { engine: "test-llm", llmEngine: "test-llm" },
         });
         await withMockedFetch(
           async () => {
@@ -1922,6 +1981,7 @@ steps:
               workflowRef: "workflow:demo",
               params: {},
               evidence: {},
+              engines: plan(LLM_RETRY_WF).execution?.engines,
             });
             expect(result.ok).toBe(true);
             expect(calls).toBe(2); // 429, then success — the retry actually fired
@@ -1964,6 +2024,18 @@ steps:
 // and assert the declared mechanism appears in the argv (harness-* convention).
 describe("buildAgentDispatchRequest — schema reaches the harness structured-output path (PR #714)", () => {
   const SCHEMA = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+  const ENGINE: FrozenAgentEngine = {
+    name: "harness",
+    kind: "agent",
+    runnerKind: "agent",
+    platform: "codex",
+    bin: "harness",
+    args: [],
+    workspace: null,
+    envPassthrough: ["PATH"],
+    commandBuilder: "codex",
+    fallbackLlmEngine: null,
+  };
 
   function schemaRequest(): UnitDispatchRequest {
     return {
@@ -1972,7 +2044,8 @@ describe("buildAgentDispatchRequest — schema reaches the harness structured-ou
       unitId: "judge:solo",
       nodeId: "judge",
       prompt: "judge it",
-      runner: "agent",
+      engine: ENGINE,
+      invocation: { engine: "harness", model: null, timeoutMs: null },
       timeoutMs: null,
       schema: SCHEMA,
     };
@@ -2000,7 +2073,10 @@ describe("buildAgentDispatchRequest — schema reaches the harness structured-ou
   });
 
   test("model is threaded through raw so the builder resolves it per-harness", () => {
-    const req = buildAgentDispatchRequest({ ...schemaRequest(), model: "fast" }, "judge it");
+    const req = buildAgentDispatchRequest(
+      { ...schemaRequest(), invocation: { engine: "harness", model: "fast", timeoutMs: null } },
+      "judge it",
+    );
     expect(req.model).toBe("fast");
   });
 
@@ -2073,17 +2149,17 @@ describe("buildAgentDispatchRequest — schema reaches the harness structured-ou
 // seams (`resolveEnv` / `preflightWorktree`) so the conditions are simulated
 // deterministically, git-independently.
 describe("executeStepPlan — dispatch prerequisites gated on actual dispatch (reviewer finding #2)", () => {
-  const ENV_SOLO_WF = `version: 1
+  const ENV_SOLO_WF = `version: 2
 name: Env
 steps:
   - id: build
     title: Build
     unit:
-      runner: agent
+      engine: test-agent
       env: [env:secrets]
       instructions: Build it.
 `;
-  const ENV_FANOUT_WF = `version: 1
+  const ENV_FANOUT_WF = `version: 2
 name: Env fan-out
 params:
   files: { type: array }
@@ -2093,21 +2169,21 @@ steps:
     map:
       over: \${{ params.files }}
       unit:
-        runner: agent
+        engine: test-agent
         env: [env:secrets]
         instructions: Build \${{ item }}.
 `;
-  const ISO_SOLO_WF = `version: 1
+  const ISO_SOLO_WF = `version: 2
 name: Iso
 steps:
   - id: build
     title: Build
     unit:
-      runner: agent
+      engine: test-agent
       isolation: worktree
       instructions: Build it.
 `;
-  const ISO_FANOUT_WF = `version: 1
+  const ISO_FANOUT_WF = `version: 2
 name: Iso fan-out
 params:
   files: { type: array }
@@ -2117,7 +2193,7 @@ steps:
     map:
       over: \${{ params.files }}
       unit:
-        runner: agent
+        engine: test-agent
         isolation: worktree
         instructions: Build \${{ item }}.
 `;
@@ -2129,7 +2205,14 @@ steps:
     params: Record<string, unknown>,
     count = Number.POSITIVE_INFINITY,
   ): Promise<void> {
-    const wl = computeStepWorkList(stepPlan, { runId: RUN_ID, params, stepOutputs: {} });
+    const engines = catalogs.get(stepPlan);
+    if (!engines) throw new Error("fixture requires a frozen engine catalog");
+    const wl = computeStepWorkList(stepPlan, {
+      runId: RUN_ID,
+      params,
+      stepOutputs: {},
+      engines,
+    });
     if (!wl.ok) throw new Error(wl.error);
     const now = new Date().toISOString();
     await withWorkflowRunsRepo((repo) => {
@@ -2145,7 +2228,8 @@ steps:
           parentUnitId: u.isFanOut ? `${stepPlan.stepId}.map` : null,
           phase: null,
           runner: u.runner,
-          model: u.model ?? null,
+          engine: u.engine?.name ?? null,
+          model: u.invocation?.model ?? null,
           inputHash: u.resolved.inputHash,
           startedAt: now,
         });
@@ -2162,6 +2246,102 @@ steps:
       }
     });
   }
+
+  test("redacts an echoed env-asset value before workflow evidence and unit journals", async () => {
+    const sentinel = "WORKFLOW-ECHO-SENTINEL";
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      resolveEnv: async () => ({ TOKEN: sentinel }),
+      dispatcher: async (request) => ({ ok: true, text: `echo ${request.env?.TOKEN}` }),
+    });
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
+
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+    expect(JSON.stringify(rows)).not.toContain(sentinel);
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(rows)).toContain("[REDACTED]");
+  });
+
+  test("redacts sensitive values from every durable outcome metadata field", async () => {
+    const sentinel = "WORKFLOW-METADATA-SENTINEL";
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      resolveEnv: async () => ({ TOKEN: sentinel }),
+      dispatcher: async () => ({
+        ok: false,
+        text: `text-${sentinel}`,
+        error: `error-${sentinel}`,
+        failureReason: `provider-${sentinel}`,
+        sessionId: `session-${sentinel}`,
+      }),
+    });
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
+
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+    expect(JSON.stringify(rows)).not.toContain(sentinel);
+    expect(result.units[0].failureReason).toBe("reported_failure");
+    expect(result.units[0].sessionId).toBe("session-[REDACTED]");
+    expect(rows[0].failure_reason).toBe("reported_failure");
+    expect(rows[0].session_id).toBe("session-[REDACTED]");
+  });
+
+  test("redacts a credential-bearing URL from an allowlisted engine passthrough", async () => {
+    const deviceCode = "WORKFLOW DEVICE SENTINEL";
+    const authorizationCode = "WORKFLOW+AUTHORIZATION+SENTINEL";
+    const deviceCodeUrl = "https://example.test/oauth/device?device_code=WORKFLOW%20DEVICE%20SENTINEL";
+    const authorizationCodeUrl =
+      "https://example.test/#/oauth/callback?authorization_code=WORKFLOW%2BAUTHORIZATION%2BSENTINEL";
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const frozen = plan(ENV_SOLO_WF);
+    const stepPlan = frozen.steps[0];
+    const engine = frozen.execution?.engines["test-agent"];
+    if (!engine || engine.kind !== "agent") throw new Error("expected frozen agent engine");
+    engine.envPassthrough = ["LLM_BASE_URL", "OPENCODE_CONFIG"];
+
+    const result = await withEnv({ LLM_BASE_URL: deviceCodeUrl, OPENCODE_CONFIG: authorizationCodeUrl }, () =>
+      executeStepPlan(stepPlan, {
+        runId: RUN_ID,
+        workflowRef: "workflow:demo",
+        params: {},
+        evidence: {},
+        resolveEnv: async () => ({}),
+        dispatcher: async () => ({
+          ok: false,
+          text: `echo ${deviceCode}`,
+          error: `provider echoed ${authorizationCode}`,
+          failureReason: `provider-${deviceCode}`,
+          sessionId: `session-${authorizationCode}`,
+        }),
+      }),
+    );
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
+
+    for (const credentialUrl of [deviceCodeUrl, authorizationCodeUrl]) {
+      expect(JSON.stringify(result)).not.toContain(credentialUrl);
+      expect(JSON.stringify(rows)).not.toContain(credentialUrl);
+    }
+    for (const secret of [deviceCode, authorizationCode]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(JSON.stringify(rows)).not.toContain(secret);
+    }
+    expect(JSON.stringify(rows)).toContain("[REDACTED]");
+    expect(result.units[0].failureReason).toBe("reported_failure");
+    expect(result.units[0].sessionId).toBe("session-[REDACTED]");
+    expect(rows[0].failure_reason).toBe("reported_failure");
+    expect(rows[0].session_id).toBe("session-[REDACTED]");
+  });
 
   test("a fully-journaled step resumes to completion with a DELETED env asset — the env resolver is never invoked", async () => {
     seedRun({ steps: [{ id: "build", title: "Build" }] });

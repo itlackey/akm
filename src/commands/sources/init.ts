@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
-import { loadUserConfig, saveConfig } from "../../core/config/config";
+import { mutateConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
 import { ensureRg } from "../../core/ripgrep/install";
@@ -93,12 +93,21 @@ export function _setAkmInitForTests(fake?: typeof akmInitReal): void {
   akmInitOverride = fake;
 }
 
-export async function akmInit(options?: { dir?: string; setDefault?: boolean }): Promise<InitResponse> {
+export async function akmInit(options?: {
+  dir?: string;
+  setDefault?: boolean;
+  /** Setup owns its single final config write and uses init only for scaffolding. */
+  persistConfig?: boolean;
+}): Promise<InitResponse> {
   if (akmInitOverride) return akmInitOverride(options);
   return akmInitReal(options);
 }
 
-async function akmInitReal(options?: { dir?: string; setDefault?: boolean }): Promise<InitResponse> {
+async function akmInitReal(options?: {
+  dir?: string;
+  setDefault?: boolean;
+  persistConfig?: boolean;
+}): Promise<InitResponse> {
   const dirExplicitlyProvided = options?.dir != null;
   const setDefault = options?.setDefault === true;
   const stashDir = options?.dir ? path.resolve(options.dir) : getDefaultStashDir();
@@ -154,21 +163,19 @@ async function akmInitReal(options?: { dir?: string; setDefault?: boolean }): Pr
   // Otherwise (--dir + existing default + no --set-default) leave the default
   // pointer alone; the target dir is still scaffolded above.
   const configPath = getConfigPath();
-  const existing = loadUserConfig();
-  const existingStashDir = existing.stashDir;
-  const shouldPersist = !dirExplicitlyProvided || !existingStashDir || setDefault;
-
   let defaultStashUpdated = false;
   let previousStashDir: string | undefined;
-  if (shouldPersist) {
-    if (!existingStashDir || existingStashDir !== stashDir) {
-      saveConfig({ ...existing, stashDir });
-      defaultStashUpdated = true;
-    }
-    // else: already pointed here — no-op, no spurious rewrite.
-  } else {
-    // Default left untouched; surface it so the CLI can inform the user.
-    previousStashDir = existingStashDir;
+  if (options?.persistConfig !== false) {
+    const result = mutateConfig((latest) => {
+      const shouldPersist = !dirExplicitlyProvided || !latest.stashDir || setDefault;
+      if (!shouldPersist) {
+        previousStashDir = latest.stashDir;
+        return latest;
+      }
+      if (latest.stashDir === stashDir) return latest;
+      return { ...latest, stashDir };
+    });
+    defaultStashUpdated = result.written;
   }
 
   // Ensure ripgrep is available (install to cache/bin if needed)

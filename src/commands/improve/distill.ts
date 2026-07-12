@@ -73,8 +73,9 @@ import { withStateDb } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
 import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/db/db";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import { tryLlmFeature } from "../../llm/feature-gate";
 import {
   createProposal,
   isProposalSkipped,
@@ -100,6 +101,7 @@ import {
 import { buildClsContext, checkDistillFidelity } from "./distill-guards";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
+import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { computeSalience, upsertAssetSalience } from "./salience";
 
 // Re-exported for `reflect.ts`, which applies the same LLM-as-judge gate to
@@ -187,6 +189,8 @@ export interface AkmDistillOptions {
   stashDir?: string;
   /** Override the loaded config (test seam). */
   config?: AkmConfig;
+  /** Pre-resolved connection supplied by the improve invocation plan. */
+  llmConfig?: LlmConnectionConfig | null;
   /**
    * Optional chat seam for tests. Defaults to {@link chatCompletion}.
    * Stateless — no module-level fallback, callers always pass a function.
@@ -720,8 +724,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   const config = options.config ?? loadConfig();
+  options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
   const stash = options.stashDir ?? resolveStashDir();
   const chat = options.chat ?? chatCompletion;
+  const distillLlm = Object.hasOwn(options, "llmConfig")
+    ? (options.llmConfig ?? undefined)
+    : (() => {
+        const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
+        return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
+      })();
   const lookup = options.lookupFn ?? defaultLookup;
   const readEventsImpl = options.readEventsFn ?? readEvents;
   // R1 opt-out must flow into every computeSalience call this command makes so
@@ -853,6 +864,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     assetContent,
     filteredEvents,
     config,
+    strategy: options.improveProfile,
+    llmConfig: distillLlm,
     chat,
     stash,
     lookup,
@@ -946,13 +959,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     "distill",
     config,
     async () => {
-      const distillLlm = getDefaultLlmConfig(config);
       if (!distillLlm) {
         // No LLM connection configured — treat as gate-disabled. Throwing
         // here lets `tryLlmFeature` route us through the "error" fallback,
         // which is the same graceful skipped path.
         throw new ConfigError(
-          "No LLM connection configured. Set `defaults.llm` and a profile under `profiles.llm`.",
+          "No LLM engine configured. Set defaults.llmEngine or improve.strategies.<name>.processes.distill.engine.",
           "LLM_NOT_CONFIGURED",
         );
       }
@@ -968,6 +980,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     },
     null as string | null,
     {
+      enabled: resolveProcessEnabled(
+        "distill",
+        options.improveProfile ?? resolveImproveStrategy(undefined, config).config,
+      ),
       onFallback: (evt) => {
         fallbackReason = evt.reason;
         // Log the fallback reason; the caller (raw === null path) handles
@@ -1104,7 +1120,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // D-5 / #388: Three-band system — review_needed band queues a proposal
   // with review_needed outcome rather than auto-rejecting.
   let lessonJudgeConfidence: number | undefined;
-  if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
+  if (options.improveProfile?.processes?.distill?.qualityGate?.enabled ?? true) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
     const judgeResult = await runLessonQualityJudge(
@@ -1113,6 +1129,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       assetContent ?? "",
       chat,
       similarLessons.length > 0 ? similarLessons : undefined,
+      distillLlm,
     );
     if (!judgeResult.pass) {
       if (judgeResult.reviewNeeded) {

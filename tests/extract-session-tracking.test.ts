@@ -66,19 +66,29 @@ afterEach(() => {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    profiles: {
-      llm: {
-        default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test", supportsJsonSchema: true },
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test",
+        supportsJsonSchema: true,
       },
-      // #561 — disable session indexing so chat-call assertions count only the
-      // distillation call (session indexing has dedicated coverage elsewhere).
-      improve: { default: { processes: { extract: { enabled: true, indexSessions: false } } } },
     },
-    defaults: { llm: "default" },
+    improve: {
+      strategies: {
+        // #561 — disable session indexing so chat-call assertions count only the
+        // distillation call (session indexing has dedicated coverage elsewhere).
+        tracking: {
+          processes: { extract: { enabled: true, indexSessions: false, triage: { enabled: false } } },
+        },
+      },
+    },
+    defaults: { llmEngine: "default", improveStrategy: "tracking" },
   } as AkmConfig;
 }
 
@@ -810,7 +820,7 @@ describe("akmExtract — per-session lock", () => {
     // Pre-create the lock held by THIS (live) process at the path akmExtract derives.
     const lockPath = path.join(stateDir, "extract-locks", "extract-claude-code-ses_locked.lock");
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBeDefined();
 
     let chatCalls = 0;
     const result = await akmExtract({
@@ -849,7 +859,7 @@ describe("akmExtract — per-session lock", () => {
     expect(result.sessionsProcessed).toBe(1);
     // Lock released → a fresh acquire succeeds.
     const lockPath = path.join(stateDir, "extract-locks", "extract-claude-code-ses_free.lock");
-    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBeDefined();
   });
 });
 
@@ -894,7 +904,7 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
     // Force triage-out for ANY session by setting an unreachable minScore, so the
     // outcome does not depend on a fragile low-signal fixture.
     const config = configEnabled(stash);
-    const extractProcess = config.profiles?.improve?.default?.processes?.extract as Record<string, unknown>;
+    const extractProcess = config.improve?.strategies?.tracking?.processes?.extract as Record<string, unknown>;
     extractProcess.minContentChars = 1;
     extractProcess.triage = { enabled: true, minScore: 999_999 };
 

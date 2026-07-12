@@ -41,13 +41,13 @@ afterEach(() => {
 });
 
 describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
-  test("agent (no profile): {ok:false} usage envelope on stderr (exit 2)", async () => {
+  test("agent (no engine): {ok:false} usage envelope on stderr (exit 2)", async () => {
     const { stderr, status } = await runCli(["--json", "agent"]);
     expect(status).toBe(2);
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);
     expect(env.code).toBe("MISSING_REQUIRED_ARGUMENT");
-    expect(env.error).toMatch(/Usage: akm agent/);
+    expect(env.error).toMatch(/agent requires --engine or defaults\.engine/);
   });
 
   test("lint: success envelope carries fixed/flagged arrays + summary (exit 0)", async () => {

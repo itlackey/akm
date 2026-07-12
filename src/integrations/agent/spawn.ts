@@ -122,7 +122,7 @@ function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void
 
 /**
  * Per-call options for {@link runAgent}. All fields are optional. Caller
- * may override the profile's `stdio`, `timeoutMs`, and `parseOutput`.
+ * may override `stdio`, `timeoutMs`, and `parseOutput`.
  */
 export interface RunAgentOptions {
   /** Override `profile.stdio`. Captured = pipe stdout/stderr; interactive = inherit. */
@@ -425,9 +425,8 @@ export async function runAgent(
   options: RunAgentOptions = {},
 ): Promise<AgentRunResult> {
   const stdioMode = options.stdio ?? profile.stdio;
-  // null = explicitly disabled (no kill timer). undefined = inherit from profile/default.
-  const timeoutMs: number | null =
-    options.timeoutMs !== undefined ? options.timeoutMs : (profile.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  // null = explicitly disabled (no kill timer). undefined = runtime default.
+  const timeoutMs: number | null = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
   const parseOutput = options.parseOutput ?? profile.parseOutput;
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
@@ -447,7 +446,7 @@ export async function runAgent(
   let builtArgv: readonly string[];
   let builtEnv: Record<string, string> | undefined;
   if (options.dispatch !== undefined) {
-    const builder = getCommandBuilder(profile.commandBuilder ?? profile.name, options.builderRegistry);
+    const builder = getCommandBuilder(profile.platform ?? profile.name, options.builderRegistry);
     const built = builder.build(profile, options.dispatch);
     builtArgv = built.argv;
     builtEnv = built.env;
@@ -484,9 +483,7 @@ export async function runAgent(
       stdout: stdioMode === "captured" ? "pipe" : "inherit",
       stderr: stdioMode === "captured" ? "pipe" : "inherit",
       env,
-      // options.cwd wins; dispatch.cwd is the request-level fallback (it was
-      // declared on AgentDispatchRequest but consumed by nothing — P0.5 fix).
-      ...((options.cwd ?? options.dispatch?.cwd) ? { cwd: options.cwd ?? options.dispatch?.cwd } : {}),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       // Spawn in its own process group so killGroup(-pid, signal) reaches all
       // descendants (e.g. the .opencode binary that opencode's node wrapper forks).
       // Only applied in captured mode — interactive mode inherits the parent

@@ -411,6 +411,7 @@ describe("env list", () => {
     fs.writeFileSync(
       path.join(xdgConfig, "akm", "config.json"),
       JSON.stringify({
+        configVersion: "0.9.0",
         stashDir: primaryStash,
         sources: [{ type: "filesystem", path: teamStash, name: "team" }],
       }),

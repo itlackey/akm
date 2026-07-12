@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { normalizeShowArgv } from "../../src/commands/read/show";
 import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type Cleanup, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
 
@@ -98,7 +98,7 @@ describe("entrypoint global --shape=summary ordering", () => {
     // Semantic off keeps stderr empty as asserted below: with the default
     // ("auto") the local embedder fetches its model from huggingface.co
     // during auto-index, and an offline/blocked fetch warns on stderr.
-    fs.writeFileSync(path.join(storage.configDir, "akm", "config.json"), JSON.stringify({ semanticSearchMode: "off" }));
+    writeSandboxConfig({ semanticSearchMode: "off" });
     writeFixture(
       path.join(storage.stashDir, "commands", "release.md"),
       "---\ndescription: Release\n---\nRun release {{version}}\n",

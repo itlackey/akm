@@ -45,15 +45,15 @@ function makeGitBacked(): void {
 }
 
 /**
- * A cheap improve profile: all heavy passes disabled so the loop stays
+ * A cheap improve strategy: all heavy passes disabled so the loop stays
  * deterministic. No `sync` block here, so end-of-run sync defaults ON.
  */
 function cheapConfig(sync?: { enabled?: boolean; push?: boolean }): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improve: "sync-test" },
-    profiles: {
-      improve: {
+    defaults: { improveStrategy: "sync-test" },
+    improve: {
+      strategies: {
         "sync-test": {
           processes: {
             reflect: { enabled: false },
@@ -61,7 +61,12 @@ function cheapConfig(sync?: { enabled?: boolean; push?: boolean }): AkmConfig {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
             graphExtraction: { enabled: false },
+            extract: { enabled: false },
+            validation: { enabled: false },
             triage: { enabled: false },
+            proactiveMaintenance: { enabled: false },
+            recombine: { enabled: false },
+            procedural: { enabled: false },
           },
           ...(sync ? { sync } : {}),
         },

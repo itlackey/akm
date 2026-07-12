@@ -30,7 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { getWorkflowStatus, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 import {
   bunAvailable,
   dispatchCount,
@@ -49,14 +49,27 @@ let markerDir: string;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeSandboxConfig({
+    configVersion: "0.9.0",
+    engines: {
+      "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      "test-llm": {
+        kind: "llm",
+        endpoint: "http://127.0.0.1:1/v1/chat/completions",
+        model: "test-model",
+      },
+    },
+    defaults: { engine: "test-agent", llmEngine: "test-llm" },
+  });
   markerDir = path.join(storage.root, "markers");
   fs.mkdirSync(markerDir, { recursive: true });
 });
 
 afterEach(() => storage.cleanup());
 
-const SOLO_WF = `version: 1
+const SOLO_WF = `version: 2
 name: crash-solo
+defaults: { engine: test-agent }
 steps:
   - id: work
     title: Work
@@ -64,8 +77,9 @@ steps:
       instructions: Do the work now.
 `;
 
-const GATE_WF = `version: 1
+const GATE_WF = `version: 2
 name: crash-gate
+defaults: { engine: test-agent }
 steps:
   - id: work
     title: Work
@@ -79,6 +93,7 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window A: SIGKILL after the unit row is running but before finish → resume re-dispatches it exactly once and completes", async () => {
     writeProgram(storage.stashDir, "crash-solo", SOLO_WF);
     const started = await startWorkflowRun("workflow:crash-solo", {});
+    expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
 
@@ -121,6 +136,7 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window B: SIGKILL after the unit completes but before the step does → resume reuses the unit, replaces the dangling gate row, finalizes once", async () => {
     writeProgram(storage.stashDir, "crash-gate", GATE_WF);
     const started = await startWorkflowRun("workflow:crash-gate", {});
+    expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
 

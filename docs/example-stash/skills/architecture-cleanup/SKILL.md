@@ -141,7 +141,7 @@ Read these before or during the cleanup:
 1. `docs/technical/functional-contract-patterns.md`
 2. `docs/technical/implementation-plan-functional-contract-refactor.md`
 3. `docs/technical/architecture.md`
-4. `docs/technical/v1-architecture-spec.md`
+4. `docs/technical/architecture.md`
 5. For agent harness work:
    - `src/integrations/agent/config.ts`
    - `src/integrations/agent/spawn.ts`

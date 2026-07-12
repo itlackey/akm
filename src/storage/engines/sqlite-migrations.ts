@@ -52,6 +52,8 @@ export interface RunMigrationsOptions {
    * migrations table is ensured and before the migration list is applied.
    */
   bootstrap?: MigrationBootstrap;
+  /** Called immediately before each pending migration and before its transaction. */
+  beforeMigration?: (migration: Migration) => void;
 }
 
 /**
@@ -89,6 +91,8 @@ export function runMigrations(db: Database, migrations: readonly Migration[], op
 
   for (const migration of migrations) {
     if (applied.has(migration.id)) continue;
+
+    opts?.beforeMigration?.(migration);
 
     db.transaction(() => {
       db.exec(migration.up);

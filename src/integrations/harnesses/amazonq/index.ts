@@ -29,7 +29,6 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
     detection: false,
     configImport: false,
     runtimeIdentity: false,
-    v1Migration: false,
     ...c,
   };
 }

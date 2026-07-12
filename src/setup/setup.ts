@@ -10,8 +10,8 @@
  * Collects all choices and writes config once at the end.
  *
  * This module holds the wizard orchestration; the individual wizard steps,
- * config-shape adapters, prompt shims, provider table, and semantic-asset
- * preparation live in sibling modules (`steps/*`, `legacy-config`, `prompt`,
+ * engine writers, prompt shims, provider table, and semantic-asset preparation
+ * live in sibling modules (`steps/*`, `engine-config`, `prompt`,
  * `providers`, `semantic-assets`).
  */
 
@@ -19,12 +19,19 @@ import { promises as dnsPromises } from "node:dns";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import * as p from "../cli/clack";
 import { akmInit, type InitResponse } from "../commands/sources/init";
-import type { AkmConfig, EmbeddingConnectionConfig, LlmConnectionConfig } from "../core/config/config";
-import { DEFAULT_CONFIG, getDefaultLlmConfig, loadUserConfig, saveConfig } from "../core/config/config";
-import { backupExistingConfig } from "../core/config/config-io";
-import { deepMergeConfig } from "../core/deep-merge";
+import type { AkmConfig, EmbeddingConnectionConfig, HarnessId, LlmConnectionConfig } from "../core/config/config";
+import {
+  DEFAULT_CONFIG,
+  loadUserConfig,
+  mutateConfigWithPrecommit,
+  parseAndValidateConfigText,
+  validateCompleteConfig,
+} from "../core/config/config";
+import { readConfigText } from "../core/config/config-io";
+import { deepMergeConfig } from "../core/config/deep-merge";
 import { ConfigError, UsageError } from "../core/errors";
 import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn } from "../core/warn";
@@ -37,7 +44,6 @@ import {
 import { detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { defaultProfileName } from "../integrations/harnesses";
 import { probeLlmCapabilities } from "../llm/client";
-import { getOutputMode } from "../output/context";
 import {
   type DetectedEnvironment,
   detectEnvironment,
@@ -45,8 +51,9 @@ import {
   type LMStudioDetectionResult,
   renderDetectionSummary,
 } from "./detect";
+import { upsertDetectedAgentEngine, upsertDetectedLlmEngine, verifyOpenAiCompatibleEndpoint } from "./detected-engines";
+import { readCurrentLlmEngine, writeAgentEngines, writeLlmEngine } from "./engine-config";
 import { detectHarnessConfigs } from "./harness-config-import";
-import { applyLegacyAgent, applyLegacyLlm, type LegacyAgentBlockShape } from "./legacy-config";
 import { bail, prompt } from "./prompt";
 import { PROVIDER_DEFAULTS } from "./providers";
 import { prepareSemanticSearchAssets } from "./semantic-assets";
@@ -126,6 +133,117 @@ export interface SetupSummary {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Raw preflight used before setup performs prompts, initialization, or writes. */
+export function assertSetupConfigPreflight(): void {
+  const configPath = getConfigPath();
+  let text: string | undefined;
+  try {
+    text = readConfigText(configPath);
+  } catch (error) {
+    throw new ConfigError(
+      `Could not read config at ${configPath}: ${error instanceof Error ? error.message : String(error)}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (text !== undefined) parseAndValidateConfigText(text, configPath);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function sameConfigValue(left: unknown, right: unknown): boolean {
+  return isDeepStrictEqual(left, right);
+}
+
+function configArrayItemKey(value: unknown): string {
+  if (!isPlainRecord(value)) return `value:${JSON.stringify(value)}`;
+  if (typeof value.id === "string") return `id:${value.id}`;
+  if (typeof value.type === "string" && typeof value.url === "string") return `source:${value.type}:url:${value.url}`;
+  if (typeof value.type === "string" && typeof value.path === "string")
+    return `source:${value.type}:path:${path.resolve(value.path)}`;
+  if (typeof value.url === "string") return `url:${value.url}`;
+  if (typeof value.name === "string") return `name:${value.name}`;
+  return `value:${JSON.stringify(value)}`;
+}
+
+function setupConflict(pathParts: readonly string[]): never {
+  const field = pathParts.length > 0 ? pathParts.join(".") : "(root)";
+  throw new ConfigError(
+    `Setup config conflict at ${field}: another process changed the same field after setup started. Rerun setup against the latest config.`,
+    "INVALID_CONFIG_FILE",
+  );
+}
+
+/** Reapply setup's changes while rejecting concurrent edits to the same field. */
+export function rebaseSetupChanges(
+  original: unknown,
+  desired: unknown,
+  latest: unknown,
+  pathParts: readonly string[] = [],
+): unknown {
+  if (sameConfigValue(original, desired)) return latest;
+  if (Array.isArray(original) && Array.isArray(desired)) {
+    if (latest !== undefined && !Array.isArray(latest)) setupConflict(pathParts);
+    const latestItems = Array.isArray(latest) ? latest : [];
+    const originalByKey = new Map(original.map((item) => [configArrayItemKey(item), item]));
+    const desiredByKey = new Map(desired.map((item) => [configArrayItemKey(item), item]));
+    const latestByKey = new Map(latestItems.map((item) => [configArrayItemKey(item), item]));
+    const result: unknown[] = [];
+    for (const [key, desiredItem] of desiredByKey) {
+      const originalItem = originalByKey.get(key);
+      const latestItem = latestByKey.get(key);
+      if (originalByKey.has(key)) {
+        if (!latestByKey.has(key)) setupConflict([...pathParts, key]);
+        result.push(rebaseSetupChanges(originalItem, desiredItem, latestItem, [...pathParts, key]));
+      } else if (!latestByKey.has(key) || sameConfigValue(latestItem, desiredItem)) {
+        result.push(desiredItem);
+      } else {
+        setupConflict([...pathParts, key]);
+      }
+    }
+    for (const [key, originalItem] of originalByKey) {
+      if (desiredByKey.has(key) || !latestByKey.has(key)) continue;
+      if (!sameConfigValue(latestByKey.get(key), originalItem)) setupConflict([...pathParts, key]);
+    }
+    for (const item of latestItems) {
+      const key = configArrayItemKey(item);
+      if (!originalByKey.has(key) && !desiredByKey.has(key)) result.push(item);
+    }
+    return result;
+  }
+  if (!isPlainRecord(original) || !isPlainRecord(desired)) {
+    if (!sameConfigValue(latest, original) && !sameConfigValue(latest, desired)) setupConflict(pathParts);
+    return desired;
+  }
+  if (latest !== undefined && !isPlainRecord(latest)) setupConflict(pathParts);
+  const result: Record<string, unknown> = isPlainRecord(latest) ? { ...latest } : {};
+  for (const key of new Set([...Object.keys(original), ...Object.keys(desired)])) {
+    if (!Object.hasOwn(desired, key)) {
+      if (Object.hasOwn(result, key) && !sameConfigValue(result[key], original[key]))
+        setupConflict([...pathParts, key]);
+      delete result[key];
+      continue;
+    }
+    result[key] = rebaseSetupChanges(original[key], desired[key], result[key], [...pathParts, key]);
+  }
+  return result;
+}
+
+async function saveSetupConfig<T>(
+  original: AkmConfig,
+  desired: AkmConfig,
+  precommit: (config: AkmConfig) => Promise<T>,
+): Promise<{ config: AkmConfig; precommit: T }> {
+  const result = await mutateConfigWithPrecommit(
+    (latest) => rebaseSetupChanges(original, desired, latest) as AkmConfig,
+    precommit,
+  );
+  return { config: result.config, precommit: result.precommit };
+}
 
 /**
  * Quick connectivity check. Returns true if we can resolve a hostname
@@ -221,7 +339,7 @@ export function buildSetupSteps(options: {
           return;
         }
         const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels, lmStudioResult, harnessConfigs);
-        ctx.apply(applyLegacyLlm(ctx.config, llm));
+        ctx.apply(writeLlmEngine(ctx.config, llm));
       },
     },
     {
@@ -271,11 +389,10 @@ export function buildSetupSteps(options: {
             "No agent CLIs detected on PATH. Agent commands will be disabled until one is installed and `akm setup` is re-run.",
           );
         }
-        // Inject the detected agent block into a synthetic AkmConfig so
-        // stepAgentSelection can read it via getCurrentAgentBlock().
-        const synthConfig = { ...ctx.config, ...applyLegacyAgent(ctx.config, result.agent) };
+        // Apply detected engines to a synthetic config for the selection UI.
+        const synthConfig = deepMergeConfig(ctx.config, writeAgentEngines(ctx.config, result.agent)) as AkmConfig;
         const agent = await stepAgentSelection(synthConfig, result.detections);
-        ctx.apply(applyLegacyAgent(ctx.config, agent));
+        ctx.apply(writeAgentEngines(ctx.config, agent));
       },
     },
     {
@@ -302,6 +419,7 @@ export function buildSetupSteps(options: {
 }
 
 export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }): Promise<void> {
+  assertSetupConfigPreflight();
   p.intro("akm setup");
 
   const current = loadUserConfig();
@@ -314,12 +432,6 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   // config from being clobbered with a stashDir that the OS may reap.
   assertSetupSandbox(resolvedStashDir, opts?.dir != null);
   applyStashIsolationToEnv(resolvedStashDir, opts?.dir != null);
-
-  // Bootstrap directory structure before any prompts so the stash exists
-  // even if the wizard is interrupted after this point.
-  if (!opts?.noInit) {
-    await akmInit({ dir: resolvedStashDir, setDefault: true });
-  }
 
   // Quick connectivity check — skip network-dependent steps when offline
   const online = await isOnline();
@@ -374,12 +486,12 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   // Step 1/2: Small model connection (for enrichment features)
   const smallModelResult = await stepSmallModelConnection(ctx.config);
   if (!smallModelResult.skipped) {
-    ctx.apply(applyLegacyLlm(ctx.config, smallModelResult.llm));
+    ctx.apply(writeLlmEngine(ctx.config, smallModelResult.llm));
   }
 
   // Step 2/2: Agent connection (for agentic features)
   const agentConfig = await stepAgentConnection(ctx.config, smallModelResult);
-  ctx.apply(applyLegacyAgent(ctx.config, agentConfig));
+  ctx.apply(writeAgentEngines(ctx.config, agentConfig));
 
   const newConfig: AkmConfig = {
     ...ctx.config,
@@ -389,7 +501,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   const semanticSearchMode = outcome.semantic;
   const stashDir = newConfig.stashDir ?? current.stashDir ?? getDefaultStashDir();
   const embedding = newConfig.embedding;
-  const llm = getDefaultLlmConfig(newConfig);
+  const llm = readCurrentLlmEngine(newConfig);
   const registries = newConfig.registries;
   const allStashes = newConfig.sources ?? [];
 
@@ -407,7 +519,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
       `Semantic search:  ${semanticSearchMode.mode}`,
       `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Stash sources:    ${allStashes.length}`,
-      `Agent default:    ${newConfig.defaults?.agent ?? "disabled"}`,
+      `Agent default:    ${newConfig.defaults?.engine ?? "disabled"}`,
       `Output:           ${newConfig.output?.format ?? "json"} / ${newConfig.output?.detail ?? "brief"}`,
     ].join("\n"),
     "Configuration Summary",
@@ -421,10 +533,10 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   );
   if (!shouldSave) bail();
 
-  // Save config
-  const cfgPath1 = getConfigPath();
-  backupAndAnnounce(cfgPath1);
-  saveConfig(newConfig);
+  validateCompleteConfig(newConfig);
+  const { config: savedConfig } = await saveSetupConfig(current, newConfig, async () => {
+    if (!opts?.noInit) await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
+  });
 
   if (semanticSearchMode.mode === "off") {
     clearSemanticStatus();
@@ -432,13 +544,13 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 
   if (semanticSearchMode.mode === "auto") {
     if (semanticSearchMode.prepareAssets) {
-      const ready = await prepareSemanticSearchAssets(newConfig);
+      const ready = await prepareSemanticSearchAssets(savedConfig);
       if (!ready.ok) {
         writeSemanticStatus({
           status: "blocked",
           reason: ready.reason as never,
           message: ready.message,
-          providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+          providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
           lastCheckedAt: new Date().toISOString(),
         });
         p.log.warn(
@@ -448,7 +560,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
         writeSemanticStatus({
           status: "pending",
           message: "Semantic prerequisites verified. Building the index to finish activation.",
-          providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+          providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
           lastCheckedAt: new Date().toISOString(),
         });
       }
@@ -456,7 +568,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
       writeSemanticStatus({
         status: "pending",
         message: "Semantic search is enabled, but asset preparation was skipped.",
-        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
         lastCheckedAt: new Date().toISOString(),
       });
       p.log.info(
@@ -472,7 +584,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   try {
     const indexResult = await akmIndex({ stashDir });
     spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
-    if (newConfig.semanticSearchMode === "auto") {
+    if (savedConfig.semanticSearchMode === "auto") {
       if (indexResult.verification.ok) {
         p.log.success(indexResult.verification.message);
       } else {
@@ -485,12 +597,12 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   } catch (err) {
     spin.stop("Indexing failed — you can run `akm index` manually later.");
     p.log.warn(String(err));
-    if (newConfig.semanticSearchMode === "auto") {
+    if (savedConfig.semanticSearchMode === "auto") {
       writeSemanticStatus({
         status: "blocked",
         reason: "index-failed",
         message: String(err),
-        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
         lastCheckedAt: new Date().toISOString(),
       });
     }
@@ -515,40 +627,6 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 // ── Non-interactive / scripting entry points ─────────────────────────────────
 
 /**
- * Back up an existing config file and print the real, timestamped backup
- * location (not a generic display string). On a fresh install where there is
- * nothing to back up, print a "nothing to back up" notice instead.
- */
-function backupAndAnnounce(configPath: string): void {
-  const result = backupExistingConfig(configPath);
-  const message = result ? `Config backed up to ${result.timestamped}` : "No existing config to back up.";
-  // In JSON output mode the structured envelope (which already carries
-  // `configPath`) MUST be the only thing on stdout — `setup --yes | jq` is a
-  // supported scripting contract. @clack's `p.log.info` writes to stdout, which
-  // would corrupt that envelope, so route this human-progress notice to stderr
-  // when emitting JSON. Interactive/text runs keep the inline clack banner.
-  if (isJsonOutputMode()) {
-    process.stderr.write(`${message}\n`);
-  } else {
-    p.log.info(message);
-  }
-}
-
-/**
- * True when the process-level output mode is JSON (the default machine format).
- * Defensive: setup is also invoked programmatically (tests) where the output
- * mode singleton may not be initialized — treat that as "not JSON" so the
- * human-readable clack banner is used.
- */
-function isJsonOutputMode(): boolean {
-  try {
-    return getOutputMode().format === "json";
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Run setup in non-interactive mode, applying all defaults.
  * Safe to call from CI or scripts. Idempotent — re-running produces the same result.
  */
@@ -557,17 +635,17 @@ export async function runSetupWithDefaults(opts: {
   noInit?: boolean;
   probe?: boolean;
 }): Promise<SetupSummary> {
-  const current = loadUserConfig();
-  const stashDir = opts.dir ? path.resolve(opts.dir) : (current.stashDir ?? getDefaultStashDir());
-
-  assertSetupSandbox(stashDir, opts.dir != null);
-  applyStashIsolationToEnv(stashDir, opts.dir != null);
-
-  // Bootstrap directory structure first
-  let initResult: InitResponse | undefined;
-  if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir, setDefault: true });
+  assertSetupConfigPreflight();
+  const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
+  if (explicitStashDir) {
+    assertSetupSandbox(explicitStashDir, true);
+    applyStashIsolationToEnv(explicitStashDir, true);
   }
+  const current = loadUserConfig();
+  const stashDir = explicitStashDir ?? current.stashDir ?? getDefaultStashDir();
+
+  assertSetupSandbox(stashDir, explicitStashDir != null);
+  applyStashIsolationToEnv(stashDir, explicitStashDir != null);
 
   // Run steps in non-interactive mode (applies defaults, skips prompts)
   const ctx = createSetupContext(current, { nonInteractive: true });
@@ -585,12 +663,12 @@ export async function runSetupWithDefaults(opts: {
   const env = await detectEnvironment({ existingStashDir: ctx.config.stashDir });
 
   // Apply a detected LLM (live local server) when the config has none yet.
-  if (!getDefaultLlmConfig(ctx.config)) {
+  if (!readCurrentLlmEngine(ctx.config as AkmConfig) && opts.probe) {
     const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);
     if (liveLocal?.defaultModel) {
       const llm: LlmConnectionConfig = {
         provider: "local",
-        endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1`,
+        endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1/chat/completions`,
         model: liveLocal.defaultModel,
       };
       // A required field being unresolvable must fail loudly rather than write
@@ -601,12 +679,22 @@ export async function runSetupWithDefaults(opts: {
           "MISSING_REQUIRED_ARGUMENT",
         );
       }
-      ctx.apply(applyLegacyLlm(ctx.config, llm));
+      const verified = await verifyOpenAiCompatibleEndpoint(llm);
+      if (verified.ok) {
+        const applied = upsertDetectedLlmEngine(ctx.config as AkmConfig, {
+          provider: llm.provider ?? "local",
+          endpoint: verified.endpoint,
+          model: llm.model,
+        });
+        ctx.apply(applied.config);
+      } else {
+        warn(`[akm setup] Skipping detected local LLM: ${verified.reason}. Verify it and rerun setup.`);
+      }
     }
   }
 
   // Auto-detect agent CLI if not already configured
-  if (!ctx.config.defaults?.agent) {
+  if (!ctx.config.defaults?.engine) {
     let defaultProfile: string | undefined;
     if (env.harness !== "none") {
       defaultProfile = env.harness;
@@ -615,13 +703,15 @@ export async function runSetupWithDefaults(opts: {
       defaultProfile = pickDefaultAgentProfile(detected, undefined);
     }
     if (defaultProfile) {
-      ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
+      ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, defaultProfile as HarnessId).config);
     }
   }
 
-  const cfgPath2 = getConfigPath();
-  backupAndAnnounce(cfgPath2);
-  saveConfig(ctx.config);
+  validateCompleteConfig(ctx.config as AkmConfig);
+  const { precommit: initResult } = await saveSetupConfig(current, ctx.config as AkmConfig, async () => {
+    if (opts.noInit) return undefined;
+    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+  });
 
   return {
     configPath: getConfigPath(),
@@ -641,8 +731,7 @@ export async function runSetupWithDefaults(opts: {
  * value.
  */
 export async function runDetectOnly(): Promise<DetectedEnvironment> {
-  const current = loadUserConfig();
-  return detectEnvironment({ existingStashDir: current.stashDir });
+  return detectEnvironment();
 }
 
 /**
@@ -658,6 +747,7 @@ export async function runDetectOnly(): Promise<DetectedEnvironment> {
  */
 export function deriveRecommendedConfig(env: DetectedEnvironment): {
   llm?: LlmConnectionConfig;
+  llmApiKeyEnvVar?: string;
   embedding?: EmbeddingConnectionConfig;
   agentDefault?: string;
   taskSchedules?: { improve?: string; index?: string };
@@ -689,6 +779,7 @@ export function deriveRecommendedConfig(env: DetectedEnvironment): {
       const defaults = PROVIDER_DEFAULTS[cloud.provider];
       if (defaults) {
         result.llm = { provider: cloud.provider, endpoint: defaults.endpoint, model: defaults.model };
+        result.llmApiKeyEnvVar = cloud.envVar;
       }
     }
   }
@@ -709,14 +800,49 @@ export async function runResetRecommended(opts: {
   noInit?: boolean;
   probe?: boolean;
 }): Promise<SetupSummary> {
+  assertSetupConfigPreflight();
+  const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
+  if (explicitStashDir) {
+    assertSetupSandbox(explicitStashDir, true);
+    applyStashIsolationToEnv(explicitStashDir, true);
+  }
   const current = loadUserConfig();
   const env = await detectEnvironment({ existingStashDir: current.stashDir });
   const recommended = deriveRecommendedConfig(env);
 
-  const incoming: Partial<AkmConfig> & { llm?: LlmConnectionConfig; agent?: LegacyAgentBlockShape } = {};
-  if (recommended.llm) incoming.llm = recommended.llm;
+  let incoming: Partial<AkmConfig> = {};
+  if (recommended.llm && recommended.llm.provider !== "anthropic") {
+    let endpoint = recommended.llm.endpoint;
+    let accepted = true;
+    if (opts.probe) {
+      const verified = await verifyOpenAiCompatibleEndpoint({
+        endpoint,
+        model: recommended.llm.model,
+        apiKeyEnvVar: recommended.llmApiKeyEnvVar,
+      });
+      if (verified.ok) {
+        endpoint = verified.endpoint;
+      } else {
+        accepted = false;
+        warn(`[akm setup] Skipping detected LLM: ${verified.reason}. Verify it and rerun setup.`);
+      }
+    }
+    if (accepted) {
+      incoming = upsertDetectedLlmEngine(incoming as AkmConfig, {
+        provider: recommended.llm.provider ?? "local",
+        endpoint,
+        model: recommended.llm.model,
+        apiKeyEnvVar: recommended.llmApiKeyEnvVar,
+      }).config;
+    }
+  }
   if (recommended.embedding) incoming.embedding = recommended.embedding;
-  if (recommended.agentDefault) incoming.agent = { default: recommended.agentDefault };
+  if (recommended.agentDefault) {
+    incoming = deepMergeConfig(
+      incoming as Record<string, unknown>,
+      writeAgentEngines(incoming as AkmConfig, { default: recommended.agentDefault }) as Record<string, unknown>,
+    ) as Partial<AkmConfig>;
+  }
   if (recommended.taskSchedules) {
     (incoming as Record<string, unknown>).setup = { taskSchedules: recommended.taskSchedules };
   }
@@ -745,12 +871,9 @@ export async function runSetupFromConfig(opts: {
    */
   applyDefaults?: boolean;
 }): Promise<SetupSummary> {
+  assertSetupConfigPreflight();
   // Phase 1: Parse JSON
-  type IncomingShape = Partial<AkmConfig> & {
-    llm?: LlmConnectionConfig;
-    agent?: LegacyAgentBlockShape;
-  };
-  let incoming: IncomingShape;
+  let incoming: Partial<AkmConfig>;
   try {
     incoming = JSON.parse(opts.configJson);
   } catch (e) {
@@ -759,13 +882,18 @@ export async function runSetupFromConfig(opts: {
 
   // Phase 2: Validate — only allow safe top-level keys
   const ALLOWED_KEYS = new Set([
+    "configVersion",
+    "engines",
+    "defaults",
+    "improve",
+    "modelAliases",
     "stashDir",
-    "llm",
     "embedding",
-    "agent",
     "semanticSearchMode",
     "output",
-    "profiles",
+    "sources",
+    "registries",
+    "defaultWriteTarget",
     "defaults",
     "setup",
   ]);
@@ -777,10 +905,6 @@ export async function runSetupFromConfig(opts: {
   }
 
   // Validate required sub-fields
-  if (incoming.llm) {
-    if (!incoming.llm.endpoint?.trim()) throw new Error("llm.endpoint is required when llm is provided");
-    if (!incoming.llm.model?.trim()) throw new Error("llm.model is required when llm is provided");
-  }
   if (incoming.embedding) {
     if (!incoming.embedding.endpoint?.trim())
       throw new Error("embedding.endpoint is required when embedding is provided");
@@ -788,36 +912,27 @@ export async function runSetupFromConfig(opts: {
   }
 
   // Phase 3: Merge with existing config
+  const explicitStashDir =
+    opts.dir != null ? path.resolve(opts.dir) : incoming.stashDir != null ? path.resolve(incoming.stashDir) : undefined;
+  if (explicitStashDir) {
+    assertSetupSandbox(explicitStashDir, true);
+    applyStashIsolationToEnv(explicitStashDir, true);
+  }
   const current = loadUserConfig();
-  const stashDir = opts.dir
-    ? path.resolve(opts.dir)
-    : incoming.stashDir
-      ? path.resolve(incoming.stashDir)
-      : (current.stashDir ?? getDefaultStashDir());
+  const stashDir = explicitStashDir ?? current.stashDir ?? getDefaultStashDir();
 
-  const stashDirExplicit = opts.dir != null || incoming.stashDir != null;
+  const stashDirExplicit = explicitStashDir != null;
   assertSetupSandbox(stashDir, stashDirExplicit);
   applyStashIsolationToEnv(stashDir, stashDirExplicit);
 
-  let merged: AkmConfig = { ...current, stashDir };
-  // Deep-merge non-llm/agent keys: nested objects merge key-by-key so a
+  let merged = deepMergeConfig(current as Record<string, unknown>, {
+    ...(incoming as Record<string, unknown>),
+    stashDir,
+  }) as AkmConfig;
+  // Deep-merge canonical keys: nested objects merge key-by-key so a
   // partial `--file` only updates the keys it carries and never drops sibling
   // subkeys (e.g. output.detail survives an output.format-only file). Arrays
   // and scalars replace wholesale.
-  for (const key of Object.keys(incoming)) {
-    if (key === "llm" || key === "agent") continue;
-    const incomingVal = (incoming as Record<string, unknown>)[key];
-    const mergedRec = merged as unknown as Record<string, unknown>;
-    mergedRec[key] = deepMergeConfig(mergedRec[key], incomingVal);
-  }
-  // Translate legacy llm/agent inputs into the new shape.
-  if (incoming.llm) {
-    merged = { ...merged, ...applyLegacyLlm(merged, incoming.llm) };
-  }
-  if (incoming.agent) {
-    merged = { ...merged, ...applyLegacyAgent(merged, incoming.agent) };
-  }
-
   // With `--yes`, fill keys still missing after the merge with non-interactive
   // defaults. Steps start from `merged` and their nonInteractive path only
   // populates absent values, so nothing the file or existing config supplied
@@ -831,31 +946,28 @@ export async function runSetupFromConfig(opts: {
     });
     await runSetupSteps(steps, ctx);
     if (!ctx.config.stashDir) ctx.apply({ stashDir });
-    if (!ctx.config.defaults?.agent) {
+    if (!ctx.config.defaults?.engine) {
       const detected = detectAgentCliProfiles(undefined);
       const defaultProfile = pickDefaultAgentProfile(detected, undefined);
       if (defaultProfile) {
-        ctx.apply(applyLegacyAgent(ctx.config, { default: defaultProfile }));
+        ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, defaultProfile as HarnessId).config);
       }
     }
     merged = ctx.config;
   }
 
-  // Bootstrap directory structure
-  let initResult: InitResponse | undefined;
-  if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir, setDefault: true });
-  }
+  // Reject an invalid merged engine graph before probing or touching the stash.
+  validateCompleteConfig(merged);
 
   // Optional probe
-  const mergedLlm = getDefaultLlmConfig(merged);
+  const mergedLlm = readCurrentLlmEngine(merged);
   if (opts.probe && mergedLlm) {
     try {
       const caps = await probeLlmCapabilities(mergedLlm);
       if (caps.reachable) {
         merged = {
           ...merged,
-          ...applyLegacyLlm(merged, {
+          ...writeLlmEngine(merged, {
             ...mergedLlm,
             capabilities: { structuredOutput: caps.structuredOutput ?? false },
           }),
@@ -866,9 +978,11 @@ export async function runSetupFromConfig(opts: {
     }
   }
 
-  const cfgPath3 = getConfigPath();
-  backupAndAnnounce(cfgPath3);
-  saveConfig(merged);
+  validateCompleteConfig(merged);
+  const { precommit: initResult } = await saveSetupConfig(current, merged, async () => {
+    if (opts.noInit) return undefined;
+    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+  });
 
   return {
     configPath: getConfigPath(),

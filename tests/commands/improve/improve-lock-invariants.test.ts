@@ -34,9 +34,9 @@ let stashDir = "";
 function quietConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improve: "quiet-test" },
-    profiles: {
-      improve: {
+    defaults: { improveStrategy: "quiet-test" },
+    improve: {
+      strategies: {
         "quiet-test": {
           processes: {
             reflect: { enabled: false },
@@ -45,7 +45,11 @@ function quietConfig(): AkmConfig {
             memoryInference: { enabled: false },
             graphExtraction: { enabled: false },
             extract: { enabled: false },
+            validation: { enabled: false },
             triage: { enabled: true },
+            proactiveMaintenance: { enabled: false },
+            recombine: { enabled: false },
+            procedural: { enabled: false },
           },
         },
       },

@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
@@ -11,6 +12,7 @@ import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../../storage/database";
+import { openDatabase } from "../../storage/database";
 import { openManagedDatabase } from "../../storage/managed-db";
 import {
   computeNextUtility,
@@ -115,6 +117,16 @@ export function openExistingDatabase(dbPath?: string): Database {
   // but some paths still need write access to usage_events and other tables —
   // so init only loads the vec extension, it does not run ensureSchema.
   return openManagedDatabase({ path: dbPath ?? getDbPath(), init: loadVecExtension });
+}
+
+/**
+ * Open an existing index for queries without creating directories, a database
+ * file, journals, or running write-capable pragmas/schema initialization.
+ */
+export function openReadonlyExistingDatabase(dbPath?: string): Database | undefined {
+  const resolvedPath = dbPath ?? getDbPath();
+  if (!fs.existsSync(resolvedPath)) return undefined;
+  return openDatabase(resolvedPath, { readonly: true, create: false });
 }
 
 export function closeDatabase(db: Database): void {

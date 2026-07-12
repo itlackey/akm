@@ -12,7 +12,7 @@
 ## Configuration & Data
 
 - [Configuration](configuration.md) -- Providers, settings, and Ollama setup
-- [Configuring Agent Profiles](configuration-agent-profiles.md) -- How akm runs a coding agent, CLI or API
+- [Configuration](configuration.md#engines) -- Named LLM and agent engines
 - [Data & Telemetry](data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
 
 ## Features
@@ -28,7 +28,6 @@
 ## Upgrading
 
 - [Roadmap](roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
-- [v1 migration guide](migration/v1.md) -- The path from 0.x to v1.0
 - [v0.8 -> v0.9 migration guide](migration/v0.8-to-v0.9.md) -- Current-cycle breaking changes
 - [Release notes (latest: 0.9.0)](migration/release-notes/0.9.0.md) -- Per-release notes; see the [release-notes index](migration/release-notes/README.md) for every version
 - [v0.5 -> v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting
@@ -86,7 +85,7 @@ Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` hea
 - [Ref Format](technical/ref.md) -- Wire format for asset references
 - [Core Principles](technical/akm-core-principles.md) -- Design principles and constraints
 - [Claude Code workflows vs. akm workflows](technical/claude-code-vs-akm-workflows.md) -- Comparing the two things that share a name
-- [Extending akm workflows into a harness-agnostic orchestration engine](technical/akm-workflows-orchestration-plan.md) -- Current formalized plan, supersedes part of the doc above
+- [Workflow source and IR](features/workflows.md) -- Current workflow execution model
 
 ## Official Ecosystem Repositories
 

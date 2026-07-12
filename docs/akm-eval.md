@@ -1,11 +1,11 @@
 # akm-eval — Analyzing `akm` Quality and Improvement
 
 `akm-eval` is a standalone, read-only toolkit that measures whether
-`akm` improvements are actually working. Every invocation of `akm
-improve` already writes a structured envelope to
-`<stash>/.akm/runs/<run-id>/improve-result.json`, and every mutating CLI
-verb writes to the `events` table in `state.db`. `akm-eval` consumes
-those artifacts plus the live `akm search` output and turns them into
+`akm` improvements are actually working. Completed live `akm improve`
+invocations record their structured schema-v2 envelopes in the `improve_runs`
+table of `$XDG_DATA_HOME/akm/state.db`, and mutating CLI verbs write to the
+`events` table in the same database. Dry-runs are never persisted. `akm-eval`
+consumes those records plus the live `akm search` output and turns them into
 operator-friendly metrics — without modifying anything.
 
 The toolkit is shell + Bun TypeScript with no extra dependencies beyond
@@ -144,7 +144,7 @@ Three JSONL logs land under `<run-dir>/artifacts/replay/`:
 | --- | --- |
 | `akm-invocations.jsonl` | one record per `AkmCli.run()` call: args, stdout, stderr, status, durationMs. |
 | `state-db-queries.jsonl` | one record per `readEvents` / `readProposals` / `available()` call, plus the captured rows. |
-| `improve-results.jsonl` | one record per `<stash>/.akm/runs/<id>/improve-result.json` read. |
+| `improve-results.jsonl` | one record per `state.db` `improve_runs.result_json` read. |
 | `replay-result.json` | written by `akm-eval-replay`: `{ deterministic, divergentCases, missingCases, extraCases }`. |
 
 These three surfaces are sufficient because every Phase 1 + Phase 3
@@ -165,8 +165,8 @@ the current run (`--out` overrides). Exits non-zero if any regressions.
 `deterministic`, or any dot-separated path into the envelope. Pipe to
 `column -t` for a pretty table.
 
-`akm-eval-collect --from-improve-run <run-id|latest>` reads
-`<stash>/.akm/runs/<run-id>/improve-result.json` and surfaces the
+`akm-eval-collect --from-improve-run <run-id|latest>` reads the matching
+`improve_runs.result_json` value from `$XDG_DATA_HOME/akm/state.db` and surfaces the
 metrics paired-mode comparison cares about: proposals emitted, actions
 by mode and outcome, validation failures, consolidation, memory cleanup.
 Writes a summary to `<stash>/.akm/evals/collected/<improve-run-id>.json`.
@@ -282,7 +282,7 @@ scripts/akm-eval/bin/akm-eval-run --suite judge-calibration \
   --akm /path/to/akm/dist/cli.js --format md
 ```
 
-When `profiles.improve.default.processes.distill.enabled` is
+When `improve.strategies.default.processes.distill.enabled` is
 disabled in the test env the judge returns `skipped` for every probe —
 that's expected; the case scores low but the runner machinery and the
 metrics block still work.
@@ -330,8 +330,8 @@ two-sandbox ablation against the same source stash — graph extraction on
 vs. off — and reports per-metric deltas (retrieval hit@K, precision@K,
 contradiction precision/recall, latency, and a proxy token-cost). The off
 side is gated via a planted `config.json` that sets both
-`profiles.improve.default.processes.graphExtraction.enabled: false` and
-`index.graph.llm: false`.
+`improve.strategies.default.processes.graphExtraction.enabled: false` and
+`index.graph.enabled: false`.
 
 Outputs land under `<stash>/.akm/evals/ablations/<eval-run-id>/` so they
 never collide with the main `runs/` namespace. See

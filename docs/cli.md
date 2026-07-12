@@ -9,10 +9,10 @@ include `error` and `hint` fields.
 > current pre-release build. Commands shipped in 0.8.0 — `health`, `agent`,
 > `improve`, `propose`, `proposal`, and the `feedback --reason`
 > extension — carry an **Available since 0.8.0** marker so you can tell at
-> a glance which surface arrived in that release. The locked v1.0 surface
-> is declared in
-> [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-> §9.4.
+> a glance which surface arrived in that release. This page is authoritative for
+> the current CLI. The historical v1 planning spec is archived at
+> [`docs/archive/v1-architecture-spec.md`](archive/v1-architecture-spec.md) and
+> is not a live CLI contract.
 
 ## Global Flags
 
@@ -221,14 +221,14 @@ akm health --since 2026-05-01T00:00:00Z
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
-default agent profile, and summarizes recent `improve_*` events.
+default agent engine, and summarizes recent `improve_*` events.
 
 Primary result fields:
 
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `task-log-backing`, `active-runs`, and `agent-profile` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `task-log-backing`, `active-runs`, and `default-engine` |
 | `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), and `session-log-failures` (informational keyword matches, never triggers warn) |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
@@ -410,7 +410,7 @@ populating `warnings` does not affect ranking.
 > Use registry scores only for ranking within a single registry — do **not**
 > compare them numerically against local `SearchHit.score` values or across
 > registries with different scoring formulas. See
-> `docs/technical/v1-architecture-spec.md` §4 for the type-level distinction.
+> `docs/technical/architecture.md` for the current type-level distinction.
 
 ### curate
 
@@ -517,10 +517,12 @@ Author, inspect, and execute structured workflow assets.
 
 ```sh
 akm workflow template
+akm workflow template --yaml                  # Print a YAML v2 program starter
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
+akm workflow create review.yaml --from ./review.yaml
 akm workflow validate workflow:ship-release    # Validate a workflow ref
-akm workflow validate ./workflows/release.md   # Validate a workflow file
+akm workflow validate ./workflows/review.yaml  # Validate YAML v2 or markdown
 akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow next workflow:ship-release
 akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
@@ -535,9 +537,9 @@ Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `template` | Print a valid starter workflow markdown document |
-| `create <name>` | Validate and write a workflow under `workflows/<name>.md` |
-| `validate <ref\|path>` | Validate a workflow markdown file or ref and print any errors |
+| `template` | Print a markdown starter, or a YAML v2 program with `--yaml` |
+| `create <name>` | Validate and write markdown (`<name>`) or YAML v2 (`<name>.yaml` / `.yml`) under `workflows/` |
+| `validate <ref\|path>` | Validate a workflow markdown/YAML file or ref and print any errors |
 | `start <ref>` | Create a new persisted workflow run |
 | `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
 | `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |
@@ -1747,8 +1749,8 @@ echo "# Attention Is All You Need" | akm wiki stash research - --as attention
 akm wiki pages research
 akm wiki search research "attention"
 akm wiki lint research
-akm wiki ingest research               # dispatches defaults.agent to run the ingest workflow
-akm wiki ingest research --profile claude --model sonnet  # explicit overrides
+akm wiki ingest research               # dispatches defaults.engine to run the ingest workflow
+akm wiki ingest research --engine claude --model sonnet  # explicit overrides
 akm wiki remove research -y            # preserves raw/ by default
 akm wiki remove research -y --with-sources
 ```
@@ -1766,7 +1768,7 @@ Subcommands:
 | `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
 | `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index, broken sources |
-| `ingest <name>` | Dispatch the configured agent (`--profile` or `config.defaults.agent`) to execute the ingest workflow end-to-end. Requires an accessible agent profile. Flags: `--profile <name>`, `--model <model>`, `--timeout-ms <ms>` |
+| `ingest <name>` | Dispatch the configured agent engine (`--engine` or `config.defaults.engine`) to execute the ingest workflow end-to-end. Requires an accessible agent engine. Flags: `--engine <name>`, `--model <model>`, `--timeout-ms <ms>` |
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$` — lowercase letters and digits
 only; must start with a lowercase letter or digit.
@@ -1867,16 +1869,16 @@ break from the older `reflect` / `proposal` / `distill` public UX.
 ### agent
 
 **Status: Available since 0.8.0.**
-Dispatch a configured external agent profile, optionally embodying a stash agent asset.
+Dispatch a configured agent engine, optionally embodying a stash agent asset.
 
 ```sh
-akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>] [--command <ref>] [--workflow <ref>] [--timeout-ms <ms>]
+akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [--command <ref>] [--workflow <ref>] [--timeout-ms <ms>]
 ```
 
 | Argument / Flag | Description |
 | --- | --- |
-| `<profile>` | Agent profile / platform to use (`opencode`, `claude`, `codex`, `gemini`, `aider`, or any custom profile name from config) |
 | `<agent-ref>` | Optional agent asset ref (e.g. `agent:code-reviewer`). Loads system prompt, model, and tool policy from the stash asset. |
+| `--engine <name>` | Agent engine to use; defaults to `defaults.engine` |
 | `--prompt <text>` | Task prompt to pass to the agent |
 | `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
 | `--command <ref>` | Load prompt from a `command:` asset |
@@ -1888,37 +1890,37 @@ its system prompt, `modelHint`, and `toolPolicy`. The `--model` flag wins
 over any model specified in the asset.
 
 **Platform-specific dispatch:** akm uses a platform builder to construct the
-CLI argv for each profile. `opencode` profiles emit:
+CLI argv for each engine's harness platform. `platform: "opencode"` engines emit:
 `opencode run [--system-prompt "..."] [--model opencode/claude-opus-4-7] "<prompt>"`.
-`claude` profiles emit:
+`platform: "claude"` engines emit:
 `claude [--system-prompt "..."] [--model claude-opus-4-7] [--allowedTools ...] --print "<prompt>"`.
-Custom profiles may set `commandBuilder` in config to map to a known builder.
+Agent engines may set `bin`, `args`, `workspace`, `model`, `timeoutMs`, and
+`modelAliases` in config.
 
 Without any `--prompt`, `<agent-ref>`, or `--model`, the agent is launched
 interactively (no injected prompt, no platform-specific flags beyond the
-profile's base args) — the same behaviour as before 0.8.0.
+engine's base args) — the same behaviour as before 0.8.0.
 
-Profiles ship for `opencode`, `claude`, `codex`, `gemini`, and `aider` and
-can be extended via `profiles.agent.<name>` in config (see
-[Configuration](configuration.md)). akm spawns the profile's `bin` via the
-shared spawn wrapper described in v1 spec §12.2 — captured or interactive
-stdio, hard timeout, structured failure reasons.
+Configure agent engines under `engines.<name>` with `kind: "agent"` and a
+registered harness `platform` (see [Configuration](configuration.md)). AKM
+lowers the selected engine to the spawn or embedded SDK runner with captured or
+interactive stdio, hard timeout, and structured failure reasons.
 
 ```sh
 # Interactive launch (unchanged from pre-0.8.0):
-akm agent opencode
+akm agent --engine opencode
 
 # Dispatch with a prompt only:
-akm agent claude --prompt "summarize recent changes"
+akm agent --engine claude --prompt "summarize recent changes"
 
 # Embody a stash agent asset:
-akm agent opencode agent:code-reviewer --prompt "review src/"
+akm agent agent:code-reviewer --engine opencode --prompt "review src/"
 
 # Model override with alias:
-akm agent claude agent:planner --model sonnet --prompt "plan the sprint"
+akm agent agent:planner --engine claude --model sonnet --prompt "plan the sprint"
 
 # Exact model ID override:
-akm agent opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
+akm agent --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
 ```
 
 Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason? }`. On
@@ -1940,7 +1942,7 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | Flag | Description |
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
-| `--dry-run` | Show planned refs without generating proposals |
+| `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, stash, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--target` | Override the write target used later by `accept` |
 | `--auto-accept[=<value>]` | Confidence threshold (0-100) for auto-accepting proposals. Default ON at 90 when the flag is absent. Bare `--auto-accept` = 90. `--auto-accept=<N>` sets the threshold to integer N (0-100). `--auto-accept=safe` is a permanent alias for 90. `--auto-accept=false` disables auto-accept and restores the interactive prompt on the HTTP consolidation path. |
 | `--limit <n>` | Maximum number of assets to process |
@@ -1948,8 +1950,8 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
 | `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 1; set 0 to include all assets regardless of retrieval history) |
-| `--profile <name>` | Override the active improve profile (e.g. `default`, `quick`, `thorough`, `memory-focus`, or any custom entry under `profiles.improve`) |
-| `--json-to-stdout` | Emit the full JSON result on stdout (legacy behaviour). Without this flag the full JSON is written to `<stash>/.akm/runs/<run-id>/improve-result.json` and stdout stays empty; pass `--json-to-stdout` to restore the pre-0.8.0 `akm improve \| jq` pipeline. |
+| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
+| `--json-to-stdout` | Emit the full JSON result on stdout for a live run. Without this flag, live-run results are recorded in `$XDG_DATA_HOME/akm/state.db` table `improve_runs` and stdout stays empty. Dry-runs always emit their result on stdout and never write an `improve_runs` row. |
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
@@ -1994,20 +1996,18 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 | --- | --- |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--profile` | Override the default agent profile |
-| `--timeout-ms` | Override the agent profile's `timeoutMs` for this call |
+| `--engine` | Override the default execution engine |
+| `--timeout-ms` | Override the selected engine timeout for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
-**Per-task `timeoutMs` in task YAML files:** a task `.yml` file may set
-`timeoutMs` to override the agent profile's `timeoutMs` (i.e.
-`profiles.agent.<name>.timeoutMs`) for that task only. Set `timeoutMs: null` to
-disable the kill timer entirely (useful for long-running local-model tasks), or
-a positive integer (milliseconds) to apply a task-specific limit.
+**Prompt-task `timeoutMs`:** a version-2 prompt task may set `timeoutMs` to
+override its selected engine timeout. Set it to `null` to disable the timer, or
+to a positive integer (milliseconds) to apply a task-specific limit.
 
 ### proposal
 
-**Status: Available since 0.8.0.**
+**Status: Version-2 schema in 0.9.0.**
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 `list`, `show`, `diff`, `accept`, `reject`, `revert`. Bare `akm proposal`
 behaves as `akm proposal list`.
@@ -2141,7 +2141,8 @@ shell commands. It manages on-disk task definitions under
 akm tasks list                              # List all tasks in the stash
 akm tasks show <id>                         # Show one parsed task
 akm tasks add <id> --schedule "@daily" \    # Register a new task and install it
-  --command "akm improve --auto-accept=90"
+  --command "akm improve --strategy default --auto-accept=90"
+akm tasks add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
 akm tasks run <id>                          # Execute now (what the scheduler calls)
 akm tasks enable <id> / disable <id>        # Toggle scheduler entry
 akm tasks remove <id>                       # Delete task file and uninstall
@@ -2151,11 +2152,13 @@ akm tasks doctor                            # Report scheduler backend + paths
 ```
 
 Each task targets exactly one of `--workflow <ref>`, `--prompt <text-or-ref>`,
-or `--command <shell>`. Prompt targets dispatch through the configured agent
-profile; command targets run as plain shell. Optional fields include
-`--profile`, `--params` (JSON for workflow params), `--name`,
-`--when-to-use`, `--description`, and `--tags`. Per-task `timeoutMs` is set
-in the task YAML itself.
+or `--command <shell>`. Task YAML is strict and begins with `version: 2`.
+Prompt targets dispatch through `--engine` or `defaults.engine` and may set
+`model`, `timeoutMs`, and LLM request overrides; command tasks may set only
+`timeoutMs`; workflow tasks may set only `params`. `tasks add` accepts
+`--engine`, `--model`, `--timeout-ms`, `--params`, `--name`, `--when-to-use`,
+`--description`, and `--tags`. A v1 task is diagnosed by list, sync, and doctor
+but is never rewritten or executed.
 
 `akm tasks run` is what cron / launchd / schtasks invoke at the scheduled
 time — `tasks_invoked` and `tasks_completed` events land in `state.db` so

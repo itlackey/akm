@@ -66,7 +66,7 @@ export function classifyLlmError(err: unknown): LlmErrorClass {
  */
 export interface CallStructuredRequest {
   temperature?: number;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   signal?: AbortSignal;
   responseSchema?: Record<string, unknown>;
   onRetryAttempt?: () => void;
@@ -79,7 +79,7 @@ export interface CallStructuredRequest {
     messages: ChatMessage[],
     options?: {
       temperature?: number;
-      timeoutMs?: number;
+      timeoutMs?: number | null;
       signal?: AbortSignal;
       responseSchema?: Record<string, unknown>;
       onRetryAttempt?: () => void;

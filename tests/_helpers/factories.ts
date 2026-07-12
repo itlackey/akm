@@ -25,14 +25,21 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  * focused on reflect/distill mechanics. The dedicated fail-closed behavior is
  * covered by `tests/commands/improve/quality-gate-fail-closed.test.ts`.
  *
- * Reflect consumes `options.config` ONLY for the quality gate when an
- * `agentProfile` is injected (the profile bypasses all other config lookup),
- * so a minimal profiles-only object is sufficient.
+ * The fixture includes a named agent engine because reflect resolves through
+ * the same strict engine boundary in tests and production.
  */
 export function quietQualityGateConfig(): AkmConfig {
   return {
-    profiles: { improve: { default: { processes: { distill: { qualityGate: { enabled: false } } } } } },
-  } as unknown as AkmConfig;
+    configVersion: "0.9.0",
+    semanticSearchMode: "auto",
+    engines: {
+      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+    },
+    defaults: { engine: "fake-agent", improveStrategy: "default" },
+    improve: {
+      strategies: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+    },
+  } as AkmConfig;
 }
 
 /**

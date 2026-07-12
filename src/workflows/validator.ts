@@ -10,6 +10,7 @@
  * step-id format, and the frontmatter key whitelist.
  */
 
+import { utf8Bytes, WORKFLOW_MAX_INSTRUCTION_BYTES, WORKFLOW_MAX_PARAMS, WORKFLOW_MAX_STEPS } from "./resource-limits";
 import type { WorkflowDocument, WorkflowError } from "./schema";
 
 const STEP_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -24,6 +25,24 @@ export function runSemanticChecks(
   checkFrontmatterKeys(frontmatterData, frontmatterEndLine, errors);
   checkStepIdFormat(draft, errors);
   checkDuplicateStepIds(draft, errors);
+  checkResourceLimits(draft, errors);
+}
+
+function checkResourceLimits(draft: WorkflowDocument, errors: WorkflowError[]): void {
+  if (draft.steps.length > WORKFLOW_MAX_STEPS) {
+    errors.push({ line: 1, message: `Workflow must contain at most ${WORKFLOW_MAX_STEPS} steps.` });
+  }
+  if ((draft.parameters?.length ?? 0) > WORKFLOW_MAX_PARAMS) {
+    errors.push({ line: 1, message: `Workflow must contain at most ${WORKFLOW_MAX_PARAMS} parameters.` });
+  }
+  for (const step of draft.steps) {
+    if (utf8Bytes(step.instructions.text) > WORKFLOW_MAX_INSTRUCTION_BYTES) {
+      errors.push({
+        line: step.instructions.source.start,
+        message: `Step "${step.id}" instructions exceed the 256 KiB resource limit.`,
+      });
+    }
+  }
 }
 
 function checkFrontmatterKeys(data: Record<string, unknown>, fmEndLine: number, errors: WorkflowError[]): void {

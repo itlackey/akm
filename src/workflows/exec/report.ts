@@ -43,6 +43,13 @@ import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
+import { acquireMaintenanceActivity } from "../../core/maintenance-barrier";
+import {
+  collectSensitiveValues,
+  isEnvPassthroughValueSafeToExpose,
+  redactSensitiveText,
+  redactSensitiveValue,
+} from "../../core/redaction";
 import type { WorkflowRunStatus } from "../../sources/types";
 import {
   type WorkflowRunUnitRow,
@@ -52,6 +59,7 @@ import {
 import { assertRunParamsSatisfyPlan } from "../ir/params";
 import type { IrStepPlan, WorkflowPlanGraph } from "../ir/schema";
 import { PROGRAM_RETRY_REASONS } from "../program/schema";
+import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -61,6 +69,7 @@ import {
 import { UNIT_STALE_MS } from "../runtime/unit-checkin";
 import type { SummaryJudge } from "../validate-summary";
 import { buildLease, resolveRunId } from "./brief";
+import { frozenSummaryJudge } from "./frozen-judge";
 import {
   activeGateLoop,
   cascadeSkippedRouter,
@@ -68,7 +77,6 @@ import {
   type ExecutedStepOutcome,
   finalizeExecutedStep,
   isRetryEligibleFailure,
-  parseFrozenPlan,
   type RouteSkipInfo,
   recoverGateFeedback,
   reduceEmptyStep,
@@ -191,6 +199,15 @@ const FINALIZE_LOCK_TTL_MS = 90_000;
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 export async function reportWorkflowUnit(input: ReportUnitInput): Promise<WorkflowReportResult> {
+  const release = await acquireMaintenanceActivity("workflow-report");
+  try {
+    return await reportWorkflowUnitWithBarrier(input);
+  } finally {
+    release();
+  }
+}
+
+async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<WorkflowReportResult> {
   const nowFn = input.now ?? (() => new Date());
   const nowIso = nowFn().toISOString();
 
@@ -198,8 +215,6 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   // #14: read the spine, run row, and unit journal in ONE snapshot so the guards
   // below see a consistent point-in-time state (same fix as `brief`).
   const { next, run: runRow, units } = await snapshotRunForDriver(runId);
-  const planJson = runRow.plan_json;
-  const planHash = runRow.plan_hash;
   const leaseHolder = runRow.engine_lease_holder;
   const leaseUntil = runRow.engine_lease_until;
 
@@ -238,7 +253,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     );
   }
 
-  const plan = loadFrozenPlan(runId, planJson, planHash);
+  const plan = requireExecutableWorkflowPlan(runRow);
   // Reviewer #12: the journaled params row must still satisfy the frozen param
   // schemas before report resolves any unit prompt from it — a violation is
   // post-start corruption, refused loudly (mirrors the frozen-plan hash check
@@ -288,15 +303,22 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
         `report a result against. This is an authoring/data error in the workflow; fix it and start a new run.`,
     );
   }
+  if (!workUnit.engine || !workUnit.invocation) {
+    throw new UsageError(`Unit "${workUnit.unitId}" has no complete frozen engine attribution.`);
+  }
+  const engineName = workUnit.engine.name;
+  const exactModel = workUnit.invocation.model;
   const inputHash = workUnit.resolved.inputHash;
   const journalId = workUnit.journalBaseId;
+  const sensitiveValues = await collectReportedUnitSensitiveValues(workUnit);
+  const sessionId = input.sessionId === undefined ? undefined : redactSensitiveText(input.sessionId, sensitiveValues);
 
   // ── running: claim / heartbeat, never advances the spine ───────────────────
   if (input.status === "running") {
     // The claim holder: the driver's --session-id, else a token we mint and
     // return so the driver can reuse it (as --session-id) to heartbeat and
     // finish the SAME claim. First unexpired claim wins.
-    const holder = input.sessionId ?? `claim:${randomUUID()}`;
+    const holder = sessionId ?? `claim:${randomUUID()}`;
     const claimExpiresAt = new Date(nowFn().getTime() + CLAIM_TTL_MS).toISOString();
     const claimed = await withWorkflowRunsRepo((repo) =>
       repo.transaction((): "claim" | "heartbeat" => {
@@ -327,7 +349,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
           phase: null,
           runner: workUnit.runner,
-          model: workUnit.model ?? null,
+          engine: engineName,
+          model: exactModel,
           inputHash,
           startedAt: nowIso,
           claimHolder: holder,
@@ -363,7 +386,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   }
 
   // ── completed / failed: validate, guard, write, maybe finalize ─────────────
-  const { resultJson, failureReason } = prepareResult(input, workUnit);
+  const { resultJson, failureReason } = prepareResult(input, workUnit, sensitiveValues);
   const thisTokens = input.tokens ?? 0;
 
   // Guarded write: the idempotent re-report / replay-divergence check and the
@@ -372,7 +395,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
   // one budgeted step) serialize on the write lock — each sees the other's row
   // and the row is always internally consistent.
   const status: Exclude<WorkflowRunUnitStatus, "pending" | "running"> = input.status;
-  const holder = input.sessionId ?? null;
+  const holder = sessionId ?? null;
   const writeResult = await withWorkflowRunsRepo((repo) =>
     repo.transaction((): UnitWriteOutcome => {
       const existing = repo.getUnit(runId, journalId);
@@ -439,7 +462,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
           phase: null,
           runner: workUnit.runner,
-          model: workUnit.model ?? null,
+          engine: engineName,
+          model: exactModel,
           inputHash,
           startedAt: existing?.started_at ?? nowIso,
         });
@@ -466,7 +490,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
         resultJson,
         tokens: carriedTokens,
         failureReason,
-        sessionId: input.sessionId ?? null,
+        sessionId: sessionId ?? null,
         finishedAt: nowIso,
       });
       // A `tokens-cross` verdict: this unit's OWN tokens push the run total over
@@ -549,7 +573,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
         byUnit,
         gateLoop,
         priorEvidence,
-        summaryJudge: input.summaryJudge,
+        summaryJudge:
+          input.summaryJudge === undefined ? frozenSummaryJudge(plan, stepPlan.gate.judge) : input.summaryJudge,
         now: nowFn,
         written: { unitId: journalId, status },
         recorded: "written",
@@ -614,7 +639,7 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
     byUnit,
     gateLoop,
     priorEvidence,
-    summaryJudge: input.summaryJudge,
+    summaryJudge: input.summaryJudge === undefined ? frozenSummaryJudge(plan, stepPlan.gate.judge) : input.summaryJudge,
     now: nowFn,
     written: { unitId: journalId, status },
     recorded: idempotent ? "idempotent" : "written",
@@ -645,6 +670,20 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
 export async function settleWorkflowSpine(input: {
   target: string;
   /** The step id the driver briefed against (from `brief`'s settle command). */
+  expectStep?: string;
+  summaryJudge?: SummaryJudge | null;
+  now?: () => Date;
+}): Promise<WorkflowReportResult> {
+  const release = await acquireMaintenanceActivity("workflow-report-settle");
+  try {
+    return await settleWorkflowSpineWithBarrier(input);
+  } finally {
+    release();
+  }
+}
+
+async function settleWorkflowSpineWithBarrier(input: {
+  target: string;
   expectStep?: string;
   summaryJudge?: SummaryJudge | null;
   now?: () => Date;
@@ -681,7 +720,7 @@ export async function settleWorkflowSpine(input: {
     );
   }
 
-  const plan = loadFrozenPlan(runId, runRow.plan_json, runRow.plan_hash);
+  const plan = requireExecutableWorkflowPlan(runRow);
   assertRunParamsSatisfyPlan(runId, plan, next.run.params ?? {});
 
   // A step with resolvable units is settled ONLY when its work-list is FULLY
@@ -834,6 +873,7 @@ function buildStepContext(
     runId,
     params: next.run.params ?? {},
     stepOutputs,
+    engines: plan.execution.engines,
     gateLoop,
     ...(gateFeedback ? { gateFeedback } : {}),
   });
@@ -1063,7 +1103,7 @@ async function finalizeStep(args: {
       workflowRef: next.run.workflowRef,
       stepPlan,
       stepId: stepState.id,
-      completionCriteria: stepState.completionCriteria ?? [],
+      completionCriteria: stepPlan.gate.criteria,
       gateLoop,
       reduced,
       priorEvidence: args.priorEvidence,
@@ -1208,6 +1248,7 @@ async function settleSpine(args: {
     const step = state.step;
     const sp = plan.steps.find((s) => s.stepId === step.id);
     if (!sp) break;
+    const stepJudge = summaryJudge === undefined ? frozenSummaryJudge(plan, sp.gate.judge) : summaryJudge;
 
     // A route-skipped target: complete it as skipped, cascading if it is itself
     // a router (identical to the engine loop's skip handling).
@@ -1232,7 +1273,7 @@ async function settleSpine(args: {
         workflowRef: state.run.workflowRef,
         stepId: step.id,
         stepPlan: sp,
-        completionCriteria: step.completionCriteria ?? [],
+        completionCriteria: sp.gate.criteria,
         gateLoop: 1,
         loopsRemaining: false,
         result: {
@@ -1245,7 +1286,7 @@ async function settleSpine(args: {
         params: state.run.params ?? {},
         routeSelected,
         routeUnselected,
-        summaryJudge,
+        summaryJudge: stepJudge,
         ...leaseArg,
       });
       if (fin.kind !== "advanced") break; // a route failure stops the walk
@@ -1267,6 +1308,7 @@ async function settleSpine(args: {
         runId,
         params: state.run.params ?? {},
         stepOutputs,
+        engines: plan.execution.engines,
         gateLoop,
         ...(gateFeedback ? { gateFeedback } : {}),
       });
@@ -1294,14 +1336,14 @@ async function settleSpine(args: {
         workflowRef: state.run.workflowRef,
         stepPlan: sp,
         stepId: step.id,
-        completionCriteria: step.completionCriteria ?? [],
+        completionCriteria: sp.gate.criteria,
         gateLoop,
         reduced,
         priorEvidence,
         params: state.run.params ?? {},
         routeSelected,
         routeUnselected,
-        summaryJudge,
+        summaryJudge: stepJudge,
         ...leaseArg,
       });
       if (completion.kind === "advanced") {
@@ -1327,16 +1369,6 @@ async function settleSpine(args: {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function loadFrozenPlan(runId: string, planJson: string | null, planHash: string | null): WorkflowPlanGraph {
-  if (!planJson) {
-    throw new UsageError(
-      `Workflow run ${runId} predates frozen plans (no plan_json on the run row) and cannot be driven by ` +
-        `\`akm workflow report\`. Use engine-driven mode: \`akm workflow run ${runId}\`.`,
-    );
-  }
-  return parseFrozenPlan(runId, planJson, planHash);
-}
-
 /**
  * Normalize a driver-supplied `--failure-reason` to the persisted taxonomy (PR
  * #714 review round 2, #16). An external driver can type ANY string; storing it
@@ -1354,9 +1386,10 @@ function loadFrozenPlan(runId: string, planJson: string | null, planHash: string
  *     unknown external reason is recorded for observability without ever
  *     triggering retry.
  */
-export function normalizeFailureReason(raw: string | undefined): string {
+export function normalizeFailureReason(raw: string | undefined, sensitiveValues: readonly string[] = []): string {
   const trimmed = raw?.trim();
   if (!trimmed) return "reported_failure";
+  if (redactSensitiveText(trimmed, sensitiveValues) !== trimmed) return "reported_failure";
   if ((PROGRAM_RETRY_REASONS as readonly string[]).includes(trimmed)) return trimmed;
   const slug = trimmed
     .toLowerCase()
@@ -1370,11 +1403,15 @@ export function normalizeFailureReason(raw: string | undefined): string {
 function prepareResult(
   input: ReportUnitInput,
   workUnit: StepWorkUnit,
+  sensitiveValues: readonly string[],
 ): { resultJson: string | null; failureReason: string | null } {
   if (input.status === "failed") {
     return {
-      resultJson: input.resultRaw !== undefined && input.resultRaw !== "" ? JSON.stringify(input.resultRaw) : null,
-      failureReason: normalizeFailureReason(input.failureReason),
+      resultJson:
+        input.resultRaw !== undefined && input.resultRaw !== ""
+          ? JSON.stringify(redactSensitiveText(input.resultRaw, sensitiveValues))
+          : null,
+      failureReason: normalizeFailureReason(input.failureReason, sensitiveValues),
     };
   }
   // completed
@@ -1392,20 +1429,21 @@ function prepareResult(
       parsed = JSON.parse(raw);
     } catch (err) {
       throw new UsageError(
-        `Unit "${input.unitId}" result is not valid JSON (its output schema requires a JSON value): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `Unit "${input.unitId}" result is not valid JSON (its output schema requires a JSON value): ${redactSensitiveText(
+          err instanceof Error ? err.message : String(err),
+          sensitiveValues,
+        )}`,
         "INVALID_FLAG_VALUE",
       );
     }
     const errors = validateJsonSchemaSubset(parsed, workUnit.schema);
     if (errors.length > 0) {
       throw new UsageError(
-        `Unit "${input.unitId}" result failed validation against its declared output schema: ${errors.join("; ")}.`,
+        `Unit "${input.unitId}" result failed validation against its declared output schema: ${redactSensitiveText(errors.join("; "), sensitiveValues)}.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    return { resultJson: JSON.stringify(parsed), failureReason: null };
+    return { resultJson: JSON.stringify(redactSensitiveValue(parsed, sensitiveValues)), failureReason: null };
   }
   // Free-text unit: journal the text as a JSON string EXACTLY as the executor
   // does — `native-executor.ts` finishUnit uses `outcome.text ? JSON.stringify… :
@@ -1413,7 +1451,35 @@ function prepareResult(
   // Matching that keeps the promoted artifact and the dispatch row byte-identical
   // across the engine and report surfaces (the cardinal graph-parity rule), and
   // stays consistent with the FAILED branch above which also maps ""→null.
-  return { resultJson: input.resultRaw ? JSON.stringify(input.resultRaw) : null, failureReason: null };
+  return {
+    resultJson: input.resultRaw ? JSON.stringify(redactSensitiveText(input.resultRaw, sensitiveValues)) : null,
+    failureReason: null,
+  };
+}
+
+async function collectReportedUnitSensitiveValues(workUnit: StepWorkUnit): Promise<string[]> {
+  const values = new Set<string>();
+  for (const ref of workUnit.env ?? []) {
+    const { resolveEnvBinding } = await import("../../commands/env/env-binding.js");
+    for (const value of Object.values(resolveEnvBinding(ref).values)) values.add(value);
+  }
+  const collectEngine = (engine: StepWorkUnit["engine"] | StepWorkUnit["fallbackEngine"]): void => {
+    if (!engine) return;
+    if (engine.kind === "llm") {
+      for (const name of engine.credential?.names ?? []) {
+        const value = process.env[name]?.trim();
+        if (value) values.add(value);
+      }
+      return;
+    }
+    for (const name of engine.envPassthrough) {
+      const value = process.env[name];
+      if (!isEnvPassthroughValueSafeToExpose(name, value) && value) values.add(value);
+    }
+  };
+  collectEngine(workUnit.engine);
+  collectEngine(workUnit.fallbackEngine);
+  return collectSensitiveValues(values);
 }
 
 /** How the guarded unit write resolved inside the SQLite transaction. */

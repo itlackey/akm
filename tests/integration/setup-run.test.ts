@@ -4,7 +4,6 @@ import path from "node:path";
 import { _setClackForTests } from "../../src/cli/clack";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import { _setDefaultTasksForTests } from "../../src/commands/tasks/default-tasks";
-import { _setSaveConfigForTests } from "../../src/core/config/config";
 import type { IndexResponse } from "../../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
@@ -438,34 +437,30 @@ describe("runSetupWizard", () => {
     expect(promptState.logs.some((entry) => entry.includes("asset preparation was skipped"))).toBe(true);
   });
 
-  test("surfaces config save failure after bootstrap init", async () => {
+  test("surfaces config preflight failure before bootstrap init", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
-    let saveCalls = 0;
-    overrideSeam(_setSaveConfigForTests, () => {
-      saveCalls += 1;
-      throw new Error("EACCES config.json");
-    });
+    fs.mkdirSync(DEFAULT_CONFIG_PATH, { recursive: true });
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
     promptState.confirms.push(false, false, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    await expect(runSetupWizard()).rejects.toThrow("EACCES config.json");
-    expect(saveCalls).toBe(1);
-    expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
+    await expect(runSetupWizard()).rejects.toThrow(/EISDIR|directory|Could not read config/);
+    expect(setupState.initCalls).toEqual([]);
     expect(setupState.indexCalls).toHaveLength(0);
   });
 
-  test("surfaces bootstrap init failure before saving config", async () => {
+  test("does not commit config when bootstrap init fails", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
     overrideSeam(_setAkmInitForTests, async () => {
       throw new Error("EACCES stash init");
     });
 
-    // akmInit throws before the wizard asks anything — no prompt queue needed
-    // (the strict clack mock will fail loudly if a prompt is ever reached).
+    promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
+    promptState.confirms.push(false, false, false, true);
+    promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
     expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);

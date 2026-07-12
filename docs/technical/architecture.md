@@ -26,27 +26,26 @@ Built-in asset types are:
 - `env`
 - `secret`
 - `wiki`
+- `task`
+- `session`
 
 The deprecated `vault` type was removed in 0.9.0 and replaced by `env` (whole
 `.env` files) and `secret` (single-value secret files).
 
 Each type maps to a canonical source directory through `src/core/asset/asset-spec.ts`
 (`skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, `scripts/`,
-`memories/`, `lessons/`, `facts/`, `env/`, `secrets/`, `wikis/`).
+`memories/`, `lessons/`, `facts/`, `env/`, `secrets/`, `wikis/`, `tasks/`,
+`sessions/`).
 
 ---
 
 ## Sources and Source Providers
 
 A **source** is a directory plus a way to refresh it from upstream. There are
-exactly two source provider types in v1:
+exactly four source provider types:
 
 - `filesystem` — a local path the user owns
 - `git` — a git working tree mirrored under akm's cache
-
-Two additional cache-backed kinds materialise files into the cache before
-indexing:
-
 - `website` — recrawled and converted to markdown
 - `npm` — installed into the cache
 
@@ -266,19 +265,29 @@ scripts tell "akm threw unexpectedly" apart from an ordinary `NotFoundError`
 
 ---
 
-## LLM/Agent Boundary
+## Engine Boundary
 
-akm has two distinct integration paths to language models. They do not share
-state, do not share modules, and do not share import graphs. The boundary is
-locked by v1 spec §9.7 and is enforced at two concrete seams.
+Public execution selection uses named `engines`, never profiles. An engine is
+either `kind: "llm"` (an OpenAI-compatible chat-completions connection) or
+`kind: "agent"` (a registered harness platform). `resolveEngine()` lowers the
+selected engine into the internal `RunnerSpec` tagged union; the SDK runtime is
+an internal lowering of an `opencode-sdk` agent engine, not a public engine kind.
+`resolveLlmEngineUse()` selects and overlays one LLM engine without materializing
+its symbolic credential until dispatch.
 
-A unified adapter (`src/llm/call-ai.ts`) bridges the two paths for interactive
-commands (`akm propose`, the reflect pass inside `akm improve`, etc.): it
-routes to the resolved agent profile under `profiles.agent.<name>` (agent CLI
-shell-out or SDK) when an agent is configured, and falls back to the resolved
-LLM profile under `profiles.llm.<name>` (HTTP chat-completions) otherwise. The indexer LLM passes do
-**not** use this adapter — they call `chatCompletion` directly to stay on the
-HTTP path and avoid agent-CLI overhead.
+`executeRunner()` is the sole exhaustive switch over `RunnerSpec`. Callers pass
+their own LLM handler for the LLM arm; agent and SDK arms use the harness runner.
+There is no generic `callAi` adapter: LLM-only processes call the bounded
+`chatCompletion()` client with their frozen connection, while mixed runner
+surfaces dispatch a frozen `RunnerSpec` through `executeRunner()`.
+An explicit missing or incompatible engine is an error and never falls through to
+another configured engine. Workflow v3 plans freeze the configured workflow cap,
+exact models, symbolic credentials, selected LLM-engine concurrency, and effective
+timeout. Dispatch uses the minimum of map width, frozen workflow cap, frozen
+LLM-engine cap, and the current host's CPU-derived safety cap.
+Timeout authority lives on each frozen invocation, not in engine catalog entries;
+an SDK invocation still derives its default timeout from its fallback LLM engine
+when the SDK engine does not set one.
 
 ### In-tree LLM helpers (`src/llm/`)
 
@@ -294,14 +303,10 @@ Concretely:
   pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
   stateless model handle (see the comment in that file). It exposes
   `resetLocalEmbedder()` so tests can construct a fresh pipeline.
-- Each call site is gated behind exactly one configuration flag — either a
-  `processes.<name>.enabled` toggle under `profiles.improve.<name>` (improve-
-  bound features such as memory inference, graph extraction, consolidation,
-  feedback distillation) or a first-class section toggle
-  (`index.metadataEnhance.enabled`, `index.stalenessDetection.enabled`) —
-  and falls back to a deterministic path
-  when the flag is `false`, the endpoint is unreachable, or parsing fails.
-  See `docs/configuration.md` for canonical paths.
+- Improve processes are selected through `improve.strategies` and resolve their
+  engine before dispatch. Index and other non-improve consumers use their own
+  documented engine-use sections. See `docs/configuration.md` for canonical
+  paths.
 
 The seam is locked by `tests/architecture/llm-stateless-seam.test.ts`, which
 inspects the module shape of each `src/llm/*` entry — not the source text.
@@ -320,29 +325,34 @@ External coding agents are reachable via two execution paths:
   `"timeout" | "spawn_failed" | "non_zero_exit" | "parse_error"`. Callers
   never see raw process errors.
 
-**SDK path** (`src/integrations/agent/sdk-runner.ts`):
+**SDK path** (`src/integrations/harnesses/opencode-sdk/sdk-runner.ts`):
 
-- `runAgentSdk(profile, prompt, opts, llmConfig?)` uses the embedded
+- `runOpencodeSdk(profile, prompt, opts, llmConfig?)` uses the embedded
   `@opencode-ai/sdk` instead of `Bun.spawn`. No agent CLI binary is required.
-- Enabled when `profile.sdkMode === true`. The profile can specify an
-  `endpoint`, `apiKey`, and `model`; absent fields inherit from `config.llm`.
+- Selected by an agent engine whose `platform` is `"opencode-sdk"`. Its optional
+  `llmEngine` (then `defaults.llmEngine`) supplies the LLM fallback connection.
 - Manages a single per-process singleton server, creating one fresh session
   per call to avoid history accumulation and unbounded token growth.
+- Concurrent calls share startup by server material, but each call races that
+  startup against its own deadline (including `null`); no caller's timeout is
+  stored in the shared lifecycle.
 
-**Shared pipeline** (`src/integrations/agent/pipeline.ts`):
+Prompt tasks are versioned task YAML v2 assets. They resolve `engine` from the
+task or `defaults.engine`; LLM prompt tasks use plain chat completion and agent
+prompt tasks use the spawn or SDK runner. Task run history writes metadata v2
+with an `engine`; historical v1 metadata remains readable without being an active
+task configuration surface.
 
-- `runProposalAgentPipeline(opts)` is the shared entry point for
-  `akm propose` and the reflect pass inside `akm improve`. It routes to
-  `runAgentSdk` when `profile.sdkMode` is true (or the agent profile's
-  `platform` is `"opencode-sdk"`), and to `runAgent` (spawn path)
-  otherwise.
-
-No file under `src/integrations/agent/` imports an in-tree LLM helper
-(`src/llm/`). The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`,
-which asserts the documented shape of `runAgent`, the failure-reason
-discriminated union, and the captured/interactive stdio modes. A regression
-guard in `tests/architecture/agent-no-llm-sdk-guard.test.ts` catches
-accidental introduction of in-tree LLM imports under that path.
+Migration restore holds a global maintenance barrier from its final blocker
+check through artifact replacement. Index writers, improve/extract process
+locks, lockfile writers, workflow lease claims, and every canonical `state.db`
+or `workflow.db` handle register under the same barrier before starting. State
+and workflow handles retain their activity registration until close, so task,
+event, proposal, workflow-run, and other durable-state access cannot overlap
+artifact replacement. Restore's own read-only workflow blocker scan uses the
+barrier it already owns rather than recursively registering an activity. Scoped
+barrier ownership is reentrant for nested repository opens in the same sync or
+async execution context; unrelated work and child processes remain excluded.
 
 ---
 
@@ -357,7 +367,7 @@ accidental introduction of in-tree LLM imports under that path.
 | `src/core/config/config.ts` | config loading, validation, env resolution (re-export shim at `src/core/config.ts`) |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
-| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 4 workers) |
+| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/sources/source-provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
@@ -383,17 +393,16 @@ accidental introduction of in-tree LLM imports under that path.
 | `src/workflows/authoring/` | workflow authoring + scope-key helpers |
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
 | `src/workflows/runtime/` | run lifecycle: runs, checkin, document-cache, agent-identity |
-| `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `profiles.improve.<name>.processes.memoryInference.enabled`) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |
 | `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
-| `src/integrations/agent/sdk-runner.ts` | embedded SDK runner (`runAgentSdk`); no CLI binary needed when `sdkMode` is true |
-| `src/integrations/agent/pipeline.ts` | shared proposal-agent pipeline; routes to spawn or SDK based on `profile.sdkMode` |
-| `src/integrations/agent/profiles.ts` | built-in agent CLI profile registry |
-| `src/integrations/agent/config.ts` | agent config parsing and profile resolution |
+| `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded SDK runner selected by an SDK `RunnerSpec` |
+| `src/integrations/agent/runner-dispatch.ts` | exhaustive `RunnerSpec` dispatch to LLM, spawn, or SDK |
+| `src/integrations/agent/profiles.ts` | internal spawn descriptors used after agent-engine lowering |
+| `src/integrations/agent/engine-resolution.ts` | named engine resolution and `RunnerSpec` lowering |
 | `src/integrations/agent/detect.ts` | PATH-based agent CLI detection for `akm setup` |
 
 ---

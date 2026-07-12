@@ -245,9 +245,8 @@ describe("runAgent — JSON parse mode", () => {
 
 // ── #284 GAP-HIGH 11: timeoutMs precedence ────────────────────────────────
 
-describe("runAgent — timeoutMs precedence", () => {
-  test("options.timeoutMs overrides profile.timeoutMs", async () => {
-    // Both profile and options carry a timeoutMs. Options must win.
+describe("runAgent — timeoutMs authority", () => {
+  test("the invocation timeout controls the spawned process deadline", async () => {
     const observedDeadlinesMs: number[] = [];
     let deadlineCallback: (() => void) | undefined;
     const fakeSet = ((cb: () => void, ms: number) => {
@@ -258,8 +257,7 @@ describe("runAgent — timeoutMs precedence", () => {
     const fakeClear = (() => {}) as unknown as typeof clearTimeout;
 
     const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
-    const profile = makeProfile({ timeoutMs: 999_999 } as Partial<AgentProfile>);
-    const promise = runAgent(profile, "go", {
+    const promise = runAgent(makeProfile(), "go", {
       spawn,
       setTimeoutFn: fakeSet,
       clearTimeoutFn: fakeClear,
@@ -472,7 +470,7 @@ describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => 
   });
 });
 
-describe("runAgent — dispatch.cwd is consumed (P0.5)", () => {
+describe("runAgent — cwd authority", () => {
   function captureSpawnOpts() {
     const captured: { cwd?: string }[] = [];
     const spawn: SpawnFn = (_argv, opts) => {
@@ -489,21 +487,21 @@ describe("runAgent — dispatch.cwd is consumed (P0.5)", () => {
     return { spawn, captured };
   }
 
-  test("dispatch.cwd reaches the spawn options when options.cwd is absent", async () => {
+  test("does not invent a cwd when options.cwd is absent", async () => {
     const { spawn, captured } = captureSpawnOpts();
     await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
       spawn,
-      dispatch: { prompt: "go", cwd: "/tmp/unit-workdir" },
+      dispatch: { prompt: "go" },
     });
-    expect(captured[0]?.cwd).toBe("/tmp/unit-workdir");
+    expect(captured[0]?.cwd).toBeUndefined();
   });
 
-  test("options.cwd wins over dispatch.cwd", async () => {
+  test("options.cwd is the sole cwd authority", async () => {
     const { spawn, captured } = captureSpawnOpts();
     await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
       spawn,
       cwd: "/tmp/options-wins",
-      dispatch: { prompt: "go", cwd: "/tmp/dispatch-loses" },
+      dispatch: { prompt: "go" },
     });
     expect(captured[0]?.cwd).toBe("/tmp/options-wins");
   });

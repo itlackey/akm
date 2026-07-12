@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmExtract, parseSinceArg } from "../src/commands/improve/extract";
+import { akmExtract, parseSinceArg, resolveStandaloneExtractPlan } from "../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../src/commands/improve/extract-prompt";
 import { listProposals } from "../src/commands/proposal/repository";
 import { isValidDescription } from "../src/commands/proposal/validators/proposal-quality-validators";
@@ -21,7 +21,7 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../src/integrations/session-logs/types";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
@@ -51,38 +51,45 @@ afterEach(() => {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    profiles: {
-      llm: {
-        default: {
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
-          supportsJsonSchema: true,
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test-model",
+        supportsJsonSchema: true,
+      },
+    },
+    improve: {
+      strategies: {
+        // #561 — these tests assert the distillation chat-call count / schema.
+        // Session indexing (default-on) would add a second chat call per session,
+        // so disable it here; the session-indexing behaviour has dedicated
+        // coverage in tests/session-indexing.test.ts.
+        extract: {
+          processes: { extract: { enabled: true, indexSessions: false, triage: { enabled: false } } },
         },
       },
-      // #561 — these tests assert the distillation chat-call count / schema.
-      // Session indexing (default-on) would add a second chat call per session,
-      // so disable it here; the session-indexing behaviour has dedicated
-      // coverage in tests/session-indexing.test.ts.
-      improve: { default: { processes: { extract: { enabled: true, indexSessions: false } } } },
     },
-    defaults: { llm: "default" },
+    defaults: { llmEngine: "default", improveStrategy: "extract" },
   } as AkmConfig;
 }
 function configDisabled(stashDir: string): AkmConfig {
   return {
+    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     stashDir,
     sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
     defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
-      improve: { default: { processes: { extract: { enabled: false } } } },
+    engines: {
+      default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
     },
-    defaults: { llm: "default" },
+    improve: { strategies: { disabled: { processes: { extract: { enabled: false } } } } },
+    defaults: { llmEngine: "default", improveStrategy: "disabled" },
   } as AkmConfig;
 }
 
@@ -283,9 +290,9 @@ describe("akmExtract — discovery mode", () => {
     const now = Date.now();
     const sessions = Array.from({ length: 5 }, (_, i) => fakeSession(`s${i}`, now - (i + 1) * 60_000));
     const cfg = configEnabled(stash) as AkmConfig & {
-      profiles: { improve: { default: { processes: { extract: Record<string, unknown> } } } };
+      improve: { strategies: { extract: { processes: { extract: Record<string, unknown> } } } };
     };
-    cfg.profiles.improve.default.processes.extract.maxSessionsPerRun = 3;
+    cfg.improve.strategies.extract.processes.extract.maxSessionsPerRun = 3;
 
     let chatCalls = 0;
     const result = await akmExtract({
@@ -652,42 +659,195 @@ describe("minContentChars improve-process config schema", () => {
   });
 });
 
-// ── per-process profile + config support ────────────────────────────────────
+// ── per-process engine + strategy config support ────────────────────────────
 
-describe("akmExtract — profile + config resolution", () => {
-  function configWithProfile(stashDir: string, processOverride: Record<string, unknown>): AkmConfig {
+describe("akmExtract — engine + strategy config resolution", () => {
+  function configWithStrategy(stashDir: string, processOverride: Record<string, unknown>): AkmConfig {
     return {
+      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       stashDir,
       sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
       defaultWriteTarget: "stash",
-      profiles: {
-        llm: {
-          default: {
-            endpoint: "http://localhost:11434/v1/chat/completions",
-            model: "default-model",
-            supportsJsonSchema: true,
-          },
-          "extract-special": {
-            endpoint: "http://192.168.0.205:1234/v1/chat/completions",
-            model: "extract-special-model",
-            supportsJsonSchema: true,
-            timeoutMs: 90_000,
-            contextLength: 131_072,
-          },
+      engines: {
+        default: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "default-model",
+          supportsJsonSchema: true,
         },
-        improve: {
+        "extract-special": {
+          kind: "llm",
+          endpoint: "http://192.168.0.205:1234/v1/chat/completions",
+          model: "extract-special-model",
+          supportsJsonSchema: true,
+          timeoutMs: 90_000,
+          contextLength: 131_072,
+        },
+      },
+      improve: {
+        strategies: {
           // #561 — default-off session indexing here so these resolution tests
           // keep asserting the single distillation chat call. Overridable via
           // processOverride for any test that wants to exercise it.
-          default: { processes: { extract: { enabled: true, indexSessions: false, ...processOverride } } },
+          extract: {
+            processes: {
+              extract: { enabled: true, indexSessions: false, triage: { enabled: false }, ...processOverride },
+            },
+          },
         },
       },
-      defaults: { llm: "default" },
+      defaults: { llmEngine: "default", improveStrategy: "extract" },
     } as AkmConfig;
   }
 
-  test("honors profiles.improve.default.processes.extract.profile to pick a non-default LLM", async () => {
+  test("standalone selection rejects simultaneous --engine and --strategy", () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {});
+    expect(() => resolveStandaloneExtractPlan(config, { engine: "extract-special", strategy: "extract" })).toThrow(
+      "--engine and --strategy are mutually exclusive",
+    );
+  });
+
+  test("an explicitly selected strategy supplies settings but cannot disable standalone extract", () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 });
+    const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
+    expect(plan).toMatchObject({ strategy: "extract", enabled: true, timeoutMs: 600_000 });
+    expect(plan.process.enabled).toBe(false);
+    expect(plan.process.maxTotalChars).toBe(4321);
+  });
+
+  test("an unset symbolic credential does not block dry-run planning with no dispatch", async () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {});
+    const engine = config.engines?.["extract-special"];
+    if (engine?.kind !== "llm") throw new Error("fixture must use an LLM engine");
+    engine.apiKey = "$EXTRACT_REQUIRED_API_KEY";
+
+    await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
+      const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
+      expect(plan.runner?.credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
+      expect(plan.runner?.connection.apiKey).toBeUndefined();
+
+      const result = await akmExtract({
+        type: "claude-code",
+        dryRun: true,
+        stashDir: stash,
+        config,
+        resolvedPlan: plan,
+        harnesses: [makeFakeHarness([])],
+        skipTracking: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.sessionsProcessed).toBe(0);
+    });
+  });
+
+  test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {
+      engine: "default",
+      model: "process-model",
+      timeoutMs: 55_000,
+      llm: { temperature: 0.2, maxTokens: 321 },
+      maxTotalChars: 1234,
+      hotProbation: { enabled: true },
+      schemaSimilarity: { enabled: false },
+    });
+    const strategy = config.improve?.strategies?.extract;
+    if (strategy) {
+      strategy.engine = "default";
+      strategy.model = "strategy-model";
+      strategy.timeoutMs = 70_000;
+      strategy.llm = { temperature: 0.1, supportsJsonSchema: false };
+    }
+    const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
+    expect(Object.isFrozen(plan)).toBe(true);
+    expect(Object.isFrozen(plan.process)).toBe(true);
+    expect(Object.isFrozen(plan.process.hotProbation)).toBe(true);
+    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
+    expect(plan.runner?.connection).toMatchObject({
+      endpoint: "http://192.168.0.205:1234/v1/chat/completions",
+      model: "process-model",
+      temperature: 0.2,
+      maxTokens: 321,
+      supportsJsonSchema: false,
+    });
+    expect(plan.process.maxTotalChars).toBe(1234);
+
+    const timeoutOverridePlan = resolveStandaloneExtractPlan(config, {
+      engine: "extract-special",
+      timeoutMs: 45_000,
+    });
+    expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
+    expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
+    expect(timeoutOverridePlan.runner?.connection.model).toBe("process-model");
+
+    const engine = config.engines?.["extract-special"];
+    if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
+    const process = config.improve?.strategies?.extract?.processes?.extract;
+    if (process) {
+      process.maxTotalChars = 9999;
+      if (process.hotProbation) process.hotProbation.enabled = false;
+    }
+
+    let receivedModel = "";
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "frozen",
+      stashDir: stash,
+      config,
+      resolvedPlan: plan,
+      harnesses: [makeFakeHarness([fakeSession("frozen", Date.now())])],
+      chat: async (cfg) => {
+        receivedModel = cfg.model;
+        return JSON.stringify({
+          candidates: [
+            {
+              type: "memory",
+              name: "frozen-hot-probation",
+              description: "Frozen extract settings remain stable throughout a long-running watch invocation.",
+              body: "The invocation plan captures nested extract behavior before watch triggers begin.",
+              confidence: 0.9,
+              evidence: "frozen plan regression test",
+            },
+          ],
+        });
+      },
+    });
+    expect(receivedModel).toBe("process-model");
+    expect(plan.engine).toBe("extract-special");
+    expect(plan.process.hotProbation?.enabled).toBe(true);
+    const proposal = listProposals(stash, { status: "pending" }).find(
+      (item) => item.ref === "memory:frozen-hot-probation",
+    );
+    expect(proposal?.payload.frontmatter?.captureMode).toBe("hot-probation");
+  });
+
+  test("a resolved null runner never falls back to live config at the extract leaf", async () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {});
+    await expect(
+      akmExtract({
+        type: "claude-code",
+        stashDir: stash,
+        config,
+        resolvedPlan: Object.freeze({
+          strategy: "extract",
+          engine: "extract-special",
+          enabled: true,
+          process: Object.freeze({ enabled: true }),
+          runner: null,
+          timeoutMs: 600_000,
+          embeddingConfig: config.embedding,
+        }),
+        harnesses: [makeFakeHarness([fakeSession("no-fallback", Date.now())])],
+      }),
+    ).rejects.toThrow("No LLM engine configured for extract");
+  });
+
+  test("honors processes.extract.engine to pick a non-default LLM", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_profile", Date.now() - 60_000);
     let receivedEndpoint = "";
@@ -695,7 +855,7 @@ describe("akmExtract — profile + config resolution", () => {
       type: "claude-code",
       sessionId: "ses_profile",
       stashDir: stash,
-      config: configWithProfile(stash, { mode: "llm", profile: "extract-special" }),
+      config: configWithStrategy(stash, { engine: "extract-special" }),
       harnesses: [makeFakeHarness([session])],
       chat: async (cfg) => {
         receivedEndpoint = cfg.endpoint;
@@ -705,7 +865,7 @@ describe("akmExtract — profile + config resolution", () => {
     expect(receivedEndpoint).toBe("http://192.168.0.205:1234/v1/chat/completions");
   });
 
-  test("falls back to defaults.llm when the process config has no profile override", async () => {
+  test("falls back to defaults.llmEngine when the process has no engine override", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_default", Date.now() - 60_000);
     let receivedModel = "";
@@ -713,7 +873,7 @@ describe("akmExtract — profile + config resolution", () => {
       type: "claude-code",
       sessionId: "ses_default",
       stashDir: stash,
-      config: configWithProfile(stash, {}),
+      config: configWithStrategy(stash, {}),
       harnesses: [makeFakeHarness([session])],
       chat: async (cfg) => {
         receivedModel = cfg.model;
@@ -723,17 +883,16 @@ describe("akmExtract — profile + config resolution", () => {
     expect(receivedModel).toBe("default-model");
   });
 
-  test("rejects non-llm mode in the process config", async () => {
+  test("rejects an explicit non-LLM process engine without fallback", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
     // Build a config where the agent profile EXISTS so the runner resolver
     // succeeds and akmExtract's own kind-check fires (not the resolver's
     // missing-profile guard).
-    const config = configWithProfile(stash, { mode: "agent", profile: "fake-agent" }) as AkmConfig & {
-      profiles: { agent?: Record<string, unknown> };
-    };
-    config.profiles.agent = {
-      "fake-agent": { platform: "opencode" as const, bin: "opencode", args: ["run"] },
+    const config = configWithStrategy(stash, { engine: "fake-agent" });
+    config.engines = {
+      ...config.engines,
+      "fake-agent": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
     };
     await expect(
       akmExtract({
@@ -744,7 +903,7 @@ describe("akmExtract — profile + config resolution", () => {
         harnesses: [makeFakeHarness([session])],
         chat: async () => JSON.stringify({ candidates: [] }),
       }),
-    ).rejects.toThrow(/only supports mode/);
+    ).rejects.toThrow(/is not an LLM engine/);
   });
 
   test("honors process timeoutMs override", async () => {
@@ -755,7 +914,7 @@ describe("akmExtract — profile + config resolution", () => {
       type: "claude-code",
       sessionId: "ses_to",
       stashDir: stash,
-      config: configWithProfile(stash, { mode: "llm", profile: "extract-special", timeoutMs: 45_000 }),
+      config: configWithStrategy(stash, { engine: "extract-special", timeoutMs: 45_000 }),
       harnesses: [makeFakeHarness([session])],
       chat: async (_cfg, _msgs, opts) => {
         receivedTimeout = opts?.timeoutMs ?? 0;
@@ -773,7 +932,7 @@ describe("akmExtract — profile + config resolution", () => {
       type: "claude-code",
       sessionId: "ses_to2",
       stashDir: stash,
-      config: configWithProfile(stash, { mode: "llm", profile: "extract-special", timeoutMs: 45_000 }),
+      config: configWithStrategy(stash, { engine: "extract-special", timeoutMs: 45_000 }),
       harnesses: [makeFakeHarness([session])],
       timeoutMs: 30_000,
       chat: async (_cfg, _msgs, opts) => {
@@ -794,7 +953,7 @@ describe("akmExtract — profile + config resolution", () => {
     const result = await akmExtract({
       type: "claude-code",
       stashDir: stash,
-      config: configWithProfile(stash, { defaultSince: "7d" }),
+      config: configWithStrategy(stash, { defaultSince: "7d" }),
       harnesses: [makeFakeHarness([old])],
       chat: async () => {
         chatCalls += 1;
@@ -840,7 +999,7 @@ describe("akmExtract — profile + config resolution", () => {
       type: "claude-code",
       sessionId: session.ref.sessionId,
       stashDir: stash,
-      config: configWithProfile(stash, processOverride),
+      config: configWithStrategy(stash, processOverride),
       harnesses: [makeFakeHarness([session])],
       chat: async () => {
         chatCalls += 1;
@@ -935,7 +1094,7 @@ describe("akmExtract — profile + config resolution", () => {
       sessionId: "ses_budget",
       force: true, // re-extract the same session twice to compare prompt budgets
       stashDir: stash,
-      config: configWithProfile(stash, { maxTotalChars: 1500 }),
+      config: configWithStrategy(stash, { maxTotalChars: 1500 }),
       harnesses: [makeFakeHarness([fatSession])],
       chat: async (_cfg, msgs) => {
         tightPromptLen = msgs[0]?.content.length ?? 0;
@@ -947,7 +1106,7 @@ describe("akmExtract — profile + config resolution", () => {
       sessionId: "ses_budget",
       force: true, // --force overrides the content-hash skip on the second run
       stashDir: stash,
-      config: configWithProfile(stash, { maxTotalChars: 100_000 }),
+      config: configWithStrategy(stash, { maxTotalChars: 100_000 }),
       harnesses: [makeFakeHarness([fatSession])],
       chat: async (_cfg, msgs) => {
         generousPromptLen = msgs[0]?.content.length ?? 0;

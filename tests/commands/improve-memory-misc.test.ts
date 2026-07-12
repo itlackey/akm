@@ -5,11 +5,12 @@ import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
-import { saveConfig } from "../../src/core/config/config";
+import { type AkmConfig, type ImproveProfileConfig, saveConfig } from "../../src/core/config/config";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
 import { writeMemory } from "../_helpers/assets";
 import { makeProposal } from "../_helpers/factories";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -30,7 +31,7 @@ function makeTempDir(prefix: string): string {
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -81,11 +82,11 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -119,11 +120,11 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:missing"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -160,11 +161,11 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       reflectFn: async (opts) => {
         capturedTimeouts.push(opts.timeoutMs);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(opts.ref ?? "memory:budget-test"),
           ref: opts.ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -193,15 +194,15 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
     const result = await akmImprove({
       scope: "memory:timer-test",
       stashDir,
-      timeoutMs: 5_000,
+      timeoutMs: 60_000,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(opts.ref ?? "memory:timer-test"),
         ref: opts.ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -239,11 +240,11 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:auth-tips"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
@@ -285,11 +286,11 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:auth-tips"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => {
@@ -311,6 +312,17 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 // ── M-1 / #367 — contradiction-detection unit tests ──────────────────────────
 
 describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)", () => {
+  const contradictionStrategy: ImproveProfileConfig = {
+    processes: { consolidate: { contradictionDetection: { enabled: true } } },
+  };
+  const contradictionConfig = (stashDir: string): AkmConfig => ({
+    semanticSearchMode: "auto",
+    stashDir,
+    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    defaultWriteTarget: "stash",
+    engines: { default: { kind: "llm", endpoint: "http://localhost/v1/chat", model: "test" } },
+    defaults: { llmEngine: "default" },
+  });
   test("detectAndWriteContradictions is a no-op when no LLM is configured", async () => {
     const { detectAndWriteContradictions } = await import(
       "../../src/commands/improve/memory/memory-contradiction-detect"
@@ -349,19 +361,10 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
 
     const result = await detectAndWriteContradictions(
       stashDir,
-      {
-        semanticSearchMode: "auto",
-        stashDir,
-        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-        defaultWriteTarget: "stash",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
-          improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
-        },
-        defaults: { llm: "default" },
-      } as Parameters<typeof detectAndWriteContradictions>[1],
+      contradictionConfig(stashDir),
       // Inject a fake chat that always returns "contradicts: true".
       async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict about VPN requirement." }),
+      contradictionStrategy,
     );
 
     expect(result.pairsChecked).toBe(1);
@@ -394,24 +397,14 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     writeMemory(stashDir, "vpn.derived", { inferred: true, source: "memory:vpn" }, "Always use VPN.");
     writeMemory(stashDir, "vpn.derived2", { inferred: true, source: "memory:vpn" }, "VPN is never required.");
 
-    const config = {
-      semanticSearchMode: "auto",
-      stashDir,
-      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-      defaultWriteTarget: "stash",
-      profiles: {
-        llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
-        improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
-      },
-      defaults: { llm: "default" },
-    } as Parameters<typeof detectAndWriteContradictions>[1];
+    const config = contradictionConfig(stashDir);
     const judge = async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict." });
 
     const loserPath = path.join(stashDir, "memories", "vpn.derived2.md");
     const winnerPath = path.join(stashDir, "memories", "vpn.derived.md");
 
     // 1. Detection writes ONE directed edge.
-    const first = await detectAndWriteContradictions(stashDir, config, judge);
+    const first = await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
     expect(first.edgesWritten).toBe(1);
 
     // 2. The SCC resolver marks the loser `contradicted` and KEEPS the edge (a
@@ -423,7 +416,7 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
 
     // 3. A read-only re-run of detection finds the edge already present and does
     //    NOT rewrite or erase it — the contradiction is stable, not self-erasing.
-    const second = await detectAndWriteContradictions(stashDir, config, judge);
+    const second = await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
     expect(second.edgesWritten).toBe(0);
     const loserAfter = fs.readFileSync(loserPath, "utf8");
     expect(loserAfter).toContain("beliefState: contradicted");
@@ -448,20 +441,10 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     writeMemory(stashDir, "vpn.bbb.derived", { inferred: true, source: "memory:vpn" }, "VPN is optional.");
     writeMemory(stashDir, "vpn.ccc.derived", { inferred: true, source: "memory:vpn" }, "VPN is never required.");
 
-    const config = {
-      semanticSearchMode: "auto",
-      stashDir,
-      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-      defaultWriteTarget: "stash",
-      profiles: {
-        llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
-        improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
-      },
-      defaults: { llm: "default" },
-    } as Parameters<typeof detectAndWriteContradictions>[1];
+    const config = contradictionConfig(stashDir);
     const judge = async () => JSON.stringify({ contradicts: true, reason: "Direct factual conflict." });
 
-    const first = await detectAndWriteContradictions(stashDir, config, judge);
+    const first = await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
     expect(first.pairsChecked).toBe(3); // aaa-bbb, aaa-ccc, bbb-ccc
     expect(first.edgesWritten).toBe(3); // one directed edge per confirmed pair
 
@@ -478,7 +461,7 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     // to only its reachable sink, so the intermediate bbb→ccc edge may be
     // re-written on re-runs, but that never destabilizes the states — the DAG has
     // no cycle to refresh back to active.)
-    await detectAndWriteContradictions(stashDir, config, judge);
+    await detectAndWriteContradictions(stashDir, config, judge, contradictionStrategy);
     applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
     expect(readState("vpn.aaa.derived")).not.toContain("beliefState: contradicted");
     expect(readState("vpn.bbb.derived")).toContain("beliefState: contradicted");
@@ -500,18 +483,9 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
 
     const result = await detectAndWriteContradictions(
       stashDir,
-      {
-        semanticSearchMode: "auto",
-        stashDir,
-        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
-        defaultWriteTarget: "stash",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/v1/chat", model: "test" } },
-          improve: { default: { processes: { consolidate: { contradictionDetection: { enabled: true } } } } },
-        },
-        defaults: { llm: "default" },
-      } as Parameters<typeof detectAndWriteContradictions>[1],
+      contradictionConfig(stashDir),
       async () => JSON.stringify({ contradicts: false, reason: "These are complementary security measures." }),
+      contradictionStrategy,
     );
 
     expect(result.pairsChecked).toBe(1);
@@ -546,7 +520,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     const repair = result.repairs[0];
     expect(repair?.outcome).toBe("queued");
     expect(repair?.proposalId).toBeDefined();
-    expect(result.repairedRefs.has("memory:auth-guide")).toBe(true);
+    expect(result.repairedRefs.has("memory:auth-guide")).toBe(false);
 
     // File should NOT be modified (write went through proposal queue)
     const fileContent = fs.readFileSync(memFile, "utf8");
@@ -602,20 +576,23 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     fs.writeFileSync(lessonFile, "---\nwhen_to_use: trigger\n---\n\nBody text.\n", "utf8");
     await buildIndex(stashDir);
     saveConfig({
+      configVersion: "0.9.0",
       semanticSearchMode: "off",
-      profiles: { llm: { default: { endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test" } } },
-      defaults: { llm: "default" },
+      engines: {
+        default: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test" },
+      },
+      defaults: { llmEngine: "default" },
     });
 
     const { appendEvent: appendFeedbackEvent } = await import("../../src/core/events");
     appendFeedbackEvent({ eventType: "feedback", ref: "lesson:no-description", metadata: { signal: "positive" } });
 
     const reflectFn = async ({ ref }: { ref?: string }): Promise<AkmReflectResult> => ({
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       proposal: makeProposal(ref ?? "lesson:no-description"),
       ref: ref ?? "",
-      agentProfile: "test",
+      engine: "test",
       durationMs: 1,
     });
     const distillFn = async ({ ref }: { ref: string }): Promise<AkmDistillResult> => ({
@@ -696,9 +673,11 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
       stashDir,
       config: {
         semanticSearchMode: "off",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: {
+        engines: {
+          default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+        },
+        improve: {
+          strategies: {
             default: {
               processes: {
                 consolidate: { enabled: true },
@@ -708,17 +687,17 @@ describe("O-3: reindex triggered after consolidation before graph extraction (#3
             },
           },
         },
-        defaults: { llm: "default" },
+        defaults: { llmEngine: "default" },
       },
       ensureIndexFn: async () => false,
       reindexFn,
       graphExtractionFn,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:auth-guide"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -758,9 +737,11 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
       stashDir,
       config: {
         semanticSearchMode: "off",
-        profiles: {
-          llm: { default: { endpoint: "http://localhost/chat/completions", model: "test" } },
-          improve: {
+        engines: {
+          default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
+        },
+        improve: {
+          strategies: {
             default: {
               processes: {
                 memoryInference: { enabled: false },
@@ -772,17 +753,17 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
             },
           },
         },
-        defaults: { llm: "default" },
+        defaults: { llmEngine: "default" },
       },
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => {
         reflected.push(ref ?? "");
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: makeProposal(ref ?? "memory:mem-1"),
           ref: ref ?? "",
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         };
       },
@@ -813,11 +794,11 @@ describe("new 0.8.0 improve metrics", () => {
       stashDir,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:alpha"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -855,7 +836,7 @@ describe("new 0.8.0 improve metrics", () => {
       minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "cooldown" as const,
         error: "Dedup signal from test",
@@ -895,11 +876,11 @@ describe("new 0.8.0 improve metrics", () => {
       stashDir,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         proposal: makeProposal(ref ?? "memory:real-asset"),
         ref: ref ?? "",
-        agentProfile: "test",
+        engine: "test",
         durationMs: 1,
       }),
       distillFn: async ({ ref }) => ({
@@ -955,11 +936,11 @@ describe("new 0.8.0 improve metrics", () => {
         });
         if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: created,
           ref: created.ref,
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -1020,11 +1001,11 @@ describe("new 0.8.0 improve metrics", () => {
         });
         if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ok: true,
           proposal: created,
           ref: created.ref,
-          agentProfile: "test",
+          engine: "test",
           durationMs: 1,
         } satisfies AkmReflectResult;
       },
@@ -1090,7 +1071,7 @@ describe("new 0.8.0 improve metrics", () => {
       autoAccept: undefined,
       // Default config.archiveRetentionDays is 90; 200 days old > 90 → expire.
       reflectFn: async ({ ref }) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "cooldown" as const,
         error: "test-suppressed",

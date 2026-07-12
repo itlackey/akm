@@ -5,9 +5,8 @@
  * transport and parsing path is exercised without process-global module
  * mocking. These tests cover:
  *   - eligible-file detection (memory + knowledge .md, inferred children skipped)
- *   - the disabled-by-default path (no `akm.llm` configured)
- *   - the `index.graph.llm = false` per-pass opt-out
- *   - the `llm.features.graph_extraction = false` feature-gate opt-out
+ *   - the disabled-by-default path (no index engine configured)
+ *   - the `index.graph.enabled = false` per-pass opt-out
  *   - graph data is written into the SQLite graph tables for the stash
  *   - toggling off after a successful run leaves the existing graph snapshot intact
  *   - read-only cache sources are not extracted (only the primary stash)
@@ -220,11 +219,20 @@ function withGraphDb<T>(
 }
 
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
-  return {
+  const base: AkmConfig = {
     semanticSearchMode: "auto",
-    profiles: { llm: { default: { ...SAMPLE_LLM } } },
-    defaults: { llm: "default" },
+    engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+    index: { defaults: { engine: "index" } },
+  };
+  return {
+    ...base,
     ...overrides,
+    engines: { ...base.engines, ...overrides?.engines },
+    index: {
+      ...base.index,
+      ...overrides?.index,
+      defaults: { ...base.index?.defaults, ...overrides?.index?.defaults },
+    },
   };
 }
 
@@ -305,7 +313,7 @@ describe("collectEligibleFiles", () => {
 // ── runGraphExtractionPass — disabled paths ────────────────────────────────
 
 describe("runGraphExtractionPass — disabled paths", () => {
-  test("no-op when no akm.llm is configured", async () => {
+  test("no-op when no index engine is configured", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => {
       throw new Error("must not be called when no llm is configured");
@@ -317,31 +325,30 @@ describe("runGraphExtractionPass — disabled paths", () => {
     expect(result.considered).toBe(0);
   });
 
-  test("no-op when index.graph.llm = false", async () => {
+  test("no-op when index.graph.enabled = false", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => {
       throw new Error("must not be called when per-pass disabled");
     };
-    const cfg = configWithLlm({ index: { graph: { llm: false } } });
+    const cfg = configWithLlm({ index: { graph: { enabled: false } } });
     const result = await withGraphDb("disabled-pass-gate", (db) =>
       runGraphExtractionPass({ config: cfg, sources: sources(), db }),
     );
     expect(result.written).toBe(false);
   });
 
-  test("no-op when llm.features.graph_extraction = false", async () => {
+  test("no-op when an improve-only graph engine is not configured for standalone indexing", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => {
       throw new Error("must not be called when feature-gated off");
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: {
-        llm: { default: { ...SAMPLE_LLM } },
-        improve: { default: { processes: { graphExtraction: { enabled: false } } } },
+      engines: { improveOnly: { kind: "llm", ...SAMPLE_LLM } },
+      improve: {
+        strategies: { default: { processes: { graphExtraction: { enabled: true, engine: "improveOnly" } } } },
       },
-      defaults: { llm: "default" },
-      index: { graph: { llm: true } },
+      index: { graph: { enabled: true } },
     };
     const result = await withGraphDb("feature-gated-off", (db) =>
       runGraphExtractionPass({ config: cfg, sources: sources(), db }),
@@ -361,7 +368,7 @@ describe("runGraphExtractionPass — disabled paths", () => {
         throw new Error("must not be called when disabled");
       };
       await runGraphExtractionPass({
-        config: configWithLlm({ index: { graph: { llm: false } } }),
+        config: configWithLlm({ index: { graph: { enabled: false } } }),
         sources: sources(),
         db,
       });
@@ -372,19 +379,16 @@ describe("runGraphExtractionPass — disabled paths", () => {
   });
 });
 
-// ── runGraphExtractionPass — orthogonal gating (§14 + #208) ────────────────
+// ── runGraphExtractionPass — standalone index engine gating ────────────────
 
-describe("runGraphExtractionPass — feature flag and per-pass key are orthogonal", () => {
-  test("runs when both gates allow", async () => {
+describe("runGraphExtractionPass — standalone index engine gating", () => {
+  test("runs when the pass is enabled and its index engine resolves", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["E"], relations: [] });
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: {
-        llm: { default: { ...SAMPLE_LLM } },
-        improve: { default: { processes: { graphExtraction: { enabled: true } } } },
-      },
-      defaults: { llm: "default" },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      index: { defaults: { engine: "index" }, graph: { enabled: true } },
     };
     const result = await withGraphDb("both-gates-allow", (db) =>
       runGraphExtractionPass({ config: cfg, sources: sources(), db }),
@@ -394,21 +398,14 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
     expect(result.extracted).toBe(1);
   });
 
-  test("no-op cleanly when feature + per-pass gates allow but akm.llm is absent (third precondition)", async () => {
-    // Three preconditions must ALL hold for the pass to run:
-    //   1. `akm.llm` configured  (this test removes it)
-    //   2. `llm.features.graph_extraction !== false`  (true here)
-    //   3. `index.graph.llm !== false`  (true here)
-    // With #1 missing, the pass must short-circuit silently — no error
-    // thrown, no graph snapshot written, no existing graph snapshot modified.
+  test("no-op cleanly when the pass is enabled but no index engine resolves", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => {
-      throw new Error("must not be called when akm.llm is absent");
+      throw new Error("must not be called when the index engine is absent");
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      // No `llm` block at all.
-      index: { graph: { llm: true } },
+      index: { graph: { enabled: true } },
     };
     const result = await withGraphDb("llm-absent-third-precondition", (db) =>
       runGraphExtractionPass({ config: cfg, sources: sources(), db }),
@@ -418,35 +415,15 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
     expect(result.extracted).toBe(0);
   });
 
-  test("either gate set to false short-circuits", async () => {
+  test("disabled graph pass short-circuits despite a configured index engine", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["E"], relations: [] });
-    const featureOff = await withGraphDb("either-gate-feature-off", (db) =>
-      runGraphExtractionPass({
-        config: {
-          semanticSearchMode: "auto",
-          profiles: {
-            llm: { default: { ...SAMPLE_LLM } },
-            improve: { default: { processes: { graphExtraction: { enabled: false } } } },
-          },
-          defaults: { llm: "default" },
-        },
-        sources: sources(),
-        db,
-      }),
-    );
-    expect(featureOff.written).toBe(false);
-
     const passOff = await withGraphDb("either-gate-pass-off", (db) =>
       runGraphExtractionPass({
         config: {
           semanticSearchMode: "auto",
-          profiles: {
-            llm: { default: { ...SAMPLE_LLM } },
-            improve: { default: { processes: { graphExtraction: { enabled: true } } } },
-          },
-          defaults: { llm: "default" },
-          index: { graph: { llm: false } },
+          engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+          index: { defaults: { engine: "index" }, graph: { enabled: false } },
         },
         sources: sources(),
         db,

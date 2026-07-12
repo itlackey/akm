@@ -5,8 +5,8 @@
  * injected through the pass's `options` parameter to return deterministic
  * derived-memory drafts (no `mock.module`). These tests cover:
  *   - pending detection (parent vs already-inferred vs already-processed)
- *   - the disabled-by-default path (no `akm.llm` configured)
- *   - the `index.memory.llm = false` opt-out
+ *   - the disabled-by-default path (no index engine configured)
+ *   - the `index.memory.enabled = false` opt-out
  *   - derived memories written with `inferred: true` + `source:` backref
  *   - re-running the pass is idempotent (no duplicate children, parent stays
  *     processed, inferred children are not deleted when toggled off)
@@ -85,17 +85,16 @@ const SAMPLE_LLM = {
 function configWithLlm(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    profiles: { llm: { default: { ...SAMPLE_LLM } } },
-    defaults: { llm: "default" },
+    engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+    index: { defaults: { engine: "index" } },
   };
 }
 
 function configOptedOut(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    profiles: { llm: { default: { ...SAMPLE_LLM } } },
-    defaults: { llm: "default" },
-    index: { memory: { llm: false } },
+    engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+    index: { defaults: { engine: "index" }, memory: { enabled: false } },
   };
 }
 
@@ -179,7 +178,7 @@ describe("collectPendingMemories", () => {
 // ── runMemoryInferencePass — disabled paths ─────────────────────────────────
 
 describe("runMemoryInferencePass — disabled by default", () => {
-  test("returns no-op when no akm.llm is configured", async () => {
+  test("returns no-op when no index engine is configured", async () => {
     writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
     const result = await runMemoryInferencePass({ config: { semanticSearchMode: "auto" }, sources: sources() });
@@ -197,7 +196,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
     });
   });
 
-  test("returns no-op when index.memory.llm = false", async () => {
+  test("returns no-op when index.memory.enabled = false", async () => {
     const filePath = writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
     const result = await runMemoryInferencePass({ config: configOptedOut(), sources: sources() });
@@ -228,25 +227,21 @@ describe("runMemoryInferencePass — disabled by default", () => {
 
 // ── runMemoryInferencePass — orthogonal gating (§14 + #208) ─────────────────
 
-describe("runMemoryInferencePass — feature flag and per-pass key are orthogonal", () => {
-  test("runs when both gates allow (feature on, per-pass on)", async () => {
+describe("runMemoryInferencePass — index pass gate and engine selection", () => {
+  test("runs when the pass is enabled and its index engine resolves", async () => {
     writeMemory("parent", {}, "Body.");
     compressor = () => sampleDraft();
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: {
-        llm: { default: { ...SAMPLE_LLM } },
-        improve: { default: { processes: { memoryInference: { enabled: true } } } },
-      },
-      defaults: { llm: "default" },
-      // index.memory.llm omitted → defaults to enabled.
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      index: { defaults: { engine: "index" }, memory: { enabled: true } },
     };
     const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result.writtenFacts).toBe(1);
     expect(result.splitParents).toBe(1);
   });
 
-  test("skipped when llm.features.memory_inference = false even with index.memory.llm enabled", async () => {
+  test("skipped when index.memory.enabled is false", async () => {
     const filePath = writeMemory("parent", {}, "Body.");
     let invocations = 0;
     compressor = () => {
@@ -255,12 +250,8 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: {
-        llm: { default: { ...SAMPLE_LLM } },
-        improve: { default: { processes: { memoryInference: { enabled: false } } } },
-      },
-      defaults: { llm: "default" },
-      index: { memory: { llm: true } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      index: { defaults: { engine: "index" }, memory: { enabled: false } },
     };
     const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result).toEqual({
@@ -281,7 +272,7 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     expect(fm.data.inferenceProcessed).toBeUndefined();
   });
 
-  test("skipped when index.memory.llm = false even with llm.features.memory_inference = true", async () => {
+  test("skipped when the pass has no resolvable index engine", async () => {
     const filePath = writeMemory("parent", {}, "Body.");
     let invocations = 0;
     compressor = () => {
@@ -290,12 +281,11 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: {
-        llm: { default: { ...SAMPLE_LLM } },
-        improve: { default: { processes: { memoryInference: { enabled: true } } } },
+      engines: { improveOnly: { kind: "llm", ...SAMPLE_LLM } },
+      improve: {
+        strategies: { default: { processes: { memoryInference: { enabled: true, engine: "improveOnly" } } } },
       },
-      defaults: { llm: "default" },
-      index: { memory: { llm: false } },
+      index: { memory: { enabled: true } },
     };
     const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result.writtenFacts).toBe(0);

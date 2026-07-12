@@ -9,125 +9,31 @@
  * new config field is one line of Zod schema in `core/config-schema.ts` and
  * zero lines here — the walker handles get/set/unset/coercion uniformly.
  *
- * Legacy behaviour preserved:
- *   - `akm config set llm.<x>` writes to `profiles.llm.<defaults.llm>` (or
- *     auto-creates a "default" profile), mirroring the pre-rewrite shim.
- *   - `akm config set embedding.ollamaOptions.numCtx` is sugar for
- *     `embedding.ollamaOptions.num_ctx` (camelCase ↔ snake_case bridge).
+ * `configVersion` is controlled by the config lifecycle. All execution
+ * settings use their canonical engine/strategy paths; retired aliases are not
+ * rewritten at this boundary.
  *   - `parseConfigValue` returns a Partial<AkmConfig> so it can be merged with
  *     the runtime config object via `mergeConfigValue`.
  */
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 import { resolveStashDir } from "../core/common";
-import {
-  type AkmConfig,
-  DEFAULT_CONFIG,
-  getSources,
-  loadConfig,
-  loadUserConfig,
-  saveConfig,
-} from "../core/config/config";
+import { type AkmConfig, DEFAULT_CONFIG, loadConfig, mutateConfig } from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { UsageError } from "../core/errors";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
 
-// ── Legacy `llm.*` → `profiles.llm.<default>.*` aliasing ────────────────────
-
-/**
- * Map a legacy top-level `llm.<sub>` path onto the actual schema path. The
- * default profile name is "default" when `defaults.llm` is unset.
- */
-function rewriteLegacyLlmPath(config: AkmConfig, key: string): string {
-  if (key !== "llm" && !key.startsWith("llm.")) return key;
-  const sub = key === "llm" ? "" : key.slice("llm.".length);
-  const profileName = config.defaults?.llm ?? "default";
-  return sub ? `profiles.llm.${profileName}.${sub}` : `profiles.llm.${profileName}`;
-}
-
-/**
- * Translate the legacy `embedding.ollamaOptions.numCtx` to the actual schema
- * key `embedding.ollamaOptions.num_ctx`.
- */
-function rewriteEmbeddingPath(key: string): string {
-  if (key === "embedding.ollamaOptions.numCtx") return "embedding.ollamaOptions.num_ctx";
-  return key;
-}
-
-/**
- * Translate the deprecated `stashes` alias for `sources` (one-way: both read
- * and write go through `sources`).
- */
-function rewriteSourcesAlias(key: string): string {
-  if (key === "stashes") return "sources";
-  if (key.startsWith("stashes.")) return `sources.${key.slice("stashes.".length)}`;
-  return key;
-}
-
-function rewriteKey(config: AkmConfig, key: string): string {
-  let k = rewriteLegacyLlmPath(config, key);
-  k = rewriteEmbeddingPath(k);
-  k = rewriteSourcesAlias(k);
-  return k;
-}
-
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
-  const k = rewriteKey(config, key);
-  const value = configGet(config as unknown as Record<string, unknown>, k);
-  if (k.split(".").at(-1) === "apiKey") return null;
-  return omitApiKeysForOutput(value);
+  return redactConfigValue(configGet(config as unknown as Record<string, unknown>, key));
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
-  // #454: reject the legacy aliases up front so the error message names the
-  // env var the user typed (AKM_LLM_API_KEY) rather than the rewritten profile
-  // env var (AKM_PROFILE_DEFAULT_API_KEY) — both work at runtime, but the
-  // shorter name matches the user's mental model.
-  if (key === "llm.apiKey") {
-    throw new UsageError(
-      "apiKey cannot be persisted in config; export AKM_LLM_API_KEY instead. (key: llm.apiKey)",
-      "INVALID_FLAG_VALUE",
-      "Storing API keys in config.json leaks them through backups, logs, and version control. " +
-        "Use the corresponding environment variable. AKM reads it at request time.",
-    );
-  }
-  if (key === "embedding.apiKey") {
-    throw new UsageError(
-      "apiKey cannot be persisted in config; export AKM_EMBED_API_KEY instead. (key: embedding.apiKey)",
-      "INVALID_FLAG_VALUE",
-      "Storing API keys in config.json leaks them through backups, logs, and version control. " +
-        "Use the corresponding environment variable. AKM reads it at request time.",
-    );
-  }
-
-  const k = rewriteKey(config, key);
-  // Legacy ergonomic: `akm config set semanticSearchMode true|false`
-  let coerced = rawValue;
-  if (k === "semanticSearchMode") {
-    if (rawValue === "true") coerced = "auto";
-    else if (rawValue === "false") coerced = "off";
-  }
-  let next = configSet(config as unknown as Record<string, unknown>, k, coerced) as unknown as AkmConfig;
-
-  // Legacy ergonomic shim: when the user sets `llm.<field>` and no
-  // `defaults.llm` is set, point it at the freshly-created profile so the
-  // value actually takes effect at runtime.
-  if (key === "llm" || key.startsWith("llm.")) {
-    if (!next.defaults?.llm) {
-      next = {
-        ...next,
-        defaults: { ...(next.defaults ?? {}), llm: "default" },
-      };
-    }
-  }
-
-  return next;
+  return configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
 }
 
 export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
-  const k = rewriteKey(config, key);
-  return configUnset(config as unknown as Record<string, unknown>, k) as unknown as AkmConfig;
+  return configUnset(config as unknown as Record<string, unknown>, key) as unknown as AkmConfig;
 }
 
 /**
@@ -151,36 +57,22 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    semanticSearchMode: config.semanticSearchMode,
-    registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
-    output: { ...(DEFAULT_CONFIG.output ?? {}), ...(config.output ?? {}) },
-    stashDir: config.stashDir ?? null,
-    installed: config.installed ?? [],
-    sources: getSources(config),
-  };
-  if (config.defaultWriteTarget) result.defaultWriteTarget = config.defaultWriteTarget;
-  if (config.embedding) result.embedding = config.embedding;
-  if (config.profiles) result.profiles = config.profiles;
-  if (config.defaults) result.defaults = config.defaults;
-  if (config.search) result.search = config.search;
-  if (config.index) result.index = config.index;
-  if (config.feedback) result.feedback = config.feedback;
-  if (config.improve) result.improve = config.improve;
-  if (config.archiveRetentionDays !== undefined) result.archiveRetentionDays = config.archiveRetentionDays;
-  if (config.configVersion !== undefined) result.configVersion = config.configVersion;
-  return omitApiKeysForOutput(result) as Record<string, unknown>;
+  return redactConfigValue({ ...DEFAULT_CONFIG, ...config, sources: config.sources ?? [] }) as Record<string, unknown>;
 }
 
-function omitApiKeysForOutput(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(omitApiKeysForOutput);
+function redactConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactConfigValue);
   if (!value || typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
+  const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "apiKey") continue;
-    out[key] = omitApiKeysForOutput(child);
+    if (
+      key !== "apiKey" ||
+      (typeof child === "string" && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(child))
+    ) {
+      result[key] = redactConfigValue(child);
+    }
   }
-  return out;
+  return result;
 }
 
 export { unknownKeyHint };
@@ -205,31 +97,24 @@ function normalizeToggleTarget(target: string): "skills.sh" {
 }
 
 function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
-  const config = loadUserConfig();
-  const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
-  const idx = registries.findIndex(
-    (registry) =>
-      registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
-  );
-
-  if (idx >= 0) {
-    const existing = registries[idx];
-    const wasEnabled = existing.enabled !== false;
-    existing.enabled = enabled;
-    saveConfig({ ...config, registries });
-    return { changed: wasEnabled !== enabled, component: SKILLS_SH_NAME, enabled };
-  }
-
-  if (!enabled) {
-    // Materialize the skills.sh registry explicitly if absent.
-    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: false });
-    saveConfig({ ...config, registries });
-    return { changed: true, component: SKILLS_SH_NAME, enabled: false };
-  }
-
-  registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: true });
-  saveConfig({ ...config, registries });
-  return { changed: true, component: SKILLS_SH_NAME, enabled: true };
+  let changed = false;
+  mutateConfig((config) => {
+    const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
+    const idx = registries.findIndex(
+      (registry) =>
+        registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
+    );
+    if (idx >= 0) {
+      const wasEnabled = registries[idx].enabled !== false;
+      registries[idx].enabled = enabled;
+      changed = wasEnabled !== enabled;
+      return { ...config, registries };
+    }
+    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled });
+    changed = true;
+    return { ...config, registries };
+  });
+  return { changed, component: SKILLS_SH_NAME, enabled };
 }
 
 function toggleComponent(
@@ -299,7 +184,11 @@ export const configCommand = defineGroupCommand({
     set: defineJsonCommand({
       meta: { name: "set", description: "Set a configuration value by key" },
       args: {
-        key: { type: "positional", required: true, description: "Config key (for example: embedding, llm)" },
+        key: {
+          type: "positional",
+          required: true,
+          description: "Config key (for example: embedding, engines.default)",
+        },
         value: { type: "positional", required: true, description: "Config value" },
         // #463: stable machine-friendly entry point for plugins / hooks.
         // `--silent` suppresses the config dump on stdout so hook-driven
@@ -322,22 +211,21 @@ export const configCommand = defineGroupCommand({
       run({ args }) {
         if (args.layer && args.layer !== "user") {
           throw new UsageError(
-            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.9.0.`,
             "INVALID_FLAG_VALUE",
           );
         }
         // Use loadConfig (not loadUserConfig) so the project-config
         // deprecation warning fires consistently with `akm config get`
         // (#457). Effective merged shape is identical post-0.8.0.
-        const updated = setConfigValue(loadConfig(), args.key, args.value);
-        saveConfig(updated);
+        const updated = mutateConfig((current) => setConfigValue(current, args.key, args.value)).config;
         if (!args.silent) {
           output("config", listConfig(updated));
         }
       },
     }),
     unset: defineJsonCommand({
-      meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/llm section" },
+      meta: { name: "unset", description: "Unset an optional configuration key or whole embedding/engine section" },
       args: {
         key: { type: "positional", required: true, description: "Config key to unset" },
         silent: {
@@ -354,12 +242,12 @@ export const configCommand = defineGroupCommand({
       run({ args }) {
         if (args.layer && args.layer !== "user") {
           throw new UsageError(
-            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.8.0.`,
+            `Unsupported --layer "${args.layer}". Only "user" is settable in 0.9.0.`,
             "INVALID_FLAG_VALUE",
           );
         }
-        const updated = unsetConfigValue(loadConfig(), args.key);
-        saveConfig(updated);
+        const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });
+        const updated = result.config;
         if (!args.silent) {
           output("config", listConfig(updated));
         }
@@ -378,19 +266,12 @@ export const configCommand = defineGroupCommand({
     migrate: defineJsonCommand({
       meta: {
         name: "migrate",
-        description: "Migrate the config file to the current schema version. Use --dry-run to preview without writing.",
+        description:
+          "Diagnose whether the user config is already in the current schema. Never writes or translates config.",
       },
-      args: {
-        "dry-run": { type: "boolean", description: "Preview the migration result without writing.", default: false },
-        "print-diff": {
-          type: "boolean",
-          description: "Print a unified diff of old vs new config alongside the migration output.",
-          default: false,
-        },
-      },
-      async run({ args }) {
+      async run() {
         const { runConfigMigrate } = await import("../cli/config-migrate.js");
-        await runConfigMigrate({ dryRun: Boolean(args["dry-run"]), printDiff: Boolean(args["print-diff"]) });
+        await runConfigMigrate();
       },
     }),
     enable: defineJsonCommand({

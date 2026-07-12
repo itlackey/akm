@@ -1,0 +1,24 @@
+{
+  "description": "Proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+  "processes": {
+    "reflect": {
+      "enabled": true,
+      "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"]
+    },
+    "distill": { "enabled": true, "allowedTypes": ["memory"] },
+    "consolidate": { "enabled": false },
+    "memoryInference": { "enabled": false },
+    "graphExtraction": { "enabled": false },
+    "extract": { "enabled": false },
+    "triage": {
+      "enabled": true,
+      "applyMode": "promote",
+      "policy": "personal-stash",
+      "maxAcceptsPerRun": 100,
+      "maxDiffLines": 200,
+      "judgment": {}
+    },
+    "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 100 }
+  },
+  "sync": { "enabled": false }
+}

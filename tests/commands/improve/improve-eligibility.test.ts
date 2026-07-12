@@ -33,6 +33,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 
 // Deterministic, strictly-ordered timestamps for signal-delta ordering.
 // These replace `await sleep(10)` between two appendEvent() calls: instead of
@@ -71,7 +72,7 @@ function writeMemory(stashDir: string, name: string, body: string, mtime?: Date)
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -88,18 +89,18 @@ async function buildIndex(stashDir: string): Promise<void> {
 // behaviour covered by proactive-maintenance-flow.test.ts; leaving it on here
 // would mask the gate each test is asserting.
 function configWithoutPoolGuard(): import("../../../src/core/config/config").AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: { processes: { consolidate: { minPoolSize: 0 }, proactiveMaintenance: { enabled: false } } },
       },
     },
-  } as import("../../../src/core/config/config").AkmConfig;
+  } as import("../../../src/core/config/config").AkmConfig);
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -111,7 +112,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# proposal" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 

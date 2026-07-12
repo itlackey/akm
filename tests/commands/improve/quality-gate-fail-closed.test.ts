@@ -18,10 +18,14 @@ function configWithLlm(): AkmConfig {
     stashDir: "/tmp/does-not-matter",
     sources: [],
     defaultWriteTarget: "stash",
-    profiles: {
-      llm: { default: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" } },
+    engines: {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test-model",
+      },
     },
-    defaults: { llm: "default" },
+    defaults: { llmEngine: "default" },
   } as unknown as AkmConfig;
 }
 
@@ -31,7 +35,7 @@ function configWithoutLlm(): AkmConfig {
     stashDir: "/tmp/does-not-matter",
     sources: [],
     defaultWriteTarget: "stash",
-    profiles: {},
+    engines: {},
     defaults: {},
   } as unknown as AkmConfig;
 }

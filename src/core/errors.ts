@@ -29,16 +29,13 @@ export type ConfigErrorCode =
   | "EMBEDDING_NOT_CONFIGURED"
   | "LLM_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  | "UNSUPPORTED_CONFIG_VERSION"
   // Defense-in-depth sentinel raised by `akm init` under `bun test` to
   // refuse persisting a temp-dir stashDir to the user's real config.
   // See src/commands/init.ts.
   | "INIT_TMP_STASH_REFUSED"
   | "SETUP_TMP_STASH_REFUSED"
-  // An `--profile <name>` (or `defaults.improve`) that matches no built-in and
-  // no user-defined `profiles.improve` entry. Raised instead of silently
-  // falling back to the default profile — the −96% incident class where a cron
-  // pinned to a host-only profile name ran the default for weeks.
-  | "UNKNOWN_IMPROVE_PROFILE"
+  | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm init`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
@@ -65,6 +62,8 @@ export type UsageErrorCode =
   | "TARGET_NOT_UPDATABLE"
   | "PATH_ESCAPE_VIOLATION"
   | "RESOURCE_ALREADY_EXISTS"
+  | "TASK_SCHEMA_VERSION_UNSUPPORTED"
+  | "WORKFLOW_IR_VERSION_UNSUPPORTED"
   | "INVALID_PROPOSAL"
   | "NON_INTERACTIVE_REQUIRES_YES";
 
@@ -87,15 +86,15 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update stashDir.",
   EMBEDDING_NOT_CONFIGURED: 'Run `akm config set embedding \'{"endpoint":"...","model":"..."}\'` to enable embeddings.',
   LLM_NOT_CONFIGURED:
-    'Run `akm setup` or `akm config set profiles.llm.default \'{"endpoint":"...","model":"..."}\' to configure an LLM profile.',
+    'Run `akm setup` or configure an `engines` entry with `kind: "llm"`, then select it with `defaults.llmEngine`.',
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_STASH_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   SETUP_TMP_STASH_REFUSED:
     "Use a persistent directory, or set AKM_FORCE_SETUP_TMP_STASH=1 to opt in to a sandboxed setup (setup also pre-sets AKM_STASH_DIR so config and cache writes auto-isolate into $stashDir/.akm/ — host config is preserved).",
   UNSAFE_STASH_DIR:
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The stash directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
-  UNKNOWN_IMPROVE_PROFILE:
-    "Pass one of the listed profile names to `--profile`, or define it under `profiles.improve` in your config. Names are case-sensitive.",
+  UNKNOWN_IMPROVE_STRATEGY:
+    "Pass one of the listed strategy names to `--strategy`, or define it under `improve.strategies`. Names are case-sensitive.",
 };
 
 /** Default hint for each UsageError code. */

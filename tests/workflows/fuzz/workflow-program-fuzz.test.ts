@@ -5,7 +5,6 @@
 import { describe, expect, test } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
 import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
-import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
 import { PROGRAM_RETRY_REASONS } from "../../../src/workflows/program/schema";
 import { fuzzSeeds, Rng, withSeed } from "./_rng";
@@ -26,7 +25,7 @@ import { fuzzSeeds, Rng, withSeed } from "./_rng";
  *   - the parser NEVER throws (returns errors);
  *   - the compiler NEVER throws on parse-ok input;
  *   - compilation is DETERMINISTIC — same program ⇒ same canonical plan JSON
- *     and the same `computePlanHash`;
+ *     and the same serialized structural draft;
  *   - the plan ROUND-TRIPS through plain JSON unchanged;
  *   - every invalid variant produces at least one validation error, and (where
  *     the category has a distinctive message) names the problem.
@@ -53,7 +52,7 @@ const STEP_IDS = [
 const PARAM_NAMES = ["items", "changed_files", "target", "n", "Flag", "the_input"];
 const IDENT = ["files", "verdict", "x", "count", "a_b", "Result"] as const;
 const TIMEOUTS = ["500ms", "5s", "10m", "none", "300", "1500ms"] as const;
-const RUNNERS = ["llm", "agent", "sdk", "inherit"] as const;
+const ENGINES = ["fast-llm", "reviewer", "default-agent"] as const;
 const REDUCERS = ["collect", "vote"] as const;
 const ON_ERROR = ["fail", "continue"] as const;
 const ISOLATION = ["none", "worktree"] as const;
@@ -113,8 +112,7 @@ function schema(rng: Rng): Yaml {
 
 function unitBlock(rng: Rng, params: string[], earlier: string[], inMap: boolean): Yaml {
   const unit: Yaml = { instructions: instructions(rng, params, earlier, inMap) };
-  if (rng.bool(0.4)) unit.runner = rng.pick(RUNNERS);
-  if (rng.bool(0.3)) unit.profile = "reviewer";
+  if (rng.bool(0.4)) unit.engine = rng.pick(ENGINES);
   if (rng.bool(0.3)) unit.model = rng.pick(["fast", "deep", "balanced"]);
   if (rng.bool(0.3)) unit.timeout = rng.pick(TIMEOUTS);
   if (rng.bool(0.25)) unit.on_error = rng.pick(ON_ERROR);
@@ -187,11 +185,11 @@ function validProgram(rng: Rng): { yaml: Yaml; ids: string[] } {
     return step;
   });
 
-  const program: Yaml = { version: 1, name: `wf-${rng.int(1000)}`, params, steps };
+  const program: Yaml = { version: 2, name: `wf-${rng.int(1000)}`, params, steps };
   if (rng.bool(0.3)) program.description = "a fuzzed workflow";
   if (rng.bool(0.3)) {
     const defaults: Yaml = {};
-    if (rng.bool()) defaults.runner = rng.pick(RUNNERS);
+    if (rng.bool()) defaults.engine = rng.pick(ENGINES);
     if (rng.bool()) defaults.on_error = rng.pick(ON_ERROR);
     if (rng.bool()) defaults.timeout = rng.pick(TIMEOUTS);
     if (Object.keys(defaults).length) program.defaults = defaults;
@@ -291,9 +289,9 @@ describe("workflow-program fuzz — valid programs parse, compile, are determini
         expect(second.ok).toBe(true);
         if (!second.ok) return;
 
-        // Determinism: identical canonical plan JSON + identical hash.
-        expect(canonicalPlanJson(second.plan)).toBe(canonicalPlanJson(first.plan));
-        expect(computePlanHash(second.plan)).toBe(computePlanHash(first.plan));
+        // Determinism: identical structural drafts across compiles.
+        expect(JSON.stringify(second.plan)).toBe(JSON.stringify(first.plan));
+        expect(second.plan).toEqual(first.plan);
 
         // Round-trip: the plan is plain JSON and survives serialize → parse.
         expect(JSON.parse(JSON.stringify(first.plan))).toEqual(first.plan);

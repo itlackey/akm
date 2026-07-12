@@ -9,6 +9,7 @@
  */
 
 import { appendEvent, readEvents } from "../../core/events";
+import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
 import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { listProposalGateDecisions, listStateProposals } from "../../storage/repositories/proposals-repository";
@@ -259,7 +260,7 @@ export function computeDegradationMetrics(
     let totalProcessed = 0;
     for (const row of runs) {
       try {
-        const result = JSON.parse(row.result_json) as Record<string, unknown>;
+        const result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
         const cons = result.consolidation as Record<string, unknown> | undefined;
         if (cons) {
           totalContradicted += toFiniteNumber(cons.contradicted);

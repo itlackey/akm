@@ -12,7 +12,12 @@ import type { UnitDispatchRequest, UnitDispatchResult } from "../../src/workflow
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { resumeWorkflowRun, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+  writeWorkflowTestConfig,
+} from "../_helpers/sandbox";
 
 /**
  * Budget ceilings (redesign addendum R2): the YAML `budget` block travels
@@ -38,6 +43,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  writeWorkflowTestConfig();
 });
 
 afterEach(() => storage.cleanup());
@@ -58,7 +64,7 @@ function execOnWorkflowDb(sql: string, ...params: Array<string | number>): void 
   }
 }
 
-const FAN_OUT_3 = (budgetYaml: string, unitExtra = ""): string => `version: 1
+const FAN_OUT_3 = (budgetYaml: string, unitExtra = ""): string => `version: 2
 name: budgeted
 params:
   files: { type: array, items: { type: string } }
@@ -73,7 +79,7 @@ steps:
 ${unitExtra}
 `;
 
-const TWO_STEPS = (budgetYaml: string): string => `version: 1
+const TWO_STEPS = (budgetYaml: string): string => `version: 2
 name: two-steps
 ${budgetYaml}
 steps:
@@ -125,7 +131,7 @@ describe("budget.max_units", () => {
     // with "budget exceeded" while the identical uninterrupted run passed.
     writeProgram(
       "gate-seeded",
-      `version: 1
+      `version: 2
 name: gate-seeded
 budget: { max_units: 2 }
 steps:
@@ -187,7 +193,7 @@ steps:
     // the ceiling: the third invocation must be REFUSED before dispatching.
     writeProgram(
       "crash-budget",
-      `version: 1
+      `version: 2
 name: crash-budget
 budget: { max_units: 2 }
 steps:
@@ -314,9 +320,21 @@ describe("budget.max_tokens", () => {
   });
 
   test("crossing the ceiling aborts an in-flight sibling through the chained AbortController", async () => {
+    writeSandboxConfig({
+      workflow: { maxConcurrency: 2 },
+      engines: {
+        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+        "test-llm": {
+          kind: "llm",
+          endpoint: "http://localhost:1/v1/chat/completions",
+          model: "test-model",
+          concurrency: 2,
+        },
+      },
+    });
     writeProgram(
       "tokens-abort",
-      `version: 1
+      `version: 2
 name: tokens-abort
 params:
   files: { type: array, items: { type: string } }
@@ -343,7 +361,6 @@ steps:
     const result = await runWorkflowSteps({
       target: started.run.id,
       summaryJudge: null,
-      maxConcurrency: 2,
       dispatcher: async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
         // Match the resolved instruction line — the preamble embeds the full
         // params JSON, so a bare "fast.ts" check would match BOTH prompts.
@@ -469,7 +486,7 @@ describe("budget interactions", () => {
  * `on_error`.
  */
 describe("budget × gate loops", () => {
-  const GATE_LOOP_WF = (budgetLine: string, unitExtra = ""): string => `version: 1
+  const GATE_LOOP_WF = (budgetLine: string, unitExtra = ""): string => `version: 2
 name: gate-budget
 ${budgetLine}
 steps:

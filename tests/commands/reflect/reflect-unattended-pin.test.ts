@@ -5,10 +5,9 @@
 /**
  * P1.3 (meta-review 07, Chain G): unattended `akm improve` must never hand
  * reflect a tool-capable runner. When `eventSource: "improve"`, config that
- * resolves an agent/SDK runner (or would fall back to the default agent
- * profile) is pinned to the tool-less LLM HTTP runner; a proper llm-mode
- * process block is honored as-is; with no defaults.llm to pin to, reflect
- * fails CLOSED instead of dispatching an agent with filesystem access.
+ * resolves an agent/SDK runner fails loudly rather than falling back; a proper
+ * LLM process engine is honored as-is; with no defaults.llmEngine to pin to,
+ * reflect fails CLOSED instead of dispatching an agent with filesystem access.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -56,14 +55,17 @@ function spySpawn(onSpawn: () => void): SpawnFn {
 /** Config whose reflect process resolves a TOOL-CAPABLE (agent) runner. */
 function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
   return {
-    defaults: { llm: "pin-target", agent: "fake-agent" },
-    profiles: {
-      llm: { "pin-target": { endpoint: "http://127.0.0.1:9", model: "pin-model" } },
-      agent: { "fake-agent": { platform: "opencode", bin: "fake-agent" } },
-      improve: {
+    configVersion: "0.9.0",
+    defaults: { llmEngine: "pin-target", engine: "fake-agent", improveStrategy: "default" },
+    engines: {
+      "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
+      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+    },
+    improve: {
+      strategies: {
         default: {
           processes: {
-            reflect: { enabled: true, mode: "agent", profile: "fake-agent" },
+            reflect: { enabled: true, engine: "fake-agent" },
             distill: { qualityGate: { enabled: false } },
           },
         },
@@ -82,68 +84,10 @@ afterEach(() => {
 });
 
 describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
-  test("eventSource=improve downgrades an agent-mode runner to the tool-less LLM runner", async () => {
+  test("eventSource=improve rejects an explicit agent engine without falling back", async () => {
     const stash = makeStashDir();
-    let chatConnection: LlmConnectionConfig | undefined;
-
-    await akmReflect({
-      ref: "memory:alpha",
-      stashDir: stash,
-      eventSource: "improve",
-      config: agentModeConfig(),
-      chat: async (connection) => {
-        chatConnection = connection;
-        throw new Error("stop-after-capture");
-      },
-    });
-
-    // The pin routed dispatch to the LLM HTTP path (chat seam), built from
-    // defaults.llm — no agent/SDK dispatch is reachable on this path.
-    expect(chatConnection?.model).toBe("pin-model");
-  });
-
-  test("eventSource=improve honors an llm-mode process block unchanged", async () => {
-    const stash = makeStashDir();
-    let chatConnection: LlmConnectionConfig | undefined;
-
-    await akmReflect({
-      ref: "memory:alpha",
-      stashDir: stash,
-      eventSource: "improve",
-      config: {
-        defaults: { llm: "other" },
-        profiles: {
-          llm: {
-            other: { endpoint: "http://127.0.0.1:9", model: "default-model" },
-            judge: { endpoint: "http://127.0.0.1:9", model: "block-model" },
-          },
-          improve: {
-            default: {
-              processes: {
-                reflect: { enabled: true, mode: "llm", profile: "judge" },
-                distill: { qualityGate: { enabled: false } },
-              },
-            },
-          },
-        },
-      } as unknown as AkmConfig,
-      chat: async (connection) => {
-        chatConnection = connection;
-        throw new Error("stop-after-capture");
-      },
-    });
-
-    // The block's own llm profile is used — the pin does not clobber it.
-    expect(chatConnection?.model).toBe("block-model");
-  });
-
-  test("eventSource=improve with no defaults.llm fails CLOSED instead of dispatching an agent", async () => {
-    const stash = makeStashDir();
-    let spawned = false;
-
     const config = agentModeConfig();
-    // biome-ignore lint/suspicious/noExplicitAny: test mutates a fixture
-    (config as any).defaults = { agent: "fake-agent" };
+    let chatCalled = false;
 
     await expect(
       akmReflect({
@@ -151,27 +95,85 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         stashDir: stash,
         eventSource: "improve",
         config,
+        improveProfile: config.improve?.strategies?.default,
+        chat: async () => {
+          chatCalled = true;
+          throw new Error("must-not-run");
+        },
+      }),
+    ).rejects.toThrow('Engine "fake-agent" is not an LLM engine.');
+
+    expect(chatCalled).toBe(false);
+  });
+
+  test("eventSource=improve honors an LLM process engine unchanged", async () => {
+    const stash = makeStashDir();
+    let chatConnection: LlmConnectionConfig | undefined;
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      defaults: { llmEngine: "other", improveStrategy: "default" },
+      engines: {
+        other: { kind: "llm", endpoint: "http://127.0.0.1:9", model: "default-model" },
+        judge: { kind: "llm", endpoint: "http://127.0.0.1:9", model: "block-model" },
+      },
+      improve: {
+        strategies: {
+          default: {
+            processes: {
+              reflect: { enabled: true, engine: "judge" },
+              distill: { qualityGate: { enabled: false } },
+            },
+          },
+        },
+      },
+    };
+
+    await akmReflect({
+      ref: "memory:alpha",
+      stashDir: stash,
+      eventSource: "improve",
+      config,
+      improveProfile: config.improve?.strategies?.default,
+      chat: async (connection) => {
+        chatConnection = connection;
+        throw new Error("stop-after-capture");
+      },
+    });
+
+    // The process engine is used; defaults.llmEngine does not clobber it.
+    expect(chatConnection?.model).toBe("block-model");
+  });
+
+  test("eventSource=improve with no defaults.llmEngine fails CLOSED instead of dispatching an agent", async () => {
+    const stash = makeStashDir();
+    let spawned = false;
+
+    const config = agentModeConfig();
+    config.defaults = { engine: "fake-agent", improveStrategy: "default" };
+    const strategy = config.improve?.strategies?.default;
+    if (strategy?.processes?.reflect) delete strategy.processes.reflect.engine;
+
+    await expect(
+      akmReflect({
+        ref: "memory:alpha",
+        stashDir: stash,
+        eventSource: "improve",
+        config,
+        improveProfile: strategy,
         runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
       }),
-    ).rejects.toThrow(/tool-less LLM runner/);
+    ).rejects.toThrow(/requires an LLM engine/);
     expect(spawned).toBe(false);
   });
 
-  test("interactive reflect (no eventSource) still dispatches the injected agent profile", async () => {
+  test("interactive reflect (no eventSource) dispatches the configured agent engine", async () => {
     const stash = makeStashDir();
     let spawned = false;
 
     await akmReflect({
       ref: "memory:alpha",
       stashDir: stash,
-      agentProfile: {
-        name: "fake-agent",
-        bin: "fake-agent",
-        args: [],
-        stdio: "captured",
-        envPassthrough: ["PATH"],
-        parseOutput: "text",
-      },
       config: agentModeConfig(),
       runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
     });

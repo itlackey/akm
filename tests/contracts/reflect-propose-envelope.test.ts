@@ -26,17 +26,17 @@ const proposal = {
 describe("reflect/propose success envelope contract", () => {
   test("normal: required fields present", () => {
     const result = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       ref: "lesson:rg-over-grep",
-      agentProfile: "claude",
+      engine: "claude",
       durationMs: 12,
       proposal,
     };
     const out = shapeProposalProducerOutput(result, "normal");
     expect(out.ok).toBe(true);
     expect(out.ref).toBe("lesson:rg-over-grep");
-    expect(out.agentProfile).toBe("claude");
+    expect(out.engine).toBe("claude");
     expect(out.durationMs).toBe(12);
     expect(out).toHaveProperty("proposal");
     // schemaVersion only at full
@@ -45,15 +45,15 @@ describe("reflect/propose success envelope contract", () => {
 
   test("full: success envelope adds schemaVersion", () => {
     const result = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: true,
       ref: "lesson:rg-over-grep",
-      agentProfile: "claude",
+      engine: "claude",
       durationMs: 12,
       proposal,
     };
     const out = shapeProposalProducerOutput(result, "full");
-    expect(out.schemaVersion).toBe(1);
+    expect(out.schemaVersion).toBe(2);
   });
 
   test("brief: shaped proposal still includes id+ref+status (via brief→normal upgrade)", () => {
@@ -69,11 +69,12 @@ describe("reflect/propose success envelope contract", () => {
 describe("reflect/propose failure envelope contract", () => {
   test("non_zero_exit: required failure fields present", () => {
     const failure = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "non_zero_exit",
       error: "exited with code 7",
       ref: "lesson:rg-over-grep",
+      engine: "claude",
       exitCode: 7,
       stdout: "out",
       stderr: "err",
@@ -91,10 +92,11 @@ describe("reflect/propose failure envelope contract", () => {
 
   test("spawn_failed: exitCode null is preserved", () => {
     const failure = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "spawn_failed",
       error: "ENOENT: command not found",
+      engine: "claude",
       exitCode: null,
     };
     const out = shapeProposalProducerOutput(failure, "normal");
@@ -105,10 +107,11 @@ describe("reflect/propose failure envelope contract", () => {
 
   test("parse_error: ref optional", () => {
     const failure = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "parse_error",
       error: "agent stdout was not valid JSON",
+      engine: "claude",
       exitCode: 0,
     };
     const out = shapeProposalProducerOutput(failure, "normal");
@@ -118,15 +121,16 @@ describe("reflect/propose failure envelope contract", () => {
 
   test("timeout: timeout reason discriminant", () => {
     const failure = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "timeout",
       error: "timed out after 100ms",
+      engine: "claude",
       exitCode: 143,
     };
     const out = shapeProposalProducerOutput(failure, "full");
     expect(out.reason).toBe("timeout");
-    expect(out.schemaVersion).toBe(1);
+    expect(out.schemaVersion).toBe(2);
   });
 
   test("propose-specific failure: type+name appear when set on the result", () => {
@@ -134,12 +138,13 @@ describe("reflect/propose failure envelope contract", () => {
     // separate from the agent-side `ref`. shapeProposalProducerOutput threads
     // both fields through unconditionally when present.
     const failure = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       ok: false,
       reason: "non_zero_exit",
       error: "agent failed",
       type: "skill",
       name: "hello",
+      engine: "claude",
       exitCode: 3,
     };
     const out = shapeProposalProducerOutput(failure, "normal");

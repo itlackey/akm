@@ -41,25 +41,25 @@ Options:
                                                  consolidation will prompt interactively on HTTP paths
                         Note: until proposals carry real confidence scores, any non-`false`
                         value behaves like the legacy "safe" mode (whole-batch auto-accept).
-  --profile <name>     Improve profile to apply. Built-ins: default, quick,
+  --strategy <name>    Improve strategy to apply. Built-ins: default, quick,
                         thorough, memory-focus, frequent, catchup, consolidate,
                         graph-refresh, synthesize, reflect-distill,
-                        proactive-maintenance, recombine-only. User-defined
-                        profiles under `profiles.improve.<name>` in config are
-                        also accepted. Profiles bundle process gating, type
+                         proactive-maintenance, recombine-only. User-defined
+                         strategies under `improve.strategies.<name>` in config are
+                         also accepted. Strategies bundle process gating, type
                         filters, and run-level autoAccept/limit defaults. Falls
-                        back to `defaults.improve` in config, then to "default".
+                         back to `defaults.improveStrategy` in config, then to "default".
                         An unknown name is a hard error listing the valid names
                         (no silent fallback to default).
-                        Sync behavior by profile: default and thorough enable
+                         Sync behavior by strategy: default and thorough enable
                         auto-commit + push; quick and memory-focus skip sync.
   --sync               Commit (and optionally push) the git-backed primary
                         stash when the run finishes. Use --no-sync to disable.
-                        Default: per profile config (enabled for default and
+                         Default: per strategy config (enabled for default and
                         thorough, disabled for quick and memory-focus).
   --push               Push after the end-of-run sync commit when the stash
                         is writable and has a remote configured. Use --no-push
-                        to commit only. Default: per profile config (true when
+                         to commit only. Default: per strategy config (true when
                         sync is enabled).
   --consolidate-recovery <mode>
                         Recovery mode for stale consolidate journals: abort (default) or clean
@@ -78,7 +78,7 @@ Examples:
   akm improve skill
   akm improve skill:code-review
   akm improve workflow:incident-response --task "reduce duplication"
-  akm improve --profile quick
-  akm improve --profile memory-focus
+  akm improve --strategy quick
+  akm improve --strategy memory-focus
   akm improve --no-sync
   akm improve --no-push

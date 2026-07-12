@@ -35,6 +35,7 @@ import { REFLECT_ALLOWED_TYPES } from "../../src/commands/improve/reflect";
 import { saveConfig } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -55,16 +56,16 @@ function makeTempDir(prefix: string): string {
 
 async function indexStash(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
 function makeStubReflectResult(ref: string): AkmReflectResult {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     ref,
-    agentProfile: "test-agent",
+    engine: "test-agent",
     durationMs: 1,
     proposal: {
       id: `reflect-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -191,16 +192,16 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     // `plannedRefs` and they MUST NOT produce any per-ref action (no
     // reflect-skipped, no distill-skipped). Previously each such ref produced
     // 2× synthetic skip actions per cron run; that audit trail is now a
-    // single `improve_skipped` event with reason `profile_filtered_all_passes`
-    // plus an envelope entry under `profileFilteredRefs`.
+    // single `improve_skipped` event with reason `strategy_filtered_all_passes`
+    // plus an envelope entry under `strategyFilteredRefs`.
     const scriptRefsInPlan = (result.plannedRefs ?? []).filter((p) => p.ref === "script:deploy.sh");
     expect(scriptRefsInPlan).toEqual([]);
     const scriptActions = (result.actions ?? []).filter((a) => a.ref === "script:deploy.sh");
     expect(scriptActions).toEqual([]);
-    const profileFiltered = result.profileFilteredRefs ?? [];
-    const scriptFiltered = profileFiltered.filter((p) => p.ref === "script:deploy.sh");
+    const strategyFiltered = result.strategyFilteredRefs ?? [];
+    const scriptFiltered = strategyFiltered.filter((p) => p.ref === "script:deploy.sh");
     expect(scriptFiltered.length).toBe(1);
-    expect(scriptFiltered[0]?.reason).toBe("profile_filtered_all_passes");
+    expect(scriptFiltered[0]?.reason).toBe("strategy_filtered_all_passes");
 
     // Core assertion 3: the allowed-type skill ref IS reflected normally (type
     // guard must not block allowed types).
@@ -249,7 +250,7 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
       // ref with the new `unsupported_type` reason even though the planner
       // dispatched it (an allowed-type skill ref).
       reflectFn: async (options): Promise<AkmReflectResult> => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "unsupported_type",
         error: `Reflect refused: asset type "script" is not supported by reflect.`,
@@ -305,10 +306,10 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
         durationMs: 0,
       }),
       reflectFn: async (options): Promise<AkmReflectResult> => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         ref: options.ref ?? "unknown",
-        agentProfile: "test-agent",
+        engine: "test-agent",
         durationMs: 1,
         proposal: {
           id: `reflect-${(options.ref ?? "x").replace(/[^a-z0-9]/gi, "-")}`,

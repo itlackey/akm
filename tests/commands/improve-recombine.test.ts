@@ -6,7 +6,7 @@
  * #609 — recombine / synthesize pass (src/commands/improve/recombine.ts).
  *
  * The recombine pass is a whole-corpus synthesis stage that runs AFTER
- * consolidation and is OPT-IN (default disabled via IMPROVE_PROCESS_DEFAULTS).
+ * consolidation and is OPT-IN (disabled by the built-in default strategy).
  * It clusters memories by RELATEDNESS (shared tags / graph entities — NOT
  * embedding similarity), issues ONE bounded LLM call per cluster to induce a
  * single cross-episodic generalization, and emits the result as a NORMAL
@@ -30,7 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
-import { resolveImproveProfile, resolveProcessEnabled } from "../../src/commands/improve/improve-profiles";
+import { resolveImproveStrategy, resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 // Imported from the module under test (now shipped).
 import { akmRecombine } from "../../src/commands/improve/recombine";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
@@ -41,6 +41,7 @@ import { readEvents } from "../../src/core/events";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { insertGraphEntities } from "../_helpers/graph-store";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -61,7 +62,7 @@ function writeMemory(stashDir: string, name: string, tags: string[], body: strin
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -71,7 +72,7 @@ function generalization(description: string, body: string): string {
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -83,7 +84,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# proposal" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 
@@ -102,10 +103,10 @@ const noopIndexFns = {
 
 /** Improve config with recombine enabled (and noisy passes silenced). */
 function recombineEnabledConfig(overrides?: Record<string, unknown>): AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
-    profiles: {
-      improve: {
+    improve: {
+      strategies: {
         default: {
           processes: {
             consolidate: { enabled: false },
@@ -117,7 +118,7 @@ function recombineEnabledConfig(overrides?: Record<string, unknown>): AkmConfig 
         },
       },
     },
-  } as unknown as AkmConfig;
+  } as unknown as AkmConfig);
 }
 
 afterEach(() => {
@@ -128,7 +129,7 @@ afterEach(() => {
 
 describe("recombine — opt-in default (AC3)", () => {
   test("resolveProcessEnabled('recombine', defaultProfile) === false", () => {
-    const profile = resolveImproveProfile("default", { semanticSearchMode: "off" } as AkmConfig);
+    const profile = resolveImproveStrategy("default", { semanticSearchMode: "off" } as AkmConfig).config;
     expect(resolveProcessEnabled("recombine", profile)).toBe(false);
   });
 

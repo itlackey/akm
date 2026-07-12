@@ -228,7 +228,6 @@ const ALLOWED_FILES = new Set<string>([
   "tests/config-sanitize-secrets.test.ts",
   "tests/config.test.ts",
   "tests/commands/consolidate/consolidate-promote-dedup.test.ts",
-  "tests/contracts/v1-spec-section-11-proposal-queue.test.ts",
   "tests/integration/write-source.test.ts",
   "tests/commands/distill/distill-cli-flag.test.ts",
   "tests/commands/distill/distill-response-schema.test.ts",
@@ -290,7 +289,7 @@ const SPAWN_ALLOWED = new Set<string>([]);
  * drained (migrated onto the in-process harness or moved to
  * tests/integration/). SPAWN_ALLOWED is now empty and must stay empty.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 64;
+export const ALLOWLIST_RATCHET_BASELINE = 63;
 
 /** Live size of the combined grandfather allowlist (all rule sets). */
 export function combinedAllowlistSize(): number {

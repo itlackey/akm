@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["bun-types"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "../../src/globals.d.ts"]
 }

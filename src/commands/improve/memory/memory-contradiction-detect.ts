@@ -23,7 +23,7 @@
  *
  * # LLM Feature Gate
  *
- * The pass is gated behind `profiles.improve.default.processes.consolidate.contradictionDetection.enabled`.
+ * The pass is gated by the selected strategy's consolidate contradiction setting.
  * When the gate is disabled or no LLM is configured,
  * the pass is a no-op and `analyzeMemoryCleanup` proceeds with only manually
  * annotated edges.
@@ -40,7 +40,8 @@ import path from "node:path";
 import contradictionJudgeTemplate from "../../../assets/prompts/contradiction-judge.md" with { type: "text" };
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
-import { getDefaultLlmConfig } from "../../../core/config/config";
+import { getDefaultLlmConfig, type ImproveProfileConfig } from "../../../core/config/config";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { tryLlmFeature } from "../../../llm/feature-gate";
 
@@ -219,6 +220,8 @@ export async function detectAndWriteContradictions(
   stashDir: string,
   config: AkmConfig,
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string> = chatCompletion,
+  strategy?: ImproveProfileConfig,
+  resolvedLlmConfig?: LlmConnectionConfig | null,
 ): Promise<ContradictionDetectionResult> {
   const result: ContradictionDetectionResult = {
     familiesExamined: 0,
@@ -227,7 +230,14 @@ export async function detectAndWriteContradictions(
     warnings: [],
   };
 
-  const contradictionLlm = getDefaultLlmConfig(config);
+  const contradictionLlm =
+    resolvedLlmConfig === null
+      ? undefined
+      : (resolvedLlmConfig ??
+        (() => {
+          const runner = resolveImproveProcessRunner(strategy, "consolidate", config);
+          return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
+        })());
   if (!contradictionLlm) return result;
 
   // Collect derived memories grouped by parent.
@@ -309,6 +319,7 @@ export async function detectAndWriteContradictions(
             ]);
           },
           null, // Fallback: null means "skip" — gate disabled or LLM call failed.
+          { enabled: strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false },
         );
 
         totalPairsChecked++;

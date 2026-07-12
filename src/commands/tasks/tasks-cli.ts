@@ -46,7 +46,9 @@ const tasksAddCommand = defineJsonCommand({
       description:
         'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
     },
-    profile: { type: "string", description: "Agent profile to use for prompt targets (default: defaults.agent)" },
+    engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
+    model: { type: "string", description: "Model override for prompt targets" },
+    "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
     "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },
@@ -62,7 +64,9 @@ const tasksAddCommand = defineJsonCommand({
       workflow: args.workflow,
       prompt: args.prompt,
       command: args.command,
-      profile: args.profile,
+      engine: args.engine,
+      model: args.model,
+      timeoutMs: args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
       params: args.params,
       name: args.name,
       when_to_use: args["when-to-use"],
@@ -204,7 +208,8 @@ export const tasksCommand = defineGroupCommand({
   meta: {
     name: "tasks",
     alias: "task",
-    description: "Schedule workflows or prompts via the OS-native scheduler (cron / launchd / schtasks)",
+    description:
+      "Schedule version-2 workflows, prompts, or commands via the OS-native scheduler (cron / launchd / schtasks)",
   },
   subCommands: {
     add: tasksAddCommand,

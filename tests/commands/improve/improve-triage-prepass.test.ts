@@ -38,15 +38,15 @@ function writeMemory(name: string, body: string): void {
 }
 
 /**
- * Config selecting a `triage-test` profile that enables triage but disables the
+ * Config selecting a `triage-test` strategy that enables triage but disables the
  * heavy full-pass siblings so the improve loop stays cheap and deterministic.
  */
 function triageEnabledConfig(enabled: boolean): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improve: "triage-test" },
-    profiles: {
-      improve: {
+    defaults: { improveStrategy: "triage-test" },
+    improve: {
+      strategies: {
         "triage-test": {
           processes: {
             reflect: { enabled: false },
@@ -54,7 +54,12 @@ function triageEnabledConfig(enabled: boolean): AkmConfig {
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
             graphExtraction: { enabled: false },
+            extract: { enabled: false },
+            validation: { enabled: false },
             triage: { enabled, applyMode: "queue", policy: "personal-stash", maxAcceptsPerRun: 25 },
+            proactiveMaintenance: { enabled: false },
+            recombine: { enabled: false },
+            procedural: { enabled: false },
           },
         },
       },

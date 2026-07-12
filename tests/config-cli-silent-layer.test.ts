@@ -55,11 +55,14 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 }
 
 describe("akm config set --silent / --layer (#463)", () => {
+  const claudeEngine = '{"kind":"agent","platform":"claude"}';
+  const opencodeEngine = '{"kind":"agent","platform":"opencode"}';
+
   test("--silent suppresses stdout but still writes the value", async () => {
     const { result, getResult } = await withEnv(freshEnv(), async () => {
-      const result = await runCliCapture(["config", "set", "--silent", "defaults.agent", "claude"]);
+      const result = await runCliCapture(["config", "set", "--silent", "engines.claude", claudeEngine]);
       // The write happened — verify by re-reading via `akm config get`.
-      const getResult = await runCliCapture(["config", "get", "defaults.agent"]);
+      const getResult = await runCliCapture(["config", "get", "engines.claude"]);
       return { result, getResult };
     });
     expect(result.code).toBe(0);
@@ -69,13 +72,75 @@ describe("akm config set --silent / --layer (#463)", () => {
   });
 
   test("without --silent, the post-write config dump appears on stdout", async () => {
-    const { stdout, status } = await runCli(["config", "set", "defaults.agent", "claude"]);
+    const { stdout, status } = await runCli(["config", "set", "engines.claude", claudeEngine]);
     expect(status).toBe(0);
     expect(stdout).toContain("claude");
   });
 
+  test("dotted kind writes preserve complete agent and LLM discriminators", async () => {
+    const { agentResult, llmResult } = await withEnv(freshEnv(), async () => {
+      await runCliCapture(["config", "set", "--silent", "engines.agent", claudeEngine]);
+      await runCliCapture([
+        "config",
+        "set",
+        "--silent",
+        "engines.llm",
+        '{"kind":"llm","endpoint":"https://example.test/v1/chat/completions","model":"test"}',
+      ]);
+      const agentResult = await runCliCapture(["--json", "config", "set", "engines.agent.kind", "agent"]);
+      const llmResult = await runCliCapture(["--json", "config", "set", "engines.llm.kind", "llm"]);
+      return { agentResult, llmResult };
+    });
+
+    expect(agentResult.code).toBe(0);
+    expect(JSON.parse(agentResult.stdout).engines.agent.kind).toBe("agent");
+    expect(llmResult.code).toBe(0);
+    expect(JSON.parse(llmResult.stdout).engines.llm.kind).toBe("llm");
+  });
+
+  test("incomplete dotted discriminators fail without persisting a rewritten kind", async () => {
+    const { setResult, getResult } = await withEnv(freshEnv(), async () => {
+      const setResult = await runCliCapture(["--json", "config", "set", "engines.new-agent.kind", "agent"]);
+      const getResult = await runCliCapture(["--json", "config", "get", "engines.new-agent.kind"]);
+      return { setResult, getResult };
+    });
+
+    expect(setResult.code).toBe(78);
+    expect(JSON.parse(setResult.stderr)).toMatchObject({ ok: false, code: "INVALID_CONFIG_FILE" });
+    expect(getResult.code).toBe(0);
+    expect(JSON.parse(getResult.stdout)).toBeNull();
+  });
+
+  test("incomplete kind transitions fail atomically and preserve the prior engine", async () => {
+    const { transitionResult, getResult } = await withEnv(freshEnv(), async () => {
+      await runCliCapture([
+        "config",
+        "set",
+        "--silent",
+        "engines.engine",
+        '{"kind":"llm","endpoint":"https://example.test/v1/chat/completions","model":"test"}',
+      ]);
+      const transitionResult = await runCliCapture(["--json", "config", "set", "engines.engine.kind", "agent"]);
+      const getResult = await runCliCapture(["--json", "config", "get", "engines.engine.kind"]);
+      return { transitionResult, getResult };
+    });
+
+    expect(transitionResult.code).toBe(78);
+    expect(JSON.parse(transitionResult.stderr)).toMatchObject({ ok: false, code: "INVALID_CONFIG_FILE" });
+    expect(getResult.code).toBe(0);
+    expect(JSON.parse(getResult.stdout)).toBe("llm");
+  });
+
   test("--layer user is accepted (no-op alias for the current user-only model)", async () => {
-    const { status } = await runCli(["config", "set", "--layer", "user", "--silent", "defaults.agent", "opencode"]);
+    const { status } = await runCli([
+      "config",
+      "set",
+      "--layer",
+      "user",
+      "--silent",
+      "engines.opencode",
+      opencodeEngine,
+    ]);
     expect(status).toBe(0);
   });
 
@@ -86,8 +151,8 @@ describe("akm config set --silent / --layer (#463)", () => {
       "--layer",
       "project",
       "--silent",
-      "defaults.agent",
-      "claude",
+      "engines.claude",
+      claudeEngine,
     ]);
     expect(status).not.toBe(0);
     expect(stderr).toContain("INVALID_FLAG_VALUE");
@@ -103,8 +168,8 @@ describe("akm config set --silent / --layer (#463)", () => {
   test("config unset --silent --layer user also suppresses stdout", async () => {
     const { setResult, unsetResult } = await withEnv(freshEnv(), async () => {
       // Set, then unset.
-      const setResult = await runCliCapture(["config", "set", "--silent", "defaults.agent", "claude"]);
-      const unsetResult = await runCliCapture(["config", "unset", "--silent", "--layer", "user", "defaults.agent"]);
+      const setResult = await runCliCapture(["config", "set", "--silent", "engines.claude", claudeEngine]);
+      const unsetResult = await runCliCapture(["config", "unset", "--silent", "--layer", "user", "engines.claude"]);
       return { setResult, unsetResult };
     });
     expect(setResult.code).toBe(0);

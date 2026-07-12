@@ -59,7 +59,7 @@ akm show wiki:research                        # Wiki summary (same as akm wiki s
 | memory | `content` (recalled context) |
 | env | `keys` (values and comment text are never returned) |
 | secret | metadata only (the single value is never returned) |
-| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
+| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. `akm wiki ingest <name>` dispatches the configured agent engine (defaults.engine or `--engine`) to execute the ingest workflow. |
 | lesson | `content` plus `when_to_use` from frontmatter — read both before applying the lesson |
 
 `akm show wiki:<name>` returns the same summary as `akm wiki show <name>`: path,
@@ -142,15 +142,15 @@ akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug
 akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index, broken sources
-akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
-akm wiki ingest research --profile claude --model sonnet  # Override agent profile and model
+akm wiki ingest research                       # Dispatch defaults.engine to run the ingest workflow on this wiki
+akm wiki ingest research --engine claude --model sonnet  # Override agent engine and model
 akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout
 akm wiki remove research -y                    # Delete pages/schema/index/log; preserves raw/
 akm wiki remove research -y --with-sources     # Full nuke, including raw/
 ```
 
 **For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`
-dispatches the configured agent (defaults.agent or `--profile`) to execute
+dispatches the configured agent engine (defaults.engine or `--engine`) to execute
 the wiki's ingest workflow end-to-end — schema read, source dedup, search,
 page create/update, log entry, lint, reindex.** Wiki pages are also addressable as
 `wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
@@ -289,8 +289,8 @@ akm hints                                     # Print this reference
 
 ## Tasks — Per-task timeoutMs
 
-Task YAML supports `timeoutMs` to override the agent profile's `timeoutMs`
-(set under `profiles.agent.<name>.timeoutMs`) for a single task:
+Task YAML v2 supports `timeoutMs` to override the selected engine's timeout for
+a single task. Prompt tasks select a named `engine`:
 
 - `timeoutMs: null` — disable the agent kill timer (useful for long-running local-model tasks)
 - `timeoutMs: 120000` — override with a specific value in milliseconds

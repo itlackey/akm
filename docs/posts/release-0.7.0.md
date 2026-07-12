@@ -151,6 +151,6 @@ akm proposal accept <id>
 
 No manual migration is required for users on 0.6.x with no `agent` or `llm.features` blocks configured. Everything new is opt-in.
 
-Full details in the [v1 migration guide](../migration/v1.md) and the [0.7.0 release notes](../migration/release-notes/0.7.0.md).
+Full historical details are in the [pre-1.0 migration plan](../archive/pre-1.0-migration.md) and the [0.7.0 release notes](../migration/release-notes/0.7.0.md).
 
 Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/.github/CHANGELOG.md).

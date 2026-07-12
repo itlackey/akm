@@ -21,24 +21,13 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
-import {
-  type AgentFailureReason,
-  type AgentProfile,
-  type AgentRunResult,
-  type RunAgentOptions,
-  runAgent,
-} from "../../integrations/agent";
-import { resolveProcessAgentProfile } from "../../integrations/agent/config";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
+import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
-import { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
-import {
-  baseFailureFields,
-  enoentHintMessage,
-  isEnoentFailure,
-  loadAgentConfigFromDisk,
-  resolveAgentProfile,
-} from "../agent/agent-support";
+import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
+import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
   createProposal,
@@ -51,39 +40,33 @@ export interface AkmProposeOptions {
   type: string;
   name: string;
   task: string;
-  profile?: string;
+  engine?: string;
   timeoutMs?: number;
   stashDir?: string;
-  agentProfile?: AgentProfile;
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
-  /**
-   * Named process to use for per-process agent config lookup. Defaults to
-   * `"propose"`. When an explicit `--profile` flag is given, the process
-   * lookup is skipped and the flag value wins.
-   */
-  agentProcess?: string;
 }
 
 export interface AkmProposeFailure {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: false;
   reason: AgentFailureReason;
   error: string;
   type: string;
   name: string;
+  engine: string;
   exitCode: number | null;
   stdout?: string;
   stderr?: string;
 }
 
 export interface AkmProposeSuccess {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: true;
   proposal: Proposal;
   ref: string;
-  agentProfile: string;
+  engine: string;
   durationMs: number;
 }
 
@@ -93,12 +76,15 @@ function failureEnvelope(
   result: AgentRunResult,
   type: string,
   name: string,
+  engine: string,
   fallbackReason: AgentFailureReason = "non_zero_exit",
 ): AkmProposeFailure {
   return {
     ...baseFailureFields(result, fallbackReason),
+    schemaVersion: 2,
     type,
     name,
+    engine,
   };
 }
 
@@ -129,38 +115,17 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       type: options.type,
       name: options.name,
       task: options.task,
-      ...(options.profile ? { profile: options.profile } : {}),
+      ...(options.engine ? { engine: options.engine } : {}),
     },
   });
 
-  // 2. Resolve profile.
-  // When an explicit --profile flag is given, honour it directly (existing
-  // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
-  // agent config (agent.processes["propose"]) is picked up automatically.
-  let profile: AgentProfile;
-  let resolvedTimeoutMs: number | null | undefined = options.timeoutMs;
-  try {
-    if (options.agentProfile) {
-      // Test seam: injected profile bypasses all config.
-      profile = options.agentProfile;
-    } else if (options.profile) {
-      // Explicit --profile flag wins over process config.
-      profile = resolveAgentProfile(options);
-    } else {
-      // Use per-process config resolution (falls back to agent.default).
-      const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-      const processName = options.agentProcess ?? "propose";
-      const resolved = resolveProcessAgentProfile(processName, agent);
-      profile = resolved.profile;
-      // Only apply process-resolved timeoutMs when caller didn't supply one.
-      if (resolvedTimeoutMs === undefined) {
-        resolvedTimeoutMs = resolved.timeoutMs;
-      }
-    }
-  } catch (err) {
-    if (err instanceof ConfigError || err instanceof UsageError) throw err;
-    throw err;
-  }
+  // 2. Resolve the selected engine exactly once. Propose accepts either kind;
+  // the LLM arm uses the caller-specific plain-chat handler below.
+  const config = options.agentConfig ?? (await import("../../core/config/config.js")).loadConfig();
+  const engineName = options.engine ?? config.defaults?.engine;
+  if (!engineName) throw new ConfigError("propose requires --engine or defaults.engine.", "INVALID_CONFIG_FILE");
+  const runner = resolveEngine(engineName, config);
+  const profile = runner.kind === "llm" ? undefined : runner.profile;
 
   // 3. Build prompt.
   // Synthesize a temp draft path so opencode can write the asset content
@@ -187,39 +152,51 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     draftFilePath: resolvedDraftPath,
   });
 
-  // 4. Spawn the agent.
+  // 4. Dispatch the selected engine.
   // Real agent runs use interactive mode so file tools can write the draft.
   // Injected/custom spawns still need captured stdout for JSON payload tests.
-  // Use callAi for the unified AI dispatch path (agent CLI preferred, LLM HTTP fallback).
+  // All kinds cross the unified RunnerSpec dispatch boundary.
   const useCustomSpawn = Boolean(options.runAgentOptions?.spawn);
   let result: AgentRunResult;
-  if (useCustomSpawn) {
-    // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
-    const runOptions: RunAgentOptions = {
-      stdio: "captured",
-      parseOutput: "text",
-      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-      ...(options.runAgentOptions ?? {}),
-    };
-    result = await runAgent(profile, prompt, runOptions);
-  } else {
-    // Production path: dispatch directly to the appropriate runner.
-    const runOptions: RunAgentOptions = {
-      stdio: resolvedDraftPath ? "interactive" : "captured",
-      parseOutput: "text",
-      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
-    };
-    result = profile.sdkMode
-      ? await runOpencodeSdk(profile, prompt ?? "", runOptions)
-      : await runAgent(profile, prompt, runOptions);
-  }
+  const runOptions: RunAgentOptions = {
+    stdio: useCustomSpawn ? "captured" : "interactive",
+    parseOutput: "text",
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.runAgentOptions ?? {}),
+  };
+  const sensitiveValues = collectDispatchSensitiveValues(runner, runOptions);
+  result = await executeRunner(runner, prompt, runOptions, {
+    llm: async (spec, llmPrompt, opts) => {
+      const { chatCompletion } = await import("../../llm/client.js");
+      const started = Date.now();
+      try {
+        const stdout = await chatCompletion(spec.connection, [{ role: "user", content: llmPrompt }], {
+          ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+        });
+        return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
+      } catch (error) {
+        return {
+          ok: false,
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          durationMs: Date.now() - started,
+          error: String(error),
+          reason: "spawn_failed",
+        };
+      }
+    },
+  });
 
   if (!result.ok) {
     // B3: ENOENT / not-found gives an actionable hint.
     if (isEnoentFailure(result)) {
-      return { ...failureEnvelope(result, options.type, options.name), error: enoentHintMessage(profile.bin) };
+      return {
+        ...failureEnvelope(result, options.type, options.name, engineName),
+        error: enoentHintMessage(profile?.bin ?? engineName),
+      };
     }
-    return failureEnvelope(result, options.type, options.name);
+    return failureEnvelope(result, options.type, options.name, engineName);
   }
 
   // 5. Resolve the proposal content.
@@ -240,13 +217,14 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     const stdioWasInteractive = !useCustomSpawn;
     if (stdioWasInteractive && (result.stdout ?? "") === "") {
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "parse_error",
         error:
           "Agent did not write draft file and stdout was not captured (interactive mode). Check that the agent CLI understood the file-write instruction, or configure a headless profile with stdio: 'captured'.",
         type: options.type,
         name: options.name,
+        engine: engineName,
         exitCode: result.exitCode,
         ...(result.stderr ? { stderr: result.stderr } : {}),
       };
@@ -255,18 +233,21 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       payload = parseAgentProposalPayload(result.stdout ?? "");
     } catch (err) {
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "parse_error",
         error: err instanceof Error ? err.message : String(err),
         type: options.type,
         name: options.name,
+        engine: engineName,
         exitCode: result.exitCode,
         stdout: result.stdout,
         ...(result.stderr ? { stderr: result.stderr } : {}),
       };
     }
   }
+
+  payload = { ...payload, content: redactSensitiveText(payload.content, sensitiveValues) };
 
   // 6. Insert the proposal. Note: we allow the agent's `ref` to normalise the
   // asset name (e.g. path-cleanup), but only after validating that the ref is
@@ -279,12 +260,13 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       parsedRef = parseAssetRef(payload.ref);
     } catch (err) {
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "parse_error",
         error: err instanceof Error ? err.message : String(err),
         type: options.type,
         name: options.name,
+        engine: engineName,
         exitCode: result.exitCode,
         stdout: result.stdout,
         ...(result.stderr ? { stderr: result.stderr } : {}),
@@ -292,12 +274,13 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     }
     if (parsedRef.type !== options.type) {
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         reason: "parse_error",
         error: `Agent returned ref type ${parsedRef.type} but expected ${options.type}`,
         type: options.type,
         name: options.name,
+        engine: engineName,
         exitCode: result.exitCode,
         stdout: result.stdout,
         ...(result.stderr ? { stderr: result.stderr } : {}),
@@ -328,11 +311,11 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
 
   const proposal: Proposal = proposalResult;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     proposal,
     ref: proposal.ref,
-    agentProfile: profile.name,
+    engine: engineName,
     durationMs: result.durationMs,
   };
 }

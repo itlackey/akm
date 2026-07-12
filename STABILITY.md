@@ -56,13 +56,14 @@ CHANGELOG with a migration note.
   group `akm proposal {list,show,diff,accept,reject,revert}`. The flat verbs
   `akm proposals`, `akm show proposal`, `akm accept`, `akm reject`, `akm diff`,
   and `akm revert` are deprecated aliases that warn on stderr and delegate
-  (removed in 0.9.0). Output JSON keys are stable; CLI flags (`--auto-accept`,
-  `--profile`, `--task`, `--generator`) may add options or tighten validation
+   (removed in 0.9.0). Output JSON keys are stable; CLI flags (`--auto-accept`,
+   `--strategy`, `--task`, `--generator`) may add options or tighten validation
   across releases. On `accept`/`reject`/`history`, `--source` is a deprecated
   alias for `--generator` (removed in 0.9.0).
 - **Tasks** — `akm tasks` subcommand surface (singular `akm task` is an
-  additive alias); YAML schema for scheduled tasks. Schema additions in patch
-  releases; removals only at minor.
+  additive alias); strict version-2 YAML for scheduled tasks. Prompt tasks use
+  named engines and task history metadata is versioned. Schema additions in
+  patch releases; removals only at minor.
 - **Events / log** — `akm events` subcommand surface (`akm log` is an additive
   alias for the same stream in 0.8; `log` becomes primary in 0.9.0).
 - **Lessons** — `akm lessons` subcommand surface (singular `akm lesson` is an
@@ -104,7 +105,7 @@ for scripted use.
   asset-type set, and the validation rules may change while the rename flow
   matures.
 - **`akm workflow run` + YAML workflow programs** — orchestrated workflows
-  are written as YAML programs (`workflows/*.yaml`, `version: 1`, validated
+  are written as YAML programs (`workflows/*.yaml`, `version: 2`, validated
   against `schemas/akm-workflow.json`) with `${{ … }}` expressions, per-step
   fan-out, routing, frozen per-run plans, and an explicit failure policy,
   executed engine-driven by `akm workflow run`. The R2 engine rework adds

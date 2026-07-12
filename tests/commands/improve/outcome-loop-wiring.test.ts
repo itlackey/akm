@@ -31,6 +31,7 @@ import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeSkill } from "../../_helpers/assets";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ afterEach(() => {
 });
 
 async function buildIndex(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -59,7 +60,7 @@ const noopIndexFns = {
 
 /** Reflect stub — returns a pending proposal so the ref is processed. */
 const okReflect = (ref: string): AkmReflectResult => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   ok: true,
   proposal: {
     id: `p-${ref.replace(/[^a-z0-9]/gi, "-")}`,
@@ -71,7 +72,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     payload: { content: "# improved" },
   },
   ref,
-  agentProfile: "test",
+  engine: "test",
   durationMs: 1,
 });
 
@@ -85,22 +86,23 @@ const noopDistill = (ref: string): AkmDistillResult => ({
 });
 
 /** Minimal config: disable all expensive processes; keep proactiveMaintenance on. */
-const minimalConfig = (): import("../../../src/core/config/config").AkmConfig => ({
-  semanticSearchMode: "off",
-  profiles: {
+const minimalConfig = (): import("../../../src/core/config/config").AkmConfig =>
+  withTestImproveLlm({
+    semanticSearchMode: "off",
     improve: {
-      default: {
-        processes: {
-          consolidate: { enabled: false },
-          memoryInference: { enabled: false },
-          graphExtraction: { enabled: false },
-          extract: { enabled: false },
-          proactiveMaintenance: { enabled: true, maxPerRun: 10 },
+      strategies: {
+        default: {
+          processes: {
+            consolidate: { enabled: false },
+            memoryInference: { enabled: false },
+            graphExtraction: { enabled: false },
+            extract: { enabled: false },
+            proactiveMaintenance: { enabled: true, maxPerRun: 10 },
+          },
         },
       },
     },
-  },
-});
+  });
 
 // ── Test 1: asset_outcome rows are written ─────────────────────────────────────
 

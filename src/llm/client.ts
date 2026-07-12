@@ -14,8 +14,11 @@
 
 import { fetchWithTimeout } from "../core/common";
 import { type LlmConnectionConfig, type LlmProfileConfig, resolveSecret } from "../core/config/config";
+import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+import { redactSensitiveText } from "../core/redaction";
 import { warnVerbose } from "../core/warn";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
@@ -30,6 +33,9 @@ export {
 
 /** Maximum length of an LLM error response body included in thrown errors. */
 const ERROR_BODY_MAX_LEN = 200;
+
+/** Stable OpenAI-compatible response-schema name used for every structured call. */
+const JSON_SCHEMA_RESPONSE_NAME = "akm_response";
 
 /**
  * Redact credential-shaped substrings from an upstream error body before
@@ -135,14 +141,14 @@ export interface ChatCompletionOptions {
   /** Override the config's temperature for this call. */
   temperature?: number;
   /** Override the config timeout for this call. */
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
   /**
    * JSON Schema for structured output. When provided AND the connection has
    * `supportsJsonSchema: true`, sends `response_format: { type: "json_schema",
-   * json_schema: { schema, strict: true } }`. Otherwise the schema is ignored
-   * and callers rely on prompt-contract JSON.
+   * json_schema: { name: "akm_response", schema, strict: true } }`. Otherwise
+   * the schema is ignored and callers rely on prompt-contract JSON.
    */
   responseSchema?: Record<string, unknown>;
   /** Override the config's enableThinking for this call. */
@@ -283,7 +289,12 @@ async function chatCompletionReal(
   messages: ChatMessage[],
   options?: ChatCompletionInternalOptions,
 ): Promise<string> {
-  const effectiveTimeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
+  const effectiveTimeoutMs =
+    options && Object.hasOwn(options, "timeoutMs")
+      ? (options.timeoutMs ?? null)
+      : Object.hasOwn(config, "timeoutMs")
+        ? (config.timeoutMs ?? null)
+        : DEFAULT_LLM_TIMEOUT_MS;
 
   const started = Date.now();
   try {
@@ -294,8 +305,11 @@ async function chatCompletionReal(
     // Timeout-budget guard: if the first attempt already burned most of the
     // budget, a second attempt cannot complete — skip the retry.
     const elapsed = Date.now() - started;
-    const remaining = effectiveTimeoutMs - elapsed;
-    if (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || remaining <= 0) {
+    const remaining = effectiveTimeoutMs === null ? null : effectiveTimeoutMs - elapsed;
+    if (
+      effectiveTimeoutMs !== null &&
+      (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || (remaining !== null && remaining <= 0))
+    ) {
       throw err;
     }
 
@@ -322,8 +336,12 @@ async function chatCompletionAttempt(
   config: LlmProfileConfig,
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ): Promise<string> {
+  if (config.extraParams !== undefined) {
+    const issue = validateExtraParams(config.extraParams)[0];
+    if (issue) throw new Error(formatExtraParamsIssue("LLM extraParams", issue));
+  }
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const resolvedKey = resolveSecret(config.apiKey);
   if (resolvedKey) {
@@ -336,7 +354,12 @@ async function chatCompletionAttempt(
   const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
   const responseFormat =
     options?.responseSchema && config.supportsJsonSchema
-      ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: JSON_SCHEMA_RESPONSE_NAME, schema: options.responseSchema, strict: true },
+          },
+        }
       : {};
 
   // Wall-clock start for per-call usage telemetry (#576). Captured here so the
@@ -374,24 +397,24 @@ async function chatCompletionAttempt(
     // caller-driven cancellations. Map both to typed LlmCallError.
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new LlmCallError(`Request timed out after ${timeoutMs}ms`, "timeout");
+      throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
     }
     if (msg.includes("timed out")) {
-      throw new LlmCallError(`Request timed out after ${timeoutMs}ms`, "timeout");
+      throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
     }
     throw new LlmCallError(`Network error: ${msg}`, "network_error");
   }
 
   if (!response.ok) {
     const rawBody = await response.text().catch(() => "");
-    const safeBody = redactErrorBody(rawBody);
+    const safeBody = redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : []);
     const status = response.status;
     if (status === 429) {
       throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
     }
     if (status >= 500 && isHtmlResponse(rawBody)) {
       throw new LlmCallError(
-        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${htmlExcerpt(rawBody)}`,
+        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawBody), resolvedKey ? [resolvedKey] : [])}`,
         "provider_html_error",
         status,
       );
@@ -412,7 +435,7 @@ async function chatCompletionAttempt(
   const rawOkBody = await response.text();
   if (isHtmlResponse(rawOkBody)) {
     throw new LlmCallError(
-      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${htmlExcerpt(rawOkBody)}`,
+      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
       "provider_html_error",
       response.status,
     );
@@ -422,7 +445,7 @@ async function chatCompletionAttempt(
     json = JSON.parse(rawOkBody) as ChatCompletionResponse;
   } catch {
     throw new LlmCallError(
-      `LLM response was not valid JSON ${config.endpoint}: ${redactErrorBody(rawOkBody)}`,
+      `LLM response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
       "parse_error",
       response.status,
     );
@@ -440,7 +463,7 @@ async function chatCompletionAttempt(
 
   const content = (json.choices?.[0]?.message?.content ?? "").trim();
   const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
-  return content || reasoning;
+  return redactSensitiveText(content || reasoning, resolvedKey ? [resolvedKey] : []);
 }
 
 /**
@@ -469,6 +492,17 @@ export async function isLlmAvailable(config: LlmConnectionConfig): Promise<boole
 
 // ── Capability probe ────────────────────────────────────────────────────────
 
+const CAPABILITY_PROBE_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean", const: true },
+    ingest: { type: "boolean", const: true },
+    lint: { type: "boolean", const: true },
+  },
+  required: ["ok", "ingest", "lint"],
+  additionalProperties: false,
+};
+
 /**
  * Ask the model to emit a strict JSON object so we know whether the knowledge
  * wiki ingest/lint flows can rely on structured output. Failure is non-fatal —
@@ -479,7 +513,7 @@ export async function probeLlmCapabilities(
 ): Promise<{ reachable: boolean; structuredOutput: boolean; error?: string }> {
   try {
     const raw = await chatCompletion(
-      config,
+      { ...config, supportsJsonSchema: true },
       [
         {
           role: "system",
@@ -490,13 +524,19 @@ export async function probeLlmCapabilities(
           content: 'Return exactly this JSON object and nothing else: {"ok": true, "ingest": true, "lint": true}',
         },
       ],
-      { maxTokens: 64, temperature: 0 },
+      { maxTokens: 64, temperature: 0, responseSchema: CAPABILITY_PROBE_JSON_SCHEMA },
     );
     if (!raw) return { reachable: false, structuredOutput: false, error: "empty response" };
-    const parsed = parseJsonResponse<{ ok?: unknown }>(raw);
+    const parsed = parseJsonResponse<Record<string, unknown>>(raw);
     return {
       reachable: true,
-      structuredOutput: Boolean(parsed && parsed.ok === true),
+      structuredOutput: Boolean(
+        parsed &&
+          Object.keys(parsed).length === 3 &&
+          parsed.ok === true &&
+          parsed.ingest === true &&
+          parsed.lint === true,
+      ),
     };
   } catch (err) {
     return { reachable: false, structuredOutput: false, error: err instanceof Error ? err.message : String(err) };

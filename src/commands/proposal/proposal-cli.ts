@@ -19,7 +19,7 @@ import { UsageError } from "../../core/errors";
 import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
-import { resolveImproveProfile } from "../improve/improve-profiles";
+import { resolveImproveStrategy } from "../improve/improve-strategies";
 import { drainProposals } from "./drain";
 import { resolveDrainPolicy } from "./drain-policies";
 import {
@@ -389,19 +389,22 @@ const proposalDrainCommand = defineJsonCommand({
         "Opt into the judgment tier (llm by default; agent/sdk per config) for deferred items. No-op with a logged triage_deferred summary when no runner is configured.",
       default: false,
     },
-    profile: {
+    strategy: {
       type: "string",
-      description: "Read the triage block (policy, applyMode, ceilings, judgment) from this improve profile.",
+      description: "Read the triage block (policy, applyMode, ceilings, judgment) from this improve strategy.",
     },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    if (rawArgs.some((arg) => arg === "--profile" || arg.startsWith("--profile="))) {
+      throw new UsageError("proposal drain: --profile is retired; use --strategy.", "INVALID_FLAG_VALUE");
+    }
     const stashDir = resolveStashDir();
     const cfg = loadConfig();
 
-    // Phase 2: read the triage block from the named improve profile. CLI flags
+    // Phase 2: read the triage block from the named improve strategy. CLI flags
     // always override config; config supplies defaults for any flag omitted.
-    const triageConfig =
-      args.profile !== undefined ? resolveImproveProfile(args.profile as string, cfg).processes?.triage : undefined;
+    const selectedStrategy = resolveImproveStrategy(args.strategy as string | undefined, cfg);
+    const triageConfig = selectedStrategy.config.processes?.triage;
 
     const policy = resolveDrainPolicy((args.policy as string | undefined) ?? triageConfig?.policy);
     const dryRun = args["dry-run"] === true;
@@ -455,10 +458,13 @@ const proposalDrainCommand = defineJsonCommand({
 
     // Phase 3: resolve the judgment runner when --judgment is set. Default
     // mode is llm; falls back to defaults.llm when the triage block sets
-    // neither mode nor profile (mirrors resolveValidationRunner). null when
+    // no explicit engine selection. null when
     // nothing is configured → the engine leaves deferred items unresolved and
     // emits triage_deferred.
-    const judgment = args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg) : null;
+    const judgment =
+      args.judgment === true
+        ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg, triageConfig, selectedStrategy.config)
+        : null;
 
     // #576: persist + attribute per-call LLM usage for the standalone drain
     // path. `IfAbsent` keeps an enclosing `akm improve` sink in charge when
@@ -488,10 +494,14 @@ const proposalDrainCommand = defineJsonCommand({
       policy: policy.name,
       applyMode,
       dryRun,
+      strategy: selectedStrategy.name,
+      judgmentEngine: judgment?.engine ?? null,
+      judgmentKind: judgment?.kind ?? null,
       promoted: result.promoted,
       rejected: result.rejected,
       deferred: result.deferred,
       skippedByCap: result.skippedByCap,
+      staged: result.staged,
     });
   },
 });

@@ -19,12 +19,12 @@ import type { UnitDispatcher } from "../../../src/workflows/exec/native-executor
 import { reportWorkflowUnit, settleWorkflowSpine } from "../../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computeStepWorkList } from "../../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
+import { frozenStepRows } from "../../../src/workflows/runtime/plan-classifier";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
+import { freezeWorkflowProgram } from "../../_helpers/workflow";
 
 /**
  * R4 — cross-surface driver-parity conformance (redesign addendum, "no
@@ -64,15 +64,24 @@ const RUN_ID = "77777777-7777-4777-8777-777777777777";
 
 let rootDir = "";
 let prevDataDir: string | undefined;
+let prevCacheDir: string | undefined;
+
+function selectSurfaceDir(dir: string): void {
+  process.env.AKM_DATA_DIR = dir;
+  process.env.AKM_CACHE_DIR = path.join(dir, "cache");
+}
 
 beforeEach(() => {
   rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-parity-"));
   prevDataDir = process.env.AKM_DATA_DIR;
+  prevCacheDir = process.env.AKM_CACHE_DIR;
 });
 
 afterEach(() => {
   if (prevDataDir === undefined) delete process.env.AKM_DATA_DIR;
   else process.env.AKM_DATA_DIR = prevDataDir;
+  if (prevCacheDir === undefined) delete process.env.AKM_CACHE_DIR;
+  else process.env.AKM_CACHE_DIR = prevCacheDir;
   try {
     fs.rmSync(rootDir, { recursive: true, force: true });
   } catch {
@@ -127,11 +136,7 @@ function lineFor(graph: GraphLine[], prefix: string): string {
 }
 
 function compile(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/golden.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText, "workflows/golden.yaml");
 }
 
 /** Strip every trailing gate-loop / retry suffix to recover the content-derived base id. */
@@ -141,22 +146,33 @@ function contentBaseId(unitId: string): string {
 
 /** The base unit ids the first step of a golden fans out to (for item-keyed fixtures). */
 function stepUnitIds(plan: WorkflowPlanGraph, stepIndex: number, params: Record<string, unknown>): WorkflowBriefUnit[] {
-  const computed = computeStepWorkList(plan.steps[stepIndex], { runId: RUN_ID, params, stepOutputs: {} });
+  const computed = computeStepWorkList(plan.steps[stepIndex], {
+    runId: RUN_ID,
+    params,
+    stepOutputs: {},
+    engines: plan.execution?.engines,
+  });
   if (!computed.ok) throw new Error(computed.error);
   // Only the fields the parity harness reads.
-  return computed.list.units.map((u) => ({
-    unitId: u.unitId,
-    nodeId: u.nodeId,
-    index: u.index,
-    runner: u.runner,
-    timeoutMs: u.timeoutMs,
-    onError: u.onError,
-    item: u.item,
-    resolved: u.resolved.ok
-      ? { ok: true, instructions: u.resolved.prompt, inputHash: u.resolved.inputHash }
-      : { ok: false, error: u.resolved.error },
-    action: "pending" as const,
-  }));
+  return computed.list.units.map((u) => {
+    if (!u.engine || !u.invocation) throw new Error("fixture requires frozen attribution");
+    return {
+      unitId: u.unitId,
+      nodeId: u.nodeId,
+      index: u.index,
+      engine: u.invocation.engine,
+      runtimeKind: u.runner,
+      platform: u.engine.kind === "agent" ? u.engine.platform : null,
+      model: u.invocation.model,
+      timeoutMs: u.timeoutMs,
+      onError: u.onError,
+      item: u.item,
+      resolved: u.resolved.ok
+        ? { ok: true, instructions: u.resolved.prompt, inputHash: u.resolved.inputHash }
+        : { ok: false, error: u.resolved.error },
+      action: "pending" as const,
+    };
+  });
 }
 
 function rejectThenAccept(): SummaryJudge {
@@ -284,15 +300,24 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>, steps
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash)
-       VALUES (?, 'workflow:golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?, ?, ?)`,
+           params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
+        VALUES (?, 'workflow:golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?, ?, ?, 3)`,
     ).run(RUN_ID, JSON.stringify(params), current, now, now, canonicalPlanJson(plan), computePlanHash(plan));
+    const plannedSteps = new Map(frozenStepRows(plan).map((step) => [step.stepId, step]));
     steps.forEach((step, i) => {
+      const planned = plannedSteps.get(step.id);
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
-         VALUES (?, ?, ?, 'instructions', ?, ?, 'pending')`,
-      ).run(RUN_ID, step.id, step.id, step.criteria ? JSON.stringify(step.criteria) : null, i);
+          VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      ).run(
+        RUN_ID,
+        step.id,
+        planned?.stepTitle ?? step.id,
+        planned?.instructions ?? "instructions",
+        planned?.completionJson ?? (step.criteria ? JSON.stringify(step.criteria) : null),
+        planned?.sequenceIndex ?? i,
+      );
     });
   } finally {
     closeWorkflowDatabase(db);
@@ -315,7 +340,13 @@ async function seedCrashedLoop1(
   plan: WorkflowPlanGraph,
   feedback: { feedback: string; missing: string[] },
 ): Promise<void> {
-  const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+  const computed = computeStepWorkList(plan.steps[0], {
+    runId: RUN_ID,
+    params: {},
+    stepOutputs: {},
+    engines: plan.execution.engines,
+    gateLoop: 1,
+  });
   if (!computed.ok) throw new Error(computed.error);
   const unit = computed.list.units[0];
   if (!unit.resolved.ok) throw new Error(unit.resolved.error);
@@ -429,7 +460,7 @@ async function runDriverSurface(golden: Golden): Promise<void> {
 
 const SOLO: Golden = {
   name: "solo",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: build
@@ -454,7 +485,7 @@ steps:
 
 const FAN_OUT_COLLECT: Golden = {
   name: "fan-out + collect",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 params:
   files: { type: array }
@@ -482,7 +513,7 @@ steps:
 
 const VOTE: Golden = {
   name: "vote",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 params:
   attempts: { type: array }
@@ -512,7 +543,7 @@ steps:
 
 const ROUTE: Golden = {
   name: "route",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: classify
@@ -555,7 +586,7 @@ steps:
 
 const GATE_MAX_LOOPS: Golden = {
   name: "gate max_loops (reject then accept)",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: work
@@ -592,7 +623,7 @@ steps:
 
 // on_error: continue — one fan-out unit fails; the step still completes.
 function onErrorContinueGolden(): Golden {
-  const yaml = `version: 1
+  const yaml = `version: 2
 name: Golden
 params:
   files: { type: array }
@@ -636,7 +667,7 @@ steps:
 // reports only the terminal success. The collapsed graphs must match.
 const RETRY: Golden = {
   name: "retry (fail then succeed)",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: work
@@ -678,7 +709,7 @@ steps:
 // empty completed result.
 const EMPTY_OUTPUT: Golden = {
   name: "empty free-text output",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: build
@@ -699,23 +730,22 @@ steps:
   },
 };
 
-// profile + timeout in the hashed dispatch envelope (reviewer finding #1). The
-// unit declares a profile and a per-unit timeout — both now part of the input
-// hash (step-work.ts). Because the hash is computed in ONE shared place, the
+// Named engine + timeout in the hashed dispatch envelope (reviewer finding #1).
+// The unit declares an engine and a per-unit timeout, which freeze into the
+// dispatch inputs hashed by step-work.ts. Because the hash is computed in ONE shared place, the
 // engine and brief/report surfaces MUST journal a byte-identical `input_hash`
 // here; a future refactor that recomputed the hash per-surface from a subset of
 // fields would diverge the `hash=` column and this golden would fail. (The
-// fake dispatcher ignores profile/timeout, so no real backend is needed.)
-const PROFILE_TIMEOUT: Golden = {
-  name: "profile + timeout in the input hash",
-  yaml: `version: 1
+// fake dispatcher ignores engine/timeout, so no real backend is needed.)
+const ENGINE_TIMEOUT: Golden = {
+  name: "named engine + timeout in the input hash",
+  yaml: `version: 2
 name: Golden
 steps:
   - id: build
     title: Build
     unit:
-      runner: agent
-      profile: reviewer
+      engine: test-agent
       timeout: 5m
       instructions: Build it.
 `,
@@ -739,7 +769,7 @@ steps:
 // run lands `blocked` on BOTH surfaces — the same unit graph.
 const REQUIRED_GATE_NO_JUDGE: Golden = {
   name: "required gate, no judge → blocked (offline parity)",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: work
@@ -771,7 +801,7 @@ steps:
 // same unit graph. This is the exact bypass finding A flagged.
 const REQUIRED_GATE_JUDGE_ERRORS: Golden = {
   name: "required gate, judge errors → blocked (offline parity)",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 steps:
   - id: work
@@ -808,7 +838,7 @@ steps:
 // branch dispatched.
 const PARAMS_ROUTE_FIRST: Golden = {
   name: "params-routed route as the FIRST step (settle verb)",
-  yaml: `version: 1
+  yaml: `version: 2
 name: Golden
 params:
   mode: { type: string }
@@ -851,7 +881,7 @@ const GOLDENS: Golden[] = [
   onErrorContinueGolden(),
   RETRY,
   EMPTY_OUTPUT,
-  PROFILE_TIMEOUT,
+  ENGINE_TIMEOUT,
   REQUIRED_GATE_NO_JUDGE,
   REQUIRED_GATE_JUDGE_ERRORS,
   PARAMS_ROUTE_FIRST,
@@ -867,7 +897,7 @@ describe("conformance — engine/driver cross-surface parity", () => {
       // (a) engine-driven, in its own database.
       const engineDir = path.join(rootDir, "engine");
       fs.mkdirSync(engineDir, { recursive: true });
-      process.env.AKM_DATA_DIR = engineDir;
+      selectSurfaceDir(engineDir);
       seedRun(plan, golden.params, golden.steps);
       await runEngineSurface(golden);
       const engineGraph = await canonicalGraph();
@@ -879,7 +909,7 @@ describe("conformance — engine/driver cross-surface parity", () => {
       // (b) brief/report-driven, in a SEPARATE database, same plan + fixtures.
       const driverDir = path.join(rootDir, "driver");
       fs.mkdirSync(driverDir, { recursive: true });
-      process.env.AKM_DATA_DIR = driverDir;
+      selectSurfaceDir(driverDir);
       seedRun(plan, golden.params, golden.steps);
       await runDriverSurface(golden);
       const driverGraph = await canonicalGraph();
@@ -901,7 +931,7 @@ describe("conformance — engine/driver cross-surface parity", () => {
   // from the SAME seeded crashed pre-state (loop-1 unit + gate:l1 rejected) and
   // must reach byte-identical loop-2 graphs, WITHOUT clobbering the l1 gate row.
   test("crash-after-rejection resume: engine and brief/report reach identical loop-2 graphs, l1 gate row untouched", async () => {
-    const yaml = `version: 1
+    const yaml = `version: 2
 name: Golden
 steps:
   - id: work
@@ -928,7 +958,7 @@ steps:
     // (a) engine surface: seed the crashed pre-state, then resume once.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, {}, steps);
     await seedCrashedLoop1(plan, feedback);
     const engineGateBefore = await unitRow("work.gate:l1");
@@ -941,7 +971,7 @@ steps:
     // (b) brief/report surface: same crashed pre-state, resume via the driver loop.
     const driverDir = path.join(rootDir, "driver");
     fs.mkdirSync(driverDir, { recursive: true });
-    process.env.AKM_DATA_DIR = driverDir;
+    selectSurfaceDir(driverDir);
     seedRun(plan, {}, steps);
     await seedCrashedLoop1(plan, feedback);
     await runDriverSurface(golden);
@@ -970,7 +1000,7 @@ steps:
   // verb brief now emits, running the SAME shared completion path. Both surfaces
   // must re-block identically (no judge available), with byte-identical graphs.
   test("fully-terminal required-gate step: engine re-reduce and brief/report --settle both re-block identically", async () => {
-    const yaml = `version: 1
+    const yaml = `version: 2
 name: Golden
 steps:
   - id: work
@@ -995,7 +1025,13 @@ steps:
     // Seed the fully-terminal recovery pre-state: run active, step pending again,
     // its solo unit already completed with the engine's content-derived hash.
     const seedCompletedUnit = async (): Promise<void> => {
-      const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {}, gateLoop: 1 });
+      const computed = computeStepWorkList(plan.steps[0], {
+        runId: RUN_ID,
+        params: {},
+        stepOutputs: {},
+        gateLoop: 1,
+        engines: plan.execution?.engines,
+      });
       if (!computed.ok) throw new Error(computed.error);
       const unit = computed.list.units[0];
       if (!unit.resolved.ok) throw new Error(unit.resolved.error);
@@ -1028,7 +1064,7 @@ steps:
     // (a) engine surface.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, {}, steps);
     await seedCompletedUnit();
     await runEngineSurface(golden);
@@ -1038,7 +1074,7 @@ steps:
     // command and settles, running the same completion path.
     const driverDir = path.join(rootDir, "driver");
     fs.mkdirSync(driverDir, { recursive: true });
-    process.env.AKM_DATA_DIR = driverDir;
+    selectSurfaceDir(driverDir);
     seedRun(plan, {}, steps);
     await seedCompletedUnit();
     await runDriverSurface(golden);
@@ -1060,7 +1096,7 @@ steps:
   // unit crashed-then-retried, its sibling never run) and must reach byte-
   // identical completed graphs.
   test("crash-after-retry resume: a base-failed unit rescued by a completed ~r1 reduces as COMPLETED on both surfaces", async () => {
-    const yaml = `version: 1
+    const yaml = `version: 2
 name: Golden
 steps:
   - id: review
@@ -1075,7 +1111,12 @@ steps:
     const plan = compile(yaml);
     const params = { files: ["a.ts", "b.ts"] };
     const steps: SeedStep[] = [{ id: "review" }];
-    const computed = computeStepWorkList(plan.steps[0], { runId: RUN_ID, params, stepOutputs: {} });
+    const computed = computeStepWorkList(plan.steps[0], {
+      runId: RUN_ID,
+      params,
+      stepOutputs: {},
+      engines: plan.execution?.engines,
+    });
     if (!computed.ok) throw new Error(computed.error);
     const [ua, ub] = computed.list.units;
     if (!ua.resolved.ok || !ub.resolved.ok) throw new Error("fixture: units did not resolve");
@@ -1124,7 +1165,7 @@ steps:
     // (a) engine surface: resume — A is reused from ~r1, B is dispatched.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, params, steps);
     await seedCrashedRetry();
     await runWorkflowSteps({
@@ -1137,7 +1178,7 @@ steps:
     // (b) brief/report surface: same pre-state, driven through the driver loop.
     const driverDir = path.join(rootDir, "driver");
     fs.mkdirSync(driverDir, { recursive: true });
-    process.env.AKM_DATA_DIR = driverDir;
+    selectSurfaceDir(driverDir);
     seedRun(plan, params, steps);
     await seedCrashedRetry();
     const golden: Golden = {
@@ -1182,7 +1223,7 @@ steps:
     // (a) engine surface.
     const engineDir = path.join(rootDir, "engine");
     fs.mkdirSync(engineDir, { recursive: true });
-    process.env.AKM_DATA_DIR = engineDir;
+    selectSurfaceDir(engineDir);
     seedRun(plan, bad, FAN_OUT_COLLECT.steps);
     await expect(
       runWorkflowSteps({
@@ -1195,14 +1236,14 @@ steps:
     // (b) brief surface, separate database, same plan + bad params row.
     const briefDir = path.join(rootDir, "brief");
     fs.mkdirSync(briefDir, { recursive: true });
-    process.env.AKM_DATA_DIR = briefDir;
+    selectSurfaceDir(briefDir);
     seedRun(plan, bad, FAN_OUT_COLLECT.steps);
     await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/integrity check/);
 
     // (c) report surface, separate database, same plan + bad params row.
     const reportDir = path.join(rootDir, "report");
     fs.mkdirSync(reportDir, { recursive: true });
-    process.env.AKM_DATA_DIR = reportDir;
+    selectSurfaceDir(reportDir);
     seedRun(plan, bad, FAN_OUT_COLLECT.steps);
     await expect(
       reportWorkflowUnit({

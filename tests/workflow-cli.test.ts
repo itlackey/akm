@@ -3,10 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
+import { createMigrationBackup } from "../src/core/migration-backup";
 import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { parseWorkflow } from "../src/workflows/parser";
 import { runCliCapture } from "./_helpers/cli";
+import { withEnvSync } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -37,7 +39,37 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
 function writeConfig(env: NodeJS.ProcessEnv, config: Record<string, unknown>) {
   const configDir = path.join(String(env.XDG_CONFIG_HOME), "akm");
   fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(path.join(configDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  withEnvSync(
+    {
+      AKM_STASH_DIR: env.AKM_STASH_DIR,
+      XDG_CACHE_HOME: env.XDG_CACHE_HOME,
+      XDG_CONFIG_HOME: env.XDG_CONFIG_HOME,
+      XDG_DATA_HOME: env.XDG_DATA_HOME,
+      XDG_STATE_HOME: env.XDG_STATE_HOME,
+    },
+    () => createMigrationBackup(),
+  );
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    `${JSON.stringify(
+      {
+        configVersion: "0.9.0",
+        engines: {
+          "test-agent": { kind: "agent", platform: "opencode-sdk" },
+          "test-llm": {
+            kind: "llm",
+            endpoint: "http://localhost:1/v1/chat/completions",
+            model: "test-model",
+          },
+        },
+        defaults: { engine: "test-agent", llmEngine: "test-llm" },
+        ...config,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 }
 
 /**

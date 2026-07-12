@@ -90,6 +90,11 @@ export class AkmCli {
     return this.run(["index", ...extraArgs]);
   }
 
+  /** Capture the mandatory pre-cutover recovery bundle before a fixture writes config. */
+  createMigrationBackup(): AkmCliRunResult {
+    return this.run(["backup", "create", "--for", "0.9.0"]);
+  }
+
   /**
    * Record feedback against a stash asset. Used by the judge-calibration
    * runner to materialize probe feedback events inside a sandbox.

@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://itlackey.github.io/akm/schemas/akm-task.json",
+  "title": "AKM Scheduled Task",
+  "description": "Strict version-2 YAML task definition. Exactly one target is required.",
+  "type": "object",
+  "required": ["version", "schedule"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 2 },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "when_to_use": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "schedule": { "type": "string", "minLength": 1 },
+    "enabled": { "type": "boolean" },
+    "workflow": { "type": "string", "minLength": 1 },
+    "prompt": { "type": "string", "minLength": 1 },
+    "command": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "params": { "type": "object" },
+    "engine": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "timeoutMs": { "type": ["integer", "null"], "minimum": 1 },
+    "llm": { "$ref": "#/definitions/llm" }
+  },
+  "oneOf": [
+    {
+      "required": ["workflow"],
+      "not": { "anyOf": [{ "required": ["prompt"] }, { "required": ["command"] }, { "required": ["engine"] }, { "required": ["model"] }, { "required": ["timeoutMs"] }, { "required": ["llm"] }] }
+    },
+    {
+      "required": ["prompt"],
+      "not": { "anyOf": [{ "required": ["workflow"] }, { "required": ["command"] }, { "required": ["params"] }] }
+    },
+    {
+      "required": ["command"],
+      "not": { "anyOf": [{ "required": ["workflow"] }, { "required": ["prompt"] }, { "required": ["params"] }, { "required": ["engine"] }, { "required": ["model"] }, { "required": ["llm"] }] }
+    }
+  ],
+  "definitions": {
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number" },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "supportsJsonSchema": { "type": "boolean" },
+        "extraParams": { "$ref": "#/definitions/extraParams" },
+        "contextLength": { "type": "integer", "minimum": 1 },
+        "enableThinking": { "type": "boolean" }
+      }
+    },
+    "extraParams": {
+      "type": "object",
+      "description": "Provider-specific request fields. Top-level AKM-owned fields are forbidden; credential-shaped keys are forbidden recursively after lowercase/non-alphanumeric normalization.",
+      "propertyNames": {
+        "not": {
+          "enum": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking", "authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+        }
+      },
+      "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
+      "x-akm-protectedTopLevelNormalizedKeys": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking"],
+      "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+    },
+    "extraParamValue": {
+      "anyOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array", "items": { "$ref": "#/definitions/extraParamValue" } },
+        {
+          "type": "object",
+          "propertyNames": {
+            "not": {
+              "enum": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+            }
+          },
+          "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
+          "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+        }
+      ]
+    }
+  }
+}

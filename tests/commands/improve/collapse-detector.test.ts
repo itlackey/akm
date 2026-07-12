@@ -36,6 +36,7 @@ import {
   insertCycleMetrics,
   queryRecentCycleMetrics,
 } from "../../../src/storage/repositories/canaries-repository";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -43,11 +44,13 @@ let stateDb: StateDatabase;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  saveConfig({
-    semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: storage.stashDir }],
-    registries: [],
-  });
+  saveConfig(
+    withTestImproveLlm({
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", path: storage.stashDir }],
+      registries: [],
+    }),
+  );
   stateDb = openStateDatabase();
 });
 
@@ -403,7 +406,7 @@ describe("runCollapseDetector orchestrator", () => {
       pass: "consolidate",
       acceptedActions: 2,
       mergeFloorViolations: 0,
-      config: { semanticSearchMode: "off" } as never,
+      config: withTestImproveLlm({ semanticSearchMode: "off" }) as never,
     });
     expect(result).toBeDefined();
     expect(result?.run_id).toBe("run-orchestrated");
@@ -433,7 +436,7 @@ describe("runCollapseDetector orchestrator", () => {
       pass: "consolidate",
       acceptedActions: 0,
       mergeFloorViolations: 0,
-      config: { semanticSearchMode: "off" } as never,
+      config: withTestImproveLlm({ semanticSearchMode: "off" }) as never,
       indexDbPath: "/nonexistent/dir/index.db",
     });
     expect(result).toBeUndefined();
@@ -450,7 +453,7 @@ describe("post-loop hook gating", () => {
     await akmImprove({
       scope: "memory",
       stashDir: storage.stashDir,
-      config: { semanticSearchMode: "off" } as never,
+      config: withTestImproveLlm({ semanticSearchMode: "off" }) as never,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async () => ({ schemaVersion: 1, ok: true, outcome: "skipped", ref: "", message: "stub" }) as never,

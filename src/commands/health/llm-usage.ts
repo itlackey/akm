@@ -9,7 +9,7 @@
 
 import { readEvents } from "../../core/events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
-import { toFiniteNumber } from "./improve-metrics";
+import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
 import type { LlmUsageAggregate, LlmUsageStageAggregate } from "./types";
 
 /** Stage key used for `llm_usage` events recorded outside any stage scope. */
@@ -27,7 +27,7 @@ function emptyLlmUsageStageAggregate(): LlmUsageStageAggregate {
 }
 
 function emptyLlmUsageAggregate(): LlmUsageAggregate {
-  return { ...emptyLlmUsageStageAggregate(), byStage: {} };
+  return { ...emptyLlmUsageStageAggregate(), byStage: {}, byProcess: {}, byEngine: {} };
 }
 
 /**
@@ -39,27 +39,24 @@ function emptyLlmUsageAggregate(): LlmUsageAggregate {
 export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"]): LlmUsageAggregate {
   const aggregate = emptyLlmUsageAggregate();
   for (const event of events) {
-    const meta = event.metadata ?? {};
-    const stageKey = typeof meta.stage === "string" && meta.stage ? meta.stage : UNATTRIBUTED_STAGE;
-    let stage = aggregate.byStage[stageKey];
-    if (!stage) {
-      stage = emptyLlmUsageStageAggregate();
-      aggregate.byStage[stageKey] = stage;
+    const record = decodeLlmUsageRecord(event.metadata);
+    if (!record) continue;
+    const dimensions: LlmUsageStageAggregate[] = [];
+    for (const [groups, key] of [
+      [aggregate.byStage, record.stage ?? UNATTRIBUTED_STAGE],
+      [aggregate.byProcess, record.process ?? UNATTRIBUTED_STAGE],
+      [aggregate.byEngine, record.engine ?? UNATTRIBUTED_STAGE],
+    ] as const) {
+      groups[key] ??= emptyLlmUsageStageAggregate();
+      dimensions.push(groups[key]);
     }
-
-    const durationMs = toFiniteNumber(meta.durationMs);
-    const promptTokens = toFiniteNumber(meta.promptTokens);
-    const completionTokens = toFiniteNumber(meta.completionTokens);
-    const totalTokens = toFiniteNumber(meta.totalTokens);
-    const reasoningTokens = toFiniteNumber(meta.reasoningTokens);
-
-    for (const target of [aggregate, stage]) {
+    for (const target of [aggregate, ...dimensions]) {
       target.calls += 1;
-      target.totalDurationMs += durationMs;
-      target.promptTokens += promptTokens;
-      target.completionTokens += completionTokens;
-      target.totalTokens += totalTokens;
-      target.reasoningTokens += reasoningTokens;
+      target.totalDurationMs += record.durationMs;
+      target.promptTokens += record.promptTokens ?? 0;
+      target.completionTokens += record.completionTokens ?? 0;
+      target.totalTokens += record.totalTokens ?? 0;
+      target.reasoningTokens += record.reasoningTokens ?? 0;
     }
   }
   return aggregate;

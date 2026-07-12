@@ -6,7 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
+import {
+  createLockPayload,
+  type LockOwnership,
+  probeLock,
+  reclaimStaleLock,
+  releaseLock,
+  tryAcquireLockSync,
+} from "../../core/file-lock";
+import { withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
 import { warn } from "../../core/warn";
 
 // #607 Lock Decomposition: fine-grained per-process locks replace the single
@@ -28,7 +36,9 @@ export const PROCESS_LOCK_DEFS = {
   triage: { fileName: "triage.lock", staleAfterMs: 30 * 60 * 1000 },
 } as const;
 
-const heldProcessLocks = new Set<string>();
+const heldProcessLocks = new Set<LockOwnership>();
+
+export type ProcessLockAcquisition = { state: "acquired"; ownership: LockOwnership } | { state: "skipped" };
 
 export function resetHeldProcessLocks(): void {
   heldProcessLocks.clear();
@@ -43,12 +53,36 @@ export function tryAcquireProcessLock(
   staleAfterMs: number,
   skipIfLocked: boolean | undefined,
   lockLabel: string,
-): "acquired" | "skipped" {
+): ProcessLockAcquisition {
+  let recoveryEvent: Parameters<typeof appendEvent>[0] | undefined;
+  const result = withMaintenanceStartBarrier(() =>
+    tryAcquireProcessLockUnlocked(lockPath, staleAfterMs, skipIfLocked, lockLabel, (event) => {
+      recoveryEvent = event;
+    }),
+  );
+  if (recoveryEvent) {
+    try {
+      appendEvent(recoveryEvent);
+    } catch {
+      /* event emission is best-effort; never block lock recovery */
+    }
+  }
+  return result;
+}
+
+function tryAcquireProcessLockUnlocked(
+  lockPath: string,
+  staleAfterMs: number,
+  skipIfLocked: boolean | undefined,
+  lockLabel: string,
+  onRecovered: (event: Parameters<typeof appendEvent>[0]) => void,
+): ProcessLockAcquisition {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  const lockPayload = () => JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
-  if (tryAcquireLockSync(lockPath, lockPayload())) {
-    heldProcessLocks.add(lockPath);
-    return "acquired";
+  const lockPayload = () => createLockPayload({ startedAt: new Date().toISOString() });
+  let ownership = tryAcquireLockSync(lockPath, lockPayload());
+  if (ownership) {
+    heldProcessLocks.add(ownership);
+    return { state: "acquired", ownership };
   }
 
   const probe = probeLock(lockPath, { staleAfterMs });
@@ -59,9 +93,10 @@ export function tryAcquireProcessLock(
   // would warn/throw with a null PID for a lock that nobody actually holds.
   // (Mirrors the absent/stale reclaim-and-retry in `acquireExtractSessionLock`.)
   if (probe.state === "absent") {
-    if (tryAcquireLockSync(lockPath, lockPayload())) {
-      heldProcessLocks.add(lockPath);
-      return "acquired";
+    ownership = tryAcquireLockSync(lockPath, lockPayload());
+    if (ownership) {
+      heldProcessLocks.add(ownership);
+      return { state: "acquired", ownership };
     }
     // Re-grabbed by another racer in the window — fall through and treat as held.
   }
@@ -78,29 +113,35 @@ export function tryAcquireProcessLock(
     : null;
 
   if (probe.state === "stale") {
-    try {
-      appendEvent({
-        eventType: "improve_lock_recovered",
-        metadata: {
-          lockName: lockLabel,
-          stalePid: lock?.pid ?? null,
-          lockedAt: lock?.startedAt ?? null,
-          recoveredAt: new Date().toISOString(),
-          lockAgeMs: probe.ageMs ?? null,
-          reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
-        },
-      });
-    } catch {
-      /* event emission is best-effort; never block lock recovery */
+    if (!reclaimStaleLock(lockPath, probe)) {
+      if (skipIfLocked) {
+        warn(`[improve] ${lockLabel} lock changed ownership during stale recovery; skipping (--skip-if-locked)`);
+        return { state: "skipped" };
+      }
+      throw new ConfigError(
+        `akm improve ${lockLabel} is already running. Delete ${lockPath} to force.`,
+        "INVALID_CONFIG_FILE",
+      );
     }
-    releaseLock(lockPath);
-    if (tryAcquireLockSync(lockPath, lockPayload())) {
-      heldProcessLocks.add(lockPath);
-      return "acquired";
+    onRecovered({
+      eventType: "improve_lock_recovered",
+      metadata: {
+        lockName: lockLabel,
+        stalePid: lock?.pid ?? null,
+        lockedAt: lock?.startedAt ?? null,
+        recoveredAt: new Date().toISOString(),
+        lockAgeMs: probe.ageMs ?? null,
+        reason: probe.reason === "pid_dead" ? "pid_not_alive" : probe.reason,
+      },
+    });
+    ownership = tryAcquireLockSync(lockPath, lockPayload());
+    if (ownership) {
+      heldProcessLocks.add(ownership);
+      return { state: "acquired", ownership };
     }
     if (skipIfLocked) {
       warn(`[improve] ${lockLabel} lock acquired by another run during stale recovery; skipping (--skip-if-locked)`);
-      return "skipped";
+      return { state: "skipped" };
     }
     throw new ConfigError(
       `akm improve ${lockLabel} is already running. Delete ${lockPath} to force.`,
@@ -112,7 +153,7 @@ export function tryAcquireProcessLock(
     warn(
       `[improve] ${lockLabel} lock held by another run (PID ${lock?.pid}, started ${lock?.startedAt}); skipping (--skip-if-locked)`,
     );
-    return "skipped";
+    return { state: "skipped" };
   }
 
   throw new ConfigError(
@@ -121,19 +162,19 @@ export function tryAcquireProcessLock(
   );
 }
 
-export function releaseProcessLock(lockPath: string): void {
+export function releaseProcessLock(ownership: LockOwnership): void {
+  if (!heldProcessLocks.has(ownership)) return;
   try {
-    fs.unlinkSync(lockPath);
-  } catch {
-    // ignore
+    releaseLock(ownership);
+  } finally {
+    heldProcessLocks.delete(ownership);
   }
-  heldProcessLocks.delete(lockPath);
 }
 
 export function releaseAllProcessLocks(): void {
-  for (const p of heldProcessLocks) {
+  for (const ownership of heldProcessLocks) {
     try {
-      fs.unlinkSync(p);
+      releaseLock(ownership);
     } catch {
       // ignore
     }
@@ -144,12 +185,12 @@ export function releaseAllProcessLocks(): void {
 /**
  * Ownership-safe release of every currently-held lock, for the `process.on("exit")`
  * backstop (signal handler / budget watchdog paths that skip the normal finally).
- * Uses `releaseLockIfOwned` so a lock another PID legitimately re-acquired after a
- * stale recovery is never deleted. Does NOT clear the Set (the process is exiting).
+ * Uses exact ownership handles so a lock legitimately re-acquired after stale
+ * recovery is never deleted. Does NOT clear the Set (the process is exiting).
  */
-export function releaseHeldLocksIfOwned(pid: number): void {
-  for (const p of heldProcessLocks) {
-    releaseLockIfOwned(p, pid);
+export function releaseHeldLocksIfOwned(): void {
+  for (const ownership of heldProcessLocks) {
+    releaseLock(ownership);
   }
 }
 
@@ -162,7 +203,7 @@ export function releaseHeldLocksIfOwned(pid: number): void {
  * Behaviour matches the hand-rolled `acquired = tryAcquire(...) === "acquired";
  * …run stage…; if (acquired) release` idiom it replaces:
  *   - When the lock is held and `skipIfLocked` is set, `tryAcquireProcessLock`
- *     returns "skipped" → the stage still runs (unlocked), nothing to release.
+ *     returns `state: "skipped"` → the stage still runs (unlocked), nothing to release.
  *   - When the lock is held and `skipIfLocked` is NOT set, `tryAcquireProcessLock`
  *     throws (propagated here before `body` runs; nothing acquired, nothing released).
  *   - The process-exit backstop (`releaseHeldLocksIfOwned`) still covers a
@@ -172,11 +213,10 @@ export async function withOptionalProcessLock<T>(
   opts: { lockPath: string; staleAfterMs: number; skipIfLocked: boolean | undefined; label: string },
   body: () => Promise<T>,
 ): Promise<T> {
-  const acquired =
-    tryAcquireProcessLock(opts.lockPath, opts.staleAfterMs, opts.skipIfLocked, opts.label) === "acquired";
+  const acquisition = tryAcquireProcessLock(opts.lockPath, opts.staleAfterMs, opts.skipIfLocked, opts.label);
   try {
     return await body();
   } finally {
-    if (acquired) releaseProcessLock(opts.lockPath);
+    if (acquisition.state === "acquired") releaseProcessLock(acquisition.ownership);
   }
 }

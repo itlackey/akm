@@ -13,7 +13,7 @@
  * @module improve-runs-repository
  */
 
-import type { AkmImproveResult } from "../../core/improve-types";
+import type { ImproveResultEnvelope } from "../../core/improve-result";
 import { classifyImproveAction } from "../../core/improve-types";
 import type { Database } from "../database";
 
@@ -55,7 +55,8 @@ export interface ImproveRunRow {
   completed_at: string | null;
   stash_dir: string;
   dry_run: number;
-  profile: string | null;
+  legacyProfile: string | null;
+  strategy: string | null;
   scope_mode: string;
   scope_value: string | null;
   guidance: string | null;
@@ -97,7 +98,7 @@ export interface ImproveRunMetrics {
  * `metrics_json`. Exposed for tests and for any future call site that wants
  * the same aggregation logic without hitting state.db.
  */
-export function computeImproveRunMetrics(result: AkmImproveResult): ImproveRunMetrics {
+export function computeImproveRunMetrics(result: ImproveResultEnvelope): ImproveRunMetrics {
   const plannedCount = Array.isArray(result.plannedRefs) ? result.plannedRefs.length : 0;
   const actions = Array.isArray(result.actions) ? result.actions : [];
   const actionsCount = actions.length;
@@ -180,12 +181,14 @@ export function recordImproveRun(
     completedAt: string | null;
     stashDir: string;
     dryRun: boolean;
-    profile: string | null;
+    /** Historical v1 selector. Never inferred from or coalesced with strategy. */
+    legacyProfile?: string | null;
+    strategy?: string | null;
     scopeMode: "all" | "type" | "ref";
     scopeValue: string | null;
     guidance: string | null;
     ok: boolean;
-    result: AkmImproveResult;
+    result: ImproveResultEnvelope;
     metrics?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
   },
@@ -193,16 +196,17 @@ export function recordImproveRun(
   const metricsObj = input.metrics ?? computeImproveRunMetrics(input.result);
   db.prepare(`
     INSERT INTO improve_runs
-      (id, started_at, completed_at, stash_dir, dry_run, profile,
+       (id, started_at, completed_at, stash_dir, dry_run, profile, strategy,
        scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.startedAt,
     input.completedAt,
     input.stashDir,
     input.dryRun ? 1 : 0,
-    input.profile,
+    input.legacyProfile ?? null,
+    input.strategy ?? null,
     input.scopeMode,
     input.scopeValue,
     input.guidance,
@@ -225,6 +229,8 @@ export interface ImproveRunSummaryRow {
   ok: number;
   scope_mode: string;
   scope_value: string | null;
+  legacyProfile: string | null;
+  strategy: string | null;
   result_json: string;
 }
 
@@ -244,8 +250,8 @@ export interface ImproveRunSummaryRow {
  */
 export function queryImproveRuns(db: Database, since: string, until?: string): ImproveRunSummaryRow[] {
   const sql = until
-    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
-    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
+    ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, profile AS legacyProfile, strategy, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
+    : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, profile AS legacyProfile, strategy, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
   return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunSummaryRow[];
 }
 

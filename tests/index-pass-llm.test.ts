@@ -5,10 +5,11 @@ import type { AkmConfig } from "../src/core/config/config";
 import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
+import { createEnrichmentDeadline } from "../src/indexer/indexer";
 import { resolveIndexPassLLM } from "../src/llm/index-passes";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-// Tests for #208 — unified `akm.llm` config across all index-time passes.
+// Tests for standalone index-pass engine resolution.
 
 let envCleanup: Cleanup = () => {};
 
@@ -36,148 +37,158 @@ const SAMPLE_LLM = {
 };
 
 describe("resolveIndexPassLLM", () => {
-  test("returns undefined when no top-level llm is configured", () => {
+  test("returns undefined when no index engine is configured", () => {
     const config: AkmConfig = { semanticSearchMode: "auto" };
     expect(resolveIndexPassLLM("enrichment", config)).toBeUndefined();
     expect(resolveIndexPassLLM("graph", config)).toBeUndefined();
   });
 
-  test("returns the default profile by default for any pass", () => {
+  test("returns the index default engine for any pass", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: { llm: { default: { ...SAMPLE_LLM } } },
-      defaults: { llm: "default" },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      index: { defaults: { engine: "index" } },
     };
-    expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
-    expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
-    expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("enrichment", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolveIndexPassLLM("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
-  // Regression guard: 2026-05-25 incident — graph and memory passes
-  // silently ignored profiles.improve.default.processes.<key>.profile
-  // and used the default LLM for everything. resolveIndexPassLLM now
-  // honors the per-process profile.
-  describe("honors profiles.improve.default.processes.<key>.profile", () => {
+  test("standalone enrichment preserves an explicit unbounded timeout", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, timeoutMs: null } },
+      index: { defaults: { engine: "index" } },
+    };
+
+    expect(resolveIndexPassLLM("enrichment", config)?.timeoutMs).toBeNull();
+    expect(createEnrichmentDeadline(resolveIndexPassLLM("enrichment", config)?.timeoutMs, 3)).toBeUndefined();
+  });
+
+  describe("per-pass engines", () => {
     const PRIMARY = { endpoint: "http://localhost:11434/v1/chat/completions", model: "primary" };
     const MINISTRAL = { endpoint: "http://localhost:11434/v1/chat/completions", model: "ministral-3b" };
 
-    test("memory pass uses processes.memoryInference.profile when set", () => {
+    test("memory pass uses index.memory.engine when set", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
-        profiles: {
-          llm: { default: { ...PRIMARY }, ministral: { ...MINISTRAL } },
-          improve: {
-            default: {
-              processes: { memoryInference: { mode: "llm", profile: "ministral" } },
-            },
-          },
+        engines: {
+          primary: { kind: "llm", ...PRIMARY },
+          ministral: { kind: "llm", ...MINISTRAL },
         },
-        defaults: { llm: "default" },
+        index: { defaults: { engine: "primary" }, memory: { engine: "ministral" } },
       };
-      expect(resolveIndexPassLLM("memory", config)).toEqual(MINISTRAL);
+      expect(resolveIndexPassLLM("memory", config)).toEqual({ ...MINISTRAL, timeoutMs: 600_000 });
       // Default LLM still wins for passes WITHOUT a per-process override.
-      expect(resolveIndexPassLLM("enrichment", config)).toEqual(PRIMARY);
+      expect(resolveIndexPassLLM("enrichment", config)).toEqual({ ...PRIMARY, timeoutMs: 600_000 });
     });
 
-    test("graph pass uses processes.graphExtraction.profile when set", () => {
+    test("graph pass uses index.graph.engine when set", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
-        profiles: {
-          llm: { default: { ...PRIMARY }, ministral: { ...MINISTRAL } },
-          improve: {
-            default: {
-              processes: { graphExtraction: { mode: "llm", profile: "ministral" } },
-            },
-          },
+        engines: {
+          primary: { kind: "llm", ...PRIMARY },
+          ministral: { kind: "llm", ...MINISTRAL },
         },
-        defaults: { llm: "default" },
+        index: { defaults: { engine: "primary" }, graph: { engine: "ministral" } },
       };
-      expect(resolveIndexPassLLM("graph", config)).toEqual(MINISTRAL);
+      expect(resolveIndexPassLLM("graph", config)).toEqual({ ...MINISTRAL, timeoutMs: 600_000 });
       // Memory pass still falls through to default — no override for memory.
-      expect(resolveIndexPassLLM("memory", config)).toEqual(PRIMARY);
+      expect(resolveIndexPassLLM("memory", config)).toEqual({ ...PRIMARY, timeoutMs: 600_000 });
     });
 
-    test("falls back to default LLM when the named profile does not exist", () => {
+    test("rejects a missing per-pass engine instead of silently using the default", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
-        profiles: {
-          llm: { default: { ...PRIMARY } },
-          improve: {
-            default: {
-              processes: { graphExtraction: { mode: "llm", profile: "no-such-profile" } },
-            },
-          },
-        },
-        defaults: { llm: "default" },
+        engines: { primary: { kind: "llm", ...PRIMARY } },
+        index: { defaults: { engine: "primary" }, graph: { engine: "missing" } },
       };
-      // Better to soft-fail to default than throw — saves the run on a typo.
-      expect(resolveIndexPassLLM("graph", config)).toEqual(PRIMARY);
+      expect(() => resolveIndexPassLLM("graph", config)).toThrow(/missing/i);
     });
 
-    test("processes.<key>.enabled === false opts the pass out", () => {
+    test("index.<pass>.enabled === false opts the pass out", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
-        profiles: {
-          llm: { default: { ...PRIMARY } },
-          improve: {
-            default: {
-              processes: { memoryInference: { enabled: false, profile: "default" } },
-            },
-          },
-        },
-        defaults: { llm: "default" },
+        engines: { primary: { kind: "llm", ...PRIMARY } },
+        index: { defaults: { engine: "primary" }, memory: { enabled: false } },
       };
       expect(resolveIndexPassLLM("memory", config)).toBeUndefined();
     });
   });
 
-  test("per-pass `llm: false` opts that pass out, leaving siblings intact", () => {
+  test("per-pass enabled false opts that pass out, leaving siblings intact", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: { llm: { default: { ...SAMPLE_LLM } } },
-      defaults: { llm: "default" },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
       index: {
-        enrichment: { llm: false },
-        graph: { llm: true },
+        defaults: { engine: "index" },
+        enrichment: { enabled: false },
+        graph: { enabled: true },
       },
     };
     expect(resolveIndexPassLLM("enrichment", config)).toBeUndefined();
-    expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
-    expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolveIndexPassLLM("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
-  test("per-pass `llm: true` is equivalent to default", () => {
+  test("per-pass model overrides the selected engine without mutating siblings", () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      profiles: { llm: { default: { ...SAMPLE_LLM } } },
-      defaults: { llm: "default" },
-      index: { enrichment: { llm: true } },
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      index: { defaults: { engine: "index" }, enrichment: { model: "override" } },
     };
-    expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("enrichment", config)).toEqual({
+      ...SAMPLE_LLM,
+      model: "override",
+      timeoutMs: 600_000,
+    });
+    expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+  });
+
+  test("improve strategy engines never configure standalone index passes", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
+      engines: { improve: { kind: "llm", ...SAMPLE_LLM } },
+      defaults: { improveStrategy: "default" },
+      improve: {
+        strategies: {
+          default: {
+            engine: "improve",
+            processes: { memoryInference: { enabled: true }, graphExtraction: { enabled: true } },
+          },
+        },
+      },
+    };
+    expect(resolveIndexPassLLM("memory", config)).toBeUndefined();
+    expect(resolveIndexPassLLM("graph", config)).toBeUndefined();
   });
 });
 
 describe("config loader: `index` block parsing", () => {
-  test("loads valid `index.<pass>.llm` boolean values", () => {
+  test("loads valid index default and per-pass engine selectors", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
+      engines: {
+        primary: { kind: "llm", ...SAMPLE_LLM },
+        graph: { kind: "llm", ...SAMPLE_LLM, model: "graph-model" },
+      },
       index: {
-        enrichment: { llm: false },
-        graph: { llm: true },
+        defaults: { engine: "primary" },
+        enrichment: { enabled: false },
+        graph: { engine: "graph" },
       },
     });
     const config = loadUserConfig();
-    expect(config.index).toEqual({
-      enrichment: { llm: false },
-      graph: { llm: true },
-    });
+    expect(config.index?.defaults?.engine).toBe("primary");
+    expect(config.index?.enrichment?.enabled).toBe(false);
+    expect(config.index?.graph?.engine).toBe("graph");
   });
 
   test("loads graphExtractionIncludeTypes for graph pass", async () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
       index: {
-        graph: { llm: true, graphExtractionIncludeTypes: ["memory", "command"] },
+        graph: { graphExtractionIncludeTypes: ["memory", "command"] },
       },
     });
     const config = loadUserConfig();
@@ -187,7 +198,7 @@ describe("config loader: `index` block parsing", () => {
 
   test("rejects per-pass provider configuration (duplicate provider path)", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
       index: {
         enrichment: {
           endpoint: "http://other-host/v1/chat/completions",
@@ -201,33 +212,44 @@ describe("config loader: `index` block parsing", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(ConfigError);
       expect((err as ConfigError).code).toBe("INVALID_CONFIG_FILE");
-      expect((err as Error).message).toContain("Duplicate LLM provider configuration");
+      expect((err as Error).message).toContain("Retired or misplaced engine setting");
       expect((err as Error).message).toContain("index.enrichment.endpoint");
     }
   });
 
-  test("rejects per-pass `provider`, `apiKey`, `temperature`, etc.", () => {
+  test("rejects per-pass provider configuration fields", () => {
     for (const key of ["provider", "apiKey", "temperature", "maxTokens", "baseUrl", "capabilities"]) {
       writeUserConfig({
-        llm: SAMPLE_LLM,
+        configVersion: "0.9.0",
         index: { enrichment: { [key]: "anything" } },
       });
       resetConfigCache();
-      expect(() => loadUserConfig()).toThrow(/Duplicate LLM provider configuration/);
+      expect(() => loadUserConfig()).toThrow(/Retired or misplaced engine setting/);
     }
   });
 
-  test("rejects non-boolean `llm` value under a pass", () => {
+  test("rejects a retired boolean llm selector under a pass", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
-      index: { enrichment: { llm: "off" } },
+      configVersion: "0.9.0",
+      index: { enrichment: { llm: false } },
     });
-    expect(() => loadUserConfig()).toThrow(/expected a boolean/);
+    expect(() => loadUserConfig()).toThrow(/typed invocation|object/i);
+  });
+
+  test("accepts typed per-pass llm invocation overrides", () => {
+    writeUserConfig({
+      configVersion: "0.9.0",
+      engines: { index: { kind: "llm", ...SAMPLE_LLM } },
+      defaults: { llmEngine: "index" },
+      index: { enrichment: { llm: { temperature: 0.2, maxTokens: 64 } } },
+    });
+    const resolved = resolveIndexPassLLM("enrichment", loadUserConfig());
+    expect(resolved).toMatchObject({ temperature: 0.2, maxTokens: 64 });
   });
 
   test("rejects unknown keys under a pass entry", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
       index: { enrichment: { foo: true } },
     });
     expect(() => loadUserConfig()).toThrow(/Unknown key `index\.enrichment\.foo`/);
@@ -235,7 +257,7 @@ describe("config loader: `index` block parsing", () => {
 
   test("rejects invalid graphExtractionIncludeTypes values", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
       index: { graph: { graphExtractionIncludeTypes: ["memory", "bogus-type"] } },
     });
     expect(() => loadUserConfig()).toThrow(/unsupported type/);
@@ -243,7 +265,7 @@ describe("config loader: `index` block parsing", () => {
 
   test("rejects array-shaped `index` block", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
       // biome-ignore lint/suspicious/noExplicitAny: testing invalid runtime input
       index: [{ llm: false }] as any,
     });
@@ -252,16 +274,16 @@ describe("config loader: `index` block parsing", () => {
 
   test("rejects non-object pass entry", () => {
     writeUserConfig({
-      llm: SAMPLE_LLM,
+      configVersion: "0.9.0",
       index: { enrichment: false },
     });
     expect(() => loadUserConfig()).toThrow(/expected an object like/);
   });
 
   test("missing `index` block is fine", () => {
-    writeUserConfig({ llm: SAMPLE_LLM });
+    writeUserConfig({ configVersion: "0.9.0" });
     const config = loadUserConfig();
     expect(config.index).toBeUndefined();
-    expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("enrichment", config)).toBeUndefined();
   });
 });

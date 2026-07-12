@@ -43,11 +43,6 @@ export const agentCommand = defineCommand({
       "Dispatch an agent CLI (opencode, claude, …) with an optional agent asset that provides the system prompt, model, and tool policy. Use <agent-ref> to embody a stash agent, --model to override the model, and --prompt/--command/--workflow to provide the task.",
   },
   args: {
-    profile: {
-      type: "positional",
-      description: "Agent profile / platform to use (opencode, claude, …)",
-      required: false,
-    },
     "agent-ref": {
       type: "positional",
       description:
@@ -55,6 +50,7 @@ export const agentCommand = defineCommand({
       required: false,
     },
     prompt: { type: "string", description: "Task prompt to pass to the agent" },
+    engine: { type: "string", description: "Agent engine to use (default: defaults.engine)" },
     command: { type: "string", description: "Load prompt from a command: asset" },
     workflow: { type: "string", description: "Load prompt from a workflow: asset" },
     model: {
@@ -70,19 +66,9 @@ export const agentCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (!args.profile) {
-        throw new UsageError(
-          "Usage: akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>]",
-          "MISSING_REQUIRED_ARGUMENT",
-          "Provide the agent profile name. Available profiles are listed in profiles.agent.",
-        );
-      }
-
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
 
       const config = loadConfig();
-      const { getDefaultLlmConfig } = await import("../../core/config/config.js");
-      // After 0.8.0 the agent block IS the loaded AkmConfig.
       const agentConfig = config;
 
       // Resolve agent asset ref → extract system prompt, model, and tool policy.
@@ -115,12 +101,11 @@ export const agentCommand = defineCommand({
       const hasDispatchContent = !!(promptText ?? commandRef ?? workflowRef ?? systemPrompt ?? model ?? assetTools);
 
       const result = await akmAgentDispatch({
-        profileName: String(args.profile),
+        engine: getStringArg(args, "engine"),
         prompt: promptText,
         commandRef,
         workflowRef,
         agentConfig,
-        llmConfig: getDefaultLlmConfig(config),
         ...(hasDispatchContent
           ? {
               dispatch: {
@@ -208,7 +193,7 @@ export const proposeCommand = defineCommand({
     },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
-    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    engine: { type: "string", description: "Engine to use (defaults to defaults.engine)" },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
   async run({ args }) {
@@ -237,7 +222,7 @@ export const proposeCommand = defineCommand({
         type: String(args.type),
         name: proposedName,
         task: taskText,
-        profile: getStringArg(args, "profile"),
+        engine: getStringArg(args, "engine"),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("propose", result);

@@ -26,6 +26,20 @@
 
 import { createRequire } from "node:module";
 import { isMap, isScalar, LineCounter, parseDocument } from "yaml";
+import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
+import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
+import {
+  jsonBytes,
+  utf8Bytes,
+  WORKFLOW_MAX_EXTRA_PARAMS_BYTES,
+  WORKFLOW_MAX_INSTRUCTION_BYTES,
+  WORKFLOW_MAX_MAP_EXPANSION,
+  WORKFLOW_MAX_PARAMS,
+  WORKFLOW_MAX_ROUTE_BRANCHES,
+  WORKFLOW_MAX_SCHEMA_BYTES,
+  WORKFLOW_MAX_SOURCE_BYTES,
+  WORKFLOW_MAX_STEPS,
+} from "../resource-limits";
 import type { SourceRef, WorkflowError } from "../schema";
 import {
   PROGRAM_ISOLATION_KINDS,
@@ -33,7 +47,6 @@ import {
   PROGRAM_PARAM_NAME_PATTERN,
   PROGRAM_REDUCERS,
   PROGRAM_RETRY_REASONS,
-  PROGRAM_RUNNER_KINDS,
   PROGRAM_STEP_ID_PATTERN,
   type ProgramBudget,
   type ProgramDefaults,
@@ -44,21 +57,21 @@ import {
   type ProgramReducer,
   type ProgramRetry,
   type ProgramRoute,
-  type ProgramRunnerKind,
   type ProgramStep,
   type ProgramUnit,
+  WORKFLOW_PROGRAM_VERSION,
   type WorkflowProgram,
   type WorkflowProgramParseResult,
 } from "./schema";
 
 const TOP_LEVEL_KEYS = ["version", "name", "description", "params", "defaults", "budget", "steps"];
-const DEFAULTS_KEYS = ["runner", "model", "timeout", "on_error"];
+const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "title", "unit", "map", "route", "output", "gate"];
 const UNIT_KEYS = [
-  "runner",
-  "profile",
+  "engine",
   "model",
+  "llm",
   "timeout",
   "retry",
   "on_error",
@@ -79,11 +92,11 @@ const TIMEOUT_HINT = `Use "<n>ms", "<n>s", "<n>m" (e.g. "10m"), or "none"`;
 /**
  * Cheap structural probe for the indexer matcher (mirrors `looksLikeWorkflow`
  * in ../parser.ts). Returns true if the text has the unmistakable top-level
- * shape of a YAML workflow program: `version: 1` and a `steps:` key, both at
+ * shape of a YAML workflow program: `version: 2` and a `steps:` key, both at
  * column 0. Used so the matcher and parser cannot drift.
  */
 export function looksLikeWorkflowProgram(yamlText: string): boolean {
-  return /^version[ \t]*:[ \t]*['"]?1['"]?[ \t]*(#.*)?$/m.test(yamlText) && /^steps[ \t]*:/m.test(yamlText);
+  return /^version[ \t]*:[ \t]*['"]?(?:1|2)['"]?[ \t]*(#.*)?$/m.test(yamlText) && /^steps[ \t]*:/m.test(yamlText);
 }
 
 type Path = Array<string | number>;
@@ -114,6 +127,12 @@ interface RouteCheck {
 }
 
 export function parseWorkflowProgram(yamlText: string, source: { path: string }): WorkflowProgramParseResult {
+  if (utf8Bytes(yamlText) > WORKFLOW_MAX_SOURCE_BYTES) {
+    return {
+      ok: false,
+      errors: [{ line: 1, message: "Workflow source exceeds the 1 MiB resource limit." }],
+    };
+  }
   const errors: WorkflowError[] = [];
   const lineCounter = new LineCounter();
 
@@ -174,16 +193,23 @@ export function parseWorkflowProgram(yamlText: string, source: { path: string })
     return {
       ok: false,
       errors: [
-        { line: 1, message: `A workflow program must be a YAML mapping with "version: 1", "name", and "steps".` },
+        { line: 1, message: `A workflow program must be a YAML mapping with "version: 2", "name", and "steps".` },
       ],
     };
   }
 
   checkUnknownKeys(ctx, root, [], TOP_LEVEL_KEYS, "top-level");
 
-  if (root.version !== 1) {
-    const got = root.version === undefined ? "it is missing" : `got ${JSON.stringify(root.version)}`;
-    ctx.err(["version"], `"version: 1" is required at the top level (${got}). Only the number 1 is a valid version.`);
+  if (root.version !== WORKFLOW_PROGRAM_VERSION) {
+    if (root.version === 1) {
+      ctx.err(
+        ["version"],
+        `Workflow version 1 retired; version 2 is required. Replace runner/profile selectors with engine.`,
+      );
+    } else {
+      const got = root.version === undefined ? "it is missing" : `got ${JSON.stringify(root.version)}`;
+      ctx.err(["version"], `"version: 2" is required at the top level (${got}). Only the number 2 is a valid version.`);
+    }
   }
 
   let name = "";
@@ -212,7 +238,7 @@ export function parseWorkflowProgram(yamlText: string, source: { path: string })
   if (errors.length > 0) return { ok: false, errors };
 
   const program: WorkflowProgram = {
-    version: 1,
+    version: WORKFLOW_PROGRAM_VERSION,
     name,
     ...(description !== undefined ? { description } : {}),
     ...(params !== undefined ? { params } : {}),
@@ -236,6 +262,9 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
       `"params" must be a mapping of param name to a JSON Schema object (e.g. changed_files: { type: array }).`,
     );
     return undefined;
+  }
+  if (Object.keys(raw).length > WORKFLOW_MAX_PARAMS) {
+    ctx.err(["params"], `"params" must contain at most ${WORKFLOW_MAX_PARAMS} entries.`);
   }
   const params: Record<string, Record<string, unknown>> = {};
   for (const [paramName, value] of Object.entries(raw)) {
@@ -264,8 +293,10 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   }
   checkUnknownKeys(ctx, raw, path, DEFAULTS_KEYS, `"defaults"`);
   const defaults: ProgramDefaults = {};
-  const runner = parseEnumField(ctx, raw.runner, [...path, "runner"], `"defaults.runner"`, PROGRAM_RUNNER_KINDS);
-  if (runner !== undefined) defaults.runner = runner as ProgramRunnerKind;
+  if (raw.engine !== undefined) {
+    if (typeof raw.engine === "string" && raw.engine.trim() !== "") defaults.engine = raw.engine.trim();
+    else ctx.err([...path, "engine"], `"defaults.engine" must be a non-empty engine name.`);
+  }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") defaults.model = raw.model.trim();
     else ctx.err([...path, "model"], `"defaults.model" must be a non-empty string (a model alias or exact id).`);
@@ -274,6 +305,8 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   if (timeoutMs !== undefined) defaults.timeoutMs = timeoutMs;
   const onError = parseEnumField(ctx, raw.on_error, [...path, "on_error"], `"defaults.on_error"`, PROGRAM_ON_ERROR);
   if (onError !== undefined) defaults.onError = onError as ProgramOnError;
+  const llm = parseLlmOverrides(ctx, raw.llm, [...path, "llm"], `"defaults.llm"`);
+  if (llm !== undefined) defaults.llm = llm;
   return Object.keys(defaults).length > 0 ? defaults : undefined;
 }
 
@@ -294,10 +327,18 @@ function parseBudget(ctx: Ctx, raw: unknown): ProgramBudget | undefined {
     }
   }
   if (raw.max_units !== undefined) {
-    if (typeof raw.max_units === "number" && Number.isInteger(raw.max_units) && raw.max_units >= 1) {
+    if (
+      typeof raw.max_units === "number" &&
+      Number.isInteger(raw.max_units) &&
+      raw.max_units >= 1 &&
+      raw.max_units <= WORKFLOW_MAX_MAP_EXPANSION
+    ) {
       budget.maxUnits = raw.max_units;
     } else {
-      ctx.err([...path, "max_units"], `"budget.max_units" must be an integer >= 1.`);
+      ctx.err(
+        [...path, "max_units"],
+        `"budget.max_units" must be an integer from 1 through ${WORKFLOW_MAX_MAP_EXPANSION}.`,
+      );
     }
   }
   return Object.keys(budget).length > 0 ? budget : undefined;
@@ -307,6 +348,9 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     ctx.err(["steps"], `"steps" is required and must be a list with at least one step.`);
     return [];
+  }
+  if (raw.length > WORKFLOW_MAX_STEPS) {
+    ctx.err(["steps"], `"steps" must contain at most ${WORKFLOW_MAX_STEPS} entries.`);
   }
 
   // First pass: collect ids so route targets can be checked against ALL steps
@@ -437,21 +481,23 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
   if (typeof raw.instructions === "string" && raw.instructions.trim() !== "") {
     unit.instructions = raw.instructions;
     ctx.checkTemplates(raw.instructions, [...path, "instructions"], `${stepLabel} "instructions"`);
+    if (utf8Bytes(raw.instructions) > WORKFLOW_MAX_INSTRUCTION_BYTES) {
+      ctx.err([...path, "instructions"], `${stepLabel} "instructions" exceeds the 256 KiB resource limit.`);
+    }
   } else {
     ctx.err([...path, "instructions"], `${stepLabel} "unit" requires non-empty string "instructions".`);
   }
 
-  const runner = parseEnumField(ctx, raw.runner, [...path, "runner"], `${stepLabel} "runner"`, PROGRAM_RUNNER_KINDS);
-  if (runner !== undefined) unit.runner = runner as ProgramRunnerKind;
-
-  if (raw.profile !== undefined) {
-    if (typeof raw.profile === "string" && raw.profile.trim() !== "") unit.profile = raw.profile.trim();
-    else ctx.err([...path, "profile"], `${stepLabel} "profile" must be a non-empty string.`);
+  if (raw.engine !== undefined) {
+    if (typeof raw.engine === "string" && raw.engine.trim() !== "") unit.engine = raw.engine.trim();
+    else ctx.err([...path, "engine"], `${stepLabel} "engine" must be a non-empty engine name.`);
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") unit.model = raw.model.trim();
     else ctx.err([...path, "model"], `${stepLabel} "model" must be a non-empty string (a model alias or exact id).`);
   }
+  const llm = parseLlmOverrides(ctx, raw.llm, [...path, "llm"], `${stepLabel} "llm"`);
+  if (llm !== undefined) unit.llm = llm;
 
   const timeoutMs = parseTimeoutField(ctx, raw.timeout, [...path, "timeout"], `${stepLabel} "timeout"`);
   if (timeoutMs !== undefined) unit.timeoutMs = timeoutMs;
@@ -561,6 +607,9 @@ function parseRoute(
       `${stepLabel} "route" requires "when": a mapping of match value to target step id (e.g. when: { pass: ship }).`,
     );
   } else if (isMap(whenNode)) {
+    if (whenNode.items.length > WORKFLOW_MAX_ROUTE_BRANCHES) {
+      ctx.err(whenPath, `${stepLabel} "when" must contain at most ${WORKFLOW_MAX_ROUTE_BRANCHES} branches.`);
+    }
     // Walk the AST pairs (not the JS object) so duplicate matches that only
     // collide after stringification ("true" vs true) are still caught.
     const seenMatches = new Map<string, number>();
@@ -601,6 +650,9 @@ function parseRoute(
       } else {
         ctx.err(whenPath, `${stepLabel} "when: ${match}" must map to a step id string.`);
       }
+    }
+    if (Object.keys(raw.when).length > WORKFLOW_MAX_ROUTE_BRANCHES) {
+      ctx.err(whenPath, `${stepLabel} "when" must contain at most ${WORKFLOW_MAX_ROUTE_BRANCHES} branches.`);
     }
     if (Object.keys(raw.when).length === 0) {
       ctx.err(whenPath, `${stepLabel} "when" must contain at least one match → step-id entry.`);
@@ -747,11 +799,72 @@ function parseEnumField(
   return undefined;
 }
 
+/** Parse only invocation tuning. Connection identity belongs to a named engine. */
+function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): LlmInvocationOverrides | undefined {
+  if (raw === undefined) return undefined;
+  if (!isPlainRecord(raw)) {
+    ctx.err(path, `${label} must be a mapping of LLM invocation overrides.`);
+    return undefined;
+  }
+  const keys = [
+    "temperature",
+    "max_tokens",
+    "supports_json_schema",
+    "extra_params",
+    "context_length",
+    "enable_thinking",
+  ];
+  checkUnknownKeys(ctx, raw, path, keys, label);
+  const result: LlmInvocationOverrides = {};
+  if (raw.temperature !== undefined) {
+    if (typeof raw.temperature === "number" && Number.isFinite(raw.temperature)) result.temperature = raw.temperature;
+    else ctx.err([...path, "temperature"], `${label}.temperature must be a finite number.`);
+  }
+  if (raw.max_tokens !== undefined) {
+    if (typeof raw.max_tokens === "number" && Number.isInteger(raw.max_tokens) && raw.max_tokens > 0) {
+      result.maxTokens = raw.max_tokens;
+    } else ctx.err([...path, "max_tokens"], `${label}.max_tokens must be a positive integer.`);
+  }
+  if (raw.supports_json_schema !== undefined) {
+    if (typeof raw.supports_json_schema === "boolean") result.supportsJsonSchema = raw.supports_json_schema;
+    else ctx.err([...path, "supports_json_schema"], `${label}.supports_json_schema must be a boolean.`);
+  }
+  if (raw.extra_params !== undefined) {
+    if (!isPlainRecord(raw.extra_params)) {
+      ctx.err([...path, "extra_params"], `${label}.extra_params must be a JSON object.`);
+    } else {
+      const issues = validateExtraParams(raw.extra_params);
+      for (const issue of issues) {
+        ctx.err([...path, "extra_params", ...issue.path], `${formatExtraParamsIssue(`${label}.extra_params`, issue)}.`);
+      }
+      if (jsonBytes(raw.extra_params) > WORKFLOW_MAX_EXTRA_PARAMS_BYTES) {
+        ctx.err([...path, "extra_params"], `${label}.extra_params exceeds the 64 KiB resource limit.`);
+      }
+      if (issues.length === 0 && jsonBytes(raw.extra_params) <= WORKFLOW_MAX_EXTRA_PARAMS_BYTES) {
+        result.extraParams = raw.extra_params;
+      }
+    }
+  }
+  if (raw.context_length !== undefined) {
+    if (typeof raw.context_length === "number" && Number.isInteger(raw.context_length) && raw.context_length > 0) {
+      result.contextLength = raw.context_length;
+    } else ctx.err([...path, "context_length"], `${label}.context_length must be a positive integer.`);
+  }
+  if (raw.enable_thinking !== undefined) {
+    if (typeof raw.enable_thinking === "boolean") result.enableThinking = raw.enable_thinking;
+    else ctx.err([...path, "enable_thinking"], `${label}.enable_thinking must be a boolean.`);
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function parseSchemaObject(ctx: Ctx, raw: unknown, path: Path, label: string): Record<string, unknown> | undefined {
   if (raw === undefined) return undefined;
   if (!isPlainRecord(raw)) {
     ctx.err(path, `${label} must be a JSON Schema object (e.g. { type: object, properties: { … } }).`);
     return undefined;
+  }
+  if (jsonBytes(raw) > WORKFLOW_MAX_SCHEMA_BYTES) {
+    ctx.err(path, `${label} exceeds the 256 KiB resource limit.`);
   }
   return raw;
 }

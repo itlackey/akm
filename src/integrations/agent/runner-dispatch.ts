@@ -30,16 +30,24 @@
  */
 
 import { assertNever } from "../../core/assert";
-import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk";
+import type { LlmConnectionConfig } from "../../core/config/config";
+import {
+  collectSensitiveValues,
+  isEnvPassthroughValueSafeToExpose,
+  redactSensitiveText,
+  redactSensitiveValue,
+} from "../../core/redaction";
+import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { materializeLlmConnection } from "./engine-resolution";
 import type { AgentProfile } from "./profiles";
-import type { RunnerSpec } from "./runner";
+import { type DispatchedLlmRunner, materializeLlmRunnerConnection, type RunnerSpec } from "./runner";
 import { type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
 
 /**
  * Release every long-lived resource the dispatch runners CACHE for reuse, so a
  * one-shot process (the CLI) can exit cleanly once dispatching is done.
  *
- * The `sdk` runner keeps a per-env registry of `opencode serve` CHILD
+ * The `sdk` runner keeps a per-material registry of `opencode serve` CHILD
  * PROCESSES (see `opencode-sdk/sdk-runner.ts`), started lazily and reused
  * across units within a process. Each live child is an OS handle that keeps
  * Bun's event loop open — and the registry's own teardown is wired ONLY to
@@ -49,15 +57,48 @@ import { type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
  * never idle enough for the exit hook to run and close the children it is
  * waiting on.
  *
- * The engine therefore calls this in its run `finally` (every exit path —
- * success, gate rejection, failure, abort) to drain the registry deterministically
- * BEFORE relying on the event loop to drain. The close is synchronous and
- * idempotent; when no SDK server was ever started it is a no-op, so the `agent`
- * / `llm` dispatch paths pay nothing. Servers are re-created lazily on the next
- * dispatch, so calling this between independent dispatch invocations is safe.
+ * The CLI composition root and workflow engine call this in `finally` blocks to
+ * drain the registry deterministically before relying on the event loop. Started
+ * servers close synchronously; in-flight starts are awaited and closed on
+ * arrival. When no SDK server was started this is an idempotent no-op.
  */
-export function disposeDispatchResources(): void {
-  disposeOpencodeSdkServers();
+export async function disposeDispatchResources(): Promise<void> {
+  await disposeOpencodeSdkServers();
+}
+
+/** Collect every materialized value that can reach one runner dispatch. */
+export function collectDispatchSensitiveValues(
+  spec: RunnerSpec,
+  opts: RunAgentOptions,
+  envSource: NodeJS.ProcessEnv = opts.envSource ?? process.env,
+): string[] {
+  const values = new Set<string>();
+  const add = (value: string | undefined): void => {
+    if (value !== undefined && value.length > 0) values.add(value);
+  };
+  const addConnection = (connection: LlmConnectionConfig | undefined): void => add(connection?.apiKey);
+
+  if (spec.kind === "llm") addConnection(spec.connection);
+  if (spec.kind === "sdk") addConnection(spec.fallbackConnection);
+  if (spec.kind !== "llm") {
+    for (const value of Object.values(spec.profile.env ?? {})) add(value);
+    for (const name of spec.profile.envPassthrough) {
+      const value = envSource[name];
+      if (!isEnvPassthroughValueSafeToExpose(name, value)) add(value);
+    }
+  }
+  for (const value of Object.values(opts.env ?? {})) add(value);
+  return collectSensitiveValues(values);
+}
+
+function redactResult(result: AgentRunResult, sensitiveValues: readonly string[]): AgentRunResult {
+  return {
+    ...result,
+    stdout: redactSensitiveText(result.stdout, sensitiveValues),
+    stderr: redactSensitiveText(result.stderr, sensitiveValues),
+    ...(result.error !== undefined ? { error: redactSensitiveText(result.error, sensitiveValues) } : {}),
+    ...(result.parsed !== undefined ? { parsed: redactSensitiveValue(result.parsed, sensitiveValues) } : {}),
+  };
 }
 
 /**
@@ -71,11 +112,16 @@ export interface RunnerSeams {
    * caller (reflect's `runReflectViaLlm` vs drain's `chatCompletion`), so it is
    * supplied rather than defaulted. Receives the narrowed `llm` spec and prompt.
    */
-  llm?: (spec: Extract<RunnerSpec, { kind: "llm" }>, prompt: string) => Promise<AgentRunResult>;
+  llm?: (spec: DispatchedLlmRunner, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Override for the `agent` runner kind. Defaults to {@link runAgent}. */
   runAgent?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Override for the `sdk` runner kind. Defaults to {@link runOpencodeSdk}. */
-  runSdk?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
+  runSdk?: (
+    profile: AgentProfile,
+    prompt: string,
+    opts: RunAgentOptions,
+    fallbackConnection?: LlmConnectionConfig,
+  ) => Promise<AgentRunResult>;
 }
 
 /**
@@ -90,23 +136,55 @@ export async function executeRunner(
   opts: RunAgentOptions,
   seams: RunnerSeams = {},
 ): Promise<AgentRunResult> {
+  const withSpecOptions = (timeoutMs: number | null | undefined, workspace?: string): RunAgentOptions => ({
+    ...opts,
+    ...(Object.hasOwn(opts, "timeoutMs") ? {} : timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(opts.cwd === undefined && workspace ? { cwd: workspace } : {}),
+  });
+  let result: AgentRunResult;
+  const dispatchSensitiveValues: string[] = [];
   switch (spec.kind) {
     case "llm": {
       if (!seams.llm) {
         throw new Error("executeRunner: an `llm` runner requires a `seams.llm` handler (no default LLM dispatch).");
       }
-      return seams.llm(spec, prompt);
+      const connection = materializeLlmRunnerConnection(spec);
+      if (connection.apiKey) dispatchSensitiveValues.push(connection.apiKey);
+      result = await seams.llm({ ...spec, connection }, prompt, withSpecOptions(spec.timeoutMs));
+      break;
     }
     case "agent": {
       const run = seams.runAgent ?? runAgent;
-      return run(spec.profile, prompt, opts);
+      result = await run(spec.profile, prompt, withSpecOptions(spec.timeoutMs, spec.profile.workspace));
+      break;
     }
     case "sdk": {
       const run = seams.runSdk ?? runOpencodeSdk;
-      return run(spec.profile, prompt, opts);
+      const fallbackConnection = spec.fallbackConnection
+        ? materializeLlmConnection({
+            engine: spec.engine ?? "unnamed-sdk-fallback",
+            connection: spec.fallbackConnection,
+            ...(spec.fallbackCredential ? { credential: spec.fallbackCredential } : {}),
+            timeoutMs:
+              spec.fallbackTimeoutMs !== undefined
+                ? spec.fallbackTimeoutMs
+                : Object.hasOwn(spec.fallbackConnection, "timeoutMs")
+                  ? (spec.fallbackConnection.timeoutMs ?? null)
+                  : null,
+          })
+        : undefined;
+      if (fallbackConnection?.apiKey) dispatchSensitiveValues.push(fallbackConnection.apiKey);
+      result = await run(
+        spec.profile,
+        prompt,
+        withSpecOptions(spec.timeoutMs, spec.profile.workspace),
+        fallbackConnection,
+      );
+      break;
     }
     default:
       // Exhaustiveness arm: a 4th RunnerSpec kind becomes a compile error here.
       return assertNever(spec);
   }
+  return redactResult(result, [...collectDispatchSensitiveValues(spec, opts), ...dispatchSensitiveValues]);
 }

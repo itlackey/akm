@@ -139,14 +139,15 @@ describe("config-cli parseConfigValue sources error message (#16)", () => {
     }
   });
 
-  test("stashes alias also shows 'sources' in error", () => {
+  test("retired stashes path is rejected without aliasing to sources", () => {
     try {
       parseConfigValue("stashes", "not-json");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       const msg = (err as UsageError).message;
-      expect(msg).toContain("sources");
+      expect(msg).toContain("Unknown config key: stashes");
+      expect(msg).not.toContain("Invalid JSON array for sources");
     }
   });
 

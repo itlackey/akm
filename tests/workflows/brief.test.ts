@@ -15,10 +15,10 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../src/workflows/ir/compile";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../src/workflows/program/parser";
+import { frozenStepRows } from "../../src/workflows/runtime/plan-classifier";
+import { freezeWorkflowProgram } from "../_helpers/workflow";
 
 /**
  * `akm workflow brief` (redesign addendum R3, task step 2). Proves brief:
@@ -40,11 +40,7 @@ function dbPath(): string {
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  const parsed = parseWorkflowProgram(yamlText, { path: "workflows/demo.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
-  return compiled.plan;
+  return freezeWorkflowProgram(yamlText);
 }
 
 interface SeedStep {
@@ -94,9 +90,9 @@ function seedRun(opts: {
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-          params_json, current_step_id, created_at, updated_at, plan_json, plan_hash,
-          engine_lease_holder, engine_lease_until)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version,
+           engine_lease_holder, engine_lease_until)
+        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       RUN_ID,
       opts.status ?? "active",
@@ -106,20 +102,24 @@ function seedRun(opts: {
       now,
       planJson,
       planHash,
+      frozen?.irVersion ?? null,
       opts.lease?.holder ?? null,
       opts.lease?.until ?? null,
     );
+    const plannedSteps = new Map((frozen ? frozenStepRows(frozen) : []).map((step) => [step.stepId, step]));
     opts.steps.forEach((step, i) => {
+      const planned = plannedSteps.get(step.id);
       db.prepare(
         `INSERT INTO workflow_run_steps
            (run_id, step_id, step_title, instructions, completion_json, sequence_index, status, evidence_json)
-         VALUES (?, ?, ?, 'instructions', ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         RUN_ID,
         step.id,
-        step.title ?? step.id,
-        step.criteria ? JSON.stringify(step.criteria) : null,
-        i,
+        planned?.stepTitle ?? step.title ?? step.id,
+        planned?.instructions ?? "instructions",
+        planned?.completionJson ?? (step.criteria ? JSON.stringify(step.criteria) : null),
+        planned?.sequenceIndex ?? i,
         step.status ?? "pending",
         step.evidence ? JSON.stringify(step.evidence) : null,
       );
@@ -172,7 +172,7 @@ afterEach(() => {
 
 // ── Workflows ────────────────────────────────────────────────────────────────
 
-const SOLO_WF = `version: 1
+const SOLO_WF = `version: 2
 name: Solo
 steps:
   - id: build
@@ -188,7 +188,7 @@ steps:
       instructions: Wrap up.
 `;
 
-const FANOUT_WF = `version: 1
+const FANOUT_WF = `version: 2
 name: Fanout
 steps:
   - id: review
@@ -204,7 +204,7 @@ steps:
           required: [verdict]
 `;
 
-const LOOP_WF = `version: 1
+const LOOP_WF = `version: 2
 name: Loop
 steps:
   - id: work
@@ -216,7 +216,7 @@ steps:
       max_loops: 3
 `;
 
-const ROUTE_WF = `version: 1
+const ROUTE_WF = `version: 2
 name: Route
 steps:
   - id: judge
@@ -260,7 +260,12 @@ describe("workflow brief — solo step", () => {
 
     const u = brief.workList.units[0];
     // Predicts the engine: unit id + input hash equal computeStepWorkList.
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: { target: "widget" }, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: { target: "widget" },
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     expect(engine.ok).toBe(true);
     if (engine.ok) {
       expect(u.unitId).toBe(engine.list.units[0].unitId);
@@ -271,10 +276,15 @@ describe("workflow brief — solo step", () => {
     }
     // Env is surfaced as REF NAMES, never resolved values.
     expect(u.env).toEqual(["env:ci-secrets"]);
-    // The rest of the required per-unit contract (node id, runner, timeout,
+    // The rest of the required per-unit contract (node id, frozen engine attribution, timeout,
     // on_error) is carried too — a driver needs every one to dispatch.
     expect(u.nodeId).toBe("build");
-    expect(u.runner).toBe("inherit");
+    expect(u.engine).toBe("test-agent");
+    expect(u.runtimeKind).toBe("sdk");
+    expect(u.platform).toBe("opencode-sdk");
+    expect(u.model).toBe("test-model");
+    expect(u).not.toHaveProperty("runner");
+    expect(u).not.toHaveProperty("profile");
     expect(u.timeoutMs).toBe(600_000);
     expect(u.onError).toBe("fail");
     // #15: an un-journaled unit is `pending` with the completed report command,
@@ -284,6 +294,27 @@ describe("workflow brief — solo step", () => {
     expect(u.journaled).toBeUndefined();
     // #14: the brief carries a spine watermark token stamping the active step.
     expect(brief.spineToken).toContain(`${RUN_ID}#build#l1#`);
+  });
+
+  test("attributes an LLM unit to its frozen engine and exact model without legacy selectors", async () => {
+    const p = plan(`version: 2
+name: Direct LLM
+defaults: { engine: test-llm }
+steps:
+  - id: answer
+    unit: { instructions: Answer directly. }
+`);
+    seedRun({ plan: p, steps: [{ id: "answer" }] });
+
+    const unit = (await buildWorkflowBrief(RUN_ID)).workList.units[0];
+    expect(unit).toMatchObject({
+      engine: "test-llm",
+      runtimeKind: "llm",
+      platform: null,
+      model: "test-model",
+    });
+    expect(unit).not.toHaveProperty("runner");
+    expect(unit).not.toHaveProperty("profile");
   });
 });
 
@@ -304,7 +335,12 @@ describe("workflow brief — fan-out with mixed journaled statuses", () => {
   test("surfaces per-unit journaled status and predicts every content-derived id", async () => {
     const p = plan(FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts"] };
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params,
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     expect(engine.ok).toBe(true);
     if (!engine.ok) return;
     const [ua, ub, uc] = engine.list.units;
@@ -386,6 +422,7 @@ describe("workflow brief — gate loop 2", () => {
       stepOutputs: {},
       gateLoop: 2,
       gateFeedback: { feedback: "Add the analysis.", missing: ["the work is thorough"] },
+      engines: p.execution?.engines,
     });
     expect(engine.ok).toBe(true);
     if (engine.ok && u.resolved.ok && engine.list.units[0].resolved.ok) {
@@ -443,7 +480,9 @@ describe("workflow brief — completed run", () => {
 describe("workflow brief — legacy run (NULL plan_json)", () => {
   test("errors clearly, pointing at engine-driven mode", async () => {
     seedRun({ plan: null, params: { target: "x" }, steps: [{ id: "build" }, { id: "wrap" }] });
-    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(/predates frozen plans.*workflow run/s);
+    await expect(buildWorkflowBrief(RUN_ID)).rejects.toThrow(
+      /no executable workflow IR plan.*inspection-only.*workflow abandon/s,
+    );
   });
 });
 
@@ -508,7 +547,12 @@ describe("workflow brief — secret-shaped params (#13)", () => {
 describe("workflow brief — unit action states (#15)", () => {
   test("a live-claimed running unit is `claimed`; a live engine lease makes it `do_not_run`", async () => {
     const p = plan(LOOP_WF);
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -539,7 +583,12 @@ describe("workflow brief — unit action states (#15)", () => {
 
   test("a running unit silent past the window is `stale` and reclaimable", async () => {
     const p = plan(LOOP_WF);
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     const old = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -592,7 +641,7 @@ describe("workflow brief — unit action states (#15)", () => {
 });
 
 describe("workflow brief — fully-terminal step needing finalization (owner finding 3)", () => {
-  const REQUIRED_GATE_WF = `version: 1
+  const REQUIRED_GATE_WF = `version: 2
 name: ReqGate
 steps:
   - id: work
@@ -608,7 +657,12 @@ steps:
    *  but its only unit already ran to completion — the fully-terminal recovery
    *  state a required-gate block + resume (or a crash before completion) leaves. */
   function seedResumedFullyTerminal(p: WorkflowPlanGraph): { unitId: string; nodeId: string } {
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -655,7 +709,12 @@ steps:
 
   test("a non-required fully-terminal gate omits the re-block note but still emits settle", async () => {
     const p = plan(LOOP_WF); // gate criteria, not `required`
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -695,7 +754,12 @@ steps:
 
   test("a live engine lease suppresses the settle command even on a fully-terminal list", async () => {
     const p = plan(REQUIRED_GATE_WF);
-    const engine = computeStepWorkList(p.steps[0], { runId: RUN_ID, params: {}, stepOutputs: {} });
+    const engine = computeStepWorkList(p.steps[0], {
+      runId: RUN_ID,
+      params: {},
+      stepOutputs: {},
+      engines: p.execution.engines,
+    });
     if (!engine.ok) throw new Error("compute failed");
     const solo = engine.list.units[0];
     seedRun({
@@ -720,13 +784,13 @@ steps:
 });
 
 describe("workflow brief — worktree isolation warning (#21)", () => {
-  const WORKTREE_WF = `version: 1
+  const WORKTREE_WF = `version: 2
 name: Isolated
 steps:
   - id: build
     title: Build
     unit:
-      runner: agent
+      engine: test-agent
       isolation: worktree
       instructions: Build it.
 `;

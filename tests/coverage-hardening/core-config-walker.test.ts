@@ -7,10 +7,10 @@
 //
 // NO test file imports config-walker directly — it is only exercised
 // indirectly through the config-cli wrappers, and only for a handful of
-// happy-path keys (output.*, embedding.*, llm.*). Several branchy coercion
+// happy-path keys (output.*, embedding.*, engines.*). Several branchy coercion
 // and schema-descent paths in the walker have zero behavioural coverage:
 //   - catchall descent (index.<passName>.<field>)
-//   - z.record descent (profiles.llm.<name>.<field>)
+//   - z.record descent (engines.<name>.<field>)
 //   - boolean case-sensitivity ("True"/"1" must be REJECTED, only "true"/"false")
 //   - number range validation via safeParse (min/max, not just finite)
 //   - empty-segment path rejection ("a..b")
@@ -24,12 +24,12 @@ import { configGet, configSet, configUnset } from "../../src/core/config/config-
 
 describe("configSet — catchall descent (index.<passName>)", () => {
   test("descends through the IndexConfig catchall into a per-pass field", () => {
-    const next = configSet({}, "index.graph.llm", "true");
-    expect(next).toEqual({ index: { graph: { llm: true } } });
+    const next = configSet({}, "index.graph.enabled", "true");
+    expect(next).toEqual({ index: { graph: { enabled: true } } });
   });
 
   test("coerces + validates the per-pass leaf (boolean rejects non-boolean)", () => {
-    expect(() => configSet({}, "index.graph.llm", "yes")).toThrow(/expected true or false/);
+    expect(() => configSet({}, "index.graph.enabled", "yes")).toThrow(/expected true or false/);
   });
 
   test("an unknown per-pass leaf key is rejected as an unknown config key", () => {
@@ -40,10 +40,74 @@ describe("configSet — catchall descent (index.<passName>)", () => {
   });
 });
 
-describe("configSet — z.record descent (profiles.llm.<name>)", () => {
-  test("an arbitrary profile name descends into the record value schema", () => {
-    const next = configSet({}, "profiles.llm.myprofile.model", "gpt-4o");
-    expect(next).toEqual({ profiles: { llm: { myprofile: { model: "gpt-4o" } } } });
+describe("configSet — z.record descent (engines.<name>)", () => {
+  test("an arbitrary engine name descends into the record value schema", () => {
+    const next = configSet({}, "engines.my-engine.model", "gpt-4o");
+    expect(next).toEqual({ engines: { "my-engine": { model: "gpt-4o" } } });
+  });
+
+  test("selects agent and LLM union branches from the raw discriminator", () => {
+    expect(configSet({}, "engines.my-agent.kind", "agent")).toEqual({
+      engines: { "my-agent": { kind: "agent" } },
+    });
+    expect(configSet({}, "engines.my-llm.kind", "llm")).toEqual({
+      engines: { "my-llm": { kind: "llm" } },
+    });
+  });
+
+  test("uses an existing agent discriminator for branch-specific leaves", () => {
+    const agent = { engines: { reviewer: { kind: "agent", platform: "opencode" } } };
+    expect(configSet(agent, "engines.reviewer.workspace", "/workspace")).toEqual({
+      engines: { reviewer: { kind: "agent", platform: "opencode", workspace: "/workspace" } },
+    });
+    expect(() => configSet(agent, "engines.reviewer.endpoint", "https://example.test")).toThrow(/Unknown config key/);
+  });
+
+  test("uses an existing LLM discriminator for branch-specific leaves", () => {
+    const llm = {
+      engines: {
+        fast: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "old" },
+      },
+    };
+    expect(configSet(llm, "engines.fast.temperature", "0.4")).toEqual({
+      engines: {
+        fast: {
+          kind: "llm",
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "old",
+          temperature: 0.4,
+        },
+      },
+    });
+    expect(() => configSet(llm, "engines.fast.workspace", "/workspace")).toThrow(/Unknown config key/);
+  });
+
+  test("raw discriminators take precedence during engine-kind transitions", () => {
+    const llm = {
+      engines: {
+        engine: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "old" },
+      },
+    };
+    expect(configSet(llm, "engines.engine.kind", "agent")).toEqual({
+      engines: {
+        engine: { kind: "agent", endpoint: "https://example.test/v1/chat/completions", model: "old" },
+      },
+    });
+
+    const agent = { engines: { engine: { kind: "agent", platform: "opencode", model: "old" } } };
+    expect(configSet(agent, "engines.engine.kind", "llm")).toEqual({
+      engines: { engine: { kind: "llm", platform: "opencode", model: "old" } },
+    });
+  });
+
+  test("shared non-discriminator leaves retain their normal coercion", () => {
+    const agent = { engines: { reviewer: { kind: "agent", platform: "opencode" } } };
+    expect(configSet(agent, "engines.reviewer.model", "claude-sonnet")).toEqual({
+      engines: { reviewer: { kind: "agent", platform: "opencode", model: "claude-sonnet" } },
+    });
+    expect(configSet(agent, "engines.reviewer.timeoutMs", "120000")).toEqual({
+      engines: { reviewer: { kind: "agent", platform: "opencode", timeoutMs: 120000 } },
+    });
   });
 });
 

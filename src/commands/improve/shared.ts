@@ -9,10 +9,10 @@
  * of any improve-specific state — these are leaf utilities.
  */
 
-import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, getImproveProcessConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
+import { getDefaultLlmConfig } from "../../core/config/config";
 import { warn } from "../../core/warn";
-import { resolveImproveProcessRunnerFromProfile, runnerIsLlm } from "../../integrations/agent/runner";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 
 /** Normalize an unknown thrown value to a human-readable message string. */
@@ -49,11 +49,18 @@ export function resolveImproveLlmFn(
     tag: string;
     signal?: AbortSignal;
     activeProfile?: ImproveProfileConfig;
+    llmConfig?: LlmConnectionConfig | null;
   },
 ): ((prompt: string) => Promise<string | null>) | undefined {
-  const processConfig = getImproveProcessConfig(config, opts.processKey, opts.activeProfile);
-  const runnerSpec = resolveImproveProcessRunnerFromProfile(processConfig, config);
-  const llmConfig = runnerSpec && runnerIsLlm(runnerSpec) ? runnerSpec.connection : getDefaultLlmConfig(config);
+  const planOwnsResolution = Object.hasOwn(opts, "llmConfig");
+  const runnerSpec = planOwnsResolution
+    ? undefined
+    : resolveImproveProcessRunner(opts.activeProfile, opts.processKey, config);
+  const llmConfig = planOwnsResolution
+    ? (opts.llmConfig ?? undefined)
+    : runnerSpec
+      ? materializeLlmRunnerConnection(runnerSpec)
+      : getDefaultLlmConfig(config);
   if (!llmConfig) return undefined;
   return async (prompt: string) => {
     const messages: ChatMessage[] = [

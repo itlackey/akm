@@ -4,14 +4,22 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../core/file-lock";
+import {
+  createLockPayload,
+  type LockOwnership,
+  probeLock,
+  reclaimStaleLock,
+  releaseLock,
+  tryAcquireLockSync,
+} from "../core/file-lock";
+import { tryAcquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDbPath, getIndexWriterLockPath } from "../core/paths";
 
 const INDEX_WRITER_LOCK_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 const INDEX_WRITER_WAIT_MS = 100;
 const DEFAULT_INDEX_WRITER_MAX_WAIT_MS = 10 * 60 * 1000;
 
-const heldLocks = new Map<string, { depth: number; exitHandler: () => void }>();
+const heldLocks = new Map<string, { depth: number; exitHandler: () => void; ownership: LockOwnership }>();
 
 export interface IndexWriterLease {
   lockPath: string;
@@ -27,9 +35,8 @@ interface AcquireIndexWriterLeaseOptions {
   onAcquired?: (info: { waitedMs: number }) => void;
 }
 
-function buildPayload(purpose: string, pid = process.pid): string {
-  return JSON.stringify({
-    pid,
+function buildPayload(purpose: string): string {
+  return createLockPayload({
     purpose,
     dbPath: getDbPath(),
     startedAt: new Date().toISOString(),
@@ -52,18 +59,19 @@ function releaseHeldLock(lockPath: string): void {
   if (held.depth > 0) return;
   heldLocks.delete(lockPath);
   process.off("exit", held.exitHandler);
-  releaseLockIfOwned(lockPath, process.pid);
+  releaseLock(held.ownership);
 }
 
-function retainHeldLock(lockPath: string): IndexWriterLease {
+function retainHeldLock(lockPath: string, ownership?: LockOwnership): IndexWriterLease {
   const existing = heldLocks.get(lockPath);
   if (existing) {
     existing.depth += 1;
     return { lockPath, release: () => releaseHeldLock(lockPath) };
   }
-  const exitHandler = () => releaseLockIfOwned(lockPath, process.pid);
+  if (!ownership) throw new Error(`Missing ownership for index writer lock at ${lockPath}.`);
+  const exitHandler = () => releaseLock(ownership);
   process.on("exit", exitHandler);
-  heldLocks.set(lockPath, { depth: 1, exitHandler });
+  heldLocks.set(lockPath, { depth: 1, exitHandler, ownership });
   return { lockPath, release: () => releaseHeldLock(lockPath) };
 }
 
@@ -76,29 +84,31 @@ export async function acquireIndexWriterLease(
   const maxWaitMs = options.maxWaitMs ?? DEFAULT_INDEX_WRITER_MAX_WAIT_MS;
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
-  if (heldLocks.has(lockPath)) {
-    options.onAcquired?.({ waitedMs: 0 });
-    return retainHeldLock(lockPath);
-  }
-
   let lastWaitNoticeMs = 0;
 
   while (true) {
     throwIfAborted(options.signal);
 
-    if (tryAcquireLockSync(lockPath, buildPayload(options.purpose))) {
-      options.onAcquired?.({ waitedMs: Date.now() - startedAt });
-      return retainHeldLock(lockPath);
-    }
+    const releaseBarrier = tryAcquireMaintenanceBarrier();
+    if (releaseBarrier) {
+      try {
+        if (heldLocks.has(lockPath)) {
+          options.onAcquired?.({ waitedMs: Date.now() - startedAt });
+          return retainHeldLock(lockPath);
+        }
+        const ownership = tryAcquireLockSync(lockPath, buildPayload(options.purpose));
+        if (ownership) {
+          options.onAcquired?.({ waitedMs: Date.now() - startedAt });
+          return retainHeldLock(lockPath, ownership);
+        }
 
-    const probe = probeLock(lockPath, { staleAfterMs: INDEX_WRITER_LOCK_STALE_AFTER_MS });
-    if (probe.state === "held" && probe.holderPid === process.pid) {
-      options.onAcquired?.({ waitedMs: Date.now() - startedAt });
-      return retainHeldLock(lockPath);
-    }
-    if (probe.state === "stale") {
-      releaseLock(lockPath);
-      continue;
+        const probe = probeLock(lockPath, { staleAfterMs: INDEX_WRITER_LOCK_STALE_AFTER_MS });
+        if (probe.state === "stale") {
+          if (reclaimStaleLock(lockPath, probe)) continue;
+        }
+      } finally {
+        releaseBarrier();
+      }
     }
     if (mode === "try") return undefined;
 

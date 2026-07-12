@@ -9,10 +9,12 @@ import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getCacheDir } from "../../core/paths";
+import { redactSensitiveText } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { parseFlagValue } from "../../output/context";
 import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { refreshCanarySet } from "./collapse-detector";
@@ -25,6 +27,14 @@ import {
   writeImproveResultFile,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
+import { resolveImprovePlan } from "./improve-strategies";
+
+let akmImproveForRun: typeof akmImprove = akmImprove;
+
+/** Swap the CLI's improve work implementation in deterministic subprocess tests. */
+export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
+  akmImproveForRun = fake ?? akmImprove;
+}
 
 // R5 — collapse-detector canary set inspection / explicit refresh. The
 // detector NEVER auto-refreshes the canary set (silent re-baselining is how a
@@ -82,7 +92,7 @@ export const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when profiles.improve.default.processes.consolidate.enabled is true. `akm improve canary [--refresh]` inspects the collapse-detector canary set.",
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when the selected strategy enables consolidate. `akm improve canary [--refresh]` inspects the collapse-detector canary set.",
   },
   args: {
     scope: {
@@ -136,10 +146,10 @@ export const improveCommand = defineCommand({
         "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
       default: false,
     },
-    profile: {
+    strategy: {
       type: "string",
       description:
-        "Named improve profile from profiles.improve or built-in profiles (default, quick, thorough, memory-focus, graph-refresh). Controls which sub-processes run and which asset types are processed.",
+        "Named improve strategy from improve.strategies or built-in strategies (default, quick, thorough, memory-focus, graph-refresh). Controls which sub-processes run and which asset types are processed.",
     },
     sync: {
       type: "boolean",
@@ -192,7 +202,13 @@ export const improveCommand = defineCommand({
       const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
-      const profileArg = getStringArg(args, "profile");
+      const strategyArg = getStringArg(args, "strategy");
+      const effectiveConfig = loadConfig();
+      // Resolve every enabled model-backed process before logging, signal
+      // lifecycle setup, or any filesystem/database side effect.
+      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig);
+      const selectedStrategyName = resolvedPlan.strategy.name;
+      const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
       // so the resolved profile `sync` block wins by default.
@@ -202,13 +218,15 @@ export const improveCommand = defineCommand({
       if (syncFlag !== undefined) syncOverride.enabled = syncFlag;
       if (pushFlag !== undefined) syncOverride.push = pushFlag;
 
-      const improveLogFile = path.join(
-        getCacheDir(),
-        "logs",
-        "improve",
-        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
-      );
-      setLogFile(improveLogFile);
+      if (!dryRun) {
+        const improveLogFile = path.join(
+          getCacheDir(),
+          "logs",
+          "improve",
+          `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        );
+        setLogFile(improveLogFile);
+      }
       const startedAtMs = Date.now();
       const startedAtIso = new Date(startedAtMs).toISOString();
 
@@ -217,7 +235,7 @@ export const improveCommand = defineCommand({
       // was minted at end-of-run, so SIGTERM'd runs (cron timeout) left no
       // row in improve_runs and effectively disappeared from `akm health`.
       const runId = buildImproveRunId();
-      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      const primaryStashDir = resolveSourceEntries(undefined, effectiveConfig)[0]?.path;
       const scopeArg = getStringArg(args, "scope");
       const inferredScopeMode = (scopeArg ?? "").includes(":") ? "ref" : scopeArg ? "type" : "all";
 
@@ -226,6 +244,7 @@ export const improveCommand = defineCommand({
       // reason in metadata.terminated.
       let runRecorded = false;
       const persistTerminated = (reason: TerminationReason, errorMessage?: string): void => {
+        if (dryRun) return;
         if (runRecorded) return;
         if (!primaryStashDir) return;
         runRecorded = true;
@@ -234,8 +253,9 @@ export const improveCommand = defineCommand({
             scopeMode: inferredScopeMode,
             scopeValue: scopeArg ?? null,
             dryRun: Boolean(dryRun),
-            profile: profileArg ?? null,
-            ...(errorMessage ? { errorMessage } : {}),
+            strategy: selectedStrategyName,
+            ...(errorMessage ? { errorMessage: redactSensitiveText(errorMessage, sensitiveValues) } : {}),
+            sensitiveValues,
           });
         } catch (err) {
           process.stderr.write(
@@ -257,10 +277,11 @@ export const improveCommand = defineCommand({
         improveResult = await runImproveSession(
           {
             runWork: () =>
-              akmImprove({
+              akmImproveForRun({
                 scope: scopeArg,
                 task: taskArg,
                 dryRun,
+                resolvedPlan,
                 target: targetArg,
                 autoAccept,
                 ...(runId !== undefined ? { runId } : {}),
@@ -269,7 +290,7 @@ export const improveCommand = defineCommand({
                 ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
-                ...(profileArg !== undefined ? { profile: profileArg } : {}),
+                ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
                 consolidateOptions: {
                   target: targetArg,
@@ -284,7 +305,12 @@ export const improveCommand = defineCommand({
             signalSource: process,
             exit: process.exit,
             onTerminate: (reason) => persistTerminated(reason),
-            ack: (message) => process.stderr.write(`[improve] ${message}; recorded terminated run ${runId}\n`),
+            ack: (message) =>
+              process.stderr.write(
+                dryRun
+                  ? `[improve] ${message}; dry-run state was not persisted\n`
+                  : `[improve] ${message}; recorded terminated run ${runId}\n`,
+              ),
           },
         );
       } catch (err) {
@@ -299,9 +325,9 @@ export const improveCommand = defineCommand({
       }
       const durationMs = Date.now() - startedAtMs;
 
-      if (jsonToStdout) {
-        // Legacy / escape-hatch mode: full JSON on stdout, no file write.
-        // Kept for scripts/agents that already pipe to jq.
+      if (dryRun || jsonToStdout) {
+        // A dry-run never persists its result, so stdout is its only result
+        // channel. --json-to-stdout remains the live-run escape hatch.
         output("improve", improveResult);
         process.exit(0);
       }
@@ -324,7 +350,7 @@ export const improveCommand = defineCommand({
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, profileArg ?? null);
+          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.

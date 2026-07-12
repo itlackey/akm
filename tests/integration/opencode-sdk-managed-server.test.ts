@@ -181,8 +181,8 @@ test("managed serve startup failure: listening timeout kills a stubborn child", 
   const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
 
   expect(result.ok).toBe(false);
-  expect(result.reason).toBe("spawn_failed");
-  expect(result.error).toContain("Timeout waiting for the OpenCode server to start");
+  expect(result.reason).toBe("timeout");
+  expect(result.error).toContain("server startup");
   const pid = Number(require("node:fs").readFileSync(pidFile, "utf8"));
   expect(await pollUntil(() => !pidAlive(pid), 4_000)).toBe(true);
 }, 15_000);

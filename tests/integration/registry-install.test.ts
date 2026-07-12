@@ -32,12 +32,16 @@ function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-function createEmptyStashDir(prefix: string): string {
+function createEmptyStashDir(prefix: string, cacheHome?: string): string {
   const stashDir = makeTempDir(prefix);
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
-  saveConfig({ semanticSearchMode: "off" });
+  if (cacheHome) {
+    withEnv({ XDG_CACHE_HOME: cacheHome }, () => saveConfig({ configVersion: "0.9.0", semanticSearchMode: "off" }));
+  } else {
+    saveConfig({ configVersion: "0.9.0", semanticSearchMode: "off" });
+  }
   return stashDir;
 }
 
@@ -211,8 +215,8 @@ async function withMockedNpmPackage<T>(packageName: string, archivePath: string,
 
 describe("local directory installs", () => {
   test("akmAdd adds a local directory as a stash source", async () => {
-    const stashDir = createEmptyStashDir("akm-git-stash-");
     const cacheHome = makeTempDir("akm-git-cache-");
+    const stashDir = createEmptyStashDir("akm-git-stash-", cacheHome);
     const repoDir = makeTempDir("akm-git-repo-");
     const stashDir2 = path.join(repoDir, "stashes", "sample");
     writeFile(path.join(stashDir2, "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
@@ -248,8 +252,8 @@ describe("local directory installs", () => {
   });
 
   test("akmAdd references local directory directly (no include config)", async () => {
-    const stashDir = createEmptyStashDir("akm-nogit-stash-");
     const cacheHome = makeTempDir("akm-nogit-cache-");
+    const stashDir = createEmptyStashDir("akm-nogit-stash-", cacheHome);
     const stashDir2 = makeTempDir("akm-nogit-stash-");
     writeFile(path.join(stashDir2, "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
 
@@ -271,8 +275,8 @@ describe("local directory installs", () => {
   });
 
   test("akmAdd discovers stash dirs nested inside a subdirectory", async () => {
-    const stashDir = createEmptyStashDir("akm-nested-stash-");
     const cacheHome = makeTempDir("akm-nested-cache-");
+    const stashDir = createEmptyStashDir("akm-nested-stash-", cacheHome);
     const projectDir = makeTempDir("akm-nested-project-");
     // Assets are nested: project/my-stash/scripts/hello.sh
     writeFile(path.join(projectDir, "my-stash", "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
@@ -299,8 +303,8 @@ describe("local directory installs", () => {
   });
 
   test("akmAdd indexes type-dir source directly when basename matches type", async () => {
-    const stashDir = createEmptyStashDir("akm-typedir-stash-");
     const cacheHome = makeTempDir("akm-typedir-cache-");
+    const stashDir = createEmptyStashDir("akm-typedir-stash-", cacheHome);
     // Create a directory named "knowledge" with nested files
     const parentDir = makeTempDir("akm-typedir-src-");
     const srcDir = path.join(parentDir, "knowledge");
@@ -325,8 +329,8 @@ describe("local directory installs", () => {
   });
 
   test("akmAdd with --type wiki registers an external wiki source coherently", async () => {
-    const stashDir = createEmptyStashDir("akm-wiki-stash-");
     const cacheHome = makeTempDir("akm-wiki-cache-");
+    const stashDir = createEmptyStashDir("akm-wiki-stash-", cacheHome);
     const wikiDir = makeTempDir("akm-wiki-source-");
     writeFile(path.join(wikiDir, "schema.md"), "---\ndescription: External docs\n---\n# Schema\n");
     writeFile(path.join(wikiDir, "overview.md"), "---\ndescription: Overview page\n---\n# Overview\n");

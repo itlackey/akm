@@ -20,7 +20,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { CURRENT_CONFIG_VERSION, compareConfigVersion } from "../../core/config/config-migration";
+import { CURRENT_CONFIG_VERSION } from "../../core/config/config-schema";
+import { compareConfigVersion } from "../../core/config/config-version";
 import type { HealthCheckResult } from "./types";
 
 /** POSIX permission checks are meaningless on Windows. */
@@ -186,7 +187,7 @@ export function collectOrphanStoresAdvisory(input: {
 export interface EgressConfigView {
   registries?: Array<{ url?: string; name?: string; enabled?: boolean }>;
   sources?: Array<{ type?: string; url?: string; name?: string; enabled?: boolean; path?: string }>;
-  profiles?: { llm?: Record<string, { endpoint?: string } | undefined> };
+  engines?: Record<string, { kind?: string; endpoint?: string } | undefined>;
   embedding?: { endpoint?: string };
 }
 
@@ -209,9 +210,9 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
     if (source.enabled === false || !source.url) continue;
     endpoints.push(`source ${source.name ?? "(unnamed)"} (${source.type ?? "?"}): ${source.url}`);
   }
-  for (const [name, profile] of Object.entries(config.profiles?.llm ?? {})) {
-    if (!profile?.endpoint) continue;
-    endpoints.push(`llm ${name}: ${profile.endpoint}`);
+  for (const [name, engine] of Object.entries(config.engines ?? {})) {
+    if (engine?.kind !== "llm" || !engine.endpoint) continue;
+    endpoints.push(`llm ${name}: ${engine.endpoint}`);
   }
   if (config.embedding?.endpoint) endpoints.push(`embedding: ${config.embedding.endpoint}`);
 

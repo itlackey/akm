@@ -5,8 +5,8 @@
 /**
  * Direct unit tests for the pure functions extracted out of the setup
  * monolith during the setup.ts decomposition:
- *   - `deepMergeConfig` / `isPlainObject`  (src/core/deep-merge.ts)
- *   - the legacy config-shape adapters       (src/setup/legacy-config.ts)
+ *   - `deepMergeConfig` / `isPlainObject`  (src/core/config/deep-merge.ts)
+ *   - direct setup engine writers           (src/setup/engine-config.ts)
  *   - the cloud provider defaults table      (src/setup/providers.ts)
  *
  * These functions are now independently importable; the point of the move was
@@ -15,8 +15,14 @@
 
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
-import { deepMergeConfig, isPlainObject } from "../../src/core/deep-merge";
-import { applyLegacyAgent, applyLegacyLlm, cloneLlmConfig, getCurrentAgentBlock } from "../../src/setup/legacy-config";
+import { deepMergeConfig, isPlainObject } from "../../src/core/config/deep-merge";
+import {
+  cloneLlmConnection,
+  readAgentEngineSelection,
+  readCurrentLlmEngine,
+  writeAgentEngines,
+  writeLlmEngine,
+} from "../../src/setup/engine-config";
 import { PROVIDER_DEFAULTS } from "../../src/setup/providers";
 
 describe("deepMergeConfig", () => {
@@ -45,8 +51,8 @@ describe("deepMergeConfig", () => {
     expect(merged).toEqual({ nested: { keep: true, added: 1 } });
   });
 
-  test("a non-object incoming replaces the base entirely", () => {
-    expect(deepMergeConfig<unknown>({ a: 1 }, 5)).toBe(5);
+  test("scalar values replace at their configured key", () => {
+    expect(deepMergeConfig({ a: 1 }, { a: 5 })).toEqual({ a: 5 });
   });
 
   test("isPlainObject rejects null and arrays", () => {
@@ -55,25 +61,40 @@ describe("deepMergeConfig", () => {
     expect(isPlainObject([])).toBe(false);
     expect(isPlainObject("x")).toBe(false);
   });
+
+  test("rejects prototype-pollution keys at every depth", () => {
+    expect(() => deepMergeConfig({}, JSON.parse('{"__proto__":{"polluted":true}}'))).toThrow(/Unsafe/);
+    expect(() => deepMergeConfig({}, { safe: JSON.parse('{"constructor":{"prototype":{"x":1}}}') })).toThrow(/Unsafe/);
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
 });
 
-describe("legacy LLM adapters", () => {
-  test("applyLegacyLlm writes the default profile + defaults.llm", () => {
-    const base = {} as AkmConfig;
-    const llm: LlmConnectionConfig = { provider: "openai", endpoint: "https://x/v1", model: "gpt-4o-mini" };
-    const patch = applyLegacyLlm(base, llm);
-    expect(patch.profiles?.llm?.default).toEqual(llm);
-    expect(patch.defaults?.llm).toBe("default");
+describe("setup LLM engine writer", () => {
+  test("readCurrentLlmEngine preserves an explicit unbounded timeout", () => {
+    const config = {
+      engines: { default: { kind: "llm", endpoint: "https://x/v1/chat/completions", model: "m", timeoutMs: null } },
+      defaults: { llmEngine: "default" },
+    } as unknown as AkmConfig;
+
+    expect(readCurrentLlmEngine(config)?.timeoutMs).toBeNull();
   });
 
-  test("applyLegacyLlm(undefined) clears the default profile and defaults.llm", () => {
+  test("writeLlmEngine writes the default engine + defaults.llmEngine", () => {
+    const base = {} as AkmConfig;
+    const llm: LlmConnectionConfig = { provider: "openai", endpoint: "https://x/v1", model: "gpt-4o-mini" };
+    const patch = writeLlmEngine(base, llm);
+    expect(patch.engines?.default).toEqual({ ...llm, kind: "llm", endpoint: "https://x/v1/chat/completions" });
+    expect(patch.defaults?.llmEngine).toBe("default");
+  });
+
+  test("writeLlmEngine(undefined) clears the default engine and defaults.llmEngine", () => {
     const base = {
-      profiles: { llm: { default: { endpoint: "e", model: "m" } } },
-      defaults: { llm: "default" },
+      engines: { default: { kind: "llm", endpoint: "https://e/v1/chat/completions", model: "m" } },
+      defaults: { llmEngine: "default" },
     } as unknown as AkmConfig;
-    const patch = applyLegacyLlm(base, undefined);
-    expect(patch.profiles?.llm?.default).toBeUndefined();
-    expect(patch.defaults?.llm).toBeUndefined();
+    const patch = writeLlmEngine(base, undefined);
+    expect(patch.engines?.default).toBeUndefined();
+    expect(patch.defaults?.llmEngine).toBeUndefined();
   });
 
   test("cloneLlmConfig deep-copies capabilities + extraParams", () => {
@@ -83,35 +104,35 @@ describe("legacy LLM adapters", () => {
       capabilities: { structuredOutput: true },
       extraParams: { top_p: 0.9 },
     };
-    const clone = cloneLlmConfig(llm);
+    const clone = cloneLlmConnection(llm);
     expect(clone).toEqual(llm);
     expect(clone?.capabilities).not.toBe(llm.capabilities);
     expect(clone?.extraParams).not.toBe(llm.extraParams);
-    expect(cloneLlmConfig(undefined)).toBeUndefined();
+    expect(cloneLlmConnection(undefined)).toBeUndefined();
   });
 });
 
-describe("legacy agent adapters", () => {
-  test("applyLegacyAgent + getCurrentAgentBlock round-trips a CLI default", () => {
+describe("setup agent engine writer", () => {
+  test("writeAgentEngines + readAgentEngineSelection round-trips a CLI default", () => {
     const base = {} as AkmConfig;
-    const applied = { ...base, ...applyLegacyAgent(base, { default: "claude" }) } as AkmConfig;
-    expect(applied.defaults?.agent).toBe("claude");
-    const block = getCurrentAgentBlock(applied);
+    const applied = { ...base, ...writeAgentEngines(base, { default: "claude" }) } as AkmConfig;
+    expect(applied.defaults?.engine).toBe("claude");
+    expect(applied.engines?.claude).toEqual({ kind: "agent", platform: "claude" });
+    const block = readAgentEngineSelection(applied);
     expect(block?.default).toBe("claude");
   });
 
-  test("applyLegacyAgent maps an sdkMode profile to the opencode-sdk platform", () => {
+  test("writeAgentEngines persists an opencode-sdk engine directly", () => {
     const base = {} as AkmConfig;
-    const patch = applyLegacyAgent(base, {
+    const patch = writeAgentEngines(base, {
       default: "default",
-      profiles: { default: { sdkMode: true, model: "m", endpoint: "e" } },
+      engines: { default: { kind: "agent", platform: "opencode-sdk", model: "m" } },
     });
-    expect(patch.profiles?.agent?.default?.platform).toBe("opencode-sdk");
-    expect(patch.profiles?.agent?.default?.model).toBe("m");
+    expect(patch.engines?.default).toMatchObject({ kind: "agent", platform: "opencode-sdk", model: "m" });
   });
 
   test("getCurrentAgentBlock returns undefined when no agent config is present", () => {
-    expect(getCurrentAgentBlock({} as AkmConfig)).toBeUndefined();
+    expect(readAgentEngineSelection({} as AkmConfig)).toBeUndefined();
   });
 });
 

@@ -50,8 +50,12 @@
  * entry.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, assertNotFlag } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
+import {
+  type AgentCommandBuilder,
+  type AgentDispatchRequest,
+  assertNotFlag,
+  resolveDispatchModel,
+} from "../../agent/builder-shared";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const PI_PLATFORM = "pi";
@@ -95,7 +99,7 @@ export const piBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, PI_PLATFORM, profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, PI_PLATFORM) as string;
       args.push("--model", resolved);
     }
     if (req.schema) {

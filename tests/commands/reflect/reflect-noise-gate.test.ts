@@ -27,7 +27,7 @@ import {
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { readEvents } from "../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
-import { makeProfile, quietQualityGateConfig } from "../../_helpers/factories";
+import { quietQualityGateConfig } from "../../_helpers/factories";
 import {
   makeStashDir,
   sandboxXdgCacheHome,
@@ -243,7 +243,6 @@ async function runReflect(stash: string, agentStdout: string) {
     ref: "knowledge:sample",
     stashDir: stash,
     assetContent: SOURCE_ASSET,
-    agentProfile: makeProfile(),
     config: quietQualityGateConfig(),
     runAgentOptions: { spawn: fakeSpawn(agentStdout) },
   });
@@ -316,7 +315,6 @@ describe("akm reflect — noise gate (#580)", () => {
       ref: "skill:stack-diagnostics",
       stashDir: stash,
       assetContent: source,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref: "skill:stack-diagnostics", content: renamedOnly })) },
     });
@@ -332,7 +330,6 @@ describe("akm reflect — noise gate (#580)", () => {
     const result = await akmReflect({
       ref: "knowledge:sample",
       stashDir: stash,
-      agentProfile: makeProfile(),
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(agentJson(SOURCE_ASSET)) },
     });

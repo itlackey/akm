@@ -57,9 +57,12 @@
  * @module state-db
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import type { Database, SqlValue } from "../storage/database";
 import { openManagedDatabase, withManagedDb, withManagedDbAsync } from "../storage/managed-db";
+import { acquireMaintenanceActivitySync } from "./maintenance-barrier";
+import { ensureMigrationBackup, getMigrationBackupDir } from "./migration-backup";
 import { getDataDir } from "./paths";
 
 // ── Path helper ──────────────────────────────────────────────────────────────
@@ -103,7 +106,42 @@ export function getStateDbPath(): string {
  *     narrow when a post-inference reindex overlapped a parallel event write.
  */
 export function openStateDatabase(dbPath?: string): Database {
-  return openManagedDatabase({ path: dbPath ?? getStateDbPath(), init: runMigrations });
+  const canonicalPath = getStateDbPath();
+  const resolvedPath = dbPath ?? canonicalPath;
+  const isCanonical = path.resolve(resolvedPath) === path.resolve(canonicalPath);
+  const releaseActivity = isCanonical ? acquireMaintenanceActivitySync("state-db") : undefined;
+  try {
+    // This must precede mkdir/open: opening an absent SQLite path creates it and
+    // would make the recovery manifest falsely record a fresh DB as pre-existing.
+    if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
+    const db = openManagedDatabase({
+      path: resolvedPath,
+      init: (db) => runMigrations(db, { ensureCutoverBackup: isCanonical }),
+    });
+    if (!releaseActivity) return db;
+    let closed = false;
+    return {
+      prepare: db.prepare.bind(db),
+      exec: db.exec.bind(db),
+      run: db.run.bind(db),
+      transaction: db.transaction.bind(db),
+      get inTransaction() {
+        return db.inTransaction;
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        try {
+          db.close();
+        } finally {
+          releaseActivity();
+        }
+      },
+    };
+  } catch (error) {
+    releaseActivity?.();
+    throw error;
+  }
 }
 
 /**

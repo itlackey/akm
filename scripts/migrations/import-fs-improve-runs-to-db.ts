@@ -42,9 +42,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { decodeImproveResult, type ImproveResultEnvelope } from "../../src/core/improve-result";
 import { openStateDatabase } from "../../src/core/state-db";
 import { computeImproveRunMetrics, recordImproveRun } from "../../src/storage/repositories/improve-runs-repository";
-import type { AkmImproveResult } from "../../src/commands/improve/improve";
 
 type Args = {
   stashDir: string;
@@ -110,7 +110,7 @@ function parseRunIdToIsoTimestamp(runId: string): string | undefined {
   return `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`;
 }
 
-function inferScope(envelope: Partial<AkmImproveResult>): {
+function inferScope(envelope: ImproveResultEnvelope): {
   scopeMode: "all" | "type" | "ref";
   scopeValue: string | null;
 } {
@@ -166,9 +166,9 @@ async function main(): Promise<void> {
       continue;
     }
 
-    let envelope: Partial<AkmImproveResult> & { schemaVersion?: number };
+    let decoded: ReturnType<typeof decodeImproveResult>;
     try {
-      envelope = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+      decoded = decodeImproveResult(fs.readFileSync(resultPath, "utf8"));
     } catch (err) {
       console.warn(`[import] skipping ${id}: parse failed (${err instanceof Error ? err.message : String(err)})`);
       skippedParseFailed++;
@@ -182,9 +182,9 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const { scopeMode, scopeValue } = inferScope(envelope);
-    const ok = envelope.ok !== false;
-    const result = envelope as AkmImproveResult;
+    const result = decoded.envelope;
+    const { scopeMode, scopeValue } = inferScope(result);
+    const ok = result.ok;
 
     if (args.dryRun) {
       imported++;
@@ -197,11 +197,12 @@ async function main(): Promise<void> {
         startedAt,
         completedAt: startedAt,
         stashDir: args.stashDir,
-        dryRun: envelope.dryRun === true,
-        profile: null,
+        dryRun: result.dryRun,
+        legacyProfile: decoded.legacyProfile,
+        strategy: decoded.strategy,
         scopeMode,
         scopeValue,
-        guidance: typeof envelope.guidance === "string" ? envelope.guidance : null,
+        guidance: typeof result.guidance === "string" ? result.guidance : null,
         ok,
         result,
         metrics: computeImproveRunMetrics(result),

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config/config-schema";
+import {
+  ImproveProcessConfigSchema,
+  ImproveProfileConfigSchema,
+  validateConfigShape,
+} from "../src/core/config/config-schema";
 
 // Phase 2: triage is a first-class improve process. These guard that a triage
 // block under `processes` parses and is accepted, that the triage-specific
@@ -18,7 +22,7 @@ describe("triage improve-process config schema", () => {
           maxAcceptsPerRun: 25,
           maxDiffLines: 200,
           rejectEmpty: true,
-          judgment: { mode: "llm", profile: "fast", timeoutMs: 600000 },
+          judgment: { engine: "fast", timeoutMs: 600000 },
         },
       },
     });
@@ -34,7 +38,7 @@ describe("triage improve-process config schema", () => {
         maxAcceptsPerRun: 10,
         maxDiffLines: 50,
         rejectEmpty: false,
-        judgment: { mode: "agent" },
+        judgment: { engine: "agent" },
       }).success,
     ).toBe(true);
 
@@ -44,9 +48,9 @@ describe("triage improve-process config schema", () => {
     expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
     expect(ImproveProcessConfigSchema.safeParse({ maxDiffLines: -1 }).success).toBe(false);
     // judgment tolerates unknown keys (lenient policy) but still type-checks known ones
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm", bogus: 1 } }).success).toBe(true);
-    // judgment.mode is constrained to llm|agent|sdk
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "human" } }).success).toBe(false);
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } }).success).toBe(true);
+    // judgment.mode is retired in favor of a named engine.
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(false);
     // judgment.timeoutMs accepts null
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
   });
@@ -62,5 +66,32 @@ describe("triage improve-process config schema", () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+
+  test("triage may select an agent engine while missing engines are rejected", () => {
+    const base = {
+      configVersion: "0.9.0",
+      engines: { reviewer: { kind: "agent", platform: "pi" } },
+    } as const;
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: {
+          strategies: {
+            custom: { processes: { triage: { enabled: true, engine: "reviewer", judgment: {} } } },
+          },
+        },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: {
+          strategies: {
+            custom: { processes: { triage: { enabled: true, engine: "missing", judgment: {} } } },
+          },
+        },
+      }).ok,
+    ).toBe(false);
   });
 });
