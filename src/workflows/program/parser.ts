@@ -27,6 +27,18 @@
 import { createRequire } from "node:module";
 import { isMap, isScalar, LineCounter, parseDocument } from "yaml";
 import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
+import {
+  jsonBytes,
+  utf8Bytes,
+  WORKFLOW_MAX_EXTRA_PARAMS_BYTES,
+  WORKFLOW_MAX_INSTRUCTION_BYTES,
+  WORKFLOW_MAX_MAP_EXPANSION,
+  WORKFLOW_MAX_PARAMS,
+  WORKFLOW_MAX_ROUTE_BRANCHES,
+  WORKFLOW_MAX_SCHEMA_BYTES,
+  WORKFLOW_MAX_SOURCE_BYTES,
+  WORKFLOW_MAX_STEPS,
+} from "../resource-limits";
 import type { SourceRef, WorkflowError } from "../schema";
 import {
   PROGRAM_ISOLATION_KINDS,
@@ -114,6 +126,12 @@ interface RouteCheck {
 }
 
 export function parseWorkflowProgram(yamlText: string, source: { path: string }): WorkflowProgramParseResult {
+  if (utf8Bytes(yamlText) > WORKFLOW_MAX_SOURCE_BYTES) {
+    return {
+      ok: false,
+      errors: [{ line: 1, message: "Workflow source exceeds the 1 MiB resource limit." }],
+    };
+  }
   const errors: WorkflowError[] = [];
   const lineCounter = new LineCounter();
 
@@ -244,6 +262,9 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
     );
     return undefined;
   }
+  if (Object.keys(raw).length > WORKFLOW_MAX_PARAMS) {
+    ctx.err(["params"], `"params" must contain at most ${WORKFLOW_MAX_PARAMS} entries.`);
+  }
   const params: Record<string, Record<string, unknown>> = {};
   for (const [paramName, value] of Object.entries(raw)) {
     if (!PROGRAM_PARAM_NAME_PATTERN.test(paramName)) {
@@ -305,10 +326,18 @@ function parseBudget(ctx: Ctx, raw: unknown): ProgramBudget | undefined {
     }
   }
   if (raw.max_units !== undefined) {
-    if (typeof raw.max_units === "number" && Number.isInteger(raw.max_units) && raw.max_units >= 1) {
+    if (
+      typeof raw.max_units === "number" &&
+      Number.isInteger(raw.max_units) &&
+      raw.max_units >= 1 &&
+      raw.max_units <= WORKFLOW_MAX_MAP_EXPANSION
+    ) {
       budget.maxUnits = raw.max_units;
     } else {
-      ctx.err([...path, "max_units"], `"budget.max_units" must be an integer >= 1.`);
+      ctx.err(
+        [...path, "max_units"],
+        `"budget.max_units" must be an integer from 1 through ${WORKFLOW_MAX_MAP_EXPANSION}.`,
+      );
     }
   }
   return Object.keys(budget).length > 0 ? budget : undefined;
@@ -318,6 +347,9 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     ctx.err(["steps"], `"steps" is required and must be a list with at least one step.`);
     return [];
+  }
+  if (raw.length > WORKFLOW_MAX_STEPS) {
+    ctx.err(["steps"], `"steps" must contain at most ${WORKFLOW_MAX_STEPS} entries.`);
   }
 
   // First pass: collect ids so route targets can be checked against ALL steps
@@ -448,6 +480,9 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
   if (typeof raw.instructions === "string" && raw.instructions.trim() !== "") {
     unit.instructions = raw.instructions;
     ctx.checkTemplates(raw.instructions, [...path, "instructions"], `${stepLabel} "instructions"`);
+    if (utf8Bytes(raw.instructions) > WORKFLOW_MAX_INSTRUCTION_BYTES) {
+      ctx.err([...path, "instructions"], `${stepLabel} "instructions" exceeds the 256 KiB resource limit.`);
+    }
   } else {
     ctx.err([...path, "instructions"], `${stepLabel} "unit" requires non-empty string "instructions".`);
   }
@@ -571,6 +606,9 @@ function parseRoute(
       `${stepLabel} "route" requires "when": a mapping of match value to target step id (e.g. when: { pass: ship }).`,
     );
   } else if (isMap(whenNode)) {
+    if (whenNode.items.length > WORKFLOW_MAX_ROUTE_BRANCHES) {
+      ctx.err(whenPath, `${stepLabel} "when" must contain at most ${WORKFLOW_MAX_ROUTE_BRANCHES} branches.`);
+    }
     // Walk the AST pairs (not the JS object) so duplicate matches that only
     // collide after stringification ("true" vs true) are still caught.
     const seenMatches = new Map<string, number>();
@@ -611,6 +649,9 @@ function parseRoute(
       } else {
         ctx.err(whenPath, `${stepLabel} "when: ${match}" must map to a step id string.`);
       }
+    }
+    if (Object.keys(raw.when).length > WORKFLOW_MAX_ROUTE_BRANCHES) {
+      ctx.err(whenPath, `${stepLabel} "when" must contain at most ${WORKFLOW_MAX_ROUTE_BRANCHES} branches.`);
     }
     if (Object.keys(raw.when).length === 0) {
       ctx.err(whenPath, `${stepLabel} "when" must contain at least one match → step-id entry.`);
@@ -788,8 +829,12 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
     else ctx.err([...path, "supports_json_schema"], `${label}.supports_json_schema must be a boolean.`);
   }
   if (raw.extra_params !== undefined) {
-    if (isPlainRecord(raw.extra_params)) result.extraParams = raw.extra_params;
-    else ctx.err([...path, "extra_params"], `${label}.extra_params must be a JSON object.`);
+    if (isPlainRecord(raw.extra_params)) {
+      result.extraParams = raw.extra_params;
+      if (jsonBytes(raw.extra_params) > WORKFLOW_MAX_EXTRA_PARAMS_BYTES) {
+        ctx.err([...path, "extra_params"], `${label}.extra_params exceeds the 64 KiB resource limit.`);
+      }
+    } else ctx.err([...path, "extra_params"], `${label}.extra_params must be a JSON object.`);
   }
   if (raw.context_length !== undefined) {
     if (typeof raw.context_length === "number" && Number.isInteger(raw.context_length) && raw.context_length > 0) {
@@ -808,6 +853,9 @@ function parseSchemaObject(ctx: Ctx, raw: unknown, path: Path, label: string): R
   if (!isPlainRecord(raw)) {
     ctx.err(path, `${label} must be a JSON Schema object (e.g. { type: object, properties: { … } }).`);
     return undefined;
+  }
+  if (jsonBytes(raw) > WORKFLOW_MAX_SCHEMA_BYTES) {
+    ctx.err(path, `${label} exceeds the 256 KiB resource limit.`);
   }
   return raw;
 }

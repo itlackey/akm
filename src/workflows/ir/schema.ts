@@ -8,6 +8,19 @@ import type { LlmInvocationOverrides } from "../../integrations/agent/engine-res
 import { HARNESS_BY_ID } from "../../integrations/harnesses";
 import { listReferences, parseTemplate } from "../program/expressions";
 import { PROGRAM_PARAM_NAME_PATTERN, PROGRAM_RETRY_REASONS, PROGRAM_STEP_ID_PATTERN } from "../program/schema";
+import {
+  jsonBytes,
+  WORKFLOW_MAX_ENGINES,
+  WORKFLOW_MAX_EXTRA_PARAMS_BYTES,
+  WORKFLOW_MAX_INSTRUCTION_BYTES,
+  WORKFLOW_MAX_JSON_DEPTH,
+  WORKFLOW_MAX_MAP_EXPANSION,
+  WORKFLOW_MAX_PARAMS,
+  WORKFLOW_MAX_PLAN_BYTES,
+  WORKFLOW_MAX_ROUTE_BRANCHES,
+  WORKFLOW_MAX_SCHEMA_BYTES,
+  WORKFLOW_MAX_STEPS,
+} from "../resource-limits";
 import type { SourceRef } from "../schema";
 
 /** The only executable persisted workflow plan format. */
@@ -147,22 +160,25 @@ export interface WorkflowPlanGraph {
   steps: IrStepPlan[];
 }
 
-export const WORKFLOW_MAX_STEPS = 256;
-export const WORKFLOW_MAX_ENGINES = 64;
 export const WORKFLOW_MAX_CONCURRENCY = 64;
-export const WORKFLOW_MAX_PARAMS = 256;
 export const WORKFLOW_MAX_GATE_LOOPS = 100;
 export const WORKFLOW_MAX_RETRIES = 100;
-export const WORKFLOW_MAX_UNITS = 1000;
+export const WORKFLOW_MAX_UNITS = WORKFLOW_MAX_MAP_EXPANSION;
 export const WORKFLOW_MAX_TIMEOUT_MS = 2 ** 31 - 1;
 const MAX_LIST_ITEMS = 1024;
 const MAX_STRING_LENGTH = 1_000_000;
 const ENGINE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
+export interface WorkflowPlanValidationHooks {
+  /** Optional shared config-policy hook. Structural and byte bounds remain owned here. */
+  validateExtraParams?(value: Readonly<Record<string, unknown>>, location: string): string | undefined;
+}
+
 /** Strictly decode persisted v3 data before it can drive a workflow. */
-export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
+export function decodeWorkflowPlanV3(input: unknown, hooks: WorkflowPlanValidationHooks = {}): WorkflowPlanGraph {
   if (!isRecord(input) || input.irVersion !== WORKFLOW_IR_VERSION) fail("irVersion must be 3");
   assertJson(input);
+  if (jsonBytes(input) > WORKFLOW_MAX_PLAN_BYTES) fail("plan exceeds the 2 MiB resource limit");
   const plan = input as unknown as WorkflowPlanGraph;
   assertKeys(input, ["irVersion", "title", "params", "paramSchemas", "budget", "execution", "steps"], "plan");
   assertString(plan.title, "title");
@@ -182,7 +198,7 @@ export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
   if (Object.keys(engines).length > WORKFLOW_MAX_ENGINES)
     fail(`execution.engines exceeds ${WORKFLOW_MAX_ENGINES} entries`);
   const references = new Set<string>();
-  for (const [key, engine] of Object.entries(engines)) validateEngine(key, engine, references);
+  for (const [key, engine] of Object.entries(engines)) validateEngine(key, engine, references, hooks);
   if (!Array.isArray(plan.steps) || plan.steps.length === 0 || plan.steps.length > WORKFLOW_MAX_STEPS)
     fail("steps must contain 1 through 256 entries");
   const stepIds = new Set<string>();
@@ -206,11 +222,10 @@ export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
       `step ${step.stepId}`,
     );
     validateStringArray(step.dependsOn, `step ${step.stepId} dependsOn`, WORKFLOW_MAX_STEPS, true);
-    if (step.outputSchema !== undefined && !isRecord(step.outputSchema))
-      fail(`step ${step.stepId} outputSchema must be an object`);
-    if (step.root) validateNode(step.root, step.stepId, references, nodeIds);
+    if (step.outputSchema !== undefined) validateSchema(step.outputSchema, `step ${step.stepId} outputSchema`);
+    if (step.root) validateNode(step.root, step.stepId, references, nodeIds, hooks);
     if (step.route) validateRoute(step.route, step.stepId);
-    validateGate(step.gate, step.stepId, references, nodeIds);
+    validateGate(step.gate, step.stepId, references, nodeIds, hooks);
   }
   const stepIndex = new Map(plan.steps.map((step, index) => [step.stepId, index]));
   for (const [index, step] of plan.steps.entries()) {
@@ -249,7 +264,12 @@ export function decodeWorkflowPlanV3(input: unknown): WorkflowPlanGraph {
   return plan;
 }
 
-function validateEngine(key: string, engine: unknown, references: Set<string>): void {
+function validateEngine(
+  key: string,
+  engine: unknown,
+  references: Set<string>,
+  hooks: WorkflowPlanValidationHooks,
+): void {
   if (
     !ENGINE_NAME_PATTERN.test(key) ||
     key.length > 63 ||
@@ -304,8 +324,7 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
       fail(`LLM engine ${key} supportsJsonSchema must be boolean`);
     if (engine.enableThinking !== undefined && typeof engine.enableThinking !== "boolean")
       fail(`LLM engine ${key} enableThinking must be boolean`);
-    if (engine.extraParams !== undefined && !isRecord(engine.extraParams))
-      fail(`LLM engine ${key} extraParams must be an object`);
+    validateExtraParams(engine.extraParams, `LLM engine ${key} extraParams`, hooks);
     if (engine.credential !== undefined) {
       if (
         !isRecord(engine.credential) ||
@@ -369,7 +388,13 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
   }
 }
 
-function validateNode(node: unknown, stepId: string, references: Set<string>, nodeIds: Set<string>): void {
+function validateNode(
+  node: unknown,
+  stepId: string,
+  references: Set<string>,
+  nodeIds: Set<string>,
+  hooks: WorkflowPlanValidationHooks,
+): void {
   if (
     !isRecord(node) ||
     (node.kind !== "unit" && node.kind !== "map") ||
@@ -392,7 +417,7 @@ function validateNode(node: unknown, stepId: string, references: Set<string>, no
       fail(`map ${node.id} is invalid`);
     if (node.id !== `${stepId}.map`) fail(`map ${node.id} does not match step ${stepId}`);
     validateSource(node.source, `map ${node.id} source`);
-    validateNode(node.template, stepId, references, nodeIds);
+    validateNode(node.template, stepId, references, nodeIds, hooks);
     if (!isRecord(node.template) || node.template.kind !== "unit") fail(`map ${node.id} template must be a unit`);
     if (node.template.id !== `${stepId}.unit`) fail(`map ${node.id} template id is invalid`);
     return;
@@ -423,14 +448,22 @@ function validateNode(node: unknown, stepId: string, references: Set<string>, no
   )
     fail(`unit ${node.id} is invalid`);
   if (node.id !== stepId && node.id !== `${stepId}.unit`) fail(`unit ${node.id} does not belong to step ${stepId}`);
-  if (node.schema !== undefined && !isRecord(node.schema)) fail(`unit ${node.id} schema must be an object`);
+  if (Buffer.byteLength(node.instructions, "utf8") > WORKFLOW_MAX_INSTRUCTION_BYTES)
+    fail(`unit ${node.id} instructions exceed the 256 KiB resource limit`);
+  if (node.schema !== undefined) validateSchema(node.schema, `unit ${node.id} schema`);
   validateRetry(node.retry, node.id);
   validateStringArray(node.env, `unit ${node.id} env`, MAX_LIST_ITEMS, true);
   validateSource(node.source, `unit ${node.id} source`);
-  validateInvocation(node.invocation, references);
+  validateInvocation(node.invocation, references, hooks);
 }
 
-function validateGate(gate: unknown, stepId: string, references: Set<string>, nodeIds: Set<string>): void {
+function validateGate(
+  gate: unknown,
+  stepId: string,
+  references: Set<string>,
+  nodeIds: Set<string>,
+  hooks: WorkflowPlanValidationHooks,
+): void {
   if (
     !isRecord(gate) ||
     gate.kind !== "gate" ||
@@ -450,10 +483,10 @@ function validateGate(gate: unknown, stepId: string, references: Set<string>, no
   nodeIds.add(gate.id);
   if (gate.criteria.length === 0 && gate.judge !== null) fail(`gate ${gate.id} without criteria cannot have a judge`);
   if (gate.required && gate.criteria.length === 0) fail(`gate ${gate.id} cannot be required without criteria`);
-  if (gate.judge !== null) validateInvocation(gate.judge, references);
+  if (gate.judge !== null) validateInvocation(gate.judge, references, hooks);
 }
 
-function validateInvocation(invocation: unknown, references: Set<string>): void {
+function validateInvocation(invocation: unknown, references: Set<string>, hooks: WorkflowPlanValidationHooks): void {
   if (
     !isRecord(invocation) ||
     typeof invocation.engine !== "string" ||
@@ -469,7 +502,7 @@ function validateInvocation(invocation: unknown, references: Set<string>): void 
     fail("invocation is invalid");
   references.add(invocation.engine);
   assertKeys(invocation, ["engine", "model", "timeoutMs", "llm"], "invocation");
-  validateLlmOverrides(invocation.llm);
+  validateLlmOverrides(invocation.llm, hooks);
 }
 
 function validateRoute(route: unknown, stepId: string): void {
@@ -479,7 +512,7 @@ function validateRoute(route: unknown, stepId: string): void {
     !route.input ||
     !isRecord(route.when) ||
     Object.keys(route.when).length === 0 ||
-    Object.keys(route.when).length > MAX_LIST_ITEMS ||
+    Object.keys(route.when).length > WORKFLOW_MAX_ROUTE_BRANCHES ||
     !Object.keys(route.when).every((match) => match.length > 0 && match.length <= MAX_STRING_LENGTH) ||
     !Object.values(route.when).every((target) => typeof target === "string" && target)
   )
@@ -506,7 +539,7 @@ function assertKeys(value: Record<string, unknown>, allowed: readonly string[], 
 }
 
 function assertJson(value: unknown, depth = 0): void {
-  if (depth > 64) fail("plan exceeds JSON depth limit");
+  if (depth > WORKFLOW_MAX_JSON_DEPTH) fail("plan exceeds JSON depth limit of 64");
   if (value === null || typeof value === "boolean") return;
   if (typeof value === "string") {
     if (value.length > MAX_STRING_LENGTH) fail("plan contains an oversized string");
@@ -537,7 +570,8 @@ function validateParams(
     if (!isRecord(schemas) || Object.keys(schemas).length > WORKFLOW_MAX_PARAMS)
       fail("paramSchemas must be a bounded object");
     for (const [name, schema] of Object.entries(schemas)) {
-      if (!PROGRAM_PARAM_NAME_PATTERN.test(name) || !isRecord(schema)) fail(`paramSchemas.${name} is invalid`);
+      if (!PROGRAM_PARAM_NAME_PATTERN.test(name)) fail(`paramSchemas.${name} is invalid`);
+      validateSchema(schema, `paramSchemas.${name}`);
     }
   }
   const names = params ?? [];
@@ -578,7 +612,7 @@ function validateRetry(retry: unknown, nodeId: string): void {
     fail(`unit ${nodeId} retry.on is invalid`);
 }
 
-function validateLlmOverrides(value: unknown): void {
+function validateLlmOverrides(value: unknown, hooks: WorkflowPlanValidationHooks): void {
   if (value === undefined) return;
   if (!isRecord(value)) fail("invocation.llm must be an object");
   assertKeys(
@@ -593,8 +627,20 @@ function validateLlmOverrides(value: unknown): void {
     fail("invocation.llm.supportsJsonSchema must be boolean");
   if (value.enableThinking !== undefined && typeof value.enableThinking !== "boolean")
     fail("invocation.llm.enableThinking must be boolean");
-  if (value.extraParams !== undefined && !isRecord(value.extraParams))
-    fail("invocation.llm.extraParams must be an object");
+  validateExtraParams(value.extraParams, "invocation.llm.extraParams", hooks);
+}
+
+function validateSchema(value: unknown, label: string): asserts value is Record<string, unknown> {
+  if (!isRecord(value)) fail(`${label} must be an object`);
+  if (jsonBytes(value) > WORKFLOW_MAX_SCHEMA_BYTES) fail(`${label} exceeds the 256 KiB resource limit`);
+}
+
+function validateExtraParams(value: unknown, label: string, hooks: WorkflowPlanValidationHooks): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) fail(`${label} must be an object`);
+  if (jsonBytes(value) > WORKFLOW_MAX_EXTRA_PARAMS_BYTES) fail(`${label} exceeds the 64 KiB resource limit`);
+  const policyError = hooks.validateExtraParams?.(value, label);
+  if (policyError) fail(`${label}: ${policyError}`);
 }
 
 function validateStepExpressions(step: IrStepPlan, index: number, steps: Map<string, number>): void {

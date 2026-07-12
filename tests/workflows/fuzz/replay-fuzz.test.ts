@@ -10,10 +10,8 @@ import {
   type UnitDispatchResult,
 } from "../../../src/workflows/exec/native-executor";
 import { canonicalJson, computeStepWorkList, unitIdFor } from "../../../src/workflows/exec/step-work";
-import { compileWorkflowProgram } from "../../../src/workflows/ir/compile";
-import type { IrStepPlan } from "../../../src/workflows/ir/schema";
-import { parseWorkflowProgram } from "../../../src/workflows/program/parser";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
+import { freezeWorkflowProgram } from "../../_helpers/workflow";
 import { distinctJsonValues, randomJsonValue, reorderKeys } from "./_gen";
 import { fuzzSeeds, Rng, withSeed } from "./_rng";
 
@@ -51,15 +49,9 @@ steps:
         instructions: Do \${{ item }}.
 `;
 
-function mapStep(): IrStepPlan {
-  const parsed = parseWorkflowProgram(MAP_WF, { path: "workflows/f.yaml" });
-  if (!parsed.ok) throw new Error(parsed.errors.map((e) => e.message).join("; "));
-  const compiled = compileWorkflowProgram(parsed.program);
-  if (!compiled.ok) throw new Error(compiled.errors.map((e) => e.message).join("; "));
-  return compiled.plan.steps[0];
-}
-
-const STEP = mapStep();
+const PLAN = freezeWorkflowProgram(MAP_WF, "workflows/f.yaml");
+const STEP = PLAN.steps[0];
+const ENGINES = PLAN.execution?.engines;
 const NODE_ID = "work.unit"; // STEP.root (map).template.id
 
 // ── Pure identity properties ─────────────────────────────────────────────────
@@ -216,6 +208,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
               params: { items },
               evidence: {},
               dispatcher,
+              engines: ENGINES,
             });
             expect(first.ok).toBe(true);
             expect(dispatches).toBe(items.length);
@@ -230,6 +223,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
                 dispatches++;
                 return { ok: true, text: "must-not-run" };
               },
+              engines: ENGINES,
             });
             expect(second.ok).toBe(true);
             expect(dispatches).toBe(items.length); // zero re-dispatch
@@ -242,6 +236,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
               params: { items, tamper: `v-${seed}` },
               evidence: {},
               dispatcher,
+              engines: ENGINES,
             });
             expect(diverged.ok).toBe(false);
             expect(diverged.summary).toContain("replay divergence");
@@ -265,6 +260,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
                 dupDispatches++;
                 return { ok: true, text: "must-not-run" };
               },
+              engines: ENGINES,
             });
             expect(dupResult.ok).toBe(false);
             expect(dupDispatches).toBe(0);

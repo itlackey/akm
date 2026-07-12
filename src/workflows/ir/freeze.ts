@@ -27,7 +27,7 @@ import type {
   IrUnitNode,
   WorkflowPlanGraph,
 } from "./schema";
-import { WORKFLOW_IR_VERSION } from "./schema";
+import { decodeWorkflowPlanV3, WORKFLOW_IR_VERSION } from "./schema";
 
 export interface FrozenWorkflow {
   plan: WorkflowPlanGraph;
@@ -122,17 +122,18 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, config: AkmCo
     };
   });
 
+  const plan = decodeWorkflowPlanV3({
+    irVersion: WORKFLOW_IR_VERSION,
+    title: preliminary.title,
+    ...(preliminary.params ? { params: preliminary.params } : {}),
+    ...(preliminary.paramSchemas ? { paramSchemas: preliminary.paramSchemas } : {}),
+    ...(preliminary.budget ? { budget: preliminary.budget } : {}),
+    execution: { maxConcurrency, engines },
+    steps,
+  });
   return {
     warnings: asset.program ? preliminary.warnings : [],
-    plan: {
-      irVersion: WORKFLOW_IR_VERSION,
-      title: preliminary.title,
-      ...(preliminary.params ? { params: preliminary.params } : {}),
-      ...(preliminary.paramSchemas ? { paramSchemas: preliminary.paramSchemas } : {}),
-      ...(preliminary.budget ? { budget: preliminary.budget } : {}),
-      execution: { maxConcurrency, engines },
-      steps,
-    },
+    plan,
   };
 }
 

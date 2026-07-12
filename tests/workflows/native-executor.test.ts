@@ -15,14 +15,16 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import {
   buildAgentDispatchRequest,
-  executeStepPlan,
+  executeStepPlan as executeFrozenStepPlan,
   llmFailureReasonFor,
+  type StepExecutionContext,
+  type StepExecutionResult,
   type UnitDispatchRequest,
   type UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import type { IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
+import type { FrozenAgentEngine, IrStepPlan, WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { PROGRAM_RETRY_REASONS } from "../../src/workflows/program/schema";
 import { completeWorkflowStep, getWorkflowStatus } from "../../src/workflows/runtime/runs";
 import { makeSandboxDir, withEnv, withMockedFetch, writeSandboxConfig } from "../_helpers/sandbox";
@@ -70,7 +72,15 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
-  return freezeWorkflowProgram(yamlText);
+  const frozen = freezeWorkflowProgram(yamlText);
+  for (const step of frozen.steps) catalogs.set(step, frozen.execution?.engines ?? {});
+  return frozen;
+}
+
+const catalogs = new WeakMap<IrStepPlan, NonNullable<WorkflowPlanGraph["execution"]>["engines"]>();
+
+function executeStepPlan(step: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
+  return executeFrozenStepPlan(step, { ...ctx, engines: ctx.engines ?? catalogs.get(step) });
 }
 
 function usePlan(yamlText: string): () => Promise<WorkflowPlanGraph> {
@@ -1989,6 +1999,18 @@ steps:
 // and assert the declared mechanism appears in the argv (harness-* convention).
 describe("buildAgentDispatchRequest — schema reaches the harness structured-output path (PR #714)", () => {
   const SCHEMA = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+  const ENGINE: FrozenAgentEngine = {
+    name: "harness",
+    kind: "agent",
+    runnerKind: "agent",
+    platform: "codex",
+    bin: "harness",
+    args: [],
+    workspace: null,
+    envPassthrough: ["PATH"],
+    commandBuilder: "codex",
+    fallbackLlmEngine: null,
+  };
 
   function schemaRequest(): UnitDispatchRequest {
     return {
@@ -1997,7 +2019,8 @@ describe("buildAgentDispatchRequest — schema reaches the harness structured-ou
       unitId: "judge:solo",
       nodeId: "judge",
       prompt: "judge it",
-      runner: "agent",
+      engine: ENGINE,
+      invocation: { engine: "harness", model: null, timeoutMs: null },
       timeoutMs: null,
       schema: SCHEMA,
     };
@@ -2025,7 +2048,10 @@ describe("buildAgentDispatchRequest — schema reaches the harness structured-ou
   });
 
   test("model is threaded through raw so the builder resolves it per-harness", () => {
-    const req = buildAgentDispatchRequest({ ...schemaRequest(), model: "fast" }, "judge it");
+    const req = buildAgentDispatchRequest(
+      { ...schemaRequest(), invocation: { engine: "harness", model: "fast", timeoutMs: null } },
+      "judge it",
+    );
     expect(req.model).toBe("fast");
   });
 
@@ -2154,7 +2180,12 @@ steps:
     params: Record<string, unknown>,
     count = Number.POSITIVE_INFINITY,
   ): Promise<void> {
-    const wl = computeStepWorkList(stepPlan, { runId: RUN_ID, params, stepOutputs: {} });
+    const wl = computeStepWorkList(stepPlan, {
+      runId: RUN_ID,
+      params,
+      stepOutputs: {},
+      engines: catalogs.get(stepPlan),
+    });
     if (!wl.ok) throw new Error(wl.error);
     const now = new Date().toISOString();
     await withWorkflowRunsRepo((repo) => {
@@ -2170,7 +2201,8 @@ steps:
           parentUnitId: u.isFanOut ? `${stepPlan.stepId}.map` : null,
           phase: null,
           runner: u.runner,
-          model: u.model ?? null,
+          engine: u.engine?.name ?? null,
+          model: u.invocation?.model ?? null,
           inputHash: u.resolved.inputHash,
           startedAt: now,
         });
