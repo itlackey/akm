@@ -150,12 +150,33 @@ function buildRefTypeAlternation(): string {
   return types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 }
 
+/**
+ * Body-ref boundary grammar, shared with `akm mv`'s ref-rewrite pattern —
+ * `src/commands/mv-cli.ts` imports these constants so the two grammars cannot
+ * drift. Any character-class change here retargets both the lint missing-ref
+ * scan and mv's inbound-xref rewriting.
+ *
+ * `REF_BOUNDARY_PREFIX_CLASS_SRC` is the character class a ref may start
+ * after (a ref also matches at line start): whitespace, backtick, quote,
+ * `(`, or `[` — the `[` admits markdown-link-style refs like
+ * `see [memory:foo]`, which the legacy class silently skipped.
+ *
+ * `REF_SLUG_CHAR_CLASS_SRC` is the character class a ref's `<type>:<slug>`
+ * token is made of; the first excluded character ends the ref.
+ */
+export const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(\\[]";
+export const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
+
 // Only the TYPE alternation is registry-derived; the surrounding grammar
 // (boundary prefix, capture group, slug charset) is byte-identical to the
-// legacy hand-written pattern. Deriving the types from `getAssetTypes()` means
-// `env`/`secret` (added in 0.9) are now matched, and the removed `vault` type
-// is not — both follow the registry automatically.
-const REF_RE = new RegExp(`(?:^|[\\s\`"'(])((${buildRefTypeAlternation()}):[^\\s"'\`)\\]>,\\n]+)`, "gm");
+// legacy hand-written pattern, except that the boundary prefix now also
+// admits `[`. Deriving the types from `getAssetTypes()` means `env`/`secret`
+// (added in 0.9) are now matched, and the removed `vault` type is not — both
+// follow the registry automatically.
+const REF_RE = new RegExp(
+  `(?:^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((${buildRefTypeAlternation()}):${REF_SLUG_CHAR_CLASS_SRC}+)`,
+  "gm",
+);
 
 /**
  * Map from ref type to relative path pattern within stashRoot. Returns null to
@@ -390,6 +411,23 @@ function readRefsArray(value: unknown): string[] | null {
     if (typeof entry === "string" && entry.trim()) out.push(entry.trim());
   }
   return out;
+}
+
+/**
+ * Like {@link readRefsArray} but also accepts a single scalar string,
+ * normalizing it to a one-element list. The indexer's
+ * `normalizeNonEmptyStringList` treats `supersededBy: memory:x` and
+ * `supersededBy: [memory:x]` identically — both are live data — so the
+ * frontmatter xref-channel check must validate both shapes; the array-only
+ * reader silently skipped dangling scalar refs. Returns `null` for any other
+ * type (missing key, number, object) and for a blank scalar.
+ */
+function readRefStringOrArray(value: unknown): string[] | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : null;
+  }
+  return readRefsArray(value);
 }
 
 /**
@@ -663,15 +701,22 @@ export abstract class BaseLinter implements AssetLinter {
       // Non-ref-shaped values (URLs, `raw/<slug>`, `<placeholder>`
       // templates, shell vars) fall out via checkMissingRefs' guards.
       //
-      // Skipped when ctx.frontmatter is null: on the task/YAML path
-      // (lint/index.ts) the whole file IS the body (`body === raw`), so
-      // ref values under these keys are already caught by the body scan
-      // above — running the pass again would double-report each dangling
-      // ref. Md files without a frontmatter block also land here, with
-      // empty ctx.data, so nothing is lost for them either.
-      if (ctx.frontmatter !== null) {
+      // Gate: runs when the file has a frontmatter block OR when an
+      // authoritative `refs:` list was extracted. On the task/YAML path
+      // (lint/index.ts) ctx.frontmatter is always null and the whole file
+      // IS the body (`body === raw`); the top-level YAML keys land in
+      // ctx.data. Without `refs:` the body scan above already catches ref
+      // values under these keys, so running the pass would double-report —
+      // skip it. With `refs:` present the body scan is suppressed
+      // (refSource is the refs list), so this pass is the ONLY thing that
+      // validates the xref keys — it must run or dangling task xrefs go
+      // unreported. The two cases are mutually exclusive, so no ref is
+      // ever double-reported. Md files without a frontmatter block and
+      // without `refs:` land in the skip branch with empty ctx.data, so
+      // nothing is lost for them either.
+      if (ctx.frontmatter !== null || explicitRefs !== null) {
         for (const key of XREF_FRONTMATTER_KEYS) {
-          const values = readRefsArray(ctx.data?.[key]);
+          const values = readRefStringOrArray(ctx.data?.[key]);
           if (values === null) continue;
           const missingXrefs = checkMissingRefs(values.join("\n"), ctx.stashRoot, ctx.extraStashRoots);
           for (const { ref, resolvedRelPath } of missingXrefs) {

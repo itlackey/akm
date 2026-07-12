@@ -526,6 +526,43 @@ describe("missing-ref check", () => {
     expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
   });
 
+  test("missing-ref: flags a bracketed body ref (`see [memory:gone]`)", () => {
+    // Regression: `[` was missing from REF_RE's prefix boundary class, so a
+    // ref opening a markdown-link-style bracket was never matched — dangling
+    // bracketed refs were silently ignored.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "bracketed.md",
+      "---\nname: bracketed\ntype: memory\nupdated: 2025-01-01\n---\n\nsee [memory:gone-bracketed] for details.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("missing ref: memory:gone-bracketed");
+  });
+
+  test("missing-ref: does NOT flag a bracketed ref whose target exists", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "target-note.md",
+      "---\nname: target-note\ntype: memory\nupdated: 2025-01-01\n---\n\nTarget.\n",
+    );
+    writeFile(
+      stashDir,
+      "memories",
+      "linker.md",
+      "---\nname: linker\ntype: memory\nupdated: 2025-01-01\n---\n\nsee [memory:target-note] for details.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    expect(result.flagged.filter((i) => i.issue === "missing-ref")).toHaveLength(0);
+  });
+
   test("missing-ref: outer-frontmatter `refs:` array suppresses body scan", () => {
     const stashDir = makeTempStash();
     // The referenced asset DOES exist, so a frontmatter-listed ref does
@@ -925,10 +962,11 @@ describe("missing-ref frontmatter xref channels (xrefs/supersededBy/contradicted
 
   test("task .yml with a dangling xrefs entry is flagged exactly once (body scan only)", () => {
     // Tasks are pure YAML: lint/index.ts sets body = raw and frontmatter =
-    // null, so ref values under `xrefs:` are already caught by the BODY scan.
-    // The frontmatter-xref pass must skip that path or every dangling task
-    // xref would be double-reported (one plain + one `frontmatter xrefs`
-    // finding for a single on-disk occurrence).
+    // null. When there is NO authoritative `refs:` array, ref values under
+    // `xrefs:` are already caught by the BODY scan, so the frontmatter-xref
+    // pass must skip that path or every dangling task xref would be
+    // double-reported (one plain + one `frontmatter xrefs` finding for a
+    // single on-disk occurrence).
     const stashDir = makeTempStash();
     writeFile(
       stashDir,
@@ -945,17 +983,84 @@ describe("missing-ref frontmatter xref channels (xrefs/supersededBy/contradicted
     expect(missing[0].detail).not.toContain("frontmatter");
   });
 
-  test("scalar-valued supersededBy (no list syntax) is silently skipped", () => {
-    // readRefsArray only accepts arrays; a scalar `supersededBy: <ref>` is
-    // neither scanned nor crashed on. The conventions and writeContradictEdge
-    // both use the array form — this pins the skip so a regression that
-    // started false-flagging (or throwing on) scalars would be caught.
+  test("task .yml with authoritative `refs:` still validates dangling xrefs (exactly once)", () => {
+    // Regression: an authoritative `refs:` array suppresses the body scan,
+    // and the frontmatter-xref pass used to be gated on `ctx.frontmatter !==
+    // null` (always null for tasks) — so `refs: [memory:exists]` + a
+    // dangling `xrefs:` entry produced ZERO findings. The xref pass now
+    // also runs when an explicit `refs:` list was extracted; since that
+    // suppresses the body scan, the dangling xref is reported exactly once,
+    // with the frontmatter-keyed detail.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "exists.md",
+      "---\nname: exists\ntype: memory\nupdated: 2025-01-01\n---\n\nStill here.\n",
+    );
+    writeFile(stashDir, "tasks", "t2.yml", "name: t2\nrefs:\n  - memory:exists\nxrefs:\n  - memory:gone-xref\n");
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].file).toContain("t2.yml");
+    expect(missing[0].detail).toContain("missing ref: memory:gone-xref");
+    expect(missing[0].detail).toContain("frontmatter xrefs");
+  });
+
+  test("task .yml with `refs:` and a dangling SCALAR supersededBy is flagged", () => {
+    // Compound regression for both gaps: the YAML path (frontmatter === null,
+    // explicit refs present) plus the scalar shape.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "exists.md",
+      "---\nname: exists\ntype: memory\nupdated: 2025-01-01\n---\n\nStill here.\n",
+    );
+    writeFile(stashDir, "tasks", "t3.yml", "name: t3\nrefs:\n  - memory:exists\nsupersededBy: task:replacement\n");
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("missing ref: task:replacement");
+    expect(missing[0].detail).toContain("frontmatter supersededBy");
+  });
+
+  test("scalar-valued supersededBy (no list syntax) is validated like the array form", () => {
+    // The indexer's normalizeNonEmptyStringList accepts a bare scalar
+    // (`supersededBy: memory:x`) as live data, so lint must validate that
+    // shape too — a dangling scalar was previously skipped silently because
+    // the xref reader only accepted arrays.
     const stashDir = makeTempStash();
     writeFile(
       stashDir,
       "memories",
       "scalar-superseded.md",
       "---\nname: scalar-superseded\ntype: memory\nupdated: 2025-01-01\nbeliefState: superseded\nsupersededBy: memory:corrections/never-written\n---\n\nOld guidance.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("missing ref: memory:corrections/never-written");
+    expect(missing[0].detail).toContain("frontmatter supersededBy");
+  });
+
+  test("scalar-valued xref that resolves produces no finding", () => {
+    // Scalar acceptance must not false-flag valid refs.
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "newer-tip.md",
+      "---\nname: newer-tip\ntype: memory\nupdated: 2025-01-01\n---\n\nNewer guidance.\n",
+    );
+    writeFile(
+      stashDir,
+      "memories",
+      "scalar-ok.md",
+      "---\nname: scalar-ok\ntype: memory\nupdated: 2025-01-01\nbeliefState: superseded\nsupersededBy: memory:newer-tip\n---\n\nOld guidance.\n",
     );
 
     const result = akmLint({ dir: stashDir });
