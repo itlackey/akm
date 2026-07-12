@@ -14,8 +14,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
+import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -32,7 +33,7 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { fetchWebsiteMarkdownSnapshot, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
-import { refExistsInAnyStash, refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
+import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 
@@ -137,6 +138,125 @@ export async function readKnowledgeInput(
   return { content: snapshot.content, preferredName: snapshot.preferredName };
 }
 
+// ── Shared write-ref validation (--xref / --supersedes) ─────────────────────
+
+/** A `--xref` / `--supersedes` flag value parsed to its components. */
+interface ParsedWriteRef {
+  /** The raw flag value as passed (trimmed) — what lands in frontmatter. */
+  ref: string;
+  /** Canonical asset type (aliases resolved by `parseAssetRef`). */
+  type: string;
+  /** Normalized asset name. */
+  name: string;
+}
+
+/**
+ * Parse a `--xref` / `--supersedes` value through the canonical ref parser
+ * (`parseAssetRef`) so malformed and origin-prefixed spellings get a
+ * structured error instead of a misleading "did not resolve". A `local//`
+ * origin is accepted (it names the same local resolution this validator
+ * performs, mirroring lint's `local//` strip); any other origin is rejected —
+ * write-time validation only resolves local stash roots.
+ */
+function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
+  let parsed: AssetRef;
+  try {
+    parsed = parseAssetRef(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new UsageError(
+      `${flag} "${raw}" is not a valid asset ref: ${message}`,
+      "INVALID_FLAG_VALUE",
+      `Refs use the form type:name, e.g. ${flag} knowledge:auth-flow.`,
+    );
+  }
+  if (parsed.origin && parsed.origin !== "local") {
+    throw new UsageError(
+      `${flag} "${raw}" carries the origin prefix "${parsed.origin}//" — ${flag} only resolves refs in the write target, the working stash, and configured sources.`,
+      "INVALID_FLAG_VALUE",
+      `Pass the plain type:name form, e.g. ${flag} ${parsed.type}:${parsed.name}.`,
+    );
+  }
+  return { ref: raw, type: parsed.type, name: parsed.name };
+}
+
+/**
+ * The ONE root set write-time ref validation resolves against, shared by
+ * `resolveXrefsForWrite` and `resolveSupersedesForWrite` so the two flags can
+ * never disagree on what a ref resolves to:
+ *
+ *   1. the resolved write target (mutable),
+ *   2. the primary working stash when it is a different directory (mutable) —
+ *      a `--target`/`defaultWriteTarget` write must still see working-stash
+ *      assets, which `resolveSourceEntries(writeTarget)` alone omits,
+ *   3. every other configured source (read-only for demotion purposes).
+ *
+ * NOTE: this is deliberately a superset of lint's root set (lint roots at the
+ * working stash; this roots at the write target AND the working stash).
+ */
+function resolveWriteRefRoots(target?: string): {
+  /** Demotion-eligible roots, write target first (existing dirs only). */
+  mutableRoots: string[];
+  /** Every other configured source (existing dirs only), with metadata. */
+  otherSources: SearchSource[];
+} {
+  const cfg = loadConfig();
+  const stashRoot = resolveWriteTarget(cfg, target).source.path;
+  let workingStash: string | undefined;
+  try {
+    workingStash = resolveStashDir({ readOnly: true });
+  } catch {
+    // No working stash configured — the write target alone.
+  }
+  const mutableRoots: string[] = [stashRoot];
+  if (workingStash && path.resolve(workingStash) !== path.resolve(stashRoot)) mutableRoots.push(workingStash);
+  const otherSources = resolveSourceEntries(stashRoot, cfg).filter(
+    (s) => !mutableRoots.some((m) => path.resolve(m) === path.resolve(s.path)) && fs.existsSync(s.path),
+  );
+  return { mutableRoots: mutableRoots.filter((p) => fs.existsSync(p)), otherSources };
+}
+
+/**
+ * True when write-time validation must FAIL OPEN for this ref type — exactly
+ * lint's `checkMissingRefs` policy (`if (relPath === null) continue`,
+ * base-linter.ts): a type the slug resolver cannot map to a path (`script:` is
+ * contract-pinned to return null) is accepted without an existence check
+ * rather than being unwinnable. `workflow:` never fails open — it resolves
+ * stash-rooted via {@link locateWriteRefInRoot}.
+ */
+function isFailOpenRefType(type: string, name: string): boolean {
+  return type !== "workflow" && refToRelPath(type, name) === null;
+}
+
+/**
+ * Resolve a write-time ref to its primary on-disk file within a single stash
+ * root. Wraps lint's `resolveRefPathInStash` with one addition: `workflow:`
+ * refs are probed against the ROOT's workflows/ dir first (every recognized
+ * workflow extension), because `workflowSpec.toAssetPath` inside
+ * `refToRelPath` probes the CWD — and write validation must not depend on the
+ * caller's cwd.
+ */
+function locateWriteRefInRoot(type: string, name: string, root: string): string | null {
+  if (type === "workflow") {
+    const typeRoot = path.join(root, TYPE_DIRS.workflow ?? "workflows");
+    const candidate = resolveAssetPathFromName("workflow", typeRoot, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const relPath = refToRelPath(type, name);
+  if (relPath === null) return null;
+  return resolveRefPathInStash(relPath, type, name, root);
+}
+
+/** Build the shared exit-2 error for refs that resolved in no root. */
+function unresolvedRefsError(flag: "--xref" | "--supersedes", unresolved: ParsedWriteRef[]): UsageError {
+  const first = unresolved[0];
+  return new UsageError(
+    `${flag} ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.map((u) => u.ref).join(", ")}`,
+    "INVALID_FLAG_VALUE",
+    `Find the intended asset with \`akm search "${first.name}" --type ${first.type}\`. Refs use the form type:name.`,
+  );
+}
+
 // ── Cross-references (--xref) ────────────────────────────────────────────────
 
 /**
@@ -149,14 +269,17 @@ export const XREF_SOFT_CAP = 5;
 /**
  * Validate `--xref` flag values before ANY write happens.
  *
- * Each ref (`type:name`) must resolve to a real asset in the resolved write
- * target or any configured stash source (mirrors lint's missing-ref root set,
- * so cross-stash provenance refs into read-only sources are accepted). An
- * unresolvable ref is input validation of an explicitly passed flag — it
- * throws {@link UsageError} (exit 2) naming every bad ref, and the caller must
- * invoke this before writing so a failed validation leaves the stash
- * untouched. Resolution reuses the lint ref-resolver helpers
- * (`refToRelPath` / `refExistsInAnyStash`) — do not fork a second resolver.
+ * Each ref (`type:name`) must resolve to a real asset in the write-ref root
+ * set (write target + working stash + configured sources — see
+ * {@link resolveWriteRefRoots}; cross-stash provenance refs into read-only
+ * sources are accepted). An unresolvable ref is input validation of an
+ * explicitly passed flag — it throws {@link UsageError} (exit 2) naming every
+ * bad ref, and the caller must invoke this before writing so a failed
+ * validation leaves the stash untouched. Resolution reuses the lint
+ * ref-resolver helpers (`refToRelPath` / `resolveRefPathInStash`) — do not
+ * fork a second resolver — and mirrors lint's fail-open policy: a type the
+ * resolver cannot map to a path (`script:`) is accepted without an existence
+ * check.
  *
  * Returns the trimmed, deduplicated refs in argv order. More than
  * {@link XREF_SOFT_CAP} refs emits a stderr warning (soft cap) but still
@@ -170,35 +293,19 @@ export function resolveXrefsForWrite(rawXrefs: string[], target?: string): strin
   }
   if (xrefs.length === 0) return xrefs;
 
-  const cfg = loadConfig();
-  const stashRoot = resolveWriteTarget(cfg, target).source.path;
-  const extraStashRoots = resolveSourceEntries(stashRoot, cfg)
-    .map((s) => s.path)
-    .filter((p) => p !== stashRoot && fs.existsSync(p));
-  const allRoots = [stashRoot, ...extraStashRoots];
+  const { mutableRoots, otherSources } = resolveWriteRefRoots(target);
+  const allRoots = [...mutableRoots, ...otherSources.map((s) => s.path)];
 
-  const unresolved: string[] = [];
+  const unresolved: ParsedWriteRef[] = [];
   for (const ref of xrefs) {
-    const colonIdx = ref.indexOf(":");
-    const refType = colonIdx > 0 ? ref.slice(0, colonIdx) : "";
-    const refName = colonIdx > 0 ? ref.slice(colonIdx + 1) : "";
-    const relPath = refType && refName ? refToRelPath(refType, refName) : null;
-    if (relPath === null || !refExistsInAnyStash(relPath, refType, refName, allRoots)) {
-      unresolved.push(ref);
+    const parsed = parseWriteRef(ref, "--xref");
+    if (isFailOpenRefType(parsed.type, parsed.name)) continue;
+    if (!allRoots.some((root) => locateWriteRefInRoot(parsed.type, parsed.name, root) !== null)) {
+      unresolved.push(parsed);
     }
   }
   if (unresolved.length > 0) {
-    const first = unresolved[0];
-    const colonIdx = first.indexOf(":");
-    const hint =
-      colonIdx > 0
-        ? `Find the intended asset with \`akm search "${first.slice(colonIdx + 1)}" --type ${first.slice(0, colonIdx)}\`. Refs use the form type:name.`
-        : "Refs use the form type:name, e.g. --xref knowledge:auth-flow.";
-    throw new UsageError(
-      `--xref ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.join(", ")}`,
-      "INVALID_FLAG_VALUE",
-      hint,
-    );
+    throw unresolvedRefsError("--xref", unresolved);
   }
 
   if (xrefs.length > XREF_SOFT_CAP) {
@@ -296,6 +403,16 @@ export interface SupersededTarget {
 }
 
 /**
+ * Asset types `--supersedes` must refuse to demote: the demotion writes a YAML
+ * frontmatter block onto the target file, and these types are RAW files whose
+ * bytes are the value (a secret's entire content is the credential; a task is
+ * pure YAML that a prepended second document breaks; scripts have arbitrary
+ * syntax). Prepending frontmatter corrupts them. `akm mv` excludes the same
+ * types as "not markdown assets" (plus `script`, unresolvable by design).
+ */
+const SUPERSEDE_REJECTED_TYPES: ReadonlySet<string> = new Set(["secret", "env", "task", "script"]);
+
+/**
  * Validate `--supersedes` flag values before ANY write happens.
  *
  * The conventions' corrections pattern needs TWO writes: the new correction
@@ -305,6 +422,12 @@ export interface SupersededTarget {
  * (same resolver + root set as {@link resolveXrefsForWrite}); an unresolvable
  * ref throws {@link UsageError} (exit 2) naming every bad ref, so a failed
  * validation leaves the stash untouched — no partial correction.
+ *
+ * Because the demotion PREPENDS a YAML frontmatter block when the target file
+ * has none, only markdown assets may be demoted: refs of a raw asset type
+ * ({@link SUPERSEDE_REJECTED_TYPES}) and refs resolving to any non-`.md` file
+ * (e.g. a YAML workflow program) are rejected with {@link UsageError} BEFORE
+ * any write — never silently corrupted.
  *
  * Demotion targets must live under the resolved write target's source path or
  * the working stash — honoring the "only operate on writable sources"
@@ -325,49 +448,53 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
   }
   if (refs.length === 0) return [];
 
-  const cfg = loadConfig();
-  const stashRoot = resolveWriteTarget(cfg, target).source.path;
-  let workingStash: string | undefined;
-  try {
-    workingStash = resolveStashDir({ readOnly: true });
-  } catch {
-    // No working stash configured — the write target alone accepts demotions.
-  }
-  const mutableRoots: string[] = [stashRoot];
-  if (workingStash && path.resolve(workingStash) !== path.resolve(stashRoot)) mutableRoots.push(workingStash);
-  const otherSources = resolveSourceEntries(stashRoot, cfg).filter(
-    (s) => !mutableRoots.some((m) => path.resolve(m) === path.resolve(s.path)) && fs.existsSync(s.path),
-  );
+  const { mutableRoots, otherSources } = resolveWriteRefRoots(target);
   // Mutable roots first: when a ref resolves in several roots, demote the copy
   // this command is allowed to mutate. Non-mutable roots keep their SearchSource
   // so the skip reason can distinguish "re-run with --target" (a configured
   // writable source that simply is not this write's target) from genuinely
   // read-only sources.
   const orderedRoots: Array<{ path: string; source?: SearchSource }> = [
-    ...mutableRoots.filter((p) => fs.existsSync(p)).map((p) => ({ path: p })),
+    ...mutableRoots.map((p) => ({ path: p })),
     ...otherSources.map((s) => ({ path: s.path, source: s })),
   ];
 
   const plan: SupersededTarget[] = [];
-  const unresolved: string[] = [];
+  const unresolved: ParsedWriteRef[] = [];
   for (const ref of refs) {
-    const colonIdx = ref.indexOf(":");
-    const refType = colonIdx > 0 ? ref.slice(0, colonIdx) : "";
-    const refName = colonIdx > 0 ? ref.slice(colonIdx + 1) : "";
-    const relPath = refType && refName ? refToRelPath(refType, refName) : null;
+    const parsed = parseWriteRef(ref, "--supersedes");
+    // Data-corruption gate (SPEC-5): demotion is a frontmatter write; a raw
+    // asset type must be rejected up front — resolving it and mutating the
+    // file would prepend a YAML block over its raw bytes.
+    if (SUPERSEDE_REJECTED_TYPES.has(parsed.type)) {
+      throw new UsageError(
+        `--supersedes cannot demote ${ref}: "${parsed.type}:" assets are raw files, and the demotion writes YAML frontmatter that would corrupt them.`,
+        "INVALID_FLAG_VALUE",
+        "Only markdown assets (e.g. memory:, knowledge:, fact:) can carry the beliefState/supersededBy demotion. Replace or delete the raw asset instead.",
+      );
+    }
     let located: { root: string; source?: SearchSource; filePath: string } | null = null;
-    if (relPath !== null) {
-      for (const root of orderedRoots) {
-        const filePath = resolveRefPathInStash(relPath, refType, refName, root.path);
-        if (filePath !== null) {
-          located = { root: root.path, source: root.source, filePath };
-          break;
-        }
+    for (const root of orderedRoots) {
+      const filePath = locateWriteRefInRoot(parsed.type, parsed.name, root.path);
+      if (filePath !== null) {
+        located = { root: root.path, source: root.source, filePath };
+        break;
       }
     }
     if (located === null) {
-      unresolved.push(ref);
+      unresolved.push(parsed);
       continue;
+    }
+    // Belt-and-suspenders for the same corruption class: whatever the type,
+    // the demotion may only touch a markdown file. Rejects e.g. a YAML
+    // workflow program (`workflow:deploy` resolving to workflows/deploy.yaml,
+    // or the explicit `workflow:deploy.yaml` spelling).
+    if (!located.filePath.toLowerCase().endsWith(".md")) {
+      throw new UsageError(
+        `--supersedes ${ref} resolves to a non-markdown file (${located.filePath}) — the demotion writes YAML frontmatter and would corrupt it.`,
+        "INVALID_FLAG_VALUE",
+        "Only markdown assets can carry the beliefState/supersededBy demotion. Replace or delete the file instead.",
+      );
     }
     const { root, source, filePath } = located;
     const writable = source === undefined;
@@ -393,17 +520,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
   }
 
   if (unresolved.length > 0) {
-    const first = unresolved[0];
-    const colonIdx = first.indexOf(":");
-    const hint =
-      colonIdx > 0
-        ? `Find the intended asset with \`akm search "${first.slice(colonIdx + 1)}" --type ${first.slice(0, colonIdx)}\`. Refs use the form type:name.`
-        : "Refs use the form type:name, e.g. --supersedes memory:projectA/old-note.";
-    throw new UsageError(
-      `--supersedes ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.join(", ")}`,
-      "INVALID_FLAG_VALUE",
-      hint,
-    );
+    throw unresolvedRefsError("--supersedes", unresolved);
   }
   return plan;
 }
@@ -532,7 +649,23 @@ export async function writeMarkdownAsset(options: {
       superseded.push({ ref: item.ref, applied: false, reason });
       continue;
     }
-    writeSupersededEdge(item.filePath, result.ref);
+    // A demotion failure (fs error, concurrent delete, malformed YAML the
+    // pre-check missed) must NOT abort the correction: the new asset is
+    // already on disk, and bailing out here would skip the boundary commit and
+    // the write-path indexing below — leaving the correction unindexed and,
+    // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
+    // Degrade to the same applied:false report the non-writable path uses.
+    try {
+      writeSupersededEdge(item.filePath, result.ref);
+    } catch (error) {
+      const reason = `demotion failed: ${error instanceof Error ? error.message : String(error)}`;
+      warn(
+        `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
+          "The correction was written and cites it in xrefs; demote the old asset manually or re-run the correction with --force.",
+      );
+      superseded.push({ ref: item.ref, applied: false, reason });
+      continue;
+    }
     superseded.push({ ref: item.ref, applied: true });
     const files = demotedByRoot.get(item.stashRoot) ?? [];
     files.push(item.filePath);

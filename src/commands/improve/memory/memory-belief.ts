@@ -39,6 +39,26 @@ export type {
   MemoryBeliefTransitionLogRecord,
 } from "./memory-improve";
 
+// ── Shared edge-list reader ───────────────────────────────────────────────────
+
+/**
+ * Read a frontmatter edge value (`supersededBy` / `contradictedBy`) as a
+ * string list, promoting a scalar string to a one-element list.
+ *
+ * Scalar edges are LIVE data: the indexer's `normalizeNonEmptyStringList`
+ * accepts them and lint deliberately never flags them. An Array.isArray-only
+ * read treats a scalar as "no existing edges" and silently destroys the edge
+ * on the next merge — mirror `mergeXrefsIntoContent`'s scalar promotion
+ * instead.
+ */
+function readEdgeList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+  }
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
 // ── Contradiction edge writer ─────────────────────────────────────────────────
 
 /**
@@ -58,9 +78,7 @@ export type {
  */
 export function writeContradictEdge(filePath: string, contradictedByRef: string): void {
   mutateFrontmatter(filePath, (parsed) => {
-    const existing: string[] = Array.isArray(parsed.data.contradictedBy)
-      ? (parsed.data.contradictedBy as string[])
-      : [];
+    const existing = readEdgeList(parsed.data.contradictedBy);
     if (existing.includes(contradictedByRef)) return null; // Already written — idempotent.
 
     const nextContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
@@ -89,13 +107,22 @@ export function writeContradictEdge(filePath: string, contradictedByRef: string)
  * is already demoted, the file is not rewritten. Multiple corrections
  * sorted-set-append their refs.
  *
+ * Never WEAKENS an existing demotion: `contradicted` and `archived` rank
+ * BELOW `superseded` (severity order deprecated > superseded > contradicted >
+ * archived — see `BELIEF_STATE_SCORE_CEILINGS` in
+ * src/indexer/search/ranking-contributors.ts), so superseding an already
+ * contradicted/archived asset keeps the stronger state and only appends the
+ * `supersededBy` edge.
+ *
  * @param filePath        - Absolute path to the asset markdown file.
  * @param supersededByRef - The ref of the correction that supersedes this asset.
  */
 export function writeSupersededEdge(filePath: string, supersededByRef: string): void {
   mutateFrontmatter(filePath, (parsed) => {
-    const existing: string[] = Array.isArray(parsed.data.supersededBy) ? (parsed.data.supersededBy as string[]) : [];
-    if (existing.includes(supersededByRef) && parsed.data.beliefState === "superseded") {
+    const existing = readEdgeList(parsed.data.supersededBy);
+    const currentState = parsed.data.beliefState;
+    const nextState = currentState === "contradicted" || currentState === "archived" ? currentState : "superseded";
+    if (existing.includes(supersededByRef) && currentState === nextState) {
       return null; // Already written — idempotent.
     }
 
@@ -103,7 +130,7 @@ export function writeSupersededEdge(filePath: string, supersededByRef: string): 
     return {
       ...parsed.data,
       supersededBy: nextSupersededBy,
-      beliefState: "superseded",
+      beliefState: nextState,
     };
   });
 }

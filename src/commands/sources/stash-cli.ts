@@ -41,6 +41,7 @@ import { resolveWriteTarget } from "../../core/write-source";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
 import {
+  inferAssetName,
   mergeXrefsIntoContent,
   readKnowledgeInput,
   resolveSupersedesForWrite,
@@ -236,12 +237,17 @@ export const importKnowledgeCommand = defineJsonCommand({
     // Imported docs may carry their own frontmatter: merge (dedupe-append)
     // BEFORE the write so write-path indexing sees the final content and no
     // second frontmatter block is ever nested.
+    // The slug must come from the ORIGINAL content: when xrefs are merged the
+    // document starts with the `---` fence, which inferAssetName would slugify
+    // to "" and fall back to a random knowledge-<epoch>-<rand> name. A stdin
+    // import (no filename-derived preferredName) therefore pre-infers the name
+    // from the pre-merge content so --xref/--supersedes never change the slug.
     const result = await writeMarkdownAsset({
       type: "knowledge",
       content: mergeXrefsIntoContent(content, xrefs),
       name: args.name ?? (isHttpUrl(args.source) ? preferredName : undefined),
       fallbackPrefix: "knowledge",
-      preferredName,
+      preferredName: preferredName ?? (xrefs.length > 0 ? inferAssetName(content, "knowledge") : undefined),
       force: args.force,
       target: args.target,
       path: args.path,

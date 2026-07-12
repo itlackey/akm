@@ -276,6 +276,117 @@ describe("remember --xref", () => {
   });
 });
 
+// ── root set + resolver parity with lint (findings #6/#7) ───────────────────
+
+describe("--xref root set and resolver parity", () => {
+  test("resolves working-stash refs when defaultWriteTarget routes the write to a named source", async () => {
+    // The primary working stash (AKM_STASH_DIR) is NOT in config.sources here,
+    // and the write goes to the named "team" source — the root set must still
+    // include the working stash (--supersedes already did; --xref did not).
+    const teamDir = makeDir("akm-xref-team-target");
+    seedAsset(stashDir, "memories/local-note.md", "Working-stash note.\n");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      defaultWriteTarget: "team",
+      sources: [{ type: "filesystem", name: "team", path: teamDir, writable: true }],
+    });
+
+    const { code, stdout } = await runCliCapture([
+      "remember",
+      "Note derived from the working-stash one",
+      "--xref",
+      "memory:local-note",
+    ]);
+    expect(code).toBe(0);
+
+    const json = JSON.parse(stdout) as { path: string };
+    // Written to the named target while citing the working-stash asset.
+    expect(json.path.startsWith(teamDir)).toBe(true);
+    const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
+    expect(parsed.data.xrefs).toEqual(["memory:local-note"]);
+  });
+
+  test("script: refs are accepted without existence validation (fail-open, mirrors lint)", async () => {
+    // script: is contract-pinned unresolvable by the slug resolver
+    // (refToRelPath returns null); lint fails OPEN on it, and the PR's own
+    // convention docs instruct agents to write `--xref script:build/release`.
+    seedAsset(stashDir, "scripts/build/release.sh", "#!/bin/sh\necho release\n");
+
+    const seeded = await runCliCapture(["remember", "Release script tip", "--xref", "script:build/release.sh"]);
+    expect(seeded.code).toBe(0);
+    const seededParsed = parseFrontmatter(
+      fs.readFileSync((JSON.parse(seeded.stdout) as { path: string }).path, "utf8"),
+    );
+    expect(seededParsed.data.xrefs).toEqual(["script:build/release.sh"]);
+
+    // Fail-open means no existence check at all — same as lint's body scan.
+    const ghost = await runCliCapture(["remember", "Ghost script tip", "--xref", "script:no-such-script.sh"]);
+    expect(ghost.code).toBe(0);
+  });
+
+  test("workflow: refs resolve YAML workflow programs against the stash roots, not the cwd", async () => {
+    // The cwd here is the repo root, NOT the stash root — the old cwd-relative
+    // `workflowSpec.toAssetPath` probe made this exit 2 from any other cwd.
+    seedAsset(stashDir, "workflows/deploy.yaml", "steps:\n  - run: echo hi\n");
+
+    const { code, stdout } = await runCliCapture(["remember", "Deploy workflow tip", "--xref", "workflow:deploy"]);
+    expect(code).toBe(0);
+    const parsed = parseFrontmatter(fs.readFileSync((JSON.parse(stdout) as { path: string }).path, "utf8"));
+    expect(parsed.data.xrefs).toEqual(["workflow:deploy"]);
+
+    // workflow: does NOT blanket fail-open: a ref resolving nowhere still fails.
+    const ghost = await runCliCapture(["remember", "Ghost workflow tip", "--xref", "workflow:ghost-flow"]);
+    expect(ghost.code).toBe(2);
+    expect((JSON.parse(ghost.stderr) as { error: string }).error).toContain("workflow:ghost-flow");
+  });
+
+  test("origin-prefixed and malformed refs get a structured parse error, not 'did not resolve'", async () => {
+    seedAsset(stashDir, "knowledge/auth-flow.md");
+
+    const remote = await runCliCapture(["remember", "x", "--xref", "npm:pkg//knowledge:auth-flow"]);
+    expect(remote.code).toBe(2);
+    const remoteJson = JSON.parse(remote.stderr) as { error: string; code?: string };
+    expect(remoteJson.code).toBe("INVALID_FLAG_VALUE");
+    expect(remoteJson.error).toContain("origin");
+    expect(remoteJson.error).not.toContain("did not resolve");
+
+    const badType = await runCliCapture(["remember", "x", "--xref", "notatype:foo"]);
+    expect(badType.code).toBe(2);
+    expect((JSON.parse(badType.stderr) as { error: string }).error.toLowerCase()).toContain("invalid asset type");
+
+    // local// names the same local resolution this validator performs — accepted.
+    const local = await runCliCapture(["remember", "Locally cited note", "--xref", "local//knowledge:auth-flow"]);
+    expect(local.code).toBe(0);
+    const localParsed = parseFrontmatter(fs.readFileSync((JSON.parse(local.stdout) as { path: string }).path, "utf8"));
+    expect(localParsed.data.xrefs).toEqual(["local//knowledge:auth-flow"]);
+  });
+});
+
+// ── slug stability under --xref/--supersedes (finding #12) ───────────────────
+
+describe("--xref/--supersedes do not change the inferred slug", () => {
+  test("remember: the same content produces the same slug with and without --xref", async () => {
+    seedAsset(stashDir, "knowledge/auth-flow.md");
+    const content = "the deploy process now uses blue-green rollout";
+
+    const plain = await runCliCapture(["remember", content]);
+    expect(plain.code).toBe(0);
+    const plainRef = (JSON.parse(plain.stdout) as { ref: string }).ref;
+    expect(plainRef).toBe("memory:the-deploy-process-now-uses-blue-green-rollout");
+
+    // The structured path (forced by --xref) must derive the identical slug
+    // from the body — not a random memory-<epoch>-<rand> fallback taken from
+    // the generated frontmatter fence. --force proves the name collides.
+    const structured = await runCliCapture(["remember", content, "--force", "--xref", "knowledge:auth-flow"]);
+    expect(structured.code).toBe(0);
+    expect((JSON.parse(structured.stdout) as { ref: string }).ref).toBe(plainRef);
+  });
+
+  // The stdin variant (`akm import -`) needs a REAL subprocess (stdin cannot
+  // be injected into the in-process harness), so it lives in
+  // tests/integration/import-stdin-xref-slug.test.ts per the isolation lint.
+});
+
 // ── import --xref ────────────────────────────────────────────────────────────
 
 describe("import --xref", () => {

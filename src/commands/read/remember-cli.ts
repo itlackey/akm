@@ -292,11 +292,16 @@ export const rememberCommand = defineJsonCommand({
 
     const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
 
+    // Derive the asset slug from the body, exactly like the hot path above:
+    // `contentWithFrontmatter` starts with the `---` fence, which
+    // inferAssetName would slugify to "" and fall back to a random
+    // memory-<epoch>-<rand> name.
     const result = await writeMarkdownAsset({
       type: "memory",
       content: contentWithFrontmatter,
       name: args.name,
       fallbackPrefix: "memory",
+      preferredName: inferAssetName(body, "memory"),
       force: args.force,
       target: args.target,
       path: args.path,

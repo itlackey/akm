@@ -39,6 +39,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { renderUsage } from "citty";
+import { writeContradictEdge } from "../../src/commands/improve/memory/memory-belief";
+import { writeMarkdownAsset } from "../../src/commands/read/knowledge";
 import { rememberCommand } from "../../src/commands/read/remember-cli";
 import { importKnowledgeCommand } from "../../src/commands/sources/stash-cli";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
@@ -439,6 +441,106 @@ describe("remember --supersedes", () => {
   });
 });
 
+// ── raw-asset corruption gate (finding #1) ───────────────────────────────────
+
+describe("--supersedes refuses non-markdown demotion targets before any write", () => {
+  test("secret:/env:/task:/script: refs exit 2 and leave the raw files byte-identical", async () => {
+    // The demotion prepends a YAML frontmatter block when the target has none —
+    // on a secret the frontmatter-prefixed blob would BECOME the credential
+    // value, and a task .yml would become an unparseable multi-document YAML.
+    const secretBytes = "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----\n";
+    const envBytes = "API_KEY=abc\n# commented-out: OLD_KEY=zzz\n";
+    const taskBytes = "schedule: '0 2 * * *'\nworkflow: workflow:daily-backup\n";
+    const secretPath = seedAsset(stashDir, "secrets/clientX/api-key", secretBytes);
+    const envPath = seedAsset(stashDir, "env/staging.env", envBytes);
+    const taskPath = seedAsset(stashDir, "tasks/nightly.yml", taskBytes);
+    seedAsset(stashDir, "scripts/rotate.sh", "#!/bin/sh\necho rotate\n");
+
+    for (const ref of ["secret:clientX/api-key", "env:staging", "task:nightly", "script:rotate.sh"]) {
+      const { code, stderr } = await runCliCapture(["remember", "key rotated", "--supersedes", ref]);
+      expect(code).toBe(2);
+      const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
+      expect(json.ok).toBe(false);
+      expect(json.code).toBe("INVALID_FLAG_VALUE");
+      expect(json.error).toContain(ref);
+    }
+
+    // Nothing demoted, nothing written.
+    expect(fs.readFileSync(secretPath, "utf8")).toBe(secretBytes);
+    expect(fs.readFileSync(envPath, "utf8")).toBe(envBytes);
+    expect(fs.readFileSync(taskPath, "utf8")).toBe(taskBytes);
+    expect(listDirRecursive(path.join(stashDir, "memories"))).toEqual([]);
+  });
+
+  test("a YAML workflow program is rejected (resolved file is not markdown), for both ref spellings", async () => {
+    const wfBytes = "steps:\n  - run: echo hi\n";
+    const wfPath = seedAsset(stashDir, "workflows/deploy.yaml", wfBytes);
+
+    for (const ref of ["workflow:deploy", "workflow:deploy.yaml"]) {
+      const { code, stderr } = await runCliCapture(["remember", "deploy changed", "--supersedes", ref]);
+      expect(code).toBe(2);
+      const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
+      expect(json.code).toBe("INVALID_FLAG_VALUE");
+      expect(json.error).toContain(ref);
+    }
+    expect(fs.readFileSync(wfPath, "utf8")).toBe(wfBytes);
+    expect(listDirRecursive(path.join(stashDir, "memories"))).toEqual([]);
+  });
+
+  test("a MARKDOWN workflow still demotes (resolved stash-rooted, independent of the cwd)", async () => {
+    const wfPath = seedAsset(stashDir, "workflows/release.md", "# Release\n\nManual steps.\n");
+
+    const { code, stdout } = await runCliCapture([
+      "remember",
+      "The release flow was replaced.",
+      "--name",
+      "release-flow-fix",
+      "--supersedes",
+      "workflow:release",
+    ]);
+    expect(code).toBe(0);
+
+    const json = JSON.parse(stdout) as WriteOutput;
+    expect(json.superseded?.[0]?.applied).toBe(true);
+    const parsed = parseFrontmatter(fs.readFileSync(wfPath, "utf8"));
+    expect(parsed.data.beliefState).toBe("superseded");
+    expect(parsed.data.supersededBy).toEqual([json.ref]);
+  });
+});
+
+// ── demotion failure does not abort the correction (finding #13) ─────────────
+
+describe("a demotion fs error still commits and indexes the correction", () => {
+  test("deleted-underneath target: correction written + indexed, target reported applied:false", async () => {
+    // The plan resolved this file, then it vanished before the demotion — the
+    // fs error must degrade to the applied:false report shape, NOT abort the
+    // write before commitWriteTargetBoundary/indexWrittenAssets.
+    const ghostPath = path.join(stashDir, "memories", "ghost-note.md");
+
+    const result = await writeMarkdownAsset({
+      type: "memory",
+      content: "---\nbeliefState: asserted\n---\nCorrected fact body.",
+      name: "corrected-fact",
+      fallbackPrefix: "memory",
+      supersedes: [{ ref: "memory:ghost-note", filePath: ghostPath, stashRoot: stashDir, writable: true }],
+    });
+
+    expect(result.ref).toBe("memory:corrected-fact");
+    expect(result.superseded).toHaveLength(1);
+    expect(result.superseded?.[0]?.ref).toBe("memory:ghost-note");
+    expect(result.superseded?.[0]?.applied).toBe(false);
+    expect(result.superseded?.[0]?.reason ?? "").toContain("demotion failed");
+
+    // The correction is on disk AND searchable immediately (write-path indexing
+    // ran despite the demotion failure).
+    expect(fs.existsSync(result.path)).toBe(true);
+    const search = await runCliCapture(["search", "corrected fact", "--type", "memory"]);
+    expect(search.code).toBe(0);
+    const refs = ((JSON.parse(search.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => h.ref);
+    expect(refs).toContain("memory:corrected-fact");
+  });
+});
+
 // ── import --supersedes ──────────────────────────────────────────────────────
 
 describe("import --supersedes", () => {
@@ -581,6 +683,71 @@ describe("writeSupersededEdge — sibling of writeContradictEdge in memory-belie
     const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
     expect(parsed.data.beliefState).toBe("superseded");
     expect(parsed.data.supersededBy).toEqual(["memory:alpha-fix", "memory:zeta-fix"]);
+  });
+
+  test("a pre-existing SCALAR supersededBy edge is preserved, not dropped (finding #14)", async () => {
+    // Scalar edges are live data: the indexer's normalizeNonEmptyStringList
+    // accepts them and lint never flags them. Merging must promote the scalar
+    // to a list, mirroring mergeXrefsIntoContent.
+    const writeSupersededEdge = await loadWriteSupersededEdge();
+    const dir = makeDir("akm-superseded-edge");
+    const filePath = path.join(dir, "old.md");
+    fs.writeFileSync(
+      filePath,
+      ["---", "supersededBy: memory:first-fix", "beliefState: superseded", "---", "", "Body.", ""].join("\n"),
+      "utf8",
+    );
+
+    writeSupersededEdge(filePath, "memory:second-fix");
+
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(parsed.data.supersededBy).toEqual(["memory:first-fix", "memory:second-fix"]);
+    expect(parsed.data.beliefState).toBe("superseded");
+  });
+
+  test("writeContradictEdge preserves a pre-existing SCALAR contradictedBy edge (finding #14)", () => {
+    const dir = makeDir("akm-contradict-edge");
+    const filePath = path.join(dir, "old.md");
+    fs.writeFileSync(
+      filePath,
+      ["---", "contradictedBy: memory:first-dispute", "beliefState: contradicted", "---", "", "Body.", ""].join("\n"),
+      "utf8",
+    );
+
+    writeContradictEdge(filePath, "memory:second-dispute");
+
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(parsed.data.contradictedBy).toEqual(["memory:first-dispute", "memory:second-dispute"]);
+    expect(parsed.data.beliefState).toBe("contradicted");
+  });
+
+  test("never weakens a stronger demotion: contradicted/archived keep their state, edge still appends", async () => {
+    // Severity order (BELIEF_STATE_SCORE_CEILINGS, ranking-contributors.ts):
+    // superseded 0.25 > contradicted 0.2 > archived 0.15 — overwriting
+    // contradicted/archived with superseded would RAISE the incumbent's rank.
+    const writeSupersededEdge = await loadWriteSupersededEdge();
+    for (const state of ["contradicted", "archived"] as const) {
+      const dir = makeDir("akm-superseded-edge-state");
+      const filePath = path.join(dir, "old.md");
+      fs.writeFileSync(
+        filePath,
+        ["---", `beliefState: ${state}`, "contradictedBy:", "  - memory:disputer", "---", "", "Body.", ""].join("\n"),
+        "utf8",
+      );
+
+      writeSupersededEdge(filePath, "memory:new-fix");
+
+      const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+      expect(parsed.data.beliefState).toBe(state);
+      expect(parsed.data.supersededBy).toEqual(["memory:new-fix"]);
+      // The contradiction edges stay consistent with the kept state.
+      expect(parsed.data.contradictedBy).toEqual(["memory:disputer"]);
+
+      // Idempotent under the kept state too: a repeat call does not rewrite.
+      const afterFirst = fs.readFileSync(filePath, "utf8");
+      writeSupersededEdge(filePath, "memory:new-fix");
+      expect(fs.readFileSync(filePath, "utf8")).toBe(afterFirst);
+    }
   });
 });
 
