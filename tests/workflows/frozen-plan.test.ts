@@ -10,8 +10,9 @@ import { resolveStorageLocations } from "../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { buildWorkflowBrief } from "../../src/workflows/exec/brief";
-import { reportWorkflowUnit } from "../../src/workflows/exec/report";
+import { reportWorkflowUnit, settleWorkflowSpine } from "../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
+import { watchWorkflowRun } from "../../src/workflows/exec/watch";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import {
@@ -68,7 +69,7 @@ function writeWorkflow(name: string, instructions: string): string {
 }
 
 /** Direct-SQL escape hatch for simulating legacy rows / journal tampering. */
-function execOnWorkflowDb(sql: string, ...params: Array<string | null>): void {
+function execOnWorkflowDb(sql: string, ...params: Array<string | number | null>): void {
   const db = openWorkflowDatabase(resolveStorageLocations().workflowDb);
   try {
     db.prepare(sql).run(...params);
@@ -220,9 +221,11 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
     const status = await getWorkflowStatus(started.run.id);
     expect(status.run.executionSupport).toBe("unsupported-version");
+    expect((await getWorkflowStatus(started.run.id, { includeUnits: true })).units).toEqual([]);
     expect((await listWorkflowRuns()).runs.find((run) => run.id === started.run.id)?.executionSupport).toBe(
       "unsupported-version",
     );
+    expect((await watchWorkflowRun({ runId: started.run.id })).status).toBe("active");
 
     const expectUnsupported = async (operation: Promise<unknown>): Promise<void> => {
       try {
@@ -238,12 +241,42 @@ describe("plan freezing at workflow start (migration 006)", () => {
     await expectUnsupported(
       reportWorkflowUnit({ target: started.run.id, unitId: "only-step:solo", status: "running" }),
     );
+    await expectUnsupported(settleWorkflowSpine({ target: started.run.id, summaryJudge: null }));
     await expectUnsupported(completeWorkflowStep({ runId: started.run.id, stepId: "only-step", status: "blocked" }));
     await expectUnsupported(resumeWorkflowRun(started.run.id));
     await expectUnsupported(runWorkflowSteps({ target: started.run.id, summaryJudge: null }));
 
     const abandoned = await abandonWorkflowRun(started.run.id);
     expect(abandoned.run.status).toBe("failed");
+  });
+
+  test("malformed historical rows with null, v2, or future attribution can abandon; attributable v3 cannot", async () => {
+    const cases = [
+      { name: "malformed-null", version: null },
+      { name: "malformed-v2", version: 2 },
+      { name: "malformed-future", version: 4 },
+    ];
+    for (const item of cases) {
+      writeWorkflow(item.name, "Historical work.");
+      const started = await startWorkflowRun(`workflow:${item.name}`, {});
+      execOnWorkflowDb(
+        "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = ? WHERE id = ?",
+        "{malformed",
+        item.version,
+        started.run.id,
+      );
+      expect((await abandonWorkflowRun(started.run.id)).run.status).toBe("failed");
+    }
+
+    writeWorkflow("malformed-v3", "Protected work.");
+    const v3 = await startWorkflowRun("workflow:malformed-v3", {});
+    execOnWorkflowDb(
+      "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = 3 WHERE id = ?",
+      "{malformed",
+      v3.run.id,
+    );
+    await expect(abandonWorkflowRun(v3.run.id)).rejects.toThrow(/corrupt frozen plan/);
+    expect((await getWorkflowStatus(v3.run.id)).run.status).toBe("active");
   });
 
   test("bad hash and spine mismatch are rejected before any workflow mutation", async () => {

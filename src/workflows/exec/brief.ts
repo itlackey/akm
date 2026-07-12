@@ -38,7 +38,7 @@ import type { WorkflowRunUnitStatus } from "../../storage/repositories/workflow-
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { assertRunParamsSatisfyPlan } from "../ir/params";
-import type { IrMapReducer, IrOnError, IrRetry, IrRunnerKind } from "../ir/schema";
+import type { IrMapReducer, IrOnError, IrRetry, IrRuntimeKind } from "../ir/schema";
 import type { ExpressionScope } from "../program/expressions";
 import { frozenStepRows, requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { snapshotRunForDriver } from "../runtime/runs";
@@ -118,9 +118,12 @@ export interface WorkflowBriefUnit {
   unitId: string;
   nodeId: string;
   index: number;
-  runner: IrRunnerKind;
-  profile?: string;
-  model?: string;
+  /** Frozen engine name and lowering; never a legacy runner/profile selector. */
+  engine: string;
+  runtimeKind: IrRuntimeKind;
+  platform: string | null;
+  /** Exact model resolved at start; null when an agent engine has no model override. */
+  model: string | null;
   /** Resolved timeout (ms); null = no timeout declared. */
   timeoutMs: number | null;
   /** JSON Schema the reported result must validate against, when declared. */
@@ -563,15 +566,19 @@ function toBriefUnit(
   journaled: WorkflowRunUnitRow | undefined,
   ctx: { stale: boolean; leaseLive: boolean },
 ): WorkflowBriefUnit {
+  if (!unit.engine || !unit.invocation || unit.runner === "inherit") {
+    throw new UsageError(`Unit "${unit.unitId}" has no complete frozen engine attribution.`);
+  }
   const action = deriveUnitAction(unit, journaled, ctx);
   const report = reportCommandForAction(runId, unit, stepId, action, journaled?.claim_holder ?? null);
   return {
     unitId: unit.unitId,
     nodeId: unit.nodeId,
     index: unit.index,
-    runner: unit.runner,
-    ...(unit.profile ? { profile: unit.profile } : {}),
-    ...(unit.model ? { model: unit.model } : {}),
+    engine: unit.invocation.engine,
+    runtimeKind: unit.runner,
+    platform: unit.engine.kind === "agent" ? unit.engine.platform : null,
+    model: unit.invocation.model,
     timeoutMs: unit.timeoutMs,
     ...(unit.schema ? { outputSchema: unit.schema } : {}),
     // Env asset REF names only — brief never resolves bindings, so no secret

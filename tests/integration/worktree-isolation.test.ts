@@ -302,7 +302,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
 
 // The llm guard is git-independent (it rejects before touching git at all),
 // so it runs even where git is unavailable.
-describe("executeStepPlan — isolation: worktree on the llm runner", () => {
+describe("frozen plan — isolation: worktree on the llm runner", () => {
   const LLM_ISOLATED_WF = `version: 2
 name: Bad isolation
 defaults: { engine: test-llm }
@@ -314,27 +314,9 @@ steps:
       instructions: Do the work.
 `;
 
-  test("fails the step loudly — the llm runner has no working directory to isolate", async () => {
+  test("rejects before persistence or dispatch — the llm runner has no working directory to isolate", () => {
     seedRun([{ id: "work", title: "Work" }]);
-    let dispatched = 0;
-    const workflow = plan(LLM_ISOLATED_WF);
-    expect(workflow.irVersion).toBe(3);
-    const result = await executeStepPlan(workflow.steps[0], {
-      runId: RUN_ID,
-      workflowRef: "workflow:demo",
-      params: {},
-      evidence: {},
-      dispatcher: async () => {
-        dispatched++;
-        return { ok: true, text: "must not run" };
-      },
-      workDir: "/nonexistent-never-touched",
-      engines: workflow.execution?.engines,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.summary).toContain("isolation: worktree on an llm unit");
-    expect(dispatched).toBe(0);
+    expect(() => plan(LLM_ISOLATED_WF)).toThrow("LLM unit work cannot use env injection or worktree isolation");
   });
 });
 
@@ -380,7 +362,6 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
       unitId: "work:solo",
       nodeId: "work",
       prompt: "do the thing",
-      runner: "sdk",
       engine: SDK_ENGINE,
       invocation: { engine: "mysdk", model: null, timeoutMs: 600_000 },
       timeoutMs: null,
@@ -445,7 +426,6 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
         });
         const result = await defaultUnitDispatcher(
           baseRequest({
-            runner: "llm",
             engine: LLM_ENGINE,
             invocation: { engine: "test-llm", model: "t", timeoutMs: 600_000 },
             env: { FOO: "bar" },
@@ -471,7 +451,6 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
         });
         const result = await defaultUnitDispatcher(
           baseRequest({
-            runner: "llm",
             engine: LLM_ENGINE,
             invocation: { engine: "test-llm", model: "t", timeoutMs: 600_000 },
             cwd: "/tmp/somewhere",

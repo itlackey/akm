@@ -15,6 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { utf8Bytes, WORKFLOW_MAX_JSON_DEPTH, WORKFLOW_MAX_PLAN_BYTES } from "../resource-limits";
 import { decodeWorkflowPlanV3, type WorkflowPlanGraph } from "./schema";
 
 /** sha256 hex of the canonical (recursively sorted-keys) JSON of the plan. */
@@ -34,8 +35,8 @@ export function canonicalJson(value: unknown): string {
 
 /** Decode, require stored canonical bytes, then verify the stored SHA-256. */
 export function decodeCanonicalPlan(runId: string, planJson: string, planHash: string | null): WorkflowPlanGraph {
-  if (Buffer.byteLength(planJson, "utf8") > 4 * 1024 * 1024)
-    throw new Error(`Workflow run ${runId} frozen plan exceeds the 4 MiB resource limit.`);
+  if (utf8Bytes(planJson) > WORKFLOW_MAX_PLAN_BYTES)
+    throw new Error(`Workflow run ${runId} frozen plan exceeds the 2 MiB resource limit.`);
   let parsed: unknown;
   try {
     parsed = JSON.parse(planJson);
@@ -52,7 +53,7 @@ export function decodeCanonicalPlan(runId: string, planJson: string, planHash: s
 }
 
 function sortKeys(value: unknown, depth = 0): unknown {
-  if (depth > 64) throw new TypeError("JSON value exceeds maximum depth");
+  if (depth > WORKFLOW_MAX_JSON_DEPTH) throw new TypeError("JSON value exceeds maximum depth");
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new TypeError("JSON values must be finite");

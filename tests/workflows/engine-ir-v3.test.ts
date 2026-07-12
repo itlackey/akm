@@ -5,11 +5,26 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { UsageError } from "../../src/core/errors";
+import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { compileResolveFreezeWorkflow } from "../../src/workflows/ir/freeze";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { decodeWorkflowPlanV3, type WorkflowPlanGraph } from "../../src/workflows/ir/schema";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
-import { classifyWorkflowRunPlan, requireExecutableWorkflowPlan } from "../../src/workflows/runtime/plan-classifier";
+import {
+  jsonBytes,
+  utf8Bytes,
+  WORKFLOW_MAX_EXTRA_PARAMS_BYTES,
+  WORKFLOW_MAX_INSTRUCTION_BYTES,
+  WORKFLOW_MAX_MAP_EXPANSION,
+  WORKFLOW_MAX_PLAN_BYTES,
+  WORKFLOW_MAX_SCHEMA_BYTES,
+  WORKFLOW_MAX_SOURCE_BYTES,
+} from "../../src/workflows/resource-limits";
+import {
+  classifyWorkflowRunPlan,
+  requireAbandonableWorkflowPlan,
+  requireExecutableWorkflowPlan,
+} from "../../src/workflows/runtime/plan-classifier";
 
 const SOURCE = { path: "workflows/review.yaml" };
 
@@ -78,6 +93,32 @@ function stepAt(plan: WorkflowPlanGraph, index: number) {
   const step = plan.steps[index];
   if (!step) throw new Error(`fixture requires step ${index}`);
   return step;
+}
+
+function jsonObjectAtBytes(limit: number): Record<string, unknown> {
+  const value = { value: "" };
+  value.value = "x".repeat(limit - jsonBytes(value));
+  expect(jsonBytes(value)).toBe(limit);
+  return value;
+}
+
+function planAtBytes(limit: number): WorkflowPlanGraph {
+  const plan = frozenPlan();
+  const engine = plan.execution?.engines.fast;
+  if (!engine || engine.kind !== "llm") throw new Error("fixture requires an LLM engine");
+  for (const target of [
+    { get: () => plan.title, set: (value: string) => (plan.title = value) },
+    { get: () => engine.provider ?? "", set: (value: string) => (engine.provider = value) },
+    { get: () => engine.model, set: (value: string) => (engine.model = value) },
+  ]) {
+    const remaining = limit - jsonBytes(plan);
+    if (remaining <= 0) break;
+    target.set(target.get() + "x".repeat(Math.min(remaining, 900_000)));
+  }
+  const remaining = limit - jsonBytes(plan);
+  if (remaining > 0) plan.title += "x".repeat(remaining);
+  expect(jsonBytes(plan)).toBe(limit);
+  return plan;
 }
 
 describe("workflow engine v3 contracts", () => {
@@ -215,7 +256,9 @@ describe("workflow engine v3 contracts", () => {
     invalid.push(concurrency);
 
     const budget = frozenPlan();
-    budget.budget = { maxUnits: 1001 };
+    budget.budget = { maxUnits: 10_000 };
+    expect(() => decodeWorkflowPlanV3(budget)).not.toThrow();
+    budget.budget = { maxUnits: 10_001 };
     invalid.push(budget);
 
     const loops = frozenPlan();
@@ -276,6 +319,33 @@ describe("workflow engine v3 contracts", () => {
     expect(
       classifyWorkflowRunPlan({ plan_json: '{"irVersion":"3"}', plan_hash: null, plan_ir_version: 3 }).support,
     ).toBe("corrupt-plan");
+  });
+
+  test("malformed null, v2, and future historical plans remain abandonable while every attributable v3 is protected", () => {
+    const historical = [
+      { plan_json: "{malformed", plan_hash: null, plan_ir_version: null, id: "null-version" },
+      { plan_json: "{malformed", plan_hash: null, plan_ir_version: 2, id: "v2" },
+      { plan_json: "{malformed", plan_hash: null, plan_ir_version: 4, id: "future" },
+      { plan_json: null, plan_hash: null, plan_ir_version: 2, id: "missing-v2" },
+    ];
+    expect(historical.map((row) => classifyWorkflowRunPlan(row).support)).toEqual([
+      "missing-plan",
+      "unsupported-version",
+      "unsupported-version",
+      "unsupported-version",
+    ]);
+    for (const row of historical) expect(() => requireAbandonableWorkflowPlan(row)).not.toThrow();
+
+    const attributableV3 = [
+      { plan_json: "{malformed", plan_hash: null, plan_ir_version: 3, id: "stored-v3" },
+      { plan_json: '{"irVersion":3}', plan_hash: null, plan_ir_version: null, id: "content-v3" },
+      { plan_json: '{"irVersion":3}', plan_hash: null, plan_ir_version: 2, id: "mismatched-v3" },
+      { plan_json: null, plan_hash: null, plan_ir_version: 3, id: "missing-v3" },
+    ];
+    for (const row of attributableV3) {
+      expect(classifyWorkflowRunPlan(row).support).toBe("corrupt-plan");
+      expect(() => requireAbandonableWorkflowPlan(row)).toThrow();
+    }
   });
 
   test("freeze captures canonical platform lowering including builder identity", () => {
@@ -401,4 +471,170 @@ describe("workflow engine v3 contracts", () => {
     });
     expect(() => decodeWorkflowPlanV3(frozen.plan)).not.toThrow();
   });
+
+  test("source and frozen plan byte limits accept the exact boundary and reject one byte over", () => {
+    const sourceBase = "version: 2\nname: bounded\nsteps:\n  - id: work\n    unit: { instructions: Work }\n";
+    const exactSource = `${sourceBase}#${"x".repeat(WORKFLOW_MAX_SOURCE_BYTES - utf8Bytes(sourceBase) - 1)}`;
+    expect(utf8Bytes(exactSource)).toBe(WORKFLOW_MAX_SOURCE_BYTES);
+    expect(parseWorkflowProgram(exactSource, SOURCE).ok).toBe(true);
+    const oversizedSource = parseWorkflowProgram(`${exactSource}x`, SOURCE);
+    expect(oversizedSource.ok).toBe(false);
+    if (!oversizedSource.ok) expect(oversizedSource.errors[0]?.message).toContain("1 MiB");
+
+    const exactPlan = planAtBytes(WORKFLOW_MAX_PLAN_BYTES);
+    expect(() => decodeWorkflowPlanV3(exactPlan)).not.toThrow();
+    exactPlan.title += "x";
+    expect(() => decodeWorkflowPlanV3(exactPlan)).toThrow("2 MiB");
+  });
+
+  test("step, engine, param, and route cardinalities bind at their exact limits", () => {
+    const steps = frozenPlan();
+    const template = stepAt(steps, 0);
+    steps.steps = Array.from({ length: 256 }, (_, index) => ({
+      ...structuredClone(template),
+      stepId: `step-${index}`,
+      title: `step-${index}`,
+      sequenceIndex: index,
+      root: { ...structuredClone(template.root as object), id: `step-${index}` } as never,
+      gate: { ...structuredClone(template.gate), id: `step-${index}.gate`, stepId: `step-${index}` },
+    }));
+    expect(() => decodeWorkflowPlanV3(steps)).not.toThrow();
+    const lastStep = steps.steps[255];
+    if (!lastStep) throw new Error("fixture requires 256 steps");
+    steps.steps.push({
+      ...structuredClone(lastStep),
+      stepId: "step-256",
+      title: "step-256",
+      sequenceIndex: 256,
+      root: { ...structuredClone(lastStep.root as object), id: "step-256" } as never,
+      gate: { ...structuredClone(lastStep.gate), id: "step-256.gate", stepId: "step-256" },
+    });
+    expect(() => decodeWorkflowPlanV3(steps)).toThrow("1 through 256");
+
+    const params = frozenPlan();
+    params.params = Array.from({ length: 128 }, (_, index) => `p${index}`);
+    expect(() => decodeWorkflowPlanV3(params)).not.toThrow();
+    params.params.push("p128");
+    expect(() => decodeWorkflowPlanV3(params)).toThrow("params is invalid");
+
+    const route = secondStep(frozenPlan());
+    const routeStep = stepAt(route, 0);
+    delete routeStep.root;
+    routeStep.route = {
+      input: `\${{ params.mode }}`,
+      when: Object.fromEntries(Array.from({ length: 256 }, (_, index) => [`match-${index}`, "second"])),
+    };
+    expect(() => decodeWorkflowPlanV3(route)).not.toThrow();
+    routeStep.route.when.overflow = "second";
+    expect(() => decodeWorkflowPlanV3(route)).toThrow("route for step review is invalid");
+
+    const engines = frozenPlan();
+    const first = stepAt(engines, 0);
+    engines.execution = { maxConcurrency: 1, engines: {} };
+    engines.steps = Array.from({ length: 64 }, (_, index) => {
+      const name = `engine-${index}`;
+      if (!engines.execution) throw new Error("fixture requires execution");
+      engines.execution.engines[name] = {
+        name,
+        kind: "llm",
+        endpoint: "https://example.test/v1/chat/completions",
+        model: "qwen",
+        timeoutMs: null,
+        concurrency: 1,
+      };
+      return {
+        ...structuredClone(first),
+        stepId: `work-${index}`,
+        title: `work-${index}`,
+        sequenceIndex: index,
+        root: {
+          ...structuredClone(first.root as object),
+          id: `work-${index}`,
+          invocation: { engine: name, model: "qwen", timeoutMs: null },
+        } as never,
+        gate: { ...structuredClone(first.gate), id: `work-${index}.gate`, stepId: `work-${index}` },
+      };
+    });
+    expect(() => decodeWorkflowPlanV3(engines)).not.toThrow();
+    if (!engines.execution) throw new Error("fixture requires execution");
+    engines.execution.engines.overflow = {
+      name: "overflow",
+      kind: "llm",
+      endpoint: "https://example.test/v1/chat/completions",
+      model: "qwen",
+      timeoutMs: null,
+      concurrency: 1,
+    };
+    expect(() => decodeWorkflowPlanV3(engines)).toThrow("exceeds 64 entries");
+  });
+
+  test("instruction, schema, extraParams, and depth limits are exact and expose the policy hook", () => {
+    const instructions = frozenPlan();
+    const root = stepAt(instructions, 0).root;
+    if (!root || root.kind === "map") throw new Error("fixture requires unit");
+    root.instructions = "x".repeat(WORKFLOW_MAX_INSTRUCTION_BYTES);
+    expect(() => decodeWorkflowPlanV3(instructions)).not.toThrow();
+    root.instructions += "x";
+    expect(() => decodeWorkflowPlanV3(instructions)).toThrow("256 KiB");
+
+    const schema = frozenPlan();
+    const schemaRoot = stepAt(schema, 0).root;
+    if (!schemaRoot || schemaRoot.kind === "map") throw new Error("fixture requires unit");
+    schemaRoot.schema = jsonObjectAtBytes(WORKFLOW_MAX_SCHEMA_BYTES);
+    expect(() => decodeWorkflowPlanV3(schema)).not.toThrow();
+    (schemaRoot.schema as { value: string }).value += "x";
+    expect(() => decodeWorkflowPlanV3(schema)).toThrow("256 KiB");
+
+    const extras = frozenPlan();
+    const engine = extras.execution?.engines.fast;
+    if (!engine || engine.kind !== "llm") throw new Error("fixture requires LLM");
+    engine.extraParams = jsonObjectAtBytes(WORKFLOW_MAX_EXTRA_PARAMS_BYTES);
+    const seen: string[] = [];
+    expect(() =>
+      decodeWorkflowPlanV3(extras, {
+        validateExtraParams: (_value, location) => {
+          seen.push(location);
+          return undefined;
+        },
+      }),
+    ).not.toThrow();
+    expect(seen).toEqual(["LLM engine fast extraParams"]);
+    (engine.extraParams as { value: string }).value += "x";
+    expect(() => decodeWorkflowPlanV3(extras)).toThrow("64 KiB");
+
+    const atDepth = frozenPlan();
+    const depthEngine = atDepth.execution?.engines.fast;
+    if (!depthEngine || depthEngine.kind !== "llm") throw new Error("fixture requires LLM");
+    let nested: Record<string, unknown> = {};
+    depthEngine.extraParams = nested;
+    for (let depth = 0; depth < 59; depth++) nested = nested.child = {};
+    nested.child = {};
+    expect(() => decodeWorkflowPlanV3(atDepth)).not.toThrow();
+    nested = nested.child as Record<string, unknown>;
+    nested.child = {};
+    expect(() => decodeWorkflowPlanV3(atDepth)).toThrow("depth limit of 64");
+  });
+
+  test("map expansion binds at 10k independently of the dispatch budget", () => {
+    const plan = frozenPlan();
+    const root = stepAt(plan, 0).root;
+    if (!root || root.kind === "map") throw new Error("fixture requires unit");
+    stepAt(plan, 0).root = {
+      kind: "map",
+      id: "review.map",
+      over: `\${{ params.items }}`,
+      template: { ...root, id: "review.unit" },
+      concurrency: 1,
+      reducer: "collect",
+    };
+    const input = (count: number) =>
+      computeStepWorkList(stepAt(plan, 0), {
+        runId: "run",
+        params: { items: Array.from({ length: count }, (_, index) => index) },
+        stepOutputs: {},
+        engines: plan.execution?.engines,
+      });
+    expect(input(WORKFLOW_MAX_MAP_EXPANSION).ok).toBe(true);
+    expect(input(WORKFLOW_MAX_MAP_EXPANSION + 1).ok).toBe(false);
+  }, 15_000);
 });

@@ -173,13 +173,10 @@ export interface UnitDispatchRequest {
   nodeId: string;
   /** Fully-assembled prompt: preamble + interpolated instructions (+ schema directive). */
   prompt: string;
-  runner: "llm" | "agent" | "sdk" | "inherit";
-  /** Frozen v3 engine snapshot. Presence forbids live config resolution. */
-  engine?: FrozenEngineSnapshot;
+  /** Frozen v3 engine snapshot. Dispatch never consults live config. */
+  engine: FrozenEngineSnapshot;
   fallbackEngine?: Extract<FrozenEngineSnapshot, { kind: "llm" }>;
-  invocation?: IrInvocation;
-  profile?: string;
-  model?: string;
+  invocation: IrInvocation;
   timeoutMs: number | null;
   schema?: Record<string, unknown>;
   /** Resolved env bindings to merge into the child environment. */
@@ -688,6 +685,14 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   if (!workUnit.resolved.ok) {
     return { unitId, ok: false, failureReason: "expression_error", error: workUnit.resolved.error };
   }
+  if (!workUnit.engine || !workUnit.invocation) {
+    return {
+      unitId,
+      ok: false,
+      failureReason: "dispatch_error",
+      error: `unit "${unitId}" has no frozen engine snapshot and cannot be dispatched`,
+    };
+  }
 
   // The prompt (and therefore the input hash) was built once with the BASE
   // unit id by computeStepWorkList: a retry re-dispatches the SAME input, the
@@ -701,12 +706,9 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     unitId,
     nodeId: workUnit.nodeId,
     prompt,
-    runner: workUnit.runner,
-    ...(workUnit.engine ? { engine: workUnit.engine } : {}),
+    engine: workUnit.engine,
     ...(workUnit.fallbackEngine ? { fallbackEngine: workUnit.fallbackEngine } : {}),
-    ...(workUnit.invocation ? { invocation: workUnit.invocation } : {}),
-    ...(workUnit.profile ? { profile: workUnit.profile } : {}),
-    ...(workUnit.model ? { model: workUnit.model } : {}),
+    invocation: workUnit.invocation,
     timeoutMs: workUnit.timeoutMs,
     ...(workUnit.schema ? { schema: workUnit.schema } : {}),
     ...(env ? { env } : {}),
@@ -850,8 +852,8 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
         parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
         phase: null,
         runner: workUnit.runner,
-        engine: workUnit.engine?.name ?? null,
-        model: workUnit.model ?? null,
+        engine: request.engine.name,
+        model: request.invocation.model,
         inputHash,
         worktreePath: worktreePath ?? null,
         startedAt: new Date().toISOString(),
@@ -1062,24 +1064,15 @@ export function buildAgentDispatchRequest(
 ): import("../../integrations/agent/builder-shared").AgentDispatchRequest {
   return {
     prompt,
-    ...(request.model ? { model: request.model } : {}),
-    ...(request.engine ? { modelIsExact: true } : {}),
+    ...(request.invocation.model ? { model: request.invocation.model } : {}),
+    ...(request.invocation.model ? { modelIsExact: true } : {}),
     ...(request.schema ? { schema: request.schema } : {}),
   };
 }
 
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
   const prompt = feedback ? `${request.prompt}\n\n${feedback}` : request.prompt;
-  // v3 requests are self-contained snapshots. The legacy branch remains only
-  // for in-memory test fixtures; persisted v2/null runs are rejected before
-  // reaching this dispatcher.
-  let config: import("../../core/config/config").AkmConfig | undefined;
-  const resolved = request.engine
-    ? frozenUnitRunner(request)
-    : await (async () => {
-        config = (await import("../../core/config/config.js")).loadConfig();
-        return resolveUnitRunner(request, config);
-      })();
+  const resolved = frozenUnitRunner(request);
 
   // `env` bindings can only reach a child process. The agent (CLI) runner
   // spawns one per call, and the sdk runner now injects them for real via the
@@ -1114,19 +1107,7 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
 
   if (resolved.kind === "llm") {
     const { chatCompletion, LlmCallError } = await import("../../llm/client.js");
-    const connection = request.model
-      ? {
-          ...resolved.connection,
-          model: request.engine
-            ? request.model
-            : (await import("../../integrations/agent/model-aliases.js")).resolveModel(
-                request.model,
-                "llm",
-                undefined,
-                config?.modelAliases,
-              ),
-        }
-      : resolved.connection;
+    const connection = resolved.connection;
     try {
       const text = await chatCompletion(connection, [{ role: "user", content: prompt }], {
         timeoutMs: request.timeoutMs,
@@ -1148,8 +1129,8 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   }
 
   const { executeRunner } = await import("../../integrations/agent/runner-dispatch.js");
-  const profile = request.model
-    ? { ...resolved.profile, model: request.model, modelIsExact: request.engine !== undefined }
+  const profile = request.invocation.model
+    ? { ...resolved.profile, model: request.invocation.model, modelIsExact: true }
     : resolved.profile;
   const result = await executeRunner(
     resolved.kind === "sdk"
@@ -1300,7 +1281,6 @@ type ResolvedUnitRunner =
 /** Reconstruct the existing RunnerSpec substrate from the frozen allowlist only. */
 function frozenUnitRunner(request: UnitDispatchRequest): ResolvedUnitRunner {
   const snapshot = request.engine;
-  if (!snapshot) throw new Error("frozenUnitRunner requires an engine snapshot");
   if (snapshot.kind === "llm") {
     return { kind: "llm", connection: materializeFrozenLlm(snapshot, request.invocation) };
   }
@@ -1355,79 +1335,6 @@ function materializeFrozenLlm(
     ...(apiKey ? { apiKey } : {}),
   };
   return invocation?.llm ? (deepMergeConfig(base, invocation.llm as Record<string, unknown>) as typeof base) : base;
-}
-
-async function resolveUnitRunner(
-  request: UnitDispatchRequest,
-  config: import("../../core/config/config").AkmConfig,
-): Promise<ResolvedUnitRunner> {
-  const requested = request.runner;
-
-  if (requested === "llm") {
-    const engineName = request.profile ?? config.defaults?.llmEngine;
-    if (!engineName) {
-      throw new ConfigError(
-        `Workflow unit "${request.unitId}" requires an LLM engine, but none is selected.`,
-        "LLM_NOT_CONFIGURED",
-      );
-    }
-    const { resolveEngine } = await import("../../integrations/agent/engine-resolution");
-    const runner = resolveEngine(engineName, config);
-    if (runner.kind !== "llm") {
-      throw new ConfigError(
-        `Workflow unit "${request.unitId}" requires an LLM engine; "${engineName}" is an agent engine.`,
-      );
-    }
-    return { kind: "llm", connection: runner.connection };
-  }
-
-  const engineName = request.profile ?? config.defaults?.engine;
-  if (engineName) {
-    const { resolveEngine } = await import("../../integrations/agent/engine-resolution");
-    const runner = resolveEngine(engineName, config);
-    if (runner.kind === "llm") {
-      if (requested === "inherit") return { kind: "llm", connection: runner.connection };
-      throw new ConfigError(
-        `Workflow unit "${request.unitId}" requires an agent engine; "${engineName}" is an LLM engine.`,
-      );
-    }
-    const inferred = runner.kind;
-    if (requested !== "inherit" && requested !== inferred) {
-      throw new ConfigError(
-        `Workflow unit "${request.unitId}" declares runner "${requested}" but engine "${engineName}" is ${
-          runner.kind === "sdk" ? "an opencode-sdk engine" : "an agent CLI engine"
-        }.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-    return { kind: inferred, profile: runner.profile };
-  }
-
-  if (requested === "inherit") {
-    const connection = await requireDefaultLlm(config, request, /* soft */ true);
-    if (connection) return { kind: "llm", connection };
-  }
-  throw new ConfigError(
-    `Workflow unit "${request.unitId}" has no runnable backend: set defaults.agent or defaults.llm in config.json, ` +
-      `or declare a runner/profile on the unit.`,
-    "INVALID_CONFIG_FILE",
-  );
-}
-
-async function requireDefaultLlm(
-  config: import("../../core/config/config").AkmConfig,
-  request: UnitDispatchRequest,
-  soft = false,
-): Promise<import("../../core/config/config").LlmConnectionConfig | undefined> {
-  const { getDefaultLlmConfig } = await import("../../core/config/config");
-  const connection = getDefaultLlmConfig(config);
-  if (!connection && !soft) {
-    throw new ConfigError(
-      `Workflow unit "${request.unitId}" declares runner "llm" but no default LLM is configured (defaults.llm).`,
-      "LLM_NOT_CONFIGURED",
-    );
-  }
-  return connection ?? undefined;
 }
 
 // ── Small helpers ────────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@
 
 import os from "node:os";
 import { concurrentMap } from "../../core/concurrent";
+import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
 
 /**
  * Hard ceiling on an EXPLICIT `workflow.maxConcurrency`. A user value above
@@ -81,7 +82,7 @@ export function maxUnitConcurrency(cpuCount = os.cpus()?.length ?? 4, configured
 }
 
 /** Lifetime unit cap per run — a runaway-loop backstop, far above real use. */
-export const LIFETIME_UNIT_CAP = 1000;
+export const LIFETIME_UNIT_CAP = WORKFLOW_MAX_MAP_EXPANSION;
 
 export class UnitCapExceededError extends Error {
   constructor(cap: number) {

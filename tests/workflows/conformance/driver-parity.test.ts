@@ -146,22 +146,33 @@ function contentBaseId(unitId: string): string {
 
 /** The base unit ids the first step of a golden fans out to (for item-keyed fixtures). */
 function stepUnitIds(plan: WorkflowPlanGraph, stepIndex: number, params: Record<string, unknown>): WorkflowBriefUnit[] {
-  const computed = computeStepWorkList(plan.steps[stepIndex], { runId: RUN_ID, params, stepOutputs: {} });
+  const computed = computeStepWorkList(plan.steps[stepIndex], {
+    runId: RUN_ID,
+    params,
+    stepOutputs: {},
+    engines: plan.execution?.engines,
+  });
   if (!computed.ok) throw new Error(computed.error);
   // Only the fields the parity harness reads.
-  return computed.list.units.map((u) => ({
-    unitId: u.unitId,
-    nodeId: u.nodeId,
-    index: u.index,
-    runner: u.runner,
-    timeoutMs: u.timeoutMs,
-    onError: u.onError,
-    item: u.item,
-    resolved: u.resolved.ok
-      ? { ok: true, instructions: u.resolved.prompt, inputHash: u.resolved.inputHash }
-      : { ok: false, error: u.resolved.error },
-    action: "pending" as const,
-  }));
+  return computed.list.units.map((u) => {
+    if (!u.engine || !u.invocation || u.runner === "inherit") throw new Error("fixture requires frozen attribution");
+    return {
+      unitId: u.unitId,
+      nodeId: u.nodeId,
+      index: u.index,
+      engine: u.invocation.engine,
+      runtimeKind: u.runner,
+      platform: u.engine.kind === "agent" ? u.engine.platform : null,
+      model: u.invocation.model,
+      timeoutMs: u.timeoutMs,
+      onError: u.onError,
+      item: u.item,
+      resolved: u.resolved.ok
+        ? { ok: true, instructions: u.resolved.prompt, inputHash: u.resolved.inputHash }
+        : { ok: false, error: u.resolved.error },
+      action: "pending" as const,
+    };
+  });
 }
 
 function rejectThenAccept(): SummaryJudge {

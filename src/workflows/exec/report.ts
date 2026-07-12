@@ -288,6 +288,11 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
         `report a result against. This is an authoring/data error in the workflow; fix it and start a new run.`,
     );
   }
+  if (!workUnit.engine || !workUnit.invocation || workUnit.runner === "inherit") {
+    throw new UsageError(`Unit "${workUnit.unitId}" has no complete frozen engine attribution.`);
+  }
+  const engineName = workUnit.engine.name;
+  const exactModel = workUnit.invocation.model;
   const inputHash = workUnit.resolved.inputHash;
   const journalId = workUnit.journalBaseId;
 
@@ -327,8 +332,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
           phase: null,
           runner: workUnit.runner,
-          engine: workUnit.engine?.name ?? null,
-          model: workUnit.model ?? null,
+          engine: engineName,
+          model: exactModel,
           inputHash,
           startedAt: nowIso,
           claimHolder: holder,
@@ -441,8 +446,8 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
           parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
           phase: null,
           runner: workUnit.runner,
-          engine: workUnit.engine?.name ?? null,
-          model: workUnit.model ?? null,
+          engine: engineName,
+          model: exactModel,
           inputHash,
           startedAt: existing?.started_at ?? nowIso,
         });
@@ -1273,6 +1278,7 @@ async function settleSpine(args: {
         runId,
         params: state.run.params ?? {},
         stepOutputs,
+        ...(plan.execution ? { engines: plan.execution.engines } : {}),
         gateLoop,
         ...(gateFeedback ? { gateFeedback } : {}),
       });

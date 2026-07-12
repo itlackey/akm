@@ -22,7 +22,7 @@ export function classifyWorkflowRunPlan(row: {
 }): ClassifiedWorkflowPlan {
   const runId = row.id ?? "(unknown)";
   if (!row.plan_json) {
-    if (row.plan_ir_version !== null && row.plan_ir_version !== undefined) {
+    if (row.plan_ir_version === WORKFLOW_IR_VERSION) {
       return {
         support: "corrupt-plan",
         irVersion: row.plan_ir_version,
@@ -30,15 +30,27 @@ export function classifyWorkflowRunPlan(row: {
       };
     }
     return {
-      support: "missing-plan",
+      support:
+        row.plan_ir_version === null || row.plan_ir_version === undefined ? "missing-plan" : "unsupported-version",
       irVersion: row.plan_ir_version ?? null,
-      error: `Workflow run ${runId} has no executable workflow IR plan.`,
+      error:
+        row.plan_ir_version === null || row.plan_ir_version === undefined
+          ? `Workflow run ${runId} has no executable workflow IR plan.`
+          : `Workflow run ${runId} uses unsupported workflow IR version ${String(row.plan_ir_version)} and has no frozen plan.`,
     };
   }
   let raw: unknown;
   try {
     raw = JSON.parse(row.plan_json);
   } catch {
+    if (row.plan_ir_version !== WORKFLOW_IR_VERSION) {
+      return {
+        support:
+          row.plan_ir_version === null || row.plan_ir_version === undefined ? "missing-plan" : "unsupported-version",
+        irVersion: row.plan_ir_version ?? null,
+        error: `Workflow run ${runId} has malformed historical frozen plan JSON that cannot be executed.`,
+      };
+    }
     return {
       support: "corrupt-plan",
       irVersion: row.plan_ir_version ?? null,
@@ -47,6 +59,14 @@ export function classifyWorkflowRunPlan(row: {
   }
   const decodedVersion = typeof raw === "object" && raw !== null ? (raw as { irVersion?: unknown }).irVersion : null;
   if (!Number.isSafeInteger(decodedVersion) || (decodedVersion as number) < 1) {
+    if (row.plan_ir_version !== WORKFLOW_IR_VERSION) {
+      return {
+        support:
+          row.plan_ir_version === null || row.plan_ir_version === undefined ? "missing-plan" : "unsupported-version",
+        irVersion: row.plan_ir_version ?? null,
+        error: `Workflow run ${runId} has historical frozen plan data with no supported IR version.`,
+      };
+    }
     return {
       support: "corrupt-plan",
       irVersion: row.plan_ir_version ?? null,
@@ -54,6 +74,13 @@ export function classifyWorkflowRunPlan(row: {
     };
   }
   if (row.plan_ir_version !== null && row.plan_ir_version !== undefined && row.plan_ir_version !== decodedVersion) {
+    if (row.plan_ir_version !== WORKFLOW_IR_VERSION && decodedVersion !== WORKFLOW_IR_VERSION) {
+      return {
+        support: "unsupported-version",
+        irVersion: decodedVersion as number,
+        error: `Workflow run ${runId} uses unsupported workflow IR version ${String(decodedVersion)} with mismatched historical metadata.`,
+      };
+    }
     return {
       support: "corrupt-plan",
       irVersion: decodedVersion as number,

@@ -348,7 +348,13 @@ describe("parseWorkflowProgram — top-level validation", () => {
       `version: 2\nname: t\nbudget:\n  max_tokens: 0\n  max_units: 1.5\n  max_dollars: 2\nsteps:\n  - id: a\n    unit: { instructions: x }`,
     ).join(" | ");
     expect(joined).toContain('"budget.max_tokens" must be an integer >= 1');
-    expect(joined).toContain('"budget.max_units" must be an integer >= 1');
+    expect(joined).toContain('"budget.max_units" must be an integer from 1 through 10000');
+
+    expect(
+      parseErrors(
+        `version: 2\nname: t\nbudget: { max_units: 10001 }\nsteps:\n  - id: a\n    unit: { instructions: x }`,
+      ).join(" | "),
+    ).toContain('"budget.max_units" must be an integer from 1 through 10000');
     expect(joined).toContain('Unknown "budget" key "max_dollars"');
 
     expect(

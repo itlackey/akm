@@ -276,10 +276,15 @@ describe("workflow brief — solo step", () => {
     }
     // Env is surfaced as REF NAMES, never resolved values.
     expect(u.env).toEqual(["env:ci-secrets"]);
-    // The rest of the required per-unit contract (node id, runner, timeout,
+    // The rest of the required per-unit contract (node id, frozen engine attribution, timeout,
     // on_error) is carried too — a driver needs every one to dispatch.
     expect(u.nodeId).toBe("build");
-    expect(u.runner).toBe("sdk");
+    expect(u.engine).toBe("test-agent");
+    expect(u.runtimeKind).toBe("sdk");
+    expect(u.platform).toBe("opencode-sdk");
+    expect(u.model).toBeNull();
+    expect(u).not.toHaveProperty("runner");
+    expect(u).not.toHaveProperty("profile");
     expect(u.timeoutMs).toBe(600_000);
     expect(u.onError).toBe("fail");
     // #15: an un-journaled unit is `pending` with the completed report command,
@@ -289,6 +294,27 @@ describe("workflow brief — solo step", () => {
     expect(u.journaled).toBeUndefined();
     // #14: the brief carries a spine watermark token stamping the active step.
     expect(brief.spineToken).toContain(`${RUN_ID}#build#l1#`);
+  });
+
+  test("attributes an LLM unit to its frozen engine and exact model without legacy selectors", async () => {
+    const p = plan(`version: 2
+name: Direct LLM
+defaults: { engine: test-llm }
+steps:
+  - id: answer
+    unit: { instructions: Answer directly. }
+`);
+    seedRun({ plan: p, steps: [{ id: "answer" }] });
+
+    const unit = (await buildWorkflowBrief(RUN_ID)).workList.units[0];
+    expect(unit).toMatchObject({
+      engine: "test-llm",
+      runtimeKind: "llm",
+      platform: null,
+      model: "test-model",
+    });
+    expect(unit).not.toHaveProperty("runner");
+    expect(unit).not.toHaveProperty("profile");
   });
 });
 

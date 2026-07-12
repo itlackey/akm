@@ -67,6 +67,7 @@ import {
   resolveWholeValue,
   type TemplateSegment,
 } from "../program/expressions";
+import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
 import type { SummaryJudge } from "../validate-summary";
@@ -253,9 +254,16 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
     items = [undefined];
   }
 
+  const isFanOut = root.kind === "map";
+  if (isFanOut && items.length > WORKFLOW_MAX_MAP_EXPANSION) {
+    return {
+      ok: false,
+      error: `Step "${plan.stepId}" fan-out expands to ${items.length} units, exceeding the ${WORKFLOW_MAX_MAP_EXPANSION}-unit resource limit.`,
+    };
+  }
+
   // Content-derived unit identity: compute every id up front. Duplicate items
   // collide on identity — an authoring error caught HERE, deterministically.
-  const isFanOut = root.kind === "map";
   const unitIds = items.map((item) => unitIdFor(template.id, item, isFanOut));
   if (isFanOut) {
     const firstIndexByCanonical = new Map<string, number>();
