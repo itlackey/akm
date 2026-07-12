@@ -1098,6 +1098,256 @@ describe("akm mv — alias-spelling citers are rewritten to the new canonical re
   });
 });
 
+// ── .md alias spellings of source and target ─────────────────────────────────
+
+describe("akm mv — .md alias spellings are accepted but canonicalized throughout", () => {
+  test(".md-suffixed SOURCE: canonical citers rewritten, canonical index row re-keyed with utility intact, salience moved", async () => {
+    seedAsset(stashDir, "memories/alias-src.md", "Moved via its .md alias spelling.\n");
+    const citer = seedAsset(stashDir, "knowledge/alias-src-citer.md", "Cites memory:alias-src canonically.\n");
+    await buildIndex();
+
+    let db = openExistingDatabase(getDbPath());
+    let entryId: number;
+    let utilityBefore: number;
+    try {
+      const row = entryByKeySuffix(db, ":memory:alias-src");
+      expect(row).toBeDefined();
+      entryId = (row as { id: number }).id;
+      applyFeedbackToUtilityScore(db, entryId, 1, 0);
+      utilityBefore = (getUtilityScore(db, entryId) as { utility: number }).utility;
+    } finally {
+      closeDatabase(db);
+    }
+    // Salience history is keyed by the CANONICAL bare ref — a fromRef keyed
+    // to the alias spelling would silently miss it.
+    const stateDb = openStateDatabase();
+    try {
+      stateDb
+        .prepare(
+          `INSERT INTO asset_salience
+             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("memory:alias-src", 0.9, 0.1, 0.2, 0.8, 0, Date.now(), "content");
+    } finally {
+      stateDb.close();
+    }
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:alias-src.md", "alias-src-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.ok).toBe(true);
+    // The alias spelling is accepted as INPUT but never leaks into the
+    // report, the citer rewrites, or any re-keyed row.
+    expect(json.from).toBe("memory:alias-src");
+    expect(json.to).toBe("memory:alias-src-v2");
+    expect(json.utilityPreserved).toBe(true);
+    expect(json.warnings).toBeUndefined();
+
+    expect(fs.readFileSync(citer, "utf8")).toBe("Cites memory:alias-src-v2 canonically.\n");
+
+    db = openExistingDatabase(getDbPath());
+    try {
+      // The CANONICAL row was re-keyed in place (same id, history attached) —
+      // not skipped in favor of a nonexistent `alias-src.md`-keyed row.
+      const after = entryById(db, entryId);
+      expect(after?.entry_key).toBe(`${stashDir}:memory:alias-src-v2`);
+      expect(getUtilityScore(db, entryId)?.utility).toBeCloseTo(utilityBefore, 10);
+      expect(entryByKeySuffix(db, ":memory:alias-src")).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+    }
+
+    const stateAfter = openStateDatabase();
+    try {
+      const rows = stateAfter
+        .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE '%alias-src%'")
+        .all() as Array<{ asset_ref: string }>;
+      expect(rows).toEqual([{ asset_ref: "memory:alias-src-v2" }]);
+    } finally {
+      stateAfter.close();
+    }
+  });
+
+  test(".md-suffixed TARGET: file written once as <name>.md, citers get the canonical ref, ONE index row at the canonical key", async () => {
+    seedAsset(stashDir, "memories/target-alias.md", "Moved onto a .md-spelled target.\n");
+    const citer = seedAsset(stashDir, "knowledge/target-alias-citer.md", "Cites memory:target-alias here.\n");
+    await buildIndex();
+
+    let db = openExistingDatabase(getDbPath());
+    let entryId: number;
+    try {
+      const row = entryByKeySuffix(db, ":memory:target-alias");
+      expect(row).toBeDefined();
+      entryId = (row as { id: number }).id;
+      applyFeedbackToUtilityScore(db, entryId, 1, 0);
+    } finally {
+      closeDatabase(db);
+    }
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:target-alias", "target-alias-v2.md"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.to).toBe("memory:target-alias-v2");
+    expect(json.utilityPreserved).toBe(true);
+
+    // The file carries the extension ONCE; citers carry the canonical ref,
+    // never `memory:target-alias-v2.md`.
+    expect(fs.existsSync(path.join(stashDir, "memories/target-alias-v2.md"))).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "memories/target-alias-v2.md.md"))).toBe(false);
+    expect(fs.readFileSync(citer, "utf8")).toBe("Cites memory:target-alias-v2 here.\n");
+
+    db = openExistingDatabase(getDbPath());
+    try {
+      // Exactly ONE row for the moved asset, at the canonical key, still under
+      // the original id — a `…:memory:target-alias-v2.md` re-key would leave
+      // the history stranded behind a row the write-path index pass (which
+      // derives the canonical name from the file) immediately duplicates.
+      const rows = db
+        .prepare("SELECT id, entry_key FROM entries WHERE entry_key LIKE '%:memory:target-alias%'")
+        .all() as Array<{ id: number; entry_key: string }>;
+      expect(rows).toEqual([{ id: entryId, entry_key: `${stashDir}:memory:target-alias-v2` }]);
+      expect(getUtilityScore(db, entryId)).toBeDefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("a twin's .md alias spelling (memory:x.derived.md) is still rejected as a twin ref (exit 2)", async () => {
+    seedAsset(stashDir, "memories/md-coupled.md", "Base memory body.\n");
+    seedAsset(stashDir, "memories/md-coupled.derived.md", "Distilled twin body.\n");
+
+    const { code, stderr } = await runCliCapture(["mv", "memory:md-coupled.derived.md", "free-twin"]);
+    expect(code).toBe(2);
+    const json = JSON.parse(stderr) as ErrorEnvelope;
+    expect(json.ok).toBe(false);
+    // The error steers to the base ref, exactly like the extensionless twin spelling.
+    expect(json.error).toContain("memory:md-coupled");
+    expect(fs.existsSync(path.join(stashDir, "memories/md-coupled.derived.md"))).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "memories/free-twin.md"))).toBe(false);
+  });
+});
+
+// ── target-parent validation ordering ────────────────────────────────────────
+
+describe("akm mv — target parent is created before any citer edit", () => {
+  test("a target parent blocked by an existing FILE fails the command with every citer byte-identical", async () => {
+    seedAsset(stashDir, "memories/parent-src.md", "Source body.\n");
+    const citer = seedAsset(stashDir, "knowledge/parent-citer.md", "Cites memory:parent-src today.\n");
+    const citerRaw = fs.readFileSync(citer, "utf8");
+    // memories/blocked exists as a FILE, so the target's parent directory
+    // (memories/blocked/) can never be created.
+    fs.writeFileSync(path.join(stashDir, "memories/blocked"), "a file squatting on the dir name", "utf8");
+
+    const { code } = await runCliCapture(["mv", "memory:parent-src", "blocked/new-src"]);
+    expect(code).not.toBe(0);
+
+    // Validate-before-write held: no citer was modified (they would otherwise
+    // point at a ref whose file never arrived), nothing moved.
+    expect(fs.readFileSync(citer, "utf8")).toBe(citerRaw);
+    expect(fs.readFileSync(path.join(stashDir, "memories/parent-src.md"), "utf8")).toBe("Source body.\n");
+  });
+});
+
+// ── state.db re-key failure honesty ──────────────────────────────────────────
+
+describe("akm mv — state.db re-key failures are surfaced, missing tables stay silent", () => {
+  test("a NON-missing-table failure (incompatible schema) lands in warnings; the move itself still succeeds", async () => {
+    seedAsset(stashDir, "memories/state-broken.md", "Salience fate unknown.\n");
+    const stateDb = openStateDatabase();
+    try {
+      stateDb.exec("DROP TABLE asset_salience");
+      stateDb.exec("CREATE TABLE asset_salience (nope TEXT)");
+    } finally {
+      stateDb.close();
+    }
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:state-broken", "state-broken-renamed"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.ok).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "memories/state-broken-renamed.md"))).toBe(true);
+    // The failure names the table in the REPORT — not swallowed as if it were
+    // the known legacy missing-table case.
+    expect(json.warnings?.some((w) => w.includes("state.db") && w.includes("asset_salience"))).toBe(true);
+  });
+
+  test("a genuinely MISSING table (legacy state.db) is skipped silently — no warning", async () => {
+    seedAsset(stashDir, "memories/state-legacy.md", "Legacy state.db without salience tables.\n");
+    const stateDb = openStateDatabase();
+    try {
+      stateDb.exec("DROP TABLE asset_salience");
+      stateDb.exec("DROP TABLE asset_outcome");
+    } finally {
+      stateDb.close();
+    }
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:state-legacy", "state-legacy-renamed"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.ok).toBe(true);
+    expect(json.warnings).toBeUndefined();
+  });
+});
+
+// ── sentence-terminal punctuation (resolver retry) ───────────────────────────
+
+describe("akm mv — refs followed by sentence punctuation are rewritten, punctuation preserved", () => {
+  test('"See memory:old." forms are rewritten; a genuinely dotted name that resolves is never mangled', async () => {
+    seedAsset(stashDir, "memories/punct-note.md", "The moved note.\n");
+    seedAsset(stashDir, "memories/v1.2-notes.md", "A genuinely dotted neighbor.\n");
+    const citer = seedAsset(
+      stashDir,
+      "knowledge/punct-citer.md",
+      "See memory:punct-note. Read memory:punct-note; also (memory:punct-note!) twice.\n" +
+        "Suffix form memory:punct-note.md.\n" +
+        "Dotted neighbor stays: memory:v1.2-notes. And plain memory:v1.2-notes too.\n",
+    );
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:punct-note", "punct-note-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+
+    const after = fs.readFileSync(citer, "utf8");
+    // Every punctuation-terminated spelling rewritten, punctuation preserved.
+    expect(after).toContain("See memory:punct-note-v2. Read memory:punct-note-v2; also (memory:punct-note-v2!) twice.");
+    expect(after).toContain("Suffix form memory:punct-note-v2.\n");
+    // The dotted neighbor resolves as its own asset — untouched in both the
+    // sentence-terminal and plain spellings.
+    expect(after).toContain("Dotted neighbor stays: memory:v1.2-notes. And plain memory:v1.2-notes too.");
+    expect(json.rewrote.find((r) => r.file.endsWith("knowledge/punct-citer.md"))?.count).toBe(4);
+  });
+});
+
+// ── workflow YAML citers ─────────────────────────────────────────────────────
+
+describe("akm mv — workflow YAML citers", () => {
+  test("refs in workflows/*.yaml and workflows/*.yml are rewritten and reported", async () => {
+    seedAsset(stashDir, "memories/wf-cited.md", "Cited from workflow programs.\n");
+    const yamlPath = seedAsset(
+      stashDir,
+      "workflows/deploy.yaml",
+      "steps:\n  - instructions: Use memory:wf-cited before deploying\n",
+    );
+    const ymlPath = seedAsset(
+      stashDir,
+      "workflows/release.yml",
+      "steps:\n  - instructions: Read memory:wf-cited notes\n",
+    );
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:wf-cited", "wf-cited-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+
+    expect(fs.readFileSync(yamlPath, "utf8")).toBe(
+      "steps:\n  - instructions: Use memory:wf-cited-v2 before deploying\n",
+    );
+    expect(fs.readFileSync(ymlPath, "utf8")).toBe("steps:\n  - instructions: Read memory:wf-cited-v2 notes\n");
+    expect(json.rewrote.find((r) => r.file.endsWith("workflows/deploy.yaml"))?.count).toBe(1);
+    expect(json.rewrote.find((r) => r.file.endsWith("workflows/release.yml"))?.count).toBe(1);
+  });
+});
+
 // ── command registration + help meta ─────────────────────────────────────────
 
 describe("akm mv — command registration and help meta", () => {

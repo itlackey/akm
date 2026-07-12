@@ -354,11 +354,46 @@ describe("--xref root set and resolver parity", () => {
     expect(badType.code).toBe(2);
     expect((JSON.parse(badType.stderr) as { error: string }).error.toLowerCase()).toContain("invalid asset type");
 
-    // local// names the same local resolution this validator performs — accepted.
+    // local// names the same local resolution this validator performs —
+    // accepted, and persisted in the canonical bare form (the prefix is
+    // stripped, mirroring lint's local// strip) so later ref scanners see
+    // the same spelling the resolver validated.
     const local = await runCliCapture(["remember", "Locally cited note", "--xref", "local//knowledge:auth-flow"]);
     expect(local.code).toBe(0);
     const localParsed = parseFrontmatter(fs.readFileSync((JSON.parse(local.stdout) as { path: string }).path, "utf8"));
-    expect(localParsed.data.xrefs).toEqual(["local//knowledge:auth-flow"]);
+    expect(localParsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+  });
+
+  test("alias spellings parseAssetRef normalizes are persisted CANONICALLY, validated and deduped as one ref", async () => {
+    // `environment:` is the accepted alias of the canonical `env:` type
+    // (asset-ref.ts TYPE_ALIASES). Validation resolves the parsed components,
+    // so persisting the RAW spelling would store an xref string later
+    // scanners (lint's registry-derived REF_RE, mv's rewriter) never match.
+    seedAsset(stashDir, "env/prod.env", "API_URL=https://example.test\n");
+
+    const { code, stdout } = await runCliCapture([
+      "remember",
+      "Note citing the prod environment",
+      "--xref",
+      "environment:prod",
+    ]);
+    expect(code).toBe(0);
+    const parsed = parseFrontmatter(fs.readFileSync((JSON.parse(stdout) as { path: string }).path, "utf8"));
+    expect(parsed.data.xrefs).toEqual(["env:prod"]);
+
+    // Two spellings of the SAME asset dedupe into one canonical entry.
+    seedAsset(stashDir, "knowledge/auth-flow.md");
+    const dupe = await runCliCapture([
+      "remember",
+      "Note citing one asset twice",
+      "--xref",
+      "local//knowledge:auth-flow",
+      "--xref",
+      "knowledge:auth-flow",
+    ]);
+    expect(dupe.code).toBe(0);
+    const dupeParsed = parseFrontmatter(fs.readFileSync((JSON.parse(dupe.stdout) as { path: string }).path, "utf8"));
+    expect(dupeParsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
   });
 });
 

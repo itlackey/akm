@@ -616,6 +616,40 @@ describe("import --supersedes", () => {
 // AND the demoted old asset) needs real git fixtures, so it lives in
 // tests/integration/supersedes-git-target.test.ts per the isolation lint.
 
+// ── canonical persistence of alias spellings ─────────────────────────────────
+
+describe("--supersedes alias spellings are persisted canonically", () => {
+  test("a local//-prefixed ref is planned, reported, and folded into xrefs as the canonical bare ref", async () => {
+    // Validation resolves the PARSED components; persisting the raw spelling
+    // would put a `local//`-prefixed string into the report and the
+    // correction's xrefs while the demotion targeted the canonical asset.
+    const old = await rememberSeed("The legacy endpoint note.", "old-endpoint-alias");
+
+    const { code, stdout } = await runCliCapture([
+      "remember",
+      "The corrected endpoint note.",
+      "--name",
+      "new-endpoint-alias",
+      "--supersedes",
+      "local//memory:old-endpoint-alias",
+    ]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as WriteOutput;
+    expect(json.ref).toBe("memory:new-endpoint-alias");
+    expect(json.superseded).toEqual([{ ref: "memory:old-endpoint-alias", applied: true }]);
+
+    // Provenance xref on the correction: canonical bare form.
+    const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
+    expect(newParsed.data.xrefs).toEqual(["memory:old-endpoint-alias"]);
+
+    // The demotion landed on the old asset with the canonical NEW ref
+    // (writeSupersededEdge receives the write result's canonical ref).
+    const oldParsed = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
+    expect(oldParsed.data.beliefState).toBe("superseded");
+    expect(oldParsed.data.supersededBy).toEqual(["memory:new-endpoint-alias"]);
+  });
+});
+
 // ── writeSupersededEdge (unit) ───────────────────────────────────────────────
 
 describe("writeSupersededEdge — sibling of writeContradictEdge in memory-belief", () => {

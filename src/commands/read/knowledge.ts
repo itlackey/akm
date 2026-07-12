@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { type AssetRef, makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -142,7 +142,14 @@ export async function readKnowledgeInput(
 
 /** A `--xref` / `--supersedes` flag value parsed to its components. */
 interface ParsedWriteRef {
-  /** The raw flag value as passed (trimmed) — what lands in frontmatter. */
+  /**
+   * The CANONICAL `type:name` spelling rebuilt from the parsed components —
+   * what lands in frontmatter. Persisting the raw flag value instead would
+   * store spellings `parseAssetRef` accepts but later ref scanners (lint's
+   * registry-derived `REF_RE`, mv's rewriter) do not recognize: the
+   * `environment:` alias of `env:`, backslash-separated names, and the
+   * `local//` origin prefix (stripped here the same way lint strips it).
+   */
   ref: string;
   /** Canonical asset type (aliases resolved by `parseAssetRef`). */
   type: string;
@@ -177,7 +184,26 @@ function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWrit
       `Pass the plain type:name form, e.g. ${flag} ${parsed.type}:${parsed.name}.`,
     );
   }
-  return { ref: raw, type: parsed.type, name: parsed.name };
+  // Canonical bare form: type alias resolved, name normalized, `local//`
+  // dropped (it names the same local resolution this validator performs).
+  return { ref: makeAssetRef(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
+}
+
+/**
+ * Trim, parse, and dedupe `--xref` / `--supersedes` flag values, in argv
+ * order. Parsing comes BEFORE deduplication so two alias spellings of the
+ * same asset (`environment:prod` and `env:prod`, `local//knowledge:x` and
+ * `knowledge:x`) collapse into one canonical entry.
+ */
+function parseWriteRefs(rawRefs: string[], flag: "--xref" | "--supersedes"): ParsedWriteRef[] {
+  const parsedRefs: ParsedWriteRef[] = [];
+  for (const raw of rawRefs) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const parsed = parseWriteRef(trimmed, flag);
+    if (!parsedRefs.some((p) => p.ref === parsed.ref)) parsedRefs.push(parsed);
+  }
+  return parsedRefs;
 }
 
 /**
@@ -281,24 +307,20 @@ export const XREF_SOFT_CAP = 5;
  * resolver cannot map to a path (`script:`) is accepted without an existence
  * check.
  *
- * Returns the trimmed, deduplicated refs in argv order. More than
- * {@link XREF_SOFT_CAP} refs emits a stderr warning (soft cap) but still
- * returns them all.
+ * Returns the CANONICAL `type:name` spellings (alias types resolved, names
+ * normalized, `local//` stripped — see {@link ParsedWriteRef}), deduplicated
+ * in argv order. More than {@link XREF_SOFT_CAP} refs emits a stderr warning
+ * (soft cap) but still returns them all.
  */
 export function resolveXrefsForWrite(rawXrefs: string[], target?: string): string[] {
-  const xrefs: string[] = [];
-  for (const raw of rawXrefs) {
-    const trimmed = raw.trim();
-    if (trimmed && !xrefs.includes(trimmed)) xrefs.push(trimmed);
-  }
-  if (xrefs.length === 0) return xrefs;
+  const parsedRefs = parseWriteRefs(rawXrefs, "--xref");
+  if (parsedRefs.length === 0) return [];
 
   const { mutableRoots, otherSources } = resolveWriteRefRoots(target);
   const allRoots = [...mutableRoots, ...otherSources.map((s) => s.path)];
 
   const unresolved: ParsedWriteRef[] = [];
-  for (const ref of xrefs) {
-    const parsed = parseWriteRef(ref, "--xref");
+  for (const parsed of parsedRefs) {
     if (isFailOpenRefType(parsed.type, parsed.name)) continue;
     if (!allRoots.some((root) => locateWriteRefInRoot(parsed.type, parsed.name, root) !== null)) {
       unresolved.push(parsed);
@@ -307,6 +329,9 @@ export function resolveXrefsForWrite(rawXrefs: string[], target?: string): strin
   if (unresolved.length > 0) {
     throw unresolvedRefsError("--xref", unresolved);
   }
+
+  // The CANONICAL spellings are what land in frontmatter (see ParsedWriteRef).
+  const xrefs = parsedRefs.map((p) => p.ref);
 
   if (xrefs.length > XREF_SOFT_CAP) {
     warn(
@@ -386,7 +411,11 @@ function isParseableYamlMapping(frontmatter: string): boolean {
  * {@link writeMarkdownAsset} AFTER the new asset is written.
  */
 export interface SupersededTarget {
-  /** The old asset's ref (`type:name`) as passed on the CLI (trimmed). */
+  /**
+   * The old asset's CANONICAL ref (`type:name` — alias spellings passed on
+   * the CLI are canonicalized, see {@link ParsedWriteRef}). Folded into the
+   * correction's xrefs by the callers, so it must be scanner-recognizable.
+   */
   ref: string;
   /** Absolute path of the old asset's primary on-disk file. */
   filePath: string;
@@ -441,12 +470,8 @@ const SUPERSEDE_REJECTED_TYPES: ReadonlySet<string> = new Set(["secret", "env", 
  * Returns the deduplicated plan in argv order; empty input returns [].
  */
 export function resolveSupersedesForWrite(rawRefs: string[], target?: string): SupersededTarget[] {
-  const refs: string[] = [];
-  for (const raw of rawRefs) {
-    const trimmed = raw.trim();
-    if (trimmed && !refs.includes(trimmed)) refs.push(trimmed);
-  }
-  if (refs.length === 0) return [];
+  const parsedRefs = parseWriteRefs(rawRefs, "--supersedes");
+  if (parsedRefs.length === 0) return [];
 
   const { mutableRoots, otherSources } = resolveWriteRefRoots(target);
   // Mutable roots first: when a ref resolves in several roots, demote the copy
@@ -461,14 +486,13 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
 
   const plan: SupersededTarget[] = [];
   const unresolved: ParsedWriteRef[] = [];
-  for (const ref of refs) {
-    const parsed = parseWriteRef(ref, "--supersedes");
+  for (const parsed of parsedRefs) {
     // Data-corruption gate (SPEC-5): demotion is a frontmatter write; a raw
     // asset type must be rejected up front — resolving it and mutating the
     // file would prepend a YAML block over its raw bytes.
     if (SUPERSEDE_REJECTED_TYPES.has(parsed.type)) {
       throw new UsageError(
-        `--supersedes cannot demote ${ref}: "${parsed.type}:" assets are raw files, and the demotion writes YAML frontmatter that would corrupt them.`,
+        `--supersedes cannot demote ${parsed.ref}: "${parsed.type}:" assets are raw files, and the demotion writes YAML frontmatter that would corrupt them.`,
         "INVALID_FLAG_VALUE",
         "Only markdown assets (e.g. memory:, knowledge:, fact:) can carry the beliefState/supersededBy demotion. Replace or delete the raw asset instead.",
       );
@@ -491,7 +515,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
     // or the explicit `workflow:deploy.yaml` spelling).
     if (!located.filePath.toLowerCase().endsWith(".md")) {
       throw new UsageError(
-        `--supersedes ${ref} resolves to a non-markdown file (${located.filePath}) — the demotion writes YAML frontmatter and would corrupt it.`,
+        `--supersedes ${parsed.ref} resolves to a non-markdown file (${located.filePath}) — the demotion writes YAML frontmatter and would corrupt it.`,
         "INVALID_FLAG_VALUE",
         "Only markdown assets can carry the beliefState/supersededBy demotion. Replace or delete the file instead.",
       );
@@ -503,7 +527,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
     // outside any boundary commit. Name the remedy when one exists.
     const namedWritableSource = source?.writable === true ? source.registryId : undefined;
     plan.push({
-      ref,
+      ref: parsed.ref,
       filePath,
       stashRoot: root,
       writable,

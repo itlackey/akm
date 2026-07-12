@@ -883,22 +883,34 @@ What it does, in order (designed to be safely re-runnable if interrupted):
    e.g. a knowledge-subdir alias — the error names the canonical ref to
    use), a `.derived` twin ref as the source (rename the base; the twin
    moves with it), and target names ending in `.derived` (reserved
-   distilled-twin suffix). Supported types: `memory`, `knowledge`,
-   `command`, `agent`, `lesson`, `session`, `fact` (flat-markdown layouts;
-   multi-file `skill` directories are out of scope for now).
+   distilled-twin suffix). The deterministic `.md`-suffixed alias spelling
+   IS accepted — for the source ref and the target name alike — and is
+   canonicalized before anything is keyed off it (`akm mv memory:foo.md
+   bar.md` behaves exactly like `akm mv memory:foo bar`). Supported types:
+   `memory`, `knowledge`, `command`, `agent`, `lesson`, `session`, `fact`
+   (flat-markdown layouts; multi-file `skill` directories are out of scope
+   for now).
 2. **Plans the inbound-ref rewrite** across every markdown file in the
-   writable stash plus task `.yml`/`.yaml` files under `tasks/` (task YAML
-   carries refs in `workflow:`/`prompt:` keys) — body prose, frontmatter
+   writable stash plus `.yml`/`.yaml` files under `tasks/` (task YAML
+   carries refs in `workflow:`/`prompt:` keys) and under `workflows/`
+   (workflow YAML programs carry refs in their step/instructions text;
+   workflows are rewritten as *citers* even though `workflow:` refs cannot
+   themselves be moved) — body prose, frontmatter
    ref-list keys (`xrefs:`, `refs:`, `supersededBy:`, …, including
    flow-style lists like `xrefs: [memory:x]`), and fenced code blocks (a
    rename must not leave stale examples). Alias spellings the resolver
    treats as the same asset — the `.md`-suffixed form, the
    `local//`-prefixed form, and resolver-fallback forms like the
    knowledge-subdir basename alias — are rewritten to the new **canonical**
-   ref. Matching is complete-ref boundary matching: a longer ref that
-   shares the old ref as a prefix is untouched.
-3. **Applies the citer edits, then renames the file last.** A memory's
-   `.derived.md` twin moves together with its base.
+   ref, and a ref followed by sentence punctuation (`See memory:old.`) is
+   rewritten with the punctuation preserved. Matching is complete-ref
+   boundary matching: a longer ref that shares the old ref as a prefix is
+   untouched.
+3. **Creates the target's parent directory, applies the citer edits, then
+   renames the file last.** The parent-dir step comes first so a blocked
+   target (e.g. a path segment that exists as a file) aborts before any
+   citer has been edited. A memory's `.derived.md` twin moves together with
+   its base.
 4. **Re-keys the index row in place and refreshes search** — the new name and
    the rewritten citers are immediately findable, the row's `usage_events`
    history is re-pointed at the new ref (so it survives a later
