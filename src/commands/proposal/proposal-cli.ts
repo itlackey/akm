@@ -461,7 +461,10 @@ const proposalDrainCommand = defineJsonCommand({
     // neither mode nor profile (mirrors resolveValidationRunner). null when
     // nothing is configured → the engine leaves deferred items unresolved and
     // emits triage_deferred.
-    const judgment = args.judgment === true ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg) : null;
+    const judgment =
+      args.judgment === true
+        ? resolveTriageJudgmentRunner(triageConfig?.judgment, cfg, triageConfig, selectedStrategy.config)
+        : null;
 
     // #576: persist + attribute per-call LLM usage for the standalone drain
     // path. `IfAbsent` keeps an enclosing `akm improve` sink in charge when

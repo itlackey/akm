@@ -93,8 +93,8 @@ const SCHEMA_REPAIR_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /**
  * Run the schema-repair loop for a batch of validation failures.
- * Returns a list of per-asset outcome records and the set of refs that were
- * successfully repaired (so the caller can exclude them from skip logic).
+ * Returns a list of per-asset outcome records and the set of refs whose live
+ * files were repaired. Queued proposals never count as live repairs.
  */
 export async function runSchemaRepairPass(
   failures: SchemaRepairFailure[],
@@ -246,8 +246,6 @@ export async function runSchemaRepairPass(
         outcome: "queued",
         proposalId: proposalResult.id,
       });
-      // Mark as repaired so the caller removes it from the validation-failure set.
-      repairedRefs.add(failure.ref);
     } catch (e) {
       appendEvent({
         eventType: "schema_repair_invoked",

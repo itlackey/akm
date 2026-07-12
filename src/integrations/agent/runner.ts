@@ -51,15 +51,19 @@ export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
   return resolveDefaultLlmRunner(config);
 }
 
-/** Resolve a triage judgment's final engine selection. Explicit wrong engines never fall back. */
+/** Resolve a triage judgment using judgment -> triage -> strategy -> defaults.llmEngine precedence. */
 export function resolveTriageJudgmentRunner(
   judgment: Pick<ImproveProcessConfig, "engine" | "model" | "timeoutMs" | "llm"> | undefined,
   config: AkmConfig,
+  triage?: Pick<ImproveProcessConfig, "engine" | "model" | "timeoutMs" | "llm">,
+  strategy?: Pick<ImproveProfileConfig, "engine" | "model" | "timeoutMs" | "llm">,
 ): RunnerSpec | null {
-  if (judgment?.engine) {
-    const runner = resolveEngine(judgment.engine, config);
+  const layers = [strategy ?? {}, triage ?? {}, judgment ?? {}];
+  const selectedEngine = judgment?.engine ?? triage?.engine ?? strategy?.engine ?? config.defaults?.llmEngine;
+  if (selectedEngine) {
+    const runner = resolveEngine(selectedEngine, config);
     if (runner.kind === "llm") {
-      const resolved = resolveLlmEngineUse(config, [judgment]);
+      const resolved = resolveLlmEngineUse(config, layers);
       return {
         kind: "llm",
         engine: resolved.engine,
@@ -67,17 +71,19 @@ export function resolveTriageJudgmentRunner(
         timeoutMs: resolved.timeoutMs,
       };
     }
-    if (judgment.llm) {
+    const effectiveLlmOverrides = [...layers].reverse().find((layer) => layer.llm !== undefined)?.llm;
+    if (effectiveLlmOverrides) {
       throw new ConfigError(
-        `Triage judgment engine "${judgment.engine}" is an agent engine and cannot receive llm overrides.`,
+        `Triage judgment engine "${selectedEngine}" is an agent engine and cannot receive llm overrides.`,
         "INVALID_CONFIG_FILE",
       );
     }
-    const profile = judgment.model
+    const model = [...layers].reverse().find((layer) => layer.model !== undefined)?.model;
+    const profile = model
       ? {
           ...runner.profile,
           model: resolveModel(
-            judgment.model,
+            model,
             runner.profile.platform ?? runner.profile.name,
             runner.profile.modelAliases,
             runner.profile.globalModelAliases,
@@ -85,20 +91,14 @@ export function resolveTriageJudgmentRunner(
           modelIsExact: true,
         }
       : runner.profile;
+    const timeoutLayer = [...layers].reverse().find((layer) => Object.hasOwn(layer, "timeoutMs"));
     return {
       ...runner,
       profile,
-      ...(judgment.timeoutMs !== undefined ? { timeoutMs: judgment.timeoutMs } : {}),
+      ...(timeoutLayer ? { timeoutMs: timeoutLayer.timeoutMs ?? null } : {}),
     };
   }
-  const resolved = resolveLlmEngineUse(config, judgment ? [judgment] : [], { optional: true });
-  if (!resolved) return null;
-  return {
-    kind: "llm",
-    engine: resolved.engine,
-    connection: materializeLlmConnection(resolved),
-    timeoutMs: resolved.timeoutMs,
-  };
+  return null;
 }
 
 /** Resolve an improve process through the active strategy and process overlays. */

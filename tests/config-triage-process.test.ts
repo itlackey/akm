@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config/config-schema";
+import {
+  ImproveProcessConfigSchema,
+  ImproveProfileConfigSchema,
+  validateConfigShape,
+} from "../src/core/config/config-schema";
 
 // Phase 2: triage is a first-class improve process. These guard that a triage
 // block under `processes` parses and is accepted, that the triage-specific
@@ -62,5 +66,32 @@ describe("triage improve-process config schema", () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+
+  test("triage may select an agent engine while missing engines are rejected", () => {
+    const base = {
+      configVersion: "0.9.0",
+      engines: { reviewer: { kind: "agent", platform: "pi" } },
+    } as const;
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: {
+          strategies: {
+            custom: { processes: { triage: { enabled: true, engine: "reviewer", judgment: {} } } },
+          },
+        },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: {
+          strategies: {
+            custom: { processes: { triage: { enabled: true, engine: "missing", judgment: {} } } },
+          },
+        },
+      }).ok,
+    ).toBe(false);
   });
 });

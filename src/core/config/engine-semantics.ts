@@ -28,7 +28,7 @@ export const IMPROVE_PROCESS_ENGINE_CAPABILITIES = {
   graphExtraction: "llm",
   extract: "llm",
   validation: "llm",
-  triage: null,
+  triage: "runner",
   proactiveMaintenance: null,
   recombine: "llm",
   procedural: "llm",

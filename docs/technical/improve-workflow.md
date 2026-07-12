@@ -8,7 +8,7 @@
 |---|---|---|
 | `--scope` | `string` | Restrict the run to a single ref (`type:name`), an asset type (`lesson`), or omit for all assets. |
 | `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
-| `--dry-run` | `boolean` | Compute the plan and memory cleanup analysis; emit no events, acquire no lock, write nothing. |
+| `--dry-run` | `boolean` | Compute the plan from the existing index and analyze memory cleanup; emit no events, acquire no lock, call no model, and write nothing. |
 | `--target` | `string` | Passed through to `akmConsolidate` as the write-target source override. |
 | `--auto-accept` | `number \| "safe" \| false` (default: **off**) | Opt-in threshold for the shared auto-accept gate (`runAutoAcceptGate`). Flag absent or bare `--auto-accept` → OFF (`parseAutoAcceptFlag`; deliberate flip from the 0.8.0-RC default-ON-at-90 behaviour). `--auto-accept=<N>` → integer threshold 0-100. `--auto-accept=safe` → permanent alias for 90. `--auto-accept=false` → explicit disable. Until proposals expose per-operation confidence scores, an enabled gate accepts the consolidate batch whole (legacy behaviour). The drain tier never consults this threshold — it is deterministic-policy-gated. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
@@ -24,12 +24,15 @@ Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`)
 ```mermaid
 flowchart TD
     A([akm improve invoked]) --> B[resolveImproveScope\nscope mode: all / type / ref]
-    B --> C[collectEligibleRefs\nquery SQLite index, filter to stashDir]
-    C --> CLEANUP_ANALYZE{memoryCleanup eligible?}
+    B --> C{dryRun?}
+    C -- no --> ENSURE[ensureIndex primaryStashDir]
+    C -- yes --> COLLECT[collectEligibleRefs\nquery existing SQLite index, filter to stashDir]
+    ENSURE --> COLLECT
+    COLLECT --> CLEANUP_ANALYZE{memoryCleanup eligible?}
     CLEANUP_ANALYZE -- yes --> ANALYZE[analyzeMemoryCleanup\nscans .derived memories\nPRE-COMPUTED before dryRun check]
     CLEANUP_ANALYZE -- no --> D
     ANALYZE --> D{dryRun?}
-    D -- yes --> DRY[Return dry-run result\nno lock, no events, no writes\nincludes memoryCleanupPlan analysis]
+    D -- yes --> DRY[Return dry-run result\nno lock, no events, no writes, no model calls\nincludes memoryCleanupPlan analysis]
     D -- no --> E[Lock acquisition\n.akm/improve.lock]
 
     E --> E1{lock file exists?}
@@ -38,9 +41,7 @@ flowchart TD
     E2 -- yes --> ERR([throw ConfigError: already running])
     E2 -- no / stale --> E3[remove stale lock\nwrite new lock JSON with pid + startedAt]
 
-    E3 --> F[appendEvent: improve_invoked]
-    F --> G[ensureIndex primaryStashDir]
-    G --> J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/archive/]
+    E3 --> J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/archive/]
     J --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
 
     K --> L[Signal filter\nkeep only refs with recent feedback events\nhaving metadata.signal or metadata.note]

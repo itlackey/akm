@@ -686,7 +686,7 @@ async function runSessionExtractPass(args: {
  * with structural problems (missing file, missing lesson description), attempts
  * LLM schema repair, and returns the still-failing ref set + the repair records.
  */
-async function runValidationAndRepairPass(args: {
+export async function runValidationAndRepairPass(args: {
   postCleanupRefs: ImproveEligibleRef[];
   options: AkmImproveOptions;
   startMs: number;
@@ -694,38 +694,43 @@ async function runValidationAndRepairPass(args: {
   primaryStashDir?: string;
   resolvedPlan: ResolvedImprovePlan;
   repairValidationFailures: boolean;
+  schemaRepairFn?: typeof runSchemaRepairPass;
 }): Promise<{
   validationFailures: Array<{ ref: string; reason: string }>;
   validationFailureRefs: Set<string>;
   schemaRepairs: ImprovePreparationResult["schemaRepairs"];
 }> {
-  const { postCleanupRefs, options, startMs, budgetMs, primaryStashDir, resolvedPlan, repairValidationFailures } = args;
-  const validationFailures: Array<{ ref: string; reason: string }> = [];
-  for (const candidate of postCleanupRefs) {
+  const {
+    postCleanupRefs,
+    options,
+    startMs,
+    budgetMs,
+    primaryStashDir,
+    resolvedPlan,
+    repairValidationFailures,
+    schemaRepairFn = runSchemaRepairPass,
+  } = args;
+  const validateCandidate = async (candidate: ImproveEligibleRef): Promise<string | undefined> => {
     try {
-      // #591: use the path pre-resolved at planning time when it is still on
-      // disk — a serial async DB lookup per ref cost ~500 s on a 9 000-ref
-      // stash. Fall back to findAssetFilePath only for refs that bypassed
-      // collectEligibleRefs' index scan or whose file moved since planning.
       const filePath =
         candidate.filePath && fs.existsSync(candidate.filePath)
           ? candidate.filePath
           : await findAssetFilePath(candidate.ref, options.stashDir);
-      if (!filePath) {
-        validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
-        continue;
-      }
-      if (path.extname(filePath).toLowerCase() !== ".md") {
-        continue;
-      }
+      if (!filePath) return "file not found on disk";
+      if (path.extname(filePath).toLowerCase() !== ".md") return undefined;
       if (isLessonCandidate(candidate.ref)) {
-        const raw = fs.readFileSync(filePath, "utf8");
-        const fm = parseFrontmatter(raw).data;
-        if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
+        const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8")).data;
+        if (!fm.description) return "missing description";
       }
-    } catch (e) {
-      validationFailures.push({ ref: candidate.ref, reason: String(e) });
+      return undefined;
+    } catch (error) {
+      return String(error);
     }
+  };
+  const validationFailures: Array<{ ref: string; reason: string }> = [];
+  for (const candidate of postCleanupRefs) {
+    const reason = await validateCandidate(candidate);
+    if (reason) validationFailures.push({ ref: candidate.ref, reason });
   }
   if (validationFailures.length > 0) {
     info(
@@ -735,7 +740,7 @@ async function runValidationAndRepairPass(args: {
   }
 
   let schemaRepairs: ImprovePreparationResult["schemaRepairs"] = [];
-  let repairedRefs = new Set<string>();
+  const repairedRefs = new Set<string>();
 
   // Schema repair pass: attempt to fix validation failures via LLM before skipping.
   if (validationFailures.length > 0) {
@@ -744,7 +749,7 @@ async function runValidationAndRepairPass(args: {
       const result = await withLlmStage(
         "validation",
         () =>
-          runSchemaRepairPass(validationFailures, {
+          schemaRepairFn(validationFailures, {
             startMs,
             budgetMs,
             llmConfig: llmCfg,
@@ -762,7 +767,14 @@ async function runValidationAndRepairPass(args: {
         { engine: resolvedPlan.processes.validation?.engine, process: "validation" },
       );
       schemaRepairs = result.repairs;
-      repairedRefs = result.repairedRefs;
+      // A repair result is advisory. Only a fresh structural read of the live
+      // asset can remove it from the failure set; queued content is not live.
+      const failedRefs = new Set(validationFailures.map((failure) => failure.ref));
+      const candidatesByRef = new Map(postCleanupRefs.map((candidate) => [candidate.ref, candidate]));
+      for (const ref of failedRefs) {
+        const candidate = candidatesByRef.get(ref);
+        if (candidate && !(await validateCandidate(candidate))) repairedRefs.add(ref);
+      }
     }
   }
 

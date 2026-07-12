@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolveImprovePlan, resolveImproveStrategy } from "../src/commands/improve/improve-strategies";
+import type { AkmConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 
 describe("resolveImproveStrategy", () => {
@@ -80,6 +81,93 @@ describe("resolveImprovePlan", () => {
     expect(plan.processes.distill?.engine).toBe("default");
     expect(plan.triageJudgment?.kind).toBe("agent");
     expect(plan.triageJudgment?.timeoutMs).toBeNull();
+  });
+
+  test("requires an explicit judgment block before folded improve enables judgment", () => {
+    const plan = resolveImprovePlan("no-judgment", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: { default: llm },
+      defaults: { llmEngine: "default" },
+      improve: { strategies: { "no-judgment": { processes: { triage: { enabled: true } } } } },
+    });
+
+    expect(plan.triageJudgment).toBeNull();
+  });
+
+  test("uses judgment then triage then strategy then defaults.llmEngine precedence", () => {
+    const engines: AkmConfig["engines"] = {
+      default: { ...llm, model: "default" },
+      strategy: { ...llm, model: "strategy" },
+      judgment: { ...llm, model: "judgment" },
+      reviewer: { kind: "agent" as const, platform: "pi", model: "agent-base" },
+    };
+    const base = {
+      configVersion: "0.9.0" as const,
+      semanticSearchMode: "auto" as const,
+      engines,
+      defaults: { llmEngine: "default" },
+    };
+
+    const explicit = resolveImprovePlan("precedence", {
+      ...base,
+      improve: {
+        strategies: {
+          precedence: {
+            engine: "strategy",
+            processes: {
+              triage: {
+                enabled: true,
+                engine: "reviewer",
+                judgment: { engine: "judgment" },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(explicit.triageJudgment).toMatchObject({ kind: "llm", engine: "judgment" });
+
+    const triage = resolveImprovePlan("precedence", {
+      ...base,
+      improve: {
+        strategies: {
+          precedence: {
+            engine: "strategy",
+            processes: {
+              triage: {
+                enabled: true,
+                engine: "reviewer",
+                model: "agent-override",
+                judgment: { timeoutMs: null },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(triage.triageJudgment).toMatchObject({
+      kind: "agent",
+      engine: "reviewer",
+      timeoutMs: null,
+      profile: { model: "agent-override" },
+    });
+
+    const strategy = resolveImprovePlan("precedence", {
+      ...base,
+      improve: {
+        strategies: {
+          precedence: { engine: "strategy", processes: { triage: { enabled: true, judgment: {} } } },
+        },
+      },
+    });
+    expect(strategy.triageJudgment).toMatchObject({ kind: "llm", engine: "strategy" });
+
+    const fallback = resolveImprovePlan("precedence", {
+      ...base,
+      improve: { strategies: { precedence: { processes: { triage: { enabled: true, judgment: {} } } } } },
+    });
+    expect(fallback.triageJudgment).toMatchObject({ kind: "llm", engine: "default" });
   });
 
   test("rejects model-only and incompatible fallbacks before dispatch", () => {

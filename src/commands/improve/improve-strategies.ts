@@ -132,9 +132,10 @@ function materializeImprovePlan(
   }
 
   const triage = strategy.config.processes?.triage;
+  const judgmentOptedIn = triage !== undefined && Object.hasOwn(triage, "judgment");
   const triageJudgment =
-    resolveProcessEnabled("triage", strategy.config) && triage?.judgment
-      ? resolveTriageJudgmentRunner(triage.judgment, config)
+    resolveProcessEnabled("triage", strategy.config) && judgmentOptedIn
+      ? resolveTriageJudgmentRunner(triage.judgment, config, triage, strategy.config)
       : null;
   return { strategy, processes, triageJudgment };
 }
