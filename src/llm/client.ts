@@ -34,6 +34,9 @@ export {
 /** Maximum length of an LLM error response body included in thrown errors. */
 const ERROR_BODY_MAX_LEN = 200;
 
+/** Stable OpenAI-compatible response-schema name used for every structured call. */
+const JSON_SCHEMA_RESPONSE_NAME = "akm_response";
+
 /**
  * Redact credential-shaped substrings from an upstream error body before
  * including it in a thrown Error. The body is also trimmed to a fixed length
@@ -144,8 +147,8 @@ export interface ChatCompletionOptions {
   /**
    * JSON Schema for structured output. When provided AND the connection has
    * `supportsJsonSchema: true`, sends `response_format: { type: "json_schema",
-   * json_schema: { schema, strict: true } }`. Otherwise the schema is ignored
-   * and callers rely on prompt-contract JSON.
+   * json_schema: { name: "akm_response", schema, strict: true } }`. Otherwise
+   * the schema is ignored and callers rely on prompt-contract JSON.
    */
   responseSchema?: Record<string, unknown>;
   /** Override the config's enableThinking for this call. */
@@ -351,7 +354,12 @@ async function chatCompletionAttempt(
   const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
   const responseFormat =
     options?.responseSchema && config.supportsJsonSchema
-      ? { response_format: { type: "json_schema", json_schema: { schema: options.responseSchema, strict: true } } }
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: JSON_SCHEMA_RESPONSE_NAME, schema: options.responseSchema, strict: true },
+          },
+        }
       : {};
 
   // Wall-clock start for per-call usage telemetry (#576). Captured here so the
@@ -484,6 +492,17 @@ export async function isLlmAvailable(config: LlmConnectionConfig): Promise<boole
 
 // ── Capability probe ────────────────────────────────────────────────────────
 
+const CAPABILITY_PROBE_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean", const: true },
+    ingest: { type: "boolean", const: true },
+    lint: { type: "boolean", const: true },
+  },
+  required: ["ok", "ingest", "lint"],
+  additionalProperties: false,
+};
+
 /**
  * Ask the model to emit a strict JSON object so we know whether the knowledge
  * wiki ingest/lint flows can rely on structured output. Failure is non-fatal —
@@ -494,7 +513,7 @@ export async function probeLlmCapabilities(
 ): Promise<{ reachable: boolean; structuredOutput: boolean; error?: string }> {
   try {
     const raw = await chatCompletion(
-      config,
+      { ...config, supportsJsonSchema: true },
       [
         {
           role: "system",
@@ -505,13 +524,19 @@ export async function probeLlmCapabilities(
           content: 'Return exactly this JSON object and nothing else: {"ok": true, "ingest": true, "lint": true}',
         },
       ],
-      { maxTokens: 64, temperature: 0 },
+      { maxTokens: 64, temperature: 0, responseSchema: CAPABILITY_PROBE_JSON_SCHEMA },
     );
     if (!raw) return { reachable: false, structuredOutput: false, error: "empty response" };
-    const parsed = parseJsonResponse<{ ok?: unknown }>(raw);
+    const parsed = parseJsonResponse<Record<string, unknown>>(raw);
     return {
       reachable: true,
-      structuredOutput: Boolean(parsed && parsed.ok === true),
+      structuredOutput: Boolean(
+        parsed &&
+          Object.keys(parsed).length === 3 &&
+          parsed.ok === true &&
+          parsed.ingest === true &&
+          parsed.lint === true,
+      ),
     };
   } catch (err) {
     return { reachable: false, structuredOutput: false, error: err instanceof Error ? err.message : String(err) };
