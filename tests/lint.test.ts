@@ -1027,6 +1027,39 @@ describe("missing-ref frontmatter xref channels (xrefs/supersededBy/contradicted
     expect(missing[0].detail).toContain("frontmatter supersededBy");
   });
 
+  test("task .yml without `refs:` — a NO-SPACE flow list flags the ref after the bare comma too (R2-5)", () => {
+    // `xrefs: [memory:a,memory:b]` is valid YAML. A task .yml WITHOUT an
+    // authoritative `refs:` key relies on the BODY scan, and `,` — already a
+    // slug terminator — was missing from the boundary prefix class, so the
+    // post-comma ref could never start a match and dangled invisibly.
+    const stashDir = makeTempStash();
+    writeFile(stashDir, "tasks", "t4.yml", "name: t4\nxrefs: [memory:gone-one,memory:gone-two]\n");
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(2);
+    const details = missing.map((i) => i.detail).join("\n");
+    expect(details).toContain("memory:gone-one");
+    expect(details).toContain("memory:gone-two");
+  });
+
+  test("md BODY refs immediately after a bare comma are scanned (R2-5)", () => {
+    const stashDir = makeTempStash();
+    writeFile(
+      stashDir,
+      "memories",
+      "comma-body.md",
+      "---\nname: comma-body\ntype: memory\nupdated: 2025-01-01\n---\n\nCompare memory:gone-a,memory:gone-b in one breath.\n",
+    );
+
+    const result = akmLint({ dir: stashDir });
+    const missing = result.flagged.filter((i) => i.issue === "missing-ref");
+    expect(missing).toHaveLength(2);
+    const details = missing.map((i) => i.detail).join("\n");
+    expect(details).toContain("memory:gone-a");
+    expect(details).toContain("memory:gone-b");
+  });
+
   test("scalar-valued supersededBy (no list syntax) is validated like the array form", () => {
     // The indexer's normalizeNonEmptyStringList accepts a bare scalar
     // (`supersededBy: memory:x`) as live data, so lint must validate that

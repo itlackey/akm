@@ -158,13 +158,19 @@ function buildRefTypeAlternation(): string {
  *
  * `REF_BOUNDARY_PREFIX_CLASS_SRC` is the character class a ref may start
  * after (a ref also matches at line start): whitespace, backtick, quote,
- * `(`, or `[` — the `[` admits markdown-link-style refs like
- * `see [memory:foo]`, which the legacy class silently skipped.
+ * `(`, `[`, or `,` — the `[` admits markdown-link-style refs like
+ * `see [memory:foo]`, which the legacy class silently skipped, and the `,`
+ * admits the ref AFTER a bare comma in a no-space flow list like
+ * `xrefs: [memory:a,memory:b]` (valid YAML). `,` is already a slug
+ * TERMINATOR (excluded from `REF_SLUG_CHAR_CLASS_SRC`), so `a,b` splits
+ * cleanly and adding it here cannot extend any existing match; false
+ * positives are fenced by the type alternation — a comma only starts a match
+ * when a literal `<type>:` follows it.
  *
  * `REF_SLUG_CHAR_CLASS_SRC` is the character class a ref's `<type>:<slug>`
  * token is made of; the first excluded character ends the ref.
  */
-export const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(\\[]";
+export const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(,\\[]";
 export const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
 
 // Only the TYPE alternation is registry-derived; the surrounding grammar

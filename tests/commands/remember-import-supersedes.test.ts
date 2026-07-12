@@ -755,6 +755,47 @@ describe("writeSupersededEdge — sibling of writeContradictEdge in memory-belie
     expect(parsed.data.beliefState).toBe("contradicted");
   });
 
+  test("writeContradictEdge repairs a MISSING demotion: edge already present but no beliefState (R2-4)", () => {
+    // Regression from the #14 scalar promotion: the guard fired on
+    // `existing.includes(ref)` ALONE, so a file carrying the edge without the
+    // demotion (hand-written scalar, beliefState lost to a partial edit) was
+    // a permanent no-op — while consolidate's handleContradictOp counted the
+    // op as applied. The guard must be state-aware like writeSupersededEdge.
+    const dir = makeDir("akm-contradict-edge");
+    const filePath = path.join(dir, "old.md");
+    fs.writeFileSync(filePath, ["---", "contradictedBy: memory:disputer", "---", "", "Body.", ""].join("\n"), "utf8");
+
+    writeContradictEdge(filePath, "memory:disputer");
+
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(parsed.data.beliefState).toBe("contradicted");
+    expect(parsed.data.contradictedBy).toEqual(["memory:disputer"]);
+
+    // Idempotent once repaired: a repeat call leaves the file byte-identical.
+    const afterFirst = fs.readFileSync(filePath, "utf8");
+    writeContradictEdge(filePath, "memory:disputer");
+    expect(fs.readFileSync(filePath, "utf8")).toBe(afterFirst);
+  });
+
+  test("writeContradictEdge never weakens archived: the edge appends, beliefState stays archived (R2-4)", () => {
+    // Severity parity with writeSupersededEdge: archived (0.15) ranks BELOW
+    // contradicted (0.2) — overwriting it would RAISE the incumbent's rank.
+    const dir = makeDir("akm-contradict-edge");
+    const filePath = path.join(dir, "old.md");
+    fs.writeFileSync(filePath, ["---", "beliefState: archived", "---", "", "Body.", ""].join("\n"), "utf8");
+
+    writeContradictEdge(filePath, "memory:new-dispute");
+
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(parsed.data.beliefState).toBe("archived");
+    expect(parsed.data.contradictedBy).toEqual(["memory:new-dispute"]);
+
+    // Idempotent under the kept state too.
+    const afterFirst = fs.readFileSync(filePath, "utf8");
+    writeContradictEdge(filePath, "memory:new-dispute");
+    expect(fs.readFileSync(filePath, "utf8")).toBe(afterFirst);
+  });
+
   test("never weakens a stronger demotion: contradicted/archived keep their state, edge still appends", async () => {
     // Severity order (BELIEF_STATE_SCORE_CEILINGS, ranking-contributors.ts):
     // superseded 0.25 > contradicted 0.2 > archived 0.15 — overwriting

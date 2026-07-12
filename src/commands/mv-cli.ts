@@ -94,8 +94,10 @@ const MV_SUPPORTED_TYPES: readonly string[] = ["memory", "knowledge", "command",
  * Boundary grammar IMPORTED from lint's `REF_RE` fragments (base-linter.ts
  * `REF_BOUNDARY_PREFIX_CLASS_SRC` / `REF_SLUG_CHAR_CLASS_SRC`) so the two
  * grammars cannot drift: a ref starts at line start or after whitespace /
- * backtick / quote / `(` / `[` (the `[` admits flow-style YAML lists like
- * `xrefs: [memory:foo]` and bracketed body refs), and its slug runs until
+ * backtick / quote / `(` / `[` / `,` (the `[` admits flow-style YAML lists
+ * like `xrefs: [memory:foo]` and bracketed body refs; the `,` admits the
+ * refs after the first in a NO-SPACE flow list `[memory:a,memory:b]`), and
+ * its slug runs until
  * the first non-slug character. Complete-ref matching is what keeps a longer
  * ref sharing the old ref as a prefix (e.g. `memory:a/base-note-extra` when
  * moving `memory:a/base-note`) untouched.
@@ -299,6 +301,45 @@ function collectCiterFiles(root: string): string[] {
 // ── Source resolution ─────────────────────────────────────────────────────────
 
 /**
+ * Return the ON-DISK casing of `relPath` under `root` as a posix-separated
+ * relative path, or `null` when a segment cannot be found (file deleted
+ * mid-flight, unreadable directory — callers treat null as "unverifiable"
+ * and keep the `existsSync` verdict).
+ *
+ * The casing guard for {@link resolveMoveSourcePath}: on a case-INSENSITIVE
+ * filesystem (macOS/Windows defaults) `existsSync` matches a wrong-case
+ * spelling and `resolveRefPathInStash` returns the user-cased join verbatim,
+ * so a byte-comparison of the resolved path against the ref-derived path
+ * compares the string against itself. This helper reads each path segment's
+ * true name from its parent's directory listing instead — deliberately NOT
+ * `fs.realpathSync.native`, which also resolves symlinks and would
+ * false-mismatch a stash root reached through one (e.g. /tmp on macOS).
+ * Matching is byte-first, then Unicode-lowercase — an approximation of the
+ * filesystem's own case folding that can only miss toward `null`
+ * (unverifiable), never toward a wrong entry.
+ */
+export function deriveOnDiskCasedRelPath(root: string, relPath: string): string | null {
+  const segments = toPosix(relPath).split("/").filter(Boolean);
+  const cased: string[] = [];
+  let dir = root;
+  for (const segment of segments) {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      return null;
+    }
+    const onDisk = entries.includes(segment)
+      ? segment
+      : entries.find((entry) => entry.toLowerCase() === segment.toLowerCase());
+    if (onDisk === undefined) return null;
+    cased.push(onDisk);
+    dir = path.join(dir, onDisk);
+  }
+  return cased.join("/");
+}
+
+/**
  * Resolve the on-disk file for the ref being moved, within the primary
  * writable stash ONLY. Reuses lint's shared resolver (`resolveRefPathInStash`,
  * base-linter.ts — do not fork a second resolver), then requires the hit to
@@ -332,17 +373,32 @@ function resolveMoveSourcePath(
   if (!resolved) return null;
   if (resolved.endsWith(".derived.md") && !refName.endsWith(".derived")) return null;
   if (path.basename(resolved) === "SKILL.md" && !relPath.endsWith(`${path.sep}SKILL.md`)) return null;
-  if (path.resolve(resolved) === path.resolve(stashDir, relPath)) return resolved;
+  // The byte-equal comparison below cannot catch a CASE alias: on a
+  // case-insensitive filesystem the resolver's `existsSync` matches
+  // `memory:Foo` against memories/foo.md and returns the USER-cased join, so
+  // the comparison checks the string against itself. Every downstream key is
+  // case-sensitive regardless of the filesystem (the citer rewrite matches
+  // bytes, the index entry_key is BINARY-collated, state.db asset_ref
+  // likewise), so a wrong-case source must be rejected like any other
+  // fallback spelling: verify the ON-DISK casing and, on mismatch, fall
+  // through to the rejection below with the true-cased path so the error
+  // names the canonical ref.
+  let onDiskResolved = resolved;
+  if (path.resolve(resolved) === path.resolve(stashDir, relPath)) {
+    const onDiskRelPath = deriveOnDiskCasedRelPath(stashDir, relPath);
+    if (onDiskRelPath === null || onDiskRelPath === toPosix(relPath)) return resolved;
+    onDiskResolved = path.join(stashDir, onDiskRelPath);
+  }
 
   // Fallback hit — reject, steering to the canonical spelling when it exists.
   const typedRef = refToString({ type: refType, name: refName });
-  const canonicalName = deriveCanonicalAssetNameFromStashRoot(refType, stashDir, resolved);
+  const canonicalName = deriveCanonicalAssetNameFromStashRoot(refType, stashDir, onDiskResolved);
   const canonicalRelPath = canonicalName ? refToRelPath(refType, canonicalName) : null;
   if (
     canonicalName &&
     canonicalName !== refName &&
     canonicalRelPath &&
-    path.resolve(stashDir, canonicalRelPath) === path.resolve(resolved)
+    path.resolve(stashDir, canonicalRelPath) === path.resolve(onDiskResolved)
   ) {
     const canonicalRef = refToString({ type: refType, name: canonicalName });
     throw new UsageError(
@@ -353,7 +409,7 @@ function resolveMoveSourcePath(
     );
   }
   throw new UsageError(
-    `"${typedRef}" resolves to ${toPosix(path.relative(stashDir, resolved))}, outside the ${TYPE_DIRS[refType]}/ ` +
+    `"${typedRef}" resolves to ${toPosix(path.relative(stashDir, onDiskResolved))}, outside the ${TYPE_DIRS[refType]}/ ` +
       "type root — akm mv renames within a type directory only; nothing moved.",
     "INVALID_FLAG_VALUE",
   );
@@ -648,6 +704,21 @@ export const mvCommand = defineJsonCommand({
     if (!newName) {
       throw new UsageError(
         `Target "${targetArg}" names no asset once the .md extension is stripped — nothing moved.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    // Reject empty path segments: `path.posix.normalize` (parseAssetRef's
+    // name normalization) PRESERVES a trailing slash — "bar/" (and "bar\",
+    // normalized to it) sails through the traversal checks, and the file
+    // would land at e.g. memories/bar/.md: a dot-prefixed file the index
+    // walker skips, unreachable by `akm show`, with every citer rewritten to
+    // the phantom ref "memory:bar/". Interior doubles ("a//b") are collapsed
+    // by the normalization, so a trailing empty segment is the only shape
+    // that reaches this check — but reject ANY empty segment regardless.
+    if (newName.split("/").some((segment) => segment.length === 0)) {
+      throw new UsageError(
+        `Target "${targetArg}" contains an empty path segment (trailing "/" or "\\") — the file would be written ` +
+          "as a hidden dotfile the index cannot see. Pass a name, e.g. `akm mv <ref> projectA/new-note` — nothing moved.",
         "INVALID_FLAG_VALUE",
       );
     }

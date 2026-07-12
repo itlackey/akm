@@ -70,8 +70,18 @@ function readEdgeList(value: unknown): string[] {
  *   - `memory-contradiction-detect.ts` for the M-1 automated contradiction pass
  *   - `resolveFamilyContradictions` in `memory-improve.ts` for SCC resolution
  *
- * Idempotent: if the `contradictedByRef` is already in `contradictedBy`,
- * the file is not rewritten.
+ * Idempotent: if the `contradictedByRef` is already in `contradictedBy` AND
+ * the file already carries the demotion state, the file is not rewritten. The
+ * guard is state-aware like its sibling {@link writeSupersededEdge}: an edge
+ * present WITHOUT the demotion (e.g. a hand-written `contradictedBy:` line,
+ * or a beliefState lost to a partial edit) is repaired, not skipped — an
+ * edge-only guard would make such a file a permanent no-op while
+ * consolidate's handleContradictOp reports the contradiction as applied.
+ *
+ * Never weakens a stronger demotion: `archived` ranks BELOW `contradicted`
+ * (see `BELIEF_STATE_SCORE_CEILINGS` in
+ * src/indexer/search/ranking-contributors.ts), so contradicting an archived
+ * memory keeps `archived` and only appends the edge.
  *
  * @param filePath          - Absolute path to the memory markdown file.
  * @param contradictedByRef - The ref that contradicts this memory.
@@ -79,13 +89,17 @@ function readEdgeList(value: unknown): string[] {
 export function writeContradictEdge(filePath: string, contradictedByRef: string): void {
   mutateFrontmatter(filePath, (parsed) => {
     const existing = readEdgeList(parsed.data.contradictedBy);
-    if (existing.includes(contradictedByRef)) return null; // Already written — idempotent.
+    const currentState = parsed.data.beliefState;
+    const nextState = currentState === "archived" ? currentState : "contradicted";
+    if (existing.includes(contradictedByRef) && currentState === nextState) {
+      return null; // Already written — idempotent.
+    }
 
     const nextContradictedBy = [...new Set([...existing, contradictedByRef])].sort();
     return {
       ...parsed.data,
       contradictedBy: nextContradictedBy,
-      beliefState: "contradicted",
+      beliefState: nextState,
     };
   });
 }

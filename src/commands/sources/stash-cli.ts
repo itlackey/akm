@@ -31,6 +31,7 @@ import { defineCommand } from "citty";
 import * as p from "../../cli/clack";
 import { defineJsonCommand, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -237,17 +238,21 @@ export const importKnowledgeCommand = defineJsonCommand({
     // Imported docs may carry their own frontmatter: merge (dedupe-append)
     // BEFORE the write so write-path indexing sees the final content and no
     // second frontmatter block is ever nested.
-    // The slug must come from the ORIGINAL content: when xrefs are merged the
-    // document starts with the `---` fence, which inferAssetName would slugify
-    // to "" and fall back to a random knowledge-<epoch>-<rand> name. A stdin
-    // import (no filename-derived preferredName) therefore pre-infers the name
-    // from the pre-merge content so --xref/--supersedes never change the slug.
+    // The slug must come from the document BODY: a merged (or self-carried)
+    // frontmatter block puts the `---` fence on the first line, which
+    // inferAssetName would slugify to "" and fall back to a random
+    // knowledge-<epoch>-<rand> name. A stdin import (no filename-derived
+    // preferredName) therefore pre-infers the name from the pre-merge
+    // content's PARSED body — not the raw text, whose first line is the fence
+    // whenever the piped doc carries its own frontmatter — so --xref/
+    // --supersedes never change the slug and a frontmattered doc gets its
+    // heading-derived slug on every path.
     const result = await writeMarkdownAsset({
       type: "knowledge",
       content: mergeXrefsIntoContent(content, xrefs),
       name: args.name ?? (isHttpUrl(args.source) ? preferredName : undefined),
       fallbackPrefix: "knowledge",
-      preferredName: preferredName ?? (xrefs.length > 0 ? inferAssetName(content, "knowledge") : undefined),
+      preferredName: preferredName ?? inferAssetName(parseFrontmatter(content).content, "knowledge"),
       force: args.force,
       target: args.target,
       path: args.path,

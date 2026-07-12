@@ -43,6 +43,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint/index";
+import { deriveOnDiskCasedRelPath } from "../../src/commands/mv-cli";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { readEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
@@ -806,6 +807,66 @@ describe("akm mv — usage_events.entry_ref is re-pointed so history survives a 
       closeDatabase(db);
     }
   });
+
+  test("DETACHED orphan events already AT the target ref are evicted — the moved asset never adopts a deleted stranger's history (R2-1)", async () => {
+    seedAsset(stashDir, "memories/live-note.md", "The live asset being renamed.\n");
+    await buildIndex();
+
+    let db = openExistingDatabase(getDbPath());
+    let entryId: number;
+    try {
+      const row = entryByKeySuffix(db, ":memory:live-note");
+      expect(row).toBeDefined();
+      entryId = (row as { id: number }).id;
+      ensureUsageEventsSchema(db);
+      // The moved asset's own (attached) history.
+      insertUsageEvent(db, { event_type: "show", entry_id: entryId, entry_ref: "memory:live-note" });
+      // A deleted stranger's DETACHED history already sitting at the TARGET
+      // ref (entry_id NULL — what a full rebuild leaves behind when the file
+      // is gone). No entries row exists for memory:dead-note, so the
+      // stale-row eviction path never runs; the re-key itself must evict
+      // these (live asset's history wins) or getRetrievalCounts reads the
+      // stranger's counts immediately and the next `index --full` relinks
+      // the stranger's whole history onto the moved asset by entry_ref.
+      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:dead-note" });
+      insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_ref: "memory:dead-note" });
+      insertUsageEvent(db, { event_type: "search", entry_ref: "local//memory:dead-note" });
+    } finally {
+      closeDatabase(db);
+    }
+
+    const mv = await runCliCapture(["mv", "memory:live-note", "dead-note"]);
+    expect(mv.code).toBe(0);
+    expect((JSON.parse(mv.stdout) as MvOutput).utilityPreserved).toBe(true);
+
+    db = openExistingDatabase(getDbPath());
+    try {
+      // Exactly ONE event survives at the target ref: the moved asset's own,
+      // still attached and re-pointed. Every detached stranger event is gone.
+      const rows = db
+        .prepare("SELECT entry_id, entry_ref FROM usage_events WHERE entry_ref LIKE '%dead-note%' ORDER BY id")
+        .all() as Array<{ entry_id: number | null; entry_ref: string }>;
+      expect(rows).toEqual([{ entry_id: entryId, entry_ref: "memory:dead-note" }]);
+    } finally {
+      closeDatabase(db);
+    }
+
+    // The permanent-contamination path: a full rebuild relinks by entry_ref.
+    // Only the asset's own event may attach to the re-minted row.
+    const reindex = await runCliCapture(["index", "--full"]);
+    expect(reindex.code).toBe(0);
+    db = openExistingDatabase(getDbPath());
+    try {
+      const entry = entryByKeySuffix(db, ":memory:dead-note");
+      expect(entry).toBeDefined();
+      const linked = db
+        .prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE entry_id = ?")
+        .get((entry as { id: number }).id) as { cnt: number };
+      expect(linked.cnt).toBe(1);
+    } finally {
+      closeDatabase(db);
+    }
+  });
 });
 
 // ── displaced-row eviction (finding #4) ──────────────────────────────────────
@@ -1252,6 +1313,10 @@ describe("akm mv — target parent is created before any citer edit", () => {
 // ── state.db re-key failure honesty ──────────────────────────────────────────
 
 describe("akm mv — state.db re-key failures are surfaced, missing tables stay silent", () => {
+  // The inner catch swallows ONLY /no such table/i (legacy state.db without
+  // the salience tables); every other shape — including a lock timeout's
+  // "database is locked" (R2-2, verified against a held BEGIN IMMEDIATE) —
+  // takes the same tableFailures -> warnings path this test pins.
   test("a NON-missing-table failure (incompatible schema) lands in warnings; the move itself still succeeds", async () => {
     seedAsset(stashDir, "memories/state-broken.md", "Salience fate unknown.\n");
     const stateDb = openStateDatabase();
@@ -1369,5 +1434,96 @@ describe("akm mv — command registration and help meta", () => {
     const { main } = await import("../../src/cli");
     const subCommands = (main as { subCommands?: Record<string, unknown> }).subCommands ?? {};
     expect(Object.keys(subCommands)).toContain("mv");
+  });
+});
+
+// ── no-space flow-list citers (R2-5) ─────────────────────────────────────────
+
+describe("akm mv — refs after a bare comma in a no-space flow list are rewritten", () => {
+  test("xrefs: [memory:other,memory:old] — the post-comma ref is rewritten like the spaced form", async () => {
+    seedAsset(stashDir, "memories/comma-note.md", "Cited from a no-space flow list.\n");
+    // Valid YAML: flow list with no space after the comma. `,` terminates a
+    // slug but was missing from the boundary prefix class, so the second ref
+    // could never start a match — mv reported `rewrote: []` and the ref
+    // dangled silently.
+    const citer = seedAsset(
+      stashDir,
+      "memories/comma-citer.md",
+      "---\ndescription: no-space flow list citer\nxrefs: [memory:elsewhere,memory:comma-note]\n---\n\nBody.\n",
+    );
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:comma-note", "comma-note-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+
+    expect(fs.readFileSync(citer, "utf8")).toContain("xrefs: [memory:elsewhere,memory:comma-note-v2]");
+    expect(json.rewrote.find((r) => r.file.endsWith("memories/comma-citer.md"))?.count).toBe(1);
+  });
+});
+
+// ── empty target path segments (R2-6) ────────────────────────────────────────
+
+describe("akm mv — targets with empty path segments are rejected", () => {
+  test.each([
+    "bar/",
+    "bar\\",
+  ])("target %j exits 2, moves nothing, rewrites no citer (a trailing separator would mint a hidden <dir>/.md)", async (target) => {
+    const srcPath = seedAsset(stashDir, "memories/slash-note.md", "Must not become a hidden dotfile.\n");
+    const citer = seedAsset(stashDir, "knowledge/slash-citer.md", "Cites memory:slash-note here.\n");
+
+    const { code, stderr } = await runCliCapture(["mv", "memory:slash-note", target]);
+    expect(code).toBe(2);
+    const json = JSON.parse(stderr) as ErrorEnvelope;
+    expect(json.ok).toBe(false);
+    expect(typeof json.code).toBe("string");
+
+    // Nothing moved, nothing rewritten, no hidden memories/bar/.md minted.
+    expect(fs.readFileSync(srcPath, "utf8")).toBe("Must not become a hidden dotfile.\n");
+    expect(fs.readFileSync(citer, "utf8")).toBe("Cites memory:slash-note here.\n");
+    expect(fs.existsSync(path.join(stashDir, "memories/bar"))).toBe(false);
+  });
+});
+
+// ── on-disk casing guard (R2-7) ──────────────────────────────────────────────
+
+describe("akm mv — deriveOnDiskCasedRelPath (the wrong-case source-ref guard)", () => {
+  // On case-INSENSITIVE filesystems (macOS/Windows defaults) existsSync
+  // matches a wrong-case ref spelling and resolveRefPathInStash returns the
+  // user-cased join verbatim, so resolveMoveSourcePath's byte-equality
+  // compares the string against itself. The guard reads each segment's TRUE
+  // name from its parent's directory listing; a mismatch is rejected through
+  // the alias-rejection path naming the canonical ref. This CI filesystem is
+  // case-SENSITIVE (a wrong-case ref simply fails to resolve here), so the
+  // guard's decision logic is pinned directly at the helper seam.
+  test("returns the byte-identical rel path for an exact-case hit", () => {
+    seedAsset(stashDir, "memories/projectA/case-note.md", "Body.\n");
+    expect(deriveOnDiskCasedRelPath(stashDir, "memories/projectA/case-note.md")).toBe("memories/projectA/case-note.md");
+  });
+
+  test("returns the on-disk casing for a wrong-case LEAF (what a case-insensitive existsSync hit hides)", () => {
+    seedAsset(stashDir, "memories/case-note.md", "Body.\n");
+    expect(deriveOnDiskCasedRelPath(stashDir, "memories/Case-Note.md")).toBe("memories/case-note.md");
+  });
+
+  test("returns the on-disk casing for a wrong-case DIRECTORY segment", () => {
+    seedAsset(stashDir, "memories/projectA/nested-note.md", "Body.\n");
+    expect(deriveOnDiskCasedRelPath(stashDir, "memories/projecta/Nested-Note.md")).toBe(
+      "memories/projectA/nested-note.md",
+    );
+  });
+
+  test("returns null for a path with no case-insensitive match (unverifiable — caller keeps the existsSync verdict)", () => {
+    seedAsset(stashDir, "memories/present.md", "Body.\n");
+    expect(deriveOnDiskCasedRelPath(stashDir, "memories/absent.md")).toBeNull();
+    expect(deriveOnDiskCasedRelPath(stashDir, "ghosts/present.md")).toBeNull();
+  });
+
+  test("exact-case mv is unaffected by the guard (control)", async () => {
+    seedAsset(stashDir, "memories/projectA/guarded-note.md", "Exact-case control.\n");
+    const { code, stdout } = await runCliCapture(["mv", "memory:projectA/guarded-note", "projectA/guarded-note-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.ok).toBe(true);
+    expect(json.to).toBe("memory:projectA/guarded-note-v2");
   });
 });

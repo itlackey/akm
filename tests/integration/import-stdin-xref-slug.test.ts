@@ -71,4 +71,24 @@ describe("import - (stdin) slug stability under --xref", () => {
     expect(structured.status, structured.stderr).toBe(0);
     expect((JSON.parse(structured.stdout) as { ref: string }).ref).toBe(plainRef);
   });
+
+  test("a stdin doc CARRYING ITS OWN frontmatter derives its slug from the parsed body — same with and without --xref (R2-3)", () => {
+    // Exactly the doc class mergeXrefsIntoContent's merge branch exists for:
+    // the raw content's first non-empty line is the `---` fence, which sent
+    // inferAssetName to its random knowledge-<epoch>-<rand> fallback on BOTH
+    // paths. The name must come from the parsed body's heading instead.
+    const seedPath = path.join(stashDir, "knowledge", "legacy-guide.md");
+    fs.mkdirSync(path.dirname(seedPath), { recursive: true });
+    fs.writeFileSync(seedPath, "# Seed\n\nSeed content.\n", "utf8");
+    const body = "---\ndescription: carried frontmatter\n---\n\n# Frontmattered Guide\n\nBody worth keeping.\n";
+
+    const plain = akmWithStdin(["import", "-"], body);
+    expect(plain.status, plain.stderr).toBe(0);
+    const plainRef = (JSON.parse(plain.stdout) as { ref: string }).ref;
+    expect(plainRef).toBe("knowledge:frontmattered-guide");
+
+    const structured = akmWithStdin(["import", "-", "--force", "--xref", "knowledge:legacy-guide"], body);
+    expect(structured.status, structured.stderr).toBe(0);
+    expect((JSON.parse(structured.stdout) as { ref: string }).ref).toBe(plainRef);
+  });
 });

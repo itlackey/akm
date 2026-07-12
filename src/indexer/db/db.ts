@@ -467,7 +467,10 @@ export interface RekeyEntryOptions {
  * either, see {@link getRetrievalCounts}). Without this, events keep the old
  * ref, `relinkUsageEvents` finds no matching entry after the next full
  * rebuild, and the utility history the re-key exists to preserve silently
- * resets.
+ * resets. DETACHED orphan events already sitting at the new ref (entry_id
+ * NULL — a deleted stranger's history) are deleted first, so the moved asset
+ * never adopts them (live asset's history wins, matching the stale-row
+ * eviction below).
  *
  * A stale row already occupying `newEntryKey` (the caller has verified no
  * FILE exists at the target, so such a row can only be a leftover for a
@@ -529,6 +532,22 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     // qualified ref has exactly one — same normalization as
     // getRetrievalCounts). Legacy DBs may predate usage_events.
     bestEffort(() => {
+      // Live-asset-wins collision policy, mirroring the stale-entries eviction
+      // above and mv's state.db re-key: DETACHED orphan events (entry_id NULL
+      // — a deleted asset's history retained by a full rebuild) already
+      // sitting AT the new ref are evicted BEFORE the old→new rewrite. No
+      // stale entries row exists for them, so the deleteRelatedRows path
+      // never sees them (it deletes by entry_id only) — left in place, the
+      // moved asset would adopt the stranger's history: getRetrievalCounts
+      // reads by entry_ref immediately, and the next full rebuild's
+      // relinkUsageEvents would attach every stranger event by ref.
+      db.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(opts.newRef);
+      db.prepare(
+        `DELETE FROM usage_events
+          WHERE entry_id IS NULL
+            AND instr(entry_ref, '//') > 0
+            AND substr(entry_ref, instr(entry_ref, '//') + 2) = ?`,
+      ).run(opts.newRef);
       db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
       db.prepare(
         `UPDATE usage_events
