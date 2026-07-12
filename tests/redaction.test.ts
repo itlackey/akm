@@ -131,6 +131,7 @@ describe("collectSensitiveValues", () => {
       ],
       ["https://issuer.test/callback#access_token=space%20token", ["space%20token", "space+token", "space token"]],
       ["https://issuer.test/callback#access_token=plus+token", ["plus%20token", "plus+token", "plus token"]],
+      ["https://issuer.test/callback#state=A%20B%20C%2FD%2BE", ["A%20B%20C%2FD%2BE", "A+B%20C%2fD%2BE", "A B C/D+E"]],
     ] as const) {
       const sensitive = collectSensitiveValues([url]);
       for (const echo of echoes) {

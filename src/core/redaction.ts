@@ -223,6 +223,30 @@ export function isEnvPassthroughValueSafeToExpose(name: string, value: string | 
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function percentEncodedBytePattern(byte: number): string {
+  return `%${byte
+    .toString(16)
+    .padStart(2, "0")
+    .split("")
+    .map((digit) => (/[a-f]/.test(digit) ? `[${digit}${digit.toUpperCase()}]` : digit))
+    .join("")}`;
+}
+
+function encodedEquivalentPattern(value: string): string | undefined {
+  if (!value || value.length > 2048 || value.includes("://") || value.includes("%")) return undefined;
+  return [...value]
+    .map((character) => {
+      if (character === " ") return "(?: |\\+|%20)";
+      const encoded = [...Buffer.from(character)].map(percentEncodedBytePattern).join("");
+      return `(?:${escapeRegExp(character)}|${encoded})`;
+    })
+    .join("");
+}
+
 /**
  * Replace exact sensitive values in text. Longer values are replaced first so
  * an overlapping prefix cannot expose the suffix of a longer credential.
@@ -232,7 +256,11 @@ export function redactSensitiveText(text: string, sensitiveValues: Iterable<stri
     .filter((value) => value.length > 0)
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
   let redacted = text;
-  for (const value of values) redacted = redacted.replaceAll(value, "[REDACTED]");
+  for (const value of values) {
+    redacted = redacted.replaceAll(value, "[REDACTED]");
+    const encodedPattern = encodedEquivalentPattern(value);
+    if (encodedPattern) redacted = redacted.replace(new RegExp(encodedPattern, "g"), "[REDACTED]");
+  }
   return redacted;
 }
 
