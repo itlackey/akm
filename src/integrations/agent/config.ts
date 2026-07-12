@@ -4,3 +4,6 @@
 
 /** Default hard timeout for an agent CLI when neither engine nor call overrides it. */
 export const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
+
+/** Default hard timeout for direct LLM calls when no engine/use override exists. */
+export const DEFAULT_LLM_TIMEOUT_MS = 600_000;

@@ -48,9 +48,9 @@ describe("resolveIndexPassLLM", () => {
       engines: { index: { kind: "llm", ...SAMPLE_LLM } },
       index: { defaults: { engine: "index" } },
     };
-    expect(resolveIndexPassLLM("enrichment", config)).toEqual(SAMPLE_LLM);
-    expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
-    expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("enrichment", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolveIndexPassLLM("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
   describe("per-pass engines", () => {
@@ -66,9 +66,9 @@ describe("resolveIndexPassLLM", () => {
         },
         index: { defaults: { engine: "primary" }, memory: { engine: "ministral" } },
       };
-      expect(resolveIndexPassLLM("memory", config)).toEqual(MINISTRAL);
+      expect(resolveIndexPassLLM("memory", config)).toEqual({ ...MINISTRAL, timeoutMs: 600_000 });
       // Default LLM still wins for passes WITHOUT a per-process override.
-      expect(resolveIndexPassLLM("enrichment", config)).toEqual(PRIMARY);
+      expect(resolveIndexPassLLM("enrichment", config)).toEqual({ ...PRIMARY, timeoutMs: 600_000 });
     });
 
     test("graph pass uses index.graph.engine when set", () => {
@@ -80,9 +80,9 @@ describe("resolveIndexPassLLM", () => {
         },
         index: { defaults: { engine: "primary" }, graph: { engine: "ministral" } },
       };
-      expect(resolveIndexPassLLM("graph", config)).toEqual(MINISTRAL);
+      expect(resolveIndexPassLLM("graph", config)).toEqual({ ...MINISTRAL, timeoutMs: 600_000 });
       // Memory pass still falls through to default — no override for memory.
-      expect(resolveIndexPassLLM("memory", config)).toEqual(PRIMARY);
+      expect(resolveIndexPassLLM("memory", config)).toEqual({ ...PRIMARY, timeoutMs: 600_000 });
     });
 
     test("rejects a missing per-pass engine instead of silently using the default", () => {
@@ -115,8 +115,8 @@ describe("resolveIndexPassLLM", () => {
       },
     };
     expect(resolveIndexPassLLM("enrichment", config)).toBeUndefined();
-    expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
-    expect(resolveIndexPassLLM("memory", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+    expect(resolveIndexPassLLM("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
   test("per-pass model overrides the selected engine without mutating siblings", () => {
@@ -125,8 +125,12 @@ describe("resolveIndexPassLLM", () => {
       engines: { index: { kind: "llm", ...SAMPLE_LLM } },
       index: { defaults: { engine: "index" }, enrichment: { model: "override" } },
     };
-    expect(resolveIndexPassLLM("enrichment", config)).toEqual({ ...SAMPLE_LLM, model: "override" });
-    expect(resolveIndexPassLLM("graph", config)).toEqual(SAMPLE_LLM);
+    expect(resolveIndexPassLLM("enrichment", config)).toEqual({
+      ...SAMPLE_LLM,
+      model: "override",
+      timeoutMs: 600_000,
+    });
+    expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
   });
 
   test("improve strategy engines never configure standalone index passes", () => {

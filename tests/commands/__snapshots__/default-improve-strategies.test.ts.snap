@@ -62,6 +62,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "enabled": false,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": true,
+      },
     },
     "sync": {
       "enabled": true,
@@ -133,6 +136,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "queue",
         "enabled": false,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": true,
       },
     },
     "sync": {
@@ -206,6 +212,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "enabled": true,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": true,
+      },
     },
     "sync": {
       "enabled": true,
@@ -271,6 +280,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "queue",
         "enabled": false,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": true,
       },
     },
     "sync": {
@@ -345,6 +357,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "enabled": false,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": true,
+      },
     },
     "sync": {
       "enabled": true,
@@ -418,6 +433,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "enabled": false,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": true,
+      },
     },
     "sync": {
       "enabled": true,
@@ -490,6 +508,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "queue",
         "enabled": false,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": true,
       },
     },
     "sync": {
@@ -565,6 +586,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "maxAcceptsPerRun": 100,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": true,
+      },
     },
     "sync": {
       "enabled": true,
@@ -636,6 +660,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "queue",
         "enabled": false,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": true,
       },
     },
     "sync": {
@@ -714,6 +741,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "maxDiffLines": 200,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": true,
+      },
     },
     "sync": {
       "enabled": false,
@@ -788,6 +818,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "maxAcceptsPerRun": 100,
         "maxDiffLines": 200,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": true,
       },
     },
     "sync": {
@@ -870,6 +903,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "queue",
         "enabled": false,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": true,
       },
     },
     "sync": {

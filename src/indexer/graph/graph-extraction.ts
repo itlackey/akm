@@ -459,14 +459,15 @@ function reuseGraphNode(
  */
 export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): Promise<GraphExtractionResult> {
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
+  const invocationOwnsConnection = Object.hasOwn(ctx, "llmConfig");
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
   // (profiles.improve.default.processes.graphExtraction.enabled). Defaults to
   // enabled when the key is absent.
-  if (!isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
+  if (!invocationOwnsConnection && !isProcessEnabled("index", "graph_extraction", config)) return { ...EMPTY_RESULT };
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
-  const llmConfig = resolveIndexPassLLM("graph", config);
+  const llmConfig = Object.hasOwn(ctx, "llmConfig") ? ctx.llmConfig : resolveIndexPassLLM("graph", config);
   if (!llmConfig) {
     const reason =
       getIndexPassConfig(config.index, "graph")?.enabled === false
@@ -475,6 +476,9 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     warnVerbose(`graph extraction: skipped because ${reason}.`);
     return { ...EMPTY_RESULT };
   }
+  const featureConfig = invocationOwnsConnection
+    ? { ...config, index: { ...config.index, graph: { ...config.index?.graph, enabled: true } } }
+    : config;
 
   // The pass only writes to the primary (working) stash. Read-only caches
   // (git, npm, website) are deliberately untouched — the graph artifact for
@@ -494,7 +498,11 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     const drained = drainExtractionQueue(db, primary.path, GRAPH_EXTRACTION_QUEUE_DRAIN_LIMIT);
     for (const queued of drained) {
       if (signal?.aborted) break;
-      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, { config, signal });
+      await extractGraphForSingleFile(db, primary.path, queued.filePath, queued.bodyHash, {
+        config: featureConfig,
+        signal,
+        llmConfig,
+      });
     }
   }
 
@@ -645,7 +653,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
             llmConfig,
             candidate.body,
             signal,
-            config,
+            featureConfig,
             onFallback,
             { batchState, telemetry: runtimeTelemetry },
           );
@@ -782,7 +790,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
           llmConfig,
           bodies,
           signal,
-          config,
+          featureConfig,
           onFallback,
           { batchState, telemetry: runtimeTelemetry },
         );
@@ -954,7 +962,12 @@ export async function extractGraphForSingleFile(
   stashRoot: string,
   filePath: string,
   bodyHash?: string,
-  opts?: { llmOverride?: SingleFileLlmOverride; signal?: AbortSignal; config?: AkmConfig },
+  opts?: {
+    llmOverride?: SingleFileLlmOverride;
+    llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
+    signal?: AbortSignal;
+    config?: AkmConfig;
+  },
 ): Promise<boolean> {
   try {
     // Re-read from disk — never trust a stale queued body.
@@ -982,10 +995,14 @@ export async function extractGraphForSingleFile(
       };
     } else {
       const config = opts?.config ?? loadConfig();
-      if (!isProcessEnabled("index", "graph_extraction", config)) return false;
-      const llmConfig = resolveIndexPassLLM("graph", config);
+      const invocationOwnsConnection = Object.hasOwn(opts ?? {}, "llmConfig");
+      if (!invocationOwnsConnection && !isProcessEnabled("index", "graph_extraction", config)) return false;
+      const llmConfig = Object.hasOwn(opts ?? {}, "llmConfig") ? opts?.llmConfig : resolveIndexPassLLM("graph", config);
       if (!llmConfig) return false; // model-available guard
-      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, config);
+      const featureConfig = invocationOwnsConnection
+        ? { ...config, index: { ...config.index, graph: { ...config.index?.graph, enabled: true } } }
+        : config;
+      const result = await graphExtract.extractGraphFromBody(llmConfig, body, opts?.signal, featureConfig);
       extraction = {
         entities: result.entities,
         relations: result.relations,

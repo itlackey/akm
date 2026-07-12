@@ -17,6 +17,7 @@ import { type LlmConnectionConfig, type LlmProfileConfig, resolveSecret } from "
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import { redactSensitiveText } from "../core/redaction";
 import { warnVerbose } from "../core/warn";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
@@ -285,7 +286,11 @@ async function chatCompletionReal(
   options?: ChatCompletionInternalOptions,
 ): Promise<string> {
   const effectiveTimeoutMs =
-    options && Object.hasOwn(options, "timeoutMs") ? (options.timeoutMs ?? null) : (config.timeoutMs ?? 120_000);
+    options && Object.hasOwn(options, "timeoutMs")
+      ? (options.timeoutMs ?? null)
+      : Object.hasOwn(config, "timeoutMs")
+        ? (config.timeoutMs ?? null)
+        : DEFAULT_LLM_TIMEOUT_MS;
 
   const started = Date.now();
   try {

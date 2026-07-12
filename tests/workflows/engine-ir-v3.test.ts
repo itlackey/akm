@@ -340,12 +340,12 @@ describe("workflow engine v3 contracts", () => {
     const root = frozen.plan.steps[0]?.root;
     expect(root?.kind).toBe("unit");
     if (!root || root.kind !== "unit") throw new Error("fixture root must be unit");
-    expect(root.invocation).toEqual({ engine: "sdk", model: "agent/exact", timeoutMs: null });
+    expect(root.invocation).toEqual({ engine: "sdk", model: "agent/exact", timeoutMs: 600_000 });
     expect(frozen.plan.execution?.engines.fallback).toMatchObject({ kind: "llm", model: "fallback/exact" });
     expect(frozen.plan.steps[0]?.gate.judge).toEqual({
       engine: "fallback",
       model: "fallback/exact",
-      timeoutMs: null,
+      timeoutMs: 600_000,
     });
     expect(() => decodeWorkflowPlanV3(frozen.plan)).not.toThrow();
   });

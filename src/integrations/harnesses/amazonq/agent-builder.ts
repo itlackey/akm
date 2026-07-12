@@ -62,8 +62,12 @@
  * that task only adds a registry entry.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, assertNotFlag } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
+import {
+  type AgentCommandBuilder,
+  type AgentDispatchRequest,
+  assertNotFlag,
+  resolveDispatchModel,
+} from "../../agent/builder-shared";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const AMAZONQ_PLATFORM = "amazonq";
@@ -148,7 +152,7 @@ export const amazonqBuilder: AgentCommandBuilder = {
       args.push("--trust-all-tools");
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, AMAZONQ_PLATFORM, profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, AMAZONQ_PLATFORM) as string;
       args.push("--model", resolved);
     }
     // No system-prompt / schema flags exist on `q chat` — both travel in the

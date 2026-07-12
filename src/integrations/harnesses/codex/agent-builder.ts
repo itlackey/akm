@@ -54,8 +54,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AgentCommandBuilder, assertNotFlag } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
+import { type AgentCommandBuilder, assertNotFlag, resolveDispatchModel } from "../../agent/builder-shared";
 
 /**
  * Write a node's JSON Schema to a fresh temp file for `--output-schema`.
@@ -125,7 +124,7 @@ export const codexBuilder: AgentCommandBuilder = {
     const sandboxArgs = ensureSandboxFlags(extra);
     const args: string[] = ["exec", ...sandboxArgs];
     if (req.model) {
-      const resolved = resolveModel(req.model, "codex", profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, "codex") as string;
       args.push("--model", resolved);
     }
     // JSONL event stream on stdout — the codex result extractor's input.

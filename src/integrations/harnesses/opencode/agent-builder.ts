@@ -16,8 +16,7 @@
  * (the canonical harness id).
  */
 
-import { type AgentCommandBuilder, assertNotFlag } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
+import { type AgentCommandBuilder, assertNotFlag, resolveDispatchModel } from "../../agent/builder-shared";
 
 /**
  * OpenCode builder.
@@ -36,7 +35,7 @@ export const opencodeBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, "opencode", profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, "opencode") as string;
       args.push("--model", resolved);
     }
     args.push("--");

@@ -27,13 +27,13 @@ const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
   consolidate: true,
   memoryInference: true,
   graphExtraction: true,
-  validation: false,
+  validation: true,
   // session-extraction reads native session files from claude-code / opencode
   // and queues durable-insight proposals. Default on — opt out via
-  // profiles.improve.default.processes.extract.enabled: false.
+  // improve.strategies.<name>.processes.extract.enabled: false.
   extract: true,
   // proposal-queue triage drains the standing backlog. Opt-in (default off),
-  // like `validation` — needs an explicit `enabled: true`.
+  // requires an explicit `enabled: true`.
   triage: false,
   // Layer 2 proactive-maintenance selector. Opt-in (default off) — surfaces
   // stale high-value assets on a schedule. Enable per-profile with an explicit

@@ -170,7 +170,7 @@ describe("error class hints", () => {
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
     expect(new ConfigError("no embedding", "EMBEDDING_NOT_CONFIGURED").hint()).toContain("akm config set embedding");
-    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("akm config set profiles.llm");
+    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("defaults.llmEngine");
   });
 
   test("ConfigError without a code-mapped hint returns undefined", () => {

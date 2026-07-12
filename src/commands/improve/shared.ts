@@ -9,7 +9,7 @@
  * of any improve-specific state — these are leaf utilities.
  */
 
-import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig } from "../../core/config/config";
 import { warn } from "../../core/warn";
 import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
@@ -49,10 +49,13 @@ export function resolveImproveLlmFn(
     tag: string;
     signal?: AbortSignal;
     activeProfile?: ImproveProfileConfig;
+    llmConfig?: LlmConnectionConfig;
   },
 ): ((prompt: string) => Promise<string | null>) | undefined {
-  const runnerSpec = resolveImproveProcessRunner(opts.activeProfile, opts.processKey, config);
-  const llmConfig = runnerSpec?.connection ?? getDefaultLlmConfig(config);
+  const runnerSpec = opts.llmConfig
+    ? undefined
+    : resolveImproveProcessRunner(opts.activeProfile, opts.processKey, config);
+  const llmConfig = opts.llmConfig ?? runnerSpec?.connection ?? getDefaultLlmConfig(config);
   if (!llmConfig) return undefined;
   return async (prompt: string) => {
     const messages: ChatMessage[] = [

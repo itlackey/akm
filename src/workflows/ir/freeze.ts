@@ -6,6 +6,7 @@ import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError, UsageError } from "../../core/errors";
+import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import {
   type EngineConfig,
   type EngineUseConfig,
@@ -59,7 +60,7 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, config: AkmCo
     const engine = engineDefinition(config, name);
     addSnapshot(config, name, engines);
     const model = exactModel(config, name, engine, layers);
-    const timeoutMs = effectiveTimeout(engine, layers);
+    const timeoutMs = effectiveTimeout(config, engine, layers);
     const llm = engine.kind === "llm" ? mergedLlmOverrides(layers) : undefined;
     if (engine.kind !== "llm" && llm !== undefined) {
       throw new ConfigError(
@@ -178,11 +179,22 @@ function exactModel(
   return resolveModel(selected, engine.platform, engine.modelAliases, config.modelAliases);
 }
 
-function effectiveTimeout(engine: EngineConfig, layers: readonly EngineUseConfig[]): number | null {
+function effectiveTimeout(config: AkmConfig, engine: EngineConfig, layers: readonly EngineUseConfig[]): number | null {
   for (let index = layers.length - 1; index >= 0; index--) {
     if (Object.hasOwn(layers[index] ?? {}, "timeoutMs")) return layers[index]?.timeoutMs ?? null;
   }
-  return engine.timeoutMs ?? null;
+  if (Object.hasOwn(engine, "timeoutMs")) return engine.timeoutMs ?? null;
+  if (engine.kind === "llm") return DEFAULT_LLM_TIMEOUT_MS;
+  if (engine.platform === "opencode-sdk") {
+    const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
+    if (fallbackName) {
+      const fallback = engineDefinition(config, fallbackName);
+      if (fallback.kind === "llm") {
+        return Object.hasOwn(fallback, "timeoutMs") ? (fallback.timeoutMs ?? null) : DEFAULT_LLM_TIMEOUT_MS;
+      }
+    }
+  }
+  return DEFAULT_AGENT_TIMEOUT_MS;
 }
 
 function mergedLlmOverrides(layers: readonly EngineUseConfig[]): Record<string, unknown> | undefined {
@@ -202,7 +214,7 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
       kind: "llm",
       endpoint: engine.endpoint,
       model: exactModel(config, name, engine, []) as string,
-      timeoutMs: engine.timeoutMs ?? null,
+      timeoutMs: resolved.timeoutMs,
       concurrency: engine.concurrency ?? 1,
       ...(engine.provider ? { provider: engine.provider } : {}),
       ...(resolved.credential ? { credential: resolved.credential } : {}),

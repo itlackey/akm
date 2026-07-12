@@ -16,7 +16,7 @@
  *     never touch a real platform.
  *   - Bounded LLM call wrapped by {@link tryLlmFeature} under the
  *     `session_extraction` gate (default-on; opt out via
- *     `profiles.improve.default.processes.extract.enabled: false`).
+ *     `improve.strategies.<name>.processes.extract.enabled: false`).
  *   - Proposals routed via `createProposal({ source: "extract", ... })` — the
  *     same review queue as reflect / distill / consolidate. Never direct-write.
  *   - Per-candidate body assembly merges description (+ when_to_use for lessons)
@@ -193,6 +193,8 @@ export interface AkmExtractOptions {
   stashDir?: string;
   /** Override config (test seam). */
   config?: AkmConfig;
+  /** Pre-resolved connection supplied by the improve invocation plan. */
+  llmConfig?: LlmProfileConfig;
   /** Override the harness registry (test seam). */
   harnesses?: SessionLogHarness[];
   /**
@@ -201,7 +203,7 @@ export interface AkmExtractOptions {
   chat?: (
     config: LlmProfileConfig,
     messages: ChatMessage[],
-    options?: { timeoutMs?: number; responseSchema?: Record<string, unknown> },
+    options?: { timeoutMs?: number | null; responseSchema?: Record<string, unknown> },
   ) => Promise<string>;
   /** Override proposal clock/id (test seam). */
   ctx?: ProposalsContext;
@@ -210,16 +212,12 @@ export interface AkmExtractOptions {
   /**
    * The resolved ACTIVE improve profile, threaded by `akmImprove` so the
    * feature gate and per-process extract config are read from the profile that
-   * is actually running — not always `profiles.improve.default`. Without it a
-   * non-default profile that enables extract was silently overridden by the
-   * default profile's `extract.enabled: false` (and vice-versa). When absent
-   * (e.g. an explicit `akm extract` invocation) the gate falls back to the
-   * default-profile `session_extraction` feature flag, so explicit runs still
-   * honour `profiles.improve.default.processes.extract.enabled`.
+   * is actually running. Standalone `akm extract` runs explicitly and does not
+   * inherit an improve strategy's enablement gate.
    */
   improveProfile?: ImproveProfileConfig;
-  /** Hard timeout for each LLM call (ms). Default 60s per session. */
-  timeoutMs?: number;
+  /** Hard timeout for each LLM call (ms); null disables it. */
+  timeoutMs?: number | null;
   /**
    * Re-process sessions even if state.db says they were already extracted
    * (and no new events have arrived since). Default `false` — the discovery
@@ -441,7 +439,7 @@ async function processSession(
   ctx: ProposalsContext | undefined,
   sourceRun: string,
   dryRun: boolean,
-  timeoutMs: number,
+  timeoutMs: number | null,
   maxTotalChars: number | undefined,
   minContentChars: number,
   // #626 — pre-LLM heuristic triage gate. Default-off (enabled:false) takes the
@@ -613,7 +611,7 @@ async function processSession(
       return llmRaw;
     },
     "",
-    { timeoutMs },
+    timeoutMs === null ? undefined : { timeoutMs },
   );
 
   if (llmResult === "" && !llmRaw) {
@@ -828,24 +826,17 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       candidatesCreated: 0,
       proposals: [],
       sessions: [],
-      warnings: [
-        "session_extraction feature disabled — set profiles.improve.default.processes.extract.enabled: true to use",
-      ],
+      warnings: ["extract is disabled by the selected improve strategy"],
       durationMs: Date.now() - startMs,
     };
   }
 
-  // Resolve the LLM connection. Priority order:
-  //   1. Options.config.profiles.improve.default.processes.extract.profile
-  //      (per-process override, matches reflect/distill/consolidate)
-  //   2. config.defaults.llm (the default LLM profile)
-  //   3. throw — extract requires an LLM.
-  let llmConfig: LlmProfileConfig | undefined;
-  const runnerSpec = resolveImproveProcessRunner(activeProfile, "extract", config);
-  if (runnerSpec) {
-    llmConfig = runnerSpec.connection;
-  } else {
-    llmConfig = getDefaultLlmConfig(config) ?? undefined;
+  // Improve supplies its invocation-owned connection. Standalone extract
+  // resolves the selected process engine, then defaults.llmEngine.
+  let llmConfig: LlmProfileConfig | undefined = options.llmConfig;
+  if (!llmConfig) {
+    const runnerSpec = resolveImproveProcessRunner(activeProfile, "extract", config);
+    llmConfig = runnerSpec?.connection ?? getDefaultLlmConfig(config) ?? undefined;
   }
   if (!llmConfig) {
     throw new ConfigError(
@@ -854,11 +845,11 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     );
   }
 
-  // Honor per-process timeoutMs override; fall back to options.timeoutMs; then 60s.
-  const timeoutMs =
-    options.timeoutMs ??
-    (typeof extractProcess?.timeoutMs === "number" ? extractProcess.timeoutMs : undefined) ??
-    60_000;
+  const timeoutMs = Object.hasOwn(options, "timeoutMs")
+    ? (options.timeoutMs ?? null)
+    : Object.hasOwn(llmConfig, "timeoutMs")
+      ? (llmConfig.timeoutMs ?? null)
+      : 600_000;
   // Pre-filter budget — process config can raise it for large-context models.
   const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
   // #595/#596 — minimum raw session size; sessions below it skip the LLM call
@@ -906,7 +897,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         return raw;
       },
       "",
-      { timeoutMs },
+      timeoutMs === null ? undefined : { timeoutMs },
     );
     return parseSessionSummary(raw);
   };

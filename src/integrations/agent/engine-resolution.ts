@@ -7,6 +7,7 @@ import type { LlmConnectionConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { HARNESS_BY_ID } from "../harnesses";
+import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { resolveModel } from "./model-aliases";
 import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
@@ -120,11 +121,15 @@ function resolveCredential(
     : { names: [specific], required: false };
 }
 
-function effectiveTimeout(engine: { timeoutMs?: number | null }, layers: readonly EngineUseConfig[]): number | null {
+function effectiveTimeout(
+  engine: { timeoutMs?: number | null },
+  layers: readonly EngineUseConfig[],
+  fallback: number,
+): number | null {
   for (let index = layers.length - 1; index >= 0; index--) {
     if (hasOwn(layers[index] ?? {}, "timeoutMs")) return layers[index]?.timeoutMs ?? null;
   }
-  return engine.timeoutMs ?? null;
+  return hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : fallback;
 }
 
 /** Resolve one selected LLM engine and overlays without materializing credentials. */
@@ -175,7 +180,7 @@ export function resolveLlmEngineUse(
     engine: name,
     connection: connection as Omit<LlmConnectionConfig, "apiKey" | "timeoutMs">,
     credential: resolveCredential(name, engine, config),
-    timeoutMs: effectiveTimeout(engine, layers),
+    timeoutMs: effectiveTimeout(engine, layers, DEFAULT_LLM_TIMEOUT_MS),
   };
 }
 
@@ -198,7 +203,7 @@ export function materializeLlmConnection(resolved: ResolvedLlmUse): LlmConnectio
   return {
     ...resolved.connection,
     ...(apiKey ? { apiKey } : {}),
-    ...(resolved.timeoutMs !== null ? { timeoutMs: resolved.timeoutMs } : {}),
+    timeoutMs: resolved.timeoutMs,
   } as LlmConnectionConfig;
 }
 
@@ -225,12 +230,22 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     ...(sdk ? { sdkMode: true } : {}),
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model
-      ? { model: resolveModel(engine.model, engine.platform, engine.modelAliases, config.modelAliases) }
+      ? {
+          model: resolveModel(engine.model, engine.platform, engine.modelAliases, config.modelAliases),
+          modelIsExact: true,
+        }
       : {}),
     ...(engine.modelAliases ? { modelAliases: engine.modelAliases } : {}),
     ...(config.modelAliases ? { globalModelAliases: config.modelAliases } : {}),
   };
-  if (!sdk) return { kind: "agent", engine: name, profile, timeoutMs: engine.timeoutMs };
+  if (!sdk) {
+    return {
+      kind: "agent",
+      engine: name,
+      profile,
+      timeoutMs: hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : DEFAULT_AGENT_TIMEOUT_MS,
+    };
+  }
   const fallback = resolveLlmEngineUse(config, [{ engine: engine.llmEngine ?? config.defaults?.llmEngine }]);
   if (!fallback) throw new ConfigError(`SDK engine "${name}" has no fallback LLM engine.`, "LLM_NOT_CONFIGURED");
   return {
@@ -238,7 +253,7 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     engine: name,
     profile,
     fallbackConnection: materializeLlmConnection(fallback),
-    timeoutMs: engine.timeoutMs,
+    timeoutMs: hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : fallback.timeoutMs,
   };
 }
 

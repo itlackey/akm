@@ -4,11 +4,13 @@
 
 import { describe, expect, test } from "bun:test";
 import { deepMergeConfig } from "../src/core/config/deep-merge";
+import { resolveDispatchModel } from "../src/integrations/agent/builder-shared";
 import {
   materializeLlmConnection,
   resolveEngine,
   resolveLlmEngineUse,
 } from "../src/integrations/agent/engine-resolution";
+import { buildSdkConfig } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 
 const config = {
   configVersion: "0.9.0",
@@ -90,5 +92,57 @@ describe("engine resolution", () => {
       expect(resolved.profile.platform).toBe("opencode-sdk");
       expect(resolved.fallbackConnection?.endpoint).toBe("https://example.test/v1/chat/completions");
     }
+  });
+
+  test("applies exact timeout precedence and preserves explicit null in direct HTTP materialization", () => {
+    const defaults = resolveLlmEngineUse(config, [{ engine: "fast" }]);
+    expect(defaults.timeoutMs).toBe(600_000);
+    expect(materializeLlmConnection(defaults).timeoutMs).toBe(600_000);
+
+    const disabled = resolveLlmEngineUse(config, [{ engine: "fast", timeoutMs: null }]);
+    expect(disabled.timeoutMs).toBeNull();
+    expect(Object.hasOwn(materializeLlmConnection(disabled), "timeoutMs")).toBe(true);
+    expect(materializeLlmConnection(disabled).timeoutMs).toBeNull();
+
+    const overridden = resolveLlmEngineUse(
+      { ...config, engines: { ...config.engines, fast: { ...config.engines.fast, timeoutMs: 90_000 } } },
+      [{ engine: "fast" }, { timeoutMs: 12_000 }],
+    );
+    expect(overridden.timeoutMs).toBe(12_000);
+  });
+
+  test("uses 60s for CLI agents and inherits the fallback LLM timeout for SDK agents", () => {
+    const direct = resolveEngine("reviewer", config);
+    expect(direct.timeoutMs).toBe(60_000);
+
+    const inherited = resolveEngine("sdk", {
+      ...config,
+      engines: { ...config.engines, fast: { ...config.engines.fast, timeoutMs: 345_000 } },
+    });
+    expect(inherited.timeoutMs).toBe(345_000);
+
+    const explicitNull = resolveEngine("sdk", {
+      ...config,
+      engines: { ...config.engines, sdk: { ...config.engines.sdk, timeoutMs: null } },
+    });
+    expect(explicitNull.timeoutMs).toBeNull();
+  });
+
+  test("does not resolve a lowered agent model through aliases a second time", () => {
+    const lowered = resolveEngine("sdk", {
+      ...config,
+      engines: { ...config.engines, sdk: { ...config.engines.sdk, model: "premium" } },
+      modelAliases: {
+        premium: { "opencode-sdk": "provider/exact" },
+        "provider/exact": { "opencode-sdk": "provider/wrong" },
+      },
+    });
+    if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
+    expect(lowered.profile.model).toBe("provider/exact");
+    expect(lowered.profile.modelIsExact).toBe(true);
+    expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection).model).toBe("provider/exact");
+    expect(resolveDispatchModel({ model: "provider/exact", modelIsExact: true }, lowered.profile, "opencode-sdk")).toBe(
+      "provider/exact",
+    );
   });
 });

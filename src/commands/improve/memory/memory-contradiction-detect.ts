@@ -23,7 +23,7 @@
  *
  * # LLM Feature Gate
  *
- * The pass is gated behind `profiles.improve.default.processes.consolidate.contradictionDetection.enabled`.
+ * The pass is gated by the selected strategy's consolidate contradiction setting.
  * When the gate is disabled or no LLM is configured,
  * the pass is a no-op and `analyzeMemoryCleanup` proceeds with only manually
  * annotated edges.
@@ -221,6 +221,7 @@ export async function detectAndWriteContradictions(
   config: AkmConfig,
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string> = chatCompletion,
   strategy?: ImproveProfileConfig,
+  resolvedLlmConfig?: LlmConnectionConfig,
 ): Promise<ContradictionDetectionResult> {
   const result: ContradictionDetectionResult = {
     familiesExamined: 0,
@@ -230,7 +231,9 @@ export async function detectAndWriteContradictions(
   };
 
   const contradictionLlm =
-    resolveImproveProcessRunner(strategy, "consolidate", config)?.connection ?? getDefaultLlmConfig(config);
+    resolvedLlmConfig ??
+    resolveImproveProcessRunner(strategy, "consolidate", config)?.connection ??
+    getDefaultLlmConfig(config);
   if (!contradictionLlm) return result;
 
   // Collect derived memories grouped by parent.

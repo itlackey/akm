@@ -36,6 +36,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface LlmUsageRecord {
   /** Ambient pipeline stage, e.g. `"memory-inference"`. `undefined` outside any stage scope. */
   stage?: string;
+  /** Named engine selected before dispatch. */
+  engine?: string;
+  /** Owning process, e.g. `reflect` or `graphExtraction`. */
+  process?: string;
   /** Model id echoed by the provider response, falling back to the request's configured model. */
   model?: string;
   /** Wall-clock duration of the HTTP request/response cycle, in milliseconds. */
@@ -52,7 +56,13 @@ export interface LlmUsageRecord {
 /** Receives one {@link LlmUsageRecord} per LLM call. Must not throw to callers (errors are swallowed). */
 export type LlmUsageSink = (record: LlmUsageRecord) => void;
 
-const stageStorage = new AsyncLocalStorage<string>();
+export interface LlmUsageAttribution {
+  stage?: string;
+  engine?: string;
+  process?: string;
+}
+
+const attributionStorage = new AsyncLocalStorage<LlmUsageAttribution>();
 
 let usageSink: LlmUsageSink | undefined;
 
@@ -62,13 +72,13 @@ let usageSink: LlmUsageSink | undefined;
  * helpers and nested `withLlmStage` calls — the innermost wins) is attributed
  * to `stage`. Returns whatever `fn` returns; never alters control flow.
  */
-export function withLlmStage<T>(stage: string, fn: () => T): T {
-  return stageStorage.run(stage, fn);
+export function withLlmStage<T>(stage: string, fn: () => T, attribution: Omit<LlmUsageAttribution, "stage"> = {}): T {
+  return attributionStorage.run({ ...attributionStorage.getStore(), ...attribution, stage }, fn);
 }
 
 /** The ambient LLM stage for the current async context, or `undefined` outside any {@link withLlmStage} scope. */
 export function currentLlmStage(): string | undefined {
-  return stageStorage.getStore();
+  return attributionStorage.getStore()?.stage;
 }
 
 /**
@@ -103,7 +113,13 @@ export function emitLlmUsage(record: LlmUsageRecord): void {
   const sink = usageSink;
   if (!sink) return;
   try {
-    sink({ ...record, stage: record.stage ?? currentLlmStage() });
+    const ambient = attributionStorage.getStore();
+    sink({
+      ...record,
+      stage: record.stage ?? ambient?.stage,
+      engine: record.engine ?? ambient?.engine,
+      process: record.process ?? ambient?.process,
+    });
   } catch {
     // Telemetry must never break a real run.
   }
@@ -119,6 +135,28 @@ export interface RawUsage {
 
 function asFiniteNonNegative(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Decode durable event metadata with the same validation used by health aggregation. */
+export function decodeLlmUsageRecord(value: unknown): LlmUsageRecord | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const durationMs = asFiniteNonNegative(raw.durationMs);
+  if (durationMs === undefined) return undefined;
+  const record: LlmUsageRecord = { durationMs };
+  for (const key of ["stage", "engine", "process", "model", "finishReason"] as const) {
+    const decoded = asNonEmptyString(raw[key]);
+    if (decoded !== undefined) record[key] = decoded;
+  }
+  for (const key of ["promptTokens", "completionTokens", "totalTokens", "reasoningTokens"] as const) {
+    const decoded = asFiniteNonNegative(raw[key]);
+    if (decoded !== undefined) record[key] = decoded;
+  }
+  return record;
 }
 
 /**

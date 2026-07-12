@@ -124,6 +124,8 @@ export interface AkmRecombineOptions {
   config: AkmConfig;
   /** Active improve profile, so the LLM runner selection honors `--profile`. */
   improveProfile?: ImproveProfileConfig;
+  /** Pre-resolved connection supplied by the improve invocation plan. */
+  llmConfig?: import("../../core/config/config").LlmConnectionConfig;
   /** PROV-DM run token stamped on every emitted proposal. */
   sourceRun?: string;
   /** Caller budget signal; an aborted signal short-circuits before any LLM call. */
@@ -661,6 +663,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
       tag: "[recombine]",
       signal: opts.signal,
       activeProfile: opts.improveProfile,
+      llmConfig: opts.llmConfig,
     });
   if (!llmFn) {
     warnings.push("recombine: no LLM configured — skipping");

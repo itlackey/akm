@@ -17,8 +17,11 @@ import thorough from "../../assets/improve-strategies/thorough.json" with { type
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
-import { resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
-import { resolveImproveProcessLlmUse } from "../../integrations/agent/runner";
+import {
+  type RunnerSpec,
+  resolveImproveProcessRunner,
+  resolveTriageJudgmentRunner,
+} from "../../integrations/agent/runner";
 import { resolveProcessEnabled } from "./improve-profiles";
 
 /** 0.9 public name for the improve preset configuration. */
@@ -78,16 +81,34 @@ const LLM_PROCESS_NAMES = [
   "procedural",
 ] as const;
 
-/** Validate explicit strategy/process engines before improve performs any work. */
-export function preflightImproveStrategyEngines(strategy: SelectedStrategy, config: AkmConfig): void {
+export type ImproveLlmProcessName = (typeof LLM_PROCESS_NAMES)[number];
+export type ImproveLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
+
+/** Immutable engine selections for one improve invocation. */
+export interface ResolvedImprovePlan {
+  strategy: SelectedStrategy;
+  processes: Partial<Record<ImproveLlmProcessName, ImproveLlmRunner>>;
+  triageJudgment: RunnerSpec | null;
+}
+
+/** Resolve and materialize every enabled process before improve emits signals or performs I/O. */
+export function resolveImprovePlan(name: string | undefined, config: AkmConfig): ResolvedImprovePlan {
+  const strategy = resolveImproveStrategy(name, config);
+  return materializeImprovePlan(strategy, config);
+}
+
+function materializeImprovePlan(strategy: SelectedStrategy, config: AkmConfig): ResolvedImprovePlan {
+  const processes: Partial<Record<ImproveLlmProcessName, ImproveLlmRunner>> = {};
   for (const processName of LLM_PROCESS_NAMES) {
-    const process = strategy.config.processes?.[processName];
-    if (!resolveProcessEnabled(processName, strategy.config) || (!strategy.config.engine && !process?.engine)) continue;
-    resolveImproveProcessLlmUse(config, strategy.config, processName);
+    if (!resolveProcessEnabled(processName, strategy.config)) continue;
+    const runner = resolveImproveProcessRunner(strategy.config, processName, config);
+    if (runner) processes[processName] = runner;
   }
 
   const triage = strategy.config.processes?.triage;
-  if (triage?.enabled !== false && triage?.judgment?.engine) {
-    resolveLlmEngineUse(config, [strategy.config, triage.judgment]);
-  }
+  const triageJudgment =
+    resolveProcessEnabled("triage", strategy.config) && triage?.judgment
+      ? resolveTriageJudgmentRunner(triage.judgment, config)
+      : null;
+  return { strategy, processes, triageJudgment };
 }

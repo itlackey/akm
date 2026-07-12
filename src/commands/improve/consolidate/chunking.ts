@@ -39,9 +39,9 @@ const PROMPT_OVERHEAD_TOKENS = 2_000;
  *     chunk content.
  *   - When the HTTP path is used (an LLM profile is selected), only the akm
  *     system prompt and user prompt are sent, so the budget can be set to the
- *     model's actual context length via profiles.llm[defaults.llm].contextLength.
+ *     model's actual context length via the selected LLM engine's contextLength.
  *
- * Set profiles.llm[defaults.llm].contextLength in your config file to the
+ * Set the selected LLM engine's contextLength in your config file to the
  * model's actual context window to allow larger chunks on the HTTP path.
  */
 export const DEFAULT_CONTEXT_LENGTH_TOKENS = 4_096;
