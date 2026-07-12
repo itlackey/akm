@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { AkmConfigSchema } from "../../src/core/config/config-schema";
 import { parseWorkflowProgram } from "../../src/workflows/program/parser";
 import {
@@ -12,6 +14,7 @@ import {
 
 describe("current engine and strategy configuration contract", () => {
   const docs = readDoc(CONFIG_DOC_PATH);
+  const repoRoot = path.resolve(import.meta.dir, "..", "..");
 
   test("accepts named LLM/agent engines and improve strategies", () => {
     expect(() =>
@@ -57,11 +60,33 @@ describe("current engine and strategy configuration contract", () => {
     expect(violations).toEqual([]);
   });
 
+  test("active documentation scan covers public entry points and excludes historical and design trees", () => {
+    const scanned = activeMarkdownDocs().map((docPath) => path.relative(repoRoot, docPath));
+    const helpDocs = fs
+      .readdirSync(path.join(repoRoot, "src", "assets", "help"))
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => path.join("src", "assets", "help", name));
+
+    expect(scanned).toEqual(
+      expect.arrayContaining(["README.md", path.join(".github", "README.npm.md"), "STABILITY.md"]),
+    );
+    expect(scanned.filter((docPath) => docPath.startsWith(path.join("src", "assets", "help")))).toEqual(
+      helpDocs.sort(),
+    );
+    expect(
+      scanned.filter((docPath) =>
+        /(^|[\\/])docs[\\/](?:archive|design|historical|incidents|migration|posts|reviews)(?:[\\/]|$)/.test(docPath),
+      ),
+    ).toEqual([]);
+  });
+
   test("retired execution example scan covers profile, runner, and defaults.agent forms", () => {
     const example = [
       "```yaml",
       "profile: reviewer",
       "runner: agent",
+      "akm improve --profile=quick",
+      "akm workflow run --runner sdk",
       "defaults:",
       "  agent: opencode",
       "```",

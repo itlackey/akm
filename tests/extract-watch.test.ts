@@ -22,6 +22,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
+import type { AkmExtractOptions, ResolvedExtractPlan } from "../src/commands/improve/extract";
+import { createExtractWatchTrigger } from "../src/commands/improve/extract-cli";
 import {
   akmExtractWatch,
   isSessionFile,
@@ -29,6 +31,7 @@ import {
   type WatchEvent,
   type WatchEventSource,
 } from "../src/commands/improve/extract-watch";
+import type { AkmConfig } from "../src/core/config/config";
 import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
 import { OpenCodeProvider } from "../src/integrations/harnesses/opencode/session-log";
 import { getWatchTargets } from "../src/integrations/session-logs";
@@ -376,6 +379,44 @@ describe("watch-mode — AC4 default unchanged", () => {
     expect(source.hasListener).toBe(true);
     handle.stop();
     expect(source.hasListener).toBe(false);
+  });
+
+  test("the production watch callback keeps its startup config and resolved plan after live config changes", async () => {
+    const startupConfig: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
+    const changedConfig: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const startupPlan: ResolvedExtractPlan = {
+      strategy: "startup",
+      enabled: true,
+      process: Object.freeze({ enabled: true }),
+      llmConfig: Object.freeze({ endpoint: "https://startup.test/v1", model: "startup-model" }),
+      timeoutMs: 1000,
+    };
+    const changedPlan: ResolvedExtractPlan = {
+      strategy: "changed",
+      enabled: true,
+      process: Object.freeze({ enabled: true }),
+      llmConfig: Object.freeze({ endpoint: "https://changed.test/v1", model: "changed-model" }),
+      timeoutMs: 2000,
+    };
+    const liveOptions = {
+      dryRun: true,
+      force: false,
+      config: startupConfig,
+      resolvedPlan: startupPlan,
+    };
+    let received: AkmExtractOptions | undefined;
+    const trigger = createExtractWatchTrigger(liveOptions, async (options) => {
+      received = options;
+    });
+
+    liveOptions.config = changedConfig;
+    liveOptions.resolvedPlan = changedPlan;
+    await trigger("claude-code");
+
+    expect(received?.type).toBe("claude-code");
+    expect(received?.config).toBe(startupConfig);
+    expect(received?.resolvedPlan).toBe(startupPlan);
+    expect(received?.resolvedPlan?.llmConfig?.model).toBe("startup-model");
   });
 });
 

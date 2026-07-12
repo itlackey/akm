@@ -3,7 +3,17 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const docsRoot = path.join(repoRoot, "docs");
-const NON_USER_FACING_DOC_DIRS = new Set(["archive", "design", "incidents", "migration", "posts", "reviews"]);
+const NON_USER_FACING_DOC_DIRS = new Set([
+  "archive",
+  "design",
+  "historical",
+  "incidents",
+  "migration",
+  "posts",
+  "reviews",
+]);
+const ACTIVE_ROOT_DOCS = ["README.md", ".github/README.npm.md", "STABILITY.md"];
+const HELP_DOCS_ROOT = path.join(repoRoot, "src", "assets", "help");
 
 export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "technical", "architecture.md");
 export const CLI_DOC_PATH = path.join(repoRoot, "docs", "cli.md");
@@ -16,7 +26,7 @@ export function readDoc(p: string): string {
 }
 
 export function activeMarkdownDocs(): string[] {
-  const docs: string[] = [];
+  const docs = ACTIVE_ROOT_DOCS.map((relativePath) => path.join(repoRoot, relativePath));
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.isDirectory() && NON_USER_FACING_DOC_DIRS.has(entry.name)) continue;
@@ -26,6 +36,9 @@ export function activeMarkdownDocs(): string[] {
     }
   };
   walk(docsRoot);
+  for (const entry of fs.readdirSync(HELP_DOCS_ROOT, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".md")) docs.push(path.join(HELP_DOCS_ROOT, entry.name));
+  }
   return docs.sort();
 }
 
@@ -34,6 +47,7 @@ export function retiredExecutionExamples(doc: string): string[] {
   for (const match of doc.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)) {
     const code = match[1];
     if (/^\s*["']?(?:profiles|profile|runner)["']?\s*:/m.test(code)) findings.push("profile/runner");
+    if (/(?:^|\s)--(?:profile|runner)(?=$|[=\s])/m.test(code)) findings.push("profile/runner");
     if (/defaults\.agent/.test(code)) findings.push("defaults.agent");
     if (/"defaults"\s*:\s*\{[^{}]*"agent"\s*:/s.test(code)) findings.push("defaults.agent");
     if (/^\s*defaults:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+agent\s*:/m.test(code)) findings.push("defaults.agent");
