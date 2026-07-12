@@ -82,10 +82,14 @@ describe("resolveImprovePlan", () => {
     expect(plan.triageJudgment?.timeoutMs).toBeNull();
   });
 
-  test("keeps offline optional fallbacks absent but rejects a selected incompatible engine", () => {
-    expect(
-      resolveImprovePlan("quick", { configVersion: "0.9.0", semanticSearchMode: "auto" }).processes.reflect,
-    ).toBeUndefined();
+  test("rejects model-only and incompatible fallbacks before dispatch", () => {
+    expect(() =>
+      resolveImprovePlan("quick", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
+      }),
+    ).toThrow('Improve process "reflect" configures model/llm overrides but has no fallback LLM engine.');
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
@@ -94,6 +98,21 @@ describe("resolveImprovePlan", () => {
         defaults: { llmEngine: "wrong" },
       }),
     ).toThrow('Engine "wrong" is not an LLM engine.');
+  });
+
+  test("does not require a validation engine when repair is disabled", () => {
+    const plan = resolveImprovePlan(
+      "quick",
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { default: llm },
+        defaults: { llmEngine: "default" },
+      },
+      { repairValidationFailures: false },
+    );
+    expect(plan.processes.reflect?.engine).toBe("default");
+    expect(plan.processes.validation).toBeUndefined();
   });
 
   test("rejects LLM-only overrides on an agent triage judgment", () => {

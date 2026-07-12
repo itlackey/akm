@@ -437,26 +437,21 @@ describe("runSetupWizard", () => {
     expect(promptState.logs.some((entry) => entry.includes("asset preparation was skipped"))).toBe(true);
   });
 
-  test("surfaces config write failure after bootstrap init", async () => {
+  test("surfaces config preflight failure before bootstrap init", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
-    overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
-      const dir = options?.dir ?? DEFAULT_STASH_DIR;
-      setupState.initCalls.push({ dir });
-      fs.mkdirSync(DEFAULT_CONFIG_PATH, { recursive: true });
-      return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultStashUpdated: true };
-    });
+    fs.mkdirSync(DEFAULT_CONFIG_PATH, { recursive: true });
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
     promptState.confirms.push(false, false, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
-    await expect(runSetupWizard()).rejects.toThrow(/EISDIR|directory/);
-    expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
+    await expect(runSetupWizard()).rejects.toThrow(/EISDIR|directory|Could not read config/);
+    expect(setupState.initCalls).toEqual([]);
     expect(setupState.indexCalls).toHaveLength(0);
   });
 
-  test("surfaces init failure before saving config", async () => {
+  test("commits verified config before surfacing a later init failure", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
     overrideSeam(_setAkmInitForTests, async () => {
@@ -468,7 +463,8 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
-    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
+    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(true);
+    expect(readSavedConfig().stashDir).toBe(DEFAULT_STASH_DIR);
     expect(setupState.indexCalls).toHaveLength(0);
   });
 });

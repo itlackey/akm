@@ -693,12 +693,13 @@ async function runValidationAndRepairPass(args: {
   budgetMs: number;
   primaryStashDir?: string;
   resolvedPlan: ResolvedImprovePlan;
+  repairValidationFailures: boolean;
 }): Promise<{
   validationFailures: Array<{ ref: string; reason: string }>;
   validationFailureRefs: Set<string>;
   schemaRepairs: ImprovePreparationResult["schemaRepairs"];
 }> {
-  const { postCleanupRefs, options, startMs, budgetMs, primaryStashDir, resolvedPlan } = args;
+  const { postCleanupRefs, options, startMs, budgetMs, primaryStashDir, resolvedPlan, repairValidationFailures } = args;
   const validationFailures: Array<{ ref: string; reason: string }> = [];
   for (const candidate of postCleanupRefs) {
     try {
@@ -727,7 +728,9 @@ async function runValidationAndRepairPass(args: {
     }
   }
   if (validationFailures.length > 0) {
-    info(`[improve] ${validationFailures.length} assets have validation issues (will attempt schema repair):`);
+    info(
+      `[improve] ${validationFailures.length} assets have validation issues${repairValidationFailures ? " (will attempt schema repair)" : ""}:`,
+    );
     for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
   }
 
@@ -919,19 +922,16 @@ export async function runImprovePreparationStage(args: {
     }
   }
 
-  const { validationFailures, validationFailureRefs, schemaRepairs } = resolveProcessEnabled(
-    "validation",
-    improveProfile,
-  )
-    ? await runValidationAndRepairPass({
-        postCleanupRefs,
-        options,
-        startMs,
-        budgetMs,
-        primaryStashDir,
-        resolvedPlan,
-      })
-    : { validationFailures: [], validationFailureRefs: new Set<string>(), schemaRepairs: [] };
+  const { validationFailures, validationFailureRefs, schemaRepairs } = await runValidationAndRepairPass({
+    postCleanupRefs,
+    options,
+    startMs,
+    budgetMs,
+    primaryStashDir,
+    resolvedPlan,
+    repairValidationFailures:
+      resolveProcessEnabled("validation", improveProfile) && options.repairValidationFailures !== false,
+  });
 
   // Phase 0.5 — structural hygiene pass
   let lintSummary: { fixed: number; flagged: number } | undefined;

@@ -3,9 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { spawnSync } from "node:child_process";
-import { loadConfig } from "../../core/config/config";
+import { createRequire } from "node:module";
+import { type AkmConfig, loadConfig } from "../../core/config/config";
 import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
 import { resolveEngine } from "../../integrations/agent/engine-resolution";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import {
   type HealthCheckResult,
   type ImproveHealthMetrics,
@@ -72,9 +74,16 @@ export interface HealthCheck {
  * only check that performs IO at dispatch time, preserving the original inline
  * `runAgentProbe()` call site behaviour exactly.
  */
-export function runAgentProbe(): HealthCheckResult {
-  const config = loadConfig();
-  const engineName = config.defaults?.engine;
+export interface AgentProbeDependencies {
+  loadConfig?: () => AkmConfig;
+  resolveEngine?: (name: string, config: AkmConfig) => RunnerSpec;
+  spawnSync?: typeof spawnSync;
+  resolvePackage?: (name: string) => string;
+}
+
+export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckResult {
+  const config = deps.loadConfig?.() ?? loadConfig();
+  const engineName = config.defaults?.engine ?? config.defaults?.llmEngine;
   if (!engineName) {
     return {
       name: "default-agent-engine",
@@ -84,37 +93,80 @@ export function runAgentProbe(): HealthCheckResult {
       message: "No default engine is configured.",
     };
   }
+  const configuredEngine = config.engines?.[engineName];
+  if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
+    let packageAvailable = false;
+    try {
+      const resolvePackage = deps.resolvePackage ?? ((name: string) => createRequire(import.meta.url).resolve(name));
+      resolvePackage("@opencode-ai/sdk");
+      packageAvailable = true;
+    } catch {
+      packageAvailable = false;
+    }
+    const binary = configuredEngine.bin ?? "opencode";
+    const version = (deps.spawnSync ?? spawnSync)(binary, ["--version"], { encoding: "utf8", timeout: 5_000 });
+    const binaryAvailable = (version.status ?? 1) === 0;
+    const fallbackEngine = configuredEngine.llmEngine ?? config.defaults?.llmEngine;
+    let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
+    if (fallbackEngine) {
+      try {
+        const resolved = (deps.resolveEngine ?? resolveEngine)(fallbackEngine, config);
+        if (resolved.kind === "llm") fallback = resolved;
+      } catch {
+        fallback = undefined;
+      }
+    }
+    const missing = [
+      !packageAvailable ? "@opencode-ai/sdk package" : undefined,
+      !binaryAvailable ? `${binary} binary` : undefined,
+      !configuredEngine.model ? "explicit SDK model" : undefined,
+      !fallback ? "fallback LLM connection" : undefined,
+    ].filter((value): value is string => value !== undefined);
+    return {
+      name: "default-agent-engine",
+      kind: "deterministic",
+      status: missing.length === 0 ? "pass" : "warn",
+      confidence: "high",
+      message:
+        missing.length === 0
+          ? `SDK engine "${engineName}" is available.`
+          : `SDK engine "${engineName}" is incomplete: missing ${missing.join(", ")}.`,
+      evidence: {
+        engine: engineName,
+        platform: configuredEngine.platform,
+        runtimeKind: "sdk",
+        binary,
+        binaryAvailable,
+        package: "@opencode-ai/sdk",
+        packageAvailable,
+        model: configuredEngine.model ?? null,
+        fallbackEngine: fallbackEngine ?? null,
+        fallbackEndpoint: fallback?.connection.endpoint ?? null,
+        fallbackModel: fallback?.connection.model ?? null,
+      },
+    };
+  }
   try {
-    const runner = resolveEngine(engineName, config);
+    const runner = (deps.resolveEngine ?? resolveEngine)(engineName, config);
     if (runner.kind === "llm") {
       return {
         name: "default-agent-engine",
         kind: "deterministic",
-        status: "unknown",
+        status: "pass",
         confidence: "high",
-        message: `Default engine "${engineName}" is an LLM; no default agent engine is selected.`,
-        evidence: { engine: engineName, platform: null, runtimeKind: "llm", model: runner.connection.model },
-      };
-    }
-    const profile = runner.profile;
-    if (runner.kind === "sdk") {
-      return {
-        name: "default-agent-engine",
-        kind: "deterministic",
-        status: profile.model ? "pass" : "warn",
-        confidence: "high",
-        message: profile.model
-          ? `SDK engine "${engineName}" is configured.`
-          : `SDK engine "${engineName}" has no explicit model.`,
+        message: `LLM engine "${engineName}" is configured.`,
         evidence: {
           engine: engineName,
-          platform: profile.platform ?? null,
-          runtimeKind: "sdk",
-          model: profile.model ?? null,
+          platform: null,
+          runtimeKind: "llm",
+          model: runner.connection.model,
+          endpoint: runner.connection.endpoint,
         },
       };
     }
-    const version = spawnSync(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
+    const profile = runner.profile;
+    if (runner.kind === "sdk") throw new Error(`SDK engine "${engineName}" has no matching SDK config.`);
+    const version = (deps.spawnSync ?? spawnSync)(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
     if ((version.status ?? 1) !== 0) {
       return {
         name: "default-agent-engine",

@@ -403,10 +403,8 @@ const proposalDrainCommand = defineJsonCommand({
 
     // Phase 2: read the triage block from the named improve strategy. CLI flags
     // always override config; config supplies defaults for any flag omitted.
-    const triageConfig =
-      args.strategy !== undefined
-        ? resolveImproveStrategy(args.strategy as string, cfg).config.processes?.triage
-        : undefined;
+    const selectedStrategy = resolveImproveStrategy(args.strategy as string | undefined, cfg);
+    const triageConfig = selectedStrategy.config.processes?.triage;
 
     const policy = resolveDrainPolicy((args.policy as string | undefined) ?? triageConfig?.policy);
     const dryRun = args["dry-run"] === true;
@@ -493,11 +491,14 @@ const proposalDrainCommand = defineJsonCommand({
       policy: policy.name,
       applyMode,
       dryRun,
-      strategy: (args.strategy as string | undefined) ?? null,
+      strategy: selectedStrategy.name,
+      judgmentEngine: judgment?.engine ?? null,
+      judgmentKind: judgment?.kind ?? null,
       promoted: result.promoted,
       rejected: result.rejected,
       deferred: result.deferred,
       skippedByCap: result.skippedByCap,
+      staged: result.staged,
     });
   },
 });

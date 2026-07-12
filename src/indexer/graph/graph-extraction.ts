@@ -172,6 +172,10 @@ export interface GraphExtractionResult {
 
 export interface GraphExtractionPassOptions {
   candidatePaths?: ReadonlySet<string>;
+  /** Invocation-owned asset types. Falls back to index.graph only for standalone index calls. */
+  includeTypes?: string[];
+  /** Invocation-owned batch size. Falls back to index.graph only for standalone index calls. */
+  batchSize?: number;
   /**
    * When set (>= 0) and a DB is available, rank eligible files by
    * `utility_scores` DESC and process only the top-N per run (incremental
@@ -506,7 +510,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
     }
   }
 
-  const includeTypes = getGraphExtractionIncludeTypes(config);
+  const includeTypes = options.includeTypes ?? getGraphExtractionIncludeTypes(config);
   let eligible = collectEligibleFiles(primary.path, includeTypes).filter(
     (candidate) => !options.candidatePaths || options.candidatePaths.has(candidate.absPath),
   );
@@ -559,7 +563,7 @@ export async function runGraphExtractionPass(ctx: GraphExtractionPassContext): P
   // DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE (4) when unset, and clamps against
   // `llm.contextLength` if the model's context window is configured.
   const batchSize = resolveBatchSize(
-    getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
+    options.batchSize ?? getIndexPassConfig(config.index, "graph")?.graphExtractionBatchSize,
     llmConfig.contextLength,
   );
   const extractionRunId = crypto.randomUUID();

@@ -209,7 +209,9 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   // strategyFilteredRefs (array of {ref, reason}) — 2026-05-27: pre-filter
   // bucket from `collectEligibleRefs` so the metric reflects work the
   // planner dropped before signal-delta / per-pass dispatch.
-  const strategyFilteredRefs = result.schemaVersion === 1 ? result.profileFilteredRefs : result.strategyFilteredRefs;
+  // Health v3 reports strategy metrics only. Historical v1 profile filtering
+  // remains legacy data and must not be silently relabelled as a strategy metric.
+  const strategyFilteredRefs = result.schemaVersion === 2 ? result.strategyFilteredRefs : undefined;
   if (Array.isArray(strategyFilteredRefs)) metrics.strategyFilteredRefs += strategyFilteredRefs.length;
 
   // actions: split reflect / distill by outcome, count others.
