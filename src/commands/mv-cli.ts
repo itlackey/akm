@@ -10,10 +10,13 @@
  * inbound xrefs in the same pass") is agent-executable EXCEPT for the part
  * only the CLI can do: a rename mints a new `entries` row (entry_key is
  * UNIQUE), which orphans the utility_scores / utility_scores_scoped /
- * embeddings / asset_salience rows keyed by entry_id — the "rename resets
- * learned ranking" cost the conventions warn about. This verb does the whole
- * pass: move the file, rewrite inbound refs, and re-key the index row IN
- * PLACE so the accumulated history survives.
+ * embeddings rows keyed by entry_id, detaches usage_events keyed by the old
+ * entry_ref, and strands the state.db asset_salience / asset_outcome rows
+ * keyed by `asset_ref` TEXT — the "rename resets learned ranking" cost the
+ * conventions warn about. This verb does the whole pass: move the file,
+ * rewrite inbound refs, re-key the index row IN PLACE (including the
+ * usage_events entry_ref history), and re-key the state.db salience/outcome
+ * rows so the accumulated history survives.
  *
  * Scope (v1, Experimental — see STABILITY.md):
  *   - flat-markdown asset types only ({@link MV_SUPPORTED_TYPES});
@@ -48,11 +51,18 @@ import { type AkmAssetType, isWithin, resolveStashDir, toPosix } from "../core/c
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
+import { getStateDbPath } from "../core/state-db";
 import { warnVerbose } from "../core/warn";
 import { closeDatabase, openExistingDatabase, rebuildFts, rekeyEntryInPlace } from "../indexer/db/db";
 import { indexWrittenAssets, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { refToRelPath, resolveRefPathInStash } from "./lint/base-linter";
+import { openDatabase } from "../storage/database";
+import {
+  REF_BOUNDARY_PREFIX_CLASS_SRC,
+  REF_SLUG_CHAR_CLASS_SRC,
+  refToRelPath,
+  resolveRefPathInStash,
+} from "./lint/base-linter";
 
 // ── Scope ─────────────────────────────────────────────────────────────────────
 
@@ -65,54 +75,146 @@ import { refToRelPath, resolveRefPathInStash } from "./lint/base-linter";
  *   - `skill` — the canonical layout is a multi-file `skills/<name>/SKILL.md`
  *     directory (a directory rename, out of v1 scope);
  *   - `script` — unresolvable by the slug resolver (contract-pinned);
+ *   - `workflow` — workflows may live as `.yaml`/`.yml` programs
+ *     (`WORKFLOW_EXTENSIONS`), and `workflowSpec.toAssetPath` resolves them
+ *     by a cwd-relative existence probe with a `<name>.md` fallback — a mv
+ *     would either rename a YAML program to `.md` (misclassifying it) or
+ *     fail to resolve it from any cwd but the stash root. Out of v1 scope;
+ *     rejected with a dedicated error naming the manual procedure;
  *   - `task` / `env` / `secret` — not markdown assets.
  */
-const MV_SUPPORTED_TYPES: readonly string[] = [
-  "memory",
-  "knowledge",
-  "command",
-  "agent",
-  "workflow",
-  "lesson",
-  "session",
-  "fact",
-];
+const MV_SUPPORTED_TYPES: readonly string[] = ["memory", "knowledge", "command", "agent", "lesson", "session", "fact"];
 
 // ── Ref rewriting ─────────────────────────────────────────────────────────────
 
 /**
- * Boundary grammar shared with lint's `REF_RE` (base-linter.ts): a ref starts
- * at line start or after whitespace / backtick / quote / `(`, and its slug
- * runs until whitespace, `"`, `'`, backtick, `)`, `]`, `>`, or `,`. Complete-
- * ref matching is what keeps a longer ref sharing the old ref as a prefix
- * (e.g. `memory:a/base-note-extra` when moving `memory:a/base-note`)
- * untouched.
+ * Boundary grammar IMPORTED from lint's `REF_RE` fragments (base-linter.ts
+ * `REF_BOUNDARY_PREFIX_CLASS_SRC` / `REF_SLUG_CHAR_CLASS_SRC`) so the two
+ * grammars cannot drift: a ref starts at line start or after whitespace /
+ * backtick / quote / `(` / `[` (the `[` admits flow-style YAML lists like
+ * `xrefs: [memory:foo]` and bracketed body refs), and its slug runs until
+ * the first non-slug character. Complete-ref matching is what keeps a longer
+ * ref sharing the old ref as a prefix (e.g. `memory:a/base-note-extra` when
+ * moving `memory:a/base-note`) untouched.
  */
-const REF_PREFIX_SRC = "(^|[\\s`\"'(])";
-const REF_SUFFIX_SRC = "(?![^\\s\"'`)\\]>,\\n])";
+const REF_PREFIX_SRC = `(^|${REF_BOUNDARY_PREFIX_CLASS_SRC})`;
+const REF_SUFFIX_SRC = `(?!${REF_SLUG_CHAR_CLASS_SRC})`;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
- * Build the rewrite pattern for one old ref. When the source is a base
- * memory, the optional `.derived` tail also rewrites explicit twin refs
- * (`memory:a/note.derived` → `memory:a/new.derived`) — the twin file moves
- * together, so its ref must too. The tail group is empty-capturing otherwise
- * so the replacer's group indices stay stable.
+ * Build the rewrite patterns for one old ref: the canonical spelling plus
+ * the DETERMINISTIC alias spellings the resolver stack accepts for the same
+ * asset — the `.md`-suffixed form (`markdownSpec.toAssetPath` accepts both)
+ * and the `local//`-prefixed form (`makeAssetRef`/`parseAssetRef` round-trip
+ * it). All alias spellings rewrite to the NEW CANONICAL ref. When the source
+ * is a base memory, the optional `.derived` tail also rewrites explicit twin
+ * refs (`memory:a/note.derived` → `memory:a/new.derived`) — the twin file
+ * moves together, so its ref must too. The tail group is empty-capturing
+ * otherwise so the replacer's group indices stay stable.
  */
-function buildRefPattern(fromRef: string, includeDerivedTail: boolean): RegExp {
+function buildRewritePatterns(fromRef: string, includeDerivedTail: boolean): RegExp[] {
   const tail = includeDerivedTail ? "(\\.derived)?" : "()";
-  return new RegExp(`${REF_PREFIX_SRC}${escapeRegExp(fromRef)}${tail}${REF_SUFFIX_SRC}`, "gm");
+  const core = escapeRegExp(fromRef);
+  return [
+    new RegExp(`${REF_PREFIX_SRC}${core}${tail}${REF_SUFFIX_SRC}`, "gm"),
+    new RegExp(`${REF_PREFIX_SRC}${core}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"),
+    new RegExp(`${REF_PREFIX_SRC}local//${core}${tail}(?:\\.md)?${REF_SUFFIX_SRC}`, "gm"),
+  ];
 }
 
-/** Replace every boundary-matched occurrence, returning the count replaced. */
-function rewriteRefs(content: string, pattern: RegExp, toRef: string): { content: string; count: number } {
+/**
+ * Everything {@link rewriteRefs} needs to rewrite one file's content:
+ * the deterministic patterns (pass 1) and the resolver-backed alias scan
+ * (pass 2) that catches remaining spellings — e.g. the knowledge-subdir
+ * basename alias (`knowledge:guide` for `knowledge/guides/guide.md`) — by
+ * resolving every ref-shaped token of the moved type through lint's shared
+ * resolver and rewriting the ones that point at the moved file's old path.
+ */
+interface RewriteContext {
+  patterns: RegExp[];
+  /** Matches `<type>:<slug>` tokens, optionally `local//`-prefixed. */
+  aliasScan: RegExp;
+  type: AkmAssetType;
+  toRef: string;
+  /** Root the moved file lives in (alias tokens are resolved against it). */
+  scanRoot: string;
+  oldPathResolved: string;
+  twinOldPathResolved: string | null;
+}
+
+function buildRewriteContext(opts: {
+  type: AkmAssetType;
+  fromRef: string;
+  toRef: string;
+  isBaseMemory: boolean;
+  stashDir: string;
+  oldPath: string;
+  twinOldPath: string | null;
+}): RewriteContext {
+  return {
+    patterns: buildRewritePatterns(opts.fromRef, opts.isBaseMemory),
+    aliasScan: new RegExp(
+      `(^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((?:local//)?${escapeRegExp(opts.type)}:${REF_SLUG_CHAR_CLASS_SRC}+)`,
+      "gm",
+    ),
+    type: opts.type,
+    toRef: opts.toRef,
+    scanRoot: opts.stashDir,
+    oldPathResolved: path.resolve(opts.oldPath),
+    twinOldPathResolved: opts.twinOldPath ? path.resolve(opts.twinOldPath) : null,
+  };
+}
+
+/**
+ * Replace every occurrence of the moved ref, returning the count replaced.
+ *
+ * Two passes:
+ *   1. the deterministic patterns (canonical / `.md`-suffixed / `local//`);
+ *   2. the resolver scan — any remaining ref-shaped token of the moved type
+ *      that resolves (via `resolveRefPathInStash`, lint's shared resolver)
+ *      to the moved file's old path is an alias spelling of the same asset
+ *      and is rewritten to the new canonical ref too. Because this pass
+ *      rewrites EVERY token that resolves to the old path, nothing
+ *      ref-shaped can still point at the moved file afterwards.
+ *
+ * Runs at PLANNING time, before the rename — the old file must still be on
+ * disk for the resolver probes.
+ */
+function rewriteRefs(content: string, ctx: RewriteContext): { content: string; count: number } {
   let count = 0;
-  const next = content.replace(pattern, (_match, prefix: string, derivedTail: string | undefined) => {
-    count += 1;
-    return `${prefix}${toRef}${derivedTail ?? ""}`;
+  let next = content;
+  for (const pattern of ctx.patterns) {
+    next = next.replace(pattern, (_match, prefix: string, derivedTail: string | undefined) => {
+      count += 1;
+      return `${prefix}${ctx.toRef}${derivedTail ?? ""}`;
+    });
+  }
+  next = next.replace(ctx.aliasScan, (match, prefix: string, token: string) => {
+    const bare = token.startsWith("local//") ? token.slice("local//".length) : token;
+    // The new canonical ref (just written by pass 1) may itself resolve to
+    // the old path through a fallback (e.g. moving knowledge:guides/x to the
+    // knowledge root while guides/x.md still exists at planning time) — never
+    // rewrite it to itself.
+    if (bare === ctx.toRef || bare === `${ctx.toRef}.derived`) return match;
+    const name = bare.slice(ctx.type.length + 1);
+    if (!name) return match;
+    const relPath = refToRelPath(ctx.type, name);
+    if (!relPath) return match;
+    const resolved = resolveRefPathInStash(relPath, ctx.type, name, ctx.scanRoot);
+    if (!resolved) return match;
+    const resolvedAbs = path.resolve(resolved);
+    if (resolvedAbs === ctx.oldPathResolved) {
+      count += 1;
+      return `${prefix}${ctx.toRef}`;
+    }
+    if (ctx.twinOldPathResolved && resolvedAbs === ctx.twinOldPathResolved) {
+      count += 1;
+      return `${prefix}${ctx.toRef}.derived`;
+    }
+    return match;
   });
   return { content: next, count };
 }
@@ -120,11 +222,17 @@ function rewriteRefs(content: string, pattern: RegExp, toRef: string): { content
 // ── File walking ──────────────────────────────────────────────────────────────
 
 /**
- * Every `.md` file under `root`, recursively. Skips dot-directories (index
- * state, `.cache/` mirrors) and `registry/` caches — the same read-only
- * carve-outs `akm lint --fix` honours (lint/index.ts).
+ * Every ref-carrying file under `root`, recursively: all `.md` files, plus
+ * `.yml`/`.yaml` files under the `tasks/` type dir — task YAML legitimately
+ * carries refs (`workflow: workflow:…`, `prompt: agent:/memory:…`, see
+ * src/tasks/parser.ts) and lint's missing-ref body scan covers them, so a
+ * rename must rewrite them like any other citer or the scheduled task
+ * dangles. Skips dot-directories (index state, `.cache/` mirrors) and
+ * `registry/` caches — the same read-only carve-outs `akm lint --fix`
+ * honours (lint/index.ts).
  */
-function collectMarkdownFiles(root: string): string[] {
+function collectCiterFiles(root: string): string[] {
+  const tasksRoot = path.join(root, TYPE_DIRS.task ?? "tasks");
   const results: string[] = [];
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
@@ -139,8 +247,12 @@ function collectMarkdownFiles(root: string): string[] {
       if (entry.isDirectory()) {
         if (entry.name === "registry") continue;
         walk(full);
-      } else if (entry.isFile() && entry.name.endsWith(".md")) {
-        results.push(full);
+      } else if (entry.isFile()) {
+        if (entry.name.endsWith(".md")) {
+          results.push(full);
+        } else if ((entry.name.endsWith(".yml") || entry.name.endsWith(".yaml")) && isWithin(full, tasksRoot)) {
+          results.push(full);
+        }
       }
     }
   };
@@ -230,6 +342,9 @@ function resolveMoveSourcePath(
  *     the canonical spelling derives (e.g. a differently-normalized stash
  *     path at index time): that history is now stranded on a ghost row and
  *     will NOT survive the next index run.
+ *
+ * When `preserved` is false, `warning` carries the reason for the command's
+ * JSON report — a re-key failure must be user-visible, not verbose-only.
  */
 function rekeyIndexForMove(opts: {
   stashDir: string;
@@ -238,13 +353,14 @@ function rekeyIndexForMove(opts: {
   newName: string;
   oldPath: string;
   newPath: string;
+  fromRef: string;
   toRef: string;
   twinOldPath: string | null;
   twinNewPath: string | null;
-}): boolean {
+}): { preserved: boolean; warning: string | null } {
   const dbPath = getDbPath();
   try {
-    if (!fs.existsSync(dbPath)) return true;
+    if (!fs.existsSync(dbPath)) return { preserved: true, warning: null };
     let preserved = true;
     const db = openExistingDatabase(dbPath);
     try {
@@ -261,6 +377,8 @@ function rekeyIndexForMove(opts: {
         newEntryKey: newKey,
         newName: opts.newName,
         newFilePath: opts.newPath,
+        oldRef: opts.fromRef,
+        newRef: opts.toRef,
       });
       if (rekeyed === null && strandedRow(opts.oldPath)) preserved = false;
       let twinRekeyed: number | null = null;
@@ -272,6 +390,8 @@ function rekeyIndexForMove(opts: {
           newEntryKey: `${newKey}.derived`,
           newName: `${opts.newName}.derived`,
           newFilePath: opts.twinNewPath,
+          oldRef: `${opts.fromRef}.derived`,
+          newRef: `${opts.toRef}.derived`,
           newDerivedFrom: opts.toRef,
         });
         if (twinRekeyed === null && opts.twinOldPath && strandedRow(opts.twinOldPath)) preserved = false;
@@ -283,18 +403,78 @@ function rekeyIndexForMove(opts: {
       closeDatabase(db);
     }
     if (!preserved) {
-      warnVerbose(
-        "akm mv: the index holds a row for the moved file under an unexpected key — its utility history was not " +
-          "re-keyed and resets on the next `akm index`.",
-      );
+      const warning =
+        "index re-key skipped: the index holds a row for the moved file under an unexpected key — its utility " +
+        "history was not re-keyed and resets on the next `akm index`.";
+      warnVerbose(`akm mv: ${warning}`);
+      return { preserved: false, warning };
     }
-    return preserved;
+    return { preserved: true, warning: null };
   } catch (error) {
-    warnVerbose(
-      "akm mv: index re-key skipped (the index heals on the next `akm index`; utility history for the moved asset may reset):",
-      error instanceof Error ? error.message : String(error),
-    );
-    return false;
+    const message = error instanceof Error ? error.message : String(error);
+    const warning =
+      `index re-key failed (${message}) — the rename itself succeeded and the index heals on the next ` +
+      "`akm index`, but the asset's utility history was NOT re-keyed and resets on that run.";
+    warnVerbose(`akm mv: ${warning}`);
+    return { preserved: false, warning };
+  }
+}
+
+/**
+ * Re-key the state.db `asset_salience` / `asset_outcome` rows after a rename.
+ *
+ * Both tables are keyed by `asset_ref` TEXT (the bare `makeAssetRef`
+ * `type:name` form — NOT entry_id; see core/state/migrations.ts 009/010), so
+ * the salience boost `loadSalienceRankScores` applies at search time and the
+ * outcome-loop history would otherwise strand on the old ref until the next
+ * improve run re-mints a type-weight stub row — losing a distill-written
+ * content-derived `encoding_salience` for good.
+ *
+ * Collision policy (conservative): a row already sitting at the NEW ref can
+ * only be an orphan of a previously deleted asset — the caller has verified
+ * no file exists at the target — so the LIVE asset's history wins: the
+ * orphan row is deleted and the moved asset's row re-keyed onto the ref.
+ *
+ * FAIL-OPEN like the index re-key: no state.db means the improve loop never
+ * ran (nothing to re-key); the file is never created here, migrations are
+ * never run (a missing table on an old state.db is simply skipped), and any
+ * error reduces to a warning in the report — the rename has already
+ * succeeded. Returns the warning for the JSON report, or null.
+ */
+function rekeyStateDbForMove(fromRef: string, toRef: string, includeTwin: boolean): string | null {
+  const statePath = getStateDbPath();
+  try {
+    if (!fs.existsSync(statePath)) return null;
+    const pairs: Array<[string, string]> = [[fromRef, toRef]];
+    if (includeTwin) pairs.push([`${fromRef}.derived`, `${toRef}.derived`]);
+    const db = openDatabase(statePath);
+    try {
+      db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
+      for (const table of ["asset_salience", "asset_outcome"] as const) {
+        try {
+          db.transaction(() => {
+            for (const [oldRef, newRef] of pairs) {
+              const moved = db.prepare(`SELECT asset_ref FROM ${table} WHERE asset_ref = ?`).get(oldRef);
+              if (!moved) continue;
+              db.prepare(`DELETE FROM ${table} WHERE asset_ref = ?`).run(newRef);
+              db.prepare(`UPDATE ${table} SET asset_ref = ? WHERE asset_ref = ?`).run(newRef, oldRef);
+            }
+          })();
+        } catch {
+          // Table missing on an older state.db — nothing of this kind to re-key.
+        }
+      }
+    } finally {
+      db.close();
+    }
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const warning =
+      `state.db salience re-key failed (${message}) — the rename itself succeeded, but the asset's salience/` +
+      "outcome history stays keyed to the old ref until the next improve run re-mints it.";
+    warnVerbose(`akm mv: ${warning}`);
+    return warning;
   }
 }
 
@@ -306,12 +486,16 @@ export const mvCommand = defineJsonCommand({
     description:
       "Rename an asset within its type directory (Experimental). Moves the file (a memory's .derived.md twin " +
       "moves together), rewrites inbound refs across the writable stash in the same pass — body prose, " +
-      "frontmatter ref lists (xrefs/refs/supersededBy/...), and fenced code examples — and re-keys the search " +
-      "index row in place so the asset's accumulated usage-ranking history (utility scores, embeddings, " +
-      "salience) survives the rename. Read-only sources are scanned but never written; their citing files are " +
+      "frontmatter ref lists (xrefs/refs/supersededBy/...), fenced code examples, task .yml files under tasks/, " +
+      "and alias spellings of the same asset (.md-suffixed, local//-prefixed, and resolver-fallback forms are " +
+      "rewritten to the new canonical ref) — and re-keys the search-index row in place (including its " +
+      "usage-event history) plus the state.db salience/outcome rows, so the asset's accumulated usage-ranking " +
+      "history survives the rename. Read-only sources are scanned but never written; their citing files are " +
       "reported in `readOnlyCiters` as manual follow-ups. Operates on the primary writable stash only, and the " +
       "source ref must be the asset's canonical spelling (alias/fallback spellings are rejected, naming the " +
-      "canonical ref). Wiki refs are not supported (use `akm wiki lint` after a manual wiki rename).",
+      "canonical ref). Wiki refs are not supported (use `akm wiki lint` after a manual wiki rename); workflow " +
+      "refs are not supported in v1 (workflows may be .yaml programs — rename the file manually and verify with " +
+      "`akm lint`).",
   },
   args: {
     ref: {
@@ -353,6 +537,14 @@ export const mvCommand = defineJsonCommand({
       throw new UsageError(
         "akm mv does not support wiki refs — wiki pages have their own xref + lint system. " +
           "Rename the page manually, fix citations in the same pass, and verify with `akm wiki lint <name>`.",
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    if (source.type === "workflow") {
+      throw new UsageError(
+        "akm mv does not support workflow refs in v1 — workflows may live as .yaml/.yml programs, which the " +
+          "flat-markdown rename path would misresolve or rename to .md. Rename the file manually under " +
+          "workflows/ (keeping its extension), fix inbound refs in the same pass, and verify with `akm lint`.",
         "INVALID_FLAG_VALUE",
       );
     }
@@ -446,29 +638,45 @@ export const mvCommand = defineJsonCommand({
     }
 
     // Memory `.derived.md` twin: moves together with its base (the entry_key
-    // suffix coupling the belief-state inheritance relies on).
+    // suffix coupling the belief-state inheritance relies on). The TARGET
+    // twin-collision check runs whenever the target could carry a twin —
+    // NOT only when the source has one: renaming a twin-less memory onto a
+    // name whose orphaned `<name>.derived.md` lingers (consolidate/dedup
+    // delete the base file without twin cleanup) would silently adopt the
+    // stranger file as the renamed memory's distillation.
     const isBaseMemory = source.type === "memory" && !source.name.endsWith(".derived");
     const twinOldPath = isBaseMemory ? oldPath.replace(/\.md$/, ".derived.md") : null;
     const hasTwin = twinOldPath !== null && fs.existsSync(twinOldPath);
-    const twinNewPath = hasTwin ? newPath.replace(/\.md$/, ".derived.md") : null;
-    if (twinNewPath && fs.existsSync(twinNewPath)) {
+    const targetTwinPath = isBaseMemory ? newPath.replace(/\.md$/, ".derived.md") : null;
+    if (targetTwinPath && fs.existsSync(targetTwinPath)) {
       throw new UsageError(
-        `Target twin ${toRef}.derived already exists at ${toPosix(path.relative(stashDir, twinNewPath))} — nothing moved.`,
+        `Target twin ${toRef}.derived already exists at ${toPosix(path.relative(stashDir, targetTwinPath))} — ` +
+          "renaming onto it would adopt that orphaned distilled twin as this memory's own. Nothing moved.",
         "RESOURCE_ALREADY_EXISTS",
+        "Pick an unused name, or delete the orphaned .derived.md file first if it belongs to a removed memory.",
       );
     }
+    const twinNewPath = hasTwin ? targetTwinPath : null;
 
     // ── Plan the inbound-ref rewrite (no writes yet) ───────────────────────
-    const pattern = buildRefPattern(fromRef, isBaseMemory);
+    const rewriteCtx = buildRewriteContext({
+      type: source.type,
+      fromRef,
+      toRef,
+      isBaseMemory,
+      stashDir,
+      oldPath,
+      twinOldPath: hasTwin ? twinOldPath : null,
+    });
     const plans: Array<{ absPath: string; relPath: string; count: number; content: string }> = [];
-    for (const absPath of collectMarkdownFiles(stashDir)) {
+    for (const absPath of collectCiterFiles(stashDir)) {
       let raw: string;
       try {
         raw = fs.readFileSync(absPath, "utf8");
       } catch {
         continue;
       }
-      const { content, count } = rewriteRefs(raw, pattern, toRef);
+      const { content, count } = rewriteRefs(raw, rewriteCtx);
       if (count > 0) {
         plans.push({ absPath, relPath: toPosix(path.relative(stashDir, absPath)), count, content });
       }
@@ -487,14 +695,17 @@ export const mvCommand = defineJsonCommand({
     }
     for (const src of sources) {
       if (path.resolve(src.path) === path.resolve(stashDir)) continue;
-      for (const absPath of collectMarkdownFiles(src.path)) {
+      for (const absPath of collectCiterFiles(src.path)) {
         let raw: string;
         try {
           raw = fs.readFileSync(absPath, "utf8");
         } catch {
           continue;
         }
-        const { count } = rewriteRefs(raw, pattern, toRef);
+        // Same detection as the writable pass (canonical + alias spellings,
+        // alias tokens resolved against the WRITABLE stash where the moved
+        // file lives) — count-only, never written.
+        const { count } = rewriteRefs(raw, rewriteCtx);
         if (count > 0) readOnlyCiters.push({ file: absPath, count });
       }
     }
@@ -509,18 +720,23 @@ export const mvCommand = defineJsonCommand({
       fs.renameSync(twinOldPath, twinNewPath);
     }
 
-    // ── Index: re-key in place, then reindex the touched files ────────────
-    const utilityPreserved = rekeyIndexForMove({
+    // ── Index + state.db: re-key in place, then reindex touched files ─────
+    const { preserved: utilityPreserved, warning: indexWarning } = rekeyIndexForMove({
       stashDir,
       type: source.type,
       oldName: source.name,
       newName,
       oldPath,
       newPath,
+      fromRef,
       toRef,
       twinOldPath: hasTwin ? twinOldPath : null,
       twinNewPath,
     });
+    // Salience/outcome history lives in state.db keyed by asset_ref TEXT —
+    // re-keyed here so the salience boost genuinely "survives the rename".
+    const stateWarning = rekeyStateDbForMove(fromRef, toRef, hasTwin);
+    const warnings = [indexWarning, stateWarning].filter((w): w is string => w !== null);
     // Rewritten citers (and the moved file itself) go through the standard
     // write-path reindex so their FTS hints reflect the new ref immediately.
     // Fail-open; an absent/empty index is skipped inside the helper.
@@ -554,6 +770,9 @@ export const mvCommand = defineJsonCommand({
       rewrote: plans.map((plan) => ({ file: plan.relPath, count: plan.count })),
       readOnlyCiters,
       utilityPreserved,
+      // Additive: present only when a re-key could not be completed, so the
+      // report (not just --verbose stderr) says WHY history may reset.
+      ...(warnings.length > 0 ? { warnings } : {}),
     });
   },
 });

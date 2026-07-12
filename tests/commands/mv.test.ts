@@ -46,12 +46,14 @@ import { akmLint } from "../../src/commands/lint/index";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { readEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import {
   applyFeedbackToUtilityScore,
   closeDatabase,
   getUtilityScore,
   openExistingDatabase,
 } from "../../src/indexer/db/db";
+import { ensureUsageEventsSchema, insertUsageEvent } from "../../src/indexer/usage/usage-events";
 import type { Database } from "../../src/storage/database";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -114,6 +116,8 @@ interface MvOutput {
   rewrote: RewroteItem[];
   readOnlyCiters: RewroteItem[];
   utilityPreserved: boolean;
+  /** Additive: present only when a re-key could not be completed. */
+  warnings?: string[];
 }
 
 interface ErrorEnvelope {
@@ -548,8 +552,10 @@ describe("akm mv — the utilityPreserved flag is honest", () => {
     const json = JSON.parse(stdout) as MvOutput;
     expect(json.ok).toBe(true);
     expect(fs.existsSync(path.join(stashDir, "memories/stranded-note-renamed.md"))).toBe(true);
-    // The command must not claim it preserved history it never re-keyed.
+    // The command must not claim it preserved history it never re-keyed, and
+    // the report carries the reason.
     expect(json.utilityPreserved).toBe(false);
+    expect(json.warnings?.some((w) => w.includes("re-key"))).toBe(true);
 
     // The ghost row is still there under the odd key — disclosed, not hidden.
     db = openExistingDatabase(getDbPath());
@@ -574,8 +580,10 @@ describe("akm mv — the utilityPreserved flag is honest", () => {
     // Fail-open: the rename itself lands...
     expect(json.ok).toBe(true);
     expect(fs.existsSync(path.join(stashDir, "memories/blocked-note-renamed.md"))).toBe(true);
-    // ...but the command must NOT claim it verified a re-key it could not run.
+    // ...but the command must NOT claim it verified a re-key it could not run,
+    // and the REPORT (not just --verbose stderr) must say why history resets.
     expect(json.utilityPreserved).toBe(false);
+    expect(json.warnings?.some((w) => w.includes("re-key"))).toBe(true);
   });
 });
 
@@ -731,6 +739,362 @@ describe("akm mv — events stream", () => {
     const bad = await runCliCapture(["mv", "memory:ghost", "ghost-renamed"]);
     expect(bad.code).toBe(2);
     expect(readEvents({ type: "mv" }).events).toHaveLength(1);
+  });
+});
+
+// ── usage-event history (finding #2) ─────────────────────────────────────────
+
+describe("akm mv — usage_events.entry_ref is re-pointed so history survives a full reindex", () => {
+  test("bare and origin-qualified event refs are rewritten; events relink after `akm index --full`", async () => {
+    seedAsset(stashDir, "memories/hist-note.md", "A memory with usage history.\n");
+    await buildIndex();
+
+    let db = openExistingDatabase(getDbPath());
+    let entryId: number;
+    try {
+      const row = entryByKeySuffix(db, ":memory:hist-note");
+      expect(row).toBeDefined();
+      entryId = (row as { id: number }).id;
+      ensureUsageEventsSchema(db);
+      // Both spellings writers persist: bare and origin-qualified.
+      insertUsageEvent(db, { event_type: "show", entry_id: entryId, entry_ref: "memory:hist-note" });
+      insertUsageEvent(db, {
+        event_type: "feedback",
+        signal: "positive",
+        entry_id: entryId,
+        entry_ref: "memory:hist-note",
+      });
+      insertUsageEvent(db, { event_type: "search", entry_id: entryId, entry_ref: "local//memory:hist-note" });
+    } finally {
+      closeDatabase(db);
+    }
+
+    const mv = await runCliCapture(["mv", "memory:hist-note", "hist-note-renamed"]);
+    expect(mv.code).toBe(0);
+    expect((JSON.parse(mv.stdout) as MvOutput).utilityPreserved).toBe(true);
+
+    // The events carry the NEW ref immediately (origin spelling preserved).
+    db = openExistingDatabase(getDbPath());
+    try {
+      const refs = (
+        db.prepare("SELECT entry_ref FROM usage_events WHERE entry_ref LIKE '%hist-note%' ORDER BY id").all() as Array<{
+          entry_ref: string;
+        }>
+      ).map((r) => r.entry_ref);
+      expect(refs).toEqual(["memory:hist-note-renamed", "memory:hist-note-renamed", "local//memory:hist-note-renamed"]);
+    } finally {
+      closeDatabase(db);
+    }
+
+    // The load-bearing path: a FULL rebuild re-mints entry ids, detaches every
+    // event, and relinks by entry_ref. With the old ref left behind, relink
+    // finds nothing and utility resets — the exact loss mv exists to prevent.
+    const reindex = await runCliCapture(["index", "--full"]);
+    expect(reindex.code).toBe(0);
+    db = openExistingDatabase(getDbPath());
+    try {
+      const entry = entryByKeySuffix(db, ":memory:hist-note-renamed");
+      expect(entry).toBeDefined();
+      const linked = db
+        .prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE entry_id = ? AND entry_ref LIKE '%hist-note-renamed%'")
+        .get((entry as { id: number }).id) as { cnt: number };
+      expect(linked.cnt).toBe(3);
+      // Utility recomputed FROM the relinked events (show + positive feedback)
+      // — the history stayed attached across the rebuild.
+      expect(getUtilityScore(db, (entry as { id: number }).id)).toBeDefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── displaced-row eviction (finding #4) ──────────────────────────────────────
+
+describe("akm mv — displaced stale index row with FK children", () => {
+  test("a stale row at the target key WITH an embeddings child is evicted cleanly and the re-key succeeds", async () => {
+    seedAsset(stashDir, "memories/keeper.md", "The memory being renamed.\n");
+    const vacatedPath = seedAsset(stashDir, "memories/vacated.md", "Deleted on disk later; index row lingers.\n");
+    await buildIndex();
+
+    let db = openExistingDatabase(getDbPath());
+    let keeperId: number;
+    let staleId: number;
+    let utilityBefore: number;
+    try {
+      keeperId = (entryByKeySuffix(db, ":memory:keeper") as { id: number }).id;
+      staleId = (entryByKeySuffix(db, ":memory:vacated") as { id: number }).id;
+      applyFeedbackToUtilityScore(db, keeperId, 1, 0);
+      utilityBefore = (getUtilityScore(db, keeperId) as { utility: number }).utility;
+      // A NON-CASCADE FK child on the stale row: with foreign_keys = ON, a
+      // bare `DELETE FROM entries` throws and rolls back the whole re-key.
+      db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(
+        staleId,
+        new Uint8Array([1, 2, 3, 4]),
+      );
+    } finally {
+      closeDatabase(db);
+    }
+    // The target's FILE is gone (mv's target check passes) but its row lingers.
+    fs.rmSync(vacatedPath);
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:keeper", "vacated"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.ok).toBe(true);
+    expect(json.utilityPreserved).toBe(true);
+    expect(json.warnings).toBeUndefined();
+
+    db = openExistingDatabase(getDbPath());
+    try {
+      // The moved row kept its id under the new key; history intact.
+      expect(entryById(db, keeperId)?.entry_key).toBe(`${stashDir}:memory:vacated`);
+      expect(getUtilityScore(db, keeperId)?.utility).toBeCloseTo(utilityBefore, 10);
+      // The displaced row AND its child rows are gone (no orphans).
+      expect(entryById(db, staleId)).toBeFalsy();
+      expect(db.prepare("SELECT id FROM embeddings WHERE id = ?").get(staleId)).toBeFalsy();
+      expect(db.prepare("SELECT entry_id FROM utility_scores WHERE entry_id = ?").get(staleId)).toBeFalsy();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── state.db salience / outcome re-key (finding #5) ──────────────────────────
+
+describe("akm mv — state.db asset_salience / asset_outcome re-key", () => {
+  test("salience and outcome rows move to the new asset_ref; an orphan row at the new ref loses to the live row", async () => {
+    seedAsset(stashDir, "memories/salient-note.md", "Salience-carrying note.\n");
+    const now = Date.now();
+    const stateDb = openStateDatabase();
+    try {
+      stateDb
+        .prepare(
+          `INSERT INTO asset_salience
+             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("memory:salient-note", 0.9, 0.1, 0.2, 0.8, 0, now, "content");
+      // An orphan row already squatting on the target ref (its asset was
+      // deleted — mv verified no file exists at the target). The LIVE
+      // asset's history must win.
+      stateDb
+        .prepare(
+          `INSERT INTO asset_salience
+             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("memory:salient-renamed", 0.5, 0, 0, 0.1, 0, now - 1000, "type-stub");
+      stateDb
+        .prepare(
+          `INSERT INTO asset_outcome
+             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("memory:salient-note", now, 7, 1.5, 2, 1, 3, 0.4, now);
+    } finally {
+      stateDb.close();
+    }
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:salient-note", "salient-renamed"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.ok).toBe(true);
+    expect(json.warnings).toBeUndefined();
+
+    const after = openStateDatabase();
+    try {
+      // Exactly ONE salience row remains for this asset, at the new ref,
+      // carrying the moved (content-derived) values — not the orphan's stub.
+      const sal = after
+        .prepare(
+          "SELECT asset_ref, encoding_salience, rank_score, encoding_source FROM asset_salience WHERE asset_ref LIKE '%salient%'",
+        )
+        .all() as Array<{ asset_ref: string; encoding_salience: number; rank_score: number; encoding_source: string }>;
+      expect(sal).toEqual([
+        { asset_ref: "memory:salient-renamed", encoding_salience: 0.9, rank_score: 0.8, encoding_source: "content" },
+      ]);
+      const outcome = after
+        .prepare(
+          "SELECT asset_ref, retrieval_count, review_pressure FROM asset_outcome WHERE asset_ref LIKE '%salient%'",
+        )
+        .all() as Array<{ asset_ref: string; retrieval_count: number; review_pressure: number }>;
+      expect(outcome).toEqual([{ asset_ref: "memory:salient-renamed", retrieval_count: 7, review_pressure: 3 }]);
+    } finally {
+      after.close();
+    }
+  });
+
+  test("no state.db: mv succeeds and does not create one", async () => {
+    seedAsset(stashDir, "memories/no-state.md", "No improve loop ever ran.\n");
+    expect(fs.existsSync(getStateDbPath())).toBe(false);
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:no-state", "no-state-renamed"]);
+    expect(code).toBe(0);
+    expect((JSON.parse(stdout) as MvOutput).ok).toBe(true);
+    // The salience re-key must not have minted a state.db on its own — but a
+    // successful mv appends an `mv` event, which legitimately creates it. So
+    // assert the move landed and no salience rows were invented.
+    if (fs.existsSync(getStateDbPath())) {
+      const stateDb = openStateDatabase();
+      try {
+        const rows = stateDb.prepare("SELECT asset_ref FROM asset_salience").all();
+        expect(rows).toEqual([]);
+      } finally {
+        stateDb.close();
+      }
+    }
+  });
+});
+
+// ── workflow refs (finding #3) ───────────────────────────────────────────────
+
+describe("akm mv — workflow refs are rejected (v1 scope)", () => {
+  test("a YAML workflow cannot be moved (exit 2, file byte-identical, error names the manual procedure)", async () => {
+    const wfBody = "steps:\n  - run: echo hi\n";
+    const wfPath = seedAsset(stashDir, "workflows/deploy.yaml", wfBody);
+
+    const { code, stderr } = await runCliCapture(["mv", "workflow:deploy", "release"]);
+    expect(code).toBe(2);
+
+    const json = JSON.parse(stderr) as ErrorEnvelope;
+    expect(json.ok).toBe(false);
+    expect(json.error.toLowerCase()).toContain("workflow");
+    expect(json.error).toContain("akm lint");
+    expect(typeof json.code).toBe("string");
+    // Nothing moved, nothing corrupted: no YAML-bodied workflows/release.md.
+    expect(fs.readFileSync(wfPath, "utf8")).toBe(wfBody);
+    expect(fs.existsSync(path.join(stashDir, "workflows/release.md"))).toBe(false);
+    expect(fs.existsSync(path.join(stashDir, "workflows/release.yaml"))).toBe(false);
+  });
+});
+
+// ── orphaned target twin (finding #8) ────────────────────────────────────────
+
+describe("akm mv — orphaned .derived.md at the target name", () => {
+  test("renaming a TWIN-LESS memory onto a name with an orphaned .derived.md is rejected (no silent adoption)", async () => {
+    const srcPath = seedAsset(stashDir, "memories/twinless.md", "No twin here.\n");
+    const orphanBody = "---\nderived_from: memory:occupied\n---\n\nStale distillation of a deleted memory.\n";
+    const orphanPath = seedAsset(stashDir, "memories/occupied.derived.md", orphanBody);
+
+    const { code, stderr } = await runCliCapture(["mv", "memory:twinless", "occupied"]);
+    expect(code).toBe(2);
+
+    const json = JSON.parse(stderr) as ErrorEnvelope;
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain(".derived");
+    expect(json.code).toBe("RESOURCE_ALREADY_EXISTS");
+    // Nothing moved; the orphan was not adopted.
+    expect(fs.readFileSync(srcPath, "utf8")).toBe("No twin here.\n");
+    expect(fs.existsSync(path.join(stashDir, "memories/occupied.md"))).toBe(false);
+    expect(fs.readFileSync(orphanPath, "utf8")).toBe(orphanBody);
+  });
+});
+
+// ── task .yml citers (finding #9) ────────────────────────────────────────────
+
+describe("akm mv — task YAML citers", () => {
+  test("refs in tasks/*.yml and tasks/*.yaml are rewritten and reported; yml outside tasks/ is not scanned", async () => {
+    seedAsset(stashDir, "memories/task-target.md", "Cited from scheduled tasks.\n");
+    const ymlPath = seedAsset(stashDir, "tasks/nightly.yml", 'schedule: "0 9 * * *"\nprompt: memory:task-target\n');
+    const yamlPath = seedAsset(stashDir, "tasks/weekly.yaml", 'schedule: "0 9 * * 1"\nprompt: memory:task-target\n');
+    const otherYml = seedAsset(stashDir, "knowledge/data.yml", "ref: memory:task-target\n");
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:task-target", "task-target-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+
+    expect(fs.readFileSync(ymlPath, "utf8")).toBe('schedule: "0 9 * * *"\nprompt: memory:task-target-v2\n');
+    expect(fs.readFileSync(yamlPath, "utf8")).toBe('schedule: "0 9 * * 1"\nprompt: memory:task-target-v2\n');
+    expect(json.rewrote.find((r) => r.file.endsWith("tasks/nightly.yml"))?.count).toBe(1);
+    expect(json.rewrote.find((r) => r.file.endsWith("tasks/weekly.yaml"))?.count).toBe(1);
+    // Outside tasks/: not scanned (lint's missing-ref pass doesn't scan it
+    // either) — untouched and unreported.
+    expect(fs.readFileSync(otherYml, "utf8")).toBe("ref: memory:task-target\n");
+    expect(json.rewrote.some((r) => r.file.endsWith("knowledge/data.yml"))).toBe(false);
+  });
+});
+
+// ── flow-style lists and bracketed refs (finding #10) ────────────────────────
+
+describe("akm mv — flow-style YAML lists and bracketed body refs", () => {
+  test("[-preceded refs are rewritten: single-element flow list, bracketed body ref, first element of a multi-element list", async () => {
+    seedAsset(stashDir, "memories/projectA/flow-note.md", "The note being renamed.\n");
+    seedAsset(stashDir, "memories/projectA/flow-sibling.md", "A neighbor that must stay untouched.\n");
+    const flowCiter = seedAsset(
+      stashDir,
+      "knowledge/flow-citer.md",
+      "---\ndescription: Flow-style citer\nxrefs: [memory:projectA/flow-note]\n---\n\nsee [memory:projectA/flow-note] for details.\n",
+    );
+    const multiCiter = seedAsset(
+      stashDir,
+      "knowledge/multi-flow-citer.md",
+      "---\ndescription: Multi-element flow list\nxrefs: [memory:projectA/flow-note, memory:projectA/flow-sibling]\n---\n\nBody.\n",
+    );
+
+    const { code, stdout } = await runCliCapture(["mv", "memory:projectA/flow-note", "projectA/flow-note-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+
+    // Single-element flow list AND bracketed body ref: both rewritten.
+    const flowAfter = fs.readFileSync(flowCiter, "utf8");
+    expect(flowAfter).toContain("xrefs: [memory:projectA/flow-note-v2]");
+    expect(flowAfter).toContain("see [memory:projectA/flow-note-v2] for details.");
+    expect(json.rewrote.find((r) => r.file.endsWith("knowledge/flow-citer.md"))?.count).toBe(2);
+
+    // Multi-element flow list: the `[`-preceded FIRST element is rewritten
+    // (the legacy grammar skipped it), the space-preceded neighbor keeps its
+    // own ref untouched.
+    const multiAfter = fs.readFileSync(multiCiter, "utf8");
+    expect(multiAfter).toContain("xrefs: [memory:projectA/flow-note-v2, memory:projectA/flow-sibling]");
+    expect(json.rewrote.find((r) => r.file.endsWith("knowledge/multi-flow-citer.md"))?.count).toBe(1);
+
+    // The rename dangles nothing lint can see.
+    const lint = akmLint({ dir: stashDir });
+    expect(lint.flagged.filter((i) => i.issue === "missing-ref")).toEqual([]);
+  });
+});
+
+// ── alias-spelling citers (finding #11) ──────────────────────────────────────
+
+describe("akm mv — alias-spelling citers are rewritten to the new canonical ref", () => {
+  test(".md-suffixed, local//-prefixed, and knowledge-subdir basename aliases", async () => {
+    seedAsset(stashDir, "knowledge/guides/old-guide.md", "# Guide\n");
+    const mdCiter = seedAsset(stashDir, "memories/md-citer.md", "See knowledge:guides/old-guide.md for details.\n");
+    const localCiter = seedAsset(stashDir, "memories/local-citer.md", "See local//knowledge:guides/old-guide too.\n");
+    // The knowledge-subdir alias: `knowledge:old-guide` resolves (via lint's
+    // shared resolver fallback) to knowledge/guides/old-guide.md.
+    const subdirCiter = seedAsset(stashDir, "memories/subdir-citer.md", "See knowledge:old-guide (basename alias).\n");
+
+    const { code, stdout } = await runCliCapture(["mv", "knowledge:guides/old-guide", "guides/renamed-guide"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+
+    // Every alias spelling is rewritten to the new CANONICAL ref.
+    expect(fs.readFileSync(mdCiter, "utf8")).toBe("See knowledge:guides/renamed-guide for details.\n");
+    expect(fs.readFileSync(localCiter, "utf8")).toBe("See knowledge:guides/renamed-guide too.\n");
+    expect(fs.readFileSync(subdirCiter, "utf8")).toBe("See knowledge:guides/renamed-guide (basename alias).\n");
+    for (const rel of ["memories/md-citer.md", "memories/local-citer.md", "memories/subdir-citer.md"]) {
+      expect(json.rewrote.find((r) => r.file.endsWith(rel))?.count).toBe(1);
+    }
+    const lint = akmLint({ dir: stashDir });
+    expect(lint.flagged.filter((i) => i.issue === "missing-ref")).toEqual([]);
+  });
+
+  test("alias citers in a READ-ONLY source are detected and reported, never written", async () => {
+    const roDir = makeDir("akm-mv-alias-readonly");
+    const roCiter = seedAsset(roDir, "knowledge/shared.md", "Team doc cites knowledge:guides/alias-note.md here.\n");
+    const roRaw = fs.readFileSync(roCiter, "utf8");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "shared", path: roDir, writable: false }],
+    });
+    seedAsset(stashDir, "knowledge/guides/alias-note.md", "# Aliased note\n");
+
+    const { code, stdout } = await runCliCapture(["mv", "knowledge:guides/alias-note", "guides/alias-note-v2"]);
+    expect(code).toBe(0);
+    const json = JSON.parse(stdout) as MvOutput;
+    expect(json.readOnlyCiters).toEqual([{ file: roCiter, count: 1 }]);
+    expect(fs.readFileSync(roCiter, "utf8")).toBe(roRaw);
   });
 });
 

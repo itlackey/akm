@@ -854,8 +854,10 @@ running `akm setup` first.
 Rename an asset **within its type directory** in the primary writable stash.
 `akm mv` is the CLI half of the stash conventions' forced-rename procedure
 ("grep and fix inbound xrefs in the same pass"): it moves the file, rewrites
-inbound refs across the writable stash, and re-keys the search-index row **in
-place** — the row id survives, so the asset's accumulated usage-ranking
+inbound refs across the writable stash, re-keys the search-index row **in
+place** (the row id survives, and the row's usage-event history is re-pointed
+at the new ref so it survives even a later `akm index --full`), and re-keys
+the `state.db` salience/outcome rows — the asset's accumulated usage-ranking
 history (utility scores, embeddings, salience) is preserved instead of
 resetting the way a delete-and-recreate rename would.
 
@@ -869,38 +871,53 @@ What it does, in order (designed to be safely re-runnable if interrupted):
 
 1. **Validates everything first** — a failure exits `2` with the standard
    error envelope and moves nothing. Rejected: wiki refs (wikis have their
-   own xref + lint system — use `akm wiki lint`), cross-type targets
-   (`memory:` → `knowledge:`), an already-existing target, an unresolvable
-   source ref, targets escaping the type root (`../`), non-canonical source
-   spellings (a ref that resolves only through one of lint's fallback
-   resolutions, e.g. a knowledge-subdir alias — the error names the
-   canonical ref to use), a `.derived` twin ref as the source (rename the
-   base; the twin moves with it), and target names ending in `.derived`
-   (reserved distilled-twin suffix). Supported types: `memory`, `knowledge`,
-   `command`, `agent`, `workflow`, `lesson`, `session`, `fact`
-   (flat-markdown layouts; multi-file `skill` directories are out of scope
-   for now).
+   own xref + lint system — use `akm wiki lint`), workflow refs (workflows
+   may be `.yaml`/`.yml` programs — rename the file manually under
+   `workflows/`, keeping its extension, fix inbound refs in the same pass,
+   and verify with `akm lint`), cross-type targets (`memory:` →
+   `knowledge:`), an already-existing target (including a memory target
+   whose orphaned `<name>.derived.md` twin still exists — a rename must not
+   silently adopt a stranger's distillation), an unresolvable source ref,
+   targets escaping the type root (`../`), non-canonical source spellings
+   (a ref that resolves only through one of lint's fallback resolutions,
+   e.g. a knowledge-subdir alias — the error names the canonical ref to
+   use), a `.derived` twin ref as the source (rename the base; the twin
+   moves with it), and target names ending in `.derived` (reserved
+   distilled-twin suffix). Supported types: `memory`, `knowledge`,
+   `command`, `agent`, `lesson`, `session`, `fact` (flat-markdown layouts;
+   multi-file `skill` directories are out of scope for now).
 2. **Plans the inbound-ref rewrite** across every markdown file in the
-   writable stash — body prose, frontmatter ref-list keys (`xrefs:`, `refs:`,
-   `supersededBy:`, …), and fenced code blocks (a rename must not leave stale
-   examples). Matching is complete-ref boundary matching: a longer ref that
+   writable stash plus task `.yml`/`.yaml` files under `tasks/` (task YAML
+   carries refs in `workflow:`/`prompt:` keys) — body prose, frontmatter
+   ref-list keys (`xrefs:`, `refs:`, `supersededBy:`, …, including
+   flow-style lists like `xrefs: [memory:x]`), and fenced code blocks (a
+   rename must not leave stale examples). Alias spellings the resolver
+   treats as the same asset — the `.md`-suffixed form, the
+   `local//`-prefixed form, and resolver-fallback forms like the
+   knowledge-subdir basename alias — are rewritten to the new **canonical**
+   ref. Matching is complete-ref boundary matching: a longer ref that
    shares the old ref as a prefix is untouched.
 3. **Applies the citer edits, then renames the file last.** A memory's
    `.derived.md` twin moves together with its base.
 4. **Re-keys the index row in place and refreshes search** — the new name and
-   the rewritten citers are immediately findable. With no local index built
-   yet, the rename still succeeds (the index picks the file up on the next
-   `akm index`).
+   the rewritten citers are immediately findable, the row's `usage_events`
+   history is re-pointed at the new ref (so it survives a later
+   `akm index --full`), and the `state.db` `asset_salience` /
+   `asset_outcome` rows (keyed by asset ref) move to the new ref too. With
+   no local index built yet, the rename still succeeds (the index picks the
+   file up on the next `akm index`).
 
 Read-only sources are scanned but **never written**: their citing files are
 reported in `readOnlyCiters` as manual follow-ups.
 
 Output shape:
-`{ok, from, to, rewrote: [{file, count}], readOnlyCiters: [{file, count}], utilityPreserved}`.
+`{ok, from, to, rewrote: [{file, count}], readOnlyCiters: [{file, count}], utilityPreserved, warnings?}`.
 `utilityPreserved` is `false` when an existing index could not be re-keyed
 (unreadable/locked, or the moved file's row sat under an unexpected key) —
 the move still succeeds, but the asset's ranking history resets on the next
-`akm index`.
+`akm index`. When any re-key could not be completed, the additive `warnings`
+array says why (index re-key failure, stranded row, or a `state.db`
+salience re-key failure).
 A successful move appends an `mv` event to the events stream; a failed one
 appends nothing. Verify a rename dangled nothing with `akm lint` (its
 `missing-ref` check covers body text and the frontmatter xref channels).

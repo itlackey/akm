@@ -429,6 +429,17 @@ export interface RekeyEntryOptions {
   /** Absolute path of the renamed file (feeds `file_path` / `dir_path`). */
   newFilePath: string;
   /**
+   * Old canonical bare ref (`type:oldName`, `makeAssetRef` form). Together
+   * with {@link newRef} this drives the `usage_events.entry_ref` rewrite —
+   * `entry_ref` (not `entry_id`) is the STABLE column `relinkUsageEvents`
+   * uses to re-attach events after a full rebuild re-mints every entry id,
+   * so leaving old-ref events behind would reset the asset's usage/utility
+   * history at the first `akm index --full`.
+   */
+  oldRef: string;
+  /** New canonical bare ref (`type:newName`, `makeAssetRef` form). */
+  newRef: string;
+  /**
    * For memory `.derived` twins: the base memory's NEW ref (e.g.
    * `memory:projectA/new-name`), written into the `derived_from` column and
    * `entry_json.derivedFrom`. Omit to leave both untouched.
@@ -440,16 +451,31 @@ export interface RekeyEntryOptions {
  * SPEC-7 (`akm mv`): re-key an entries row IN PLACE after an on-disk rename.
  *
  * The row id is preserved on purpose — `utility_scores`,
- * `utility_scores_scoped`, `embeddings`, and `asset_salience` are all keyed
- * by `entry_id`, so an UPDATE (rather than a delete + insert under the new
- * `entry_key`) is what keeps the asset's accumulated usage-ranking history
- * attached across a rename. `entry_json.name` (and `filename`, when present)
- * is patched and `search_text` rebuilt so search reflects the new name; the
- * row is marked FTS-dirty for the caller's `rebuildFts({incremental: true})`.
+ * `utility_scores_scoped`, and `embeddings` are keyed by `entry_id`, so an
+ * UPDATE (rather than a delete + insert under the new `entry_key`) is what
+ * keeps the asset's accumulated usage-ranking history attached across a
+ * rename. (`asset_salience` / `asset_outcome` live in state.db keyed by
+ * `asset_ref` TEXT and are re-keyed separately by `akm mv` — see
+ * mv-cli.ts `rekeyStateDbForMove`.) `entry_json.name` (and `filename`, when
+ * present) is patched and `search_text` rebuilt so search reflects the new
+ * name; the row is marked FTS-dirty for the caller's
+ * `rebuildFts({incremental: true})`.
+ *
+ * `usage_events.entry_ref` rows for the old ref are rewritten to the new ref
+ * in the same transaction — both the bare `type:name` spelling and the
+ * origin-qualified `origin//type:name` spelling (search/show writers persist
+ * either, see {@link getRetrievalCounts}). Without this, events keep the old
+ * ref, `relinkUsageEvents` finds no matching entry after the next full
+ * rebuild, and the utility history the re-key exists to preserve silently
+ * resets.
  *
  * A stale row already occupying `newEntryKey` (the caller has verified no
  * FILE exists at the target, so such a row can only be a leftover for a
- * deleted file) is removed first — the moved row must keep its id.
+ * deleted file) is evicted first — through {@link deleteRelatedRows}, so its
+ * child rows (embeddings, entries_vec, utility scores, usage events) go with
+ * it. A bare `DELETE FROM entries` would trip the non-CASCADE `embeddings`
+ * FK under `PRAGMA foreign_keys = ON` and roll back the whole re-key.
+ * The moved row keeps its id.
  *
  * Returns the surviving row id, or `null` when no row matches `oldEntryKey`
  * (nothing indexed under the old name — the caller falls open and the next
@@ -483,8 +509,12 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       | undefined
       | null;
     if (stale && stale.id !== row.id) {
-      db.prepare("DELETE FROM entries_fts WHERE entry_id = ?").run(stale.id);
-      db.prepare("DELETE FROM entries_fts_dirty WHERE entry_id = ?").run(stale.id);
+      // Full child-row cleanup (embeddings, entries_vec, utility scores,
+      // usage events, FTS + dirty marks) BEFORE the entries delete: the
+      // `embeddings` FK is non-CASCADE and `foreign_keys = ON`, so a bare
+      // entries delete would throw and roll back the entire re-key; and
+      // without it the FK-less child rows would orphan permanently.
+      deleteRelatedRows(db, [{ id: stale.id }]);
       db.prepare("DELETE FROM entries WHERE id = ?").run(stale.id);
     }
     db.prepare(
@@ -493,6 +523,20 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     if (opts.newDerivedFrom !== undefined) {
       db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
     }
+    // Re-point usage history at the new ref (see the docstring): the bare
+    // spelling exactly, and the origin-qualified spelling by rewriting only
+    // the part after the last `//` (stored origins never contain `//`, so a
+    // qualified ref has exactly one — same normalization as
+    // getRetrievalCounts). Legacy DBs may predate usage_events.
+    bestEffort(() => {
+      db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
+      db.prepare(
+        `UPDATE usage_events
+            SET entry_ref = substr(entry_ref, 1, instr(entry_ref, '//') + 1) || ?
+          WHERE instr(entry_ref, '//') > 0
+            AND substr(entry_ref, instr(entry_ref, '//') + 2) = ?`,
+      ).run(opts.newRef, opts.oldRef);
+    }, "usage_events table may be missing on legacy DBs — no usage history to re-key");
     db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)").run(row.id);
   })();
 
