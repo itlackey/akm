@@ -44,6 +44,7 @@ import { type AkmDistillResult, akmDistill } from "./distill";
 import {
   buildLatestProposalTsMap,
   collectEligibleRefs,
+  collectEligibleRefsReadOnly,
   memoryCleanupParentRef,
   resolveImproveScope,
   shouldAnalyzeMemoryCleanup,
@@ -403,7 +404,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const reindexFn = options.reindexFn ?? akmIndex;
   const drainProposalsFn = options.drainProposalsFn ?? drainProposals;
   // #616 multi-cycle test seams. Default to the real module-local fns.
-  const collectEligibleRefsImpl = options.collectEligibleRefsFn ?? collectEligibleRefs;
+  const collectEligibleRefsImpl =
+    options.collectEligibleRefsFn ?? (options.dryRun ? collectEligibleRefsReadOnly : collectEligibleRefs);
   const runImprovePreparationStageImpl = options.runImprovePreparationStageFn ?? runImprovePreparationStage;
   const runImproveLoopStageImpl = options.runImproveLoopStageFn ?? runImproveLoopStage;
   const runImprovePostLoopStageImpl = options.runImprovePostLoopStageFn ?? runImprovePostLoopStage;

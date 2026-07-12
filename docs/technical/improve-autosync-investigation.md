@@ -587,7 +587,7 @@ primary stash, per-asset for named/`--target` writable git sources.**
 
 ## Commit message templates (`sync.message`)
 
-`profiles.improve.<name>.sync.message` accepts `{token}` placeholders, expanded
+`improve.strategies.<name>.sync.message` accepts `{token}` placeholders, expanded
 at the end of the run by `renderSyncCommitMessage` (src/commands/improve.ts)
 before the string is handed to `saveGitStash` (which still sanitizes it to a
 single line). Unknown tokens pass through verbatim, so templates are
@@ -612,8 +612,8 @@ pre-pass `DrainResult` and threading the CLI-minted `runId` onto the result):
 Example:
 
 ```yaml
-profiles:
-  improve:
+improve:
+  strategies:
     default:
       sync:
         enabled: true

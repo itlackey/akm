@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Regression test: `akm improve --dry-run` must not write to the stash.
+ * Regression test: `akm improve --dry-run` must not write any AKM artifact.
  *
  * Background — the documented contract of dry-run is "report planned changes
  * without modifying anything." Past incidents have surfaced where dry-run
@@ -12,12 +12,8 @@
  * testing checklist asserts this invariant prose-style, but no automated
  * gate pinned it — so a regression could slip through.
  *
- * This test pins the invariant: snapshot the stash directory before and
- * after `akmImprove({ dryRun: true })`, then assert the snapshot is
- * byte-identical. Only the stash itself is checked. The event-log database
- * (in $XDG_DATA_HOME) and registry cache (in $XDG_CACHE_HOME) intentionally
- * receive an `improve_invoked` event even on dry-run for observability —
- * that is *not* a side effect on user content.
+ * This test pins the invariant across config, data, state, cache, and stash:
+ * every root is byte-identical before and after `akmImprove({ dryRun: true })`.
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -33,6 +29,7 @@ import { withMockedFetch } from "../../_helpers/sandbox";
 const TIMEOUT_MS = 15_000;
 
 const tempDirs: string[] = [];
+let sandboxRoots: Record<"cache" | "config" | "data" | "state", string>;
 const savedEnv: Record<string, string | undefined> = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   AKM_DATA_DIR: process.env.AKM_DATA_DIR,
@@ -98,11 +95,33 @@ function diffSnapshots(before: Map<string, string>, after: Map<string, string>):
   return diffs;
 }
 
+function snapshotSandboxRoots(stashDir: string): Record<string, Map<string, string>> {
+  return Object.fromEntries(
+    Object.entries({ ...sandboxRoots, stash: stashDir }).map(([name, root]) => [name, snapshotDir(root)]),
+  );
+}
+
+function expectSandboxRootsUnchanged(before: Record<string, Map<string, string>>, stashDir: string): void {
+  const after = snapshotSandboxRoots(stashDir);
+  const diffs = Object.keys(before).flatMap((name) =>
+    diffSnapshots(before[name], after[name]).map((diff) => `${name}: ${diff}`),
+  );
+  if (diffs.length > 0) {
+    throw new Error(`Dry-run leaked AKM artifacts:\n${diffs.join("\n")}`);
+  }
+}
+
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-dryrun-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-dryrun-config-");
-  process.env.AKM_DATA_DIR = makeTempDir("akm-dryrun-data-");
-  process.env.AKM_STATE_DIR = makeTempDir("akm-dryrun-state-");
+  sandboxRoots = {
+    cache: makeTempDir("akm-dryrun-cache-"),
+    config: makeTempDir("akm-dryrun-config-"),
+    data: makeTempDir("akm-dryrun-data-"),
+    state: makeTempDir("akm-dryrun-state-"),
+  };
+  process.env.XDG_CACHE_HOME = sandboxRoots.cache;
+  process.env.XDG_CONFIG_HOME = sandboxRoots.config;
+  process.env.AKM_DATA_DIR = sandboxRoots.data;
+  process.env.AKM_STATE_DIR = sandboxRoots.state;
 });
 
 afterEach(() => {
@@ -115,7 +134,7 @@ afterEach(() => {
   }
 });
 
-describe("akm improve --dry-run writes nothing to the stash directory", () => {
+describe("akm improve --dry-run writes no AKM artifacts", () => {
   test(
     "stash directory is byte-identical before and after akmImprove({ dryRun: true })",
     async () => {
@@ -126,9 +145,8 @@ describe("akm improve --dry-run writes nothing to the stash directory", () => {
       saveConfig({ semanticSearchMode: "off" });
       await akmIndex({ stashDir, full: true });
 
-      // Allow any post-index lazy writes to settle.
-      const before = snapshotDir(stashDir);
-      expect(before.size).toBeGreaterThan(0);
+      const before = snapshotSandboxRoots(stashDir);
+      expect(before.stash.size).toBeGreaterThan(0);
 
       const result = await akmImprove({
         scope: "memory",
@@ -142,34 +160,26 @@ describe("akm improve --dry-run writes nothing to the stash directory", () => {
       expect(result.ok).toBe(true);
       expect(result.dryRun).toBe(true);
 
-      const after = snapshotDir(stashDir);
-      const diffs = diffSnapshots(before, after);
-
-      if (diffs.length > 0) {
-        throw new Error(
-          `Dry-run leaked side effects into the stash dir:\n${diffs.join("\n")}\n` +
-            "The stash MUST be byte-identical before and after a dry-run improve.",
-        );
-      }
+      expectSandboxRootsUnchanged(before, stashDir);
     },
     TIMEOUT_MS,
   );
 
   test(
-    "no .akm/proposals/ artifacts appear after a dry-run on an empty memory stash",
+    "a fresh dry-run returns an empty plan without creating index.db or root artifacts",
     async () => {
       const stashDir = makeTempDir("akm-dryrun-empty-");
       fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
       process.env.AKM_STASH_DIR = stashDir;
-      saveConfig({ semanticSearchMode: "off" });
+      const before = snapshotSandboxRoots(stashDir);
 
       const result = await akmImprove({ stashDir, dryRun: true });
       expect(result.ok).toBe(true);
       expect(result.dryRun).toBe(true);
+      expect(result.plannedRefs).toEqual([]);
 
-      const proposalsDir = path.join(stashDir, ".akm", "proposals");
-      const hasProposals = fs.existsSync(proposalsDir) && fs.readdirSync(proposalsDir).length > 0;
-      expect(hasProposals).toBe(false);
+      expect(fs.existsSync(path.join(sandboxRoots.data, "index.db"))).toBe(false);
+      expectSandboxRootsUnchanged(before, stashDir);
     },
     TIMEOUT_MS,
   );
@@ -188,7 +198,7 @@ describe("akm improve --dry-run writes nothing to the stash directory", () => {
       secondPath,
       "---\ndescription: Deploy without VPN\ninferred: true\nsource: memory:deploy\n---\n\nDo not use the VPN.\n",
     );
-    const before = snapshotDir(stashDir);
+    const before = snapshotSandboxRoots(stashDir);
     const ensureIndexFn = mock(async () => {
       throw new Error("dry-run invoked ensureIndex");
     });
@@ -249,7 +259,7 @@ describe("akm improve --dry-run writes nothing to the stash directory", () => {
     expect(result.dryRun).toBe(true);
     expect(ensureIndexFn).not.toHaveBeenCalled();
     expect(fetchCalls).toEqual([]);
-    expect(diffSnapshots(before, snapshotDir(stashDir))).toEqual([]);
+    expectSandboxRootsUnchanged(before, stashDir);
     expect(fs.readFileSync(firstPath, "utf8")).not.toContain("contradictedBy");
     expect(fs.readFileSync(secondPath, "utf8")).not.toContain("contradictedBy");
   });

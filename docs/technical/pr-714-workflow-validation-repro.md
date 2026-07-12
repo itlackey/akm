@@ -81,6 +81,7 @@ Replace `config.json` with this minimal reproducible config:
 mkdir -p "$XDG_CONFIG_HOME/akm"
 cat > "$XDG_CONFIG_HOME/akm/config.json" <<'EOF'
 {
+  "configVersion": "0.9.0",
   "semanticSearchMode": "off",
   "registries": [
     {
@@ -99,29 +100,20 @@ cat > "$XDG_CONFIG_HOME/akm/config.json" <<'EOF'
     "detail": "brief"
   },
   "stashDir": "/tmp/opencode/workflow-pr714-repro/stash",
-  "defaults": {
-    "agent": "opencode"
-  },
-  "modelAliases": {
-    "balanced": {
-      "*": "openai/gpt-5.4-mini"
+  "defaults": { "engine": "opencode" },
+  "engines": {
+    "opencode": {
+      "kind": "agent",
+      "platform": "opencode",
+      "workspace": "/tmp/opencode/workflow-pr714-repro/project"
     },
-    "deep": {
-      "*": "openai/gpt-5.4"
-    }
-  },
-  "profiles": {
-    "agent": {
-      "opencode": {
-        "platform": "opencode",
-        "workspace": "/tmp/opencode/workflow-pr714-repro/project"
-      },
-      "reviewer": {
-        "platform": "opencode",
-        "workspace": "/tmp/opencode/workflow-pr714-repro/project",
-        "modelAliases": {
-          "deep": "openai/gpt-5.4-mini"
-        }
+    "reviewer": {
+      "kind": "agent",
+      "platform": "opencode",
+      "workspace": "/tmp/opencode/workflow-pr714-repro/project",
+      "modelAliases": {
+        "balanced": "openai/gpt-5.4-mini",
+        "deep": "openai/gpt-5.4"
       }
     }
   }
@@ -148,7 +140,7 @@ Create these workflow assets under `$AKM_STASH_DIR/workflows/`.
 
 ```sh
 cat > "$AKM_STASH_DIR/workflows/basic-check.yaml" <<'EOF'
-version: 1
+version: 2
 name: basic-check
 description: External-driver review flow with fan-out, aggregation, routing, and a final step.
 
@@ -156,7 +148,7 @@ params:
   files: { type: array, items: { type: string } }
 
 defaults:
-  runner: agent
+  engine: reviewer
   timeout: 10m
   on_error: fail
 
@@ -168,7 +160,6 @@ steps:
       concurrency: 3
       reducer: collect
       unit:
-        profile: reviewer
         model: deep
         instructions: |
           Review ${{ item }} and return JSON with file and verdict.
@@ -182,7 +173,6 @@ steps:
   - id: aggregate
     title: Aggregate Verdict
     unit:
-      profile: reviewer
       model: balanced
       instructions: |
         Summarize the collected review verdicts and return JSON with a single verdict.
@@ -224,7 +214,7 @@ EOF
 
 ```sh
 cat > "$AKM_STASH_DIR/workflows/gate-block.yaml" <<'EOF'
-version: 1
+version: 2
 name: gate-block
 description: Required gate without a configured judge should block rather than fail open.
 
@@ -245,7 +235,7 @@ EOF
 
 ```sh
 cat > "$AKM_STASH_DIR/workflows/token-budget.yaml" <<'EOF'
-version: 1
+version: 2
 name: token-budget
 description: Budget ceiling for externally reported fan-out units.
 
@@ -273,12 +263,12 @@ EOF
 
 ```sh
 cat > "$AKM_STASH_DIR/workflows/worktree-proof.yaml" <<'EOF'
-version: 1
+version: 2
 name: worktree-proof
 description: Real agent run that mutates files so worktree isolation can be observed.
 
 defaults:
-  runner: agent
+  engine: opencode
   timeout: 10m
   on_error: fail
 
@@ -286,7 +276,6 @@ steps:
   - id: mutate
     title: Mutate In Isolation
     unit:
-      profile: opencode
       isolation: worktree
       instructions: |
         In the current working directory, create a file named worktree-sentinel.txt
@@ -567,6 +556,7 @@ bun src/cli.ts init
 mkdir -p "$XDG_CONFIG_HOME/akm"
 cat > "$XDG_CONFIG_HOME/akm/config.json" <<'EOF'
 {
+  "configVersion": "0.9.0",
   "semanticSearchMode": "off",
   "registries": [
     {
@@ -585,20 +575,22 @@ cat > "$XDG_CONFIG_HOME/akm/config.json" <<'EOF'
     "detail": "brief"
   },
   "stashDir": "/tmp/opencode/workflow-multi-harness-check/stash",
-  "profiles": {
-    "agent": {
-      "opencode": {
-        "platform": "opencode",
-        "workspace": "/tmp/opencode/workflow-multi-harness-check/project"
-      },
-      "codex": {
-        "platform": "codex",
-        "workspace": "/tmp/opencode/workflow-multi-harness-check/project"
-      },
-      "claude": {
-        "platform": "claude",
-        "workspace": "/tmp/opencode/workflow-multi-harness-check/project"
-      }
+  "defaults": { "engine": "opencode" },
+  "engines": {
+    "opencode": {
+      "kind": "agent",
+      "platform": "opencode",
+      "workspace": "/tmp/opencode/workflow-multi-harness-check/project"
+    },
+    "codex": {
+      "kind": "agent",
+      "platform": "codex",
+      "workspace": "/tmp/opencode/workflow-multi-harness-check/project"
+    },
+    "claude": {
+      "kind": "agent",
+      "platform": "claude",
+      "workspace": "/tmp/opencode/workflow-multi-harness-check/project"
     }
   }
 }
@@ -616,12 +608,12 @@ Create one workflow per harness so the final run records stay distinct.
 
 ```sh
 cat > "$AKM_STASH_DIR/workflows/worktree-proof-opencode.yaml" <<'EOF'
-version: 1
+version: 2
 name: worktree-proof-opencode
 description: Minimal live harness cleanup repro for opencode.
 
 defaults:
-  runner: agent
+  engine: opencode
   timeout: 10m
   on_error: fail
 
@@ -629,7 +621,6 @@ steps:
   - id: mutate
     title: Mutate In Isolation
     unit:
-      profile: opencode
       isolation: worktree
       instructions: |
         In the current working directory, create a file named worktree-sentinel.txt
@@ -638,12 +629,12 @@ steps:
 EOF
 
 cat > "$AKM_STASH_DIR/workflows/worktree-proof-codex.yaml" <<'EOF'
-version: 1
+version: 2
 name: worktree-proof-codex
 description: Minimal live harness cleanup repro for codex.
 
 defaults:
-  runner: agent
+  engine: codex
   timeout: 10m
   on_error: fail
 
@@ -651,7 +642,6 @@ steps:
   - id: mutate
     title: Mutate In Isolation
     unit:
-      profile: codex
       isolation: worktree
       instructions: |
         In the current working directory, create a file named worktree-sentinel.txt
@@ -660,12 +650,12 @@ steps:
 EOF
 
 cat > "$AKM_STASH_DIR/workflows/worktree-proof-claude.yaml" <<'EOF'
-version: 1
+version: 2
 name: worktree-proof-claude
 description: Minimal live harness cleanup repro for claude code.
 
 defaults:
-  runner: agent
+  engine: claude
   timeout: 10m
   on_error: fail
 
@@ -673,7 +663,6 @@ steps:
   - id: mutate
     title: Mutate In Isolation
     unit:
-      profile: claude
       isolation: worktree
       instructions: |
         In the current working directory, create a file named worktree-sentinel.txt

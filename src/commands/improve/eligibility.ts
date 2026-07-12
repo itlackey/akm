@@ -11,7 +11,13 @@ import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import type { ImproveEligibleRef } from "../../core/improve-types";
-import { closeDatabase, getAllEntries, getUtilityScoresByIds, openExistingDatabase } from "../../indexer/db/db";
+import {
+  closeDatabase,
+  getAllEntries,
+  getUtilityScoresByIds,
+  openExistingDatabase,
+  openReadonlyExistingDatabase,
+} from "../../indexer/db/db";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
@@ -83,6 +89,24 @@ export async function collectEligibleRefs(
    */
   strategyFilteredRefs: ImproveEligibleRef[];
 }> {
+  return collectEligibleRefsFromIndex(scope, stashDir, improveProfile, false);
+}
+
+/** Dry-run planner path: query an existing index without creating or mutating it. */
+export async function collectEligibleRefsReadOnly(
+  scope: { mode: "all" | "type" | "ref"; value?: string },
+  stashDir?: string,
+  improveProfile?: ImproveProfileConfig,
+): ReturnType<typeof collectEligibleRefs> {
+  return collectEligibleRefsFromIndex(scope, stashDir, improveProfile, true);
+}
+
+async function collectEligibleRefsFromIndex(
+  scope: { mode: "all" | "type" | "ref"; value?: string },
+  stashDir: string | undefined,
+  improveProfile: ImproveProfileConfig | undefined,
+  readOnly: boolean,
+): ReturnType<typeof collectEligibleRefs> {
   if (scope.mode === "ref" && scope.value) {
     const parsed = parseAssetRef(scope.value);
     const writableDirs = new Set(getWritableStashDirs(stashDir).map((dir) => path.resolve(dir)));
@@ -126,7 +150,10 @@ export async function collectEligibleRefs(
 
   let db: Database | undefined;
   try {
-    db = openExistingDatabase();
+    db = readOnly ? openReadonlyExistingDatabase() : openExistingDatabase();
+    if (!db) {
+      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+    }
     const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) => {
       // First apply the existing stashDir-scope filter (no-op when stashDir is unset).
       if (!isEntryInScope(indexed.stashDir, indexed.filePath, stashDir)) return false;
