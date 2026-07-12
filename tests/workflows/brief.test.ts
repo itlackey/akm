@@ -282,7 +282,7 @@ describe("workflow brief — solo step", () => {
     expect(u.engine).toBe("test-agent");
     expect(u.runtimeKind).toBe("sdk");
     expect(u.platform).toBe("opencode-sdk");
-    expect(u.model).toBeNull();
+    expect(u.model).toBe("test-model");
     expect(u).not.toHaveProperty("runner");
     expect(u).not.toHaveProperty("profile");
     expect(u.timeoutMs).toBe(600_000);

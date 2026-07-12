@@ -20,7 +20,7 @@ export function readCurrentLlmEngine(config: AkmConfig): LlmConnectionConfig | u
   const { kind: _kind, supportsJsonSchema, timeoutMs, ...connection } = engine;
   return {
     ...connection,
-    ...(timeoutMs !== null && timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(supportsJsonSchema !== undefined ? { capabilities: { structuredOutput: supportsJsonSchema } } : {}),
   };
 }

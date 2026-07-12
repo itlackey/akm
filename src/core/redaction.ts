@@ -11,7 +11,20 @@ export const ENV_PASSTHROUGH_REDACTION_ALLOWLIST: ReadonlySet<string> = new Set(
   "LC_ALL",
   "TERM",
   "TMPDIR",
+  "SYSTEMROOT",
+  "COMSPEC",
+  "PATHEXT",
+  "WINDIR",
+  "TEMP",
+  "TMP",
   "AKM_EVENT_SOURCE",
+  "OPENCODE_CONFIG",
+  "CLAUDE_CONFIG",
+  "CODEX_CONFIG",
+  "AWS_PROFILE",
+  "AWS_REGION",
+  "LLM_MODEL",
+  "LLM_BASE_URL",
 ]);
 
 /**

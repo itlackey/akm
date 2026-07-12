@@ -172,7 +172,7 @@ export const LlmConnectionConfigSchema = z
     apiKey: z.string().optional(),
     temperature: z.number().finite().optional(),
     maxTokens: positiveInt.optional(),
-    timeoutMs: positiveInt.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
     concurrency: positiveInt.optional(),
     capabilities: LlmCapabilitiesSchema.optional(),
     extraParams: ExtraParamsSchema.optional(),

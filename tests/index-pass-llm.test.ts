@@ -5,6 +5,7 @@ import type { AkmConfig } from "../src/core/config/config";
 import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
+import { createEnrichmentDeadline } from "../src/indexer/indexer";
 import { resolveIndexPassLLM } from "../src/llm/index-passes";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
@@ -51,6 +52,17 @@ describe("resolveIndexPassLLM", () => {
     expect(resolveIndexPassLLM("enrichment", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
     expect(resolveIndexPassLLM("memory", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
     expect(resolveIndexPassLLM("graph", config)).toEqual({ ...SAMPLE_LLM, timeoutMs: 600_000 });
+  });
+
+  test("standalone enrichment preserves an explicit unbounded timeout", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
+      engines: { index: { kind: "llm", ...SAMPLE_LLM, timeoutMs: null } },
+      index: { defaults: { engine: "index" } },
+    };
+
+    expect(resolveIndexPassLLM("enrichment", config)?.timeoutMs).toBeNull();
+    expect(createEnrichmentDeadline(resolveIndexPassLLM("enrichment", config)?.timeoutMs, 3)).toBeUndefined();
   });
 
   describe("per-pass engines", () => {

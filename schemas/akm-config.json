@@ -11261,8 +11261,15 @@
           "exclusiveMinimum": 0
         },
         "timeoutMs": {
-          "type": "integer",
-          "exclusiveMinimum": 0
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "concurrency": {
           "type": "integer",

@@ -19,6 +19,7 @@ import { deepMergeConfig, isPlainObject } from "../../src/core/config/deep-merge
 import {
   cloneLlmConnection,
   readAgentEngineSelection,
+  readCurrentLlmEngine,
   writeAgentEngines,
   writeLlmEngine,
 } from "../../src/setup/engine-config";
@@ -69,6 +70,15 @@ describe("deepMergeConfig", () => {
 });
 
 describe("setup LLM engine writer", () => {
+  test("readCurrentLlmEngine preserves an explicit unbounded timeout", () => {
+    const config = {
+      engines: { default: { kind: "llm", endpoint: "https://x/v1/chat/completions", model: "m", timeoutMs: null } },
+      defaults: { llmEngine: "default" },
+    } as unknown as AkmConfig;
+
+    expect(readCurrentLlmEngine(config)?.timeoutMs).toBeNull();
+  });
+
   test("writeLlmEngine writes the default engine + defaults.llmEngine", () => {
     const base = {} as AkmConfig;
     const llm: LlmConnectionConfig = { provider: "openai", endpoint: "https://x/v1", model: "gpt-4o-mini" };

@@ -108,7 +108,7 @@ export interface ConfigBackupResult {
   latest: string;
 }
 
-export function backupExistingConfig(configPath: string): ConfigBackupResult | undefined {
+export function backupExistingConfig(configPath: string, now = new Date()): ConfigBackupResult | undefined {
   if (!fs.existsSync(configPath)) return undefined;
 
   const backupDir = path.join(getCacheDir(), "config-backups");
@@ -118,10 +118,20 @@ export function backupExistingConfig(configPath: string): ConfigBackupResult | u
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(backupDir, 0o700);
 
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const timestamped = path.join(backupDir, `config-${timestamp}.json`);
+  const timestamp = now.toISOString().replace(/[.:]/g, "-");
+  let sequence = 0;
+  let timestamped: string;
+  while (true) {
+    timestamped = path.join(backupDir, `config-${timestamp}${sequence === 0 ? "" : `-${sequence}`}.json`);
+    try {
+      fs.copyFileSync(configPath, timestamped, fs.constants.COPYFILE_EXCL);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      sequence++;
+    }
+  }
   const latest = path.join(backupDir, "config.latest.json");
-  fs.copyFileSync(configPath, timestamped);
   fs.copyFileSync(configPath, latest);
   // 08-F4: a config backup carries the same sensitive fields as the live config
   // (endpoints, tokens). `copyFileSync` inherits the source's (often 0644) mode,

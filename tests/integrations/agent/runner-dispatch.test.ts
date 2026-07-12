@@ -146,11 +146,28 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       asset: "ENV-ASSET-ECHO-SENTINEL",
       passthrough: "PASSTHROUGH-ECHO-SENTINEL",
       safePath: "/safe/runtime/path",
+      safeProfile: "developer-profile",
+      safeRegion: "us-test-1",
+      safeModel: "local-model",
+      safeBaseUrl: "http://localhost:1234/v1",
+      safeOpencodeConfig: "/safe/opencode.json",
+      safeClaudeConfig: "/safe/claude.json",
+      safeCodexConfig: "/safe/codex.toml",
     };
     const profile: AgentProfile = {
       ...sdkProfile,
       env: { ENV_ASSET_VALUE: values.asset },
-      envPassthrough: ["PATH", "CUSTOM_AGENT_TOKEN"],
+      envPassthrough: [
+        "PATH",
+        "CUSTOM_AGENT_TOKEN",
+        "AWS_PROFILE",
+        "AWS_REGION",
+        "LLM_MODEL",
+        "LLM_BASE_URL",
+        "OPENCODE_CONFIG",
+        "CLAUDE_CONFIG",
+        "CODEX_CONFIG",
+      ],
     };
     const spec: RunnerSpec = {
       kind: "sdk",
@@ -164,7 +181,17 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       "p",
       {
         env: { BOUND_VALUE: values.binding },
-        envSource: { PATH: values.safePath, CUSTOM_AGENT_TOKEN: values.passthrough },
+        envSource: {
+          PATH: values.safePath,
+          CUSTOM_AGENT_TOKEN: values.passthrough,
+          AWS_PROFILE: values.safeProfile,
+          AWS_REGION: values.safeRegion,
+          LLM_MODEL: values.safeModel,
+          LLM_BASE_URL: values.safeBaseUrl,
+          OPENCODE_CONFIG: values.safeOpencodeConfig,
+          CLAUDE_CONFIG: values.safeClaudeConfig,
+          CODEX_CONFIG: values.safeCodexConfig,
+        },
       },
       {
         runSdk: async () => ({
@@ -180,6 +207,17 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       expect(JSON.stringify(result)).not.toContain(secret);
     }
     expect(JSON.stringify(result)).toContain(values.safePath);
+    for (const nonsecret of [
+      values.safeProfile,
+      values.safeRegion,
+      values.safeModel,
+      values.safeBaseUrl,
+      values.safeOpencodeConfig,
+      values.safeClaudeConfig,
+      values.safeCodexConfig,
+    ]) {
+      expect(JSON.stringify(result)).toContain(nonsecret);
+    }
     expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(4);
   });
 });

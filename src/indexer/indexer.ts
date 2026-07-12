@@ -1089,10 +1089,10 @@ async function enhanceDirsWithLlm(
   // P3 — wall-clock budget for the enrichment pass. Defaults to llm.timeoutMs
   // (or 10 minutes if not set). Users can extend this via llm.timeoutMs in
   // config — no separate knob needed.
-  const budgetMs = (llmConfig.timeoutMs ?? 10 * 60 * 1000) * Math.max(totalEntries, 1);
-  const enrichDeadline = AbortSignal.timeout(budgetMs);
+  const enrichDeadline = createEnrichmentDeadline(llmConfig.timeoutMs, totalEntries);
   let deadlineHit = false;
   const enrichSignal: AbortSignal = (() => {
+    if (!enrichDeadline) return signal ?? new AbortController().signal;
     if (!signal) return enrichDeadline;
     // Combine: abort when either fires.
     const controller = new AbortController();
@@ -1253,6 +1253,14 @@ async function enhanceDirsWithLlm(
     const sample = summary.failureSamples.length ? ` Examples: ${summary.failureSamples.join("; ")}` : "";
     warn(`LLM enhancement failed for ${failed}/${summary.attempted} entries — they were left un-enhanced.${sample}`);
   }
+}
+
+export function createEnrichmentDeadline(
+  timeoutMs: number | null | undefined,
+  totalEntries: number,
+): AbortSignal | undefined {
+  const perEntryTimeoutMs = timeoutMs === undefined ? 10 * 60 * 1000 : timeoutMs;
+  return perEntryTimeoutMs === null ? undefined : AbortSignal.timeout(perEntryTimeoutMs * Math.max(totalEntries, 1));
 }
 
 async function generateEmbeddingsForDb(

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { acquireMaintenanceBarrier } from "../../src/core/maintenance-barrier";
 import type { WorkflowRunStatus } from "../../src/sources/types";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
@@ -268,7 +269,9 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
       const rows = repo.getUnitsForStep(RUN_ID, "review");
       const dispatchRows = rows.filter((u) => u.phase !== "gate");
       expect(dispatchRows.every((row) => row.engine === "test-agent" && row.runner === "sdk")).toBe(true);
-      expect(dispatchRows.every((row) => row.model === null && /^[0-9a-f]{64}$/.test(row.input_hash ?? ""))).toBe(true);
+      expect(
+        dispatchRows.every((row) => row.model === "test-model" && /^[0-9a-f]{64}$/.test(row.input_hash ?? "")),
+      ).toBe(true);
       const gate = rows.filter((u) => u.node_id === "review.gate");
       expect(gate).toHaveLength(1);
       expect(gate[0].unit_id).toBe("review.gate:l1");
@@ -492,6 +495,26 @@ describe("workflow report — re-report semantics", () => {
 // ── Unit check-in (running) + stale surfacing ────────────────────────────────
 
 describe("workflow report — running claim + stale surfacing", () => {
+  test("report waits at the maintenance barrier before creating an external claim", async () => {
+    const p = plan(ONERROR_WF("fail"));
+    const params = { files: ["a.ts", "b.ts"] };
+    seedRun({ plan: p, params, steps: [{ id: "review" }] });
+    const [ua] = unitIds(p, 0, params);
+    const release = acquireMaintenanceBarrier();
+    let settled = false;
+    const pending = reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" }).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      expect(settled).toBe(false);
+      await withWorkflowRunsRepo((repo) => expect(repo.getUnit(RUN_ID, ua)).toBeNull());
+    } finally {
+      release();
+    }
+    expect((await pending).status).toBe("running");
+  });
+
   test("--status running claims a unit (started_at + last_checkin_at) without advancing the spine", async () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };

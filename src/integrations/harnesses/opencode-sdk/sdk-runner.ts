@@ -137,6 +137,7 @@ type SdkServerFactory = (options: {
   config?: Record<string, unknown>;
   port?: number;
   env: Record<string, string>;
+  startupTimeoutMs: number | null;
 }) => Promise<SdkServer>;
 
 // Server registry — one server per complete server-material signature, started
@@ -328,12 +329,30 @@ function serverRegistryKey(profile: AgentProfile, env: Record<string, string>): 
 }
 
 function buildServerEnv(
+  profile: AgentProfile,
   config: Record<string, unknown>,
   bindings: Record<string, string> | undefined,
   envSource: NodeJS.ProcessEnv,
 ): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(envSource)) {
+  const inheritedNames = new Set([
+    "HOME",
+    "PATH",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "COMSPEC",
+    "PATHEXT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    ...(profile.envPassthrough ?? []),
+  ]);
+  for (const key of inheritedNames) {
+    const value = envSource[key];
     if (value !== undefined) env[key] = value;
   }
   for (const [key, value] of Object.entries(bindings ?? {})) env[key] = value;
@@ -409,9 +428,6 @@ async function allocateFreePort(registryKey: string): Promise<number> {
 /** Grace between SIGTERM and SIGKILL when closing a managed server child. */
 const SERVER_KILL_GRACE_MS = 2_000;
 
-/** How long the managed spawn waits for the server's listening handshake. */
-const SERVER_START_TIMEOUT_MS = 5_000;
-
 // Test seam: override the argv used to spawn the server child ("opencode"
 // plus serve flags by default) so the managed-spawn lifecycle (handshake,
 // unref, SIGTERM→SIGKILL escalation) is testable without the real binary.
@@ -439,6 +455,7 @@ async function createManagedOpencode(options: {
   config?: Record<string, unknown>;
   port?: number;
   env: Record<string, string>;
+  startupTimeoutMs: number | null;
 }): Promise<SdkServer> {
   const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
     throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
@@ -539,9 +556,12 @@ async function createManagedOpencode(options: {
     const onError = (err: Error): void => {
       fail(err instanceof Error ? err : new Error(String(err)));
     };
-    timer = setTimeout(() => {
-      fail(new Error(`Timeout waiting for the OpenCode server to start after ${SERVER_START_TIMEOUT_MS}ms`));
-    }, SERVER_START_TIMEOUT_MS);
+    if (options.startupTimeoutMs !== null) {
+      timer = setTimeout(() => {
+        fail(new Error(`Timeout waiting for the OpenCode server to start after ${options.startupTimeoutMs}ms`));
+      }, options.startupTimeoutMs);
+      timer.unref?.();
+    }
     proc.stdout?.on("data", onStdoutData);
     proc.stderr?.on("data", onStderrData);
     proc.on("exit", onExit);
@@ -563,13 +583,21 @@ async function startServer(
   sdkConfig: Record<string, unknown>,
   env: Record<string, string>,
   registryKey: string,
+  startupTimeoutMs: number | null,
 ): Promise<SdkServer> {
   const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
-  const options: { bin?: string; config?: Record<string, unknown>; port?: number; env: Record<string, string> } = {
+  const options: {
+    bin?: string;
+    config?: Record<string, unknown>;
+    port?: number;
+    env: Record<string, string>;
+    startupTimeoutMs: number | null;
+  } = {
     bin: profile.bin,
     ...(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {}),
     env,
+    startupTimeoutMs,
   };
 
   // Every cached server receives a separately reserved port. This avoids both
@@ -599,14 +627,15 @@ async function getOrStartServer(
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
   envSource: NodeJS.ProcessEnv = process.env,
+  startupTimeoutMs: number | null = null,
 ): Promise<SdkServer> {
   if (_testServer) return _testServer;
   const sdkConfig = buildSdkConfig(profile, llmConfig);
-  const serverEnv = buildServerEnv(sdkConfig, env, envSource);
+  const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
   const key = serverRegistryKey(profile, serverEnv);
   let pending = _servers.get(key);
   if (!pending) {
-    pending = startServer(profile, sdkConfig, serverEnv, key);
+    pending = startServer(profile, sdkConfig, serverEnv, key, startupTimeoutMs);
     _servers.set(key, pending);
     pending.then(
       (server) => {
@@ -742,6 +771,12 @@ export async function runOpencodeSdk(
   llmConfig?: LlmConnectionConfig,
 ): Promise<AgentRunResult> {
   const start = Date.now();
+  const timeoutMs: number | null =
+    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
+  const deadline = timeoutMs === null ? null : start + timeoutMs;
+  const remainingTimeoutMs = (): number | null => (deadline === null ? null : Math.max(0, deadline - Date.now()));
+  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
+  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
 
   if (opts.signal?.aborted) {
     return {
@@ -756,33 +791,61 @@ export async function runOpencodeSdk(
   }
 
   let client: SdkClient;
-  try {
-    ({ client } = await getOrStartServer(profile, llmConfig, opts.env, opts.envSource));
-  } catch (e) {
-    return {
-      ok: false,
-      stdout: "",
-      stderr: String(e),
-      durationMs: Date.now() - start,
-      exitCode: 1,
-      reason: "spawn_failed" as AgentFailureReason,
-      error: String(e),
-    };
+  if (_testServer) {
+    client = _testServer.client;
+  } else {
+    try {
+      const startup = await raceSdkOperation(
+        getOrStartServer(profile, llmConfig, opts.env, opts.envSource, remainingTimeoutMs()),
+        {
+          timeoutMs: remainingTimeoutMs(),
+          setTimeoutFn: setTimeoutImpl,
+          clearTimeoutFn: clearTimeoutImpl,
+          signal: opts.signal,
+        },
+      );
+      if (startup === SDK_OPERATION_ABORTED) {
+        return {
+          ok: false,
+          stdout: "",
+          stderr: "",
+          durationMs: Date.now() - start,
+          exitCode: null,
+          reason: "aborted" as AgentFailureReason,
+          error: `opencode-sdk agent "${profile.name}" aborted by caller signal during server startup`,
+        };
+      }
+      if (startup === SDK_OPERATION_TIMED_OUT) {
+        return {
+          ok: false,
+          stdout: "",
+          stderr: "",
+          durationMs: Date.now() - start,
+          exitCode: null,
+          reason: "timeout" as AgentFailureReason,
+          error: `opencode-sdk agent "${profile.name}" timed out during server startup after ${timeoutMs}ms`,
+        };
+      }
+      client = startup.client;
+    } catch (e) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: String(e),
+        durationMs: Date.now() - start,
+        exitCode: 1,
+        reason: "spawn_failed" as AgentFailureReason,
+        error: String(e),
+      };
+    }
   }
 
   // #564 bug fix (3): enforce a hard timeout like the CLI path (runAgent).
   // Previously runOpencodeSdk() awaited SDK calls with no timeout, so a stalled
   // local-model endpoint or wedged server could block the caller indefinitely.
-  // We resolve the same budget runAgent uses (opts.timeoutMs override →
-  // profile.timeoutMs → DEFAULT_AGENT_TIMEOUT_MS) and race both session.create
-  // and session.prompt against it. null disables the timer (parity with
-  // runAgent's "no timeout" contract). Session cleanup is separately bounded
-  // by a short best-effort timer so timeout/abort results cannot be pinned in
-  // the finally path by a hung delete call.
-  const timeoutMs: number | null =
-    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
-  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
-  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+  // The same absolute deadline covers server startup, session creation, and
+  // prompting. null disables every dispatch timer. Session cleanup remains a
+  // separately bounded best-effort operation.
 
   // Per-call working directory (module doc): forwarded as the SDK's
   // `query.directory` on every session call, so worktree-isolated units run
@@ -798,7 +861,7 @@ export async function runOpencodeSdk(
     const created = await raceSdkOperation(
       client.session.create({ body: { title: "akm" }, ...(query ? { query } : {}) }),
       {
-        timeoutMs,
+        timeoutMs: remainingTimeoutMs(),
         setTimeoutFn: setTimeoutImpl,
         clearTimeoutFn: clearTimeoutImpl,
         signal: abortSignal,
@@ -877,7 +940,7 @@ export async function runOpencodeSdk(
     const prompted = await raceSdkOperation(
       client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) }),
       {
-        timeoutMs,
+        timeoutMs: remainingTimeoutMs(),
         setTimeoutFn: setTimeoutImpl,
         clearTimeoutFn: clearTimeoutImpl,
         signal: abortSignal,
