@@ -135,10 +135,10 @@ Fixture refs worth using throughout this doc:
 - [ ] `akm setup --yes` runs without prompts, writes config with sandbox paths,
       and exits zero.
 - [ ] `akm setup --yes | jq '.stashDir'` returns a path under `$AKM_SANDBOX`.
-- [ ] `akm setup --config '{"llm":{"endpoint":"http://localhost:1234/v1","model":"test-model"}}'`
+- [ ] `akm setup --config '{"engines":{"local":{"kind":"llm","endpoint":"http://localhost:1234/v1/chat/completions","model":"test-model"}},"defaults":{"llmEngine":"local"}}'`
       applies the JSON blob non-interactively and exits zero.
-- [ ] `akm config get llm.endpoint` after the above returns
-      `http://localhost:1234/v1`.
+- [ ] `akm config get engines.local.endpoint` after the above returns
+      `http://localhost:1234/v1/chat/completions`.
 - [ ] `akm setup --config 'not-json'` fails with a structured usage error and
       exits non-zero.
 

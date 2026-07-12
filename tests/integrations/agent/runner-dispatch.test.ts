@@ -223,18 +223,30 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
   test("redacts credential-bearing values even when their passthrough names are allowlisted", async () => {
     const userinfo = "https://user:password@example.test/v1";
     const signed = "https://example.test/object?X-Amz-Credential=owner&X-Amz-Signature=signed-secret";
-    const profile: AgentProfile = { ...sdkProfile, envPassthrough: ["LLM_BASE_URL", "AWS_PROFILE"] };
-    const echoed = `${userinfo} | ${signed}`;
+    const clientAssertion = "https://example.test/token?client_assertion=RUNNER-ASSERTION-SENTINEL";
+    const codeVerifier = "https://example.test/#/oauth/callback?code_verifier=RUNNER-PKCE-SENTINEL";
+    const profile: AgentProfile = {
+      ...sdkProfile,
+      envPassthrough: ["LLM_BASE_URL", "AWS_PROFILE", "OPENCODE_CONFIG", "CLAUDE_CONFIG"],
+    };
+    const credentialUrls = [userinfo, signed, clientAssertion, codeVerifier];
+    const echoed = credentialUrls.join(" | ");
 
     const result = await executeRunner(
       { kind: "sdk", profile },
       "p",
-      { envSource: { LLM_BASE_URL: userinfo, AWS_PROFILE: signed } },
+      {
+        envSource: {
+          LLM_BASE_URL: userinfo,
+          AWS_PROFILE: signed,
+          OPENCODE_CONFIG: clientAssertion,
+          CLAUDE_CONFIG: codeVerifier,
+        },
+      },
       { runSdk: async () => ({ ...okResult(echoed), parsed: { echoed } }) },
     );
 
-    expect(JSON.stringify(result)).not.toContain(userinfo);
-    expect(JSON.stringify(result)).not.toContain(signed);
-    expect(result.stdout).toBe("[REDACTED] | [REDACTED]");
+    for (const url of credentialUrls) expect(JSON.stringify(result)).not.toContain(url);
+    expect(result.stdout).toBe("[REDACTED] | [REDACTED] | [REDACTED] | [REDACTED]");
   });
 });
