@@ -62,7 +62,7 @@ export interface AkmProceduralOptions {
   /** Active improve profile, so the LLM runner selection honors `--profile`. */
   improveProfile?: ImproveProfileConfig;
   /** Pre-resolved connection supplied by the improve invocation plan. */
-  llmConfig?: import("../../core/config/config").LlmConnectionConfig;
+  llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
   /** PROV-DM run token stamped on every emitted proposal. */
   sourceRun?: string;
   /** Caller budget signal; an aborted signal short-circuits before any LLM call. */

@@ -100,7 +100,7 @@ describe("health checks characterization (WS9)", () => {
         message: "No active task runs exceeded the stale threshold.",
       },
       {
-        name: "default-agent-engine",
+        name: "default-engine",
         kind: "deterministic",
         status: "unknown",
         confidence: "high",
@@ -237,7 +237,7 @@ describe("health checks characterization (WS9)", () => {
       "task-history-read",
       "task-log-backing",
       "active-runs",
-      "default-agent-engine",
+      "default-engine",
     ]);
     expect(result.advisories.map((c) => c.name)).toEqual([
       "collapse-churn-detector",

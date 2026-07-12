@@ -48,7 +48,7 @@ describe("improve engine-plan boundaries", () => {
         },
         ensureIndexFn,
       }),
-    ).rejects.toThrow('Improve process "reflect" configures model/llm overrides but has no fallback LLM engine.');
+    ).rejects.toThrow('Enabled improve process "reflect" requires an LLM engine.');
     expect(ensureIndexFn).not.toHaveBeenCalled();
   });
 

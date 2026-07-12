@@ -96,6 +96,8 @@ export interface AkmImproveOptions {
   autoAccept?: number;
   stashDir?: string;
   config?: AkmConfig;
+  /** Invocation plan preflighted by the public CLI before any side effects. */
+  resolvedPlan?: ResolvedImprovePlan;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`). Threaded onto the
    * result so health/run records and sync-commit templates (`{runId}`) can read
@@ -412,9 +414,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
-  const resolvedPlan = resolveImprovePlan(options.strategy, _earlyConfig, {
-    repairValidationFailures: options.repairValidationFailures,
-  });
+  const resolvedPlan =
+    options.resolvedPlan ??
+    resolveImprovePlan(options.strategy, _earlyConfig, {
+      repairValidationFailures: options.repairValidationFailures,
+    });
   const selectedStrategy = resolvedPlan.strategy;
   const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
   const improveProfile = selectedStrategy.config;
@@ -580,7 +584,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               _earlyConfig,
               undefined,
               improveProfile,
-              resolvedPlan.processes.consolidate.runner?.connection,
+              resolvedPlan.processes.consolidate.runner?.connection ?? null,
             ),
           { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
         );

@@ -228,7 +228,7 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `task-log-backing`, `active-runs`, and `agent-profile` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `task-log-backing`, `active-runs`, and `default-engine` |
 | `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), and `session-log-failures` (informational keyword matches, never triggers warn) |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
@@ -1785,7 +1785,7 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | Flag | Description |
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
-| `--dry-run` | Show planned refs without generating proposals |
+| `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, stash, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--target` | Override the write target used later by `accept` |
 | `--auto-accept[=<value>]` | Confidence threshold (0-100) for auto-accepting proposals. Default ON at 90 when the flag is absent. Bare `--auto-accept` = 90. `--auto-accept=<N>` sets the threshold to integer N (0-100). `--auto-accept=safe` is a permanent alias for 90. `--auto-accept=false` disables auto-accept and restores the interactive prompt on the HTTP consolidation path. |
 | `--limit <n>` | Maximum number of assets to process |
@@ -1794,7 +1794,7 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
 | `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 1; set 0 to include all assets regardless of retrieval history) |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
-| `--json-to-stdout` | Emit the full JSON result on stdout (legacy behaviour). Without this flag the full JSON is written to `<stash>/.akm/runs/<run-id>/improve-result.json` and stdout stays empty; pass `--json-to-stdout` to restore the pre-0.8.0 `akm improve \| jq` pipeline. |
+| `--json-to-stdout` | Emit the full JSON result on stdout for a live run. Without this flag, live-run results are recorded in `$XDG_DATA_HOME/akm/state.db` table `improve_runs` and stdout stays empty. Dry-runs always emit their result on stdout and never write an `improve_runs` row. |
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation

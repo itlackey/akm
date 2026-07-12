@@ -73,21 +73,21 @@ export interface HealthCheck {
 /**
  * Probe the configured agent profile. Self-contained (reads config + PATH); the
  * only check that performs IO at dispatch time, preserving the original inline
- * `runAgentProbe()` call site behaviour exactly.
+ * `runDefaultEngineProbe()` call site behaviour exactly.
  */
-export interface AgentProbeDependencies {
+export interface DefaultEngineProbeDependencies {
   loadConfig?: () => AkmConfig;
   resolveEngine?: (name: string, config: AkmConfig) => RunnerSpec;
   spawnSync?: typeof spawnSync;
   resolvePackage?: (name: string) => string;
 }
 
-export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckResult {
+export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {}): HealthCheckResult {
   const config = deps.loadConfig?.() ?? loadConfig();
   const engineName = config.defaults?.engine ?? config.defaults?.llmEngine;
   if (!engineName) {
     return {
-      name: "default-agent-engine",
+      name: "default-engine",
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
@@ -138,7 +138,7 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
       !effectiveModel ? "effective SDK model" : undefined,
     ].filter((value): value is string => value !== undefined);
     return {
-      name: "default-agent-engine",
+      name: "default-engine",
       kind: "deterministic",
       status: missing.length === 0 ? "pass" : "warn",
       confidence: "high",
@@ -167,7 +167,7 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
     const runner = (deps.resolveEngine ?? resolveEngine)(engineName, config);
     if (runner.kind === "llm") {
       return {
-        name: "default-agent-engine",
+        name: "default-engine",
         kind: "deterministic",
         status: "pass",
         confidence: "high",
@@ -186,7 +186,7 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
     const version = (deps.spawnSync ?? spawnSync)(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
     if ((version.status ?? 1) !== 0) {
       return {
-        name: "default-agent-engine",
+        name: "default-engine",
         kind: "deterministic",
         status: "warn",
         confidence: "medium",
@@ -200,7 +200,7 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
       };
     }
     return {
-      name: "default-agent-engine",
+      name: "default-engine",
       kind: "deterministic",
       status: "pass",
       confidence: "high",
@@ -214,7 +214,7 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
     };
   } catch (error) {
     return {
-      name: "default-agent-engine",
+      name: "default-engine",
       kind: "deterministic",
       status: "warn",
       confidence: "high",
@@ -303,9 +303,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     }),
   },
   {
-    name: "default-agent-engine",
+    name: "default-engine",
     channel: "hard",
-    run: () => runAgentProbe(),
+    run: () => runDefaultEngineProbe(),
   },
   {
     // C2 (13-bus-factor): the cron task-failure rate was computed and rendered

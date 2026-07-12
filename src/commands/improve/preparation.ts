@@ -41,7 +41,7 @@ import {
   isLessonCandidate,
   isSignalDeltaEligible,
 } from "./eligibility";
-import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./extract";
+import { type AkmExtractResult, akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
 import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
 import type { AkmImproveOptions, ConsolidationPassResult, ImprovePreparationResult, ImproveScope } from "./improve";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
@@ -381,7 +381,7 @@ export async function runConsolidationPass(args: {
           // Active profile for this improve run — lets consolidate's secondary
           // process-config reads honor `--profile <name>` instead of `default`.
           improveProfile,
-          llmConfig: resolvedPlan.processes.consolidate.runner?.connection,
+          llmConfig: resolvedPlan.processes.consolidate.runner?.connection ?? null,
           autoTriggered: volumeTriggered,
           // Tie consolidate proposals back to this improve invocation so
           // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
@@ -573,6 +573,15 @@ async function runSessionExtractPass(args: {
   // a retired global feature path; the selected strategy is authoritative.)
   // `akmExtract` re-checks the same active profile internally via `improveProfile`.
   if (resolvedPlan.processes.extract.enabled) {
+    const extractRunner = resolvedPlan.processes.extract.runner;
+    const extractPlan: ResolvedExtractPlan = Object.freeze({
+      strategy: resolvedPlan.strategy.name,
+      enabled: true,
+      process: resolvedPlan.processes.extract.config,
+      llmConfig: extractRunner?.connection ?? null,
+      timeoutMs: extractRunner?.timeoutMs ?? extractRunner?.connection.timeoutMs ?? 600_000,
+      embeddingConfig: Object.freeze(structuredClone(extractConfig.embedding)),
+    });
     const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
     // The guard engages only when minNewSessions > 0; 0 disables it entirely.
     let belowMinNewSessions = false;
@@ -619,10 +628,7 @@ async function runSessionExtractPass(args: {
                 type: h.name,
                 ...(primaryStashDir !== undefined ? { stashDir: primaryStashDir } : {}),
                 config: extractConfig,
-                // Thread the ACTIVE profile so extract's internal gate + per-process
-                // config read the running profile, not always `default`.
-                improveProfile,
-                llmConfig: resolvedPlan.processes.extract.runner?.connection,
+                resolvedPlan: extractPlan,
                 dryRun: options.dryRun ?? false,
                 ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
                 // C2: pin extract's skip-tracking state.db open to the boundary path.

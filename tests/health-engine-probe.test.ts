@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { runAgentProbe } from "../src/commands/health/checks";
+import { runDefaultEngineProbe } from "../src/commands/health/checks";
 import type { AkmConfig } from "../src/core/config/config";
 
 const llm = {
@@ -20,7 +20,7 @@ describe("health engine probes", () => {
       engines: { fast: llm },
       defaults: { llmEngine: "fast" },
     };
-    const result = runAgentProbe({ loadConfig: () => config });
+    const result = runDefaultEngineProbe({ loadConfig: () => config });
     expect(result.status).toBe("pass");
     expect(result.message).toBe('LLM engine "fast" is configured.');
     expect(result.evidence).toMatchObject({ engine: "fast", runtimeKind: "llm", model: "fallback-model" });
@@ -36,7 +36,7 @@ describe("health engine probes", () => {
       },
       defaults: { engine: "sdk", llmEngine: "fallback" },
     };
-    const inheritedModel = runAgentProbe({
+    const inheritedModel = runDefaultEngineProbe({
       loadConfig: () => config,
       resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
@@ -61,7 +61,7 @@ describe("health engine probes", () => {
         sdk: { ...config.engines?.sdk, kind: "agent", platform: "opencode-sdk", model: "sdk-model" },
       },
     };
-    const ready = runAgentProbe({
+    const ready = runDefaultEngineProbe({
       loadConfig: () => readyConfig,
       resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
@@ -81,7 +81,7 @@ describe("health engine probes", () => {
       },
       defaults: { engine: "sdk", llmEngine: "fallback" },
     };
-    const result = runAgentProbe({
+    const result = runDefaultEngineProbe({
       loadConfig: () => config,
       resolvePackage: () => {
         throw new Error("missing");
@@ -100,7 +100,7 @@ describe("health engine probes", () => {
       engines: { sdk: { kind: "agent", platform: "opencode-sdk", model: "sdk-model" } },
       defaults: { engine: "sdk" },
     };
-    const result = runAgentProbe({
+    const result = runDefaultEngineProbe({
       loadConfig: () => config,
       resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,

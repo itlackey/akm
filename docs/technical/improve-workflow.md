@@ -170,7 +170,7 @@ flowchart TD
 
     GRAPH --> FINAL
 
-    FINAL[Assemble AkmImproveResult\nschemaVersion: 1] --> UNLOCK[fs.unlinkSync improve.lock\nfinally block]
+    FINAL[Assemble AkmImproveResult\nschemaVersion: 2] --> UNLOCK[release process locks\nfinally block]
     UNLOCK --> RETURN([return AkmImproveResult])
 ```
 
@@ -322,7 +322,9 @@ LLM-only processes reject an explicit agent engine rather than falling through. 
 
 ## Output shape
 
-`AkmImproveResult` (always `schemaVersion: 1`, `ok: true`):
+`AkmImproveResult` uses `schemaVersion: 2`, identifies the selected `strategy`,
+and can report `ok: false` for terminated runs. The decoder retains read-only
+support for historical schema-v1 results that used `profile`:
 
 | Field | Type | Description |
 |---|---|---|

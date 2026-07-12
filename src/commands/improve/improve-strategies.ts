@@ -122,9 +122,20 @@ export interface ResolvedImproveProcess {
 
 /** Complete immutable process behavior for one improve invocation. */
 export interface ResolvedImprovePlan {
-  strategy: SelectedStrategy;
+  strategy: Readonly<SelectedStrategy>;
   processes: Readonly<Record<ImproveProcessName, ResolvedImproveProcess>>;
   triageJudgment: RunnerSpec | null;
+}
+
+function cloneAndFreeze<T>(value: T): Readonly<T> {
+  const clone = structuredClone(value);
+  const freeze = (item: unknown): void => {
+    if (typeof item !== "object" || item === null || Object.isFrozen(item)) return;
+    for (const child of Object.values(item)) freeze(child);
+    Object.freeze(item);
+  };
+  freeze(clone);
+  return clone;
 }
 
 /** Resolve and materialize every enabled process before improve emits signals or performs I/O. */
@@ -144,7 +155,7 @@ function materializeImprovePlan(
 ): ResolvedImprovePlan {
   const processes = {} as Record<ImproveProcessName, ResolvedImproveProcess>;
   for (const processName of Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]) {
-    const processConfig = Object.freeze({ ...(strategy.config.processes?.[processName] ?? {}) });
+    const processConfig = cloneAndFreeze(strategy.config.processes?.[processName] ?? {});
     const enabled = processConfig.enabled === true;
     let runner: ImproveLlmRunner | null = null;
     if (IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName] !== "llm" || !enabled) {
@@ -158,17 +169,21 @@ function materializeImprovePlan(
     }
     if (!runner && !(processName === "validation" && options.repairValidationFailures === false)) {
       const hasModelIntent =
+        strategy.config.engine !== undefined ||
         strategy.config.model !== undefined ||
         strategy.config.llm !== undefined ||
+        processConfig.engine !== undefined ||
         processConfig.model !== undefined ||
-        processConfig.llm !== undefined;
+        processConfig.llm !== undefined ||
+        config.defaults?.llmEngine !== undefined;
       if (hasModelIntent) {
         throw new ConfigError(
-          `Improve process "${processName}" configures model/llm overrides but has no fallback LLM engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.${processName}.engine.`,
+          `Enabled improve process "${processName}" requires an LLM engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.${processName}.engine.`,
           "LLM_NOT_CONFIGURED",
         );
       }
     }
+    if (runner) runner = cloneAndFreeze(runner) as ImproveLlmRunner;
     processes[processName] = Object.freeze({ enabled, config: processConfig, runner });
   }
 
@@ -178,17 +193,25 @@ function materializeImprovePlan(
     processes.triage.enabled && judgmentOptedIn
       ? resolveTriageJudgmentRunner(triage.judgment, config, triage, strategy.config)
       : null;
+  if (processes.triage.enabled && judgmentOptedIn && !triageJudgment) {
+    throw new ConfigError(
+      `Enabled improve triage judgment requires an engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.triage.judgment.engine.`,
+      "LLM_NOT_CONFIGURED",
+    );
+  }
   const frozenProcesses = Object.freeze(processes);
   const frozenStrategy: SelectedStrategy = Object.freeze({
     name: strategy.name,
-    config: Object.freeze({
+    config: cloneAndFreeze({
       ...strategy.config,
-      processes: Object.freeze(
-        Object.fromEntries(
-          Object.entries(frozenProcesses).map(([name, process]) => [name, process.config]),
-        ) as NonNullable<ImproveProfileConfig["processes"]>,
-      ),
+      processes: Object.fromEntries(
+        Object.entries(frozenProcesses).map(([name, process]) => [name, process.config]),
+      ) as NonNullable<ImproveProfileConfig["processes"]>,
     }),
   });
-  return { strategy: frozenStrategy, processes: frozenProcesses, triageJudgment };
+  return Object.freeze({
+    strategy: frozenStrategy,
+    processes: frozenProcesses,
+    triageJudgment: triageJudgment ? cloneAndFreeze(triageJudgment) : null,
+  });
 }
