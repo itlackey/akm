@@ -23,6 +23,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import proceduralSystemPrompt from "../../assets/prompts/procedural-system.md" with { type: "text" };
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
@@ -31,7 +32,7 @@ import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, ProceduralCompilationResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { closeDatabase, type DbIndexedEntry, getAllEntries, openExistingDatabase } from "../../indexer/db/db";
 import { parseWorkflow } from "../../workflows/parser";
 import { createProposal, isProposalSkipped } from "../proposal/repository";
@@ -275,10 +276,11 @@ function kebab(s: string): string {
 }
 
 /** Build the exact workflow markdown the parser accepts. */
-export function assembleWorkflowMarkdown(doc: ProceduralWorkflow): string {
+export function assembleWorkflowMarkdown(doc: ProceduralWorkflow, xrefs: string[] = []): string {
   const lines: string[] = [
     "---",
     `description: ${JSON.stringify(doc.description)}`,
+    ...(xrefs.length > 0 ? ["xrefs:", ...xrefs.map((ref) => `  - ${ref}`)] : []),
     "---",
     "",
     `# Workflow: ${doc.title}`,
@@ -335,7 +337,8 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {
     db = openExistingDatabase();
-    entries = getAllEntries(db);
+    const selectedRoot = path.resolve(stashDir);
+    entries = getAllEntries(db).filter((entry) => path.resolve(entry.stashDir) === selectedRoot);
   } catch (e) {
     warnings.push(`procedural: failed to open index — ${String(e)}`);
     return finish({ ok: false });
@@ -371,7 +374,7 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
 
   // Procedural output is a workflow (non-wiki) → stash authoring standards.
   // Resolved ONCE per run and passed to each sequence prompt.
-  const standardsContext = resolveStashStandards(stashDir);
+  const standardsContext = resolveStandardsContext("workflow:_procedural", stashDir);
 
   for (const cluster of clusters) {
     if (opts.signal?.aborted) {
@@ -426,7 +429,8 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
 
     // Assemble + locally validate the workflow markdown. Never queue an
     // unparseable workflow.
-    const content = assembleWorkflowMarkdown(doc);
+    const xrefs = cluster.members.map((member) => member.ref).sort();
+    const content = assembleWorkflowMarkdown(doc, xrefs);
     const parsed = parseWorkflow(content, { path: workflowRef });
     if (!parsed.ok) {
       appendEvent(
@@ -452,7 +456,7 @@ export async function akmProcedural(opts: AkmProceduralOptions): Promise<Procedu
         ref: workflowRef,
         source: "procedural",
         sourceRun,
-        payload: { content, frontmatter: { description: doc.description } },
+        payload: { content, frontmatter: { description: doc.description, xrefs } },
         eligibilitySource,
       },
       opts.ctx,

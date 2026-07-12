@@ -39,15 +39,17 @@
  * assertions are hermetic), following tests/commands/remember-import-*.test.ts.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint/index";
 import { deriveOnDiskCasedRelPath } from "../../src/commands/mv-cli";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { readEvents } from "../../src/core/events";
-import { getDbPath } from "../../src/core/paths";
+import { getDbPath, getIndexWriterLockPath, getMaintenanceBarrierPath } from "../../src/core/paths";
+import * as stateDbModule from "../../src/core/state-db";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import * as indexDbModule from "../../src/indexer/db/db";
 import {
   applyFeedbackToUtilityScore,
   closeDatabase,
@@ -195,6 +197,271 @@ describe("akm mv — rename within a type dir", () => {
     expect(json.to).toBe("memory:renamed-solo");
     expect(fs.existsSync(path.join(stashDir, "memories/solo.md"))).toBe(false);
     expect(fs.existsSync(path.join(stashDir, "memories/renamed-solo.md"))).toBe(true);
+  });
+});
+
+describe("akm mv — serialized, managed, and recoverable mutation", () => {
+  test("waits for the index-writer lease before changing the stash", async () => {
+    const oldPath = seedAsset(stashDir, "memories/serialized.md", "Serialized move.\n");
+    const newPath = path.join(stashDir, "memories/serialized-new.md");
+    const lockPath = getIndexWriterLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString(), purpose: "test-holder" }),
+      "utf8",
+    );
+
+    const move = runCliCapture(["mv", "memory:serialized", "serialized-new"]);
+    await Bun.sleep(150);
+    const changedWhileLocked = !fs.existsSync(oldPath) || fs.existsSync(newPath);
+    fs.rmSync(lockPath, { force: true });
+    const result = await move;
+
+    expect(changedWhileLocked).toBe(false);
+    expect(result.code).toBe(0);
+    expect(fs.existsSync(newPath)).toBe(true);
+  });
+
+  test("keeps a managed maintenance activity live while canonical state is re-keyed", async () => {
+    seedAsset(stashDir, "memories/managed-state.md", "Managed state move.\n");
+    const db = openStateDatabase();
+    db.close();
+    const realOpen = stateDbModule.openStateDatabase;
+    let observedActivity = false;
+    spyOn(stateDbModule, "openStateDatabase").mockImplementation(((...args: Parameters<typeof realOpen>) => {
+      const opened = realOpen(...args);
+      const activityDir = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
+      observedActivity =
+        fs.existsSync(activityDir) && fs.readdirSync(activityDir).some((name) => name.startsWith("state-db-"));
+      return opened;
+    }) as typeof realOpen);
+
+    const result = await runCliCapture(["mv", "memory:managed-state", "managed-state-new"]);
+    expect(result.code).toBe(0);
+    expect(observedActivity).toBe(true);
+  });
+
+  test("a citer write failure leaves every citer and the source byte-identical", async () => {
+    const sourcePath = seedAsset(stashDir, "memories/write-failure.md", "Move source.\n");
+    const firstCiter = seedAsset(stashDir, "knowledge/a-citer.md", "FIRST memory:write-failure\n");
+    const failingCiter = seedAsset(stashDir, "knowledge/z-citer.md", "SECOND memory:write-failure\n");
+    const originalWrite = fs.writeFileSync;
+    let rewrittenWrites = 0;
+    spyOn(fs, "writeFileSync").mockImplementation(((
+      file: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      ...args: unknown[]
+    ) => {
+      if (String(data).includes("memory:write-failure-new")) {
+        rewrittenWrites += 1;
+        if (rewrittenWrites === 2) throw new Error("injected citer write failure");
+      }
+      return originalWrite(file, data, ...(args as [fs.WriteFileOptions?]));
+    }) as typeof fs.writeFileSync);
+
+    const result = await runCliCapture(["mv", "memory:write-failure", "write-failure-new"]);
+
+    expect(result.code).not.toBe(0);
+    expect(fs.readFileSync(sourcePath, "utf8")).toBe("Move source.\n");
+    expect(fs.readFileSync(firstCiter, "utf8")).toBe("FIRST memory:write-failure\n");
+    expect(fs.readFileSync(failingCiter, "utf8")).toBe("SECOND memory:write-failure\n");
+    expect(fs.existsSync(path.join(stashDir, "memories/write-failure-new.md"))).toBe(false);
+  });
+
+  test("an asset publication failure rolls back already-published citer rewrites", async () => {
+    const sourcePath = seedAsset(stashDir, "memories/rename-failure.md", "Move source.\n");
+    const citer = seedAsset(stashDir, "knowledge/rename-citer.md", "Cites memory:rename-failure\n");
+    const targetPath = path.join(stashDir, "memories/rename-failure-new.md");
+    const originalLink = fs.linkSync;
+    spyOn(fs, "linkSync").mockImplementation(((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+      if (path.resolve(String(oldPath)) === path.resolve(sourcePath) && path.resolve(String(newPath)) === targetPath) {
+        throw new Error("injected asset publication failure");
+      }
+      return originalLink(oldPath, newPath);
+    }) as typeof fs.linkSync);
+
+    const result = await runCliCapture(["mv", "memory:rename-failure", "rename-failure-new"]);
+
+    expect(result.code).not.toBe(0);
+    expect(fs.readFileSync(sourcePath, "utf8")).toBe("Move source.\n");
+    expect(fs.readFileSync(citer, "utf8")).toBe("Cites memory:rename-failure\n");
+    expect(fs.existsSync(targetPath)).toBe(false);
+  });
+
+  test("a committed journal is irreversible when transaction cleanup fails", async () => {
+    const sourcePath = seedAsset(stashDir, "memories/cleanup-failure.md", "Committed move.\n");
+    const targetPath = path.join(stashDir, "memories/cleanup-failure-new.md");
+    const originalRm = fs.rmSync;
+    spyOn(fs, "rmSync").mockImplementation(((target: fs.PathLike, options?: fs.RmDirOptions) => {
+      if (String(target).includes(`${path.sep}mv-transactions${path.sep}`)) {
+        throw new Error("injected cleanup failure");
+      }
+      return originalRm(target, options);
+    }) as typeof fs.rmSync);
+
+    const result = await runCliCapture(["mv", "memory:cleanup-failure", "cleanup-failure-new"]);
+    expect(result.code).toBe(0);
+    expect(fs.existsSync(sourcePath)).toBe(false);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("Committed move.\n");
+  });
+
+  test("refuses to replace a citer that diverged after planning", async () => {
+    const sourcePath = seedAsset(stashDir, "memories/divergent.md", "Divergent source.\n");
+    const citer = seedAsset(stashDir, "knowledge/divergent-citer.md", "Cites memory:divergent\n");
+    const originalWrite = fs.writeFileSync;
+    let changed = false;
+    spyOn(fs, "writeFileSync").mockImplementation(((
+      file: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      ...args: unknown[]
+    ) => {
+      const result = originalWrite(file, data, ...(args as [fs.WriteFileOptions?]));
+      if (!changed && String(file).endsWith("journal.json.tmp") && String(data).includes('"phase": "applying"')) {
+        changed = true;
+        originalWrite(citer, "EXTERNAL EDIT memory:divergent\n", "utf8");
+      }
+      return result;
+    }) as typeof fs.writeFileSync);
+
+    const result = await runCliCapture(["mv", "memory:divergent", "divergent-new"]);
+    expect(result.code).not.toBe(0);
+    expect(fs.readFileSync(citer, "utf8")).toBe("EXTERNAL EDIT memory:divergent\n");
+    expect(fs.existsSync(sourcePath)).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "memories/divergent-new.md"))).toBe(false);
+  });
+
+  test("does not clobber a citer changed after hash validation but before replacement", async () => {
+    const sourcePath = seedAsset(stashDir, "memories/hash-race.md", "Hash race source.\n");
+    const citer = seedAsset(stashDir, "knowledge/hash-race-citer.md", "Cites memory:hash-race\n");
+    const originalLink = fs.linkSync;
+    let raced = false;
+    spyOn(fs, "linkSync").mockImplementation(((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+      if (!raced && path.basename(String(oldPath)).startsWith("staged-") && path.resolve(String(newPath)) === citer) {
+        raced = true;
+        fs.writeFileSync(citer, "EXTERNAL RACE EDIT memory:hash-race\n", "utf8");
+      }
+      return originalLink(oldPath, newPath);
+    }) as typeof fs.linkSync);
+
+    const result = await runCliCapture(["mv", "memory:hash-race", "hash-race-new"]);
+    expect(result.code).not.toBe(0);
+    expect(fs.readFileSync(citer, "utf8")).toBe("EXTERNAL RACE EDIT memory:hash-race\n");
+    expect(fs.existsSync(sourcePath)).toBe(true);
+  });
+
+  test("retains and retries the move journal when index row re-key throws transiently", async () => {
+    seedAsset(stashDir, "memories/rekey-retry.md", "Preserve row identity.\n");
+    seedAsset(stashDir, "memories/rekey-trigger.md", "Recovery trigger.\n");
+    await buildIndex();
+    let db = openExistingDatabase(getDbPath());
+    const originalRow = entryByKeySuffix(db, ":memory:rekey-retry");
+    db.close();
+    expect(originalRow).toBeDefined();
+    const spy = spyOn(indexDbModule, "rekeyEntryInPlace").mockImplementation(() => {
+      throw new Error("injected transient re-key failure");
+    });
+
+    const failed = await runCliCapture(["mv", "memory:rekey-retry", "rekey-retry-new"]);
+    expect(failed.code).not.toBe(0);
+    expect(fs.existsSync(path.join(stashDir, ".akm", "mv-transactions"))).toBe(true);
+    spy.mockRestore();
+
+    const recovered = await runCliCapture(["mv", "memory:rekey-trigger", "rekey-trigger-new"]);
+    expect(recovered.stderr).toBe("");
+    expect(recovered.code).toBe(0);
+    db = openExistingDatabase(getDbPath());
+    const recoveredRow = entryByKeySuffix(db, ":memory:rekey-retry-new");
+    db.close();
+    expect(recoveredRow?.id).toBe(originalRow?.id);
+  });
+
+  test("retains and retries when usage_events re-key hits a non-legacy write error", async () => {
+    seedAsset(stashDir, "memories/usage-rekey-retry.md", "Preserve usage history.\n");
+    seedAsset(stashDir, "memories/usage-recovery-trigger.md", "Recovery trigger.\n");
+    await buildIndex();
+    let db = openExistingDatabase(getDbPath());
+    const originalRow = entryByKeySuffix(db, ":memory:usage-rekey-retry");
+    if (!originalRow) throw new Error("missing indexed source row");
+    ensureUsageEventsSchema(db);
+    insertUsageEvent(db, {
+      event_type: "show",
+      entry_id: originalRow.id,
+      entry_ref: "memory:usage-rekey-retry",
+    });
+    db.exec(`CREATE TRIGGER fail_usage_rekey
+      BEFORE UPDATE OF entry_ref ON usage_events
+      WHEN OLD.entry_ref = 'memory:usage-rekey-retry'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected usage re-key failure');
+      END`);
+    closeDatabase(db);
+
+    const failed = await runCliCapture(["mv", "memory:usage-rekey-retry", "usage-rekey-retry-new"]);
+    expect(failed.code).not.toBe(0);
+    expect(fs.existsSync(path.join(stashDir, ".akm", "mv-transactions"))).toBe(true);
+
+    db = openExistingDatabase(getDbPath());
+    db.exec("DROP TRIGGER fail_usage_rekey");
+    closeDatabase(db);
+    const recovered = await runCliCapture(["mv", "memory:usage-recovery-trigger", "usage-recovery-trigger-new"]);
+    expect(recovered.code).toBe(0);
+    db = openExistingDatabase(getDbPath());
+    const recoveredRow = entryByKeySuffix(db, ":memory:usage-rekey-retry-new");
+    const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as {
+      entry_ref: string;
+      entry_id: number;
+    };
+    closeDatabase(db);
+    expect(recoveredRow?.id).toBe(originalRow.id);
+    expect(usage).toEqual({ entry_ref: "memory:usage-rekey-retry-new", entry_id: originalRow.id });
+  });
+
+  test("does not clobber a target created after validation", async () => {
+    const sourcePath = seedAsset(stashDir, "memories/target-race.md", "Race source.\n");
+    const targetPath = path.join(stashDir, "memories/target-race-new.md");
+    const originalWrite = fs.writeFileSync;
+    let createdTarget = false;
+    spyOn(fs, "writeFileSync").mockImplementation(((
+      file: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      ...args: unknown[]
+    ) => {
+      const result = originalWrite(file, data, ...(args as [fs.WriteFileOptions?]));
+      if (!createdTarget && String(file).endsWith("journal.json.tmp") && String(data).includes('"phase": "applying"')) {
+        createdTarget = true;
+        originalWrite(targetPath, "EXTERNAL TARGET\n", "utf8");
+      }
+      return result;
+    }) as typeof fs.writeFileSync);
+
+    const result = await runCliCapture(["mv", "memory:target-race", "target-race-new"]);
+    expect(result.code).not.toBe(0);
+    expect(fs.readFileSync(sourcePath, "utf8")).toBe("Race source.\n");
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("EXTERNAL TARGET\n");
+  });
+
+  test("validates the committed target before index and state finalization", async () => {
+    seedAsset(stashDir, "memories/commit-validation.md", "Committed source.\n");
+    const targetPath = path.join(stashDir, "memories", "commit-validation-new.md");
+    const originalRename = fs.renameSync;
+    let diverged = false;
+    spyOn(fs, "renameSync").mockImplementation(((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+      const result = originalRename(oldPath, newPath);
+      if (!diverged && String(newPath).endsWith("journal.json")) {
+        const journal = JSON.parse(fs.readFileSync(String(newPath), "utf8")) as { phase?: string };
+        if (journal.phase === "filesystem-committed") {
+          diverged = true;
+          fs.writeFileSync(targetPath, "EXTERNAL COMMITTED EDIT.\n", "utf8");
+        }
+      }
+      return result;
+    }) as typeof fs.renameSync);
+
+    const result = await runCliCapture(["mv", "memory:commit-validation", "commit-validation-new"]);
+    expect(result.code).not.toBe(0);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("EXTERNAL COMMITTED EDIT.\n");
+    expect(fs.existsSync(path.join(stashDir, ".akm", "mv-transactions"))).toBe(true);
   });
 });
 
@@ -532,7 +799,7 @@ describe("akm mv — the utilityPreserved flag is honest", () => {
     }
   });
 
-  test("the file's row sits under an UNEXPECTED entry_key: the move succeeds but utilityPreserved reports false", async () => {
+  test("an unexpected entry key retains the committed journal instead of discarding row history", async () => {
     seedAsset(stashDir, "memories/stranded-note.md", "History under a weird key.\n");
     await buildIndex();
     // Simulate a row indexed under a differently-normalized key (e.g. a
@@ -548,15 +815,11 @@ describe("akm mv — the utilityPreserved flag is honest", () => {
       closeDatabase(db);
     }
 
-    const { code, stdout } = await runCliCapture(["mv", "memory:stranded-note", "stranded-note-renamed"]);
-    expect(code).toBe(0);
-    const json = JSON.parse(stdout) as MvOutput;
-    expect(json.ok).toBe(true);
+    const { code, stderr } = await runCliCapture(["mv", "memory:stranded-note", "stranded-note-renamed"]);
+    expect(code).not.toBe(0);
     expect(fs.existsSync(path.join(stashDir, "memories/stranded-note-renamed.md"))).toBe(true);
-    // The command must not claim it preserved history it never re-keyed, and
-    // the report carries the reason.
-    expect(json.utilityPreserved).toBe(false);
-    expect(json.warnings?.some((w) => w.includes("re-key"))).toBe(true);
+    expect(stderr).toContain("re-key");
+    expect(fs.existsSync(path.join(stashDir, ".akm", "mv-transactions"))).toBe(true);
 
     // The ghost row is still there under the odd key — disclosed, not hidden.
     db = openExistingDatabase(getDbPath());
@@ -569,22 +832,17 @@ describe("akm mv — the utilityPreserved flag is honest", () => {
     }
   });
 
-  test("an unreadable index.db: the move still succeeds but utilityPreserved reports false", async () => {
+  test("an unreadable index.db retains the committed journal for later re-key recovery", async () => {
     seedAsset(stashDir, "memories/blocked-note.md", "History fate unknown.\n");
     const dbPath = getDbPath();
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     fs.writeFileSync(dbPath, "definitely not a sqlite database", "utf8");
 
-    const { code, stdout } = await runCliCapture(["mv", "memory:blocked-note", "blocked-note-renamed"]);
-    expect(code).toBe(0);
-    const json = JSON.parse(stdout) as MvOutput;
-    // Fail-open: the rename itself lands...
-    expect(json.ok).toBe(true);
+    const { code, stderr } = await runCliCapture(["mv", "memory:blocked-note", "blocked-note-renamed"]);
+    expect(code).not.toBe(0);
     expect(fs.existsSync(path.join(stashDir, "memories/blocked-note-renamed.md"))).toBe(true);
-    // ...but the command must NOT claim it verified a re-key it could not run,
-    // and the REPORT (not just --verbose stderr) must say why history resets.
-    expect(json.utilityPreserved).toBe(false);
-    expect(json.warnings?.some((w) => w.includes("re-key"))).toBe(true);
+    expect(stderr).toContain("re-key");
+    expect(fs.existsSync(path.join(stashDir, ".akm", "mv-transactions"))).toBe(true);
   });
 });
 
@@ -765,7 +1023,8 @@ describe("akm mv — usage_events.entry_ref is re-pointed so history survives a 
         entry_id: entryId,
         entry_ref: "memory:hist-note",
       });
-      insertUsageEvent(db, { event_type: "search", entry_id: entryId, entry_ref: "local//memory:hist-note" });
+      insertUsageEvent(db, { event_type: "search", entry_id: entryId, entry_ref: "stash//memory:hist-note" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "team//memory:hist-note" });
     } finally {
       closeDatabase(db);
     }
@@ -782,7 +1041,12 @@ describe("akm mv — usage_events.entry_ref is re-pointed so history survives a 
           entry_ref: string;
         }>
       ).map((r) => r.entry_ref);
-      expect(refs).toEqual(["memory:hist-note-renamed", "memory:hist-note-renamed", "local//memory:hist-note-renamed"]);
+      expect(refs).toEqual([
+        "memory:hist-note-renamed",
+        "memory:hist-note-renamed",
+        "stash//memory:hist-note-renamed",
+        "team//memory:hist-note",
+      ]);
     } finally {
       closeDatabase(db);
     }
@@ -935,6 +1199,20 @@ describe("akm mv — state.db asset_salience / asset_outcome re-key", () => {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run("memory:salient-note", 0.9, 0.1, 0.2, 0.8, 0, now, "content");
+      stateDb
+        .prepare(
+          `INSERT INTO asset_salience
+             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("stash//memory:salient-note", 0.7, 0.1, 0.2, 0.6, 0, now, "content");
+      stateDb
+        .prepare(
+          `INSERT INTO asset_salience
+             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("team//memory:salient-note", 0.4, 0.1, 0.2, 0.3, 0, now, "content");
       // An orphan row already squatting on the target ref (its asset was
       // deleted — mv verified no file exists at the target). The LIVE
       // asset's history must win.
@@ -952,6 +1230,20 @@ describe("akm mv — state.db asset_salience / asset_outcome re-key", () => {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run("memory:salient-note", now, 7, 1.5, 2, 1, 3, 0.4, now);
+      stateDb
+        .prepare(
+          `INSERT INTO asset_outcome
+             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("stash//memory:salient-note", now, 5, 1.5, 0, 1, 2, 0.3, now);
+      stateDb
+        .prepare(
+          `INSERT INTO asset_outcome
+             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("team//memory:salient-note", now, 11, 1.5, 0, 1, 4, 0.7, now);
     } finally {
       stateDb.close();
     }
@@ -973,13 +1265,24 @@ describe("akm mv — state.db asset_salience / asset_outcome re-key", () => {
         .all() as Array<{ asset_ref: string; encoding_salience: number; rank_score: number; encoding_source: string }>;
       expect(sal).toEqual([
         { asset_ref: "memory:salient-renamed", encoding_salience: 0.9, rank_score: 0.8, encoding_source: "content" },
+        {
+          asset_ref: "stash//memory:salient-renamed",
+          encoding_salience: 0.7,
+          rank_score: 0.6,
+          encoding_source: "content",
+        },
+        { asset_ref: "team//memory:salient-note", encoding_salience: 0.4, rank_score: 0.3, encoding_source: "content" },
       ]);
       const outcome = after
         .prepare(
           "SELECT asset_ref, retrieval_count, review_pressure FROM asset_outcome WHERE asset_ref LIKE '%salient%'",
         )
         .all() as Array<{ asset_ref: string; retrieval_count: number; review_pressure: number }>;
-      expect(outcome).toEqual([{ asset_ref: "memory:salient-renamed", retrieval_count: 7, review_pressure: 3 }]);
+      expect(outcome).toEqual([
+        { asset_ref: "memory:salient-renamed", retrieval_count: 7, review_pressure: 3 },
+        { asset_ref: "stash//memory:salient-renamed", retrieval_count: 5, review_pressure: 2 },
+        { asset_ref: "team//memory:salient-note", retrieval_count: 11, review_pressure: 4 },
+      ]);
     } finally {
       after.close();
     }
@@ -1317,7 +1620,7 @@ describe("akm mv — state.db re-key failures are surfaced, missing tables stay 
   // the salience tables); every other shape — including a lock timeout's
   // "database is locked" (R2-2, verified against a held BEGIN IMMEDIATE) —
   // takes the same tableFailures -> warnings path this test pins.
-  test("a NON-missing-table failure (incompatible schema) lands in warnings; the move itself still succeeds", async () => {
+  test("a NON-missing-table failure keeps the committed move journal for forward recovery", async () => {
     seedAsset(stashDir, "memories/state-broken.md", "Salience fate unknown.\n");
     const stateDb = openStateDatabase();
     try {
@@ -1327,14 +1630,11 @@ describe("akm mv — state.db re-key failures are surfaced, missing tables stay 
       stateDb.close();
     }
 
-    const { code, stdout } = await runCliCapture(["mv", "memory:state-broken", "state-broken-renamed"]);
-    expect(code).toBe(0);
-    const json = JSON.parse(stdout) as MvOutput;
-    expect(json.ok).toBe(true);
+    const { code, stderr } = await runCliCapture(["mv", "memory:state-broken", "state-broken-renamed"]);
+    expect(code).not.toBe(0);
     expect(fs.existsSync(path.join(stashDir, "memories/state-broken-renamed.md"))).toBe(true);
-    // The failure names the table in the REPORT — not swallowed as if it were
-    // the known legacy missing-table case.
-    expect(json.warnings?.some((w) => w.includes("state.db") && w.includes("asset_salience"))).toBe(true);
+    expect(stderr).toContain("asset_salience");
+    expect(fs.existsSync(path.join(stashDir, ".akm", "mv-transactions"))).toBe(true);
   });
 
   test("a genuinely MISSING table (legacy state.db) is skipped silently — no warning", async () => {

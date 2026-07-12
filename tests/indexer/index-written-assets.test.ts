@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getDbPath } from "../../src/core/paths";
+import { getDbPath, getIndexWriterLockPath } from "../../src/core/paths";
 import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -45,6 +45,15 @@ function queryIndex(ftsTerm?: string): { entryNames: string[]; ftsCount: number 
       ? (db.prepare("SELECT COUNT(*) AS c FROM entries_fts WHERE entries_fts MATCH ?").get(ftsTerm) as { c: number }).c
       : 0;
     return { entryNames, ftsCount };
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function indexedFileCount(filePath: string): number {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    return (db.prepare("SELECT COUNT(*) AS c FROM entries WHERE file_path = ?").get(filePath) as { c: number }).c;
   } finally {
     closeDatabase(db);
   }
@@ -151,5 +160,35 @@ describe("indexWrittenAssets", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+
+  test("waits for a full-index writer lease before publishing a targeted update", async () => {
+    const filePath = writeMemory("serialized-write", "Targeted update.");
+    const lockPath = getIndexWriterLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }), "utf8");
+
+    const update = indexWrittenAssets(stashDir, [filePath]);
+    await Bun.sleep(150);
+    expect(queryIndex().entryNames).not.toContain("serialized-write");
+    fs.rmSync(lockPath, { force: true });
+    await update;
+    expect(queryIndex().entryNames).toContain("serialized-write");
+  });
+
+  test("removes stale metadata when a rewritten file is no longer indexable", async () => {
+    const filePath = path.join(stashDir, "workflows", "stale-workflow.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(
+      filePath,
+      "---\ndescription: Valid workflow\n---\n\n# Workflow: Valid\n\n## Step: First\nStep ID: first\n\n### Instructions\nRun.\n",
+      "utf8",
+    );
+    await indexWrittenAssets(stashDir, [filePath]);
+    expect(indexedFileCount(filePath)).toBe(1);
+
+    fs.writeFileSync(filePath, "---\ndescription: Broken workflow\n---\n\nNo workflow heading.\n", "utf8");
+    await indexWrittenAssets(stashDir, [filePath]);
+    expect(indexedFileCount(filePath)).toBe(0);
   });
 });

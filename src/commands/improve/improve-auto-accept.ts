@@ -25,7 +25,7 @@
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { appendEvent, type EventsContext } from "../../core/events";
+import type { EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { getPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
@@ -242,7 +242,27 @@ export async function runAutoAcceptGate(
     }
 
     try {
-      const promotion = await promoteFn(cfg.stashDir, resolvedConfig, proposalId, {}, undefined);
+      const target = resolvedConfig.defaultWriteTarget;
+      const resolvedEligibilitySource: string | undefined = isExploration
+        ? "exploration"
+        : currentProposal?.eligibilitySource;
+      const promotion = await promoteFn(
+        cfg.stashDir,
+        resolvedConfig,
+        proposalId,
+        {
+          ...(target ? { target } : {}),
+          eventMetadata: {
+            autoAccept: true,
+            confidence,
+            threshold: effectiveThreshold,
+            phase: cfg.phase,
+            ...(resolvedEligibilitySource !== undefined ? { eligibilitySource: resolvedEligibilitySource } : {}),
+            ...(isExploration ? { explorationBudget: true } : {}),
+          },
+        },
+        undefined,
+      );
       stamp(promotion.proposal.id, {
         outcome: "auto-accepted",
         reason: promoteReason,
@@ -251,36 +271,6 @@ export async function runAutoAcceptGate(
         ...(currentContentHash !== undefined ? { contentHash: currentContentHash } : {}),
         gate: gateLabel,
       });
-      // Resolve the eligibilitySource: exploration-promoted proposals get
-      // eligibilitySource="exploration" (WS-4); normal auto-accepts carry
-      // whatever the proposal was tagged with at selection time.
-      const resolvedEligibilitySource: string | undefined = isExploration
-        ? "exploration"
-        : promotion.proposal.eligibilitySource;
-      appendEvent(
-        {
-          eventType: "promoted",
-          ref: promotion.ref,
-          metadata: {
-            proposalId: promotion.proposal.id,
-            source: promotion.proposal.source,
-            ...(promotion.proposal.sourceRun !== undefined ? { sourceRun: promotion.proposal.sourceRun } : {}),
-            assetPath: promotion.assetPath,
-            autoAccept: true,
-            confidence,
-            threshold: effectiveThreshold,
-            phase: cfg.phase,
-            // Attribution tagging: carry the eligibility lane from the proposal
-            // record onto the auto-accept promoted event so the lane survives to
-            // accept time even when promotion happens in a later run.
-            ...(resolvedEligibilitySource !== undefined ? { eligibilitySource: resolvedEligibilitySource } : {}),
-            // WS-4: mark exploration promotions so health/telemetry can
-            // distinguish them from calibration-signal promotions.
-            ...(isExploration ? { explorationBudget: true } : {}),
-          },
-        },
-        cfg.eventsCtx ?? {},
-      );
       if (isExploration) {
         info(
           `[improve] exploration-accepted ${promotion.ref} (${cfg.phase}; confidence=${(confidence as number).toFixed(2)}; budgetRemaining=${explorationRemaining})`,

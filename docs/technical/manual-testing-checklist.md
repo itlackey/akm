@@ -562,15 +562,59 @@ checklist did not exercise.
       reports the missing artifact with a structured envelope.
 - [ ] `akm health --since 24h` filters telemetry to the last 24 hours.
 
-#### `akm config migrate` diagnosis
+#### `akm migrate` recovery
 
-- [ ] With no config file, `akm config migrate` reports `status: "absent"` and
+- [ ] With no config file, `akm migrate status` reports `status: "blocked"`,
+      includes the missing source and target config states, exits nonzero, and
       does not create one.
-- [ ] With a valid 0.9 config, `akm config migrate` reports `status: "current"`
+- [ ] With a valid 0.9 config, `akm migrate status` reports `status: "current"`
       and leaves the file byte-for-byte unchanged.
-- [ ] With a pre-0.9 profile config, `akm config migrate` fails with
-      `UNSUPPORTED_CONFIG_VERSION`, explains that profile-to-engine conversion
-      is manual, and does not rewrite or back up the file.
+- [ ] With a pre-0.9 profile config and no target, `akm migrate status` reports
+      `status: "blocked"`, explains that profile-to-engine conversion is manual,
+      exits nonzero, and does not rewrite or back up the file.
+- [ ] `akm migrate apply --config <prepared> --dry-run` performs the same checks
+      as status and leaves config and databases unchanged.
+- [ ] `akm migrate apply --config <prepared>` creates a unique verified backup
+      run, applies each pending database migration transactionally, and installs
+      the prepared config last.
+- [ ] A current config with pre-cutover databases is reported as mixed state and
+      can be completed with the same prepared-config command.
+- [ ] The 0.8-to-0.9 operator documentation does not claim the installed 0.8
+      binary enforces a new guard. It directs the operator to make an independent
+      backup, install/stage 0.9 manually, and invoke the new binary's migrate
+      apply command.
+- [ ] A 0.9+ future `akm upgrade --migration-config <prepared>` passes the target
+      only to the installed binary's apply command; the current binary's status
+      preflight receives no future config path.
+- [ ] A standalone future upgrade runs both current-binary status without the
+      future config and staged-binary status with it before replacement. Make
+      staged status fail and verify the old executable remains byte-identical.
+- [ ] Hold canonical state and workflow handles, then run migrate apply. It
+      refuses before creating a backup and names the active maintenance blocker.
+- [ ] SIGKILL apply after state, workflow, and config phases. Canonical opens
+      fail closed, status reports the retained phase without mutation, and the
+      next apply completes one current generation.
+- [ ] Leave a prepared restore journal with a published database and quarantined
+      predecessor. Config/database access refuses before accepting writes or
+      recreating an absent peer database; apply recovers the journal first.
+- [ ] Inject a crash after each prepared rollback destination, stage, sidecar,
+      and pre-journal-delete boundary. Every retry authenticates the original
+      fingerprint and completes; substituting a same-ledger database fails closed.
+- [ ] Substitute a same-ledger database after an apply phase is journaled. Status,
+      resume, and rollback reject the exact-generation mismatch without replacing
+      the substituted file.
+- [ ] SIGKILL immediately after each durable state/workflow/config mutation but
+      before journal advancement. The operation marker or exact config target is
+      recognized as one adjacent generation and apply resumes successfully.
+- [ ] SIGKILL after rollback restore commits but before apply-journal deletion.
+      The next apply authenticates the backup generation, removes the stale apply
+      journal, and leaves restored artifacts byte-identical.
+- [ ] Populate more than 100 active workflow leases/claims. Restore reports a
+      capped sample plus an additional-blockers marker; it never materializes the
+      unbounded result set.
+- [ ] Use a valid prepared config just below the config read cap whose expanded
+      target makes the apply journal exceed its cap. Apply rejects before writing
+      the journal or mutating config/databases.
 - [ ] `AKM_NO_AUTO_MIGRATE=1 akm config list` behaves exactly like the command
       without that retired variable: legacy config is rejected and disk is not
       modified.

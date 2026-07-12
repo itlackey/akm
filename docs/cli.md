@@ -796,13 +796,40 @@ Reports per-entry change flags: `changed.version`, `changed.revision`,
 
 ### upgrade
 
-Upgrade `akm` itself to the latest release. This is for users who installed
-`akm` as a standalone binary. For npm installs, it prints guidance instead.
+Upgrade `akm` itself to the latest release. Standalone binaries are downloaded,
+checksummed, and staged before replacement; npm, Bun, and pnpm global installs
+use their package manager.
+
+For contract-capable 0.9+ releases, upgrade treats migration and indexing as
+separate steps. It runs migration preflight before installation, migration apply
+after installation, and rebuilds the derived index only after migration
+succeeds. Standalone upgrades retain the previous binary until migration apply
+completes. If apply fails, the new binary stays installed and the previous binary
+remains beside it for operator recovery; the executable is never rolled back
+independently of durable state.
+
+The 0.8 binary has neither `migrate` nor `--migration-config`, and cannot enforce
+guards implemented in a release that is not installed yet. Do not use 0.8
+self-update for this boundary. Prepare the 0.9 config, take an independent
+filesystem backup, install or stage the new binary manually, then run the new
+binary's `akm migrate apply --config <prepared>` command. See [the 0.8-to-0.9
+guide](migration/v0.8-to-v0.9.md).
+
+For 0.9+ future upgrades, the old/current binary's preflight inspects only its
+current artifact state and never parses the future prepared config. The prepared
+config is then checked by the staged standalone binary's `migrate status` before
+replacement and passed to the newly installed binary's apply command. A failed
+staged preflight removes the stage and leaves the old executable untouched.
+
+Standalone downloads are streamed directly to the staged file while SHA-256 is
+computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
+1 MiB; an oversized response is cancelled and the staged file is removed.
 
 ```sh
 akm upgrade              # Download and replace the running binary
 akm upgrade --check      # Check for updates without installing
 akm upgrade --force      # Force upgrade even if already on latest
+akm upgrade --migration-config ./prepared-future.json  # Contract-capable 0.9+ only
 ```
 
 | Flag | Description |
@@ -810,6 +837,8 @@ akm upgrade --force      # Force upgrade even if already on latest
 | `--check` | Check for updates without installing |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-checksum` | Skip checksum verification during upgrade (not recommended) |
+| `--skip-post-upgrade` | Skip only the post-migration index rebuild; migration preflight and apply still run |
+| `--migration-config` | On 0.9+ upgrades, operator-prepared config passed only to the new binary's migration apply; not an 0.8-to-0.9 path |
 
 ### clone
 
@@ -1423,6 +1452,27 @@ akm registry search "docker" --limit 5
 | --- | --- |
 | `--limit` | Maximum number of results |
 | `--assets` | Include asset-level results from v3 registry indexes |
+
+### migrate
+
+Inspect or apply config, `state.db`, and `workflow.db` migration as one
+installation lifecycle. Status and dry-run are read-only and exit nonzero when
+newer, inconsistent, corrupt, or unresolved config state blocks apply.
+
+```sh
+akm migrate status
+akm migrate status --config ./prepared-0.9.json
+akm migrate apply --config ./prepared-0.9.json --dry-run
+akm migrate apply --config ./prepared-0.9.json
+```
+
+`--config` is required when the active config is legacy or absent. When the
+active config is current, apply safely uses it as the target. Apply is
+idempotent and creates a verified recovery run before sealing checksums or
+changing any artifact. Durable per-artifact phases make a killed apply
+resumable; while an apply or restore journal is pending, ordinary canonical
+config/database access fails closed. Apply refuses before backup when managed
+handles, maintenance activities, mutation locks, or workflow claims are live.
 
 ### config
 

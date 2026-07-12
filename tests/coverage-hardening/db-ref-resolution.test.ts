@@ -172,7 +172,7 @@ describe("relinkUsageEvents — re-resolve entry_id after a rebuild", () => {
     try {
       // A usage event pointing at an entry_id that is not in `entries`.
       insertUsageEvent(db, { event_type: "search", entry_ref: "skill:gone", entry_id: 987654 });
-      relinkUsageEvents(db);
+      relinkUsageEvents(db, { defaultStashDir: "/stash" });
       const rows = getUsageEvents(db);
       expect(rows).toHaveLength(1);
       // Its ref cannot be resolved (no such entry) → stays null, never a stale id.
@@ -190,7 +190,7 @@ describe("relinkUsageEvents — re-resolve entry_id after a rebuild", () => {
       const id = seedEntry(db, "/stash", "skill", "deploy");
       expect(id).not.toBe(999);
       insertUsageEvent(db, { event_type: "search", entry_ref: "skill:deploy", entry_id: 999 });
-      relinkUsageEvents(db);
+      relinkUsageEvents(db, { sources: [{ path: "/stash" }], defaultStashDir: "/stash" });
       const [row] = getUsageEvents(db);
       expect(row.entry_id).toBe(id); // stale 999 → nulled → re-resolved to id
     } finally {
@@ -233,7 +233,7 @@ describe("relinkUsageEvents — re-resolve entry_id after a rebuild", () => {
     try {
       const id = seedEntry(db, "/stash", "skill", "deploy");
       insertUsageEvent(db, { event_type: "search", entry_ref: "local//skill:deploy", entry_id: 999 });
-      relinkUsageEvents(db);
+      relinkUsageEvents(db, { sources: [{ path: "/stash" }], defaultStashDir: "/stash" });
       const [row] = getUsageEvents(db);
       expect(row.entry_id).toBe(id);
     } finally {

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../errors";
-import { ensureMigrationBackupWithConfigLockHeld } from "../migration-backup";
+import { assertNoPendingMigrationOperation } from "../migration-operation";
 import {
   acquireConfigLock,
   backupExistingConfig,
@@ -120,6 +120,7 @@ export function resetConfigCache(): void {
 }
 
 export function loadUserConfig(): AkmConfig {
+  assertNoPendingMigrationOperation();
   const configPath = getConfigPath();
 
   let stat: fs.Stats;
@@ -148,16 +149,16 @@ export function loadUserConfig(): AkmConfig {
     return cachedConfig.config;
   }
 
-  let text: string;
+  let text: string | undefined;
   try {
-    text = fs.readFileSync(configPath, "utf8");
+    text = readConfigText(configPath);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new ConfigError(
-        `Unable to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
+    throw new ConfigError(
+      `Unable to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (text === undefined) {
     cachedConfig = undefined;
     return { ...DEFAULT_CONFIG };
   }
@@ -280,13 +281,14 @@ export function saveConfig(config: AkmConfig): void {
 }
 
 function saveConfigReal(config: AkmConfig): void {
+  assertNoPendingMigrationOperation();
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
   withConfigLock(() => {
+    assertNoPendingMigrationOperation();
     const validated = validateCompleteConfig(config);
-    ensureMigrationBackupWithConfigLockHeld();
     backupExistingConfig(configPath);
     writeConfigAtomic(configPath, sanitizeConfigForWrite(validated));
   });
@@ -311,15 +313,17 @@ export interface ConfigMutationResult {
 
 /**
  * Mutate config under one fail-closed lock spanning read, merge, validation,
- * migration backup, ordinary backup, and atomic write.
+ * ordinary backup, and atomic write.
  */
 export function mutateConfig(
   mutate: (current: AkmConfig) => AkmConfig,
   options?: { absentNoop?: boolean },
 ): ConfigMutationResult {
+  assertNoPendingMigrationOperation();
   cachedConfig = undefined;
   const configPath = getConfigPath();
   return withConfigLock(() => {
+    assertNoPendingMigrationOperation();
     const text = readConfigText(configPath);
     if (text === undefined && options?.absentNoop) {
       return { config: { ...DEFAULT_CONFIG }, written: false };
@@ -329,7 +333,6 @@ export function mutateConfig(
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
-    ensureMigrationBackupWithConfigLockHeld();
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     writeConfigAtomic(configPath, sanitizeConfigForWrite(next));
@@ -346,19 +349,17 @@ export async function mutateConfigWithPrecommit<T>(
   mutate: (current: AkmConfig) => AkmConfig,
   precommit: (next: AkmConfig) => Promise<T>,
 ): Promise<ConfigMutationResult & { precommit: T }> {
+  assertNoPendingMigrationOperation();
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const release = acquireConfigLock();
   try {
+    assertNoPendingMigrationOperation();
     const text = readConfigText(configPath);
     const current =
       text === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : parseAndValidateConfigText(text, configPath);
     const mutated = mutate(current);
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
-    // Setup's pre-commit may initialize the stash. Prove the rebase and final
-    // config are valid, then require the recovery snapshots before that first
-    // external side effect.
-    ensureMigrationBackupWithConfigLockHeld();
     if (text !== undefined) backupExistingConfig(configPath);
     const precommitResult = await precommit(next);
     if (mutated === current) return { config: current, written: false, precommit: precommitResult };
@@ -385,7 +386,7 @@ export async function mutateConfigWithPrecommit<T>(
  * --yes` with an `apiKey` field expected persistence and got a wiped config
  * with no feedback.
  */
-function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
+export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
   const stripped: string[] = [];
 

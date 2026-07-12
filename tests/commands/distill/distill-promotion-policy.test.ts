@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   assessMemoryKnowledgePromotionCandidate,
+  deriveKnowledgeRef,
   evaluateMemoryPromotionBenchmark,
   getDefaultPromotionPolicySelection,
   type PromotionBenchmarkCase,
@@ -14,6 +15,10 @@ function fixtureByName(name: string): PromotionBenchmarkCase {
 }
 
 describe("distill promotion policy", () => {
+  test("does not copy a memory project scope into the reusable knowledge namespace", () => {
+    expect(deriveKnowledgeRef("memory:project-a/oauth-refresh-race")).toBe("knowledge:oauth-refresh-race");
+  });
+
   test("selected model is derived from a larger train/held-out corpus", () => {
     const selection = getDefaultPromotionPolicySelection();
 
@@ -57,7 +62,7 @@ describe("distill promotion policy", () => {
 
     expect(promoted.promote).toBe(true);
     expect(promoted.modelName).toBe(getDefaultPromotionPolicySelection().selectedModel.name);
-    expect(promoted.content).toContain("sources:");
+    expect(promoted.content).toContain("xrefs:");
     expect(promoted.content).toContain("memory:deploy-vpn-required");
     expect(promoted.content).toContain("Always connect the VPN before starting production deploys.");
   });

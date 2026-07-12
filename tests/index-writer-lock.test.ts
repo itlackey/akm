@@ -16,20 +16,15 @@ afterEach(() => {
 });
 
 describe("index writer lease", () => {
-  test("supports same-process reentrancy and releases on the outermost close", async () => {
-    const outer = await acquireIndexWriterLease({ purpose: "outer" });
-    expect(outer).toBeDefined();
-    const inner = await acquireIndexWriterLease({ purpose: "inner" });
-    expect(inner).toBeDefined();
-
-    const held = probeIndexWriterLease();
-    expect(held.state).toBe("held");
-    if (held.state === "held") expect(held.holderPid).toBe(process.pid);
-
-    inner?.release();
-    expect(fs.existsSync(getIndexWriterLockPath())).toBe(true);
-
-    outer?.release();
+  test("supports nested same-context reentrancy and releases on the outermost close", async () => {
+    await withIndexWriterLease({ purpose: "outer" }, async () => {
+      await withIndexWriterLease({ purpose: "inner" }, async () => {
+        const held = probeIndexWriterLease();
+        expect(held.state).toBe("held");
+        if (held.state === "held") expect(held.holderPid).toBe(process.pid);
+      });
+      expect(fs.existsSync(getIndexWriterLockPath())).toBe(true);
+    });
     expect(fs.existsSync(getIndexWriterLockPath())).toBe(false);
   });
 
@@ -82,5 +77,33 @@ describe("index writer lease", () => {
       if (probe.state === "held") expect(probe.holderPid).toBe(process.pid);
     });
     expect(fs.existsSync(getIndexWriterLockPath())).toBe(false);
+  });
+
+  test("reentrancy is scoped to the owning async context, not the whole process", async () => {
+    let releaseOuter!: () => void;
+    let outerEntered!: () => void;
+    const outerReady = new Promise<void>((resolve) => {
+      outerEntered = resolve;
+    });
+    const outerGate = new Promise<void>((resolve) => {
+      releaseOuter = resolve;
+    });
+    const outer = withIndexWriterLease({ purpose: "outer-context" }, async () => {
+      outerEntered();
+      await outerGate;
+      await withIndexWriterLease({ purpose: "nested-context" }, async () => {});
+    });
+    await outerReady;
+
+    let contenderEntered = false;
+    const contender = withIndexWriterLease({ purpose: "independent-context" }, async () => {
+      contenderEntered = true;
+    });
+    await Bun.sleep(30);
+    expect(contenderEntered).toBe(false);
+
+    releaseOuter();
+    await Promise.all([outer, contender]);
+    expect(contenderEntered).toBe(true);
   });
 });

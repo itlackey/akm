@@ -40,6 +40,8 @@ export interface EmbeddedTask {
   schedule: string;
   /** Human-readable description shown in the wizard. */
   description: string;
+  /** Whether setup may offer this template for installation. */
+  enabled: boolean;
   /** Raw template YAML, written verbatim (with schedule edits) on enable. */
   yaml: string;
 }
@@ -69,7 +71,7 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
     } catch {
       continue;
     }
-    let doc: { command?: unknown; schedule?: unknown; description?: unknown };
+    let doc: { command?: unknown; schedule?: unknown; description?: unknown; enabled?: unknown };
     try {
       doc = yamlParse(yaml) ?? {};
     } catch {
@@ -78,12 +80,14 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
     const command = typeof doc.command === "string" ? doc.command : "";
     const schedule = typeof doc.schedule === "string" ? doc.schedule : "";
     const description = typeof doc.description === "string" ? doc.description : "";
+    const enabled = doc.enabled !== false;
     tasks.push({
       id,
       label: `core/${id}`,
       command,
       schedule,
       description,
+      enabled,
       yaml,
     });
   }

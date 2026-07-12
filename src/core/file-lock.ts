@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { openDatabase } from "../storage/database";
-import { isProcessAlive } from "./common";
+import { isProcessAlive, MAX_LOCK_METADATA_BYTES, readTextFileDescriptorWithLimit } from "./common";
 
 // Shared primitives for sentinel-style file locks across akm. The four
 // historical implementations (config-io.ts, commands/improve.ts,
@@ -72,7 +72,7 @@ function readLockSnapshot(lockPath: string): { rawContent: string; identity: Loc
     throw err;
   }
   try {
-    const rawContent = fs.readFileSync(fd, "utf8");
+    const rawContent = readTextFileDescriptorWithLimit(fd, MAX_LOCK_METADATA_BYTES, "Lock metadata", lockPath);
     const stat = fs.fstatSync(fd);
     return {
       rawContent,

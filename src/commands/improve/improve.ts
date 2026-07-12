@@ -24,6 +24,7 @@ import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
+import { type ResolvedWriteTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../indexer/db/db";
 import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index";
 import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
@@ -35,7 +36,12 @@ import { materializeLlmRunnerConnection } from "../../integrations/agent/runner"
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
-import { isGitBackedStash, resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
+import {
+  isGitBackedStash,
+  listGitChangedPaths,
+  resolveWritableOverride,
+  saveGitStash,
+} from "../../sources/providers/git";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
 import type { DeadUrl } from "../url-checker";
@@ -75,6 +81,7 @@ import type { akmProcedural } from "./procedural";
 import type { akmRecombine } from "./recombine";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { errMessage } from "./shared";
+import { shouldReadLegacyBareImproveState } from "./source-identity";
 
 export { resetHeldProcessLocks } from "./locks";
 // Re-exported from ./loop-stages for test importers (improve-db-locking).
@@ -87,6 +94,8 @@ export interface AkmImproveOptions {
   task?: string;
   dryRun?: boolean;
   target?: string;
+  /** Write target resolved once at the improve invocation boundary. */
+  writeTarget?: ResolvedWriteTarget;
   /**
    * Confidence threshold (0-100). Undefined disables auto-accept for all
    * sub-processes (consolidation will prompt interactively on HTTP paths).
@@ -97,6 +106,8 @@ export interface AkmImproveOptions {
   autoAccept?: number;
   stashDir?: string;
   config?: AkmConfig;
+  /** Internal cutover flag: permit bare durable-state reads for the historical local stash only. */
+  legacyBareState?: boolean;
   /** Invocation plan preflighted by the public CLI before any side effects. */
   resolvedPlan?: ResolvedImprovePlan;
   /**
@@ -414,7 +425,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const runImprovePostLoopStageImpl = options.runImprovePostLoopStageFn ?? runImprovePostLoopStage;
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
-  const _earlyConfig = options.config ?? loadConfig();
+  let _earlyConfig = options.config ?? loadConfig();
+  const writeTarget =
+    options.writeTarget ??
+    (options.target
+      ? resolveWriteTarget(_earlyConfig, options.target, { requireWritable: !options.dryRun })
+      : undefined);
+  if (writeTarget && options.target) {
+    _earlyConfig = { ..._earlyConfig, defaultWriteTarget: writeTarget.source.name };
+  }
   const resolvedPlan =
     options.resolvedPlan ??
     resolveImprovePlan(options.strategy, _earlyConfig, {
@@ -431,6 +450,21 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // Pin nested calls and quality gates to the same config snapshot as the
     // invocation plan. They must never reload a changed config mid-run.
     config: _earlyConfig,
+    ...(writeTarget
+      ? {
+          target: writeTarget.source.name,
+          writeTarget,
+          stashDir: writeTarget.source.path,
+          consolidateOptions: {
+            ...options.consolidateOptions,
+            target: writeTarget.source.name,
+            writeTarget,
+          },
+        }
+      : {}),
+    legacyBareState:
+      options.legacyBareState ??
+      shouldReadLegacyBareImproveState(writeTarget?.source.name, writeTarget?.source.path, _earlyConfig),
     autoAccept: options.autoAccept ?? improveProfile.autoAccept,
     // Profile-level limit, then process-level reflect.limit as fallback.
     // CLI --limit takes precedence over both.
@@ -445,6 +479,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   } catch {
     primaryStashDir = undefined;
   }
+  const syncRepoDir = writeTarget?.source.repoPath ?? primaryStashDir;
+  const initialGitPaths =
+    syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
 
   // C2 (#553/#554/#499): resolve the state.db path ONCE, synchronously, at the
   // command boundary — before the first `await` below. Every state.db open in
@@ -648,6 +685,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
               triageDrain = await drainProposalsFn({
                 stashDir: primaryStashDir,
+                ...(options.target ? { target: options.target } : {}),
+                config: options.config,
                 policy,
                 applyMode,
                 maxAccepts,
@@ -753,19 +792,31 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const commitStashBatch = (
     messageContext: Parameters<typeof renderSyncCommitMessage>[1],
   ): AkmImproveResult["sync"] | undefined => {
-    if (!primaryStashDir || effectiveSync.enabled === false || !isGitBackedStash(primaryStashDir)) {
+    const repoDir = writeTarget?.source.repoPath ?? primaryStashDir;
+    if (!primaryStashDir || !repoDir || effectiveSync.enabled === false || !isGitBackedStash(repoDir)) {
       return undefined;
     }
     const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
-    const writableOverride = resolveWritableOverride(_earlyConfig);
-    const push = effectiveSync.push !== false;
+    const writableOverride = writeTarget ? resolveWritable(writeTarget.config) : resolveWritableOverride(_earlyConfig);
+    const push = options.sync?.push ?? writeTarget?.config.options?.pushOnCommit ?? improveProfile.sync?.push ?? true;
     const message = renderSyncCommitMessage(
       effectiveSync.message ?? "akm improve auto-sync",
       messageContext,
       Date.now(),
     );
     try {
-      const syncResult = saveGitStashFn(undefined, message, writableOverride, { push, repoDir: primaryStashDir });
+      const assetRoot = writeTarget?.source.path ?? primaryStashDir;
+      const assetPrefix = assetRoot ? path.relative(repoDir, assetRoot).replaceAll(path.sep, "/") : "";
+      const paths = listGitChangedPaths(repoDir).filter((changedPath) => {
+        if (initialGitPaths.has(changedPath)) return false;
+        if (path.basename(changedPath).includes(".lock")) return false;
+        return !assetPrefix || changedPath === assetPrefix || changedPath.startsWith(`${assetPrefix}/`);
+      });
+      const syncResult = saveGitStashFn(undefined, message, writableOverride, {
+        push,
+        repoDir,
+        paths,
+      });
       appendEvent(
         {
           eventType: "stash_synced",
@@ -993,8 +1044,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           let postLockLoopRefs = preparation.loopRefs;
           if (proactiveLoopRefs.length > 0) {
             const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
-            const freshReflectTs = buildLatestProposalTsMap(proactiveRefStrs, "reflect");
-            const freshDistillTs = buildLatestProposalTsMap(proactiveRefStrs, "distill");
+            const freshReflectTs = buildLatestProposalTsMap(
+              proactiveRefStrs,
+              "reflect",
+              options.target,
+              options.legacyBareState,
+            );
+            const freshDistillTs = buildLatestProposalTsMap(
+              proactiveRefStrs,
+              "distill",
+              options.target,
+              options.legacyBareState,
+            );
             const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
             const stillDue = new Set(
               filterProactiveDue(proactiveLoopRefs, freshReflectTs, freshDistillTs, pmDueDays, Date.now()).map(

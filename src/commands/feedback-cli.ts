@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
-import { parseAssetRef } from "../core/asset/asset-ref";
+import { parseAssetRef, refToString } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { writeFileAtomic } from "../core/common";
@@ -17,9 +17,11 @@ import {
   applyFeedbackToUtilityScore,
   closeDatabase,
   findEntryIdByRef,
+  getEntryById,
   getEntryFilePathById,
   openExistingDatabase,
 } from "../indexer/db/db";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
@@ -184,7 +186,7 @@ export const feedbackCommand = defineJsonCommand({
         "Pass a ref like `skill:deploy` and either --positive or --negative.",
       );
     }
-    parseAssetRef(ref);
+    const parsedRef = parseAssetRef(ref);
     if (args.positive && args.negative) {
       throw new UsageError("Specify either --positive or --negative, not both.");
     }
@@ -263,9 +265,22 @@ export const feedbackCommand = defineJsonCommand({
     // background reindex it spawned — now that ensureIndex is removed, holding
     // the lock only causes feedback to block for the full improve run duration.
     let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+    let durableRef = ref;
     const db = openExistingDatabase();
     try {
-      const entryId = findEntryIdByRef(db, ref);
+      const config = loadConfig();
+      const sources = resolveSourceEntries(undefined, config);
+      const requestedSource = parsedRef.origin
+        ? sources.find(
+            (source) =>
+              source.registryId === parsedRef.origin ||
+              ((parsedRef.origin === "local" || parsedRef.origin === "stash") && source === sources[0]),
+          )
+        : undefined;
+      if (parsedRef.origin && !requestedSource) {
+        throw new UsageError(`Source "${parsedRef.origin}" is not configured.`, "INVALID_FLAG_VALUE");
+      }
+      const entryId = findEntryIdByRef(db, ref, requestedSource?.path);
       if (entryId === undefined) {
         throw new UsageError(
           `Ref "${ref}" is not in the index. ` +
@@ -277,9 +292,15 @@ export const feedbackCommand = defineJsonCommand({
       // For negative signals, the score is adjusted the next time `akm index`
       // runs — the signal is durable in the DB but does NOT suppress ranking
       // in search results until after reindexing.
+      const indexedEntry = getEntryById(db, entryId);
+      const source = sources.find((candidate) => candidate.path === indexedEntry?.stashDir);
+      durableRef = refToString({
+        ...parsedRef,
+        origin: parsedRef.origin ?? source?.registryId ?? "stash",
+      });
       insertUsageEvent(db, {
         event_type: "feedback",
-        entry_ref: ref,
+        entry_ref: durableRef,
         entry_id: entryId,
         signal,
         metadata: metadataStr,
@@ -302,7 +323,7 @@ export const feedbackCommand = defineJsonCommand({
 
     appendEvent({
       eventType: "feedback",
-      ref,
+      ref: durableRef,
       metadata: metadataObj,
     });
 
@@ -318,7 +339,7 @@ export const feedbackCommand = defineJsonCommand({
       try {
         appendEvent({
           eventType: "improve_review_needed",
-          ref,
+          ref: durableRef,
           metadata: {
             previousUtility: utilityResult.previousUtility,
             nextUtility: utilityResult.nextUtility,

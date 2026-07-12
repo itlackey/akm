@@ -23,9 +23,11 @@ describe("relinkUsageEvents", () => {
 
   /** Minimal `entries` schema — only the columns the resolver reads. */
   function seedEntry(entryKey: string, entryType: string, name: string): number {
+    const suffix = `:${entryType}:${name}`;
+    const stashDir = entryKey.endsWith(suffix) ? entryKey.slice(0, -suffix.length) : "";
     const info = db
-      .prepare("INSERT INTO entries (entry_key, entry_type, entry_json) VALUES (?, ?, ?)")
-      .run(entryKey, entryType, JSON.stringify({ type: entryType, name }));
+      .prepare("INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json) VALUES (?, ?, ?, ?)")
+      .run(entryKey, entryType, stashDir, JSON.stringify({ type: entryType, name }));
     return Number(info.lastInsertRowid);
   }
 
@@ -50,6 +52,7 @@ describe("relinkUsageEvents", () => {
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_key  TEXT NOT NULL,
         entry_type TEXT NOT NULL,
+        stash_dir  TEXT NOT NULL,
         entry_json TEXT NOT NULL
       );
     `);
@@ -60,7 +63,7 @@ describe("relinkUsageEvents", () => {
     const id = seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
     insertEvent("skill:deploy", null); // detached (e.g. after a full rebuild)
 
-    relinkUsageEvents(db);
+    relinkUsageEvents(db, { defaultStashDir: "/home/u/akm" });
 
     expect(entryIdFor("skill:deploy")).toBe(id);
   });
@@ -73,16 +76,55 @@ describe("relinkUsageEvents", () => {
     );
     insertEvent("github:getsentry/skills//knowledge:skills/skill-writer/references/workflow-routing", null);
 
-    relinkUsageEvents(db);
+    relinkUsageEvents(db, {
+      sources: [
+        {
+          path: "/home/u/.cache/akm/registry/git-github-getsentry-skills/abc/extracted",
+          registryId: "github:getsentry/skills",
+        },
+      ],
+    });
 
     expect(entryIdFor("github:getsentry/skills//knowledge:skills/skill-writer/references/workflow-routing")).toBe(id);
+  });
+
+  test("relinks duplicate refs by qualified source and routes bare legacy refs only to the default root", () => {
+    const stashRoot = "/home/u/akm";
+    const teamRoot = "/home/u/team";
+    const stashId = seedEntry(`${stashRoot}:memory:duplicate`, "memory", "duplicate");
+    const teamId = seedEntry(`${teamRoot}:memory:duplicate`, "memory", "duplicate");
+    insertEvent("stash//memory:duplicate", null);
+    insertEvent("team//memory:duplicate", null);
+    insertEvent("memory:duplicate", null);
+
+    relinkUsageEvents(db, {
+      sources: [
+        { path: stashRoot, registryId: "stash" },
+        { path: teamRoot, registryId: "team" },
+      ],
+      defaultStashDir: stashRoot,
+    });
+
+    expect(entryIdFor("stash//memory:duplicate")).toBe(stashId);
+    expect(entryIdFor("team//memory:duplicate")).toBe(teamId);
+    expect(entryIdFor("memory:duplicate")).toBe(stashId);
+  });
+
+  test("leaves an ambiguous bare ref detached when no historical root policy is supplied", () => {
+    seedEntry("/home/u/akm:memory:duplicate", "memory", "duplicate");
+    seedEntry("/home/u/team:memory:duplicate", "memory", "duplicate");
+    insertEvent("memory:duplicate", null);
+
+    relinkUsageEvents(db);
+
+    expect(entryIdFor("memory:duplicate")).toBeNull();
   });
 
   test("leaves a genuinely-orphaned ref null (no matching entry)", () => {
     seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
     insertEvent("script:does-not-exist", null);
 
-    relinkUsageEvents(db);
+    relinkUsageEvents(db, { defaultStashDir: "/home/u/akm" });
 
     expect(entryIdFor("script:does-not-exist")).toBeNull();
   });
@@ -93,7 +135,7 @@ describe("relinkUsageEvents", () => {
     // resolvable ref.
     insertEvent("skill:deploy", 99);
 
-    relinkUsageEvents(db);
+    relinkUsageEvents(db, { defaultStashDir: "/home/u/akm" });
 
     expect(entryIdFor("skill:deploy")).toBe(id);
   });

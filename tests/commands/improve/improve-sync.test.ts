@@ -126,6 +126,54 @@ describe("akm improve — end-of-run auto-sync", () => {
   );
 
   test(
+    "content-layout sync detects the repository root and scopes staging to content",
+    async () => {
+      const repoRoot = path.join(stashDir, "repo");
+      const contentRoot = path.join(repoRoot, "content");
+      fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
+      fs.mkdirSync(path.join(contentRoot, "memories"), { recursive: true });
+      fs.writeFileSync(
+        path.join(contentRoot, "memories", "alpha.md"),
+        "---\ndescription: alpha memory\n---\n\nAlpha.\n",
+        "utf8",
+      );
+      await akmIndex({ stashDir: contentRoot, full: true });
+      const calls: Array<{ writable?: boolean; push?: boolean; repoDir?: string; paths?: string[] }> = [];
+      const saveGitStashFn = mock(
+        (
+          _name?: string,
+          _message?: string,
+          writable?: boolean,
+          options?: { push?: boolean; repoDir?: string; paths?: string[] },
+        ) => {
+          calls.push({ writable, push: options?.push, repoDir: options?.repoDir, paths: options?.paths });
+          return committedResult(false);
+        },
+      );
+
+      await akmImprove({
+        scope: "memory",
+        stashDir: contentRoot,
+        writeTarget: {
+          source: { kind: "git", name: "team", path: contentRoot, repoPath: repoRoot },
+          config: {
+            type: "git",
+            name: "team",
+            url: "https://example.com/team/stash.git",
+            writable: true,
+            options: { pushOnCommit: false },
+          },
+        },
+        config: cheapConfig(),
+        saveGitStashFn: saveGitStashFn as never,
+      });
+
+      expect(calls).toEqual([{ writable: true, push: false, repoDir: repoRoot, paths: [] }]);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "SKIPPED when the stash is not git-backed (no .git)",
     async () => {
       writeMemory("alpha", "Remember alpha details.");

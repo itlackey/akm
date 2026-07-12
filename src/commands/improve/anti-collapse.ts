@@ -100,7 +100,7 @@ export function checkGenerationGuard(
 
 export interface MergeInformationFloorResult {
   passed: boolean;
-  /** Provenance: |required union| before vs. |merged source_refs| after. */
+  /** Provenance: |required union| before vs. |merged xrefs| after. */
   provenanceBefore: number;
   provenanceAfter: number;
   /** Specificity proxy: distinct-token retention of merged body vs. union of sources. */
@@ -123,8 +123,8 @@ function distinctTokens(text: string): Set<string> {
 
 /**
  * A merge must strictly increase information (R5 §4.2):
- *  1. Provenance: the merged asset's `source_refs` must be a superset of the
- *     union of all participants' `source_refs` plus the participant refs
+ *  1. Provenance: the merged asset's `xrefs` must be a superset of the union of
+ *     all participants' `xrefs` plus the participant refs
  *     themselves — provenance never shrinks through a merge.
  *  2. Specificity: distinctTokens(mergedBody) ≥ minSpecificityRetention ×
  *     |union(distinctTokens(participant bodies))| — a merge that only
@@ -169,7 +169,7 @@ export function checkMergeInformationFloor(
 
   const reasons: string[] = [];
   if (!provenanceOk) {
-    reasons.push(`provenance shrank: merged source_refs missing ${missing.length} ref(s) (e.g. ${missing[0]})`);
+    reasons.push(`provenance shrank: merged xrefs missing ${missing.length} ref(s) (e.g. ${missing[0]})`);
   }
   if (!specificityOk) {
     reasons.push(

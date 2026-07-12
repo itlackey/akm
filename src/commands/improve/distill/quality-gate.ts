@@ -205,7 +205,7 @@ export function writeQualityRejection(
   fs.mkdirSync(rejectDir, { recursive: true });
   const ts = timestampForFilename();
   fs.writeFileSync(
-    path.join(rejectDir, `${ts}-${lessonRef}.md`),
+    path.join(rejectDir, `${ts}-${lessonRef.replace(/[:/\\]/g, "-")}.md`),
     `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n---\n\n${content}`,
     "utf8",
   );

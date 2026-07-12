@@ -21,14 +21,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
 import { asNonEmptyString } from "../../core/common";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
-import { closeDatabase, computeBodyHash, findEntryIdByRef, openExistingDatabase } from "../../indexer/db/db";
+import {
+  closeDatabase,
+  computeBodyHash,
+  findEntryIdByRef,
+  getEntryIdByFilePath,
+  openExistingDatabase,
+} from "../../indexer/db/db";
 import { hasGraphData } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
@@ -193,7 +199,7 @@ export async function akmShowUnified(input: {
   }
   // Count prior shows of this ref before logging the current one.
   const priorShowCount = recentShowCount(ref);
-  logShowEvent(ref, input.eventSource);
+  logShowEvent(ref, input.eventSource, result.path, result.origin);
   if (priorShowCount >= 2) {
     // Agent has shown this same asset 3+ times — inject a loop-break hint.
     (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
@@ -298,11 +304,17 @@ function recentShowCount(ref: string): number {
   }
 }
 
-function logShowEvent(ref: string, eventSource: UsageEventSource = "user"): void {
+function logShowEvent(
+  ref: string,
+  eventSource: UsageEventSource = "user",
+  filePath?: string,
+  origin?: string | null,
+): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
   const parsed = parseAssetRef(ref);
-  appendEvent({ eventType: "show", ref, metadata: { type: parsed.type, name: parsed.name } });
+  const eventRef = refToString({ ...parsed, ...(parsed.origin || !origin ? {} : { origin }) });
+  appendEvent({ eventType: "show", ref: eventRef, metadata: { type: parsed.type, name: parsed.name } });
 
   // Detect if this show is a selection from a recent search result.
   try {
@@ -337,8 +349,8 @@ function logShowEvent(ref: string, eventSource: UsageEventSource = "user"): void
       (db) => {
         insertUsageEvent(db, {
           event_type: "show",
-          entry_ref: ref,
-          entry_id: findEntryIdByRef(db, ref),
+          entry_ref: eventRef,
+          entry_id: filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef),
           source: eventSource,
         });
       },

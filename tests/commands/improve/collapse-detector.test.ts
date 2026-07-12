@@ -217,7 +217,7 @@ describe("collapse simulation (synthetic merge passes)", () => {
     // ── Pass 1: FAITHFUL merges — topics 0-8 merge 3-into-1. FTS covers the
     // searchable surface (name/description/tags/TOC), not the raw body, so a
     // faithful merge keeps the member topics in its description + tags —
-    // exactly what a real consolidate merge preserves — and source_refs carry
+    // exactly what a real consolidate merge preserves — and xrefs carry
     // provenance for the merge-following hit rule.
     for (let g = 0; g < 3; g++) {
       const members = TOPICS.slice(g * 3, g * 3 + 3);
@@ -226,13 +226,13 @@ describe("collapse simulation (synthetic merge passes)", () => {
         description: `Merged notes about ${members.map((m) => m.name).join(" ")}`,
         tags: members.map((m) => m.name),
         generation: 1,
-        source_refs: members.map((m) => `memory:${m.name}`),
+        xrefs: members.map((m) => `memory:${m.name}`),
       });
     }
     await reindex();
     const pass1 = snapshot("cycle-2");
     // Merge-following: anchors for topics 0-8 are gone from the index but the
-    // merged docs carry their vocabulary + source_refs — recall survives.
+    // merged docs carry their vocabulary + canonical xrefs — recall survives.
     expect(pass1.mean_recall).toBeGreaterThanOrEqual(baselineRecall - 0.05);
     const pass1Alerts = record(pass1);
     expect(pass1Alerts.map((a) => a.kind)).not.toContain("collapse-recall");

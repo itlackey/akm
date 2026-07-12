@@ -27,6 +27,7 @@ import { type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client
 import { createProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
 import type { AkmDistillResult } from "../distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../distill-promotion-policy";
+import { durableImproveRef } from "../source-identity";
 import { persistOutputEncodingSalience, runLessonQualityJudge, writeQualityRejection } from "./quality-gate";
 
 /**
@@ -37,6 +38,9 @@ import { persistOutputEncodingSalience, runLessonQualityJudge, writeQualityRejec
 export interface PromoteMemoryContext {
   targetKind: "lesson" | "knowledge" | "auto";
   inputRef: string;
+  /** Source-qualified key for durable events/provenance. */
+  durableInputRef?: string;
+  sourceName?: string;
   assetContent: string | null;
   /** Filtered feedback events (only `.metadata` is read by the promotion policy). */
   filteredEvents: readonly { metadata?: Record<string, unknown> }[];
@@ -82,12 +86,13 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     filteredFeedbackCount,
     feedbackFullyFiltered,
   } = ctx;
+  const durableInputRef = ctx.durableInputRef ?? inputRef;
 
   const promotion =
     targetKind === "lesson"
       ? null
       : assessMemoryKnowledgePromotionCandidate({
-          inputRef,
+          inputRef: durableInputRef,
           assetContent,
           feedbackEvents: ctx.filteredEvents.map((event) => ({
             ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
@@ -103,7 +108,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   // overwriting. Follows mem0 ADD/UPDATE/DELETE/NOOP pattern (arXiv:2504.19413 §3.2)
   // and A-MEM dynamic linking (arXiv:2502.12110).
   let resolvedPromotionContent = promotion.content;
-  const existingKnowledgePath = await lookup(promotion.knowledgeRef);
+  const existingKnowledgePath = await lookup(durableImproveRef(promotion.knowledgeRef, ctx.sourceName));
   const existingKnowledgeContent =
     existingKnowledgePath && fs.existsSync(existingKnowledgePath)
       ? (() => {
@@ -148,7 +153,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
         // Existing content is authoritative — no update needed.
         appendEvent({
           eventType: "distill_invoked",
-          ref: inputRef,
+          ref: durableInputRef,
           metadata: {
             outcome: "skipped" as const,
             lessonRef: promotion.knowledgeRef,
@@ -258,7 +263,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   if (isProposalSkipped(proposalResult)) {
     appendEvent({
       eventType: "distill_invoked",
-      ref: inputRef,
+      ref: durableInputRef,
       metadata: {
         outcome: "skipped" as const,
         lessonRef: promotion.knowledgeRef,
@@ -281,14 +286,14 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   // G4: content-score the distilled OUTPUT so it carries a real encoding
   // salience (encoding_source='content') from creation.
   persistOutputEncodingSalience(
-    promotion.knowledgeRef,
+    durableImproveRef(promotion.knowledgeRef, ctx.sourceName),
     resolvedPromotionContent,
     existingRefVocabulary,
     outcomeWeightEnabled,
   );
   appendEvent({
     eventType: "distill_invoked",
-    ref: inputRef,
+    ref: durableInputRef,
     metadata: {
       outcome: "queued" as const,
       lessonRef: promotion.knowledgeRef,

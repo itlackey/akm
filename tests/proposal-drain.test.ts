@@ -12,6 +12,7 @@ import {
 import { CONSERVATIVE, MANUAL, PERSONAL_STASH, resolveDrainPolicy } from "../src/commands/proposal/drain-policies";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands/proposal/proposal";
 import { createProposal, isProposalSkipped, listProposals, type Proposal } from "../src/commands/proposal/repository";
+import type { AkmConfig } from "../src/core/config/config";
 import type { EventsContext } from "../src/core/events";
 import type { AgentRunResult } from "../src/integrations/agent";
 import type { RunnerSpec } from "../src/integrations/agent/runner";
@@ -245,6 +246,17 @@ describe("drainProposals — maxAccepts ceiling", () => {
     expect(result.skippedByCap).toHaveLength(2);
     expect(promoteFn).toHaveBeenCalledTimes(1);
   });
+
+  test("deterministic promotion receives the frozen target and config", async () => {
+    const stash = makeStashDir();
+    seed(stash, "lesson:a", "extract", VALID_LESSON);
+    const config = { semanticSearchMode: "off" } as AkmConfig;
+    const promoteFn = fakeAccept();
+
+    await drainProposals(baseOpts(stash, { target: "team", config }), promoteFn, fakeReject());
+
+    expect(promoteFn).toHaveBeenCalledWith(expect.objectContaining({ target: "team", config }));
+  });
 });
 
 describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)", () => {
@@ -402,6 +414,23 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(result.deferred).toEqual([]);
     expect(promoteFn).toHaveBeenCalledTimes(1);
     expect(rejectFn).not.toHaveBeenCalled();
+  });
+
+  test("judgment promotion receives the frozen target and config", async () => {
+    const stash = makeStashDir();
+    seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const config = { semanticSearchMode: "off" } as AkmConfig;
+    const promoteFn = fakeAccept();
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));
+
+    await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, target: "team", config }),
+      promoteFn,
+      fakeReject(),
+      { chat },
+    );
+
+    expect(promoteFn).toHaveBeenCalledWith(expect.objectContaining({ target: "team", config }));
   });
 
   test("engine rejects a deferred item when the llm verdict is reject", async () => {

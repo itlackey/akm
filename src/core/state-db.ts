@@ -59,11 +59,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { Database, SqlValue } from "../storage/database";
+import { type Database, openDatabase, type SqlValue } from "../storage/database";
+import { assertCurrentMigrationLedger, assertMigrationLedger } from "../storage/engines/sqlite-migrations";
 import { openManagedDatabase, withManagedDb, withManagedDbAsync } from "../storage/managed-db";
 import { acquireMaintenanceActivitySync } from "./maintenance-barrier";
-import { ensureMigrationBackup, getMigrationBackupDir } from "./migration-backup";
+import { assertNoPendingMigrationOperation } from "./migration-operation";
 import { getDataDir } from "./paths";
+import { runMigrations, STATE_MIGRATIONS } from "./state/migrations";
 
 // ── Path helper ──────────────────────────────────────────────────────────────
 
@@ -109,14 +111,23 @@ export function openStateDatabase(dbPath?: string): Database {
   const canonicalPath = getStateDbPath();
   const resolvedPath = dbPath ?? canonicalPath;
   const isCanonical = path.resolve(resolvedPath) === path.resolve(canonicalPath);
+  if (isCanonical) assertNoPendingMigrationOperation();
   const releaseActivity = isCanonical ? acquireMaintenanceActivitySync("state-db") : undefined;
   try {
-    // This must precede mkdir/open: opening an absent SQLite path creates it and
-    // would make the recovery manifest falsely record a fresh DB as pre-existing.
-    if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
+    if (isCanonical) assertNoPendingMigrationOperation();
+    const existed = fs.existsSync(resolvedPath);
+    if (existed) {
+      const preflight = openDatabase(resolvedPath, { readonly: true });
+      try {
+        if (isCanonical) assertCurrentMigrationLedger(preflight, STATE_MIGRATIONS);
+        else assertMigrationLedger(preflight, STATE_MIGRATIONS);
+      } finally {
+        preflight.close();
+      }
+    }
     const db = openManagedDatabase({
       path: resolvedPath,
-      init: (db) => runMigrations(db, { ensureCutoverBackup: isCanonical }),
+      init: (db) => runMigrations(db, { applyPending: !(isCanonical && existed) }),
     });
     if (!releaseActivity) return db;
     let closed = false;
@@ -172,8 +183,6 @@ export function withStateDbAsync<T>(
 // The MIGRATIONS registry + runMigrations live in ./state/migrations (the single
 // append-only ordered source of truth). Imported for internal use by
 // openStateDatabase.
-import { runMigrations } from "./state/migrations";
-
 // ── BEGIN IMMEDIATE transaction helper ───────────────────────────────────────
 
 /**

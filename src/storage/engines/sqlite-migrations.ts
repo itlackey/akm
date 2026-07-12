@@ -15,14 +15,17 @@
  * This module factors that runner out once. Each DB module supplies only its
  * own `MIGRATIONS` array; workflow.db additionally passes a `bootstrap` hook.
  *
- * Migration-safety contract (enforced by convention in each module's array):
+ * Migration-safety contract:
  *   - `id` is permanent and must never be reused.
  *   - `up` must be idempotent (use IF NOT EXISTS, INSERT OR IGNORE, etc.).
  *   - `up` must not DROP any table that holds durable (non-regenerable) data.
  *   - `up` must not RENAME or change the type of an existing column.
  *   - To add a column: use `ALTER TABLE … ADD COLUMN … DEFAULT …`.
+ *   - Applied IDs must be an exact ordered prefix of the registry.
+ *   - Released migration bodies are sealed by SHA-256 in the same ledger.
  */
 
+import crypto from "node:crypto";
 import type { Database } from "../database";
 
 /**
@@ -54,6 +57,119 @@ export interface RunMigrationsOptions {
   bootstrap?: MigrationBootstrap;
   /** Called immediately before each pending migration and before its transaction. */
   beforeMigration?: (migration: Migration) => void;
+  /** Validate the ledger but leave known pending migrations unapplied. */
+  applyPending?: boolean;
+  /** Durable operation marker used to authenticate migration-journal adjacent generations. */
+  generationMarker?: { operationId: string; phase: string };
+}
+
+export type MigrationLedgerStatus = "old" | "current" | "newer" | "inconsistent";
+
+export interface MigrationLedgerState {
+  status: MigrationLedgerStatus;
+  migrationIds: string[];
+  checksums: Array<string | null>;
+  detail?: string;
+}
+
+export function migrationChecksum(migration: Migration): string {
+  return crypto.createHash("sha256").update(migration.id).update("\0").update(migration.up).digest("hex");
+}
+
+function migrationsTableExists(db: Database): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
+}
+
+function ledgerHasChecksum(db: Database): boolean {
+  return (db.prepare("PRAGMA table_info(schema_migrations)").all() as Array<{ name: string }>).some(
+    (column) => column.name === "checksum",
+  );
+}
+
+export function inspectMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
+  const registryIds = migrations.map((migration) => migration.id);
+  if (new Set(registryIds).size !== registryIds.length) {
+    return {
+      status: "inconsistent",
+      migrationIds: [],
+      checksums: [],
+      detail: "migration registry contains duplicate IDs",
+    };
+  }
+  if (!migrationsTableExists(db))
+    return { status: registryIds.length === 0 ? "current" : "old", migrationIds: [], checksums: [] };
+
+  const hasChecksum = ledgerHasChecksum(db);
+  const rows = db
+    .prepare(`SELECT id${hasChecksum ? ", checksum" : ""} FROM schema_migrations ORDER BY rowid`)
+    .all() as Array<{ id: string; checksum?: string | null }>;
+  const migrationIds = rows.map((row) => row.id);
+  const checksums = rows.map((row) => row.checksum ?? null);
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const expected = migrations[index];
+    const row = rows[index];
+    if (!expected) {
+      return { status: "newer", migrationIds, checksums, detail: `unknown migration ID ${row.id}` };
+    }
+    if (row.id !== expected.id) {
+      const knownLater = registryIds.includes(row.id);
+      return {
+        status: knownLater ? "inconsistent" : "newer",
+        migrationIds,
+        checksums,
+        detail: knownLater
+          ? `migration ledger is not an exact ordered prefix at position ${index + 1}`
+          : `unknown migration ID ${row.id}`,
+      };
+    }
+    const expectedChecksum = migrationChecksum(expected);
+    if (row.checksum && row.checksum !== expectedChecksum) {
+      return {
+        status: "inconsistent",
+        migrationIds,
+        checksums,
+        detail: `migration ${row.id} checksum does not match the released migration body`,
+      };
+    }
+  }
+
+  const missingChecksum = checksums.indexOf(null);
+  if (missingChecksum >= 0) {
+    return {
+      status: "old",
+      migrationIds,
+      checksums,
+      detail: `migration ${migrationIds[missingChecksum]} has not been sealed with a checksum`,
+    };
+  }
+
+  return {
+    status: rows.length === migrations.length ? "current" : "old",
+    migrationIds,
+    checksums,
+  };
+}
+
+export function assertMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
+  const state = inspectMigrationLedger(db, migrations);
+  if (state.status === "newer") {
+    throw new Error(`Refusing to open a database with a newer migration ledger: ${state.detail}.`);
+  }
+  if (state.status === "inconsistent") {
+    throw new Error(`Refusing a database whose migrations are not an exact ordered prefix: ${state.detail}.`);
+  }
+  return state;
+}
+
+export function assertCurrentMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
+  const state = assertMigrationLedger(db, migrations);
+  if (state.status !== "current") {
+    throw new Error(
+      `Refusing to open an obsolete writable schema; run \`akm migrate apply\`: ${state.detail ?? "pending migrations"}.`,
+    );
+  }
+  return state;
 }
 
 /**
@@ -64,9 +180,11 @@ export function ensureMigrationsTable(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
+      applied_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      checksum   TEXT
     );
   `);
+  if (!ledgerHasChecksum(db)) db.exec("ALTER TABLE schema_migrations ADD COLUMN checksum TEXT");
 }
 
 /**
@@ -83,10 +201,35 @@ export function ensureMigrationsTable(db: Database): void {
  * @param opts        Optional `bootstrap` hook (see {@link RunMigrationsOptions}).
  */
 export function runMigrations(db: Database, migrations: readonly Migration[], opts?: RunMigrationsOptions): void {
+  if (opts?.applyPending === false) {
+    assertMigrationLedger(db, migrations);
+    return;
+  }
+  if (migrationsTableExists(db)) assertMigrationLedger(db, migrations);
   ensureMigrationsTable(db);
   opts?.bootstrap?.(db);
 
-  const appliedRows = db.prepare("SELECT id FROM schema_migrations").all() as Array<{ id: string }>;
+  const ledger = assertMigrationLedger(db, migrations);
+  db.transaction(() => {
+    const update = db.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = ? AND checksum IS NULL");
+    for (let index = 0; index < ledger.migrationIds.length; index += 1) {
+      update.run(migrationChecksum(migrations[index]), ledger.migrationIds[index]);
+    }
+    if (opts?.generationMarker) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS akm_migration_generation (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          operation_id TEXT NOT NULL,
+          phase TEXT NOT NULL
+        )
+      `);
+      db.prepare(
+        "INSERT INTO akm_migration_generation(singleton, operation_id, phase) VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET operation_id=excluded.operation_id, phase=excluded.phase",
+      ).run(opts.generationMarker.operationId, opts.generationMarker.phase);
+    }
+  })();
+
+  const appliedRows = db.prepare("SELECT id FROM schema_migrations ORDER BY rowid").all() as Array<{ id: string }>;
   const applied = new Set(appliedRows.map((r) => r.id));
 
   for (const migration of migrations) {
@@ -96,7 +239,10 @@ export function runMigrations(db: Database, migrations: readonly Migration[], op
 
     db.transaction(() => {
       db.exec(migration.up);
-      db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
+      db.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (?, ?)").run(
+        migration.id,
+        migrationChecksum(migration),
+      );
     })();
   }
 }

@@ -16,7 +16,7 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -169,10 +169,12 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
         });
         for (const item of result.items) {
           if (!("ref" in item) || typeof item.ref !== "string") continue;
+          const parsed = parseAssetRef(item.ref);
+          const itemOrigin = "origin" in item && typeof item.origin === "string" ? item.origin : undefined;
           insertUsageEvent(db, {
             event_type: "curate",
             query,
-            entry_ref: item.ref,
+            entry_ref: refToString({ ...parsed, ...(parsed.origin || !itemOrigin ? {} : { origin: itemOrigin }) }),
             source: eventSource,
           });
         }

@@ -48,26 +48,32 @@ import path from "node:path";
 import type { AssetRef } from "../../core/asset/asset-ref";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { isWithin } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
+import { getDataDir } from "../../core/paths";
 import { withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
-  formatRefForMessage,
+  type ResolvedWriteTarget,
+  resolveWritableTargets,
   resolveWriteTarget,
   type WriteTargetSource,
-  writeAssetToSource,
 } from "../../core/write-source";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { Database } from "../../storage/database";
+import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
   getStateProposal,
   listStateProposalIdsByPrefix,
   listStateProposals,
   upsertProposal,
 } from "../../storage/repositories/proposals-repository";
+import { recoverInterruptedMoveTransactions } from "../mv-cli";
 import { importLegacyProposalFiles } from "./legacy-import";
 import { repairProposalContent, validateProposal } from "./validators/proposals";
 
@@ -342,6 +348,19 @@ export interface Proposal {
    * revert state carried on the row.
    */
   backupContent?: string;
+  /** SHA-256 of the exact bytes published when this proposal was accepted. */
+  acceptedContentHash?: string;
+  /** Exact write target owned by the accepted content; prevents cross-target revert. */
+  acceptedTarget?: {
+    source: string;
+    root: string;
+    path: string;
+    contentHash: string;
+  };
+  /** Internal marker for a target binding reconstructed from pre-binding proposal state. */
+  legacyAcceptedTargetDerived?: boolean;
+  /** The accepted file was absent when legacy ownership was reconstructed. */
+  legacyAcceptedAssetWasAbsent?: boolean;
   /**
    * Attribution tagging: which eligibility lane selected the source asset for the
    * improve run that produced this proposal (`signal-delta`, `high-retrieval`,
@@ -1014,6 +1033,591 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   };
 }
 
+type ProposalTransactionPhase =
+  | "prepared"
+  | "asset-published"
+  | "proposal-persisted"
+  | "index-finalized"
+  | "event-finalized"
+  | "committed";
+
+interface ProposalTransactionJournal {
+  version: 1;
+  operation: "accept" | "revert";
+  phase: ProposalTransactionPhase;
+  transactionId: string;
+  proposalId: string;
+  stashDir: string;
+  targetRoot: string;
+  targetSource: string;
+  assetPath: string;
+  ref: string;
+  contentPath: string;
+  publishPath: string;
+  displacedPath: string;
+  backupPath: string | null;
+  originalHash: string | null;
+  publishedHash: string;
+  decidedAt: string;
+  eventMetadata?: Record<string, unknown>;
+}
+
+interface ProposalTransaction {
+  journal: ProposalTransactionJournal;
+  journalPath: string;
+  transactionDir: string;
+}
+
+let proposalMutationHookForTests: ((point: string) => void) | undefined;
+
+/** TEST-ONLY crash-window hook used by subprocess recovery tests. */
+export function _setProposalMutationHookForTests(hook?: (point: string) => void): void {
+  proposalMutationHookForTests = hook;
+}
+
+function proposalHash(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function proposalTransactionRoot(stashDir: string, targetRoot: string): string {
+  const namespace = proposalHash(`${path.resolve(stashDir)}\0${path.resolve(targetRoot)}`).slice(0, 24);
+  return path.join(getDataDir(), "proposal-transactions", namespace);
+}
+
+function proposalFileHash(filePath: string): string {
+  return proposalHash(fs.readFileSync(filePath));
+}
+
+function sameProposalFile(left: string, right: string): boolean {
+  try {
+    const leftStat = fs.statSync(left);
+    const rightStat = fs.statSync(right);
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
+}
+
+function fsyncProposalFile(filePath: string): void {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function fsyncProposalDir(dirPath: string): void {
+  try {
+    fsyncProposalFile(dirPath);
+  } catch {
+    // Directory fsync is unavailable on some platforms.
+  }
+}
+
+function writeProposalJournal(transaction: ProposalTransaction, phase: ProposalTransactionPhase): void {
+  const next = { ...transaction.journal, phase };
+  const tempPath = `${transaction.journalPath}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  fsyncProposalFile(tempPath);
+  fs.renameSync(tempPath, transaction.journalPath);
+  fsyncProposalDir(transaction.transactionDir);
+  transaction.journal.phase = phase;
+}
+
+function cleanupProposalTransaction(transactionDir: string): void {
+  try {
+    fs.rmSync(transactionDir, { recursive: true, force: true });
+    try {
+      fs.rmdirSync(path.dirname(transactionDir));
+    } catch {
+      // Other proposal transactions may still exist.
+    }
+  } catch (error) {
+    warn(
+      `[proposals] transaction committed but cleanup failed at ${transactionDir}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function cleanupProposalPublication(journal: ProposalTransactionJournal): void {
+  for (const filePath of [journal.publishPath, journal.displacedPath]) {
+    try {
+      fs.rmSync(filePath, { force: true });
+    } catch (error) {
+      warn(
+        `[proposals] transaction publication cleanup failed at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  fsyncProposalDir(path.dirname(journal.assetPath));
+}
+
+function rollbackPreparedProposalTransaction(transaction: ProposalTransaction): void {
+  const { journal } = transaction;
+  const currentHash = fs.existsSync(journal.assetPath) ? proposalFileHash(journal.assetPath) : null;
+  if (!fs.existsSync(journal.displacedPath)) {
+    if (journal.originalHash === null) {
+      if (currentHash === journal.publishedHash && sameProposalFile(journal.assetPath, journal.publishPath)) {
+        fs.unlinkSync(journal.assetPath);
+      } else if (currentHash !== null) {
+        throw new Error(`Cannot roll back proposal transaction: target was created externally.`);
+      }
+    } else if (currentHash !== journal.originalHash) {
+      throw new Error(`Cannot roll back proposal transaction: ${journal.assetPath} diverged.`);
+    }
+    cleanupProposalPublication(journal);
+    return;
+  }
+  if (currentHash === journal.publishedHash) fs.unlinkSync(journal.assetPath);
+  else if (currentHash !== null && currentHash !== journal.originalHash) {
+    throw new Error(`Cannot roll back proposal transaction: ${journal.assetPath} diverged.`);
+  }
+  if (fs.existsSync(journal.displacedPath)) {
+    if (fs.existsSync(journal.assetPath)) {
+      throw new Error(`Cannot restore proposal backup: ${journal.assetPath} is occupied.`);
+    }
+    fs.linkSync(journal.displacedPath, journal.assetPath);
+  }
+  cleanupProposalPublication(journal);
+}
+
+function validatePublishedProposal(journal: ProposalTransactionJournal): void {
+  if (!fs.existsSync(journal.assetPath) || proposalFileHash(journal.assetPath) !== journal.publishedHash) {
+    throw new Error(`Cannot recover proposal ${journal.proposalId}: published asset diverged.`);
+  }
+}
+
+function persistProposalTransactionState(
+  transaction: ProposalTransaction,
+  proposal: Proposal,
+  ctx?: ProposalsContext,
+): Proposal {
+  const { journal } = transaction;
+  const backupContent = journal.backupPath ? fs.readFileSync(journal.backupPath, "utf8") : undefined;
+  const publishedContent = fs.readFileSync(journal.contentPath, "utf8");
+  return withProposalsDb(journal.stashDir, ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const current = requireProposal(db, journal.stashDir, journal.proposalId);
+      if (journal.operation === "accept") {
+        if (current.status === "accepted") {
+          if (current.acceptedContentHash !== journal.publishedHash) {
+            throw new Error(`Accepted proposal ${journal.proposalId} does not match its recovery journal.`);
+          }
+          return current;
+        }
+        if (current.status !== "pending") {
+          throw new Error(`Proposal ${journal.proposalId} changed status during acceptance (${current.status}).`);
+        }
+        const accepted: Proposal = {
+          ...proposal,
+          payload: { ...proposal.payload, content: publishedContent },
+          status: "accepted",
+          updatedAt: journal.decidedAt,
+          review: { outcome: "accepted", decidedAt: journal.decidedAt },
+          acceptedContentHash: journal.publishedHash,
+          acceptedTarget: {
+            source: journal.targetSource,
+            root: journal.targetRoot,
+            path: journal.assetPath,
+            contentHash: journal.publishedHash,
+          },
+          ...(backupContent !== undefined ? { backupContent } : {}),
+        };
+        upsertProposal(db, accepted, journal.stashDir);
+        return accepted;
+      }
+
+      if (current.status === "reverted") return current;
+      if (current.status !== "accepted") {
+        throw new Error(`Proposal ${journal.proposalId} changed status during reversion (${current.status}).`);
+      }
+      const reverted: Proposal = {
+        ...current,
+        status: "reverted",
+        updatedAt: journal.decidedAt,
+        review: {
+          outcome: "rejected",
+          reason: "reverted: prior content restored from backup",
+          decidedAt: journal.decidedAt,
+        },
+      };
+      upsertProposal(db, reverted, journal.stashDir);
+      return reverted;
+    }),
+  );
+}
+
+function persistProposalEvent(transaction: ProposalTransaction, proposal: Proposal, ctx?: ProposalsContext): void {
+  const { journal } = transaction;
+  withProposalsDb(journal.stashDir, ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const metadata = {
+        proposalId: proposal.id,
+        source: proposal.source,
+        ...(proposal.sourceRun !== undefined ? { sourceRun: proposal.sourceRun } : {}),
+        assetPath: journal.assetPath,
+        ...(proposal.eligibilitySource !== undefined ? { eligibilitySource: proposal.eligibilitySource } : {}),
+        ...(journal.eventMetadata ?? {}),
+        proposalTransactionId: journal.transactionId,
+      };
+      insertEventOnce(db, {
+        eventType: journal.operation === "accept" ? "promoted" : "proposal_reverted",
+        ts: journal.decidedAt,
+        ref: journal.ref,
+        metadata,
+        idempotencyKey: journal.transactionId,
+      });
+    }),
+  );
+}
+
+async function finalizeProposalTransaction(
+  transaction: ProposalTransaction,
+  target: ResolvedWriteTarget,
+  proposal: Proposal,
+  ctx?: ProposalsContext,
+): Promise<Proposal> {
+  const { journal } = transaction;
+  validatePublishedProposal(journal);
+  cleanupProposalPublication(journal);
+  if (journal.phase === "asset-published") {
+    const commitRoot = target.source.repoPath ?? target.source.path;
+    const commitPath = path.relative(commitRoot, journal.assetPath).replaceAll(path.sep, "/");
+    commitWriteTargetBoundary(target, `${journal.operation === "accept" ? "Update" : "Revert"} ${journal.ref}`, {
+      paths: [commitPath],
+    });
+    persistProposalTransactionState(transaction, proposal, ctx);
+    writeProposalJournal(transaction, "proposal-persisted");
+  }
+  let accepted = getProposal(journal.stashDir, journal.proposalId, ctx);
+  if (journal.phase === "proposal-persisted") {
+    if (!(await indexWrittenAssets(journal.targetRoot, [journal.assetPath]))) {
+      throw new Error(`Proposal ${journal.proposalId} index finalization failed.`);
+    }
+    writeProposalJournal(transaction, "index-finalized");
+  }
+  if (journal.phase === "index-finalized") {
+    accepted = getProposal(journal.stashDir, journal.proposalId, ctx);
+    persistProposalEvent(transaction, accepted, ctx);
+    proposalMutationHookForTests?.("event-persisted");
+    writeProposalJournal(transaction, "event-finalized");
+  }
+  if (journal.phase === "event-finalized") writeProposalJournal(transaction, "committed");
+  return accepted;
+}
+
+async function recoverProposalTransactions(
+  target: ResolvedWriteTarget,
+  stashDir: string,
+  ctx?: ProposalsContext,
+): Promise<Map<string, Proposal>> {
+  const completed = new Map<string, Proposal>();
+  const root = proposalTransactionRoot(stashDir, target.source.path);
+  if (!fs.existsSync(root)) return completed;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const transactionDir = path.join(root, entry.name);
+    const journalPath = path.join(transactionDir, "journal.json");
+    if (!fs.existsSync(journalPath)) {
+      cleanupProposalTransaction(transactionDir);
+      continue;
+    }
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ProposalTransactionJournal;
+    if (
+      journal.version !== 1 ||
+      !["accept", "revert"].includes(journal.operation) ||
+      path.resolve(journal.targetRoot) !== path.resolve(target.source.path) ||
+      path.resolve(journal.stashDir) !== path.resolve(stashDir) ||
+      !isWithin(journal.assetPath, target.source.path) ||
+      ![journal.contentPath, journal.backupPath]
+        .filter((candidate): candidate is string => candidate !== null)
+        .every((candidate) => isWithin(candidate, transactionDir)) ||
+      ![journal.publishPath, journal.displacedPath].every(
+        (candidate) =>
+          isWithin(candidate, journal.targetRoot) && path.dirname(candidate) === path.dirname(journal.assetPath),
+      )
+    ) {
+      throw new Error(`Refusing unsafe proposal transaction journal at ${journalPath}.`);
+    }
+    const transaction = { journal, journalPath, transactionDir };
+    if (journal.phase === "prepared") rollbackPreparedProposalTransaction(transaction);
+    else if (journal.phase !== "committed") {
+      const proposal = getProposal(stashDir, journal.proposalId, ctx);
+      completed.set(journal.proposalId, await finalizeProposalTransaction(transaction, target, proposal, ctx));
+    } else {
+      completed.set(journal.proposalId, getProposal(stashDir, journal.proposalId, ctx));
+    }
+    cleanupProposalPublication(journal);
+    cleanupProposalTransaction(transactionDir);
+  }
+  return completed;
+}
+
+export async function recoverProposalTransactionsForStash(
+  stashDir: string,
+  config: AkmConfig,
+  ctx?: ProposalsContext,
+  proposalId?: string,
+): Promise<Map<string, Proposal>> {
+  const completed = new Map<string, Proposal>();
+  const root = path.join(getDataDir(), "proposal-transactions");
+  if (!fs.existsSync(root)) return completed;
+  const matches: ProposalTransactionJournal[] = [];
+  for (const namespace of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!namespace.isDirectory()) continue;
+    const namespaceDir = path.join(root, namespace.name);
+    for (const entry of fs.readdirSync(namespaceDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const journalPath = path.join(namespaceDir, entry.name, "journal.json");
+      if (!fs.existsSync(journalPath)) continue;
+      const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ProposalTransactionJournal;
+      if (path.resolve(journal.stashDir) !== path.resolve(stashDir)) continue;
+      if (proposalId !== undefined && journal.proposalId !== proposalId) continue;
+      matches.push(journal);
+    }
+  }
+  const irreversible = matches.filter((journal) => journal.phase !== "prepared" && journal.phase !== "committed");
+  if (proposalId !== undefined && irreversible.length > 1) {
+    throw new Error(`Conflicting durable proposal transactions exist for ${proposalId}; refusing recovery.`);
+  }
+  const recoveredRoots = new Set<string>();
+  for (const journal of matches) {
+    let target: ResolvedWriteTarget;
+    try {
+      target = resolveWriteTarget(config, journal.targetSource);
+    } catch {
+      target = resolveWriteTarget(config);
+    }
+    if (path.resolve(target.source.path) !== path.resolve(journal.targetRoot)) {
+      throw new Error(`Proposal transaction ${journal.transactionId} is bound to a different target root.`);
+    }
+    const key = path.resolve(target.source.path);
+    if (recoveredRoots.has(key)) continue;
+    await recoverInterruptedMoveTransactions(target.source.path);
+    const recovered = await recoverProposalTransactions(target, stashDir, ctx);
+    for (const [id, proposal] of recovered) completed.set(id, proposal);
+    recoveredRoots.add(key);
+  }
+  return completed;
+}
+
+type RejectTransactionPhase = "prepared" | "state-persisted" | "event-finalized" | "committed";
+
+interface RejectTransactionJournal {
+  version: 1;
+  transactionId: string;
+  phase: RejectTransactionPhase;
+  stashDir: string;
+  proposalId: string;
+  reason?: string;
+  decidedAt: string;
+}
+
+function rejectTransactionRoot(stashDir: string): string {
+  return path.join(getDataDir(), "proposal-rejections", proposalHash(path.resolve(stashDir)).slice(0, 24));
+}
+
+function writeRejectJournal(journalPath: string, journal: RejectTransactionJournal): void {
+  const tempPath = `${journalPath}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(journal, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  fsyncProposalFile(tempPath);
+  fs.renameSync(tempPath, journalPath);
+  fsyncProposalDir(path.dirname(journalPath));
+}
+
+function setRejectPhase(journalPath: string, journal: RejectTransactionJournal, phase: RejectTransactionPhase): void {
+  journal.phase = phase;
+  writeRejectJournal(journalPath, journal);
+}
+
+function finalizeRejectTransaction(
+  journalPath: string,
+  journal: RejectTransactionJournal,
+  ctx?: ProposalsContext,
+): Proposal {
+  let proposal = getProposal(journal.stashDir, journal.proposalId, ctx);
+  if (journal.phase === "prepared") {
+    if (proposal.status === "pending") {
+      proposal = archiveProposal(journal.stashDir, journal.proposalId, "rejected", journal.reason, {
+        ...ctx,
+        now: () => Date.parse(journal.decidedAt),
+      });
+    } else if (proposal.status !== "rejected") {
+      throw new Error(`Proposal ${journal.proposalId} changed status during rejection (${proposal.status}).`);
+    }
+    setRejectPhase(journalPath, journal, "state-persisted");
+    proposalMutationHookForTests?.("reject-state-persisted");
+  }
+  if (journal.phase === "state-persisted") {
+    proposal = getProposal(journal.stashDir, journal.proposalId, ctx);
+    withProposalsDb(journal.stashDir, ctx, (db) =>
+      withImmediateTransaction(db, () => {
+        insertEventOnce(db, {
+          eventType: "rejected",
+          ts: journal.decidedAt,
+          ref: proposal.ref,
+          metadata: {
+            proposalId: proposal.id,
+            source: proposal.source,
+            ...(proposal.sourceRun !== undefined ? { sourceRun: proposal.sourceRun } : {}),
+            ...(journal.reason !== undefined ? { reason: journal.reason } : {}),
+            proposalTransactionId: journal.transactionId,
+          },
+          idempotencyKey: journal.transactionId,
+        });
+      }),
+    );
+    proposalMutationHookForTests?.("reject-event-persisted");
+    setRejectPhase(journalPath, journal, "event-finalized");
+  }
+  if (journal.phase === "event-finalized") setRejectPhase(journalPath, journal, "committed");
+  return proposal;
+}
+
+function recoverRejectTransaction(stashDir: string, proposalId: string, ctx?: ProposalsContext): Proposal | undefined {
+  const root = rejectTransactionRoot(stashDir);
+  if (!fs.existsSync(root)) return undefined;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const transactionDir = path.join(root, entry.name);
+    const journalPath = path.join(transactionDir, "journal.json");
+    if (!fs.existsSync(journalPath)) continue;
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as RejectTransactionJournal;
+    if (journal.proposalId !== proposalId) continue;
+    if (journal.version !== 1 || path.resolve(journal.stashDir) !== path.resolve(stashDir)) {
+      throw new Error(`Refusing unsafe proposal rejection journal at ${journalPath}.`);
+    }
+    const proposal = finalizeRejectTransaction(journalPath, journal, ctx);
+    cleanupProposalTransaction(transactionDir);
+    return proposal;
+  }
+  return undefined;
+}
+
+export function rejectProposalDurably(
+  stashDir: string,
+  proposalId: string,
+  reason?: string,
+  ctx?: ProposalsContext,
+): Proposal {
+  const recovered = recoverRejectTransaction(stashDir, proposalId, ctx);
+  if (recovered) return recovered;
+  const proposal = getProposal(stashDir, proposalId, ctx);
+  if (proposal.status !== "pending") {
+    throw new UsageError(
+      `Proposal ${proposalId} is not pending (current status: ${proposal.status}). Only pending proposals can be rejected.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const transactionId = randomUUID();
+  const transactionDir = path.join(rejectTransactionRoot(stashDir), transactionId);
+  fs.mkdirSync(transactionDir, { recursive: true, mode: 0o700 });
+  const journalPath = path.join(transactionDir, "journal.json");
+  const journal: RejectTransactionJournal = {
+    version: 1,
+    transactionId,
+    phase: "prepared",
+    stashDir,
+    proposalId,
+    ...(reason !== undefined ? { reason } : {}),
+    decidedAt: nowIso(ctx),
+  };
+  writeRejectJournal(journalPath, journal);
+  const rejected = finalizeRejectTransaction(journalPath, journal, ctx);
+  cleanupProposalTransaction(transactionDir);
+  return rejected;
+}
+
+function prepareProposalTransaction(
+  stashDir: string,
+  target: ResolvedWriteTarget,
+  proposal: Proposal,
+  ref: AssetRef,
+  content: string,
+  options: {
+    operation: "accept" | "revert";
+    originalHash: string | null;
+    backup?: Buffer;
+    eventMetadata?: Record<string, unknown>;
+  },
+  ctx?: ProposalsContext,
+): ProposalTransaction {
+  const assetPath = resolveAssetFilePathSafe(target.source, ref);
+  if (!assetPath) throw new Error(`Cannot resolve proposal target ${proposal.ref}.`);
+  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+  const transactionId = randomUUID();
+  const transactionDir = path.join(proposalTransactionRoot(stashDir, target.source.path), transactionId);
+  fs.mkdirSync(transactionDir, { recursive: true, mode: 0o700 });
+  const contentPath = path.join(transactionDir, "published-content");
+  const publishPath = path.join(path.dirname(assetPath), `.akm-proposal-${transactionId}.publish`);
+  const displacedPath = path.join(path.dirname(assetPath), `.akm-proposal-${transactionId}.displaced`);
+  const backupPath = path.join(transactionDir, "backup-content");
+  const normalized = content.endsWith("\n") ? content : `${content}\n`;
+  fs.writeFileSync(contentPath, normalized, { encoding: "utf8", mode: 0o600 });
+  fsyncProposalFile(contentPath);
+
+  let persistedBackupPath: string | null = null;
+  if (options.backup) {
+    fs.writeFileSync(backupPath, options.backup, { mode: 0o600 });
+    fsyncProposalFile(backupPath);
+    persistedBackupPath = backupPath;
+  }
+  const journal: ProposalTransactionJournal = {
+    version: 1,
+    operation: options.operation,
+    phase: "prepared",
+    transactionId,
+    proposalId: proposal.id,
+    stashDir,
+    targetRoot: target.source.path,
+    targetSource: target.source.name,
+    assetPath,
+    ref: proposal.ref,
+    contentPath,
+    publishPath,
+    displacedPath,
+    backupPath: persistedBackupPath,
+    originalHash: options.originalHash,
+    publishedHash: proposalHash(normalized),
+    decidedAt: nowIso(ctx),
+    ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
+  };
+  const transaction = { journal, journalPath: path.join(transactionDir, "journal.json"), transactionDir };
+  writeProposalJournal(transaction, "prepared");
+  try {
+    const mode = fs.existsSync(assetPath) ? fs.statSync(assetPath).mode & 0o777 : 0o644;
+    fs.writeFileSync(publishPath, normalized, { encoding: "utf8", flag: "wx", mode });
+    fsyncProposalFile(publishPath);
+    fsyncProposalDir(path.dirname(assetPath));
+  } catch (error) {
+    rollbackPreparedProposalTransaction(transaction);
+    cleanupProposalTransaction(transactionDir);
+    throw error;
+  }
+  return transaction;
+}
+
+function publishProposalAsset(transaction: ProposalTransaction): void {
+  const { journal } = transaction;
+  try {
+    if (journal.originalHash !== null) {
+      fs.renameSync(journal.assetPath, journal.displacedPath);
+      if (proposalFileHash(journal.displacedPath) !== journal.originalHash) {
+        fs.renameSync(journal.displacedPath, journal.assetPath);
+        throw new Error(`Proposal target changed while its backup was being acquired.`);
+      }
+    }
+    fs.linkSync(journal.publishPath, journal.assetPath);
+    fsyncProposalDir(path.dirname(journal.assetPath));
+    writeProposalJournal(transaction, "asset-published");
+  } catch (error) {
+    rollbackPreparedProposalTransaction(transaction);
+    cleanupProposalTransaction(transaction.transactionDir);
+    throw error;
+  }
+}
+
 // ── Promotion ──────────────────────────────────────────────────────────────
 
 export interface PromoteResult {
@@ -1040,16 +1644,20 @@ export async function promoteProposal(
   stashDir: string,
   config: AkmConfig,
   id: string,
-  options: { target?: string } = {},
+  options: { target?: string; eventMetadata?: Record<string, unknown> } = {},
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
-  const proposal = getProposal(stashDir, id, ctx);
-  if (proposal.status !== "pending") {
-    throw new UsageError(
-      `Proposal ${id} is not pending (current status: ${proposal.status}). Only pending proposals can be accepted.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
+  return withAssetMutationLease("proposal-accept", () => promoteProposalWithLease(stashDir, config, id, options, ctx));
+}
+
+async function promoteProposalWithLease(
+  stashDir: string,
+  config: AkmConfig,
+  id: string,
+  options: { target?: string; eventMetadata?: Record<string, unknown> },
+  ctx?: ProposalsContext,
+): Promise<PromoteResult> {
+  let proposal = getProposal(stashDir, id, ctx);
 
   // Attempt bounded auto-repair of mechanically-fixable structural defects
   // (pseudo-frontmatter-in-body, stray `---` fences, truncated description)
@@ -1088,43 +1696,63 @@ export async function promoteProposal(
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
 
+  await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
+  proposal = getProposal(stashDir, id, ctx);
   const target = resolveWriteTarget(config, options.target);
-
-  // Phase 6C: capture the prior content (if any) BEFORE writing the new
-  // asset. We use the resolved write target to compute the exact path the
-  // asset would land at — same resolver `writeAssetToSource` uses — so the
-  // backup always mirrors what would be overwritten.
-  let backupContent: string | undefined;
-  try {
-    const targetFilePath = resolveAssetFilePathSafe(target.source, ref);
-    if (targetFilePath && fs.existsSync(targetFilePath)) {
-      backupContent = fs.readFileSync(targetFilePath, "utf8");
+  await recoverInterruptedMoveTransactions(target.source.path);
+  if (proposal.status === "accepted" && proposal.acceptedContentHash) {
+    const assetPath = resolveAssetFilePathSafe(target.source, ref);
+    if (
+      proposal.acceptedTarget &&
+      (proposal.acceptedTarget.source !== target.source.name ||
+        path.resolve(proposal.acceptedTarget.root) !== path.resolve(target.source.path) ||
+        !assetPath ||
+        path.resolve(proposal.acceptedTarget.path) !== path.resolve(assetPath))
+    ) {
+      throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
     }
-  } catch (err) {
-    // Backup capture is best-effort. A failure here must not block promotion
-    // (the user explicitly asked to accept); we surface a warning so the
-    // missing-revert path is visible.
-    warn(
-      `[proposals] promoteProposal: failed to capture backup for ${id}: ${err instanceof Error ? err.message : String(err)}`,
+    if (!assetPath || !fs.existsSync(assetPath) || proposalFileHash(assetPath) !== proposal.acceptedContentHash) {
+      throw new Error(`Accepted proposal ${id} does not match the current asset content.`);
+    }
+    return { proposal, assetPath, ref: proposal.ref };
+  }
+  if (proposal.status !== "pending") {
+    throw new UsageError(
+      `Proposal ${id} is not pending (current status: ${proposal.status}). Only pending proposals can be accepted.`,
+      "INVALID_FLAG_VALUE",
     );
   }
 
-  const written = await writeAssetToSource(target.source, target.config, ref, repairedContent);
-  // 0.9.0 (issue #507): single batch commit at the write boundary for git
-  // targets. No-op for filesystem/primary-stash targets.
-  commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
-
-  const archived = archiveProposal(stashDir, id, "accepted", undefined, ctx);
-
-  // Persist the backup content on the archived proposal record so the revert
-  // flow can restore the prior asset state.
-  if (backupContent !== undefined) {
-    const withBackup: Proposal = { ...archived, backupContent };
-    withProposalsDb(stashDir, ctx, (db) => upsertProposal(db, withBackup, stashDir));
-    return { proposal: withBackup, assetPath: written.path, ref: written.ref };
+  const assetPath = resolveAssetFilePathSafe(target.source, ref);
+  if (!assetPath) throw new Error(`Cannot resolve proposal target ${proposal.ref}.`);
+  let backup: Buffer | undefined;
+  if (fs.existsSync(assetPath)) {
+    try {
+      backup = fs.readFileSync(assetPath);
+    } catch (error) {
+      throw new Error(
+        `Proposal backup read failed for ${assetPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
-
-  return { proposal: archived, assetPath: written.path, ref: written.ref };
+  const transaction = prepareProposalTransaction(
+    stashDir,
+    target,
+    proposalToValidate,
+    ref,
+    repairedContent,
+    {
+      operation: "accept",
+      originalHash: backup ? proposalHash(backup) : null,
+      backup,
+      eventMetadata: options.eventMetadata,
+    },
+    ctx,
+  );
+  publishProposalAsset(transaction);
+  const accepted = await finalizeProposalTransaction(transaction, target, proposalToValidate, ctx);
+  cleanupProposalTransaction(transaction.transactionDir);
+  return { proposal: accepted, assetPath: transaction.journal.assetPath, ref: proposal.ref };
 }
 
 // ── Reversion (Phase 6C) ────────────────────────────────────────────────────
@@ -1166,48 +1794,193 @@ export async function revertProposal(
   options: { target?: string } = {},
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
-  const proposal = getProposal(stashDir, id, ctx);
+  return withAssetMutationLease("proposal-revert", () => revertProposalWithLease(stashDir, config, id, options, ctx));
+}
+
+async function revertProposalWithLease(
+  stashDir: string,
+  config: AkmConfig,
+  id: string,
+  options: { target?: string },
+  ctx?: ProposalsContext,
+): Promise<RevertResult> {
+  let proposal = getProposal(stashDir, id, ctx);
+  const ref = parseAssetRef(proposal.ref);
+  if (!TYPE_DIRS[ref.type]) {
+    throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
+  }
+
+  await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
+  proposal = getProposal(stashDir, id, ctx);
+  if (proposal.status === "reverted") {
+    if (options.target) resolveWriteTarget(config, options.target);
+    const target = proposal.legacyAcceptedTargetDerived
+      ? resolveWritableTargets(config).find(
+          (candidate) =>
+            candidate.source.name === proposal.acceptedTarget?.source &&
+            path.resolve(candidate.source.path) === path.resolve(proposal.acceptedTarget?.root ?? ""),
+        )
+      : resolveWriteTarget(config, options.target);
+    const requestedAssetPath = target ? resolveAssetFilePathSafe(target.source, ref) : undefined;
+    if (
+      !target ||
+      !requestedAssetPath ||
+      (proposal.acceptedTarget &&
+        (proposal.acceptedTarget.source !== target.source.name ||
+          path.resolve(proposal.acceptedTarget.root) !== path.resolve(target.source.path) ||
+          path.resolve(proposal.acceptedTarget.path) !== path.resolve(requestedAssetPath)))
+    ) {
+      throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
+    }
+    return {
+      proposal,
+      assetPath: requestedAssetPath as string,
+      ref: proposal.ref,
+    };
+  }
   if (proposal.status !== "accepted") {
     throw new UsageError(
       `only accepted proposals can be reverted (proposal ${id} status: ${proposal.status})`,
       "INVALID_FLAG_VALUE",
     );
   }
-  if (proposal.backupContent === undefined) {
+  const backupContent = proposal.backupContent;
+  if (backupContent === undefined) {
     throw new UsageError(
       `no backup available for this proposal (id: ${id})`,
       "MISSING_REQUIRED_ARGUMENT",
       "Backups are only captured when a proposal overwrites an existing asset — new-asset proposals cannot be reverted via this path; delete the asset directly instead.",
     );
   }
+  const legacyAccepted = proposal.payload.content.endsWith("\n")
+    ? proposal.payload.content
+    : `${proposal.payload.content}\n`;
+  let acceptedHash =
+    proposal.acceptedTarget?.contentHash ?? proposal.acceptedContentHash ?? proposalHash(legacyAccepted);
+  const writableTargets = resolveWritableTargets(config);
+  let target: ResolvedWriteTarget;
+  let assetPath: string;
 
-  const ref = parseAssetRef(proposal.ref);
-  if (!TYPE_DIRS[ref.type]) {
-    throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
+  if (!proposal.acceptedTarget) {
+    if (options.target) resolveWriteTarget(config, options.target);
+    const candidates = writableTargets.flatMap((candidate) => {
+      const candidatePath = resolveAssetFilePathSafe(candidate.source, ref);
+      return candidatePath ? [{ target: candidate, assetPath: candidatePath }] : [];
+    });
+    const matching = candidates.filter(
+      (candidate) => fs.existsSync(candidate.assetPath) && proposalFileHash(candidate.assetPath) === acceptedHash,
+    );
+    if (matching.length > 1) {
+      throw new UsageError(
+        `legacy proposal ${id} has ambiguous accepted content in multiple writable targets; refusing revert`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const existing = candidates.filter((candidate) => fs.existsSync(candidate.assetPath));
+    if (matching.length === 0 && existing.length > 0) {
+      throw new UsageError(
+        `asset content changed after proposal ${id} was accepted; refusing to clobber the newer content`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    if (matching.length === 0 && candidates.length !== 1) {
+      throw new UsageError(
+        `legacy proposal ${id} has no accepted asset and ${candidates.length} writable targets can own the ref; ownership is ambiguous`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const owner = matching[0] ?? candidates[0];
+    if (!owner) {
+      throw new UsageError(
+        `legacy proposal ${id} has no writable target that can own ${proposal.ref}`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const acceptedAssetWasAbsent = matching.length === 0;
+    proposal = withProposalsDb(stashDir, ctx, (db) =>
+      withImmediateTransaction(db, () => {
+        const current = requireProposal(db, stashDir, id);
+        if (current.status !== "accepted" || current.acceptedTarget) {
+          throw new Error(`Proposal ${id} changed while deriving its legacy revert target.`);
+        }
+        const bound: Proposal = {
+          ...current,
+          acceptedContentHash: acceptedHash,
+          acceptedTarget: {
+            source: owner.target.source.name,
+            root: owner.target.source.path,
+            path: owner.assetPath,
+            contentHash: acceptedHash,
+          },
+          legacyAcceptedTargetDerived: true,
+          ...(acceptedAssetWasAbsent ? { legacyAcceptedAssetWasAbsent: true } : {}),
+        };
+        upsertProposal(db, bound, stashDir);
+        return bound;
+      }),
+    );
+    proposalMutationHookForTests?.("legacy-target-derived");
+    target = owner.target;
+    assetPath = owner.assetPath;
+  } else if (proposal.legacyAcceptedTargetDerived) {
+    const acceptedTarget = proposal.acceptedTarget;
+    if (!acceptedTarget) throw new Error(`Legacy proposal ${id} lost its derived accepted target.`);
+    const bound = writableTargets.find((candidate) => {
+      const candidatePath = resolveAssetFilePathSafe(candidate.source, ref);
+      return (
+        candidate.source.name === acceptedTarget.source &&
+        path.resolve(candidate.source.path) === path.resolve(acceptedTarget.root) &&
+        candidatePath !== undefined &&
+        path.resolve(candidatePath) === path.resolve(acceptedTarget.path)
+      );
+    });
+    if (!bound) {
+      throw new UsageError(
+        `legacy proposal ${id} is bound to a writable target that is no longer configured`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    target = bound;
+    assetPath = acceptedTarget.path;
+  } else {
+    target = resolveWriteTarget(config, options.target);
+    const requestedAssetPath = resolveAssetFilePathSafe(target.source, ref);
+    if (
+      proposal.acceptedTarget.source !== target.source.name ||
+      path.resolve(proposal.acceptedTarget.root) !== path.resolve(target.source.path) ||
+      !requestedAssetPath ||
+      path.resolve(proposal.acceptedTarget.path) !== path.resolve(requestedAssetPath)
+    ) {
+      throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
+    }
+    assetPath = requestedAssetPath;
   }
 
-  const target = resolveWriteTarget(config, options.target);
-  const written = await writeAssetToSource(target.source, target.config, ref, proposal.backupContent);
-  // 0.9.0 (issue #507): single batch commit at the write boundary for git
-  // targets. No-op for filesystem/primary-stash targets.
-  commitWriteTargetBoundary(target, `Revert ${formatRefForMessage(ref)}`);
-
-  // Update the proposal record to status: "reverted" and bump updatedAt +
-  // review so the audit trail reflects the second decision.
-  const now = nowIso(ctx);
-  const reverted: Proposal = {
-    ...proposal,
-    status: "reverted",
-    updatedAt: now,
-    review: {
-      outcome: "rejected",
-      reason: "reverted: prior content restored from backup",
-      decidedAt: now,
-    },
-  };
-  withProposalsDb(stashDir, ctx, (db) => upsertProposal(db, reverted, stashDir));
-
-  return { proposal: reverted, assetPath: written.path, ref: written.ref };
+  await recoverInterruptedMoveTransactions(target.source.path);
+  acceptedHash = proposal.acceptedTarget?.contentHash ?? proposal.acceptedContentHash ?? acceptedHash;
+  const acceptedAssetExists = fs.existsSync(assetPath);
+  if (
+    (fs.existsSync(assetPath) && proposalFileHash(assetPath) !== acceptedHash) ||
+    (!fs.existsSync(assetPath) && !proposal.legacyAcceptedAssetWasAbsent)
+  ) {
+    throw new UsageError(
+      `asset content changed after proposal ${id} was accepted; refusing to clobber the newer content`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const transaction = prepareProposalTransaction(
+    stashDir,
+    target,
+    proposal,
+    ref,
+    backupContent,
+    { operation: "revert", originalHash: acceptedAssetExists ? acceptedHash : null },
+    ctx,
+  );
+  publishProposalAsset(transaction);
+  const reverted = await finalizeProposalTransaction(transaction, target, proposal, ctx);
+  cleanupProposalTransaction(transaction.transactionDir);
+  return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
 // ── Diff helpers ────────────────────────────────────────────────────────────

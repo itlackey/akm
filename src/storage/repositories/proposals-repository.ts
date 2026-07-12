@@ -18,8 +18,8 @@ import type { Database, SqlValue } from "../database";
  * Raw SQLite row shape for the `proposals` table.
  *
  * Maps to the public {@link Proposal} interface from src/commands/proposal/repository.ts.
- * The `sourceRun`, `review`, `confidence`, `gateDecision`, and `backupContent`
- * fields are stored in `metadata_json`; callers that need them should
+ * Fields without dedicated columns, including durable revert ownership state,
+ * are stored in `metadata_json`; callers that need them should
  * `JSON.parse(row.metadata_json)` (or use {@link proposalRowToProposal}).
  */
 export interface ProposalRow {
@@ -71,6 +71,10 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
     ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
+    ...(typeof meta.acceptedContentHash === "string" ? { acceptedContentHash: meta.acceptedContentHash } : {}),
+    ...(meta.acceptedTarget !== undefined ? { acceptedTarget: meta.acceptedTarget as Proposal["acceptedTarget"] } : {}),
+    ...(meta.legacyAcceptedTargetDerived === true ? { legacyAcceptedTargetDerived: true } : {}),
+    ...(meta.legacyAcceptedAssetWasAbsent === true ? { legacyAcceptedAssetWasAbsent: true } : {}),
     ...(typeof meta.eligibilitySource === "string"
       ? { eligibilitySource: meta.eligibilitySource as Proposal["eligibilitySource"] }
       : {}),
@@ -89,6 +93,14 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
   if (proposal.gateDecision !== undefined) metaObj.gateDecision = proposal.gateDecision;
   if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
+  if (proposal.acceptedContentHash !== undefined) metaObj.acceptedContentHash = proposal.acceptedContentHash;
+  if (proposal.acceptedTarget !== undefined) metaObj.acceptedTarget = proposal.acceptedTarget;
+  if (proposal.legacyAcceptedTargetDerived !== undefined) {
+    metaObj.legacyAcceptedTargetDerived = proposal.legacyAcceptedTargetDerived;
+  }
+  if (proposal.legacyAcceptedAssetWasAbsent !== undefined) {
+    metaObj.legacyAcceptedAssetWasAbsent = proposal.legacyAcceptedAssetWasAbsent;
+  }
   if (proposal.eligibilitySource !== undefined) metaObj.eligibilitySource = proposal.eligibilitySource;
 
   return {

@@ -45,15 +45,49 @@ describe("raw recovery startup", () => {
     }
   });
 
-  test("raw validate and migrate diagnose a legacy config without rewriting it", async () => {
+  test("raw validate rejects legacy config while migrate reports the prepared-config recovery path", async () => {
     const original = '{"configVersion":"0.8.0","profiles":{}}\n';
     fs.writeFileSync(getConfigPath(), original);
     const validate = await runCliCapture(["config", "validate"]);
     const migrate = await runCliCapture(["config", "migrate"]);
     expect(validate.code).toBe(78);
-    expect(migrate.code).toBe(78);
+    expect(migrate.code).toBe(1);
     expect(validate.stderr).toContain("UNSUPPORTED_CONFIG_VERSION");
+    expect(migrate.stdout).toContain("blocked");
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(original);
+  });
+
+  test("top-level migrate status is wired through the real CLI process", async () => {
+    fs.writeFileSync(getConfigPath(), '{"configVersion":"0.8.0"}\n');
+    const prepared = path.join(path.dirname(getConfigPath()), "prepared-0.9.json");
+    fs.writeFileSync(prepared, '{"configVersion":"0.9.0"}\n');
+
+    const blockedChild = Bun.spawn(["bun", "src/cli.ts", "migrate", "status"], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [blockedExit, blockedStdout] = await Promise.all([
+      blockedChild.exited,
+      new Response(blockedChild.stdout).text(),
+    ]);
+    expect(blockedExit).toBe(1);
+    expect(blockedStdout).toContain('"status":"blocked"');
+
+    const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "status", "--config", prepared], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode, stderr).toBe(0);
+    expect(stdout).toContain('"status":"ready"');
   });
 
   test("setup rejects legacy config before creating the stash or backup", async () => {

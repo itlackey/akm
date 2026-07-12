@@ -32,7 +32,7 @@ import type { AkmDistillResult } from "../../src/commands/improve/distill";
 import { akmImprove } from "../../src/commands/improve/improve";
 import { resolveImproveStrategy, resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 // Imported from the module under test (now shipped).
-import { akmRecombine } from "../../src/commands/improve/recombine";
+import { akmRecombine, deriveRecombineLessonRef } from "../../src/commands/improve/recombine";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
 import { listProposals } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
@@ -128,6 +128,34 @@ afterEach(() => {
 // ── AC3: opt-in gating ────────────────────────────────────────────────────────
 
 describe("recombine — opt-in default (AC3)", () => {
+  test("derived lesson refs preserve a unanimous memory scope", () => {
+    const cluster = {
+      signature: "tag:auth",
+      members: ["refresh", "session", "mfa"].map((name, id) => ({
+        entryKey: `memory:project-a/${name}`,
+        entry: { name: `project-a/${name}`, description: name, tags: ["auth"] },
+        filePath: `/tmp/${name}.md`,
+        id,
+      })),
+    };
+
+    expect(deriveRecombineLessonRef(cluster as never)).toMatch(/^lesson:project-a\/auth-[a-f0-9]{8}$/);
+  });
+
+  test("unscoped memories produce a flat lesson ref instead of an invented memory scope", () => {
+    const cluster = {
+      signature: "tag:auth",
+      members: ["refresh", "session", "mfa"].map((name, id) => ({
+        entryKey: `memory:${name}`,
+        entry: { name, description: name, tags: ["auth"] },
+        filePath: `/tmp/${name}.md`,
+        id,
+      })),
+    };
+
+    expect(deriveRecombineLessonRef(cluster as never)).toMatch(/^lesson:auth-[a-f0-9]{8}$/);
+  });
+
   test("resolveProcessEnabled('recombine', defaultProfile) === false", () => {
     const profile = resolveImproveStrategy("default", { semanticSearchMode: "off" } as AkmConfig).config;
     expect(resolveProcessEnabled("recombine", profile)).toBe(false);
@@ -225,17 +253,26 @@ describe("recombine — single-proposal emission (AC1)", () => {
       writeMemory(stash, "auth-a", ["auth"], "Refresh tokens rotate on each login event.");
       writeMemory(stash, "auth-b", ["auth"], "A scheduled cron prunes orphaned database rows nightly.");
       writeMemory(stash, "auth-c", ["auth"], "The marketing site uses a teal accent color in the footer.");
+      const conventions = path.join(stash, "facts", "conventions", "assets");
+      fs.mkdirSync(conventions, { recursive: true });
+      fs.writeFileSync(
+        path.join(conventions, "lesson.md"),
+        "---\ncategory: convention\n---\n\nLESSON_RECOMBINE_RULE\n",
+      );
+      fs.writeFileSync(path.join(conventions, "skill.md"), "---\ncategory: convention\n---\n\nSKILL_RECOMBINE_RULE\n");
       await buildIndex(stash);
 
       let calls = 0;
+      let prompt = "";
       const res = await akmRecombine({
         stashDir: stash,
         config: recombineEnabledConfig(),
         sourceRun: "run-ac1",
         relatednessSource: "tags",
         minClusterSize: 3,
-        recombineLlmFn: async () => {
+        recombineLlmFn: async (value) => {
           calls += 1;
+          prompt = value;
           return generalization(
             "Authentication state is short-lived and continuously re-verified.",
             "Across login, session, and escalation flows, auth artifacts are intentionally ephemeral.",
@@ -244,6 +281,8 @@ describe("recombine — single-proposal emission (AC1)", () => {
       });
 
       expect(calls).toBe(1);
+      expect(prompt).toContain("LESSON_RECOMBINE_RULE");
+      expect(prompt).not.toContain("SKILL_RECOMBINE_RULE");
       expect(res.proposalsEmitted).toBe(1);
 
       const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "recombine");
@@ -251,12 +290,77 @@ describe("recombine — single-proposal emission (AC1)", () => {
 
       // The emitted proposal must carry frontmatter type: hypothesis and target a lesson ref.
       const proposal = pending[0];
-      expect(proposal.ref.startsWith("lesson:")).toBe(true);
+      expect(proposal.ref.startsWith("lesson:auth-")).toBe(true);
       const content = proposal.payload.content ?? "";
       expect(content).toContain("type: hypothesis");
+      expect(content).toContain("xrefs:");
+      expect(content).toContain("memory:auth-a");
+      expect(content).not.toContain("source_refs:");
     },
     TIMEOUT_MS,
   );
+
+  test("rejects a cluster spanning multiple memory scopes instead of flattening its lesson ref", async () => {
+    const stash = isolatedStash();
+    writeMemory(stash, "project-a/auth-a", ["auth"], "Project A rotates refresh tokens after login.");
+    writeMemory(stash, "project-b/auth-b", ["auth"], "Project B expires idle sessions after thirty minutes.");
+    writeMemory(stash, "project-b/auth-c", ["auth"], "Project B requires MFA for administrators.");
+    await buildIndex(stash);
+    let calls = 0;
+
+    const result = await akmRecombine({
+      stashDir: stash,
+      config: recombineEnabledConfig(),
+      sourceRun: "run-mixed-scope",
+      relatednessSource: "tags",
+      minClusterSize: 3,
+      recombineLlmFn: async () => {
+        calls += 1;
+        return generalization("Mixed scope output should not happen.", "This output must not be queued.");
+      },
+    });
+
+    expect(calls).toBe(0);
+    expect(result.proposalsEmitted).toBe(0);
+    expect(result.warnings.join(" ")).toContain("mixed scopes");
+  });
+
+  test("loads corpus entries only from the selected source root", async () => {
+    const selected = isolatedStash();
+    const readOnly = fs.mkdtempSync(path.join(path.dirname(selected), "readonly-source-"));
+    cleanups.push(() => fs.rmSync(readOnly, { recursive: true, force: true }));
+    for (const name of ["selected-a", "selected-b", "selected-c"]) {
+      writeMemory(selected, name, ["selected"], `Selected body ${name}.`);
+    }
+    for (const name of ["foreign-a", "foreign-b", "foreign-c"]) {
+      writeMemory(readOnly, name, ["foreign"], `Foreign body ${name}.`);
+    }
+    const config = recombineEnabledConfig();
+    config.sources = [
+      { type: "filesystem", name: "selected", path: selected, writable: true },
+      { type: "filesystem", name: "readonly", path: readOnly, writable: false },
+    ];
+    config.defaultWriteTarget = "selected";
+    saveConfig(config);
+    await akmIndex({ full: true });
+    const prompts: string[] = [];
+
+    const result = await akmRecombine({
+      stashDir: selected,
+      config,
+      minClusterSize: 3,
+      relatednessSource: "tags",
+      recombineLlmFn: async (prompt) => {
+        prompts.push(prompt);
+        return generalization("Selected source pattern.", "Only selected source memories support this pattern.");
+      },
+    });
+
+    expect(result.clustersFormed).toBe(1);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("selected-a");
+    expect(prompts[0]).not.toContain("foreign-a");
+  });
 
   test(
     "justified null: LLM returns explicit null → ZERO proposals + null_returned event",
@@ -614,7 +718,7 @@ describe("recombine #632 — entity clustering end-to-end", () => {
       expect(seenSignal).toBe("entity:oauth"); // entity_norm is lowercased
       const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "recombine");
       expect(pending.length).toBe(1);
-      expect(pending[0].ref.startsWith("lesson:recombined/oauth-")).toBe(true);
+      expect(pending[0].ref.startsWith("lesson:oauth-")).toBe(true);
     },
     TIMEOUT_MS,
   );

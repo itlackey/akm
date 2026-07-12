@@ -120,8 +120,13 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
     params.push(filters.event_type);
   }
   if (filters?.entry_ref) {
-    conditions.push("entry_ref = ?");
-    params.push(filters.entry_ref);
+    if (filters.entry_ref.includes("//")) {
+      conditions.push("entry_ref = ?");
+      params.push(filters.entry_ref);
+    } else {
+      conditions.push("(entry_ref = ? OR substr(entry_ref, -length(?) - 2) = '//' || ?)");
+      params.push(filters.entry_ref, filters.entry_ref, filters.entry_ref);
+    }
   }
   if (filters?.source) {
     conditions.push("source = ?");

@@ -156,7 +156,13 @@ function deriveDescription(body: string, description: string | undefined): strin
 
 export function deriveKnowledgeRef(inputRef: string): string {
   const parsed = parseAssetRef(inputRef);
-  return `knowledge:${parsed.name}`;
+  const leaf = parsed.name.split("/").filter(Boolean).at(-1) ?? parsed.name;
+  const safe = leaf
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `knowledge:${safe}`;
 }
 
 function collectPromotionFeatures(input: PromotionPolicyInput): {
@@ -237,13 +243,13 @@ function buildKnowledgeContent(input: PromotionPolicyInput): string {
   const body = parsedContent.content.trim();
   const description = typeof fm.description === "string" ? fm.description.trim() : undefined;
   const normalizedDescription = deriveDescription(body, description);
-  const sources = [input.inputRef];
-  if (typeof fm.source === "string" && fm.source.trim()) sources.push(fm.source.trim());
+  const xrefs = [input.inputRef];
+  if (typeof fm.source === "string" && fm.source.trim()) xrefs.push(fm.source.trim());
   const knowledgeFrontmatter: Record<string, unknown> = {
     ...(normalizedDescription ? { description: normalizedDescription } : {}),
     ...(Array.isArray(fm.tags) ? { tags: fm.tags } : {}),
     ...(typeof fm.observed_at === "string" && fm.observed_at.trim() ? { observed_at: fm.observed_at.trim() } : {}),
-    sources,
+    xrefs,
   };
   return assembleAsset(knowledgeFrontmatter, body);
 }
@@ -674,7 +680,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:deploy-vpn-required",
           content:
-            "---\ndescription: VPN required before deploy\ntags:\n  - deploy\n  - ops\nobserved_at: 2026-04-20\nsources:\n  - memory:deploy-vpn-required\n  - skill:deploy\n---\n\nAlways connect the VPN before starting production deploys.\n",
+            "---\ndescription: VPN required before deploy\ntags:\n  - deploy\n  - ops\nobserved_at: 2026-04-20\nxrefs:\n  - memory:deploy-vpn-required\n  - skill:deploy\n---\n\nAlways connect the VPN before starting production deploys.\n",
           blockedBy: [],
           positiveSignals: [
             "2 positive feedback events",
@@ -701,7 +707,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:release-smoke-test",
           content:
-            "---\ndescription: Smoke test gates release\nobserved_at: 2026-04-18\nsources:\n  - memory:release-smoke-test\n  - skill:release\n---\n\nRun the smoke test before tagging a release candidate.\n",
+            "---\ndescription: Smoke test gates release\nobserved_at: 2026-04-18\nxrefs:\n  - memory:release-smoke-test\n  - skill:release\n---\n\nRun the smoke test before tagging a release candidate.\n",
           blockedBy: [],
           positiveSignals: [
             "3 positive feedback events",
@@ -728,7 +734,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:kubernetes-rollout-check",
           content:
-            "---\ndescription: Verify rollout status after apply\ntags:\n  - k8s\nobserved_at: 2026-04-15\nsources:\n  - memory:kubernetes-rollout-check\n  - skill:k8s\n---\n\nCheck rollout status after kubectl apply before declaring success.\n",
+            "---\ndescription: Verify rollout status after apply\ntags:\n  - k8s\nobserved_at: 2026-04-15\nxrefs:\n  - memory:kubernetes-rollout-check\n  - skill:k8s\n---\n\nCheck rollout status after kubectl apply before declaring success.\n",
           blockedBy: [],
           positiveSignals: [
             "2 positive feedback events",
@@ -755,7 +761,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:incident-channel-rule",
           content:
-            "---\ndescription: Incident bridge stays single-threaded\nobserved_at: 2026-04-12\nsources:\n  - memory:incident-channel-rule\n  - skill:incident\n---\n\nKeep one operator narrating decisions in the incident bridge to avoid conflicting instructions.\n",
+            "---\ndescription: Incident bridge stays single-threaded\nobserved_at: 2026-04-12\nxrefs:\n  - memory:incident-channel-rule\n  - skill:incident\n---\n\nKeep one operator narrating decisions in the incident bridge to avoid conflicting instructions.\n",
           blockedBy: [],
           positiveSignals: [
             "3 positive feedback events",
@@ -871,7 +877,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:feedback-conflict",
           content:
-            "---\ndescription: VPN required before deploy\nobserved_at: 2026-04-20\nsources:\n  - memory:feedback-conflict\n  - skill:deploy\n---\n\nAlways connect the VPN before starting production deploys.\n",
+            "---\ndescription: VPN required before deploy\nobserved_at: 2026-04-20\nxrefs:\n  - memory:feedback-conflict\n  - skill:deploy\n---\n\nAlways connect the VPN before starting production deploys.\n",
           blockedBy: [],
           positiveSignals: [
             "2 positive feedback events",
@@ -920,7 +926,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:staging-cutover-order",
           content:
-            "---\ndescription: Cut over staging after migrations\ntags:\n  - db\n  - deploy\nobserved_at: 2026-04-10\nsources:\n  - memory:staging-cutover-order\n  - skill:database\n---\n\nRun database migrations before shifting staging traffic onto the new release.\n",
+            "---\ndescription: Cut over staging after migrations\ntags:\n  - db\n  - deploy\nobserved_at: 2026-04-10\nxrefs:\n  - memory:staging-cutover-order\n  - skill:database\n---\n\nRun database migrations before shifting staging traffic onto the new release.\n",
           blockedBy: [],
           positiveSignals: [
             "3 positive feedback events",
@@ -1018,7 +1024,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:kafka-rebalance-note",
           content:
-            "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nsources:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
+            "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nxrefs:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
           blockedBy: [],
           positiveSignals: [
             "3 positive feedback events",
@@ -1046,7 +1052,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:gha-token-scope",
           content:
-            "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nsources:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
+            "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nxrefs:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
           blockedBy: [],
           positiveSignals: [
             "2 positive feedback events",
@@ -1097,7 +1103,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:terraform-state-location",
           content:
-            "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nsources:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
+            "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nxrefs:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
           blockedBy: [],
           positiveSignals: [
             "3 positive feedback events",
@@ -1150,7 +1156,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
           threshold: 3.8,
           knowledgeRef: "knowledge:cache-ttl-fact",
           content:
-            "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nsources:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
+            "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nxrefs:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
           blockedBy: [],
           positiveSignals: [
             "2 positive feedback events",
@@ -1213,7 +1219,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 2,
               knowledgeRef: "knowledge:kafka-rebalance-note",
               content:
-                "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nsources:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
+                "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nxrefs:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
               blockedBy: [],
               positiveSignals: ["baseline positive feedback rule"],
               negativeSignals: [],
@@ -1231,7 +1237,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 2,
               knowledgeRef: "knowledge:gha-token-scope",
               content:
-                "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nsources:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
+                "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nxrefs:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
               blockedBy: [],
               positiveSignals: ["baseline positive feedback rule"],
               negativeSignals: [],
@@ -1249,7 +1255,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 2,
               knowledgeRef: "knowledge:helm-debug-guess",
               content:
-                "---\ndescription: Helm upgrade might need --debug\nobserved_at: 2026-04-05\nsources:\n  - memory:helm-debug-guess\n  - skill:helm\n---\n\nIt might help to add --debug to helm upgrade output during failures.\n",
+                "---\ndescription: Helm upgrade might need --debug\nobserved_at: 2026-04-05\nxrefs:\n  - memory:helm-debug-guess\n  - skill:helm\n---\n\nIt might help to add --debug to helm upgrade output during failures.\n",
               blockedBy: [],
               positiveSignals: ["baseline positive feedback rule"],
               negativeSignals: [],
@@ -1267,7 +1273,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 2,
               knowledgeRef: "knowledge:terraform-state-location",
               content:
-                "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nsources:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
+                "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nxrefs:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
               blockedBy: [],
               positiveSignals: ["baseline positive feedback rule"],
               negativeSignals: [],
@@ -1285,7 +1291,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 2,
               knowledgeRef: "knowledge:mixed-signal-rollback",
               content:
-                "---\ndescription: Rollback the cluster immediately\nobserved_at: 2026-04-03\nsources:\n  - memory:mixed-signal-rollback\n  - skill:incident\n---\n\nRollback the cluster immediately after any 5xx spike.\n",
+                "---\ndescription: Rollback the cluster immediately\nobserved_at: 2026-04-03\nxrefs:\n  - memory:mixed-signal-rollback\n  - skill:incident\n---\n\nRollback the cluster immediately after any 5xx spike.\n",
               blockedBy: [],
               positiveSignals: ["baseline positive feedback rule"],
               negativeSignals: [],
@@ -1303,7 +1309,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 2,
               knowledgeRef: "knowledge:cache-ttl-fact",
               content:
-                "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nsources:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
+                "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nxrefs:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
               blockedBy: [],
               positiveSignals: ["baseline positive feedback rule"],
               negativeSignals: [],
@@ -1360,7 +1366,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 3,
               knowledgeRef: "knowledge:kafka-rebalance-note",
               content:
-                "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nsources:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
+                "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nxrefs:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
               blockedBy: [],
               positiveSignals: ["baseline metadata rule"],
               negativeSignals: [],
@@ -1378,7 +1384,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 3,
               knowledgeRef: "knowledge:gha-token-scope",
               content:
-                "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nsources:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
+                "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nxrefs:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
               blockedBy: [],
               positiveSignals: ["baseline metadata rule"],
               negativeSignals: [],
@@ -1396,7 +1402,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 3,
               knowledgeRef: "knowledge:helm-debug-guess",
               content:
-                "---\ndescription: Helm upgrade might need --debug\nobserved_at: 2026-04-05\nsources:\n  - memory:helm-debug-guess\n  - skill:helm\n---\n\nIt might help to add --debug to helm upgrade output during failures.\n",
+                "---\ndescription: Helm upgrade might need --debug\nobserved_at: 2026-04-05\nxrefs:\n  - memory:helm-debug-guess\n  - skill:helm\n---\n\nIt might help to add --debug to helm upgrade output during failures.\n",
               blockedBy: [],
               positiveSignals: ["baseline metadata rule"],
               negativeSignals: [],
@@ -1414,7 +1420,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 3,
               knowledgeRef: "knowledge:terraform-state-location",
               content:
-                "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nsources:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
+                "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nxrefs:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
               blockedBy: [],
               positiveSignals: ["baseline metadata rule"],
               negativeSignals: [],
@@ -1432,7 +1438,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 3,
               knowledgeRef: "knowledge:mixed-signal-rollback",
               content:
-                "---\ndescription: Rollback the cluster immediately\nobserved_at: 2026-04-03\nsources:\n  - memory:mixed-signal-rollback\n  - skill:incident\n---\n\nRollback the cluster immediately after any 5xx spike.\n",
+                "---\ndescription: Rollback the cluster immediately\nobserved_at: 2026-04-03\nxrefs:\n  - memory:mixed-signal-rollback\n  - skill:incident\n---\n\nRollback the cluster immediately after any 5xx spike.\n",
               blockedBy: [],
               positiveSignals: ["baseline metadata rule"],
               negativeSignals: [],
@@ -1450,7 +1456,7 @@ export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult 
               threshold: 3,
               knowledgeRef: "knowledge:cache-ttl-fact",
               content:
-                "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nsources:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
+                "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nxrefs:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
               blockedBy: [],
               positiveSignals: ["baseline metadata rule"],
               negativeSignals: [],

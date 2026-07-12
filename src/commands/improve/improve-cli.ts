@@ -12,8 +12,8 @@ import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
+import { resolveWriteTarget } from "../../core/write-source";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { parseFlagValue } from "../../output/context";
 import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
@@ -204,6 +204,7 @@ export const improveCommand = defineCommand({
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
+      const writeTarget = resolveWriteTarget(effectiveConfig, targetArg, { requireWritable: !dryRun });
       // Resolve every enabled model-backed process before logging, signal
       // lifecycle setup, or any filesystem/database side effect.
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig);
@@ -235,7 +236,7 @@ export const improveCommand = defineCommand({
       // was minted at end-of-run, so SIGTERM'd runs (cron timeout) left no
       // row in improve_runs and effectively disappeared from `akm health`.
       const runId = buildImproveRunId();
-      const primaryStashDir = resolveSourceEntries(undefined, effectiveConfig)[0]?.path;
+      const primaryStashDir = writeTarget.source.path;
       const scopeArg = getStringArg(args, "scope");
       const inferredScopeMode = (scopeArg ?? "").includes(":") ? "ref" : scopeArg ? "type" : "all";
 
@@ -283,6 +284,7 @@ export const improveCommand = defineCommand({
                 dryRun,
                 resolvedPlan,
                 target: targetArg,
+                writeTarget,
                 autoAccept,
                 ...(runId !== undefined ? { runId } : {}),
                 ...(limitRaw !== undefined ? { limit: limitRaw } : {}),

@@ -32,34 +32,34 @@
  *     cannot be moved alone, and target names ending `.derived` are rejected
  *     (reserved suffix).
  *
- * Ordering (partial-failure mitigation — the operation spans FS + DB and is
- * NOT transactional): validate everything first, compute the full rewrite
- * plan, create the target's parent directory (so a blocked target aborts
- * before any citer is edited), apply the citer edits, rename the file(s)
- * LAST among the FS steps, then re-key the index. The command is RE-RUNNABLE after an interruption:
- * a crash before the rename leaves the source resolvable under its old ref
- * (already-edited citers simply yield zero further rewrites on the retry);
- * a crash after the rename but before the index re-key is healed by the next
- * full `akm index` (at the cost of the utility history the re-key preserves).
+ * Ordering: the complete mutation holds the index-writer lease. After validation,
+ * citer replacements are staged beside durable byte-for-byte backups and a small
+ * phase journal under `.akm/mv-transactions/`. Publication uses same-filesystem
+ * renames; any synchronous failure restores every citer and asset rename. A later
+ * invocation rolls back an interrupted prepared/applying journal before planning
+ * another move. Derived index state remains fail-open and heals on a full index.
  * Graph tables (graph_files) key extractions by file path and stay stale
  * until the next graph pass — acceptable, the graph is a derived cache.
  */
 
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { parseAssetRef, refToString } from "../core/asset/asset-ref";
 import { deriveCanonicalAssetNameFromStashRoot, TYPE_DIRS } from "../core/asset/asset-spec";
 import { type AkmAssetType, isWithin, resolveStashDir, toPosix } from "../core/common";
+import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
-import { getStateDbPath } from "../core/state-db";
+import { getStateDbPath, openStateDatabase } from "../core/state-db";
 import { warnVerbose } from "../core/warn";
 import { closeDatabase, openExistingDatabase, rebuildFts, rekeyEntryInPlace } from "../indexer/db/db";
+import { withAssetMutationLease } from "../indexer/index-writer-lock";
 import { indexWrittenAssets, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { openDatabase } from "../storage/database";
+import { insertEventOnce } from "../storage/repositories/events-repository";
+import { shouldReadLegacyBareImproveState } from "./improve/source-identity";
 import {
   REF_BOUNDARY_PREFIX_CLASS_SRC,
   REF_SLUG_CHAR_CLASS_SRC,
@@ -298,6 +298,380 @@ function collectCiterFiles(root: string): string[] {
   return results;
 }
 
+interface CiterRewritePlan {
+  absPath: string;
+  relPath: string;
+  count: number;
+  content: string;
+  originalHash: string;
+}
+
+interface MoveJournal {
+  version: 1;
+  phase:
+    | "prepared"
+    | "applying"
+    | "filesystem-committed"
+    | "index-finalized"
+    | "state-finalized"
+    | "event-finalized"
+    | "committed";
+  transactionId: string;
+  sourceName: string;
+  sourceRoot: string;
+  includeLegacyBare: boolean;
+  eventTs: string;
+  eventMetadata: Record<string, unknown>;
+  oldPath: string;
+  newPath: string;
+  twinOldPath: string | null;
+  twinNewPath: string | null;
+  sourceOriginalHash: string;
+  expectedNewHash: string;
+  twinOriginalHash: string | null;
+  expectedTwinNewHash: string | null;
+  type: string;
+  oldName: string;
+  newName: string;
+  fromRef: string;
+  toRef: string;
+  citers: Array<{
+    absPath: string;
+    backupPath: string;
+    stagedPath: string;
+    ownedPath: string;
+    mode: number;
+    originalHash: string;
+    replacementHash: string;
+  }>;
+}
+
+interface MoveTransaction {
+  journal: MoveJournal;
+  journalPath: string;
+  transactionDir: string;
+}
+
+let mvMutationHookForTests: ((point: string) => void) | undefined;
+
+/** TEST-ONLY crash-window hook used by subprocess recovery tests. */
+export function _setMvMutationHookForTests(hook?: (point: string) => void): void {
+  mvMutationHookForTests = hook;
+}
+
+function hashContent(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function hashFile(filePath: string): string {
+  return hashContent(fs.readFileSync(filePath));
+}
+
+function fsyncFile(filePath: string): void {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function fsyncDirectory(dirPath: string): void {
+  try {
+    fsyncFile(dirPath);
+  } catch {
+    // Some platforms do not permit opening directories; file fsync still applies.
+  }
+}
+
+function writeMoveJournal(journalPath: string, journal: MoveJournal): void {
+  const tempPath = `${journalPath}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(journal, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  fsyncFile(tempPath);
+  fs.renameSync(tempPath, journalPath);
+  fsyncDirectory(path.dirname(journalPath));
+}
+
+function setMoveJournalPhase(transaction: MoveTransaction, phase: MoveJournal["phase"]): void {
+  const next = { ...transaction.journal, phase };
+  writeMoveJournal(transaction.journalPath, next);
+  transaction.journal.phase = phase;
+}
+
+function rollbackMoveJournal(journal: MoveJournal): void {
+  const restoreRename = (
+    oldPath: string | null,
+    newPath: string | null,
+    originalHash: string | null,
+    publishedHash: string | null,
+  ): void => {
+    if (!oldPath || !newPath || !fs.existsSync(newPath)) return;
+    if (!publishedHash || hashFile(newPath) !== publishedHash) {
+      throw new Error(`cannot roll back ${newPath}: published file diverged after the move`);
+    }
+    if (fs.existsSync(oldPath)) {
+      if (hashFile(oldPath) !== publishedHash) {
+        throw new Error(`cannot roll back ${newPath}: source path ${oldPath} is occupied by divergent content`);
+      }
+      fs.unlinkSync(newPath);
+      return;
+    }
+    fs.linkSync(newPath, oldPath);
+    fs.unlinkSync(newPath);
+    if (originalHash && hashFile(oldPath) !== publishedHash) {
+      throw new Error(`cannot verify rolled-back source ${oldPath}`);
+    }
+  };
+
+  // Undo asset publication before restoring self-citing files at their old paths.
+  restoreRename(journal.oldPath, journal.newPath, journal.sourceOriginalHash, journal.expectedNewHash);
+  restoreRename(journal.twinOldPath, journal.twinNewPath, journal.twinOriginalHash, journal.expectedTwinNewHash);
+  for (const [index, citer] of journal.citers.entries()) {
+    if (!fs.existsSync(citer.backupPath)) {
+      throw new Error(`cannot restore ${citer.absPath}: backup is missing`);
+    }
+    const currentHash = fs.existsSync(citer.absPath) ? hashFile(citer.absPath) : null;
+    if (fs.existsSync(citer.ownedPath)) {
+      if (currentHash !== null && currentHash !== citer.replacementHash && currentHash !== citer.originalHash) {
+        throw new Error(`cannot restore ${citer.absPath}: file diverged after exclusive ownership`);
+      }
+      if (currentHash === citer.replacementHash) fs.unlinkSync(citer.absPath);
+      if (!fs.existsSync(citer.absPath)) fs.linkSync(citer.ownedPath, citer.absPath);
+      continue;
+    }
+    if (currentHash === citer.originalHash) continue;
+    if (currentHash !== citer.replacementHash) {
+      throw new Error(`cannot restore ${citer.absPath}: file diverged after move planning`);
+    }
+    const restorePath = path.join(path.dirname(citer.backupPath), `restore-${index}`);
+    fs.copyFileSync(citer.backupPath, restorePath);
+    fs.chmodSync(restorePath, citer.mode);
+    fs.renameSync(restorePath, citer.absPath);
+  }
+}
+
+function validateCommittedMove(journal: MoveJournal): void {
+  if (fs.existsSync(journal.oldPath) || !fs.existsSync(journal.newPath)) {
+    throw new Error(`Cannot finalize move: expected only committed target ${journal.newPath}.`);
+  }
+  if (hashFile(journal.newPath) !== journal.expectedNewHash) {
+    throw new Error(`Cannot finalize move: committed target ${journal.newPath} diverged.`);
+  }
+  if (journal.twinNewPath) {
+    if (journal.twinOldPath && fs.existsSync(journal.twinOldPath)) {
+      throw new Error(`Cannot finalize move: old twin ${journal.twinOldPath} still exists.`);
+    }
+    if (!fs.existsSync(journal.twinNewPath) || hashFile(journal.twinNewPath) !== journal.expectedTwinNewHash) {
+      throw new Error(`Cannot finalize move: committed twin ${journal.twinNewPath} diverged.`);
+    }
+  }
+  for (const citer of journal.citers) {
+    if (citer.absPath === journal.oldPath || citer.absPath === journal.twinOldPath) continue;
+    if (!fs.existsSync(citer.absPath) || hashFile(citer.absPath) !== citer.replacementHash) {
+      throw new Error(`Cannot finalize move: citer ${citer.absPath} diverged.`);
+    }
+  }
+}
+
+function cleanupMoveTransaction(transactionDir: string): string | null {
+  try {
+    fs.rmSync(transactionDir, { recursive: true, force: true });
+    const root = path.dirname(transactionDir);
+    try {
+      fs.rmdirSync(root);
+    } catch {
+      // Other transactions may still exist.
+    }
+    return null;
+  } catch (error) {
+    const warning = `move committed but journal cleanup failed at ${transactionDir}: ${error instanceof Error ? error.message : String(error)}`;
+    warnVerbose(`akm mv: ${warning}`);
+    return warning;
+  }
+}
+
+export async function recoverInterruptedMoveTransactions(stashDir: string): Promise<void> {
+  const root = path.join(stashDir, ".akm", "mv-transactions");
+  if (!fs.existsSync(root)) return;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const transactionDir = path.join(root, entry.name);
+    const journalPath = path.join(transactionDir, "journal.json");
+    if (!fs.existsSync(journalPath)) {
+      cleanupMoveTransaction(transactionDir);
+      continue;
+    }
+    let journal: MoveJournal;
+    try {
+      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as MoveJournal;
+    } catch (error) {
+      throw new Error(
+        `Cannot recover interrupted move journal at ${journalPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (journal.version !== 1) throw new Error(`Unsupported move journal version at ${journalPath}.`);
+    const stashPaths = [journal.oldPath, journal.newPath, journal.twinOldPath, journal.twinNewPath]
+      .concat(journal.citers.map((citer) => citer.absPath))
+      .filter((candidate): candidate is string => candidate !== null);
+    const transactionPaths = journal.citers.flatMap((citer) => [citer.backupPath, citer.stagedPath, citer.ownedPath]);
+    if (
+      ![
+        "prepared",
+        "applying",
+        "filesystem-committed",
+        "index-finalized",
+        "state-finalized",
+        "event-finalized",
+        "committed",
+      ].includes(journal.phase) ||
+      stashPaths.some((candidate) => !isWithin(candidate, stashDir)) ||
+      transactionPaths.some((candidate) => !isWithin(candidate, transactionDir))
+    ) {
+      throw new Error(`Refusing unsafe move recovery journal at ${journalPath}.`);
+    }
+    const transaction = { journal, journalPath, transactionDir };
+    if (journal.phase === "prepared" || journal.phase === "applying") {
+      rollbackMoveJournal(journal);
+    } else if (journal.phase !== "committed") {
+      validateCommittedMove(journal);
+      await finalizeMoveTransaction(transaction);
+    }
+    cleanupMoveTransaction(transactionDir);
+  }
+}
+
+function applyMoveFilesystem(opts: {
+  stashDir: string;
+  oldPath: string;
+  newPath: string;
+  twinOldPath: string | null;
+  twinNewPath: string | null;
+  sourceOriginalHash: string;
+  twinOriginalHash: string | null;
+  type: string;
+  oldName: string;
+  newName: string;
+  fromRef: string;
+  toRef: string;
+  sourceName: string;
+  sourceRoot: string;
+  includeLegacyBare: boolean;
+  eventMetadata: Record<string, unknown>;
+  plans: CiterRewritePlan[];
+}): MoveTransaction {
+  const transactionRoot = path.join(opts.stashDir, ".akm", "mv-transactions");
+  fs.mkdirSync(transactionRoot, { recursive: true, mode: 0o700 });
+  const transactionId = randomUUID();
+  const transactionDir = path.join(transactionRoot, transactionId);
+  fs.mkdirSync(transactionDir, { mode: 0o700 });
+  const journalPath = path.join(transactionDir, "journal.json");
+  let journal: MoveJournal | undefined;
+
+  try {
+    const citers = opts.plans.map((plan, index) => {
+      const mode = fs.statSync(plan.absPath).mode;
+      const backupPath = path.join(transactionDir, `backup-${index}`);
+      const stagedPath = path.join(transactionDir, `staged-${index}`);
+      const ownedPath = path.join(transactionDir, `owned-${index}`);
+      if (hashFile(plan.absPath) !== plan.originalHash) {
+        throw new Error(`refusing to stage divergent citer ${plan.absPath}`);
+      }
+      fs.copyFileSync(plan.absPath, backupPath);
+      fs.chmodSync(backupPath, mode);
+      fs.writeFileSync(stagedPath, plan.content, { encoding: "utf8", mode });
+      fsyncFile(backupPath);
+      fsyncFile(stagedPath);
+      return {
+        absPath: plan.absPath,
+        backupPath,
+        stagedPath,
+        ownedPath,
+        mode,
+        originalHash: plan.originalHash,
+        replacementHash: hashContent(plan.content),
+      };
+    });
+
+    if (hashFile(opts.oldPath) !== opts.sourceOriginalHash) throw new Error(`source ${opts.oldPath} diverged`);
+    if (opts.twinOldPath && opts.twinOriginalHash && hashFile(opts.twinOldPath) !== opts.twinOriginalHash) {
+      throw new Error(`twin ${opts.twinOldPath} diverged`);
+    }
+    const sourceCiter = citers.find((citer) => citer.absPath === opts.oldPath);
+    const twinCiter = citers.find((citer) => citer.absPath === opts.twinOldPath);
+
+    journal = {
+      version: 1,
+      phase: "prepared",
+      transactionId,
+      sourceName: opts.sourceName,
+      sourceRoot: opts.sourceRoot,
+      includeLegacyBare: opts.includeLegacyBare,
+      eventTs: new Date().toISOString(),
+      eventMetadata: opts.eventMetadata,
+      oldPath: opts.oldPath,
+      newPath: opts.newPath,
+      twinOldPath: opts.twinOldPath,
+      twinNewPath: opts.twinNewPath,
+      sourceOriginalHash: opts.sourceOriginalHash,
+      expectedNewHash: sourceCiter?.replacementHash ?? opts.sourceOriginalHash,
+      twinOriginalHash: opts.twinOriginalHash,
+      expectedTwinNewHash: twinCiter?.replacementHash ?? opts.twinOriginalHash,
+      type: opts.type,
+      oldName: opts.oldName,
+      newName: opts.newName,
+      fromRef: opts.fromRef,
+      toRef: opts.toRef,
+      citers,
+    };
+    writeMoveJournal(journalPath, journal);
+    const transaction = { journal, journalPath, transactionDir };
+    setMoveJournalPhase(transaction, "applying");
+
+    for (const citer of citers) {
+      fs.renameSync(citer.absPath, citer.ownedPath);
+      if (hashFile(citer.ownedPath) !== citer.originalHash) {
+        if (!fs.existsSync(citer.absPath)) fs.linkSync(citer.ownedPath, citer.absPath);
+        throw new Error(`refusing to replace divergent citer ${citer.absPath}`);
+      }
+      try {
+        fs.linkSync(citer.stagedPath, citer.absPath);
+        fs.unlinkSync(citer.stagedPath);
+      } catch (error) {
+        if (!fs.existsSync(citer.absPath)) fs.linkSync(citer.ownedPath, citer.absPath);
+        throw error;
+      }
+    }
+    if (hashFile(opts.oldPath) !== journal.expectedNewHash) throw new Error(`source ${opts.oldPath} diverged`);
+    fs.linkSync(opts.oldPath, opts.newPath);
+    fs.unlinkSync(opts.oldPath);
+    if (opts.twinOldPath && opts.twinNewPath) {
+      if (hashFile(opts.twinOldPath) !== journal.expectedTwinNewHash)
+        throw new Error(`twin ${opts.twinOldPath} diverged`);
+      fs.linkSync(opts.twinOldPath, opts.twinNewPath);
+      fs.unlinkSync(opts.twinOldPath);
+    }
+
+    setMoveJournalPhase(transaction, "filesystem-committed");
+    return transaction;
+  } catch (error) {
+    if (journal) {
+      try {
+        rollbackMoveJournal(journal);
+        cleanupMoveTransaction(transactionDir);
+      } catch (rollbackError) {
+        throw new Error(
+          `Move failed (${error instanceof Error ? error.message : String(error)}) and rollback failed ` +
+            `(${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}). ` +
+            `Recovery journal retained at ${journalPath}.`,
+        );
+      }
+    } else {
+      cleanupMoveTransaction(transactionDir);
+    }
+    throw error;
+  }
+}
+
 // ── Source resolution ─────────────────────────────────────────────────────────
 
 /**
@@ -449,10 +823,13 @@ function rekeyIndexForMove(opts: {
   toRef: string;
   twinOldPath: string | null;
   twinNewPath: string | null;
-}): { preserved: boolean; warning: string | null } {
+  sourceName: string;
+  sourceRoot: string;
+  includeLegacyBare: boolean;
+}): { complete: boolean; preserved: boolean; warning: string | null } {
   const dbPath = getDbPath();
   try {
-    if (!fs.existsSync(dbPath)) return { preserved: true, warning: null };
+    if (!fs.existsSync(dbPath)) return { complete: true, preserved: true, warning: null };
     let preserved = true;
     const db = openExistingDatabase(dbPath);
     try {
@@ -464,6 +841,9 @@ function rekeyIndexForMove(opts: {
         db.prepare("SELECT id FROM entries WHERE file_path = ? LIMIT 1").get(movedFrom) != null;
       const oldKey = `${opts.stashDir}:${opts.type}:${opts.oldName}`;
       const newKey = `${opts.stashDir}:${opts.type}:${opts.newName}`;
+      const alreadyRekeyed =
+        db.prepare("SELECT id FROM entries WHERE entry_key = ? AND file_path = ? LIMIT 1").get(newKey, opts.newPath) !=
+        null;
       const rekeyed = rekeyEntryInPlace(db, {
         oldEntryKey: oldKey,
         newEntryKey: newKey,
@@ -471,12 +851,19 @@ function rekeyIndexForMove(opts: {
         newFilePath: opts.newPath,
         oldRef: opts.fromRef,
         newRef: opts.toRef,
+        sourceName: opts.sourceName,
+        sourceRoot: opts.sourceRoot,
+        includeLegacyBare: opts.includeLegacyBare,
       });
-      if (rekeyed === null && strandedRow(opts.oldPath)) preserved = false;
+      if (rekeyed === null && !alreadyRekeyed && strandedRow(opts.oldPath)) preserved = false;
       let twinRekeyed: number | null = null;
       if (opts.twinNewPath) {
         // The twin coupling (db.ts getBaseBeliefStatesForDerivedTwins) is
         // `twin entry_key === base entry_key + ".derived"` — preserved here.
+        const twinAlreadyRekeyed =
+          db
+            .prepare("SELECT id FROM entries WHERE entry_key = ? AND file_path = ? LIMIT 1")
+            .get(`${newKey}.derived`, opts.twinNewPath) != null;
         twinRekeyed = rekeyEntryInPlace(db, {
           oldEntryKey: `${oldKey}.derived`,
           newEntryKey: `${newKey}.derived`,
@@ -485,12 +872,18 @@ function rekeyIndexForMove(opts: {
           oldRef: `${opts.fromRef}.derived`,
           newRef: `${opts.toRef}.derived`,
           newDerivedFrom: opts.toRef,
+          sourceName: opts.sourceName,
+          sourceRoot: opts.sourceRoot,
+          includeLegacyBare: opts.includeLegacyBare,
         });
-        if (twinRekeyed === null && opts.twinOldPath && strandedRow(opts.twinOldPath)) preserved = false;
+        if (twinRekeyed === null && !twinAlreadyRekeyed && opts.twinOldPath && strandedRow(opts.twinOldPath)) {
+          preserved = false;
+        }
       }
       if (rekeyed !== null || twinRekeyed !== null) {
         rebuildFts(db, { incremental: true });
       }
+      mvMutationHookForTests?.("index-rekeyed");
     } finally {
       closeDatabase(db);
     }
@@ -499,16 +892,16 @@ function rekeyIndexForMove(opts: {
         "index re-key skipped: the index holds a row for the moved file under an unexpected key — its utility " +
         "history was not re-keyed and resets on the next `akm index`.";
       warnVerbose(`akm mv: ${warning}`);
-      return { preserved: false, warning };
+      return { complete: false, preserved: false, warning };
     }
-    return { preserved: true, warning: null };
+    return { complete: true, preserved: true, warning: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const warning =
       `index re-key failed (${message}) — the rename itself succeeded and the index heals on the next ` +
       "`akm index`, but the asset's utility history was NOT re-keyed and resets on that run.";
     warnVerbose(`akm mv: ${warning}`);
-    return { preserved: false, warning };
+    return { complete: false, preserved: false, warning };
   }
 }
 
@@ -527,19 +920,37 @@ function rekeyIndexForMove(opts: {
  * no file exists at the target — so the LIVE asset's history wins: the
  * orphan row is deleted and the moved asset's row re-keyed onto the ref.
  *
- * FAIL-OPEN like the index re-key: no state.db means the improve loop never
- * ran (nothing to re-key); the file is never created here, migrations are
- * never run (a missing table on an old state.db is simply skipped), and any
- * error reduces to a warning in the report — the rename has already
- * succeeded. Returns the warning for the JSON report, or null.
+ * No state.db means the improve loop never ran and is complete as a no-op. A
+ * legacy missing table is likewise complete. Other failures retain the
+ * committed move journal and block completion so a later mutation retries the
+ * non-regenerable state update rather than silently stranding it.
  */
-function rekeyStateDbForMove(fromRef: string, toRef: string, includeTwin: boolean): string | null {
+function rekeyStateDbForMove(
+  fromRef: string,
+  toRef: string,
+  includeTwin: boolean,
+  sourceName: string,
+  sourceRoot: string,
+  includeLegacyBare: boolean,
+): { complete: boolean; warning: string | null } {
   const statePath = getStateDbPath();
   try {
-    if (!fs.existsSync(statePath)) return null;
-    const pairs: Array<[string, string]> = [[fromRef, toRef]];
-    if (includeTwin) pairs.push([`${fromRef}.derived`, `${toRef}.derived`]);
-    const db = openDatabase(statePath);
+    if (!fs.existsSync(statePath)) return { complete: true, warning: null };
+    if (!sourceName || !sourceRoot) return { complete: false, warning: "move source identity is unavailable" };
+    const origins = new Set([sourceName]);
+    if (sourceName === "stash" && includeLegacyBare) origins.add("local");
+    const pairs: Array<[string, string]> = [...origins].map((origin) => [
+      `${origin}//${fromRef}`,
+      `${origin}//${toRef}`,
+    ]);
+    if (includeLegacyBare) pairs.push([fromRef, toRef]);
+    if (includeTwin) {
+      for (const origin of origins) {
+        pairs.push([`${origin}//${fromRef}.derived`, `${origin}//${toRef}.derived`]);
+      }
+      if (includeLegacyBare) pairs.push([`${fromRef}.derived`, `${toRef}.derived`]);
+    }
+    const db = openStateDatabase();
     const tableFailures: string[] = [];
     try {
       db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
@@ -553,6 +964,7 @@ function rekeyStateDbForMove(fromRef: string, toRef: string, includeTwin: boolea
               db.prepare(`UPDATE ${table} SET asset_ref = ? WHERE asset_ref = ?`).run(newRef, oldRef);
             }
           })();
+          mvMutationHookForTests?.(`state-${table}-rekeyed`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           // The ONLY swallowable failure: the table is missing on an older
@@ -571,17 +983,100 @@ function rekeyStateDbForMove(fromRef: string, toRef: string, includeTwin: boolea
         `state.db salience re-key failed (${tableFailures.join("; ")}) — the rename itself succeeded, but the ` +
         "asset's salience/outcome history stays keyed to the old ref until the next improve run re-mints it.";
       warnVerbose(`akm mv: ${warning}`);
-      return warning;
+      return { complete: false, warning };
     }
-    return null;
+    return { complete: true, warning: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const warning =
       `state.db salience re-key failed (${message}) — the rename itself succeeded, but the asset's salience/` +
       "outcome history stays keyed to the old ref until the next improve run re-mints it.";
     warnVerbose(`akm mv: ${warning}`);
-    return warning;
+    return { complete: false, warning };
   }
+}
+
+function persistMoveEvent(journal: MoveJournal): void {
+  const db = openStateDatabase();
+  try {
+    db.transaction(() => {
+      insertEventOnce(db, {
+        eventType: "mv",
+        ts: journal.eventTs,
+        ref: journal.toRef,
+        metadata: {
+          ...journal.eventMetadata,
+          mutationTransactionId: journal.transactionId,
+        },
+        idempotencyKey: journal.transactionId,
+        idempotencyMetadataKey: "mutationTransactionId",
+      });
+    })();
+  } finally {
+    db.close();
+  }
+}
+
+async function finalizeMoveTransaction(transaction: MoveTransaction): Promise<{
+  utilityPreserved: boolean;
+  warnings: string[];
+}> {
+  const { journal } = transaction;
+  validateCommittedMove(journal);
+  const warnings: string[] = [];
+  let utilityPreserved = true;
+  if (journal.phase === "filesystem-committed") {
+    const indexResult = rekeyIndexForMove({
+      stashDir: path.dirname(path.dirname(path.dirname(transaction.transactionDir))),
+      type: journal.type,
+      oldName: journal.oldName,
+      newName: journal.newName,
+      oldPath: journal.oldPath,
+      newPath: journal.newPath,
+      fromRef: journal.fromRef,
+      toRef: journal.toRef,
+      twinOldPath: journal.twinOldPath,
+      twinNewPath: journal.twinNewPath,
+      sourceName: journal.sourceName,
+      sourceRoot: journal.sourceRoot,
+      includeLegacyBare: journal.includeLegacyBare,
+    });
+    utilityPreserved = indexResult.preserved;
+    if (indexResult.warning) warnings.push(indexResult.warning);
+    if (!indexResult.complete) throw new Error(indexResult.warning ?? "move index re-key did not complete");
+    const touched = new Set<string>([journal.newPath]);
+    if (journal.twinNewPath) touched.add(journal.twinNewPath);
+    for (const citer of journal.citers) {
+      if (citer.absPath === journal.oldPath || citer.absPath === journal.twinOldPath) continue;
+      touched.add(citer.absPath);
+    }
+    const stashDir = path.dirname(path.dirname(path.dirname(transaction.transactionDir)));
+    if (!(await indexWrittenAssets(stashDir, [...touched], { recoverMoves: false }))) {
+      utilityPreserved = false;
+      warnings.push("write-path index refresh failed; the derived index will heal on the next full index");
+    }
+    setMoveJournalPhase(transaction, "index-finalized");
+  }
+  if (journal.phase === "index-finalized") {
+    const stateResult = rekeyStateDbForMove(
+      journal.fromRef,
+      journal.toRef,
+      journal.twinNewPath !== null,
+      journal.sourceName,
+      journal.sourceRoot,
+      journal.includeLegacyBare,
+    );
+    if (stateResult.warning) warnings.push(stateResult.warning);
+    if (!stateResult.complete) throw new Error(stateResult.warning ?? "move state finalization did not complete");
+    setMoveJournalPhase(transaction, "state-finalized");
+  }
+  if (journal.phase === "state-finalized") {
+    persistMoveEvent(journal);
+    mvMutationHookForTests?.("mv-event-persisted");
+    setMoveJournalPhase(transaction, "event-finalized");
+  }
+  if (journal.phase === "event-finalized") setMoveJournalPhase(transaction, "committed");
+  return { utilityPreserved, warnings };
 }
 
 // ── Command ───────────────────────────────────────────────────────────────────
@@ -632,296 +1127,287 @@ export const mvCommand = defineJsonCommand({
       );
     }
 
-    // ── Validation (everything before any write; a failure moves nothing) ──
-    const source = parseAssetRef(refArg);
-    if (source.origin && source.origin !== "local") {
-      throw new UsageError(
-        `akm mv operates on the primary writable stash only — the origin prefix "${source.origin}//" is not supported.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (source.type === "wiki") {
-      throw new UsageError(
-        "akm mv does not support wiki refs — wiki pages have their own xref + lint system. " +
-          "Rename the page manually, fix citations in the same pass, and verify with `akm wiki lint <name>`.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (source.type === "workflow") {
-      throw new UsageError(
-        "akm mv does not support workflow refs in v1 — workflows may live as .yaml/.yml programs, which the " +
-          "flat-markdown rename path would misresolve or rename to .md. Rename the file manually under " +
-          "workflows/ (keeping its extension), fix inbound refs in the same pass, and verify with `akm lint`.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (!MV_SUPPORTED_TYPES.includes(source.type)) {
-      throw new UsageError(
-        `akm mv supports flat-markdown asset types (${MV_SUPPORTED_TYPES.join(", ")}); "${source.type}:" refs cannot be moved.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    // The `.derived` suffix is the distilled-twin marker: a twin's entry_key
-    // must stay exactly `<base entry_key>.derived` (db.ts
-    // getBaseBeliefStatesForDerivedTwins), so a twin can never move alone and
-    // no independent asset may squat on the suffix. The `.md`-suffixed alias
-    // spelling of a twin ref names the same file, so it is caught here too.
-    if (source.type === "memory" && /\.derived(\.md)?$/.test(source.name)) {
-      const baseRef = refToString({ type: "memory", name: source.name.replace(/\.derived(\.md)?$/, "") });
-      throw new UsageError(
-        `"${refToString({ type: source.type, name: source.name })}" names a .derived.md distilled twin — a twin ` +
-          "cannot be moved on its own without breaking its belief-inheritance coupling to the base memory. " +
-          `Rename the base ref instead (akm mv ${baseRef} <new-name>); the twin moves with it.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-
-    // The target may be a bare name ("projectA/new-note") or a ref-shaped
-    // spelling. Parsing the bare form through the same ref grammar gives it
-    // identical name validation (traversal, null bytes, absolute paths).
-    const target = parseAssetRef(targetArg.includes(":") ? targetArg : `${source.type}:${targetArg}`);
-    if (target.origin) {
-      throw new UsageError(
-        `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (target.type !== source.type) {
-      throw new UsageError(
-        `Cross-type move is not supported: "${refToString({ type: source.type, name: source.name })}" is a ` +
-          `${source.type}: asset but the target names the ${target.type}: type. akm mv renames within one asset type.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    // Accept the `.md`-suffixed alias spelling of the TARGET, but operate on
-    // the canonical extensionless name: every MV_SUPPORTED_TYPES layout is
-    // the markdownSpec family, whose `toAssetPath` writes `<name>.md` either
-    // way — so `bar.md` names the same file as `bar`, while a `bar.md`-keyed
-    // toRef/entry_key would rewrite citers to a non-canonical ref and strand
-    // the re-keyed history behind a row the write-path index pass (which
-    // derives the canonical name `bar` from the file) immediately duplicates.
-    const newName = target.name.endsWith(".md") ? target.name.slice(0, -".md".length) : target.name;
-    if (!newName) {
-      throw new UsageError(
-        `Target "${targetArg}" names no asset once the .md extension is stripped — nothing moved.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    // Reject empty path segments: `path.posix.normalize` (parseAssetRef's
-    // name normalization) PRESERVES a trailing slash — "bar/" (and "bar\",
-    // normalized to it) sails through the traversal checks, and the file
-    // would land at e.g. memories/bar/.md: a dot-prefixed file the index
-    // walker skips, unreachable by `akm show`, with every citer rewritten to
-    // the phantom ref "memory:bar/". Interior doubles ("a//b") are collapsed
-    // by the normalization, so a trailing empty segment is the only shape
-    // that reaches this check — but reject ANY empty segment regardless.
-    if (newName.split("/").some((segment) => segment.length === 0)) {
-      throw new UsageError(
-        `Target "${targetArg}" contains an empty path segment (trailing "/" or "\\") — the file would be written ` +
-          "as a hidden dotfile the index cannot see. Pass a name, e.g. `akm mv <ref> projectA/new-note` — nothing moved.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (source.type === "memory" && newName.endsWith(".derived")) {
-      throw new UsageError(
-        `The target name "${newName}" ends with the reserved .derived suffix (the distilled-twin marker) — a base ` +
-          "memory renamed onto it would masquerade as a twin of a memory that does not exist. Pick a name without " +
-          "the suffix; a real twin always moves together with its base.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    const toRef = refToString({ type: source.type, name: newName });
-
-    const stashDir = resolveStashDir();
-    const typeDir = TYPE_DIRS[source.type];
-    const typeRoot = path.join(stashDir, typeDir);
-
-    const oldRelPath = refToRelPath(source.type, source.name);
-    const newRelPath = refToRelPath(source.type, newName);
-    if (!oldRelPath || !newRelPath) {
-      // Unreachable for MV_SUPPORTED_TYPES; guards a future registry change.
-      throw new UsageError(`"${source.type}:" refs are not path-resolvable and cannot be moved.`, "INVALID_FLAG_VALUE");
-    }
-
-    const oldPath = resolveMoveSourcePath(stashDir, oldRelPath, source.type, source.name);
-    if (!oldPath) {
-      throw new UsageError(
-        `Cannot resolve ${refToString({ type: source.type, name: source.name })} in the writable stash at ` +
-          `${stashDir} — nothing moved.`,
-        "MISSING_REQUIRED_ARGUMENT",
-        "akm mv renames assets in the primary writable stash only. Check the ref with `akm show <ref>` or `akm search`.",
-      );
-    }
-    // The accepted spelling may be the `.md`-suffixed alias of the same file
-    // (markdownSpec.toAssetPath maps `foo` and `foo.md` to memories/foo.md).
-    // Everything keyed off the source — the citer rewrite patterns, the index
-    // entry_key re-key, the state.db asset_ref re-key, the report — must use
-    // the CANONICAL extensionless name derived from the resolved path, or the
-    // real rows (keyed by the canonical spelling) are silently missed.
-    const sourceName = deriveCanonicalAssetNameFromStashRoot(source.type, stashDir, oldPath) ?? source.name;
-    const fromRef = refToString({ type: source.type, name: sourceName });
-
-    const newPath = path.join(stashDir, newRelPath);
-    // Defense-in-depth: parseAssetRef already rejects `../` traversal, but the
-    // computed target must land inside the type root regardless.
-    if (!isWithin(newPath, typeRoot)) {
-      throw new UsageError(
-        `Target "${targetArg}" escapes the ${typeDir}/ type root — nothing moved.`,
-        "PATH_ESCAPE_VIOLATION",
-      );
-    }
-    if (path.resolve(newPath) === path.resolve(oldPath)) {
-      throw new UsageError(`Source and target resolve to the same file (${fromRef}) — nothing to move.`);
-    }
-    if (fs.existsSync(newPath)) {
-      throw new UsageError(
-        `Target ${toRef} already exists at ${toPosix(path.relative(stashDir, newPath))} — nothing moved.`,
-        "RESOURCE_ALREADY_EXISTS",
-        "Pick an unused name, or move the existing asset out of the way first.",
-      );
-    }
-
-    // Memory `.derived.md` twin: moves together with its base (the entry_key
-    // suffix coupling the belief-state inheritance relies on). The TARGET
-    // twin-collision check runs whenever the target could carry a twin —
-    // NOT only when the source has one: renaming a twin-less memory onto a
-    // name whose orphaned `<name>.derived.md` lingers (consolidate/dedup
-    // delete the base file without twin cleanup) would silently adopt the
-    // stranger file as the renamed memory's distillation.
-    const isBaseMemory = source.type === "memory" && !sourceName.endsWith(".derived");
-    const twinOldPath = isBaseMemory ? oldPath.replace(/\.md$/, ".derived.md") : null;
-    const hasTwin = twinOldPath !== null && fs.existsSync(twinOldPath);
-    const targetTwinPath = isBaseMemory ? newPath.replace(/\.md$/, ".derived.md") : null;
-    if (targetTwinPath && fs.existsSync(targetTwinPath)) {
-      throw new UsageError(
-        `Target twin ${toRef}.derived already exists at ${toPosix(path.relative(stashDir, targetTwinPath))} — ` +
-          "renaming onto it would adopt that orphaned distilled twin as this memory's own. Nothing moved.",
-        "RESOURCE_ALREADY_EXISTS",
-        "Pick an unused name, or delete the orphaned .derived.md file first if it belongs to a removed memory.",
-      );
-    }
-    const twinNewPath = hasTwin ? targetTwinPath : null;
-
-    // ── Plan the inbound-ref rewrite (no writes yet) ───────────────────────
-    const rewriteCtx = buildRewriteContext({
-      type: source.type,
-      fromRef,
-      toRef,
-      isBaseMemory,
-      stashDir,
-      oldPath,
-      twinOldPath: hasTwin ? twinOldPath : null,
-    });
-    const plans: Array<{ absPath: string; relPath: string; count: number; content: string }> = [];
-    for (const absPath of collectCiterFiles(stashDir)) {
-      let raw: string;
-      try {
-        raw = fs.readFileSync(absPath, "utf8");
-      } catch {
-        continue;
+    await withAssetMutationLease("mv", async () => {
+      // ── Validation (everything before any write; a failure moves nothing) ──
+      const source = parseAssetRef(refArg);
+      if (source.origin && source.origin !== "local") {
+        throw new UsageError(
+          `akm mv operates on the primary writable stash only — the origin prefix "${source.origin}//" is not supported.`,
+          "INVALID_FLAG_VALUE",
+        );
       }
-      const { content, count } = rewriteRefs(raw, rewriteCtx);
-      if (count > 0) {
-        plans.push({ absPath, relPath: toPosix(path.relative(stashDir, absPath)), count, content });
+      if (source.type === "wiki") {
+        throw new UsageError(
+          "akm mv does not support wiki refs — wiki pages have their own xref + lint system. " +
+            "Rename the page manually, fix citations in the same pass, and verify with `akm wiki lint <name>`.",
+          "INVALID_FLAG_VALUE",
+        );
       }
-    }
+      if (source.type === "workflow") {
+        throw new UsageError(
+          "akm mv does not support workflow refs in v1 — workflows may live as .yaml/.yml programs, which the " +
+            "flat-markdown rename path would misresolve or rename to .md. Rename the file manually under " +
+            "workflows/ (keeping its extension), fix inbound refs in the same pass, and verify with `akm lint`.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      if (!MV_SUPPORTED_TYPES.includes(source.type)) {
+        throw new UsageError(
+          `akm mv supports flat-markdown asset types (${MV_SUPPORTED_TYPES.join(", ")}); "${source.type}:" refs cannot be moved.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      // The `.derived` suffix is the distilled-twin marker: a twin's entry_key
+      // must stay exactly `<base entry_key>.derived` (db.ts
+      // getBaseBeliefStatesForDerivedTwins), so a twin can never move alone and
+      // no independent asset may squat on the suffix. The `.md`-suffixed alias
+      // spelling of a twin ref names the same file, so it is caught here too.
+      if (source.type === "memory" && /\.derived(\.md)?$/.test(source.name)) {
+        const baseRef = refToString({ type: "memory", name: source.name.replace(/\.derived(\.md)?$/, "") });
+        throw new UsageError(
+          `"${refToString({ type: source.type, name: source.name })}" names a .derived.md distilled twin — a twin ` +
+            "cannot be moved on its own without breaking its belief-inheritance coupling to the base memory. " +
+            `Rename the base ref instead (akm mv ${baseRef} <new-name>); the twin moves with it.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
 
-    // Read-only sources: scanned, never written — manual follow-ups.
-    const readOnlyCiters: Array<{ file: string; count: number }> = [];
-    let sources: ReturnType<typeof resolveSourceEntries> = [];
-    try {
-      sources = resolveSourceEntries(stashDir);
-    } catch (error) {
-      warnVerbose(
-        "akm mv: could not enumerate configured sources for the read-only citer scan:",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    for (const src of sources) {
-      if (path.resolve(src.path) === path.resolve(stashDir)) continue;
-      for (const absPath of collectCiterFiles(src.path)) {
+      // The target may be a bare name ("projectA/new-note") or a ref-shaped
+      // spelling. Parsing the bare form through the same ref grammar gives it
+      // identical name validation (traversal, null bytes, absolute paths).
+      const target = parseAssetRef(targetArg.includes(":") ? targetArg : `${source.type}:${targetArg}`);
+      if (target.origin) {
+        throw new UsageError(
+          `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      if (target.type !== source.type) {
+        throw new UsageError(
+          `Cross-type move is not supported: "${refToString({ type: source.type, name: source.name })}" is a ` +
+            `${source.type}: asset but the target names the ${target.type}: type. akm mv renames within one asset type.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      // Accept the `.md`-suffixed alias spelling of the TARGET, but operate on
+      // the canonical extensionless name: every MV_SUPPORTED_TYPES layout is
+      // the markdownSpec family, whose `toAssetPath` writes `<name>.md` either
+      // way — so `bar.md` names the same file as `bar`, while a `bar.md`-keyed
+      // toRef/entry_key would rewrite citers to a non-canonical ref and strand
+      // the re-keyed history behind a row the write-path index pass (which
+      // derives the canonical name `bar` from the file) immediately duplicates.
+      const newName = target.name.endsWith(".md") ? target.name.slice(0, -".md".length) : target.name;
+      if (!newName) {
+        throw new UsageError(
+          `Target "${targetArg}" names no asset once the .md extension is stripped — nothing moved.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      // Reject empty path segments: `path.posix.normalize` (parseAssetRef's
+      // name normalization) PRESERVES a trailing slash — "bar/" (and "bar\",
+      // normalized to it) sails through the traversal checks, and the file
+      // would land at e.g. memories/bar/.md: a dot-prefixed file the index
+      // walker skips, unreachable by `akm show`, with every citer rewritten to
+      // the phantom ref "memory:bar/". Interior doubles ("a//b") are collapsed
+      // by the normalization, so a trailing empty segment is the only shape
+      // that reaches this check — but reject ANY empty segment regardless.
+      if (newName.split("/").some((segment) => segment.length === 0)) {
+        throw new UsageError(
+          `Target "${targetArg}" contains an empty path segment (trailing "/" or "\\") — the file would be written ` +
+            "as a hidden dotfile the index cannot see. Pass a name, e.g. `akm mv <ref> projectA/new-note` — nothing moved.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      if (source.type === "memory" && newName.endsWith(".derived")) {
+        throw new UsageError(
+          `The target name "${newName}" ends with the reserved .derived suffix (the distilled-twin marker) — a base ` +
+            "memory renamed onto it would masquerade as a twin of a memory that does not exist. Pick a name without " +
+            "the suffix; a real twin always moves together with its base.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const toRef = refToString({ type: source.type, name: newName });
+
+      const stashDir = resolveStashDir();
+      const config = loadConfig();
+      const configuredSources = resolveSourceEntries(stashDir, config);
+      const primarySource = configuredSources.find((entry) => path.resolve(entry.path) === path.resolve(stashDir));
+      const durableSourceName = primarySource?.registryId ?? "stash";
+      const includeLegacyBare = shouldReadLegacyBareImproveState(durableSourceName, stashDir, config);
+      await recoverInterruptedMoveTransactions(stashDir);
+      const typeDir = TYPE_DIRS[source.type];
+      const typeRoot = path.join(stashDir, typeDir);
+
+      const oldRelPath = refToRelPath(source.type, source.name);
+      const newRelPath = refToRelPath(source.type, newName);
+      if (!oldRelPath || !newRelPath) {
+        // Unreachable for MV_SUPPORTED_TYPES; guards a future registry change.
+        throw new UsageError(
+          `"${source.type}:" refs are not path-resolvable and cannot be moved.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+
+      const oldPath = resolveMoveSourcePath(stashDir, oldRelPath, source.type, source.name);
+      if (!oldPath) {
+        throw new UsageError(
+          `Cannot resolve ${refToString({ type: source.type, name: source.name })} in the writable stash at ` +
+            `${stashDir} — nothing moved.`,
+          "MISSING_REQUIRED_ARGUMENT",
+          "akm mv renames assets in the primary writable stash only. Check the ref with `akm show <ref>` or `akm search`.",
+        );
+      }
+      // The accepted spelling may be the `.md`-suffixed alias of the same file
+      // (markdownSpec.toAssetPath maps `foo` and `foo.md` to memories/foo.md).
+      // Everything keyed off the source — the citer rewrite patterns, the index
+      // entry_key re-key, the state.db asset_ref re-key, the report — must use
+      // the CANONICAL extensionless name derived from the resolved path, or the
+      // real rows (keyed by the canonical spelling) are silently missed.
+      const sourceName = deriveCanonicalAssetNameFromStashRoot(source.type, stashDir, oldPath) ?? source.name;
+      const fromRef = refToString({ type: source.type, name: sourceName });
+
+      const newPath = path.join(stashDir, newRelPath);
+      // Defense-in-depth: parseAssetRef already rejects `../` traversal, but the
+      // computed target must land inside the type root regardless.
+      if (!isWithin(newPath, typeRoot)) {
+        throw new UsageError(
+          `Target "${targetArg}" escapes the ${typeDir}/ type root — nothing moved.`,
+          "PATH_ESCAPE_VIOLATION",
+        );
+      }
+      if (path.resolve(newPath) === path.resolve(oldPath)) {
+        throw new UsageError(`Source and target resolve to the same file (${fromRef}) — nothing to move.`);
+      }
+      if (fs.existsSync(newPath)) {
+        throw new UsageError(
+          `Target ${toRef} already exists at ${toPosix(path.relative(stashDir, newPath))} — nothing moved.`,
+          "RESOURCE_ALREADY_EXISTS",
+          "Pick an unused name, or move the existing asset out of the way first.",
+        );
+      }
+
+      // Memory `.derived.md` twin: moves together with its base (the entry_key
+      // suffix coupling the belief-state inheritance relies on). The TARGET
+      // twin-collision check runs whenever the target could carry a twin —
+      // NOT only when the source has one: renaming a twin-less memory onto a
+      // name whose orphaned `<name>.derived.md` lingers (consolidate/dedup
+      // delete the base file without twin cleanup) would silently adopt the
+      // stranger file as the renamed memory's distillation.
+      const isBaseMemory = source.type === "memory" && !sourceName.endsWith(".derived");
+      const twinOldPath = isBaseMemory ? oldPath.replace(/\.md$/, ".derived.md") : null;
+      const hasTwin = twinOldPath !== null && fs.existsSync(twinOldPath);
+      const targetTwinPath = isBaseMemory ? newPath.replace(/\.md$/, ".derived.md") : null;
+      if (targetTwinPath && fs.existsSync(targetTwinPath)) {
+        throw new UsageError(
+          `Target twin ${toRef}.derived already exists at ${toPosix(path.relative(stashDir, targetTwinPath))} — ` +
+            "renaming onto it would adopt that orphaned distilled twin as this memory's own. Nothing moved.",
+          "RESOURCE_ALREADY_EXISTS",
+          "Pick an unused name, or delete the orphaned .derived.md file first if it belongs to a removed memory.",
+        );
+      }
+      const twinNewPath = hasTwin ? targetTwinPath : null;
+      const sourceOriginalHash = hashFile(oldPath);
+      const twinOriginalHash = hasTwin && twinOldPath ? hashFile(twinOldPath) : null;
+
+      // ── Plan the inbound-ref rewrite (no writes yet) ───────────────────────
+      const rewriteCtx = buildRewriteContext({
+        type: source.type,
+        fromRef,
+        toRef,
+        isBaseMemory,
+        stashDir,
+        oldPath,
+        twinOldPath: hasTwin ? twinOldPath : null,
+      });
+      const plans: CiterRewritePlan[] = [];
+      for (const absPath of collectCiterFiles(stashDir)) {
         let raw: string;
         try {
           raw = fs.readFileSync(absPath, "utf8");
         } catch {
           continue;
         }
-        // Same detection as the writable pass (canonical + alias spellings,
-        // alias tokens resolved against the WRITABLE stash where the moved
-        // file lives) — count-only, never written.
-        const { count } = rewriteRefs(raw, rewriteCtx);
-        if (count > 0) readOnlyCiters.push({ file: absPath, count });
+        const { content, count } = rewriteRefs(raw, rewriteCtx);
+        if (count > 0) {
+          plans.push({
+            absPath,
+            relPath: toPosix(path.relative(stashDir, absPath)),
+            count,
+            content,
+            originalHash: hashContent(raw),
+          });
+        }
       }
-    }
 
-    // ── Apply citer edits, then rename last (see module docstring) ────────
-    // The target's parent directory is created FIRST: if it cannot be (a
-    // segment of the target's subdirectory path exists as a FILE, or the
-    // parent is unwritable), the command must abort before any citer has
-    // been edited — otherwise citers would already point at a ref whose
-    // file never arrives.
-    fs.mkdirSync(path.dirname(newPath), { recursive: true });
-    for (const plan of plans) {
-      fs.writeFileSync(plan.absPath, plan.content, "utf8");
-    }
-    fs.renameSync(oldPath, newPath);
-    if (twinOldPath && twinNewPath) {
-      fs.renameSync(twinOldPath, twinNewPath);
-    }
+      // Read-only sources: scanned, never written — manual follow-ups.
+      const readOnlyCiters: Array<{ file: string; count: number }> = [];
+      for (const src of configuredSources) {
+        if (path.resolve(src.path) === path.resolve(stashDir)) continue;
+        for (const absPath of collectCiterFiles(src.path)) {
+          let raw: string;
+          try {
+            raw = fs.readFileSync(absPath, "utf8");
+          } catch {
+            continue;
+          }
+          // Same detection as the writable pass (canonical + alias spellings,
+          // alias tokens resolved against the WRITABLE stash where the moved
+          // file lives) — count-only, never written.
+          const { count } = rewriteRefs(raw, rewriteCtx);
+          if (count > 0) readOnlyCiters.push({ file: absPath, count });
+        }
+      }
 
-    // ── Index + state.db: re-key in place, then reindex touched files ─────
-    const { preserved: utilityPreserved, warning: indexWarning } = rekeyIndexForMove({
-      stashDir,
-      type: source.type,
-      oldName: sourceName,
-      newName,
-      oldPath,
-      newPath,
-      fromRef,
-      toRef,
-      twinOldPath: hasTwin ? twinOldPath : null,
-      twinNewPath,
-    });
-    // Salience/outcome history lives in state.db keyed by asset_ref TEXT —
-    // re-keyed here so the salience boost genuinely "survives the rename".
-    const stateWarning = rekeyStateDbForMove(fromRef, toRef, hasTwin);
-    const warnings = [indexWarning, stateWarning].filter((w): w is string => w !== null);
-    // Rewritten citers (and the moved file itself) go through the standard
-    // write-path reindex so their FTS hints reflect the new ref immediately.
-    // Fail-open; an absent/empty index is skipped inside the helper.
-    const touched = new Set<string>([newPath]);
-    if (twinNewPath) touched.add(twinNewPath);
-    for (const plan of plans) {
-      // A self-citing moved file was edited at its OLD path but now lives at
-      // the new one; report the file that exists.
-      if (plan.absPath === oldPath) continue;
-      if (twinOldPath && plan.absPath === twinOldPath) continue;
-      touched.add(plan.absPath);
-    }
-    await indexWrittenAssets(stashDir, [...touched]);
+      // ── Apply citer edits, then rename last (see module docstring) ────────
+      // The target's parent directory is created FIRST: if it cannot be (a
+      // segment of the target's subdirectory path exists as a FILE, or the
+      // parent is unwritable), the command must abort before any citer has
+      // been edited — otherwise citers would already point at a ref whose
+      // file never arrives.
+      fs.mkdirSync(path.dirname(newPath), { recursive: true });
+      const transaction = applyMoveFilesystem({
+        stashDir,
+        oldPath,
+        newPath,
+        twinOldPath: hasTwin ? twinOldPath : null,
+        twinNewPath,
+        sourceOriginalHash,
+        twinOriginalHash,
+        type: source.type,
+        oldName: sourceName,
+        newName,
+        fromRef,
+        toRef,
+        sourceName: durableSourceName,
+        sourceRoot: stashDir,
+        includeLegacyBare,
+        eventMetadata: {
+          from: fromRef,
+          to: toRef,
+          rewroteFiles: plans.length,
+          readOnlyCiters: readOnlyCiters.length,
+          twinMoved: hasTwin,
+        },
+        plans,
+      });
 
-    appendEvent({
-      eventType: "mv",
-      ref: toRef,
-      metadata: {
+      // Filesystem commit is irreversible. Any finalization error leaves the
+      // journal for the next mutation to finish forward; it never rolls back.
+      const finalized = await finalizeMoveTransaction(transaction);
+      const cleanupWarning = cleanupMoveTransaction(transaction.transactionDir);
+      const warnings = [...finalized.warnings, ...(cleanupWarning ? [cleanupWarning] : [])];
+
+      output("mv", {
+        ok: true,
         from: fromRef,
         to: toRef,
-        rewroteFiles: plans.length,
-        readOnlyCiters: readOnlyCiters.length,
-        twinMoved: hasTwin,
-      },
-    });
-
-    output("mv", {
-      ok: true,
-      from: fromRef,
-      to: toRef,
-      rewrote: plans.map((plan) => ({ file: plan.relPath, count: plan.count })),
-      readOnlyCiters,
-      utilityPreserved,
-      // Additive: present only when a re-key could not be completed, so the
-      // report (not just --verbose stderr) says WHY history may reset.
-      ...(warnings.length > 0 ? { warnings } : {}),
+        rewrote: plans.map((plan) => ({ file: plan.relPath, count: plan.count })),
+        readOnlyCiters,
+        utilityPreserved: finalized.utilityPreserved,
+        // Additive: present only when a re-key could not be completed, so the
+        // report (not just --verbose stderr) says WHY history may reset.
+        ...(warnings.length > 0 ? { warnings } : {}),
+      });
     });
   },
 });

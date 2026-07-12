@@ -26,6 +26,7 @@ import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
   formatRefForMessage,
+  recordWriteTargetPath,
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
@@ -681,6 +682,9 @@ export async function writeMarkdownAsset(options: {
     // Degrade to the same applied:false report the non-writable path uses.
     try {
       writeSupersededEdge(item.filePath, result.ref);
+      if (path.resolve(item.stashRoot) === path.resolve(source.path)) {
+        recordWriteTargetPath(source, item.filePath);
+      }
     } catch (error) {
       const reason = `demotion failed: ${error instanceof Error ? error.message : String(error)}`;
       warn(

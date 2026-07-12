@@ -30,6 +30,8 @@ afterAll(() => {
 
 const xdgCache = makeTempDir();
 const xdgConfig = makeTempDir();
+const xdgData = makeTempDir();
+const xdgState = makeTempDir();
 const isolatedHome = makeTempDir();
 
 async function runCli(...args: string[]): Promise<{ stdout: string; stderr: string; status: number }> {
@@ -39,7 +41,8 @@ async function runCli(...args: string[]): Promise<{ stdout: string; stderr: stri
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: undefined,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
     () => runCliCapture(args),
   );
@@ -85,6 +88,7 @@ describe("completions command", () => {
       "clone",
       "feedback",
       "registry",
+      "migrate",
       "config",
       "help",
       "hints",

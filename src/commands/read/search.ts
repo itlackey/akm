@@ -13,6 +13,7 @@
  * Provider `search()` methods do not exist.
  */
 
+import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -280,7 +281,11 @@ function resolveEntryIds(
   for (const hit of hits) {
     try {
       const entryId = getEntryIdByFilePath(db, hit.path);
-      if (entryId !== undefined) results.push({ entryId, ref: hit.ref });
+      if (entryId !== undefined) {
+        const parsed = parseAssetRef(hit.ref);
+        const origin = parsed.origin ?? hit.origin ?? undefined;
+        results.push({ entryId, ref: refToString({ ...parsed, ...(origin ? { origin } : {}) }) });
+      }
     } catch {
       /* skip unresolvable */
     }

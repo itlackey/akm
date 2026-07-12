@@ -26,6 +26,25 @@ export function isGitBackedStash(stashDir: string): boolean {
   return fs.existsSync(path.join(stashDir, ".git"));
 }
 
+/** Return repo-relative dirty/staged paths without changing the index. */
+export function listGitChangedPaths(repoDir: string): string[] {
+  const result = runGit(["-C", repoDir, "status", "--porcelain", "-z", "--untracked-files=all"]);
+  if (result.status !== 0) return [];
+  const records = result.stdout.split("\0");
+  const paths: string[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record) continue;
+    const status = record.slice(0, 2);
+    paths.push(record.slice(3));
+    if (status.includes("R") || status.includes("C")) {
+      const previousPath = records[++i];
+      if (previousPath) paths.push(previousPath);
+    }
+  }
+  return paths;
+}
+
 export interface SaveGitStashResult {
   committed: boolean;
   pushed: boolean;
@@ -132,17 +151,27 @@ export function saveGitStash(
   //   2. Managed pathspecs (TYPE_DIRS values + `.akm`) that exist on disk —
   //      stages everything akm owns and, by construction, never stages non-akm
   //      WIP. This preserves the #476 protection WITHOUT refusing.
-  //   3. Last-resort `git add -A` — ONLY when neither an explicit list nor any
-  //      managed pathspec can be resolved. This is the maintainer-approved
-  //      "or all files if we cannot determine the exact file list" fallback and
-  //      is the one (rare) path that could include unrelated non-akm files.
-  if (!stageScopedChanges(repoDir, options?.paths)) {
+  //   3. No resolvable managed path — no commit. Broad staging is never safe
+  //      because it can absorb unrelated work already present in the index.
+  const staged = stageScopedChanges(repoDir, options?.paths);
+  if (!staged.ok) {
     throw new Error(`git add failed while staging akm changes in ${repoDir}`);
+  }
+
+  if (staged.pathspecs && staged.pathspecs.length === 0) {
+    return { committed: false, pushed: false, skipped: false, output: "nothing to commit" };
   }
 
   // Nothing actually staged → don't create an empty commit. This happens when
   // only non-akm files were dirty (precedence 2 staged nothing).
-  const stagedResult = runGit(["-C", repoDir, "diff", "--cached", "--quiet"]);
+  const stagedResult = runGit([
+    "-C",
+    repoDir,
+    "diff",
+    "--cached",
+    "--quiet",
+    ...(staged.pathspecs ? ["--", ...staged.pathspecs] : []),
+  ]);
   if (stagedResult.status === 0) {
     return { committed: false, pushed: false, skipped: false, output: "nothing to commit" };
   }
@@ -159,6 +188,7 @@ export function saveGitStash(
     "commit",
     "-m",
     commitMessage,
+    ...(staged.pathspecs ? ["--only", "--", ...staged.pathspecs] : []),
   ]);
   if (commitResult.status !== 0) {
     throw new Error(`git commit failed: ${commitResult.stderr?.trim() || "unknown error"}`);
@@ -190,36 +220,41 @@ export function saveGitStash(
 
 /**
  * Stage akm's changes in `repoDir` using the scoped-staging precedence
- * documented at the call site (#476). Returns `false` only when a `git add`
- * subprocess fails; returns `true` otherwise (including when nothing matched —
- * the caller then detects "nothing staged" via `git diff --cached --quiet`).
+ * documented at the call site (#476). The returned pathspecs are reduced to
+ * exact staged files so `git commit --only` cannot absorb unrelated index state.
  *
  * @param paths Optional explicit repo-relative paths akm wrote this run. When
  *   provided and non-empty, exactly those are staged (chunked to stay under
  *   argv length limits). Otherwise we fall back to the managed pathspecs, and
- *   finally to `git add -A` only if no managed pathspec exists on disk.
+ *   skip the commit when no managed pathspec exists on disk.
  */
-function stageScopedChanges(repoDir: string, paths?: string[]): boolean {
+function stageScopedChanges(repoDir: string, paths?: string[]): { ok: boolean; pathspecs?: string[] } {
+  if (paths !== undefined && paths.length === 0) return { ok: true, pathspecs: [] };
   // Precedence 1: explicit modified-file list.
   const explicit = (paths ?? []).filter((p) => typeof p === "string" && p.length > 0);
   if (explicit.length > 0) {
-    return addPathspecsChunked(repoDir, explicit);
+    const ok = addPathspecsChunked(repoDir, explicit);
+    return { ok, pathspecs: ok ? listStagedPaths(repoDir, explicit) : [] };
   }
 
   // Precedence 2: managed pathspecs that exist on disk (TYPE_DIRS + `.akm`).
   const managed = [...Object.values(TYPE_DIRS), ".akm"].filter((dir) => fs.existsSync(path.join(repoDir, dir)));
   if (managed.length > 0) {
-    return addPathspecsChunked(repoDir, managed);
+    const ok = addPathspecsChunked(repoDir, managed);
+    return { ok, pathspecs: ok ? listStagedPaths(repoDir, managed) : [] };
   }
 
-  // Precedence 3 (last resort): nothing akm-managed resolved on disk. Stage
-  // everything. This is the ONLY branch that can include unrelated non-akm
-  // files — it is the explicit, maintainer-approved "or all files if we cannot
-  // determine the exact file list" fallback and should be rare/never in
-  // practice (a git-backed stash always has at least one managed subtree once
-  // akm has written to it).
-  const addAll = runGit(["-C", repoDir, "add", "-A"]);
-  return addAll.status === 0;
+  // No managed target means there is no safe commit scope.
+  return { ok: true, pathspecs: [] };
+}
+
+function listStagedPaths(repoDir: string, pathspecs: string[]): string[] {
+  const result = runGit(["-C", repoDir, "diff", "--cached", "--name-only", "--", ...pathspecs]);
+  if (result.status !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 /**

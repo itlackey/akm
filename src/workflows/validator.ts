@@ -10,11 +10,12 @@
  * step-id format, and the frontmatter key whitelist.
  */
 
+import { parseAssetRef, refToString } from "../core/asset/asset-ref";
 import { utf8Bytes, WORKFLOW_MAX_INSTRUCTION_BYTES, WORKFLOW_MAX_PARAMS, WORKFLOW_MAX_STEPS } from "./resource-limits";
 import type { WorkflowDocument, WorkflowError } from "./schema";
 
 const STEP_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const ALLOWED_FRONTMATTER_KEYS = new Set(["description", "tags", "params", "name", "updated", "when_to_use"]);
+const ALLOWED_FRONTMATTER_KEYS = new Set(["description", "tags", "params", "name", "updated", "when_to_use", "xrefs"]);
 
 export function runSemanticChecks(
   draft: WorkflowDocument,
@@ -23,9 +24,28 @@ export function runSemanticChecks(
   errors: WorkflowError[],
 ): void {
   checkFrontmatterKeys(frontmatterData, frontmatterEndLine, errors);
+  checkXrefs(frontmatterData.xrefs, frontmatterEndLine, errors);
   checkStepIdFormat(draft, errors);
   checkDuplicateStepIds(draft, errors);
   checkResourceLimits(draft, errors);
+}
+
+function checkXrefs(value: unknown, line: number, errors: WorkflowError[]): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push({ line, message: 'Workflow frontmatter "xrefs" must be an array of canonical asset refs.' });
+    return;
+  }
+  for (const ref of value) {
+    try {
+      if (typeof ref !== "string" || refToString(parseAssetRef(ref)) !== ref) throw new Error("non-canonical ref");
+    } catch {
+      errors.push({
+        line,
+        message: `Workflow frontmatter "xrefs" contains an invalid or non-canonical ref: ${String(ref)}.`,
+      });
+    }
+  }
 }
 
 function checkResourceLimits(draft: WorkflowDocument, errors: WorkflowError[]): void {
@@ -50,7 +70,7 @@ function checkFrontmatterKeys(data: Record<string, unknown>, fmEndLine: number, 
     if (ALLOWED_FRONTMATTER_KEYS.has(key)) continue;
     errors.push({
       line: fmEndLine,
-      message: `Workflow frontmatter "${key}" is not supported. Use only: description, tags, params, name, updated, when_to_use.`,
+      message: `Workflow frontmatter "${key}" is not supported. Use only: description, tags, params, name, updated, when_to_use, xrefs.`,
     });
   }
 }

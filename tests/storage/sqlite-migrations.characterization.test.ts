@@ -10,6 +10,7 @@ import path from "node:path";
 import { runMigrations as runStateMigrations } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
 import type { Database as AkmDatabase } from "../../src/storage/database";
+import { migrationChecksum, runMigrations as runSqliteMigrations } from "../../src/storage/engines/sqlite-migrations";
 import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "../../src/workflows/db";
 
 /**
@@ -203,6 +204,68 @@ describe("SQLite migration runner characterization", () => {
       // The scope_key column must exist exactly once (bootstrap did not re-ALTER).
       const cols = db.prepare<{ name: string }>("PRAGMA table_info(workflow_runs)").all();
       expect(cols.filter((c) => c.name === "scope_key").length).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("rejects an unknown future migration before applying local migrations", () => {
+    const db = new Database(path.join(tmpDir, "future.db"));
+    try {
+      db.exec(`
+        CREATE TABLE schema_migrations(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+        INSERT INTO schema_migrations(id) VALUES ('001-known'), ('999-future');
+      `);
+      expect(() =>
+        runSqliteMigrations(db as never, [{ id: "001-known", up: "CREATE TABLE known(value TEXT)" }]),
+      ).toThrow(/newer|unknown|prefix/i);
+      expect(db.query("SELECT name FROM sqlite_master WHERE name='known'").get()).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("rejects holey and out-of-order ledgers", () => {
+    const migrations = [
+      { id: "001-one", up: "CREATE TABLE one(value TEXT)" },
+      { id: "002-two", up: "CREATE TABLE two(value TEXT)" },
+      { id: "003-three", up: "CREATE TABLE three(value TEXT)" },
+    ];
+    for (const ids of [
+      ["001-one", "003-three"],
+      ["002-two", "001-one"],
+    ]) {
+      const db = new Database(path.join(tmpDir, `${ids.join("-")}.db`));
+      try {
+        db.exec(
+          "CREATE TABLE schema_migrations(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now'))) ",
+        );
+        const insert = db.prepare("INSERT INTO schema_migrations(id) VALUES (?)");
+        for (const id of ids) insert.run(id);
+        expect(() => runSqliteMigrations(db as never, migrations)).toThrow(/ordered prefix/i);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  test("seals legacy ledger rows with checksums and rejects changed released SQL", () => {
+    const db = new Database(path.join(tmpDir, "checksum.db"));
+    const released = { id: "001-released", up: "CREATE TABLE released(value TEXT)" };
+    try {
+      db.exec(`
+        CREATE TABLE released(value TEXT);
+        CREATE TABLE schema_migrations(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+        INSERT INTO schema_migrations(id) VALUES ('001-released');
+      `);
+      runSqliteMigrations(db as never, [released]);
+      expect(
+        (db.query("SELECT checksum FROM schema_migrations WHERE id='001-released'").get() as { checksum: string })
+          .checksum,
+      ).toBe(migrationChecksum(released));
+      expect(() =>
+        runSqliteMigrations(db as never, [{ ...released, up: "CREATE TABLE released(value INTEGER)" }]),
+      ).toThrow(/checksum/i);
     } finally {
       db.close();
     }

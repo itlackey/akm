@@ -6,14 +6,25 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { openDatabase } from "../storage/database";
-import { writeFileAtomic } from "./common";
+import {
+  inspectMigrationLedger,
+  type Migration,
+  type MigrationLedgerState,
+} from "../storage/engines/sqlite-migrations";
+import { WORKFLOW_MIGRATIONS } from "../workflows/db";
+import { MAX_CONFIG_FILE_BYTES, MAX_LOCAL_METADATA_BYTES, readTextFileWithLimit, writeFileAtomic } from "./common";
 import { parseConfigText, withConfigLock } from "./config/config-io";
-import { CURRENT_CONFIG_VERSION } from "./config/config-schema";
+import { CURRENT_CONFIG_VERSION, validateConfigShape } from "./config/config-schema";
+import { compareConfigVersion } from "./config/config-version";
 import { ConfigError } from "./errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
 import { acquireMaintenanceActivitySync, withMaintenanceStartBarrier } from "./maintenance-barrier";
 import {
-  getCacheDir,
+  getMigrationApplyJournalPath,
+  getMigrationOperationRoot,
+  getMigrationRestoreJournalPath,
+} from "./migration-operation";
+import {
   getConfigPath,
   getDataDir,
   getIndexWriterLockPath,
@@ -21,13 +32,34 @@ import {
   getStateDbPathInDataDir,
   getWorkflowDbPath,
 } from "./paths";
+import { STATE_MIGRATIONS } from "./state/migrations";
 
 export const MIGRATION_BACKUP_VERSION = "0.9.0" as const;
-
+const MANIFEST_FORMAT_VERSION = 2 as const;
+const RESTORE_JOURNAL_FORMAT_VERSION = 2 as const;
 const ARTIFACT_NAMES = ["config.json", "state.db", "workflow.db"] as const;
+const MAX_BLOCKER_DIRECTORY_SAMPLES = 100;
+const MAX_WORKFLOW_BLOCKER_SAMPLES = 100;
+const MAX_BLOCKER_FIELD_BYTES = 256;
+const MAX_BLOCKER_ITEM_BYTES = 512;
+const MAX_BLOCKER_DIAGNOSTIC_BYTES = 16 * 1024;
 type ArtifactName = (typeof ARTIFACT_NAMES)[number];
+export type MigrationArtifactStatus = "old" | "current" | "newer" | "inconsistent" | "missing" | "corrupt";
 
-export interface MigrationBackupArtifact {
+export interface MigrationArtifactState {
+  status: MigrationArtifactStatus;
+  migrationIds?: string[];
+  migrationChecksums?: Array<string | null>;
+  detail?: string;
+}
+
+export interface MigrationState {
+  config: MigrationArtifactState;
+  state: MigrationArtifactState;
+  workflow: MigrationArtifactState;
+}
+
+export interface MigrationBackupArtifact extends MigrationArtifactState {
   sourcePath: string;
   present: boolean;
   byteSize: number;
@@ -36,8 +68,13 @@ export interface MigrationBackupArtifact {
 }
 
 export interface MigrationBackupManifest {
+  formatVersion: typeof MANIFEST_FORMAT_VERSION;
   version: typeof MIGRATION_BACKUP_VERSION;
+  targetVersion: typeof MIGRATION_BACKUP_VERSION;
+  installationId: string;
+  runId: string;
   createdAt: string;
+  complete: true;
   artifacts: Record<ArtifactName, MigrationBackupArtifact>;
 }
 
@@ -45,14 +82,29 @@ export interface MigrationBackupResult {
   path: string;
   created: boolean;
   manifest: MigrationBackupManifest;
+  rescuePath?: string;
 }
 
-export function getMigrationBackupDir(): string {
-  return path.join(getCacheDir(), "migration-backups", MIGRATION_BACKUP_VERSION);
+export function getMigrationBackupRoot(): string {
+  return getMigrationOperationRoot();
+}
+
+export { getMigrationApplyJournalPath, getMigrationRestoreJournalPath } from "./migration-operation";
+
+export function getMigrationBackupDir(runId?: string): string {
+  if (!runId) return getMigrationBackupRoot();
+  if (!/^[A-Za-z0-9._-]+$/.test(runId)) {
+    throw new ConfigError(`Invalid migration backup run ID ${JSON.stringify(runId)}.`, "INVALID_CONFIG_FILE");
+  }
+  return path.join(getMigrationBackupRoot(), runId);
 }
 
 function migrationBackupLockPath(): string {
-  return path.join(getCacheDir(), "migration-backups", `${MIGRATION_BACKUP_VERSION}.lock`);
+  return path.join(getMigrationBackupRoot(), ".lock");
+}
+
+function restoreJournalPath(): string {
+  return getMigrationRestoreJournalPath();
 }
 
 function expectedSourcePaths(): Record<ArtifactName, string> {
@@ -64,13 +116,28 @@ function expectedSourcePaths(): Record<ArtifactName, string> {
 }
 
 function sha256File(filePath: string): string {
-  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest("hex");
 }
 
-function ownerOnlyMode(filePath: string, directory: boolean): boolean {
-  if (process.platform === "win32") return true;
-  const mode = fs.statSync(filePath).mode & 0o777;
-  return mode === (directory ? 0o700 : 0o600);
+function fsyncFile(filePath: string): void {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function fsyncDirectory(directory: string): void {
@@ -87,14 +154,103 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
+function copyFileDurable(source: string, destination: string): void {
+  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(destination, 0o600);
+  fsyncFile(destination);
+}
+
+function ownerOnlyMode(filePath: string, directory: boolean): boolean {
+  if (process.platform === "win32") return true;
+  const mode = fs.statSync(filePath).mode & 0o777;
+  return mode === (directory ? 0o700 : 0o600);
+}
+
+function mapLedgerState(state: MigrationLedgerState): MigrationArtifactState {
+  return {
+    status: state.status,
+    migrationIds: state.migrationIds,
+    migrationChecksums: state.checksums,
+    ...(state.detail ? { detail: state.detail } : {}),
+  };
+}
+
+function inspectConfig(configPath: string): MigrationArtifactState {
+  if (!fs.existsSync(configPath)) return { status: "missing" };
+  try {
+    const raw = parseConfigText(readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file"), configPath);
+    const comparison = compareConfigVersion(raw.configVersion as string | number | undefined, CURRENT_CONFIG_VERSION);
+    if (comparison === undefined) return { status: "inconsistent", detail: "configVersion is missing or invalid" };
+    if (comparison < 0) return { status: "old" };
+    if (comparison > 0) return { status: "newer" };
+    const validated = validateConfigShape(raw);
+    if (!validated.ok) {
+      return {
+        status: "corrupt",
+        detail: validated.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "),
+      };
+    }
+    return { status: "current" };
+  } catch (error) {
+    return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function quickCheck(db: ReturnType<typeof openDatabase>, filePath: string): void {
+  const rows = db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>;
+  if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") {
+    throw new ConfigError(`SQLite quick_check failed for ${filePath}.`, "INVALID_CONFIG_FILE");
+  }
+}
+
+function inspectSqlite(filePath: string, migrations: readonly Migration[]): MigrationArtifactState {
+  if (!fs.existsSync(filePath)) return { status: "missing" };
+  let db: ReturnType<typeof openDatabase> | undefined;
+  try {
+    db = openDatabase(filePath, { readonly: true });
+    quickCheck(db, filePath);
+    return mapLedgerState(inspectMigrationLedger(db, migrations));
+  } catch (error) {
+    return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };
+  } finally {
+    db?.close();
+  }
+}
+
+export function inspectMigrationState(): MigrationState {
+  return {
+    config: inspectConfig(getConfigPath()),
+    state: inspectSqlite(getStateDbPathInDataDir(), STATE_MIGRATIONS),
+    workflow: inspectSqlite(getWorkflowDbPath(), WORKFLOW_MIGRATIONS),
+  };
+}
+
+function assertBackupEligible(state: MigrationState): void {
+  const entries: Array<[string, MigrationArtifactState]> = [
+    ["config.json", state.config],
+    ["state.db", state.state],
+    ["workflow.db", state.workflow],
+  ];
+  const unsafe = entries.filter(([, artifact]) => ["newer", "inconsistent", "corrupt"].includes(artifact.status));
+  if (unsafe.length > 0) {
+    throw new ConfigError(
+      `Refusing migration backup because artifact state is unsafe: ${unsafe
+        .map(([name, artifact]) => `${name}=${artifact.status}${artifact.detail ? ` (${artifact.detail})` : ""}`)
+        .join(", ")}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+}
+
 function parseManifest(bundlePath: string): MigrationBackupManifest {
   const manifestPath = path.join(bundlePath, "manifest.json");
   let value: unknown;
   try {
-    value = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    value = JSON.parse(readTextFileWithLimit(manifestPath, MAX_LOCAL_METADATA_BYTES, "Migration manifest"));
   } catch (error) {
     throw new ConfigError(
-      `Migration backup at ${bundlePath} is incomplete or unreadable: ${error instanceof Error ? error.message : String(error)}. Remove it only after preserving any recoverable files, then retry backup creation.`,
+      `Migration backup at ${bundlePath} is incomplete or unreadable: ${error instanceof Error ? error.message : String(error)}.`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -102,9 +258,18 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
     throw new ConfigError(`Migration backup manifest at ${manifestPath} is invalid.`, "INVALID_CONFIG_FILE");
   }
   const manifest = value as Partial<MigrationBackupManifest>;
-  if (manifest.version !== MIGRATION_BACKUP_VERSION || typeof manifest.createdAt !== "string") {
+  if (
+    manifest.formatVersion !== MANIFEST_FORMAT_VERSION ||
+    manifest.version !== MIGRATION_BACKUP_VERSION ||
+    manifest.targetVersion !== MIGRATION_BACKUP_VERSION ||
+    manifest.installationId !== path.basename(getMigrationOperationRoot()) ||
+    typeof manifest.runId !== "string" ||
+    path.basename(bundlePath) !== manifest.runId ||
+    typeof manifest.createdAt !== "string" ||
+    manifest.complete !== true
+  ) {
     throw new ConfigError(
-      `Migration backup manifest at ${manifestPath} has an unsupported version.`,
+      `Migration backup manifest at ${manifestPath} is foreign or unsupported.`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -118,9 +283,10 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
       !Number.isSafeInteger(artifact.byteSize) ||
       artifact.byteSize < 0 ||
       typeof artifact.createdAt !== "string" ||
+      !["old", "current", "missing"].includes(artifact.status) ||
       (artifact.present
         ? typeof artifact.sha256 !== "string" || artifact.sha256.length !== 64
-        : artifact.sha256 !== null)
+        : artifact.sha256 !== null || artifact.status !== "missing")
     ) {
       throw new ConfigError(`Migration backup manifest has an invalid ${name} entry.`, "INVALID_CONFIG_FILE");
     }
@@ -128,8 +294,46 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
   return manifest as MigrationBackupManifest;
 }
 
-/** Verify the complete bundle, including source-path binding, modes, sizes, and hashes. */
-export function verifyMigrationBackup(bundlePath = getMigrationBackupDir()): MigrationBackupManifest {
+function sameState(actual: MigrationArtifactState, expected: MigrationBackupArtifact): boolean {
+  return (
+    actual.status === expected.status &&
+    JSON.stringify(actual.migrationIds ?? []) === JSON.stringify(expected.migrationIds ?? []) &&
+    JSON.stringify(actual.migrationChecksums ?? []) === JSON.stringify(expected.migrationChecksums ?? [])
+  );
+}
+
+function verifyArtifactAgainstManifest(
+  filePath: string,
+  name: ArtifactName,
+  artifact: MigrationBackupArtifact,
+  context: string,
+): void {
+  if (!artifact.present) {
+    if (fs.existsSync(filePath)) {
+      throw new ConfigError(
+        `${context} ${name} should be absent according to the selected backup.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    return;
+  }
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    throw new ConfigError(`${context} ${name} is missing or is not a regular file.`, "INVALID_CONFIG_FILE");
+  }
+  const stat = fs.statSync(filePath);
+  if (stat.size !== artifact.byteSize || sha256File(filePath) !== artifact.sha256) {
+    throw new ConfigError(`${context} ${name} failed size/checksum authentication.`, "INVALID_CONFIG_FILE");
+  }
+  const inspected = inspectArtifactAt(name, filePath);
+  if (!sameState(inspected, artifact)) {
+    throw new ConfigError(
+      `${context} ${name} failed SQLite/config recoverability verification: expected ${artifact.status}, got ${inspected.status}${inspected.detail ? ` (${inspected.detail})` : ""}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+}
+
+export function verifyMigrationBackup(bundlePath = resolveBackupRun()): MigrationBackupManifest {
   if (!fs.existsSync(bundlePath) || !fs.statSync(bundlePath).isDirectory()) {
     throw new ConfigError(`Migration backup does not exist at ${bundlePath}.`, "INVALID_CONFIG_FILE");
   }
@@ -151,11 +355,11 @@ export function verifyMigrationBackup(bundlePath = getMigrationBackupDir()): Mig
       continue;
     }
     expectedFiles.add(name);
-    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
-      throw new ConfigError(`Migration backup is missing ${artifactPath}.`, "INVALID_CONFIG_FILE");
-    }
-    if (!ownerOnlyMode(artifactPath, false)) {
-      throw new ConfigError(`Migration backup artifact ${artifactPath} must have mode 0600.`, "INVALID_CONFIG_FILE");
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile() || !ownerOnlyMode(artifactPath, false)) {
+      throw new ConfigError(
+        `Migration backup artifact ${artifactPath} is missing or has unsafe permissions.`,
+        "INVALID_CONFIG_FILE",
+      );
     }
     const stat = fs.statSync(artifactPath);
     if (stat.size !== artifact.byteSize || sha256File(artifactPath) !== artifact.sha256) {
@@ -164,9 +368,19 @@ export function verifyMigrationBackup(bundlePath = getMigrationBackupDir()): Mig
         "INVALID_CONFIG_FILE",
       );
     }
+    const inspected =
+      name === "config.json"
+        ? inspectConfig(artifactPath)
+        : inspectSqlite(artifactPath, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS);
+    if (!sameState(inspected, artifact)) {
+      throw new ConfigError(
+        `Migration backup artifact ${artifactPath} failed SQLite/config recoverability verification: expected ${artifact.status}, got ${inspected.status}${inspected.detail ? ` (${inspected.detail})` : ""}.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
   }
   if (!ownerOnlyMode(path.join(bundlePath, "manifest.json"), false)) {
-    throw new ConfigError(`Migration backup manifest must have mode 0600.`, "INVALID_CONFIG_FILE");
+    throw new ConfigError("Migration backup manifest must have mode 0600.", "INVALID_CONFIG_FILE");
   }
   const extras = fs.readdirSync(bundlePath).filter((name) => !expectedFiles.has(name));
   if (extras.length > 0) {
@@ -183,37 +397,10 @@ function acquireMigrationBackupLock(): () => void {
     const ownership = tryAcquireLockSync(lockPath, createLockPayload());
     if (ownership) return () => releaseLock(ownership);
     const probe = probeLock(lockPath);
-    if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) {
-      continue;
-    }
+    if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) continue;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
   throw new ConfigError(`Timed out waiting for migration backup lock at ${lockPath}.`, "INVALID_CONFIG_FILE");
-}
-
-function assertNotAlreadyCutOver(): void {
-  const configPath = getConfigPath();
-  let text: string;
-  try {
-    text = fs.readFileSync(configPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  const raw = parseConfigText(text, configPath);
-  if (raw.configVersion === CURRENT_CONFIG_VERSION) {
-    throw new ConfigError(
-      `Refusing to create a pre-0.9 migration backup from an existing ${CURRENT_CONFIG_VERSION} config at ${configPath}. Restore the original migration bundle or pre-cutover config before retrying.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-}
-
-function copyRegularArtifact(source: string, destination: string): void {
-  const stat = fs.statSync(source);
-  if (!stat.isFile()) throw new ConfigError(`Backup source is not a regular file: ${source}`, "INVALID_CONFIG_FILE");
-  writeFileAtomic(destination, fs.readFileSync(source), 0o600);
-  fs.chmodSync(destination, 0o600);
 }
 
 function sqliteQuote(value: string): string {
@@ -221,9 +408,9 @@ function sqliteQuote(value: string): string {
 }
 
 function backupSqlite(source: string, destination: string): void {
-  const stat = fs.statSync(source);
-  if (!stat.isFile())
+  if (!fs.statSync(source).isFile()) {
     throw new ConfigError(`SQLite backup source is not a regular file: ${source}`, "INVALID_CONFIG_FILE");
+  }
   const resolvedSource = path.resolve(source);
   const activityName =
     resolvedSource === path.resolve(getWorkflowDbPath())
@@ -232,14 +419,10 @@ function backupSqlite(source: string, destination: string): void {
         ? "state-db"
         : undefined;
   const releaseActivity = activityName ? acquireMaintenanceActivitySync(activityName) : undefined;
-  // The source was stat-verified above. Opening without Bun's `create:false`
-  // avoids bun:sqlite's SQLITE_MISUSE for that unsupported false option while
-  // retaining Node's ordinary existing-file behavior.
   let db: ReturnType<typeof openDatabase> | undefined;
   try {
     db = openDatabase(source);
     db.exec("PRAGMA busy_timeout = 10000");
-    db.exec("PRAGMA wal_checkpoint(FULL)");
     db.exec(`VACUUM INTO ${sqliteQuote(destination)}`);
   } finally {
     try {
@@ -249,25 +432,26 @@ function backupSqlite(source: string, destination: string): void {
     }
   }
   fs.chmodSync(destination, 0o600);
-  const fd = fs.openSync(destination, "r");
-  try {
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
+  fsyncFile(destination);
+}
+
+function newRunId(): string {
+  return `${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+}
+
+function stateForName(state: MigrationState, name: ArtifactName): MigrationArtifactState {
+  return name === "config.json" ? state.config : name === "state.db" ? state.state : state.workflow;
 }
 
 function createMigrationBackupUnlocked(): MigrationBackupResult {
-  const bundlePath = getMigrationBackupDir();
-  if (fs.existsSync(bundlePath)) {
-    return { path: bundlePath, created: false, manifest: verifyMigrationBackup(bundlePath) };
-  }
-  assertNotAlreadyCutOver();
-
-  const parent = path.dirname(bundlePath);
-  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-  fs.chmodSync(parent, 0o700);
-  const temporary = path.join(parent, `.0.9.0.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`);
+  const state = inspectMigrationState();
+  assertBackupEligible(state);
+  const root = getMigrationBackupRoot();
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  fs.chmodSync(root, 0o700);
+  const runId = newRunId();
+  const bundlePath = path.join(root, runId);
+  const temporary = path.join(root, `.${runId}.tmp`);
   fs.mkdirSync(temporary, { mode: 0o700 });
   const createdAt = new Date().toISOString();
   const sources = expectedSourcePaths();
@@ -275,42 +459,49 @@ function createMigrationBackupUnlocked(): MigrationBackupResult {
   try {
     for (const name of ARTIFACT_NAMES) {
       const sourcePath = sources[name];
+      const sourceState = stateForName(state, name);
       const destination = path.join(temporary, name);
-      let present = true;
-      try {
-        fs.statSync(sourcePath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") present = false;
-        else throw error;
-      }
+      const present = sourceState.status !== "missing";
       if (present) {
-        if (name === "config.json") copyRegularArtifact(sourcePath, destination);
+        if (name === "config.json") copyFileDurable(sourcePath, destination);
         else backupSqlite(sourcePath, destination);
       }
-      const byteSize = present ? fs.statSync(destination).size : 0;
+      const inspected = present
+        ? name === "config.json"
+          ? inspectConfig(destination)
+          : inspectSqlite(destination, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS)
+        : { status: "missing" as const };
+      const expectedArtifact = { ...sourceState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
+      if (!sameState(inspected, expectedArtifact)) {
+        throw new ConfigError(`Snapshot ${name} does not match its source migration state.`, "INVALID_CONFIG_FILE");
+      }
       artifacts[name] = {
+        ...sourceState,
         sourcePath,
         present,
-        byteSize,
+        byteSize: present ? fs.statSync(destination).size : 0,
         sha256: present ? sha256File(destination) : null,
         createdAt,
       };
     }
-    const manifest: MigrationBackupManifest = { version: MIGRATION_BACKUP_VERSION, createdAt, artifacts };
+    const manifest: MigrationBackupManifest = {
+      formatVersion: MANIFEST_FORMAT_VERSION,
+      version: MIGRATION_BACKUP_VERSION,
+      targetVersion: MIGRATION_BACKUP_VERSION,
+      installationId: path.basename(getMigrationOperationRoot()),
+      runId,
+      createdAt,
+      complete: true,
+      artifacts,
+    };
     writeFileAtomic(path.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, 0o600);
     fs.chmodSync(path.join(temporary, "manifest.json"), 0o600);
     fsyncDirectory(temporary);
     fs.renameSync(temporary, bundlePath);
-    fsyncDirectory(parent);
+    fsyncDirectory(root);
     return { path: bundlePath, created: true, manifest: verifyMigrationBackup(bundlePath) };
   } catch (error) {
     fs.rmSync(temporary, { recursive: true, force: true });
-    if (fs.existsSync(bundlePath)) {
-      throw new ConfigError(
-        `Migration backup creation raced with another writer and left ${bundlePath}. Verify or preserve it before retrying.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
     throw error;
   }
 }
@@ -324,36 +515,92 @@ function withMigrationBackupLock<T>(fn: () => T): T {
   }
 }
 
-/** Create or verify the immutable pre-cutover bundle. Safe for raw legacy config. */
 export function createMigrationBackup(): MigrationBackupResult {
-  return withConfigLock(() => withMigrationBackupLock(createMigrationBackupUnlocked));
+  return withConfigLock(() =>
+    withMigrationBackupLock(() => withMaintenanceStartBarrier(createMigrationBackupUnlocked)),
+  );
 }
 
-/** Used while a config mutation already owns config.json.lck. */
 export function ensureMigrationBackupWithConfigLockHeld(): MigrationBackupResult {
-  return withMigrationBackupLock(createMigrationBackupUnlocked);
+  return withMigrationBackupLock(() => withMaintenanceStartBarrier(createMigrationBackupUnlocked));
 }
 
-/** Used by database migration hooks before applying the first 0.9 migration. */
 export function ensureMigrationBackup(): MigrationBackupResult {
   return createMigrationBackup();
 }
 
-function activeRestoreLocks(): string[] {
+function sanitizeDiagnosticField(value: unknown, maxBytes = MAX_BLOCKER_FIELD_BYTES): string {
+  const source = String(value);
+  let output = "";
+  let bytes = 0;
+  let truncated = false;
+  const contentLimit = Math.max(0, maxBytes - 3);
+  for (const character of source) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    const safe = codePoint < 0x20 || codePoint === 0x7f ? "?" : character;
+    const width = Buffer.byteLength(safe, "utf8");
+    if (bytes + width > contentLimit) {
+      truncated = true;
+      break;
+    }
+    output += safe;
+    bytes += width;
+  }
+  if (!truncated && bytes < Buffer.byteLength(source, "utf8")) truncated = true;
+  return truncated ? `${output}...` : output;
+}
+
+function sampleLockDirectory(directory: string): { paths: string[]; overflow: boolean } {
+  let handle: fs.Dir;
+  try {
+    handle = fs.opendirSync(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { paths: [], overflow: false };
+    throw error;
+  }
+  const paths: string[] = [];
+  let inspected = 0;
+  let overflow = false;
+  try {
+    while (true) {
+      const entry = handle.readSync();
+      if (!entry) break;
+      inspected += 1;
+      if (inspected > MAX_BLOCKER_DIRECTORY_SAMPLES) {
+        overflow = true;
+        break;
+      }
+      if (entry.isFile() && entry.name.endsWith(".lock")) paths.push(path.join(directory, entry.name));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { paths: [], overflow: false };
+    throw error;
+  } finally {
+    try {
+      handle.closeSync();
+    } catch {
+      // A concurrently removed directory may already have invalidated the handle.
+    }
+  }
+  return { paths, overflow };
+}
+
+function activeRestoreLocks(bundlePath?: string): string[] {
   const lockPaths = [getLockfileLockPath(), getIndexWriterLockPath()];
+  const overflowBlockers: string[] = [];
   const configLock = path.join(path.dirname(getConfigPath()), "config.json.lck");
   const dataDir = getDataDir();
   for (const name of ["improve.lock", "consolidate.lock", "reflect-distill.lock", "triage.lock"]) {
     lockPaths.push(path.join(dataDir, name));
   }
   const stashDirs = new Set<string>();
-  for (const configPath of [getConfigPath(), path.join(getMigrationBackupDir(), "config.json")]) {
+  const configPaths = [getConfigPath(), ...(bundlePath ? [path.join(bundlePath, "config.json")] : [])];
+  for (const configPath of configPaths) {
     try {
-      const raw = parseConfigText(fs.readFileSync(configPath, "utf8"), configPath);
+      const raw = parseConfigText(readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file"), configPath);
       if (typeof raw.stashDir === "string" && raw.stashDir) stashDirs.add(raw.stashDir);
     } catch {
-      // Restore still verifies the bundle. A malformed live config must not
-      // prevent recovery; it simply cannot contribute an extra stash lock path.
+      // A malformed or absent config contributes no stash-scoped lock paths.
     }
   }
   for (const stashDir of stashDirs) {
@@ -363,121 +610,652 @@ function activeRestoreLocks(): string[] {
   }
   for (const baseDir of [dataDir, ...[...stashDirs].map((stashDir) => path.join(stashDir, ".akm"))]) {
     const extractLockDir = path.join(baseDir, "extract-locks");
-    try {
-      for (const entry of fs.readdirSync(extractLockDir, { withFileTypes: true })) {
-        if (entry.isFile() && entry.name.endsWith(".lock")) lockPaths.push(path.join(extractLockDir, entry.name));
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const sample = sampleLockDirectory(extractLockDir);
+    lockPaths.push(...sample.paths);
+    if (sample.overflow) {
+      overflowBlockers.push(`lock directory sample capped: ${sanitizeDiagnosticField(extractLockDir)}`);
     }
   }
   const activityDir = path.join(path.dirname(getLockfileLockPath()), "maintenance-activities");
-  try {
-    for (const entry of fs.readdirSync(activityDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith(".lock")) lockPaths.push(path.join(activityDir, entry.name));
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  const activitySample = sampleLockDirectory(activityDir);
+  lockPaths.push(...activitySample.paths);
+  if (activitySample.overflow) {
+    overflowBlockers.push(`lock directory sample capped: ${sanitizeDiagnosticField(activityDir)}`);
   }
-  return [configLock, ...lockPaths].filter((lockPath) => {
-    const probe = probeLock(lockPath);
-    return probe.state === "held" && (lockPath !== configLock || probe.holderPid !== process.pid);
-  });
+  const active = [configLock, ...lockPaths]
+    .filter((lockPath) => {
+      const probe = probeLock(lockPath);
+      return probe.state === "held" && (lockPath !== configLock || probe.holderPid !== process.pid);
+    })
+    .map((lockPath) => sanitizeDiagnosticField(lockPath, MAX_BLOCKER_ITEM_BYTES));
+  return [...active, ...overflowBlockers];
 }
 
 function activeWorkflowClaims(): string[] {
+  const maxSamples = MAX_WORKFLOW_BLOCKER_SAMPLES;
   const workflowPath = getWorkflowDbPath();
   if (!fs.existsSync(workflowPath)) return [];
-  // Restore already owns the maintenance barrier for this handle's complete
-  // lifetime. Registering a normal workflow-db activity here would re-enter
-  // that barrier and deadlock against ourselves.
   const db = openDatabase(workflowPath, { readonly: true });
   try {
-    const runsTable = db
-      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workflow_runs'")
-      .get();
     const blockers: string[] = [];
-    if (runsTable) {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get()) {
       const columns = new Set(
         (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
       );
       if (columns.has("engine_lease_holder") && columns.has("engine_lease_until")) {
-        const now = new Date().toISOString();
+        const leases = db
+          .prepare(
+            `SELECT substr(CAST(id AS TEXT), 1, 257) AS id, substr(CAST(engine_lease_holder AS TEXT), 1, 257) AS holder, substr(CAST(engine_lease_until AS TEXT), 1, 129) AS expires FROM workflow_runs WHERE engine_lease_holder IS NOT NULL AND engine_lease_until >= ? LIMIT ${maxSamples + 1}`,
+          )
+          .all(new Date().toISOString()) as Array<{ id: string; holder: string; expires: string }>;
         blockers.push(
-          ...(
-            db
-              .prepare(
-                `SELECT id, engine_lease_holder AS holder, engine_lease_until AS expires
-                 FROM workflow_runs
-                 WHERE engine_lease_holder IS NOT NULL AND engine_lease_until IS NOT NULL AND engine_lease_until >= ?`,
-              )
-              .all(now) as Array<{ id: string; holder: string; expires: string }>
-          ).map((lease) => `${workflowPath}#run=${lease.id},holder=${lease.holder},expires=${lease.expires}`),
+          ...leases
+            .slice(0, maxSamples)
+            .map(
+              (lease) =>
+                `${sanitizeDiagnosticField(workflowPath)}#run=${sanitizeDiagnosticField(lease.id)},holder=${sanitizeDiagnosticField(lease.holder)},expires=${sanitizeDiagnosticField(lease.expires, 128)}`,
+            ),
         );
+        if (leases.length > maxSamples) {
+          blockers.push(`${workflowPath}#additional-active-workflow-blockers`);
+          return blockers;
+        }
       }
     }
-    const unitsTable = db
-      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workflow_run_units'")
-      .get();
-    if (!unitsTable) return blockers;
-    const unitColumns = new Set(
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_units'").get())
+      return blockers;
+    const columns = new Set(
       (db.prepare("PRAGMA table_info(workflow_run_units)").all() as Array<{ name: string }>).map((row) => row.name),
     );
-    if (!unitColumns.has("claim_holder") || !unitColumns.has("claim_expires_at")) return blockers;
-    const now = new Date().toISOString();
+    if (!columns.has("claim_holder") || !columns.has("claim_expires_at")) return blockers;
+    const remaining = maxSamples - blockers.length;
+    if (remaining <= 0) return blockers;
+    const claims = db
+      .prepare(
+        `SELECT substr(CAST(run_id AS TEXT), 1, 257) AS runId, substr(CAST(unit_id AS TEXT), 1, 257) AS unitId, substr(CAST(claim_holder AS TEXT), 1, 257) AS holder, substr(CAST(claim_expires_at AS TEXT), 1, 129) AS expires FROM workflow_run_units WHERE status='running' AND claim_holder IS NOT NULL AND claim_expires_at >= ? LIMIT ${remaining + 1}`,
+      )
+      .all(new Date().toISOString()) as Array<{ runId: string; unitId: string; holder: string; expires: string }>;
     blockers.push(
-      ...(
-        db
-          .prepare(
-            `SELECT run_id AS runId, unit_id AS unitId, claim_holder AS holder, claim_expires_at AS expires
-             FROM workflow_run_units
-             WHERE status = 'running' AND claim_holder IS NOT NULL
-               AND claim_expires_at IS NOT NULL AND claim_expires_at >= ?`,
-          )
-          .all(now) as Array<{ runId: string; unitId: string; holder: string; expires: string }>
-      ).map(
-        (claim) =>
-          `${workflowPath}#run=${claim.runId},unit=${claim.unitId},holder=${claim.holder},expires=${claim.expires}`,
-      ),
+      ...claims
+        .slice(0, remaining)
+        .map(
+          (claim) =>
+            `${sanitizeDiagnosticField(workflowPath)}#run=${sanitizeDiagnosticField(claim.runId)},unit=${sanitizeDiagnosticField(claim.unitId)},holder=${sanitizeDiagnosticField(claim.holder)},expires=${sanitizeDiagnosticField(claim.expires, 128)}`,
+        ),
     );
+    if (claims.length > remaining) blockers.push(`${workflowPath}#additional-active-workflow-blockers`);
     return blockers;
   } finally {
     db.close();
   }
 }
 
-function restoreArtifact(source: string, destination: string): void {
-  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-  writeFileAtomic(destination, fs.readFileSync(source), 0o600);
-  fs.chmodSync(destination, 0o600);
+/** Caller must hold the maintenance start barrier while checking and replacing artifacts. */
+export function assertNoArtifactReplacementBlockers(bundlePath?: string): void {
+  const blockers = [...activeRestoreLocks(bundlePath), ...activeWorkflowClaims()];
+  if (blockers.length > 0) {
+    const prefix = "Refusing artifact replacement while AKM locks, activities, or workflow leases are active: ";
+    const omission = " ... additional blockers omitted.";
+    const punctuation = ".";
+    const contentLimit = MAX_BLOCKER_DIAGNOSTIC_BYTES - Buffer.byteLength(omission, "utf8");
+    let message = prefix;
+    let included = 0;
+    for (const blocker of blockers) {
+      const item = sanitizeDiagnosticField(blocker, MAX_BLOCKER_ITEM_BYTES);
+      const segment = `${included === 0 ? "" : ", "}${item}`;
+      if (Buffer.byteLength(message, "utf8") + Buffer.byteLength(segment, "utf8") + 1 > contentLimit) break;
+      message += segment;
+      included += 1;
+    }
+    message += included < blockers.length ? omission : punctuation;
+    throw new ConfigError(message, "INVALID_CONFIG_FILE");
+  }
 }
 
-/** Restore exactly the manifest's original presence/absence state. */
-export function restoreMigrationBackup(confirm: boolean): MigrationBackupResult {
-  if (!confirm) {
-    throw new ConfigError("Migration backup restore requires --confirm.", "INVALID_CONFIG_FILE");
+interface RestoreJournalEntry {
+  destination: string;
+  stage?: string;
+  originalPresent: boolean;
+  originalFingerprint: FileFingerprint | null;
+  quarantine: string;
+  sidecars: Array<{
+    destination: string;
+    originalPresent: boolean;
+    originalFingerprint: FileFingerprint | null;
+    quarantine: string;
+  }>;
+}
+
+export interface FileFingerprint {
+  byteSize: number;
+  sha256: string;
+}
+
+export interface MigrationGenerationFingerprint {
+  config: { main: FileFingerprint | null; wal: null; shm: null };
+  state: { main: FileFingerprint | null; wal: FileFingerprint | null; shm: FileFingerprint | null };
+  workflow: { main: FileFingerprint | null; wal: FileFingerprint | null; shm: FileFingerprint | null };
+}
+
+function fingerprintFile(filePath: string): FileFingerprint | null {
+  if (!fs.existsSync(filePath)) return null;
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile())
+    throw new ConfigError(`Fingerprint source is not a regular file: ${filePath}.`, "INVALID_CONFIG_FILE");
+  return { byteSize: stat.size, sha256: sha256File(filePath) };
+}
+
+function matchesFingerprint(filePath: string, fingerprint: FileFingerprint | null): boolean {
+  if (fingerprint === null) return !fs.existsSync(filePath);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
+  return fs.statSync(filePath).size === fingerprint.byteSize && sha256File(filePath) === fingerprint.sha256;
+}
+
+export function fingerprintMigrationGeneration(): MigrationGenerationFingerprint {
+  const statePath = getStateDbPathInDataDir();
+  const workflowPath = getWorkflowDbPath();
+  return {
+    config: { main: fingerprintFile(getConfigPath()), wal: null, shm: null },
+    state: {
+      main: fingerprintFile(statePath),
+      wal: fingerprintFile(`${statePath}-wal`),
+      shm: fingerprintFile(`${statePath}-shm`),
+    },
+    workflow: {
+      main: fingerprintFile(workflowPath),
+      wal: fingerprintFile(`${workflowPath}-wal`),
+      shm: fingerprintFile(`${workflowPath}-shm`),
+    },
+  };
+}
+
+export function sameMigrationGeneration(
+  left: MigrationGenerationFingerprint,
+  right: MigrationGenerationFingerprint,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+let restoreRollbackBoundaryHook: ((boundary: string) => void) | undefined;
+
+/** TEST-ONLY: inject a crash at a named prepared-restore rollback boundary. */
+export function _setRestoreRollbackBoundaryHookForTests(hook?: (boundary: string) => void): void {
+  restoreRollbackBoundaryHook = hook;
+}
+
+function rollbackBoundary(boundary: string): void {
+  restoreRollbackBoundaryHook?.(boundary);
+}
+
+interface RestoreJournal {
+  formatVersion: typeof RESTORE_JOURNAL_FORMAT_VERSION;
+  version: typeof MIGRATION_BACKUP_VERSION;
+  operationId: string;
+  sourceRunId: string;
+  rescueRunId: string;
+  phase: "prepared" | "committed";
+  entries: RestoreJournalEntry[];
+}
+
+function writeRestoreJournal(journal: RestoreJournal): void {
+  writeFileAtomic(restoreJournalPath(), `${JSON.stringify(journal, null, 2)}\n`, 0o600);
+}
+
+function invalidRestoreJournal(journalPath: string, detail: string): never {
+  throw new ConfigError(`Invalid restore journal ${journalPath}: ${detail}.`, "INVALID_CONFIG_FILE");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, required: string[], optional: string[] = []): boolean {
+  const keys = Object.keys(value);
+  return (
+    required.every((key) => keys.includes(key)) && keys.every((key) => required.includes(key) || optional.includes(key))
+  );
+}
+
+function parseFileFingerprint(value: unknown, present: boolean, journalPath: string): FileFingerprint | null {
+  if (!present) {
+    if (value !== null) invalidRestoreJournal(journalPath, "absent original has a non-null fingerprint");
+    return null;
   }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["byteSize", "sha256"]) ||
+    !Number.isSafeInteger(value.byteSize) ||
+    (value.byteSize as number) < 0 ||
+    typeof value.sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.sha256)
+  ) {
+    invalidRestoreJournal(journalPath, "original fingerprint is malformed");
+  }
+  return { byteSize: value.byteSize as number, sha256: value.sha256 };
+}
+
+function isOperationBoundPath(
+  candidate: string,
+  destination: string,
+  kind: "restore-stage" | "restore-quarantine",
+  operationId: string,
+): boolean {
+  const expected = `${destination}.${kind}.${operationId}`;
+  return candidate === expected && path.dirname(path.resolve(candidate)) === path.dirname(path.resolve(destination));
+}
+
+function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJournal {
+  if (
+    !isRecord(raw) ||
+    !hasExactKeys(raw, ["formatVersion", "version", "operationId", "sourceRunId", "rescueRunId", "phase", "entries"])
+  ) {
+    invalidRestoreJournal(journalPath, "expected the complete versioned journal shape");
+  }
+  if (raw.formatVersion !== RESTORE_JOURNAL_FORMAT_VERSION) {
+    invalidRestoreJournal(journalPath, `unsupported formatVersion ${JSON.stringify(raw.formatVersion)}`);
+  }
+  if (raw.version !== MIGRATION_BACKUP_VERSION) {
+    invalidRestoreJournal(journalPath, `unsupported migration version ${JSON.stringify(raw.version)}`);
+  }
+  if (raw.phase !== "prepared" && raw.phase !== "committed") {
+    invalidRestoreJournal(journalPath, `unsupported phase ${JSON.stringify(raw.phase)}`);
+  }
+  for (const field of ["operationId", "sourceRunId", "rescueRunId"] as const) {
+    if (typeof raw[field] !== "string" || !/^[A-Za-z0-9._-]+$/.test(raw[field])) {
+      invalidRestoreJournal(journalPath, `${field} is not a safe operation identifier`);
+    }
+  }
+  if (!Array.isArray(raw.entries) || raw.entries.length !== ARTIFACT_NAMES.length) {
+    invalidRestoreJournal(journalPath, `expected exactly ${ARTIFACT_NAMES.length} artifact entries`);
+  }
+
+  const operationId = raw.operationId as string;
+  const expectedPaths = expectedSourcePaths();
+  const byDestination = new Map<string, RestoreJournalEntry>();
+  const allPaths = new Set<string>();
+  const registerPath = (candidate: string, label: string): void => {
+    const resolved = path.resolve(candidate);
+    if (allPaths.has(resolved)) invalidRestoreJournal(journalPath, `${label} path is duplicated: ${candidate}`);
+    allPaths.add(resolved);
+  };
+
+  for (const value of raw.entries) {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(
+        value,
+        ["destination", "originalPresent", "originalFingerprint", "quarantine", "sidecars"],
+        ["stage"],
+      ) ||
+      typeof value.destination !== "string" ||
+      typeof value.originalPresent !== "boolean" ||
+      typeof value.quarantine !== "string" ||
+      !Array.isArray(value.sidecars)
+    ) {
+      invalidRestoreJournal(journalPath, "artifact entry has an invalid shape");
+    }
+    const originalFingerprint = parseFileFingerprint(value.originalFingerprint, value.originalPresent, journalPath);
+    const artifactName = ARTIFACT_NAMES.find((name) => expectedPaths[name] === value.destination);
+    if (!artifactName || byDestination.has(value.destination)) {
+      invalidRestoreJournal(journalPath, `artifact destinations are not the exact unique canonical set`);
+    }
+    if (!isOperationBoundPath(value.quarantine, value.destination, "restore-quarantine", operationId)) {
+      invalidRestoreJournal(journalPath, `quarantine path is not bound to operation ${operationId}`);
+    }
+    if (
+      value.stage !== undefined &&
+      (typeof value.stage !== "string" ||
+        !isOperationBoundPath(value.stage, value.destination, "restore-stage", operationId))
+    ) {
+      invalidRestoreJournal(journalPath, `stage path is not bound to operation ${operationId}`);
+    }
+
+    const expectedSidecarDestinations =
+      artifactName === "config.json" ? [] : [`${value.destination}-wal`, `${value.destination}-shm`];
+    if (value.sidecars.length !== expectedSidecarDestinations.length) {
+      invalidRestoreJournal(journalPath, `${artifactName} has an incomplete sidecar set`);
+    }
+    const sidecars: RestoreJournalEntry["sidecars"] = [];
+    for (const sidecarValue of value.sidecars) {
+      if (
+        !isRecord(sidecarValue) ||
+        !hasExactKeys(sidecarValue, ["destination", "originalPresent", "originalFingerprint", "quarantine"]) ||
+        typeof sidecarValue.destination !== "string" ||
+        typeof sidecarValue.originalPresent !== "boolean" ||
+        typeof sidecarValue.quarantine !== "string" ||
+        !expectedSidecarDestinations.includes(sidecarValue.destination)
+      ) {
+        invalidRestoreJournal(journalPath, `${artifactName} has an invalid sidecar entry`);
+      }
+      const sidecarFingerprint = parseFileFingerprint(
+        sidecarValue.originalFingerprint,
+        sidecarValue.originalPresent,
+        journalPath,
+      );
+      if (sidecars.some((sidecar) => sidecar.destination === sidecarValue.destination)) {
+        invalidRestoreJournal(journalPath, `${artifactName} has a duplicate sidecar destination`);
+      }
+      if (!isOperationBoundPath(sidecarValue.quarantine, sidecarValue.destination, "restore-quarantine", operationId)) {
+        invalidRestoreJournal(journalPath, `sidecar quarantine path is not bound to operation ${operationId}`);
+      }
+      sidecars.push({
+        destination: sidecarValue.destination,
+        originalPresent: sidecarValue.originalPresent,
+        originalFingerprint: sidecarFingerprint,
+        quarantine: sidecarValue.quarantine,
+      });
+    }
+
+    registerPath(value.destination, "destination");
+    registerPath(value.quarantine, "quarantine");
+    if (typeof value.stage === "string") registerPath(value.stage, "stage");
+    for (const sidecar of sidecars) {
+      registerPath(sidecar.destination, "sidecar destination");
+      registerPath(sidecar.quarantine, "sidecar quarantine");
+    }
+    byDestination.set(value.destination, {
+      destination: value.destination,
+      ...(typeof value.stage === "string" ? { stage: value.stage } : {}),
+      originalPresent: value.originalPresent,
+      originalFingerprint,
+      quarantine: value.quarantine,
+      sidecars,
+    });
+  }
+
+  const sourceRunId = raw.sourceRunId as string;
+  let sourceManifest: MigrationBackupManifest;
+  try {
+    sourceManifest = verifyMigrationBackup(getMigrationBackupDir(sourceRunId));
+  } catch (error) {
+    invalidRestoreJournal(
+      journalPath,
+      `source backup ${sourceRunId} is unavailable or invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const entries = ARTIFACT_NAMES.map((name) => byDestination.get(expectedPaths[name]) as RestoreJournalEntry);
+  for (const [index, name] of ARTIFACT_NAMES.entries()) {
+    const entry = entries[index];
+    const artifact = sourceManifest.artifacts[name];
+    const expectedStage = artifact.present ? `${entry.destination}.restore-stage.${operationId}` : undefined;
+    if (entry.stage !== expectedStage) {
+      invalidRestoreJournal(journalPath, `${name} stage presence does not match source backup ${sourceRunId}`);
+    }
+
+    if (raw.phase === "committed") {
+      if (fs.existsSync(entry.destination) !== artifact.present || (entry.stage && fs.existsSync(entry.stage))) {
+        invalidRestoreJournal(journalPath, `committed ${name} publication state is stale`);
+      }
+      if (fs.existsSync(entry.quarantine) && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
+        invalidRestoreJournal(journalPath, `committed ${name} quarantine does not match the original generation`);
+      }
+      if (entry.sidecars.some((sidecar) => fs.existsSync(sidecar.destination))) {
+        invalidRestoreJournal(journalPath, `committed ${name} still has a live sidecar`);
+      }
+      for (const sidecar of entry.sidecars) {
+        if (fs.existsSync(sidecar.quarantine) && !matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)) {
+          invalidRestoreJournal(journalPath, `committed ${name} sidecar quarantine is not the original generation`);
+        }
+      }
+      verifyArtifactAgainstManifest(entry.destination, name, artifact, "Committed restore publication");
+      continue;
+    }
+
+    const destinationPresent = fs.existsSync(entry.destination);
+    const quarantinePresent = fs.existsSync(entry.quarantine);
+    if (entry.originalPresent ? !destinationPresent && !quarantinePresent : quarantinePresent) {
+      invalidRestoreJournal(journalPath, `prepared ${name} original state is stale`);
+    }
+    if (quarantinePresent && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
+      invalidRestoreJournal(journalPath, `prepared ${name} quarantine does not match the original generation`);
+    }
+    if (entry.stage) {
+      const stagePresent = fs.existsSync(entry.stage);
+      const rolledBack =
+        !quarantinePresent && !stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
+      const validPublicationState =
+        rolledBack ||
+        (entry.originalPresent
+          ? quarantinePresent
+            ? destinationPresent !== stagePresent
+            : destinationPresent && stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
+          : destinationPresent !== stagePresent);
+      if (!validPublicationState) {
+        invalidRestoreJournal(journalPath, `prepared ${name} publication state is stale`);
+      }
+    } else {
+      const rolledBack = !quarantinePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
+      const forwardState = entry.originalPresent
+        ? quarantinePresent
+          ? !destinationPresent
+          : destinationPresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
+        : !destinationPresent;
+      if (!rolledBack && !forwardState) {
+        invalidRestoreJournal(journalPath, `prepared absent ${name} has an impossible publication state`);
+      }
+    }
+    for (const sidecar of entry.sidecars) {
+      const live = fs.existsSync(sidecar.destination);
+      const quarantined = fs.existsSync(sidecar.quarantine);
+      const authenticated = quarantined
+        ? matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)
+        : matchesFingerprint(sidecar.destination, sidecar.originalFingerprint);
+      if ((sidecar.originalPresent ? live === quarantined : live || quarantined) || !authenticated) {
+        invalidRestoreJournal(journalPath, `prepared ${name} sidecar state is stale`);
+      }
+    }
+  }
+
+  return {
+    formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
+    version: MIGRATION_BACKUP_VERSION,
+    operationId,
+    sourceRunId,
+    rescueRunId: raw.rescueRunId as string,
+    phase: raw.phase,
+    entries,
+  };
+}
+
+function rollbackRestoreJournal(journal: RestoreJournal): void {
+  for (const [index, entry] of journal.entries.entries()) {
+    if (fs.existsSync(entry.quarantine)) {
+      fs.rmSync(entry.destination, { force: true });
+      fs.renameSync(entry.quarantine, entry.destination);
+    } else if (!entry.originalPresent) {
+      fs.rmSync(entry.destination, { force: true });
+    }
+    rollbackBoundary(`${index}:destination`);
+    if (entry.stage) fs.rmSync(entry.stage, { force: true });
+    rollbackBoundary(`${index}:stage`);
+    for (const [sidecarIndex, sidecar] of entry.sidecars.entries()) {
+      if (fs.existsSync(sidecar.quarantine)) {
+        fs.rmSync(sidecar.destination, { force: true });
+        fs.renameSync(sidecar.quarantine, sidecar.destination);
+      } else if (!sidecar.originalPresent) {
+        fs.rmSync(sidecar.destination, { force: true });
+      }
+      rollbackBoundary(`${index}:sidecar:${sidecarIndex}`);
+    }
+  }
+  for (const directory of new Set(journal.entries.map((entry) => path.dirname(entry.destination)))) {
+    fsyncDirectory(directory);
+  }
+  rollbackBoundary("before-journal-delete");
+  fs.rmSync(restoreJournalPath(), { force: true });
+  fsyncDirectory(path.dirname(restoreJournalPath()));
+}
+
+function cleanupCommittedRestore(journal: RestoreJournal): void {
+  const directories = new Set<string>();
+  for (const entry of journal.entries) {
+    directories.add(path.dirname(entry.destination));
+    fs.rmSync(entry.quarantine, { force: true });
+    if (entry.stage) fs.rmSync(entry.stage, { force: true });
+    for (const sidecar of entry.sidecars) fs.rmSync(sidecar.quarantine, { force: true });
+  }
+  for (const directory of directories) fsyncDirectory(directory);
+  fs.rmSync(restoreJournalPath(), { force: true });
+  fsyncDirectory(path.dirname(restoreJournalPath()));
+}
+
+function recoverInterruptedRestore(): void {
+  const journalPath = restoreJournalPath();
+  if (!fs.existsSync(journalPath)) return;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readTextFileWithLimit(journalPath, MAX_LOCAL_METADATA_BYTES, "Restore journal"));
+  } catch (error) {
+    invalidRestoreJournal(journalPath, error instanceof Error ? error.message : String(error));
+  }
+  const journal = validateRestoreJournal(raw, journalPath);
+  if (journal.phase === "committed") cleanupCommittedRestore(journal);
+  else rollbackRestoreJournal(journal);
+}
+
+/** Caller must hold the config lock and maintenance barrier. */
+export function recoverInterruptedRestoreWithLocksHeld(): void {
+  assertNoArtifactReplacementBlockers();
+  recoverInterruptedRestore();
+}
+
+function resolveBackupRun(runId?: string): string {
+  if (runId) return getMigrationBackupDir(runId);
+  const root = getMigrationBackupRoot();
+  const candidates = fs.existsSync(root)
+    ? fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => ({ name: entry.name, mtime: fs.statSync(path.join(root, entry.name)).mtimeMs }))
+        .sort((left, right) => left.mtime - right.mtime || left.name.localeCompare(right.name))
+    : [];
+  const latest = candidates.at(-1)?.name;
+  if (!latest) throw new ConfigError(`No migration backup runs exist under ${root}.`, "INVALID_CONFIG_FILE");
+  return getMigrationBackupDir(latest);
+}
+
+function inspectArtifactAt(name: ArtifactName, filePath: string): MigrationArtifactState {
+  return name === "config.json"
+    ? inspectConfig(filePath)
+    : inspectSqlite(filePath, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS);
+}
+
+function replaceArtifactsFromBundle(bundlePath: string, manifest: MigrationBackupManifest, rescueRunId: string): void {
+  const operationId = `${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  const entries: RestoreJournalEntry[] = [];
+  let journal: RestoreJournal | undefined;
+  let committed = false;
+  try {
+    for (const name of ARTIFACT_NAMES) {
+      const artifact = manifest.artifacts[name];
+      const destination = artifact.sourcePath;
+      const stage = artifact.present ? `${destination}.restore-stage.${operationId}` : undefined;
+      if (stage) {
+        fs.rmSync(stage, { force: true });
+        copyFileDurable(path.join(bundlePath, name), stage);
+        if (sha256File(stage) !== artifact.sha256 || !sameState(inspectArtifactAt(name, stage), artifact)) {
+          throw new ConfigError(`Staged restore artifact ${name} failed verification.`, "INVALID_CONFIG_FILE");
+        }
+      }
+      entries.push({
+        destination,
+        stage,
+        originalPresent: fs.existsSync(destination),
+        originalFingerprint: fingerprintFile(destination),
+        quarantine: `${destination}.restore-quarantine.${operationId}`,
+        sidecars:
+          name === "config.json"
+            ? []
+            : ["-wal", "-shm"].map((suffix) => ({
+                destination: `${destination}${suffix}`,
+                originalPresent: fs.existsSync(`${destination}${suffix}`),
+                originalFingerprint: fingerprintFile(`${destination}${suffix}`),
+                quarantine: `${destination}${suffix}.restore-quarantine.${operationId}`,
+              })),
+      });
+    }
+    journal = {
+      formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
+      version: MIGRATION_BACKUP_VERSION,
+      operationId,
+      sourceRunId: manifest.runId,
+      rescueRunId,
+      phase: "prepared",
+      entries,
+    };
+    writeRestoreJournal(journal);
+
+    for (const entry of entries) {
+      fs.mkdirSync(path.dirname(entry.destination), { recursive: true, mode: 0o700 });
+      if (entry.originalPresent) fs.renameSync(entry.destination, entry.quarantine);
+      for (const sidecar of entry.sidecars) {
+        if (sidecar.originalPresent) fs.renameSync(sidecar.destination, sidecar.quarantine);
+      }
+    }
+    for (const entry of entries) {
+      if (entry.stage) {
+        fs.renameSync(entry.stage, entry.destination);
+        fs.chmodSync(entry.destination, 0o600);
+        fsyncDirectory(path.dirname(entry.destination));
+      }
+    }
+    for (const name of ARTIFACT_NAMES) {
+      const artifact = manifest.artifacts[name];
+      const actual = artifact.present ? inspectArtifactAt(name, artifact.sourcePath) : { status: "missing" as const };
+      if (!sameState(actual, artifact)) {
+        throw new ConfigError(`Published restore artifact ${name} failed final verification.`, "INVALID_CONFIG_FILE");
+      }
+    }
+    journal.phase = "committed";
+    writeRestoreJournal(journal);
+    committed = true;
+    cleanupCommittedRestore(journal);
+  } catch (error) {
+    if (!committed) {
+      rollbackRestoreJournal(
+        journal ?? {
+          operationId,
+          formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
+          version: MIGRATION_BACKUP_VERSION,
+          sourceRunId: manifest.runId,
+          rescueRunId,
+          phase: "prepared",
+          entries,
+        },
+      );
+    }
+    throw error;
+  }
+}
+
+/** Caller must hold the config lock and maintenance barrier. */
+export function restoreMigrationBackupWithLocksHeld(bundlePath: string): void {
+  assertNoArtifactReplacementBlockers(bundlePath);
+  recoverInterruptedRestore();
+  const manifest = verifyMigrationBackup(bundlePath);
+  replaceArtifactsFromBundle(bundlePath, manifest, "migration-apply-rollback");
+}
+
+export function restoreMigrationBackup(confirm: boolean, runId?: string): MigrationBackupResult {
+  if (!confirm) throw new ConfigError("Migration backup restore requires --confirm.", "INVALID_CONFIG_FILE");
+  const bundlePath = resolveBackupRun(runId);
   return withConfigLock(() =>
-    withMigrationBackupLock(() => {
-      return withMaintenanceStartBarrier(() => {
-        const blockers = [...activeRestoreLocks(), ...activeWorkflowClaims()];
-        if (blockers.length > 0) {
+    withMigrationBackupLock(() =>
+      withMaintenanceStartBarrier(() => {
+        if (fs.existsSync(getMigrationApplyJournalPath())) {
           throw new ConfigError(
-            `Refusing restore while AKM locks or workflow leases are active: ${blockers.join(", ")}.`,
+            `Migration apply recovery is pending at ${getMigrationApplyJournalPath()}; run \`akm migrate apply\` before restore.`,
             "INVALID_CONFIG_FILE",
           );
         }
-        const bundlePath = getMigrationBackupDir();
+        assertNoArtifactReplacementBlockers(bundlePath);
+        recoverInterruptedRestore();
         const manifest = verifyMigrationBackup(bundlePath);
-        for (const name of ARTIFACT_NAMES) {
-          const artifact = manifest.artifacts[name];
-          if (artifact.present) restoreArtifact(path.join(bundlePath, name), artifact.sourcePath);
-          else fs.rmSync(artifact.sourcePath, { force: true });
-          fs.rmSync(`${artifact.sourcePath}-wal`, { force: true });
-          fs.rmSync(`${artifact.sourcePath}-shm`, { force: true });
-        }
-        return { path: bundlePath, created: false, manifest };
-      });
-    }),
+
+        const rescue = createMigrationBackupUnlocked();
+        replaceArtifactsFromBundle(bundlePath, manifest, rescue.manifest.runId);
+        return { path: bundlePath, created: false, manifest, rescuePath: rescue.path };
+      }),
+    ),
   );
 }

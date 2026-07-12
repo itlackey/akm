@@ -239,10 +239,10 @@ export function normHash(text: string): string {
 }
 
 /**
- * Score one canary against the live index, merge-following via `source_refs`:
- * a hit is the anchor ref itself OR any returned entry whose `source_refs`
- * frontmatter contains the anchor (ONE level — provenance dropped on a
- * second-generation merge is a miss by design; that IS the information loss).
+ * Score one canary against the live index, merge-following via canonical
+ * `xrefs`. Legacy `source_refs` remains readable for assets written before the
+ * xref cutover. A hit is the anchor ref itself OR any returned entry whose
+ * provenance contains the anchor.
  * Returns the 0-based rank of the first hit, or -1.
  */
 function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
@@ -251,7 +251,7 @@ function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query
     const r = results[i];
     const ref = makeAssetRef(r.entry.type as AkmAssetType, r.entry.name);
     if (ref === canary.anchor_ref) return i;
-    if (r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
+    if (r.entry.xrefs?.includes(canary.anchor_ref) || r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
   }
   return -1;
 }

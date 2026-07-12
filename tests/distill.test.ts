@@ -23,6 +23,7 @@ import {
 import { assessMemoryKnowledgePromotionCandidate } from "../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../src/commands/improve/salience";
 import { listProposals } from "../src/commands/proposal/repository";
+import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { AkmConfig } from "../src/core/config/config";
 import { readEvents } from "../src/core/events";
 import { openStateDatabase } from "../src/core/state-db";
@@ -179,6 +180,41 @@ describe("deriveLessonRef", () => {
 
   test("rejects malformed input refs", () => {
     expect(() => deriveLessonRef("not-a-ref")).toThrow();
+  });
+
+  test("preserves the scope segment for scope-born lesson output", () => {
+    expect(deriveLessonRef("memory:project-a/deploy-vpn")).toBe("lesson:project-a/memory-deploy-vpn-lesson");
+  });
+});
+
+describe("akmDistill — source-qualified lookup", () => {
+  test("qualifies duplicate refs and never writes salience to another source", async () => {
+    const selected = makeStashDir();
+    const other = makeStashDir();
+    const selectedFile = path.join(selected, "skills", "duplicate.md");
+    const otherFile = path.join(other, "skills", "duplicate.md");
+    const selectedContent = "---\ndescription: Selected source\n---\n\nSelected source body.\n";
+    const otherContent = "---\ndescription: Other source\n---\n\nOther source body.\n";
+    fs.writeFileSync(selectedFile, selectedContent, "utf8");
+    fs.writeFileSync(otherFile, otherContent, "utf8");
+    const lookedUp: string[] = [];
+
+    await akmDistill({
+      ref: "skill:duplicate",
+      sourceName: "team",
+      stashDir: selected,
+      config: configEnabled(selected),
+      lookupFn: async (ref) => {
+        lookedUp.push(ref);
+        return ref === "team//skill:duplicate" ? selectedFile : otherFile;
+      },
+      readEventsFn: emptyEvents,
+      chat: async () => VALID_LESSON,
+    });
+
+    expect(lookedUp[0]).toBe("team//skill:duplicate");
+    expect(fs.readFileSync(selectedFile, "utf8")).toContain("salience:");
+    expect(fs.readFileSync(otherFile, "utf8")).toBe(otherContent);
   });
 });
 
@@ -591,11 +627,36 @@ describe("akmDistill — queued proposal", () => {
     expect(proposals[0].ref).toBe("lesson:skill-deploy-lesson");
     expect(proposals[0].payload.content).toContain("description: Prefer ripgrep over grep");
     expect(proposals[0].payload.frontmatter?.when_to_use).toBeDefined();
+    expect(parseFrontmatter(proposals[0].payload.content).data.xrefs).toEqual(["skill:deploy"]);
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(1);
     expect(events[0].metadata?.outcome).toBe("queued");
     expect(events[0].metadata?.proposalId).toBe(result.proposalId);
+  });
+
+  test("injects only the generated lesson type convention into the prompt", async () => {
+    const stash = makeStashDir();
+    const conventions = path.join(stash, "facts", "conventions", "assets");
+    fs.mkdirSync(conventions, { recursive: true });
+    fs.writeFileSync(path.join(conventions, "lesson.md"), "---\ncategory: convention\n---\n\nLESSON_ONLY_RULE\n");
+    fs.writeFileSync(path.join(conventions, "skill.md"), "---\ncategory: convention\n---\n\nSKILL_ONLY_RULE\n");
+    let prompt = "";
+
+    await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async (_config, messages) => {
+        prompt = messages.at(-1)?.content ?? "";
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(prompt).toContain("LESSON_ONLY_RULE");
+    expect(prompt).not.toContain("SKILL_ONLY_RULE");
   });
 
   test("attribution: eligibilitySource stamps distill_invoked event + proposal record", async () => {
@@ -716,7 +777,7 @@ describe("akmDistill — queued proposal", () => {
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
     expect(proposals[0].ref).toBe("knowledge:deploy-fact");
-    expect(proposals[0].payload.content).toContain("sources:");
+    expect(proposals[0].payload.content).toContain("xrefs:");
     expect(proposals[0].payload.content).toContain("memory:deploy-fact");
     expect(proposals[0].payload.content).toContain("Always connect the VPN");
 

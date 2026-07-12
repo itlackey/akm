@@ -58,8 +58,8 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
           },
           name: {
             type: "string",
-            description: "Kebab-case slug for the new asset.",
-            pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+            description: "Kebab-case slug, optionally under one stable scope/domain segment.",
+            pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$",
           },
           description: {
             type: "string",

@@ -79,12 +79,22 @@ describe("setup LLM engine writer", () => {
     expect(readCurrentLlmEngine(config)?.timeoutMs).toBeNull();
   });
 
-  test("writeLlmEngine writes the default engine + defaults.llmEngine", () => {
+  test("writeLlmEngine establishes both the general and LLM defaults when neither exists", () => {
     const base = {} as AkmConfig;
     const llm: LlmConnectionConfig = { provider: "openai", endpoint: "https://x/v1", model: "gpt-4o-mini" };
     const patch = writeLlmEngine(base, llm);
     expect(patch.engines?.default).toEqual({ ...llm, kind: "llm", endpoint: "https://x/v1/chat/completions" });
     expect(patch.defaults?.llmEngine).toBe("default");
+    expect(patch.defaults?.engine).toBe("default");
+  });
+
+  test("writeLlmEngine preserves a selected general agent default", () => {
+    const base = {
+      engines: { reviewer: { kind: "agent", platform: "claude" } },
+      defaults: { engine: "reviewer" },
+    } as unknown as AkmConfig;
+    const patch = writeLlmEngine(base, { endpoint: "https://x/v1", model: "m" });
+    expect(patch.defaults).toMatchObject({ engine: "reviewer", llmEngine: "default" });
   });
 
   test("writeLlmEngine(undefined) clears the default engine and defaults.llmEngine", () => {
@@ -113,6 +123,29 @@ describe("setup LLM engine writer", () => {
 });
 
 describe("setup agent engine writer", () => {
+  test("declining an agent default preserves an LLM-valued general default", () => {
+    const base = {
+      engines: { local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "m" } },
+      defaults: { engine: "local", llmEngine: "local" },
+    } as unknown as AkmConfig;
+    const patch = writeAgentEngines(base, undefined);
+    expect(patch.defaults).toEqual(base.defaults);
+  });
+
+  test("explicit none clears an agent default and restores the LLM general default", () => {
+    const base = {
+      engines: {
+        local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "m" },
+        claude: { kind: "agent", platform: "claude" },
+      },
+      defaults: { engine: "claude", llmEngine: "local" },
+    } as unknown as AkmConfig;
+
+    const patch = writeAgentEngines(base, { disabled: true });
+
+    expect(patch.defaults).toEqual({ engine: "local", llmEngine: "local" });
+  });
+
   test("writeAgentEngines + readAgentEngineSelection round-trips a CLI default", () => {
     const base = {} as AkmConfig;
     const applied = { ...base, ...writeAgentEngines(base, { default: "claude" }) } as AkmConfig;

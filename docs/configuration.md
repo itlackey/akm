@@ -8,10 +8,23 @@ directory. Project `.akm/config.json` files are not merged.
 ## Version 0.9
 
 A present configuration file must set `configVersion` to exactly `"0.9.0"`.
-Missing, older, newer, numeric, and malformed versions are rejected without
-rewriting the file. `akm config migrate` is diagnosis only; it never translates
-profile configuration. See [the migration guide](migration/v0.8-to-v0.9.md)
-before editing an existing installation.
+Missing, older, newer, numeric, and malformed versions are rejected by ordinary
+commands without rewriting the file. `akm migrate status` reports config and
+database state independently; it exits nonzero when migration is blocked.
+`akm migrate apply` installs an operator-prepared 0.9 config and applies pending
+database migrations, but it never guesses profile-to-engine mappings. See [the
+migration guide](migration/v0.8-to-v0.9.md) before editing an existing
+installation.
+
+Canonical config and durable database access fail closed while a restore or
+migration-apply journal is pending. Use `akm migrate status` to inspect the
+phase and `akm migrate apply` to resume; do not delete journal files manually.
+
+AKM 0.8 does not provide these migration commands. To cross from 0.8 to 0.9,
+prepare the target and an independent filesystem backup first, install or stage
+the 0.9 binary manually, then invoke that new binary with `migrate apply
+--config`. Do not use `upgrade --migration-config` from 0.8; that installed 0.8
+code cannot enforce safeguards introduced by 0.9.
 
 ```jsonc
 {
@@ -134,7 +147,10 @@ akm config set engines.fast '{"kind":"llm","endpoint":"http://localhost:11434/v1
 akm config set engines.fast.apiKey '$LOCAL_LLM_API_KEY'
 akm config unset engines.old
 akm config validate
-akm config migrate                 # diagnosis only
+akm migrate status
+akm migrate status --config ./prepared-0.9.json
+akm migrate apply --config ./prepared-0.9.json --dry-run
+akm migrate apply --config ./prepared-0.9.json
 ```
 
 Object values passed to `config set` deep-merge with their current value.

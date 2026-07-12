@@ -40,6 +40,7 @@ let stubMode: "ok" | "throw" = "ok";
 
 let cleanup: Cleanup;
 let stashDir: string;
+let storageRoot: string;
 
 beforeEach(() => {
   overrideSeam(_setChatCompletionForTests, async () => {
@@ -50,6 +51,7 @@ beforeEach(() => {
   });
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
+  storageRoot = storage.root;
   cleanup = storage.cleanup;
   chatCalls = 0;
   stubMode = "ok";
@@ -83,6 +85,32 @@ const CONFIG = {
 } as unknown as AkmConfig;
 
 describe("#581 consolidate judged-state cache", () => {
+  test("duplicate bare refs keep independent judged cache entries per source", async () => {
+    const primary = stashDir;
+    const team = path.join(storageRoot, "team-stash");
+    writeMemory("shared", "Identical body in both sources.");
+    stashDir = team;
+    writeMemory("shared", "Identical body in both sources.");
+    const config = {
+      ...CONFIG,
+      stashDir: primary,
+      sources: [
+        { type: "filesystem" as const, name: "primary", path: primary, writable: true },
+        { type: "filesystem" as const, name: "team", path: team, writable: true },
+      ],
+      defaultWriteTarget: "primary",
+    };
+
+    const first = await akmConsolidate({ target: "primary", config, judgedCache: { enabled: true } });
+    expect(first.processed).toBe(1);
+    expect(chatCalls).toBe(1);
+
+    chatCalls = 0;
+    const second = await akmConsolidate({ target: "team", config, judgedCache: { enabled: true } });
+    expect(second.processed).toBe(1);
+    expect(chatCalls).toBe(1);
+  });
+
   test("cache ON: second run over an UNCHANGED corpus makes ~0 LLM judge calls", async () => {
     writeMemory("alpha", "Alpha body content that is distinct enough to matter.");
     writeMemory("beta", "Beta body content that is distinct enough to matter.");

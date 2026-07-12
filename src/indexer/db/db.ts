@@ -451,6 +451,12 @@ export interface RekeyEntryOptions {
   oldRef: string;
   /** New canonical bare ref (`type:newName`, `makeAssetRef` form). */
   newRef: string;
+  /** Configured source identity owning the moved entry. */
+  sourceName?: string;
+  /** Absolute source root owning the moved entry. */
+  sourceRoot?: string;
+  /** Whether pre-source-qualification bare usage refs belong to this source. */
+  includeLegacyBare?: boolean;
   /**
    * For memory `.derived` twins: the base memory's NEW ref (e.g.
    * `memory:projectA/new-name`), written into the `derived_from` column and
@@ -497,11 +503,16 @@ export interface RekeyEntryOptions {
  * full `akm index` picks the file up as a fresh entry).
  */
 export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number | null {
-  const row = db.prepare("SELECT id, entry_json, search_text FROM entries WHERE entry_key = ?").get(opts.oldEntryKey) as
-    | { id: number; entry_json: string; search_text: string }
+  const row = db
+    .prepare("SELECT id, stash_dir, entry_json, search_text FROM entries WHERE entry_key = ?")
+    .get(opts.oldEntryKey) as
+    | { id: number; stash_dir: string; entry_json: string; search_text: string }
     | undefined
     | null;
   if (!row) return null;
+  if (opts.sourceRoot && path.resolve(row.stash_dir) !== path.resolve(opts.sourceRoot)) {
+    throw new Error(`Refusing to re-key entry ${opts.oldEntryKey}: source root does not match.`);
+  }
 
   // Patch the JSON payload. On corrupt entry_json still re-key key + paths so
   // the utility history survives; the next full index heals the JSON.
@@ -543,7 +554,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     // the part after the last `//` (stored origins never contain `//`, so a
     // qualified ref has exactly one — same normalization as
     // getRetrievalCounts). Legacy DBs may predate usage_events.
-    bestEffort(() => {
+    try {
       // Live-asset-wins collision policy, mirroring the stale-entries eviction
       // above and mv's state.db re-key: DETACHED orphan events (entry_id NULL
       // — a deleted asset's history retained by a full rebuild) already
@@ -553,21 +564,28 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
       // moved asset would adopt the stranger's history: getRetrievalCounts
       // reads by entry_ref immediately, and the next full rebuild's
       // relinkUsageEvents would attach every stranger event by ref.
-      db.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(opts.newRef);
-      db.prepare(
-        `DELETE FROM usage_events
-          WHERE entry_id IS NULL
-            AND instr(entry_ref, '//') > 0
-            AND substr(entry_ref, instr(entry_ref, '//') + 2) = ?`,
-      ).run(opts.newRef);
-      db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
-      db.prepare(
-        `UPDATE usage_events
-            SET entry_ref = substr(entry_ref, 1, instr(entry_ref, '//') + 1) || ?
-          WHERE instr(entry_ref, '//') > 0
-            AND substr(entry_ref, instr(entry_ref, '//') + 2) = ?`,
-      ).run(opts.newRef, opts.oldRef);
-    }, "usage_events table may be missing on legacy DBs — no usage history to re-key");
+      if (opts.sourceName) {
+        const origins = new Set([opts.sourceName]);
+        if (opts.sourceName === "stash" && opts.includeLegacyBare) origins.add("local");
+        for (const origin of origins) {
+          const oldQualifiedRef = `${origin}//${opts.oldRef}`;
+          const newQualifiedRef = `${origin}//${opts.newRef}`;
+          db.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(newQualifiedRef);
+          db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(newQualifiedRef, oldQualifiedRef);
+        }
+      }
+      if (opts.includeLegacyBare || !opts.sourceName) {
+        db.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(opts.newRef);
+        db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const missingLegacyUsageSchema =
+        /no such table:\s*(?:main\.)?usage_events\b/i.test(message) ||
+        /no such column:\s*(?:usage_events\.)?(?:entry_id|entry_ref)\b/i.test(message) ||
+        /table\s+usage_events\s+has no column named\s+(?:entry_id|entry_ref)\b/i.test(message);
+      if (!missingLegacyUsageSchema) throw error;
+    }
     db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)").run(row.id);
   })();
 
@@ -1121,7 +1139,7 @@ export function getEntitiesByEntryIds(db: Database, entryIds: number[]): Map<num
   return result;
 }
 
-export function findEntryIdByRef(db: Database, ref: string): number | undefined {
+export function findEntryIdByRef(db: Database, ref: string, stashDir?: string): number | undefined {
   const parsed = parseAssetRef(ref);
   const nameVariants = [parsed.name];
   if (parsed.name.endsWith(".md")) {
@@ -1131,12 +1149,16 @@ export function findEntryIdByRef(db: Database, ref: string): number | undefined 
   }
 
   const stmt = db.prepare(
-    "SELECT id FROM entries WHERE entry_type = ? AND substr(entry_key, length(entry_key) - length(?) + 1) = ? LIMIT 1",
+    `SELECT id FROM entries
+     WHERE entry_type = ?
+       AND substr(entry_key, length(entry_key) - length(?) + 1) = ?
+       ${stashDir ? "AND stash_dir = ?" : ""}
+     LIMIT 1`,
   );
 
   for (const name of nameVariants) {
     const suffix = `${parsed.type}:${name}`;
-    const row = stmt.get(parsed.type, suffix, suffix) as { id: number } | undefined;
+    const row = stmt.get(parsed.type, suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
     if (row) return row.id;
   }
 
@@ -1157,9 +1179,12 @@ export function getEmbeddingCount(db: Database): number {
   return row.cnt;
 }
 
-export function getEntryById(db: Database, id: number): { filePath: string; entry: StashEntry } | undefined {
-  const row = db.prepare("SELECT file_path, entry_json FROM entries WHERE id = ?").get(id) as
-    | { file_path: string; entry_json: string }
+export function getEntryById(
+  db: Database,
+  id: number,
+): { filePath: string; stashDir: string; entry: StashEntry } | undefined {
+  const row = db.prepare("SELECT file_path, stash_dir, entry_json FROM entries WHERE id = ?").get(id) as
+    | { file_path: string; stash_dir: string; entry_json: string }
     | undefined;
   if (!row) return undefined;
   // Guard against corrupt JSON
@@ -1170,7 +1195,7 @@ export function getEntryById(db: Database, id: number): { filePath: string; entr
     warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
     return undefined;
   }
-  return { filePath: row.file_path, entry };
+  return { filePath: row.file_path, stashDir: row.stash_dir, entry };
 }
 
 export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[] {
@@ -1563,11 +1588,11 @@ function bareRef(ref: string): string {
  * least one matching event appear). Used by the improve loop to find
  * high-retrieval assets without feedback.
  *
- * Matching is normalization-aware: each stored `entry_ref` is reduced to its
- * bare `type:name` form before comparison, so a stash-prefixed stored ref
- * (`origin//type:name`) still matches a bare input ref (`type:name`) and vice
- * versa. Previously the raw `entry_ref IN (...)` comparison silently dropped
- * roughly half the signal whenever the two spellings disagreed.
+ * Unscoped callers retain normalization-aware legacy matching. Source-scoped
+ * callers instead require either an event linked to an entry in the selected
+ * stash root or a detached ref qualified with the selected source name. Bare
+ * detached events are accepted only when `includeLegacyBare` is explicitly set
+ * for the historical local stash.
  *
  * `curate` events are included: their per-item rows are written with
  * entry_ref populated (see logCurateEvent), so curation is a real retrieval
@@ -1579,8 +1604,25 @@ function bareRef(ref: string): string {
  * creates a self-reinforcing loop (meta-review 05 DRIFT-6). NULL sources
  * (pre-column rows) count as user demand.
  */
-export function getRetrievalCounts(db: Database, refs: string[]): Map<string, number> {
+export interface RetrievalCountOptions {
+  /** Configured source identity persisted in qualified usage refs. */
+  sourceName?: string;
+  /** Selected source root used to validate usage-event entry IDs. */
+  stashDir?: string;
+  /** Accept detached pre-cutover bare events only for the historical local source. */
+  includeLegacyBare?: boolean;
+}
+
+export function getRetrievalCounts(
+  db: Database,
+  refs: string[],
+  options: RetrievalCountOptions = {},
+): Map<string, number> {
   if (refs.length === 0) return new Map();
+
+  if (options.sourceName || options.stashDir) {
+    return getSourceScopedRetrievalCounts(db, refs, options);
+  }
 
   // Map each distinct bare form back to the input ref(s) that produced it so we
   // can re-key DB results (grouped by bare form) onto the caller's ref strings.
@@ -1636,6 +1678,67 @@ export function getRetrievalCounts(db: Database, refs: string[]): Map<string, nu
     for (const input of bareToInputs.get(bare) ?? []) {
       result.set(input, count);
     }
+  }
+  return result;
+}
+
+function getSourceScopedRetrievalCounts(
+  db: Database,
+  refs: string[],
+  options: RetrievalCountOptions,
+): Map<string, number> {
+  const bareToInputs = new Map<string, string[]>();
+  for (const ref of refs) {
+    const bare = bareRef(ref);
+    const inputs = bareToInputs.get(bare);
+    if (inputs) inputs.push(ref);
+    else bareToInputs.set(bare, [ref]);
+  }
+
+  const countsByBare = new Map<string, number>();
+  const bareForms = [...bareToInputs.keys()];
+  const selectedRoot = options.stashDir ? path.resolve(options.stashDir) : undefined;
+  for (let i = 0; i < bareForms.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = bareForms.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = db
+      .prepare(
+        `SELECT ue.entry_ref, ue.entry_id, e.stash_dir
+           FROM usage_events ue
+           LEFT JOIN entries e ON e.id = ue.entry_id
+          WHERE ue.event_type IN ('search','show','curate')
+            AND ue.entry_ref IS NOT NULL
+            AND (ue.source IS NULL OR ue.source NOT IN ('improve','task'))
+            AND CASE
+                  WHEN instr(ue.entry_ref, '//') > 0
+                    THEN substr(ue.entry_ref, instr(ue.entry_ref, '//') + 2)
+                  ELSE ue.entry_ref
+                END IN (${placeholders})`,
+      )
+      .all(...(chunk as SqlValue[])) as Array<{
+      entry_ref: string;
+      entry_id: number | null;
+      stash_dir: string | null;
+    }>;
+
+    for (const row of rows) {
+      const bare = bareRef(row.entry_ref);
+      const linkedToSelectedRoot =
+        row.entry_id !== null && selectedRoot !== undefined && row.stash_dir !== null
+          ? path.resolve(row.stash_dir) === selectedRoot
+          : false;
+      const detached = row.entry_id === null || selectedRoot === undefined;
+      const qualifiedForSource =
+        detached && options.sourceName !== undefined && row.entry_ref === `${options.sourceName}//${bare}`;
+      const acceptedLegacyBare = detached && options.includeLegacyBare === true && row.entry_ref === bare;
+      if (!linkedToSelectedRoot && !qualifiedForSource && !acceptedLegacyBare) continue;
+      countsByBare.set(bare, (countsByBare.get(bare) ?? 0) + 1);
+    }
+  }
+
+  const result = new Map<string, number>();
+  for (const [bare, count] of countsByBare) {
+    for (const input of bareToInputs.get(bare) ?? []) result.set(input, count);
   }
   return result;
 }
@@ -1840,12 +1943,40 @@ export function applyFeedbackToUtilityScore(
 }
 
 /**
+ * Source mapping used to preserve qualified usage-event identity while relinking.
+ */
+export interface UsageEventRelinkSource {
+  path: string;
+  registryId?: string;
+}
+
+export interface RelinkUsageEventsOptions {
+  /** Ordered sources from the active index run; the first source owns `local//`. */
+  sources?: readonly UsageEventRelinkSource[];
+  /** Explicit historical/default root allowed to adopt legacy bare refs. */
+  defaultStashDir?: string;
+}
+
+function resolveUsageEventEntryId(db: Database, ref: string, options: RelinkUsageEventsOptions): number | undefined {
+  const parsed = parseAssetRef(ref);
+  if (!parsed.origin) {
+    return options.defaultStashDir ? findEntryIdByRef(db, ref, options.defaultStashDir) : undefined;
+  }
+
+  const source =
+    parsed.origin === "local" || parsed.origin === "stash"
+      ? options.sources?.[0]
+      : options.sources?.find((candidate) => candidate.registryId === parsed.origin);
+  return source ? findEntryIdByRef(db, ref, source.path) : undefined;
+}
+
+/**
  * Re-link detached usage_events to their current entry_ids via entry_ref.
  *
  * After a full rebuild, entry IDs change. This restores each event's link
  * using the stable `entry_ref` column so usage history survives a reindex.
  */
-export function relinkUsageEvents(db: Database): void {
+export function relinkUsageEvents(db: Database, options: RelinkUsageEventsOptions = {}): void {
   bestEffort(() => {
     // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
     // Leaving them in place would let `recomputeUtilityScores` aggregate
@@ -1861,14 +1992,10 @@ export function relinkUsageEvents(db: Database): void {
         AND entry_id NOT IN (SELECT id FROM entries)
     `);
 
-    // Step 2: re-resolve any null entry_id from entry_ref against the current
-    // entries table, reusing the SAME canonical resolver the read path uses at
-    // insert time (`findEntryIdByRef` → `parseAssetRef`). Resolving per DISTINCT
-    // ref keeps this O(distinct-refs) indexed lookups instead of the previous
-    // O(events × entries) non-indexable `substr(entry_key, …)` scan. It also
-    // fixes a silent correctness bug: the old suffix match compared the RAW
-    // `entry_ref`, so origin-qualified refs ("source//type:name") never matched
-    // an `entry_key` and lost their usage history on every full rebuild.
+    // Step 2: re-resolve each distinct ref inside its source boundary. Qualified
+    // refs require an origin→root mapping; bare legacy refs require the explicit
+    // historical/default root. This keeps duplicate refs from adopting whichever
+    // entries row SQLite happens to return first while retaining indexed lookups.
     const refs = db
       .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_id IS NULL AND entry_ref IS NOT NULL")
       .all() as { ref: string }[];
@@ -1878,7 +2005,7 @@ export function relinkUsageEvents(db: Database): void {
       for (const { ref } of refs) {
         let id: number | undefined;
         try {
-          id = findEntryIdByRef(db, ref);
+          id = resolveUsageEventEntryId(db, ref, options);
         } catch (err) {
           if (err instanceof Error && err.name === "UsageError") continue;
           throw err;

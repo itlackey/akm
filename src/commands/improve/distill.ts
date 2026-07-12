@@ -35,14 +35,10 @@
  *
  * # Lesson-name derivation rule
  *
- * The proposed lesson ref is `lesson:<original-ref-slug>-lesson`, where
- * `<original-ref-slug>` is `<type>-<name>` from the parsed input ref (so
- * `skill:deploy` → `lesson:skill-deploy-lesson`, and `team//memory:auth-tips`
- * → `lesson:memory-auth-tips-lesson`). Origin prefixes are dropped from the
- * derived name so two sources with the same asset-type/name collapse onto
- * the same lesson queue entry rather than each generating its own — the
- * proposal queue tolerates duplicate refs (id is a UUID), so the human
- * reviewer can decide which one to accept.
+ * A nested input preserves its first legitimate scope segment
+ * (`memory:project-a/deploy` → `lesson:project-a/memory-deploy-lesson`). An
+ * unscoped input stays flat; asset types are not project scopes. Origin prefixes
+ * remain durable provenance but are not embedded in the output path.
  *
  * # Why we do not call `runAgent`
  *
@@ -56,7 +52,7 @@ import fs from "node:fs";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { assembleAssetFromString } from "../../core/asset/asset-serialize";
+import { assembleAsset, assembleAssetFromString } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
@@ -68,7 +64,7 @@ import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { getDbPath } from "../../core/paths";
-import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDb } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
 import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/db/db";
@@ -103,6 +99,7 @@ import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { computeSalience, upsertAssetSalience } from "./salience";
+import { bareImproveRef, durableImproveRef } from "./source-identity";
 
 // Re-exported for `reflect.ts`, which applies the same LLM-as-judge gate to
 // reflect proposals (R-5 / #374).
@@ -250,6 +247,10 @@ export interface AkmDistillOptions {
    * direct `akm distill` invocations (no lane → downstream treats as `"unknown"`).
    */
   eligibilitySource?: EligibilitySource;
+  /** Source identity used for durable events, salience, and provenance keys. */
+  sourceName?: string;
+  /** Read pre-source-qualification feedback only for the historical local stash. */
+  legacyBareState?: boolean;
 }
 
 export interface AkmDistillResult {
@@ -319,14 +320,21 @@ export function deriveLessonRef(inputRef: string): string {
   // distils into the same lesson namespace as `skill:deploy`. The proposal
   // id (a UUID) keeps the queue entries distinct, so collisions are not a
   // problem — and reviewers want to see them next to each other anyway.
-  const slug = `${parsed.type}-${parsed.name}`.toLowerCase();
+  const parts = parsed.name.split("/");
+  const scope = parts.length > 1 ? parts.shift() : undefined;
+  const slug = `${parsed.type}-${parts.join("-")}`.toLowerCase();
   // Replace anything outside the canonical asset-name charset with `-`. Keep
   // it deterministic so re-runs produce the same ref.
   const safe = slug
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  return `lesson:${safe}-lesson`;
+  const safeScope = scope
+    ?.toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `lesson:${safeScope ? `${safeScope}/` : ""}${safe}-lesson`;
 }
 
 // ── Content quality validators ──────────────────────────────────────────────
@@ -476,7 +484,7 @@ export function assembleStructuredDistillMarkdown(
 
   if (kind === "knowledge" && Array.isArray(payload.sources)) {
     const sources = payload.sources.filter((s): s is string => typeof s === "string" && s.trim().length > 0);
-    if (sources.length > 0) fm.sources = sources;
+    if (sources.length > 0) fm.xrefs = sources;
   }
 
   const fmLines = Object.entries(fm)
@@ -674,6 +682,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
   // Validate the ref shape up front so a typo never reaches the LLM.
   const parsedInputRef = parseAssetRef(inputRef);
+  const durableInputRef = durableImproveRef(inputRef, options.sourceName);
   const targetKind = options.proposalKind ?? "lesson";
 
   // Attribution tagging: spread into every distill_invoked event's metadata so
@@ -704,7 +713,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
     appendEvent({
       eventType: "distill_invoked",
-      ref: inputRef,
+      ref: durableInputRef,
       metadata: {
         outcome: "skipped" as const,
         lessonRef: skippedRef,
@@ -733,7 +742,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
         return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
       })();
-  const lookup = options.lookupFn ?? defaultLookup;
+  const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
   const readEventsImpl = options.readEventsFn ?? readEvents;
   // R1 opt-out must flow into every computeSalience call this command makes so
   // distill-written rank_score rows use the same weights as preparation's.
@@ -747,7 +756,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   let assetContent: string | null = null;
   let assetFilePath: string | null = null;
   try {
-    const filePath = await lookup(inputRef);
+    const filePath = await lookup(durableInputRef);
     if (filePath && fs.existsSync(filePath)) {
       assetFilePath = filePath;
       assetContent = fs.readFileSync(filePath, "utf8");
@@ -816,7 +825,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
             encodingSalience: salienceResult.score,
             outcomeWeightEnabled,
           });
-          upsertAssetSalience(stateDb, inputRef, vector);
+          upsertAssetSalience(stateDb, durableInputRef, vector);
         });
       } catch {
         // State DB unavailable — frontmatter mirror is the only persistence.
@@ -826,12 +835,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     }
   }
 
-  const { events } = readEventsImpl({
-    ref: inputRef,
+  const { events: unfilteredEvents } = readEventsImpl({
+    ...(!options.legacyBareState ? { ref: durableInputRef } : {}),
     type: "feedback",
     excludeTags: options.excludeTags,
     includeTags: options.includeTags,
   });
+  const events = options.legacyBareState
+    ? unfilteredEvents.filter((event) => event.ref === durableInputRef || event.ref === bareImproveRef(inputRef))
+    : unfilteredEvents;
 
   // #267 — feedback exclusion. Filter events whose `ref` matches the
   // exclusion list BEFORE the prompt is built. The original event stream
@@ -861,6 +873,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const promotionResult = await promoteMemoryToKnowledge({
     targetKind,
     inputRef,
+    durableInputRef,
+    sourceName: options.sourceName,
     assetContent,
     filteredEvents,
     config,
@@ -920,7 +934,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   // Distill output is a lesson/knowledge (non-wiki) → stash authoring
   // standards. Resolved once for this single call.
-  const standardsContext = resolveStashStandards(stash);
+  const standardsContext = resolveStandardsContext(effectiveLessonRef, stash);
   const baseUserPrompt = buildDistillPrompt({
     inputRef,
     assetContent,
@@ -1017,7 +1031,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     // is observable.
     appendEvent({
       eventType: "distill_invoked",
-      ref: inputRef,
+      ref: durableInputRef,
       metadata: {
         outcome: "llm_failed" as const,
         lessonRef: effectiveLessonRef,
@@ -1094,7 +1108,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (findings.length > 0) {
     appendEvent({
       eventType: "distill_invoked",
-      ref: inputRef,
+      ref: durableInputRef,
       metadata: {
         outcome: "validation_failed" as const,
         lessonRef: effectiveLessonRef,
@@ -1205,15 +1219,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // structured payload alongside the raw content (matches the shape used by
   // other proposal sources).
   //
-  // D-7 / #398: Inject `sources: [inputRef]` into the LLM-path proposal
-  // frontmatter when the field is absent, providing reviewers with provenance
-  // without requiring them to open event history. A-MEM arXiv:2502.12110 —
-  // all notes carry explicit provenance links.
+  // Serialize canonical provenance into the content that promotion writes.
   const parsed = parseFrontmatter(content);
-  const frontmatterWithSources: Record<string, unknown> = { ...parsed.data };
-  if (!Array.isArray(frontmatterWithSources.sources) || (frontmatterWithSources.sources as unknown[]).length === 0) {
-    frontmatterWithSources.sources = [inputRef];
-  }
+  const existingXrefs = Array.isArray(parsed.data.xrefs) ? parsed.data.xrefs.map(String) : [];
+  const frontmatterWithXrefs: Record<string, unknown> = {
+    ...parsed.data,
+    xrefs: [...new Set([...existingXrefs, durableInputRef])],
+  };
+  delete frontmatterWithXrefs.sources;
+  content = assembleAsset(frontmatterWithXrefs, parsed.content);
   const proposalResult2 = createProposal(
     stash,
     {
@@ -1222,7 +1236,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: {
         content,
-        frontmatter: frontmatterWithSources,
+        frontmatter: frontmatterWithXrefs,
       },
       ...(lessonJudgeConfidence !== undefined ? { confidence: lessonJudgeConfidence } : {}),
       // Attribution tagging: persist the eligibility lane on the proposal.
@@ -1234,7 +1248,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (isProposalSkipped(proposalResult2)) {
     appendEvent({
       eventType: "distill_invoked",
-      ref: inputRef,
+      ref: durableInputRef,
       metadata: {
         outcome: "skipped" as const,
         lessonRef: effectiveLessonRef,
@@ -1257,10 +1271,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // G4: content-score the distilled OUTPUT so it carries a real encoding
   // salience (encoding_source='content') from creation — lessons never get
   // another chance (they are refused as distill inputs).
-  persistOutputEncodingSalience(effectiveLessonRef, content, existingRefVocabulary, outcomeWeightEnabled);
+  persistOutputEncodingSalience(
+    durableImproveRef(effectiveLessonRef, options.sourceName),
+    content,
+    existingRefVocabulary,
+    outcomeWeightEnabled,
+  );
   appendEvent({
     eventType: "distill_invoked",
-    ref: inputRef,
+    ref: durableInputRef,
     metadata: {
       outcome: "queued" as const,
       lessonRef: effectiveLessonRef,
@@ -1294,6 +1313,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async function defaultLookup(ref: string): Promise<string | null> {
-  return resolveAssetPath(ref, { mode: "index-only" });
+async function defaultLookup(ref: string, stashDir: string): Promise<string | null> {
+  return resolveAssetPath(ref, {
+    stashDir,
+    mode: "disk-only",
+    directoryIndexNames: ["SKILL.md"],
+    preserveDirectNameFallback: true,
+    honorOrigin: false,
+  });
 }

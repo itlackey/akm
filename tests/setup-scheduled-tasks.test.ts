@@ -90,11 +90,12 @@ function makeDeps(installed: Array<{ id: string; enabled: boolean }>) {
 describe("stepScheduledTasks", () => {
   beforeEach(resetClack);
 
-  test("lists all 6 embedded tasks with id, description, and schedule in the multiselect", async () => {
+  test("lists the 5 enabled embedded tasks and excludes disabled templates", async () => {
     const { deps } = makeDeps([]);
     await stepScheduledTasks(deps);
     const opts = state.multiselectConfig?.options ?? [];
-    expect(opts.length).toBe(6);
+    expect(opts.length).toBe(5);
+    expect(opts.find((o) => o.value === "backup")).toBeUndefined();
     const improve = opts.find((o) => o.value === "improve");
     expect(improve?.label).toBe("core/improve");
     expect(improve?.hint).toContain("Run improve pipeline nightly");
@@ -111,7 +112,7 @@ describe("stepScheduledTasks", () => {
     await stepScheduledTasks(deps);
     expect(state.multiselectConfig?.initialValues).toEqual(["improve"]);
     const opts = state.multiselectConfig?.options ?? [];
-    expect(opts.find((o) => o.value === "backup")?.hint).toContain("disabled");
+    expect(opts.find((o) => o.value === "backup")).toBeUndefined();
     expect(opts.find((o) => o.value === "improve")?.hint).toContain("enabled");
   });
 
@@ -143,11 +144,11 @@ describe("stepScheduledTasks", () => {
     expect(calls.syncCalls).toBe(0);
   });
 
-  test("re-checking a present-but-disabled task re-enables it", async () => {
-    const { deps, calls } = makeDeps([{ id: "backup", enabled: false }]);
-    state.multiselectReturn = ["backup"];
+  test("re-checking a present-but-disabled enabled template re-enables it", async () => {
+    const { deps, calls } = makeDeps([{ id: "sync", enabled: false }]);
+    state.multiselectReturn = ["sync"];
     await stepScheduledTasks(deps);
-    expect(calls.enabled).toEqual([{ id: "backup", enabled: true }]);
+    expect(calls.enabled).toEqual([{ id: "sync", enabled: true }]);
     expect(calls.added).toEqual([]);
   });
 

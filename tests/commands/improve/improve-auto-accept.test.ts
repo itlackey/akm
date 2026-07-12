@@ -11,7 +11,7 @@ import {
 import { createProposal, getProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
-import type { EventsContext } from "../../../src/core/events";
+import { type EventsContext, readEvents } from "../../../src/core/events";
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
@@ -141,6 +141,21 @@ describe("runAutoAcceptGate — threshold decisions", () => {
       promoteFn as never,
     );
     expect(result.promoted).toEqual(["p1"]);
+  });
+
+  test("forwards the resolved named write target to proposal promotion", async () => {
+    const promoteFn = mock(async (_stash, _cfg, id: string) => makePromotion(id));
+    const config = { defaultWriteTarget: "team" } as AkmConfig;
+
+    await runAutoAcceptGate([candidate("p1", 0.97)], baseConfig({ config }), promoteFn as never);
+
+    expect(promoteFn).toHaveBeenCalledWith(
+      STUB_STASH,
+      config,
+      "p1",
+      expect.objectContaining({ target: "team", eventMetadata: expect.objectContaining({ autoAccept: true }) }),
+      undefined,
+    );
   });
 
   test("minimumThreshold floors a permissive globalThreshold", async () => {
@@ -315,6 +330,36 @@ describe("runAutoAcceptGate — archives validation-failed proposals (M4)", () =
 
     // A transient/unknown error must NOT archive — the proposal stays pending.
     expect(getProposal(stash, id)?.status).toBe("pending");
+  });
+
+  test("real auto-accept composition emits exactly one promoted event", async () => {
+    const stash = makeStashDir();
+    const proposal = createProposal(stash, {
+      ref: "lesson:single-promoted-event",
+      source: "extract",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: Single promoted event fixture\nwhen_to_use: Testing real auto accept composition\n---\n\nOne event.\n",
+      },
+    });
+    if (isProposalSkipped(proposal)) throw new Error("unexpected skip");
+    const config = {
+      stashDir: stash,
+      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      defaultWriteTarget: "stash",
+    } as AkmConfig;
+
+    const result = await runAutoAcceptGate(
+      [{ proposalId: proposal.id, confidence: 0.99 }],
+      baseConfig({ stashDir: stash, config, globalThreshold: 90 }),
+    );
+    expect(result.promoted).toEqual([proposal.id]);
+    const events = readEvents({ type: "promoted", ref: proposal.ref }).events.filter(
+      (event) => event.metadata?.proposalId === proposal.id,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata?.autoAccept).toBe(true);
   });
 });
 

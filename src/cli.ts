@@ -91,6 +91,7 @@ import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { extractCommand } from "./commands/improve/extract-cli";
 import { improveCommand } from "./commands/improve/improve-cli";
+import { migrateCommand } from "./commands/migrate-cli";
 import { mvCommand } from "./commands/mv-cli";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
@@ -569,6 +570,7 @@ export const main = defineCommand({
     clone: cloneCommand,
     mv: mvCommand,
     registry: registryCommand,
+    migrate: migrateCommand,
     backup: backupCommand,
     config: configCommand,
     feedback: feedbackCommand,
@@ -598,7 +600,7 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   const args = argv.slice(2);
   if (args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-v")) return true;
   const command = findCittyTopLevelCommand([...args], MAIN_TOP_LEVEL_ARGS);
-  if (command === "setup" || command === "backup") return true;
+  if (command === "setup" || command === "backup" || command === "migrate") return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");
   const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));

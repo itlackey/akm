@@ -70,6 +70,7 @@ import { akmRecombine } from "./recombine";
 import type { AkmReflectResult } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { errMessage, refSlug } from "./shared";
+import { durableImproveRef } from "./source-identity";
 
 // ── improve loop / post-loop / maintenance stages ───────────────────
 // The cycle stages run by akmImprove, extracted from improve.ts.
@@ -282,11 +283,13 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           const reflectProfileRunner = resolvedPlan.processes.reflect.runner;
           const reflectCallArgs = {
             ref: planned.ref,
+            ...(options.target ? { sourceName: options.target } : {}),
+            ...(options.legacyBareState ? { legacyBareState: true } : {}),
             task: options.task,
             // Active strategy supplies non-engine process tuning.
             ...(improveProfile ? { improveProfile } : {}),
             config: options.config,
-            ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+            ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
             eventSource: "improve" as const,
             // #639 — resolve the low-value filter from the ACTIVE improve profile
@@ -424,13 +427,13 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           // the asset changed; reset the counter so the dampener lifts.
           if (isNoChange && eventsCtx?.db) {
             try {
-              recordNoOp(eventsCtx.db, planned.ref);
+              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.target));
             } catch {
               // best-effort: plasticity counter failure never blocks the run
             }
           } else if (reflectResult.ok && eventsCtx?.db) {
             try {
-              resetConsecutiveNoOps(eventsCtx.db, planned.ref);
+              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.target));
             } catch {
               // best-effort
             }
@@ -578,8 +581,10 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           () =>
             distillFn({
               ref: planned.ref,
+              ...(options.target ? { sourceName: options.target } : {}),
+              ...(options.legacyBareState ? { legacyBareState: true } : {}),
               ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
-              ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+              ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
               // Active profile so distill's per-process reads honor `--profile`.
               ...(improveProfile ? { improveProfile } : {}),
               config: options.config,
@@ -612,9 +617,9 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
         if (eventsCtx?.db) {
           try {
             if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
-              recordNoOp(eventsCtx.db, planned.ref);
+              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.target));
             } else if (distillResult.outcome === "queued") {
-              resetConsecutiveNoOps(eventsCtx.db, planned.ref);
+              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.target));
             }
           } catch {
             // best-effort: plasticity counter failure never blocks the run

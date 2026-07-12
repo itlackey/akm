@@ -62,13 +62,35 @@ import {
   computeSalience,
   getAllRankScores,
   getAssetSalience,
-  getConsecutiveNoOps,
   getLastUseMsByRef,
   isContentEncodingRow,
   SALIENCE_NO_OP_DAMPEN_FACTOR,
   SALIENCE_NO_OP_DAMPEN_THRESHOLD,
   upsertAssetSalience,
 } from "./salience";
+import { bareImproveRef, durableImproveRef, improveStateReadRefs } from "./source-identity";
+
+function readAssetSalienceForImproveRef(
+  db: Parameters<typeof getAssetSalience>[0],
+  ref: string,
+  sourceName?: string,
+  includeLegacyBare = false,
+): ReturnType<typeof getAssetSalience> {
+  for (const key of improveStateReadRefs(ref, sourceName, includeLegacyBare)) {
+    const row = getAssetSalience(db, key);
+    if (row) return row;
+  }
+  return undefined;
+}
+
+function readConsecutiveNoOpsForImproveRef(
+  db: Parameters<typeof getAssetSalience>[0],
+  ref: string,
+  sourceName?: string,
+  includeLegacyBare = false,
+): number {
+  return readAssetSalienceForImproveRef(db, ref, sourceName, includeLegacyBare)?.consecutive_no_ops ?? 0;
+}
 
 // ── improve preparation stage ───────────────────────
 // The pre-loop preparation pipeline (consolidation, session-extract, validation/
@@ -1023,9 +1045,24 @@ export async function runImprovePreparationStage(args: {
   // Per-ref queries would be N+1 and the planner is already the hottest path
   // in `akm improve`.
   const candidateRefs = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref)).map((r) => r.ref);
-  const latestFeedbackTs = buildLatestFeedbackTsMap(candidateRefs, feedbackSinceCutoff);
-  const lastReflectProposalTs = buildLatestProposalTsMap(candidateRefs, "reflect");
-  const lastDistillProposalTs = buildLatestProposalTsMap(candidateRefs, "distill");
+  const latestFeedbackTs = buildLatestFeedbackTsMap(
+    candidateRefs,
+    feedbackSinceCutoff,
+    options.target,
+    options.legacyBareState,
+  );
+  const lastReflectProposalTs = buildLatestProposalTsMap(
+    candidateRefs,
+    "reflect",
+    options.target,
+    options.legacyBareState,
+  );
+  const lastDistillProposalTs = buildLatestProposalTsMap(
+    candidateRefs,
+    "distill",
+    options.target,
+    options.legacyBareState,
+  );
 
   // Refs the distill signal-delta gate rejected at planning time. The main
   // loop reads this to skip distill for these refs without re-checking
@@ -1173,15 +1210,21 @@ export async function runImprovePreparationStage(args: {
   // to feedbackSinceCutoff (same as the old inline `(e.ts ?? "") >= cutoff` guard).
   const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
   {
-    const feedbackCandidateSet = new Set([...processableRefs, ...noFeedbackPool].map((r) => r.ref));
+    const feedbackCandidateRefs = [...processableRefs, ...noFeedbackPool].map((r) => r.ref);
+    const feedbackCandidateSet = new Set(feedbackCandidateRefs);
+    const feedbackRefByDurableKey = new Map(
+      feedbackCandidateRefs.flatMap((ref) =>
+        improveStateReadRefs(ref, options.target, options.legacyBareState).map((key) => [key, ref]),
+      ),
+    );
     if (feedbackCandidateSet.size > 0) {
       // Fetch ALL feedback events in one query (no ref filter, no since filter =
       // single full table scan). Filtering per-ref in memory avoids N sequential
       // state.db opens — the dominant FD-leak path on large stashes.
       const { events: allFeedbackEvents } = readEvents({ type: "feedback" }, eventsCtx);
       for (const e of allFeedbackEvents) {
-        const ref = e.ref;
-        if (!ref || !feedbackCandidateSet.has(ref)) continue;
+        const ref = e.ref ? feedbackRefByDurableKey.get(e.ref) : undefined;
+        if (!ref) continue;
         const entry = feedbackSummary.get(ref) ?? { hasSignal: false, positive: 0, negative: 0 };
         const meta = e.metadata as { signal?: unknown; note?: unknown } | undefined;
         // hasSignal: only count feedback events within the 30-day window.
@@ -1247,10 +1290,15 @@ export async function runImprovePreparationStage(args: {
     // heavily-retrieved, one never-touched — would receive identical rankScores.
     // Fix (WS-1 blocker 3): union the feedback pool into the lookup.
     const allCandidateRefs = [...new Set([...signalFiltered, ...noFeedbackCandidates].map((r) => r.ref))];
-    retrievalCounts = getRetrievalCounts(dbForRetrieval, allCandidateRefs);
+    retrievalCounts = getRetrievalCounts(dbForRetrieval, allCandidateRefs, {
+      sourceName: options.target,
+      stashDir: primaryStashDir,
+      includeLegacyBare: options.legacyBareState || !options.target,
+    });
     lastUseMsForProactive = getLastUseMsByRef(
       dbForRetrieval,
       noFeedbackCandidates.map((r) => r.ref),
+      primaryStashDir,
     );
     // High-retrieval signal-delta (simplified rule, 0.8.0): a no-feedback
     // ref qualifies exactly once — when it has actually been retrieved
@@ -1396,7 +1444,7 @@ export async function runImprovePreparationStage(args: {
         // found later in the scan lost its slot to an earlier lower-scoring one.
         const qualifying: Array<{ ref: ImproveEligibleRef; score: number }> = [];
         for (const r of candidates) {
-          const row = getAssetSalience(dbForHighSalience, r.ref);
+          const row = readAssetSalienceForImproveRef(dbForHighSalience, r.ref, options.target, options.legacyBareState);
           if (
             row &&
             isContentEncodingRow(row, parseAssetRef(r.ref).type) &&
@@ -1529,6 +1577,7 @@ export async function runImprovePreparationStage(args: {
     lastUseMsByRef = getLastUseMsByRef(
       dbForSalience,
       mergedRefs.map((r) => r.ref),
+      primaryStashDir,
     );
   } catch (err) {
     rethrowIfTestIsolationError(err);
@@ -1695,7 +1744,12 @@ export async function runImprovePreparationStage(args: {
       (dbForStoredEncoding) => {
         for (const r of mergedRefs) {
           const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
-          const row = getAssetSalience(dbForStoredEncoding, r.ref);
+          const row = readAssetSalienceForImproveRef(
+            dbForStoredEncoding,
+            r.ref,
+            options.target,
+            options.legacyBareState,
+          );
           if (row && isContentEncodingRow(row, type)) {
             storedEncodingByRef.set(r.ref, row.encoding_salience);
           }
@@ -1790,7 +1844,17 @@ export async function runImprovePreparationStage(args: {
         // Step 7: stash-wide rank-change report BEFORE overwriting the table.
         //
         // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
-        const existingAllScores = getAllRankScores(stateDb);
+        const allStoredScores = getAllRankScores(stateDb);
+        const existingAllScores = options.target
+          ? new Map(
+              [...allStoredScores].flatMap(([ref, score]) => {
+                const parsed = parseAssetRef(ref);
+                return parsed.origin === options.target || (options.legacyBareState && !parsed.origin)
+                  ? [[bareImproveRef(ref), score] as const]
+                  : [];
+              }),
+            )
+          : allStoredScores;
 
         if (existingAllScores.size === 0) {
           // Scenario A: first WS-1 run — table empty.
@@ -1907,7 +1971,7 @@ export async function runImprovePreparationStage(args: {
         }
 
         for (const [ref, vector] of salienceMap) {
-          upsertAssetSalience(stateDb, ref, vector, nowForSalience);
+          upsertAssetSalience(stateDb, durableImproveRef(ref, options.target), vector, nowForSalience);
         }
       },
       { path: eventsCtx?.dbPath },
@@ -1993,7 +2057,17 @@ export async function runImprovePreparationStage(args: {
       withStateDb(
         (replayDb) => {
           const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
-          const allRankScores = getAllRankScores(replayDb);
+          const storedRankScores = getAllRankScores(replayDb);
+          const allRankScores = options.target
+            ? new Map(
+                [...storedRankScores].flatMap(([ref, score]) => {
+                  const parsed = parseAssetRef(ref);
+                  return parsed.origin === options.target || (options.legacyBareState && !parsed.origin)
+                    ? [[bareImproveRef(ref), score] as const]
+                    : [];
+                }),
+              )
+            : storedRankScores;
           // Candidate universe = every salience row NOT already in the pool, ordered by
           // rank_score desc with a deterministic ref-string tie-break (mirrors the main
           // sort). Converged refs (consecutive_no_ops >= dampener threshold) are fully
@@ -2002,7 +2076,7 @@ export async function runImprovePreparationStage(args: {
           const candidates: Array<{ ref: string; rankScore: number }> = [];
           for (const [ref, rankScore] of allRankScores) {
             if (alreadyInPool.has(ref)) continue;
-            const noOps = getConsecutiveNoOps(replayDb, ref);
+            const noOps = readConsecutiveNoOpsForImproveRef(replayDb, ref, options.target, options.legacyBareState);
             if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
               convergedSkipped++;
               continue;
@@ -2085,7 +2159,7 @@ export async function runImprovePreparationStage(args: {
       const ownsNoOpDb = !eventsCtx?.db;
       try {
         for (const r of mergedRefs) {
-          noOpMap.set(r.ref, getConsecutiveNoOps(noOpDb, r.ref));
+          noOpMap.set(r.ref, readConsecutiveNoOpsForImproveRef(noOpDb, r.ref, options.target, options.legacyBareState));
         }
       } finally {
         if (ownsNoOpDb) noOpDb.close();

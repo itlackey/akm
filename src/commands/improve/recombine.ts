@@ -26,8 +26,9 @@
  * not re-promoted on every subsequent run. Hypotheses NOT re-induced in a run
  * have their consecutive streak reset (decay-to-zero).
  *
- * NAMESPACE note: the ref stays `lesson:recombined/<slug>-<hash>` for BOTH
- * passes. The ref is the promotion TARGET asset (a lesson in both the hypothesis
+ * NAMESPACE note: the ref stays stable for BOTH passes. A unanimous source-memory
+ * scope is preserved; unscoped members produce a flat lesson ref rather than an
+ * invented type scope. The ref is the promotion TARGET asset (a lesson in both the hypothesis
  * and promoted states), so re-induction must map to the same ref and the ref
  * cannot encode the proposal type. The hypothesis-vs-lesson distinction is
  * carried ONLY by the proposal frontmatter `type` field. On promotion the prior
@@ -41,6 +42,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import recombineSystemPrompt from "../../assets/prompts/recombine-system.md" with { type: "text" };
 import { assembleAssetFromString } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -50,7 +52,7 @@ import { loadConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { EligibilitySource, RecombineResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDbAsync } from "../../core/state-db";
 import {
   closeDatabase,
@@ -527,7 +529,25 @@ export function deriveRecombineLessonRef(cluster: MemoryCluster): string {
     .replace(/^-|-$/g, "");
   const memberKey = recombineMemberKey(cluster);
   const hash = createHash("sha256").update(memberKey, "utf8").digest("hex").slice(0, 8);
-  return `lesson:recombined/${slug || "cluster"}-${hash}`;
+  const scopeResult = recombineClusterScope(cluster);
+  if (!scopeResult.ok) throw new Error("Cannot derive a lesson ref for a cluster with mixed scopes.");
+  return `lesson:${scopeResult.scope ? `${scopeResult.scope}/` : ""}${slug || "cluster"}-${hash}`;
+}
+
+function recombineClusterScope(cluster: MemoryCluster): { ok: true; scope: string } | { ok: false } {
+  const scopes = new Set(
+    cluster.members.map((member) => {
+      const parts = member.entry.name.split("/");
+      return parts.length > 1 ? parts[0] : "";
+    }),
+  );
+  if (scopes.size !== 1) return { ok: false };
+  const scope = [...scopes][0]
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return { ok: true, scope };
 }
 
 function validatePromotedLessonFrontmatter(
@@ -617,7 +637,8 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {
     db = openExistingDatabase();
-    entries = getAllEntries(db, "memory");
+    const selectedRoot = path.resolve(stashDir);
+    entries = getAllEntries(db, "memory").filter((entry) => path.resolve(entry.stashDir) === selectedRoot);
     if (relatednessSource === "graph" || relatednessSource === "both") {
       try {
         entityByEntryId = getEntitiesByEntryIds(
@@ -676,7 +697,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
 
   // Recombine output is knowledge/lesson (non-wiki) → stash authoring
   // standards. Resolved ONCE per run and passed to each cluster prompt.
-  const standardsContext = resolveStashStandards(stashDir);
+  const standardsContext = resolveStandardsContext("lesson:_recombined", stashDir);
 
   // #625 — open the confirmation-count store once per run via the ctx seam,
   // reusing a long-lived ctx.db handle when the caller provided one (mirrors
@@ -689,6 +710,10 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
           break;
         }
         clustersFormed += 1;
+        if (!recombineClusterScope(cluster).ok) {
+          warnings.push(`recombine: skipped ${cluster.signature} cluster with mixed scopes`);
+          continue;
+        }
 
         // #9 — promotion is terminal. If this cluster Jaccard-matches a
         // hypothesis that was ALREADY promoted, generating again can at best
@@ -848,7 +873,7 @@ export async function akmRecombine(opts: AkmRecombineOptions): Promise<Recombine
           type: proposalType,
           description: generalization.description,
           ...(generalization.when_to_use ? { when_to_use: generalization.when_to_use } : {}),
-          source_refs: sourceRefs,
+          xrefs: sourceRefs,
         };
         const content = assembleContent(frontmatter, generalization.body);
 

@@ -506,7 +506,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   const allStashes = newConfig.sources ?? [];
 
   // Feature capability summary
-  const agentConfigured = Boolean(agentConfig);
+  const agentConfigured = Boolean(agentConfig && !agentConfig.disabled);
   printCapabilitySummary(smallModelResult.skipped, agentConfigured);
 
   // Confirm before saving

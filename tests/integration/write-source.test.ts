@@ -36,6 +36,7 @@ import {
   type WriteTargetSource,
   writeAssetToSource,
 } from "../../src/core/write-source";
+import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -445,6 +446,57 @@ describe("resolveWriteTarget", () => {
     );
     expect(result.source.name).toBe("explicit");
     expect(result.source.path).toBe(dir);
+  });
+
+  test("git target uses content root for assets and retains repository root for sync", async () => {
+    const url = "https://example.invalid/acme/content-layout.git";
+    const repoRoot = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    const contentRoot = path.join(repoRoot, "content");
+    fs.mkdirSync(contentRoot, { recursive: true });
+
+    const result = resolveWriteTarget(
+      {
+        semanticSearchMode: "off",
+        sources: [{ type: "git", url, name: "team", writable: true }],
+      },
+      "team",
+    );
+
+    expect(result.source.path).toBe(contentRoot);
+    expect(result.source.repoPath).toBe(repoRoot);
+    const written = await writeAssetToSource(
+      result.source,
+      result.config,
+      { type: "knowledge", name: "layout" },
+      "Body",
+    );
+    expect(written.path).toBe(path.join(contentRoot, "knowledge", "layout.md"));
+    fs.rmSync(getCachePaths(parseGitRepoUrl(url).canonicalUrl).rootDir, { recursive: true, force: true });
+  });
+
+  test("git target falls back to repository root when content layout is absent", async () => {
+    const url = "https://example.invalid/acme/root-layout.git";
+    const paths = getCachePaths(parseGitRepoUrl(url).canonicalUrl);
+    fs.mkdirSync(paths.repoDir, { recursive: true });
+
+    const result = resolveWriteTarget(
+      {
+        semanticSearchMode: "off",
+        sources: [{ type: "git", url, name: "team", writable: true }],
+      },
+      "team",
+    );
+
+    expect(result.source.path).toBe(paths.repoDir);
+    expect(result.source.repoPath).toBe(paths.repoDir);
+    const written = await writeAssetToSource(
+      result.source,
+      result.config,
+      { type: "knowledge", name: "layout" },
+      "Body",
+    );
+    expect(written.path).toBe(path.join(paths.repoDir, "knowledge", "layout.md"));
+    fs.rmSync(paths.rootDir, { recursive: true, force: true });
   });
 
   test("falls back to defaultWriteTarget", () => {

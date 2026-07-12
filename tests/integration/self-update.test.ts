@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   checkForUpdate,
+  defaultMigrationCommand,
   detectInstallMethod,
   getAkmBinaryName,
   getPackageManagerUpgradeCommand,
   type InstallSignals,
   performUpgrade,
 } from "../../src/commands/sources/self-update";
+import { upgradeCommand } from "../../src/commands/sources/sources-cli";
+import { sandboxHome } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
 
@@ -219,6 +225,326 @@ describe("checkForUpdate", () => {
 // ── performUpgrade ──────────────────────────────────────────────────────────
 
 describe("performUpgrade", () => {
+  test("upgrade help and results do not claim index migrates config", async () => {
+    const args = upgradeCommand.args as Record<string, { description?: string }>;
+    expect(args["skip-post-upgrade"]?.description).not.toMatch(/index migrates config|auto-migrat/i);
+    expect(args["migration-config"]?.description).toMatch(/0\.9\+.*prepared config.*new binary.*apply/i);
+
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+    const result = await performUpgrade({
+      currentVersion: "0.0.13",
+      latestVersion: "0.0.14",
+      updateAvailable: true,
+      installMethod: "npm",
+    });
+
+    expect(result.postUpgrade?.message).not.toMatch(/config migrated|migrate config|auto-migrat/i);
+    expect(spawnSyncSpy).toHaveBeenCalled();
+  });
+
+  test("runs migration preflight and apply before rebuilding the index", async () => {
+    const events: string[] = [];
+    spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {
+      events.push(args[0] === "install" ? "install" : args.join(" "));
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    await performUpgrade(
+      {
+        currentVersion: "0.0.13",
+        latestVersion: "0.0.14",
+        updateAvailable: true,
+        installMethod: "npm",
+      },
+      undefined,
+      {
+        migration: {
+          preflight: (binary) => events.push(`preflight:${binary}`),
+          stagedPreflight: (binary) => events.push(`staged:${binary}`),
+          apply: (binary) => events.push(`apply:${binary}`),
+        },
+      },
+    );
+
+    expect(events).toEqual(["preflight:akm", "install", "apply:akm", "index"]);
+  });
+
+  test("refuses a pre-contract 0.8 to 0.9 self-update before preflight or installation", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+    const migration = { preflight: mock(() => {}), stagedPreflight: mock(() => {}), apply: mock(() => {}) };
+
+    await expect(
+      performUpgrade(
+        {
+          currentVersion: "0.8.14",
+          latestVersion: "0.9.0",
+          updateAvailable: true,
+          installMethod: "npm",
+        },
+        { migrationConfig: "/operator/prepared-0.9.json", skipPostUpgrade: true },
+        { migration },
+      ),
+    ).rejects.toThrow(/independent backup.*install.*0\.9.*migrate apply --config/is);
+
+    expect(migration.preflight).not.toHaveBeenCalled();
+    expect(migration.stagedPreflight).not.toHaveBeenCalled();
+    expect(migration.apply).not.toHaveBeenCalled();
+    expect(spawnSyncSpy).not.toHaveBeenCalled();
+
+    let fetched = false;
+    mockFetch(() => {
+      fetched = true;
+      return new Response("unexpected", { status: 200 });
+    });
+    await expect(
+      performUpgrade({
+        currentVersion: "0.8.14",
+        latestVersion: "0.9.0",
+        updateAvailable: true,
+        installMethod: "binary",
+      }),
+    ).rejects.toThrow(/self-update cannot safely cross/i);
+    expect(fetched).toBe(false);
+  });
+
+  test("preserves migration preflight and apply for contract-capable future upgrades", async () => {
+    const events: string[] = [];
+    spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {
+      events.push(args[0] === "install" ? "install" : args.join(" "));
+      return { status: 0, stdout: "", stderr: "" } as never;
+    }) as never);
+
+    await performUpgrade(
+      {
+        currentVersion: "0.9.0",
+        latestVersion: "0.10.0",
+        updateAvailable: true,
+        installMethod: "npm",
+      },
+      { migrationConfig: "/operator/prepared-future.json", skipPostUpgrade: true },
+    );
+
+    expect(events).toEqual(["migrate status", "install", "migrate apply --config /operator/prepared-future.json"]);
+  });
+
+  test("real migration command keeps future prepared config away from the old parser", () => {
+    const root = path.join(sandboxHome().dir, "upgrade-parser-contract");
+    fs.mkdirSync(root, { recursive: true });
+    const oldBinary = path.join(root, "old-akm");
+    const newBinary = path.join(root, "new-akm");
+    fs.writeFileSync(
+      oldBinary,
+      '#!/bin/sh\n[ "$1" = "migrate" ] && [ "$2" = "status" ] && [ "$#" = "2" ] || exit 41\n',
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      newBinary,
+      '#!/bin/sh\n[ "$1" = "migrate" ] || exit 42\n[ "$3" = "--config" ] && [ "$4" = "/future/config.json" ] || exit 42\n[ "$2" = "status" ] || [ "$2" = "apply" ] || exit 42\n',
+      { mode: 0o755 },
+    );
+
+    const migration = defaultMigrationCommand("/future/config.json");
+    expect(() => migration.preflight(oldBinary)).not.toThrow();
+    expect(() => migration.stagedPreflight(newBinary)).not.toThrow();
+    expect(() => migration.apply(newBinary)).not.toThrow();
+  });
+
+  test("staged binary preflight failure retains the old standalone executable", async () => {
+    const installDir = path.join(sandboxHome().dir, "staged-preflight-failure");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(
+      binaryPath,
+      '#!/bin/sh\n[ "$1" = "migrate" ] && [ "$2" = "status" ] && [ "$#" = "2" ] || exit 51\n',
+      { mode: 0o755 },
+    );
+    const rejectedBinary = "#!/bin/sh\nexit 57\n";
+    const binaryName = getAkmBinaryName();
+    const hash = createHash("sha256").update(rejectedBinary).digest("hex");
+    mockFetch((url) =>
+      url.includes("checksums.txt")
+        ? new Response(`${hash}  ${binaryName}\n`, { status: 200 })
+        : new Response(rejectedBinary, { status: 200 }),
+    );
+
+    await expect(
+      performUpgrade(
+        {
+          currentVersion: "0.9.0",
+          latestVersion: "0.10.0",
+          updateAvailable: true,
+          installMethod: "binary",
+        },
+        { migrationConfig: "/future/config.json", skipPostUpgrade: true },
+        { execPath: binaryPath },
+      ),
+    ).rejects.toThrow(/staged migration preflight failed/i);
+    expect(fs.readFileSync(binaryPath, "utf8")).toContain('"$#" = "2"');
+    expect(fs.existsSync(`${binaryPath}.bak`)).toBe(false);
+    expect(fs.readdirSync(installDir)).toEqual(["akm"]);
+  });
+
+  test("rejects an oversized binary response before replacing or staging the executable", async () => {
+    const installDir = path.join(sandboxHome().dir, "oversized-binary");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(binaryPath, "old-binary");
+    const binaryName = getAkmBinaryName();
+    const hash = createHash("sha256").update("x").digest("hex");
+    mockFetch((url) =>
+      url.includes("checksums.txt")
+        ? new Response(`${hash}  ${binaryName}\n`, { status: 200 })
+        : new Response("x", { status: 200, headers: { "content-length": String(1024 * 1024 * 1024) } }),
+    );
+
+    await expect(
+      performUpgrade(
+        {
+          currentVersion: "0.9.0",
+          latestVersion: "0.10.0",
+          updateAvailable: true,
+          installMethod: "binary",
+        },
+        { skipPostUpgrade: true },
+        { execPath: binaryPath, migration: { preflight() {}, stagedPreflight() {}, apply() {} } },
+      ),
+    ).rejects.toThrow(/exceed|too large|limit/i);
+    expect(fs.readFileSync(binaryPath, "utf8")).toBe("old-binary");
+    expect(fs.readdirSync(installDir)).toEqual(["akm"]);
+  });
+
+  test("rejects oversized checksum metadata and removes the streamed stage", async () => {
+    const installDir = path.join(sandboxHome().dir, "oversized-checksums");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(binaryPath, "old-binary");
+    const binaryData = "new-binary";
+    const binaryName = getAkmBinaryName();
+    const hash = createHash("sha256").update(binaryData).digest("hex");
+    mockFetch((url) =>
+      url.includes("checksums.txt")
+        ? new Response(`${hash}  ${binaryName}\n`, {
+            status: 200,
+            headers: { "content-length": String(2 * 1024 * 1024) },
+          })
+        : new Response(binaryData, { status: 200 }),
+    );
+
+    await expect(
+      performUpgrade(
+        {
+          currentVersion: "0.9.0",
+          latestVersion: "0.10.0",
+          updateAvailable: true,
+          installMethod: "binary",
+        },
+        { skipPostUpgrade: true },
+        { execPath: binaryPath, migration: { preflight() {}, stagedPreflight() {}, apply() {} } },
+      ),
+    ).rejects.toThrow(/exceed|too large|limit/i);
+    expect(fs.readFileSync(binaryPath, "utf8")).toBe("old-binary");
+    expect(fs.readdirSync(installDir)).toEqual(["akm"]);
+  });
+
+  test("stages binary migration and retains the old binary until apply succeeds", async () => {
+    const installDir = path.join(sandboxHome().dir, "self-update");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(binaryPath, "old-binary");
+    const binaryData = "new-binary";
+    const binaryName = getAkmBinaryName();
+    const hash = createHash("sha256").update(binaryData).digest("hex");
+    mockFetch((url) =>
+      url.includes("checksums.txt")
+        ? new Response(`${hash}  ${binaryName}\n`, { status: 200 })
+        : new Response(binaryData, { status: 200 }),
+    );
+    const events: string[] = [];
+
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.0.13",
+        latestVersion: "0.0.14",
+        updateAvailable: true,
+        installMethod: "binary",
+      },
+      { skipPostUpgrade: true },
+      {
+        execPath: binaryPath,
+        migration: {
+          preflight(currentBinary) {
+            events.push("preflight");
+            expect(currentBinary).toBe(binaryPath);
+            expect(fs.readFileSync(currentBinary, "utf8")).toBe("old-binary");
+          },
+          stagedPreflight(stagedBinary) {
+            events.push("staged-preflight");
+            expect(stagedBinary).not.toBe(binaryPath);
+            expect(fs.readFileSync(stagedBinary, "utf8")).toBe(binaryData);
+          },
+          apply(installedBinary) {
+            events.push("apply");
+            expect(installedBinary).toBe(binaryPath);
+            expect(fs.readFileSync(binaryPath, "utf8")).toBe(binaryData);
+            expect(fs.readFileSync(`${binaryPath}.bak`, "utf8")).toBe("old-binary");
+          },
+        },
+      },
+    );
+
+    expect(events).toEqual(["preflight", "staged-preflight", "apply"]);
+    expect(result.upgraded).toBe(true);
+    expect(fs.readFileSync(binaryPath, "utf8")).toBe(binaryData);
+    expect(fs.existsSync(`${binaryPath}.bak`)).toBe(false);
+  });
+
+  test("does not roll the executable back independently when migration apply fails", async () => {
+    const installDir = path.join(sandboxHome().dir, "self-update-failed-migration");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(binaryPath, "old-binary");
+    const binaryData = "new-binary";
+    const binaryName = getAkmBinaryName();
+    const hash = createHash("sha256").update(binaryData).digest("hex");
+    mockFetch((url) =>
+      url.includes("checksums.txt")
+        ? new Response(`${hash}  ${binaryName}\n`, { status: 200 })
+        : new Response(binaryData, { status: 200 }),
+    );
+
+    await expect(
+      performUpgrade(
+        {
+          currentVersion: "0.9.0",
+          latestVersion: "0.10.0",
+          updateAvailable: true,
+          installMethod: "binary",
+        },
+        { skipPostUpgrade: true },
+        {
+          execPath: binaryPath,
+          migration: {
+            preflight() {},
+            stagedPreflight() {},
+            apply() {
+              throw new Error("apply failed");
+            },
+          },
+        },
+      ),
+    ).rejects.toThrow(/previous binary retained/i);
+    expect(fs.readFileSync(binaryPath, "utf8")).toBe(binaryData);
+    expect(fs.readFileSync(`${binaryPath}.bak`, "utf8")).toBe("old-binary");
+  });
+
   test("runs npm global install for npm installs", async () => {
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -332,8 +658,8 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(true);
     expect(result.postUpgrade?.skipped).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(0);
-    // First spawnSync = the install; second spawnSync = the post-upgrade `akm index`.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
+    // Preflight, install, apply, then the post-upgrade `akm index`.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
     expect(spawnSyncSpy).toHaveBeenLastCalledWith(
       "akm",
       ["index"],
@@ -362,16 +688,16 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade).toBeDefined();
     expect(result.postUpgrade?.skipped).toBe(true);
     expect(result.postUpgrade?.ok).toBe(true);
-    // Only the install spawnSync ran — no second call for `akm index`.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
+    // Preflight, install, and apply ran; only the index rebuild was skipped.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
   });
 
   test("captures post-upgrade failure without failing the upgrade", async () => {
     let call = 0;
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation((() => {
       call++;
-      if (call === 1) {
-        // The install itself succeeds.
+      if (call < 4) {
+        // Migration preflight, package install, and migration apply succeed.
         return { status: 0, stdout: "", stderr: "" } as never;
       }
       // The post-upgrade `akm index` fails with a non-zero exit.
@@ -389,7 +715,7 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(1);
     expect(result.postUpgrade?.message).toContain("no embedding model configured");
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(4);
   });
 
   test("throws when latestVersion is empty and force is used", async () => {
@@ -438,9 +764,8 @@ describe("performUpgrade", () => {
         { skipPostUpgrade: true },
       ),
     ).resolves.toMatchObject({ upgraded: true, installMethod: "npm" });
-    // Only the install spawnSync ran; skipPostUpgrade keeps the test focused
-    // on the checksum-bypass behavior, not the new post-upgrade hook.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
+    // Migration preflight and apply still bracket the package install.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
   });
 
   test("checksum URL 404 throws Checksum verification failed for binary install", async () => {
@@ -479,9 +804,8 @@ describe("performUpgrade", () => {
       },
       { skipChecksum: true, skipPostUpgrade: true },
     );
-    // Only the install spawnSync ran; skipPostUpgrade keeps the test focused
-    // on the skipChecksum option, not the new post-upgrade hook.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
+    // Migration preflight and apply still bracket the package install.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
     expect(result.upgraded).toBe(true);
     expect(result.installMethod).toBe("npm");
   });

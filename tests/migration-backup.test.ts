@@ -24,9 +24,10 @@ import {
   getStateDbPathInDataDir,
   getWorkflowDbPath,
 } from "../src/core/paths";
+import { runMigrations as runStateMigrations } from "../src/core/state/migrations";
 import { openStateDatabase } from "../src/core/state-db";
 import { acquireIndexWriterLease } from "../src/indexer/index-writer-lock";
-import { openWorkflowDatabase } from "../src/workflows/db";
+import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "../src/workflows/db";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
 
 let cleanup: Cleanup | undefined;
@@ -64,15 +65,15 @@ describe("0.9 migration backup", () => {
 
     const result = createMigrationBackup();
     expect(result.created).toBe(true);
-    expect(createMigrationBackup().created).toBe(false);
-    const manifest = verifyMigrationBackup();
+    expect(createMigrationBackup().created).toBe(true);
+    const manifest = verifyMigrationBackup(result.path);
     expect(manifest.artifacts["config.json"].present).toBe(true);
     expect(manifest.artifacts["state.db"].present).toBe(true);
     expect(manifest.artifacts["workflow.db"].present).toBe(false);
     expect(manifest.artifacts["state.db"].sha256).toHaveLength(64);
     if (process.platform !== "win32") {
-      expect(fs.statSync(getMigrationBackupDir()).mode & 0o777).toBe(0o700);
-      expect(fs.statSync(path.join(getMigrationBackupDir(), "state.db")).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(result.path).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(result.path, "state.db")).mode & 0o777).toBe(0o600);
     }
 
     state.exec("UPDATE durable SET value='after'");
@@ -83,44 +84,40 @@ describe("0.9 migration backup", () => {
     workflow.close();
 
     expect(() => restoreMigrationBackup(false)).toThrow(/--confirm/);
-    restoreMigrationBackup(true);
+    restoreMigrationBackup(true, result.manifest.runId);
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(configBefore);
     expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
     const restored = new Database(getStateDbPathInDataDir(), { readonly: true });
     expect((restored.query("SELECT value FROM durable").get() as { value: string }).value).toBe("before");
     restored.close();
-    expect(fs.existsSync(getMigrationBackupDir())).toBe(true);
+    expect(fs.existsSync(result.path)).toBe(true);
   });
 
-  test("refuses to bless an existing current config when the pre-cutover bundle is missing", () => {
+  test("can snapshot an existing current config when databases require independent classification", () => {
     fs.writeFileSync(getConfigPath(), '{"configVersion":"0.9.0"}\n');
-    expect(() => createMigrationBackup()).toThrow(/Refusing to create a pre-0.9 migration backup/);
+    expect(createMigrationBackup().manifest.artifacts["config.json"].status).toBe("current");
   });
 
   test("fails closed on an incomplete existing bundle", () => {
-    fs.mkdirSync(getMigrationBackupDir(), { recursive: true, mode: 0o700 });
-    expect(() => createMigrationBackup()).toThrow(/incomplete or unreadable/);
+    const incomplete = getMigrationBackupDir("incomplete");
+    fs.mkdirSync(incomplete, { recursive: true, mode: 0o700 });
+    expect(() => verifyMigrationBackup(incomplete)).toThrow(/incomplete or unreadable/);
+    expect(createMigrationBackup().created).toBe(true);
   });
 
   test("fails closed when an immutable bundle artifact is checksum-corrupted", () => {
     seedLegacyConfig();
-    createMigrationBackup();
-    fs.appendFileSync(path.join(getMigrationBackupDir(), "config.json"), "corruption");
-    expect(() => verifyMigrationBackup()).toThrow(/checksum verification/);
-    expect(() => createMigrationBackup()).toThrow(/checksum verification/);
+    const corrupted = createMigrationBackup();
+    fs.appendFileSync(path.join(corrupted.path, "config.json"), "corruption");
+    expect(() => verifyMigrationBackup(corrupted.path)).toThrow(/checksum verification/);
+    expect(createMigrationBackup().created).toBe(true);
   });
 
-  test("records fresh canonical databases absent before their first open", () => {
+  test("fresh canonical database opens do not manufacture a historical bundle", () => {
     const state = openStateDatabase(getStateDbPathInDataDir());
     state.close();
-    const manifest = verifyMigrationBackup();
-    expect(manifest.artifacts["config.json"].present).toBe(false);
-    expect(manifest.artifacts["state.db"].present).toBe(false);
-    expect(manifest.artifacts["workflow.db"].present).toBe(false);
     expect(fs.existsSync(getStateDbPathInDataDir())).toBe(true);
-
-    restoreMigrationBackup(true);
-    expect(fs.existsSync(getStateDbPathInDataDir())).toBe(false);
+    expect(fs.existsSync(getMigrationBackupDir())).toBe(false);
   });
 
   test("refuses restore for active improve and extract locks", () => {
@@ -131,7 +128,7 @@ describe("0.9 migration backup", () => {
     ]) {
       fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       fs.writeFileSync(lockPath, String(process.pid));
-      expect(() => restoreMigrationBackup(true)).toThrow(/locks or workflow leases are active/);
+      expect(() => restoreMigrationBackup(true)).toThrow(/locks, activities, or workflow leases are active/);
       fs.rmSync(lockPath);
     }
   });
@@ -191,6 +188,82 @@ describe("0.9 migration backup", () => {
     workflow.close();
 
     expect(() => restoreMigrationBackup(true)).toThrow(/run=run-external,unit=unit-live,holder=driver-live/);
+  });
+
+  test("workflow blocker reporting samples at most 100 active rows", () => {
+    createMigrationBackup();
+    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getWorkflowDbPath());
+    workflow.exec(`
+      CREATE TABLE workflow_runs(
+        id TEXT PRIMARY KEY,
+        engine_lease_holder TEXT,
+        engine_lease_until TEXT
+      );
+    `);
+    const insert = workflow.prepare("INSERT INTO workflow_runs VALUES (?, ?, ?)");
+    const expires = new Date(Date.now() + 60_000).toISOString();
+    for (let index = 0; index < 150; index += 1) insert.run(`run-${index}`, `holder-${index}`, expires);
+    workflow.close();
+
+    let message = "";
+    try {
+      restoreMigrationBackup(true);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("additional-active-workflow-blockers");
+    expect((message.match(/#run=/g) ?? []).length).toBe(100);
+    expect(message.length).toBeLessThan(20_000);
+  });
+
+  test("workflow blocker diagnostics truncate oversized fields and control characters by bytes", () => {
+    createMigrationBackup();
+    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getWorkflowDbPath());
+    workflow.exec(`
+      CREATE TABLE workflow_runs(
+        id TEXT PRIMARY KEY,
+        engine_lease_holder TEXT,
+        engine_lease_until TEXT
+      );
+    `);
+    const oversized = `${"x".repeat(100_000)}\n\tforged-line`;
+    workflow
+      .prepare("INSERT INTO workflow_runs VALUES (?, ?, ?)")
+      .run(oversized, oversized, new Date(Date.now() + 60_000).toISOString());
+    workflow.close();
+
+    let message = "";
+    try {
+      restoreMigrationBackup(true);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("Refusing artifact replacement");
+    expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(16 * 1024);
+    expect(message).not.toContain("\n\tforged-line");
+    expect(message.length).toBeLessThan(2_000);
+  });
+
+  test("large blocker directories are sampled and still fail closed with a bounded diagnostic", () => {
+    createMigrationBackup();
+    const lockDir = path.join(getDataDir(), "extract-locks");
+    fs.mkdirSync(lockDir, { recursive: true });
+    for (let index = 0; index < 500; index += 1) {
+      fs.writeFileSync(path.join(lockDir, `oversized-directory-${index}.lock`), String(process.pid));
+    }
+
+    let message = "";
+    try {
+      restoreMigrationBackup(true);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("Refusing artifact replacement");
+    expect(message).toMatch(/additional|omitted|directory/i);
+    expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(16 * 1024);
+    expect((message.match(/oversized-directory-/g) ?? []).length).toBeLessThanOrEqual(100);
   });
 
   test("maintenance barrier excludes new lock starts and restore contenders", async () => {
@@ -305,11 +378,16 @@ describe("0.9 migration backup", () => {
     }
     workflow.close();
 
-    openStateDatabase(getStateDbPathInDataDir()).close();
-    openWorkflowDatabase(getWorkflowDbPath()).close();
+    const backup = createMigrationBackup();
+    const stateToMigrate = new Database(getStateDbPathInDataDir());
+    runStateMigrations(stateToMigrate as never);
+    stateToMigrate.close();
+    const workflowToMigrate = new Database(getWorkflowDbPath());
+    runWorkflowMigrations(workflowToMigrate as never);
+    workflowToMigrate.close();
 
-    const stateBackup = new Database(path.join(getMigrationBackupDir(), "state.db"), { readonly: true });
-    const workflowBackup = new Database(path.join(getMigrationBackupDir(), "workflow.db"), { readonly: true });
+    const stateBackup = new Database(path.join(backup.path, "state.db"), { readonly: true });
+    const workflowBackup = new Database(path.join(backup.path, "workflow.db"), { readonly: true });
     expect(hasColumn(stateBackup, "improve_runs", "strategy")).toBe(false);
     expect(hasColumn(workflowBackup, "workflow_runs", "plan_ir_version")).toBe(false);
     expect(hasColumn(workflowBackup, "workflow_run_units", "engine")).toBe(false);

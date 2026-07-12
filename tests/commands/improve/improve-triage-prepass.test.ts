@@ -116,6 +116,35 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
+    "passes the frozen named target and config snapshot into triage",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+      const config = {
+        ...triageEnabledConfig(true),
+        stashDir,
+        sources: [{ type: "filesystem" as const, name: "team", path: stashDir, writable: true }],
+        defaultWriteTarget: "team",
+      };
+      let captured: import("../../../src/commands/proposal/drain").DrainOptions | undefined;
+
+      await akmImprove({
+        target: "team",
+        scope: "memory",
+        config,
+        drainProposalsFn: (async (opts: import("../../../src/commands/proposal/drain").DrainOptions) => {
+          captured = opts;
+          return emptyDrainResult();
+        }) as never,
+      });
+
+      expect(captured?.target).toBe("team");
+      expect(captured?.config?.defaultWriteTarget).toBe("team");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "does NOT fire when triage is disabled",
     async () => {
       writeMemory("alpha", "Remember alpha details.");

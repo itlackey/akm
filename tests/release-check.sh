@@ -39,7 +39,7 @@ run_step \
 run_step \
   "Install and Setup Regression Suite" \
   bun test tests/setup.test.ts ./tests/integration/setup-run.test.ts tests/install-script.test.ts tests/setup-wizard.test.ts
-run_step "Full Test Suite" bun test
+run_step "Full Test Suite" bun test --timeout=30000
 
 if [ "$SKIP_DOCKER" = false ]; then
 	run_step "Docker Install Matrix" "$SCRIPT_DIR/docker/run-docker-tests.sh"

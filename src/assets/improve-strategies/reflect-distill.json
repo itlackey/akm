@@ -15,6 +15,7 @@
       "triage": { "enabled": true, "minScore": 2 },
       "minNewSessions": 1
     },
+    "validation": { "enabled": false },
     "triage": {
       "enabled": true,
       "applyMode": "promote",

@@ -9,6 +9,7 @@ import type { SemanticSearchStatus } from "../../indexer/search/semantic-status"
 import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import { resolveModel } from "../../integrations/agent/model-aliases";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { resolveImprovePlan } from "../improve/improve-strategies";
 import {
   type HealthCheckResult,
   type ImproveHealthMetrics,
@@ -80,20 +81,35 @@ export interface DefaultEngineProbeDependencies {
   resolveEngine?: (name: string, config: AkmConfig) => RunnerSpec;
   spawnSync?: typeof spawnSync;
   resolvePackage?: (name: string) => string;
+  env?: NodeJS.ProcessEnv;
 }
 
-export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {}): HealthCheckResult {
-  const config = deps.loadConfig?.() ?? loadConfig();
-  const engineName = config.defaults?.engine ?? config.defaults?.llmEngine;
+function credentialAvailable(
+  credential: { names: readonly string[]; required: boolean } | undefined,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  return !credential?.required || credential.names.some((name) => Boolean(env[name]?.trim()));
+}
+
+function runConfiguredEngineProbe(
+  checkName: string,
+  engineName: string | undefined,
+  config: AkmConfig,
+  deps: DefaultEngineProbeDependencies,
+): HealthCheckResult {
   if (!engineName) {
     return {
-      name: "default-engine",
+      name: checkName,
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
-      message: "No default engine is configured.",
+      message:
+        checkName === "default-llm-engine"
+          ? "No default LLM engine is configured."
+          : "No default engine is configured.",
     };
   }
+  const env = deps.env ?? process.env;
   const configuredEngine = config.engines?.[engineName];
   if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
     let packageAvailable = false;
@@ -109,6 +125,7 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
     const binaryAvailable = (version.status ?? 1) === 0;
     const fallbackEngine = configuredEngine.llmEngine ?? config.defaults?.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
+    let fallbackCredential: Extract<RunnerSpec, { kind: "llm" }>["credential"];
     let sdkRunner: Extract<RunnerSpec, { kind: "sdk" }> | undefined;
     const resolve = deps.resolveEngine ?? resolveEngine;
     try {
@@ -119,10 +136,14 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
     }
     if (sdkRunner?.fallbackConnection) {
       fallback = { kind: "llm", connection: sdkRunner.fallbackConnection };
+      fallbackCredential = sdkRunner.fallbackCredential;
     } else if (fallbackEngine) {
       try {
         const resolved = resolve(fallbackEngine, config);
-        if (resolved.kind === "llm") fallback = resolved;
+        if (resolved.kind === "llm") {
+          fallback = resolved;
+          fallbackCredential = resolved.credential;
+        }
       } catch {
         fallback = undefined;
       }
@@ -131,14 +152,15 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
       ? resolveModel(configuredEngine.model, "opencode-sdk", configuredEngine.modelAliases, config.modelAliases)
       : undefined;
     const effectiveModel = sdkRunner?.profile.model ?? configuredModel ?? fallback?.connection.model;
+    const fallbackCredentialAvailable = credentialAvailable(fallbackCredential, env);
     const missing = [
       !packageAvailable ? "@opencode-ai/sdk package" : undefined,
       !binaryAvailable ? `${binary} binary` : undefined,
-      !fallback ? "fallback LLM connection" : undefined,
-      !effectiveModel ? "effective SDK model" : undefined,
+      fallbackEngine && !fallback ? "configured fallback LLM connection" : undefined,
+      !fallbackCredentialAvailable ? "required fallback credential" : undefined,
     ].filter((value): value is string => value !== undefined);
     return {
-      name: "default-engine",
+      name: checkName,
       kind: "deterministic",
       status: missing.length === 0 ? "pass" : "warn",
       confidence: "high",
@@ -160,24 +182,29 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
         fallbackEngine: fallbackEngine ?? null,
         fallbackEndpoint: fallback?.connection.endpoint ?? null,
         fallbackModel: fallback?.connection.model ?? null,
+        requiredCredentialAvailable: fallbackCredentialAvailable,
       },
     };
   }
   try {
     const runner = (deps.resolveEngine ?? resolveEngine)(engineName, config);
     if (runner.kind === "llm") {
+      const requiredCredentialAvailable = credentialAvailable(runner.credential, env);
       return {
-        name: "default-engine",
+        name: checkName,
         kind: "deterministic",
-        status: "pass",
+        status: requiredCredentialAvailable ? "pass" : "warn",
         confidence: "high",
-        message: `LLM engine "${engineName}" is configured.`,
+        message: requiredCredentialAvailable
+          ? `LLM engine "${engineName}" is configured.`
+          : `LLM engine "${engineName}" is configured, but its required credential is unavailable.`,
         evidence: {
           engine: engineName,
           platform: null,
           runtimeKind: "llm",
           model: runner.connection.model,
           endpoint: runner.connection.endpoint,
+          requiredCredentialAvailable,
         },
       };
     }
@@ -186,7 +213,7 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
     const version = (deps.spawnSync ?? spawnSync)(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
     if ((version.status ?? 1) !== 0) {
       return {
-        name: "default-engine",
+        name: checkName,
         kind: "deterministic",
         status: "warn",
         confidence: "medium",
@@ -200,7 +227,7 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
       };
     }
     return {
-      name: "default-engine",
+      name: checkName,
       kind: "deterministic",
       status: "pass",
       confidence: "high",
@@ -214,11 +241,68 @@ export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {})
     };
   } catch (error) {
     return {
-      name: "default-engine",
+      name: checkName,
       kind: "deterministic",
       status: "warn",
       confidence: "high",
       message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {}): HealthCheckResult {
+  const config = deps.loadConfig?.() ?? loadConfig();
+  return runConfiguredEngineProbe("default-engine", config.defaults?.engine, config, deps);
+}
+
+export function runDefaultLlmEngineProbe(deps: DefaultEngineProbeDependencies = {}): HealthCheckResult {
+  const config = deps.loadConfig?.() ?? loadConfig();
+  return runConfiguredEngineProbe("default-llm-engine", config.defaults?.llmEngine, config, deps);
+}
+
+export function runActiveImproveStrategyProbe(deps: DefaultEngineProbeDependencies = {}): HealthCheckResult {
+  const config = deps.loadConfig?.() ?? loadConfig();
+  const strategyName = config.defaults?.improveStrategy ?? "default";
+  try {
+    const plan = resolveImprovePlan(strategyName, config);
+    const env = deps.env ?? process.env;
+    const unavailableProcesses = Object.entries(plan.processes).flatMap(([name, process]) => {
+      if (!process.enabled || !process.runner) return [];
+      return credentialAvailable(process.runner.credential, env) ? [] : [name];
+    });
+    if (plan.triageJudgment) {
+      const judgmentCredential =
+        plan.triageJudgment.kind === "llm"
+          ? plan.triageJudgment.credential
+          : plan.triageJudgment.kind === "sdk"
+            ? plan.triageJudgment.fallbackCredential
+            : undefined;
+      if (!credentialAvailable(judgmentCredential, env)) unavailableProcesses.push("triage.judgment");
+    }
+    return {
+      name: "active-improve-strategy",
+      kind: "deterministic",
+      status: unavailableProcesses.length === 0 ? "pass" : "warn",
+      confidence: "high",
+      message:
+        unavailableProcesses.length === 0
+          ? `Active improve strategy "${plan.strategy.name}" has available process engines.`
+          : `Active improve strategy "${plan.strategy.name}" has unavailable required credentials for: ${unavailableProcesses.join(", ")}.`,
+      evidence: {
+        strategy: plan.strategy.name,
+        unavailableProcesses,
+      },
+    };
+  } catch (error) {
+    const explicitlyConfigured =
+      config.defaults?.improveStrategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
+    return {
+      name: "active-improve-strategy",
+      kind: "deterministic",
+      status: explicitlyConfigured ? "warn" : "unknown",
+      confidence: "high",
+      message: `Active improve strategy "${strategyName}" is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      evidence: { strategy: strategyName, unavailableProcesses: [] },
     };
   }
 }
@@ -306,6 +390,16 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "default-engine",
     channel: "hard",
     run: () => runDefaultEngineProbe(),
+  },
+  {
+    name: "default-llm-engine",
+    channel: "hard",
+    run: () => runDefaultLlmEngineProbe(),
+  },
+  {
+    name: "active-improve-strategy",
+    channel: "hard",
+    run: () => runActiveImproveStrategyProbe(),
   },
   {
     // C2 (13-bus-factor): the cron task-failure rate was computed and rendered

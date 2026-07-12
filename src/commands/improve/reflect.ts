@@ -69,7 +69,9 @@ import {
 } from "../proposal/repository";
 import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { deriveLessonRef, runLessonQualityJudge } from "./distill";
+import { findAssetFilePath } from "./eligibility";
 import { classifyReflectChange } from "./reflect-noise";
+import { bareImproveRef, durableImproveRef } from "./source-identity";
 
 export interface AkmReflectOptions {
   /**
@@ -165,6 +167,10 @@ export interface AkmReflectOptions {
    * direct `akm reflect` invocations (no lane → downstream treats as `"unknown"`).
    */
   eligibilitySource?: EligibilitySource;
+  /** Source identity used only for durable event keys. */
+  sourceName?: string;
+  /** Read pre-source-qualification feedback only for the historical local stash. */
+  legacyBareState?: boolean;
 }
 
 export interface AkmReflectFailure {
@@ -199,12 +205,14 @@ const MAX_GLOBAL_FEEDBACK_LINES = 20;
  * all assets so `akm reflect` can operate in a general "review recent
  * signals" mode. Best-effort — a missing or empty events stream returns `[]`.
  */
-function readRecentFeedback(ref?: string): string[] {
+function readRecentFeedback(ref?: string, legacyRef?: string): string[] {
   try {
-    const result = readEvents({ type: "feedback", ...(ref ? { ref } : {}) });
+    const result = readEvents({ type: "feedback", ...(ref && !legacyRef ? { ref } : {}) });
+    const events =
+      ref && legacyRef ? result.events.filter((event) => event.ref === ref || event.ref === legacyRef) : result.events;
     const lines: string[] = [];
     const limit = ref ? MAX_FEEDBACK_LINES : MAX_GLOBAL_FEEDBACK_LINES;
-    for (const event of result.events.slice(-limit)) {
+    for (const event of events.slice(-limit)) {
       const md = (event.metadata ?? {}) as Record<string, unknown>;
       const signal = typeof md.signal === "string" ? md.signal : "?";
       const note = typeof md.reason === "string" ? md.reason : typeof md.note === "string" ? md.note : "";
@@ -343,6 +351,7 @@ async function readRelatedLessons(
   stash: string,
   ref: string,
   parsedRef: { type: string; name: string },
+  sourceName?: string,
 ): Promise<RelatedLesson[]> {
   if (parsedRef.type !== "skill") return [];
 
@@ -355,7 +364,7 @@ async function readRelatedLessons(
   }
 
   try {
-    const feedbackEvents = readEvents({ type: "distill_invoked", ref }).events;
+    const feedbackEvents = readEvents({ type: "distill_invoked", ref: durableImproveRef(ref, sourceName) }).events;
     for (const event of feedbackEvents) {
       const lessonRef = typeof event.metadata?.lessonRef === "string" ? event.metadata.lessonRef : undefined;
       if (lessonRef?.startsWith("lesson:")) candidateRefs.add(lessonRef);
@@ -366,9 +375,9 @@ async function readRelatedLessons(
 
   for (const candidateRef of candidateRefs) {
     try {
-      const entry = await lookup(parseAssetRef(candidateRef));
-      if (!entry?.filePath || !fs.existsSync(entry.filePath)) continue;
-      const content = fs.readFileSync(entry.filePath, "utf8");
+      const filePath = await findAssetFilePath(durableImproveRef(candidateRef, sourceName), stash);
+      if (!filePath || !fs.existsSync(filePath)) continue;
+      const content = fs.readFileSync(filePath, "utf8");
       related.set(candidateRef, { ref: candidateRef, content });
     } catch {
       // Index miss is non-fatal.
@@ -934,7 +943,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // attempt regardless of downstream success/failure.
   appendEvent({
     eventType: "reflect_invoked",
-    ...(options.ref ? { ref: options.ref } : {}),
+    ...(options.ref ? { ref: durableImproveRef(options.ref, options.sourceName) } : {}),
     metadata: {
       ...(options.task ? { task: options.task } : {}),
       ...(options.engine ? { engine: options.engine } : {}),
@@ -1004,9 +1013,15 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       assetContent = options.assetContent;
     } else {
       try {
-        const entry = await lookup(parsedRef);
-        if (entry?.filePath && fs.existsSync(entry.filePath)) {
-          assetContent = fs.readFileSync(entry.filePath, "utf8");
+        const qualifiedRef = durableImproveRef(options.ref, options.sourceName);
+        const localFilePath = await findAssetFilePath(qualifiedRef, stash);
+        if (localFilePath && fs.existsSync(localFilePath)) {
+          assetContent = fs.readFileSync(localFilePath, "utf8");
+        } else {
+          const entry = await lookup(parseAssetRef(qualifiedRef));
+          if (entry?.filePath && fs.existsSync(entry.filePath)) {
+            assetContent = fs.readFileSync(entry.filePath, "utf8");
+          }
         }
       } catch {
         // Index miss is non-fatal — the agent can still propose a fresh asset.
@@ -1063,9 +1078,13 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
   // proposals. These are stable across refinement iterations; only the
   // `priorDraft` field changes per-iteration (R-1 / #372).
-  const feedback = readRecentFeedback(options.ref);
+  const feedback = readRecentFeedback(
+    options.ref ? durableImproveRef(options.ref, options.sourceName) : undefined,
+    options.ref && options.legacyBareState ? bareImproveRef(options.ref) : undefined,
+  );
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
-  const relatedLessons = options.ref && parsedRef ? await readRelatedLessons(stash, options.ref, parsedRef) : [];
+  const relatedLessons =
+    options.ref && parsedRef ? await readRelatedLessons(stash, options.ref, parsedRef, options.sourceName) : [];
   // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
   // reproducing proposals that have already been reviewed and refused.
   const rejectedProposals = readRejectedProposals(stash, options.ref);

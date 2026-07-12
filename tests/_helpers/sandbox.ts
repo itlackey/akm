@@ -25,7 +25,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createMigrationBackup, getMigrationBackupDir } from "../../src/core/migration-backup";
 
 export type Cleanup = () => void;
 
@@ -354,10 +353,6 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
   }
   const configPath = path.join(xdgConfigHome, "akm", "config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-
-  // Model the production first-write contract: capture the absent/pre-cutover
-  // state before a test fixture writes a current-version config directly.
-  if (!fs.existsSync(configPath) && !fs.existsSync(getMigrationBackupDir())) createMigrationBackup();
 
   let existing: Record<string, unknown> = {};
   if (fs.existsSync(configPath)) {

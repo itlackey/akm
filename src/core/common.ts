@@ -48,6 +48,9 @@ export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const IS_WINDOWS = process.platform === "win32";
+export const MAX_CONFIG_FILE_BYTES = 1024 * 1024;
+export const MAX_LOCAL_METADATA_BYTES = 1024 * 1024;
+export const MAX_LOCK_METADATA_BYTES = 64 * 1024;
 
 export function isHttpUrl(value: string | undefined): boolean {
   return !!value && /^https?:\/\//.test(value);
@@ -85,6 +88,39 @@ export function isAssetType(type: string): type is AkmAssetType {
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
+
+export function readTextFileDescriptorWithLimit(
+  fd: number,
+  maxBytes: number,
+  label = "File",
+  displayPath = "(open file)",
+): string {
+  const stat = fs.fstatSync(fd);
+  if (!stat.isFile()) throw new ConfigError(`${label} is not a regular file: ${displayPath}.`, "INVALID_CONFIG_FILE");
+  if (stat.size > maxBytes) {
+    throw new ConfigError(`${label} exceeds the ${maxBytes}-byte limit: ${displayPath}.`, "INVALID_CONFIG_FILE");
+  }
+  const buffer = Buffer.allocUnsafe(maxBytes + 1);
+  let total = 0;
+  while (total <= maxBytes) {
+    const bytesRead = fs.readSync(fd, buffer, total, maxBytes + 1 - total, null);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  if (total > maxBytes) {
+    throw new ConfigError(`${label} exceeds the ${maxBytes}-byte limit: ${displayPath}.`, "INVALID_CONFIG_FILE");
+  }
+  return buffer.subarray(0, total).toString("utf8");
+}
+
+export function readTextFileWithLimit(filePath: string, maxBytes: number, label = "File"): string {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    return readTextFileDescriptorWithLimit(fd, maxBytes, label, filePath);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 /**
  * Write content to a file atomically via a temp file + rename.
@@ -203,7 +239,7 @@ function isValidDirectory(dir: string): boolean {
 function readStashDirFromConfig(): string | undefined {
   try {
     const configPath = getConfigPath();
-    const text = fs.readFileSync(configPath, "utf8");
+    const text = readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file");
     const raw = JSON.parse(text);
     if (typeof raw === "object" && raw !== null && typeof raw.stashDir === "string" && raw.stashDir.trim()) {
       return raw.stashDir.trim();
@@ -411,7 +447,8 @@ export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT
     // No streaming body available (e.g., some mock environments). Fall
     // back to text() but still enforce the cap post-hoc.
     const text = await response.text();
-    if (text.length > maxBytes) throw new ResponseTooLargeError(url, maxBytes, text.length);
+    const byteLength = Buffer.byteLength(text, "utf8");
+    if (byteLength > maxBytes) throw new ResponseTooLargeError(url, maxBytes, byteLength);
     return text;
   }
 

@@ -405,7 +405,8 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "sql": 
 "CREATE TABLE schema_migrations (
       id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
+      applied_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      checksum   TEXT
     )"
 ,
       "type": "table",
@@ -494,7 +495,8 @@ exports[`SQLite migration runner characterization workflow.db: fresh-DB migratio
       "sql": 
 "CREATE TABLE schema_migrations (
       id         TEXT    PRIMARY KEY,
-      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))
+      applied_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      checksum   TEXT
     )"
 ,
       "type": "table",

@@ -41,6 +41,7 @@ import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import type { AkmConfig } from "../../core/config/config";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
 import { info, warn } from "../../core/warn";
@@ -48,7 +49,7 @@ import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { executeRunner, type RunnerSeams } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
-import { akmProposalAccept, akmProposalReject } from "./proposal";
+import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./repository";
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,10 @@ export interface DrainGateContext {
 
 export interface DrainOptions {
   stashDir: string;
+  /** Frozen destination identity used by every promotion path. */
+  target?: string;
+  /** Frozen config snapshot paired with {@link target}. */
+  config?: AkmConfig;
   policy: DrainPolicy;
   /** "queue" (default, safe) stages only and never promotes; "promote" accepts. */
   applyMode: "queue" | "promote";
@@ -150,7 +155,9 @@ export interface DrainResult {
 
 // Injectable test seams (mirrors improve-auto-accept.ts's promoteFn override).
 export type PromoteFn = typeof akmProposalAccept;
-export type RejectFn = typeof akmProposalReject;
+export type RejectFn = (
+  options: Parameters<typeof akmProposalReject>[0],
+) => ProposalRejectResult | Promise<ProposalRejectResult>;
 
 /** A single verdict the judgment runner returns for a deferred proposal. */
 export interface JudgmentVerdict {
@@ -417,6 +424,8 @@ interface JudgmentTierInput {
   promoteFn: PromoteFn;
   rejectFn: RejectFn;
   seams: JudgmentSeams;
+  target?: string;
+  config?: AkmConfig;
   /**
    * Remaining accept budget so (deterministic promotions + judgment-tier
    * promotions) ≤ maxAccepts. Once exhausted, further judge-"accept" items are
@@ -479,7 +488,7 @@ async function runJudgmentTier(input: JudgmentTierInput): Promise<{
         continue;
       }
       try {
-        input.rejectFn({ stashDir: input.stashDir, id: item.id, reason: verdict.reason || "judgment: reject" });
+        await input.rejectFn({ stashDir: input.stashDir, id: item.id, reason: verdict.reason || "judgment: reject" });
         rejected.push(item.id);
       } catch (err) {
         warn(`[triage] judgment reject failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -509,7 +518,12 @@ async function runJudgmentTier(input: JudgmentTierInput): Promise<{
       continue;
     }
     try {
-      await input.promoteFn({ stashDir: input.stashDir, id: item.id });
+      await input.promoteFn({
+        stashDir: input.stashDir,
+        id: item.id,
+        ...(input.target ? { target: input.target } : {}),
+        ...(input.config ? { config: input.config } : {}),
+      });
       promoted.push(item.id);
       acceptBudget -= 1;
     } catch (err) {
@@ -597,7 +611,7 @@ export async function drainProposals(
       continue;
     }
     try {
-      rejectFn({ stashDir: opts.stashDir, id: target.id, reason: target.reason });
+      await rejectFn({ stashDir: opts.stashDir, id: target.id, reason: target.reason });
       result.rejected.push(target.id);
     } catch (err) {
       warn(`[triage] reject failed for ${target.id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -621,7 +635,12 @@ export async function drainProposals(
     info(`[triage] auto-promote active: ${withinCap.length} accepts allowed this run`);
     for (const id of withinCap) {
       try {
-        await promoteFn({ stashDir: opts.stashDir, id });
+        await promoteFn({
+          stashDir: opts.stashDir,
+          id,
+          ...(opts.target ? { target: opts.target } : {}),
+          ...(opts.config ? { config: opts.config } : {}),
+        });
         result.promoted.push(id);
         deterministicPromoted += 1;
       } catch (err) {
@@ -655,6 +674,8 @@ export async function drainProposals(
       promoteFn,
       rejectFn,
       seams: judgmentSeams,
+      ...(opts.target ? { target: opts.target } : {}),
+      ...(opts.config ? { config: opts.config } : {}),
       remainingAcceptBudget,
     });
     result.promoted.push(...tier.promoted);

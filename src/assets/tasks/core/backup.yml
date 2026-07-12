@@ -1,5 +1,5 @@
 version: 2
 schedule: "0 3 * * 0"
 command: akm db backups
-enabled: true
-description: Weekly config/DB backup
+enabled: false
+description: Disabled until akm provides a general recurring backup command

@@ -672,10 +672,10 @@ describe("recombine cap-aware decay — full rankedClusters wiring (#658, Gap-3)
 
       // Resolve each cluster's stable lesson ref from the pending hypothesis
       // proposals. `deriveRecombineLessonRef` slugifies the tag into the ref
-      // (`lesson:recombined/<tag>-<hash>`), so the tag prefix identifies which
+      // (`lesson:<tag>-<hash>`), so the tag prefix identifies which
       // ref belongs to which cluster without reconstructing entryKeys by hand.
       const refForTag = (tag: string): string => {
-        const hyp = pendingByType(stash, "hypothesis").find((p) => p.ref.startsWith(`lesson:recombined/${tag}-`));
+        const hyp = pendingByType(stash, "hypothesis").find((p) => p.ref.startsWith(`lesson:${tag}-`));
         expect(hyp).toBeDefined();
         return (hyp as { ref: string }).ref;
       };

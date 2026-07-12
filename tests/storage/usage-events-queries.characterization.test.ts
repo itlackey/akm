@@ -18,10 +18,9 @@ import type { Database as AkmDatabase } from "../../src/storage/database";
  * out of command code (feedback-cli.ts, improve.ts, history.ts) into
  * src/indexer/usage-events.ts.
  *
- * Each `expected*` block is the EXACT raw SQL that lived inline in the command
- * before extraction. The test asserts the new repository helper returns
- * byte-identical results against a directly-seeded in-memory usage_events table,
- * proving zero behaviour change.
+ * The non-ref filters retain the raw SQL behaviour that lived inline in the
+ * command before extraction. Ref filtering additionally covers canonical bare
+ * refs across legacy and source-qualified rows.
  */
 describe("usage_events query characterization (WS5)", () => {
   let db: AkmDatabase;
@@ -46,6 +45,9 @@ describe("usage_events query characterization (WS5)", () => {
       ["feedback", null, 1, "lesson:a", "negative", "{}", "user", "2026-01-06 10:00:00"],
       ["feedback", null, 2, "lesson:b", "negative", "{}", "improve", "2026-01-07 10:00:00"],
       ["search", "beta", 2, "lesson:b", null, null, "improve", "2026-01-08 10:00:00"],
+      ["ref-test", null, 1, "stash//lesson:a", null, null, "user", "2026-01-09 10:00:00"],
+      ["ref-test", null, 1, "team//lesson:a", null, null, "user", "2026-01-10 10:00:00"],
+      ["ref-test", null, 1, "team//lesson:a-extra", null, null, "user", "2026-01-11 10:00:00"],
     ];
     for (const r of rows) insert.run(...r);
   });
@@ -104,16 +106,18 @@ describe("usage_events query characterization (WS5)", () => {
     expect(getUsageEvents(db, { since: "2026-01-05 00:00:00" })).toEqual(
       buildExpected(["created_at >= ?"], ["2026-01-05 00:00:00"]),
     );
-    // since + entry_ref.
-    expect(getUsageEvents(db, { since: "2026-01-04 00:00:00", entry_ref: "lesson:a" })).toEqual(
-      buildExpected(["entry_ref = ?", "created_at >= ?"], ["lesson:a", "2026-01-04 00:00:00"]),
-    );
+    // Bare entry_ref includes exact legacy rows and exact source-qualified suffixes.
+    expect(
+      getUsageEvents(db, { since: "2026-01-04 00:00:00", entry_ref: "lesson:a" }).map((row) => row.entry_ref),
+    ).toEqual(["lesson:a", "lesson:a", "lesson:a", "stash//lesson:a", "team//lesson:a"]);
     // since + source.
     expect(getUsageEvents(db, { since: "2026-01-01 00:00:00", source: "improve" })).toEqual(
       buildExpected(["created_at >= ?", "source = ?"], ["2026-01-01 00:00:00", "improve"]),
     );
-    // no since (existing behaviour unchanged).
-    expect(getUsageEvents(db, { entry_ref: "lesson:a" })).toEqual(buildExpected(["entry_ref = ?"], ["lesson:a"]));
+    // A qualified entry_ref preserves exact source identity.
+    expect(getUsageEvents(db, { entry_ref: "stash//lesson:a" }).map((row) => row.entry_ref)).toEqual([
+      "stash//lesson:a",
+    ]);
   });
 
   test("getUsageEvents fully materialises results (survive db.close)", () => {

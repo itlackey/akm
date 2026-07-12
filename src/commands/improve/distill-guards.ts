@@ -129,7 +129,7 @@ export function checkDistillFidelity(
     }
   }
 
-  // Also flag proposals whose source_refs are empty (broken provenance).
+  // Also flag proposals whose xrefs are empty (broken provenance).
   // This is a degradation signal, not a contradiction, but worth surfacing.
   return { contradictionDetected: false };
 }

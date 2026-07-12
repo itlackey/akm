@@ -8,13 +8,15 @@
 // files are dirty; instead it SCOPES what it stages:
 //   1. explicit `options.paths` → exactly those
 //   2. fallback → akm-managed pathspecs (TYPE_DIRS + `.akm`) that exist
-//   3. last resort → `git add -A` (only when no managed pathspec exists)
+//   3. no managed pathspec → no commit (never broad-stage unrelated files)
 // The non-akm files must be left untouched/uncommitted.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { parseAssetRef } from "../../src/core/asset/asset-ref";
+import { commitWriteTargetBoundary, writeAssetToSource } from "../../src/core/write-source";
 import { saveGitStash } from "../../src/sources/providers/git";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
@@ -65,6 +67,73 @@ afterEach(() => {
 });
 
 describe("saveGitStash — scoped staging (auto-sync incident regression)", () => {
+  test("content-layout boundary commits only content and leaves repository-root WIP dirty", () => {
+    const repoDir = process.env.AKM_STASH_DIR as string;
+    const contentDir = path.join(repoDir, "content");
+    initRepo(repoDir);
+    writeFile(path.join(contentDir, "memories", "asset.md"), "asset\n");
+    writeFile(path.join(repoDir, "src", "work-in-progress.ts"), "unrelated WIP\n");
+
+    commitWriteTargetBoundary(
+      {
+        source: { kind: "git", name: "team", path: contentDir, repoPath: repoDir },
+        config: { type: "git", name: "team", url: "https://example.com/team/stash.git", writable: true },
+      },
+      "content only",
+      { push: false, paths: ["content/memories/asset.md"] },
+    );
+
+    expect(committedFiles(repoDir)).toEqual(["content/memories/asset.md"]);
+    expect(status(repoDir)).toContain("src/");
+  });
+
+  test("content-layout boundary does not commit unrelated pre-staged WIP", () => {
+    const repoDir = process.env.AKM_STASH_DIR as string;
+    const contentDir = path.join(repoDir, "content");
+    initRepo(repoDir);
+    writeFile(path.join(repoDir, "src", "staged-wip.ts"), "pre-staged WIP\n");
+    const stageWip = spawnSync("git", ["-C", repoDir, "add", "--", "src/staged-wip.ts"], { encoding: "utf8" });
+    expect(stageWip.status).toBe(0);
+    writeFile(path.join(contentDir, "memories", "asset.md"), "asset\n");
+
+    commitWriteTargetBoundary(
+      {
+        source: { kind: "git", name: "team", path: contentDir, repoPath: repoDir },
+        config: { type: "git", name: "team", url: "https://example.com/team/stash.git", writable: true },
+      },
+      "content only",
+      { push: false, paths: ["content/memories/asset.md"] },
+    );
+
+    expect(committedFiles(repoDir)).toEqual(["content/memories/asset.md"]);
+    expect(status(repoDir)).toContain("A  src/staged-wip.ts");
+  });
+
+  test("write boundary excludes pre-staged WIP inside the same content asset directory", async () => {
+    const repoDir = process.env.AKM_STASH_DIR as string;
+    const contentDir = path.join(repoDir, "content");
+    initRepo(repoDir);
+    writeFile(path.join(contentDir, "memories", "staged-wip.md"), "pre-staged content WIP\n");
+    expect(
+      spawnSync("git", ["-C", repoDir, "add", "--", "content/memories/staged-wip.md"], { encoding: "utf8" }).status,
+    ).toBe(0);
+    const target = {
+      source: { kind: "git", name: "team", path: contentDir, repoPath: repoDir },
+      config: { type: "git" as const, name: "team", url: "https://example.com/team/stash.git", writable: true },
+    };
+
+    await writeAssetToSource(
+      target.source,
+      target.config,
+      parseAssetRef("memory:operation-owned"),
+      "---\ndescription: Operation-owned memory\n---\n\nAsset body.\n",
+    );
+    commitWriteTargetBoundary(target, "exact operation paths", { push: false });
+
+    expect(committedFiles(repoDir)).toEqual(["content/memories/operation-owned.md"]);
+    expect(status(repoDir)).toContain("A  content/memories/staged-wip.md");
+  });
+
   test("commits akm-managed files and leaves unrelated non-akm files dirty/untouched", () => {
     const stashDir = process.env.AKM_STASH_DIR as string;
     initRepo(stashDir);

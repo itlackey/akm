@@ -43,6 +43,7 @@ import {
 } from "../../core/file-lock";
 import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
+import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
 import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
@@ -451,16 +452,17 @@ function resolveHarness(type: string, harnesses?: SessionLogHarness[]): SessionL
  */
 function buildCandidateProposal(
   candidate: ExtractCandidate,
-  sourceRef: SessionRef,
+  sourceRef: SessionSummary,
+  sessionAssetRef?: string,
 ): { ref: string; content: string; description: string } {
-  const ref = `${candidate.type}:${candidate.name}`;
+  const ref = deriveExtractCandidateRef(candidate, sourceRef);
   // Post-generation repair pass (#556): deterministically complete a
   // description the LLM sliced mid-sentence before it reaches the
   // auto-accept validators. No-op (byte-identical) for valid descriptions.
   const description = repairTruncatedDescription(candidate.description, candidate.body);
   const fm: Record<string, unknown> = {
     description,
-    sources: [`session:${sourceRef.harness}:${sourceRef.sessionId}`],
+    ...(sessionAssetRef ? { xrefs: [sessionAssetRef] } : {}),
   };
   if (candidate.type === "lesson" && candidate.when_to_use) {
     fm.when_to_use = candidate.when_to_use;
@@ -476,6 +478,38 @@ function buildCandidateProposal(
   }
   const content = assembleAsset(fm, candidate.body);
   return { ref, content, description };
+}
+
+function canonicalSegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function deriveExtractCandidateRef(candidate: ExtractCandidate, sourceRef: SessionSummary): string {
+  const candidateParts = candidate.name.split("/").map(canonicalSegment).filter(Boolean);
+  const leaf = candidateParts.at(-1) ?? "extracted-insight";
+  if (candidate.type === "memory" || candidate.type === "lesson") {
+    const projectName = sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
+    const scope = projectName ? canonicalSegment(projectName) : "";
+    return `${candidate.type}:${scope ? `${scope}/` : ""}${leaf}`;
+  }
+  return `knowledge:${leaf}`;
+}
+
+function resolveExtractStandards(stashDir: string): string {
+  const sections: string[] = [];
+  const general = resolveStashStandards(stashDir);
+  if (general) sections.push(general);
+  for (const type of ["memory", "lesson", "knowledge"]) {
+    const body = resolveTypeConventions(stashDir, type);
+    if (body)
+      sections.push(`# ${typeConventionRef(type)} (soft per-type conventions — guidance, not enforced)\n${body}`);
+  }
+  return sections.join("\n\n");
 }
 
 /**
@@ -720,12 +754,14 @@ async function processSession(
 
   const payload = parseExtractPayload(llmRaw);
   const proposalIds: string[] = [];
+  // Provenance refs are added only after the cited session asset exists.
+  const sessionAsset = await maybeWriteSessionAsset();
 
   if (payload.candidates.length === 0) {
     appendEvent(
       {
         eventType: "extract_invoked",
-        ref: `session:${harness.name}:${sessionRef.sessionId}`,
+        ...(sessionAsset.sessionAssetRef ? { ref: sessionAsset.sessionAssetRef } : {}),
         metadata: {
           outcome: "no_candidates" as const,
           sessionId: sessionRef.sessionId,
@@ -738,7 +774,6 @@ async function processSession(
       },
       ctx,
     );
-    const sessionAsset = await maybeWriteSessionAsset();
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
@@ -763,8 +798,9 @@ async function processSession(
   // The invocation boundary resolves this from the frozen extract process.
 
   for (const candidate of payload.candidates) {
+    const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
     if (dryRun) {
-      proposalIds.push(`dry-run:${candidate.type}:${candidate.name}`);
+      proposalIds.push(`dry-run:${built.ref}`);
       continue;
     }
     try {
@@ -781,7 +817,7 @@ async function processSession(
       );
       const effectiveConfidence = gateResult.effectiveConfidence;
       if (gateResult.warning) warn(gateResult.warning);
-      const { ref, content, description } = buildCandidateProposal(candidate, sessionRef);
+      const { ref, content, description } = built;
       const result = createProposal(
         stashDir,
         {
@@ -794,7 +830,7 @@ async function processSession(
               description,
               ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
               ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
-              sources: [`session:${sessionRef.harness}:${sessionRef.sessionId}`],
+              ...(sessionAsset.sessionAssetRef ? { xrefs: [sessionAsset.sessionAssetRef] } : {}),
               evidence: candidate.evidence,
               // #615 WS-0: mirror ordered-action + outcome data in the proposal
               // frontmatter record so downstream tooling can read it without
@@ -829,7 +865,7 @@ async function processSession(
   appendEvent(
     {
       eventType: "extract_invoked",
-      ref: `session:${harness.name}:${sessionRef.sessionId}`,
+      ...(sessionAsset.sessionAssetRef ? { ref: sessionAsset.sessionAssetRef } : {}),
       metadata: {
         outcome: "candidates_queued" as const,
         sessionId: sessionRef.sessionId,
@@ -844,7 +880,6 @@ async function processSession(
     ctx,
   );
 
-  const sessionAsset = await maybeWriteSessionAsset();
   return {
     sessionId: sessionRef.sessionId,
     harness: harness.name,
@@ -1130,7 +1165,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // Stash authoring standards (convention/meta fact bodies) for non-wiki
   // extract output. Resolved ONCE per run and threaded into each session's
   // prompt so facts are not re-read per session.
-  const extractStandardsContext = resolveStashStandards(stashDir);
+  const extractStandardsContext = resolveExtractStandards(stashDir);
 
   for (const summary of candidates) {
     // #602 — the already-extracted skip moved INTO processSession (the content

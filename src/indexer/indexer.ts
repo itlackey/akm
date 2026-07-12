@@ -344,7 +344,7 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
 
   // Re-link detached usage_events and recompute utility scores.
   onProgress({ phase: "finalize", message: "Relinking usage events." });
-  relinkUsageEvents(db);
+  relinkUsageEvents(db, { sources, defaultStashDir: stashDir });
   onProgress({ phase: "finalize", message: "Recomputing utility scores." });
   recomputeUtilityScores(db);
 
@@ -553,6 +553,10 @@ async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
       const sourceCacheEnd = Date.now();
       const allSourceEntries = resolveSourceEntries(stashDir, config);
       const allSourceDirs = allSourceEntries.map((s) => s.path);
+      const { recoverInterruptedMoveTransactions } = await import("../commands/mv-cli");
+      for (const sourceDir of new Set([stashDir, ...allSourceDirs])) {
+        await recoverInterruptedMoveTransactions(sourceDir);
+      }
       onProgress({
         phase: "preflight",
         message: `Resolved ${allSourceDirs.length} stash source${allSourceDirs.length === 1 ? "" : "s"}.`,

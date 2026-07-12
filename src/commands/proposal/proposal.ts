@@ -16,10 +16,8 @@
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import {
-  archiveProposal,
   type CreateProposalInput,
   createProposal,
   diffProposal,
@@ -29,6 +27,8 @@ import {
   type Proposal,
   type ProposalsContext,
   promoteProposal,
+  recoverProposalTransactionsForStash,
+  rejectProposalDurably,
   resolveProposalId,
   revertProposal,
 } from "./repository";
@@ -137,26 +137,6 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
   const resolvedId = resolveProposalId(stash, options.id).id;
   const result = await promoteProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
 
-  // Emit `promoted` to the events stream so observers (audit, dashboards,
-  // sync) see the accept happen. Only emit on the happy path — promotion
-  // throws on validation failure, so reaching this point means the asset
-  // is committed.
-  appendEvent({
-    eventType: "promoted",
-    ref: result.ref,
-    metadata: {
-      proposalId: result.proposal.id,
-      source: result.proposal.source,
-      ...(result.proposal.sourceRun !== undefined ? { sourceRun: result.proposal.sourceRun } : {}),
-      assetPath: result.assetPath,
-      // Attribution tagging: carry the eligibility lane from the proposal record
-      // onto the promoted event so accept outcomes can be sliced by lane.
-      ...(result.proposal.eligibilitySource !== undefined
-        ? { eligibilitySource: result.proposal.eligibilitySource }
-        : {}),
-    },
-  });
-
   return {
     schemaVersion: 1,
     ok: true,
@@ -174,6 +154,7 @@ export interface ProposalRejectOptions {
   id: string;
   reason?: string;
   ctx?: ProposalsContext;
+  config?: AkmConfig;
 }
 
 export interface ProposalRejectResult {
@@ -185,36 +166,23 @@ export interface ProposalRejectResult {
   proposal: Proposal;
 }
 
-export function akmProposalReject(options: ProposalRejectOptions): ProposalRejectResult {
-  const stash = resolveStash(options.stashDir);
-  const existing = resolveProposalId(stash, options.id);
-  if (existing.status !== "pending") {
-    throw new UsageError(
-      `Proposal ${existing.id} is not pending (current status: ${existing.status}). Only pending proposals can be rejected.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const updated = archiveProposal(stash, existing.id, "rejected", options.reason, options.ctx);
+export async function akmProposalReject(options: ProposalRejectOptions): Promise<ProposalRejectResult> {
+  return withAssetMutationLease("proposal-reject", async () => {
+    const stash = resolveStash(options.stashDir);
+    const config = options.config ?? loadConfig();
+    const proposalId = resolveProposalId(stash, options.id).id;
+    await recoverProposalTransactionsForStash(stash, config, options.ctx, proposalId);
+    const updated = rejectProposalDurably(stash, proposalId, options.reason, options.ctx);
 
-  appendEvent({
-    eventType: "rejected",
-    ref: updated.ref,
-    metadata: {
-      proposalId: updated.id,
-      source: updated.source,
-      ...(updated.sourceRun !== undefined ? { sourceRun: updated.sourceRun } : {}),
+    return {
+      schemaVersion: 1,
+      ok: true,
+      id: updated.id,
+      ref: updated.ref,
       ...(options.reason !== undefined ? { reason: options.reason } : {}),
-    },
+      proposal: updated,
+    };
   });
-
-  return {
-    schemaVersion: 1,
-    ok: true,
-    id: updated.id,
-    ref: updated.ref,
-    ...(options.reason !== undefined ? { reason: options.reason } : {}),
-    proposal: updated,
-  };
 }
 
 // ── diff ────────────────────────────────────────────────────────────────────
@@ -329,17 +297,6 @@ export async function akmProposalRevert(options: ProposalRevertOptions): Promise
   const config = options.config ?? loadConfig();
   const resolvedId = resolveProposalId(stash, options.id).id;
   const result = await revertProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
-
-  appendEvent({
-    eventType: "proposal_reverted",
-    ref: result.ref,
-    metadata: {
-      proposalId: result.proposal.id,
-      source: result.proposal.source,
-      ...(result.proposal.sourceRun !== undefined ? { sourceRun: result.proposal.sourceRun } : {}),
-      assetPath: result.assetPath,
-    },
-  });
 
   return {
     schemaVersion: 1,

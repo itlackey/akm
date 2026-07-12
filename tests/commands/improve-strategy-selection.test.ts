@@ -58,25 +58,23 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(false);
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
-    // Built-ins are complete presets. Omitted lanes retain code-default/off
-    // behavior rather than inheriting enabled blocks from the default preset.
-    expect(profile.processes?.validation).toBeUndefined();
-    expect(profile.processes?.proactiveMaintenance).toBeUndefined();
-    expect(profile.processes?.recombine).toBeUndefined();
-    expect(profile.processes?.procedural).toBeUndefined();
+    expect(profile.processes?.validation?.enabled).toBe(false);
+    expect(profile.processes?.proactiveMaintenance?.enabled).toBe(false);
+    expect(profile.processes?.recombine?.enabled).toBe(false);
+    expect(profile.processes?.procedural?.enabled).toBe(false);
     // Sync is enabled (consistent with every built-in): reflect can auto-accept
     // and write, so the run must commit rather than leave a silent backlog.
     // saveGitStash no-ops a clean tree, so this is free when nothing is written.
     expect(profile.sync?.enabled).toBe(true);
   });
 
-  test("built-in 'graph-refresh' does not inherit omitted default lanes", () => {
+  test("built-in 'graph-refresh' explicitly disables default lanes it does not run", () => {
     const profile = resolveImproveStrategy("graph-refresh", MINIMAL_CONFIG).config;
     expect(profile.processes?.graphExtraction).toMatchObject({ enabled: true, fullScan: true });
-    expect(profile.processes?.validation).toBeUndefined();
-    expect(profile.processes?.proactiveMaintenance).toBeUndefined();
-    expect(profile.processes?.recombine).toBeUndefined();
-    expect(profile.processes?.procedural).toBeUndefined();
+    expect(profile.processes?.validation?.enabled).toBe(false);
+    expect(profile.processes?.proactiveMaintenance?.enabled).toBe(false);
+    expect(profile.processes?.recombine?.enabled).toBe(false);
+    expect(profile.processes?.procedural?.enabled).toBe(false);
   });
 
   test("resolves named built-in 'thorough'", () => {
@@ -86,6 +84,33 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(true);
     expect(profile.processes?.memoryInference?.enabled).toBe(true);
     expect(profile.processes?.graphExtraction?.enabled).toBe(true);
+    expect(profile.processes?.extract?.enabled).toBe(true);
+    expect(profile.processes?.validation?.enabled).toBe(true);
+    expect(profile.processes?.proactiveMaintenance?.enabled).toBe(true);
+    expect(profile.processes?.triage?.enabled).toBe(true);
+  });
+
+  test("every built-in resolves the complete default process baseline", () => {
+    const expectedProcesses = Object.keys(
+      resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes ?? {},
+    ).sort();
+    for (const name of [
+      "quick",
+      "thorough",
+      "memory-focus",
+      "graph-refresh",
+      "frequent",
+      "consolidate",
+      "catchup",
+      "synthesize",
+      "reflect-distill",
+      "proactive-maintenance",
+      "recombine-only",
+    ]) {
+      expect(Object.keys(resolveImproveStrategy(name, MINIMAL_CONFIG).config.processes ?? {}).sort()).toEqual(
+        expectedProcesses,
+      );
+    }
   });
 
   test("resolves named built-in 'memory-focus'", () => {

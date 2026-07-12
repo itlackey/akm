@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
-import { saveConfig } from "../src/core/config/config";
+import { loadConfig, saveConfig } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openIndexDatabase } from "../src/indexer/db/db";
 import { akmIndex } from "../src/indexer/indexer";
+import { resolveSourceEntries } from "../src/indexer/search/search-source";
 import type { SourceSearchHit } from "../src/sources/types";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
@@ -94,10 +95,10 @@ describe("akm feedback", () => {
         )
         .all() as Array<{ entry_ref: string; entry_id: number | null; signal: string }>;
       expect(events).toHaveLength(2);
-      expect(events[0]?.entry_ref).toBe("env:prod");
+      expect(events[0]?.entry_ref).toBe("stash//env:prod");
       expect(events[0]?.entry_id).toEqual(expect.any(Number));
       expect(events[0]?.signal).toBe("positive");
-      expect(events[1]?.entry_ref).toBe("memory:deployment-notes");
+      expect(events[1]?.entry_ref).toBe("stash//memory:deployment-notes");
       expect(events[1]?.entry_id).toEqual(expect.any(Number));
       expect(events[1]?.signal).toBe("positive");
     } finally {
@@ -114,7 +115,7 @@ describe("akm feedback", () => {
     await buildIndex();
 
     const result = await runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
-    expect(result.status).toBe(0);
+    expect(result).toMatchObject({ status: 0 });
     expect(parseJsonOutput(result)).toMatchObject({
       ok: true,
       ref: "command:complete-github-issue",
@@ -161,11 +162,47 @@ describe("akm feedback", () => {
 
     // Read events.jsonl directly and verify the note was persisted in metadata.
     const { readEvents } = await import("../src/core/events");
-    const { events } = readEvents({ type: "feedback", ref: "memory:deployment-notes" });
+    const { events } = readEvents({ type: "feedback", ref: "stash//memory:deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
     expect(md.reason).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
+  });
+
+  test("origin-qualified feedback binds duplicate refs to the selected source row", async () => {
+    const teamDir = path.join(storage.root, "team-stash");
+    writeFile(path.join(stashDir, "memories", "shared.md"), "---\ndescription: primary copy\n---\nPrimary.\n");
+    writeFile(path.join(teamDir, "memories", "shared.md"), "---\ndescription: team copy\n---\nTeam.\n");
+    saveConfig({
+      semanticSearchMode: "off",
+      stashDir,
+      sources: [
+        { type: "filesystem", name: "stash", path: stashDir, primary: true, writable: true },
+        { type: "filesystem", name: "team", path: teamDir, writable: true },
+      ],
+      defaultWriteTarget: "stash",
+    });
+    expect(resolveSourceEntries(undefined, loadConfig()).map((source) => source.path)).toContain(teamDir);
+    await akmIndex({ stashDir, full: true });
+    expect(await runCli(["feedback", "stash//memory:shared", "--positive", "--format=json"])).toMatchObject({
+      status: 0,
+    });
+    // Re-prioritize the second source. The index intentionally keeps one winner
+    // for a duplicate bare ref, while durable feedback must retain both origins.
+    await akmIndex({ stashDir: teamDir, full: true });
+    expect(await runCli(["feedback", "team//memory:shared", "--positive", "--format=json"])).toMatchObject({
+      status: 0,
+    });
+
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const refs = db
+        .prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'feedback' ORDER BY entry_ref")
+        .all() as Array<{ entry_ref: string }>;
+      expect(refs.map((row) => row.entry_ref)).toEqual(["stash//memory:shared", "team//memory:shared"]);
+    } finally {
+      closeDatabase(db);
+    }
   });
 
   test("positive feedback affects subsequent ranking after re-indexing", async () => {

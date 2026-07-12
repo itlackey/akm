@@ -14,8 +14,8 @@
  * commit behaviour — they only ever touch the filesystem. Git-backed targets
  * are committed in a SINGLE batch at the operation boundary via
  * {@link commitWriteTargetBoundary} (which delegates to `saveGitStash`). This
- * stages `.akm/` + sibling assets together as one complete commit instead of
- * one noisy, incomplete commit per asset.
+ * stages only operation-owned paths that still have a Git status entry as one
+ * complete commit instead of one noisy, incomplete commit per asset.
  *
  * This module is still the **single dispatch point** for write/delete: callers
  * (remember, import, source-add, etc.) MUST go through `writeAssetToSource` /
@@ -26,7 +26,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getCachePaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
+import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
 import type { AssetRef } from "./asset/asset-ref";
 import { makeAssetRef } from "./asset/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "./asset/asset-spec";
@@ -54,6 +54,8 @@ export interface WriteTargetSource {
   readonly name: string;
   /** Absolute filesystem path the indexer walks. The asset is written here. */
   readonly path: string;
+  /** Git repository root used only for sync/commit boundaries. */
+  readonly repoPath?: string;
 }
 
 /**
@@ -71,6 +73,31 @@ const REJECTED_WRITABLE_KINDS: ReadonlySet<string> = new Set(["website", "npm"])
  * stream a downstream consumer parses.
  */
 const COMMIT_MESSAGE_MAX_LENGTH = 4096;
+const pendingGitPaths = new Map<string, Set<string>>();
+
+function gitTargetKey(source: WriteTargetSource): string {
+  return `${path.resolve(source.repoPath ?? source.path)}\0${path.resolve(source.path)}`;
+}
+
+/** Register a successful direct mutation for the target's exact-path boundary commit. */
+export function recordWriteTargetPath(source: WriteTargetSource, filePath: string): void {
+  if (source.kind !== "git") return;
+  const key = gitTargetKey(source);
+  const paths = pendingGitPaths.get(key) ?? new Set<string>();
+  paths.add(path.resolve(filePath));
+  pendingGitPaths.set(key, paths);
+}
+
+function takeGitTargetPaths(source: WriteTargetSource): string[] {
+  const key = gitTargetKey(source);
+  const absolutePaths = pendingGitPaths.get(key);
+  pendingGitPaths.delete(key);
+  if (!absolutePaths) return [];
+  const repoDir = path.resolve(source.repoPath ?? source.path);
+  return [...absolutePaths]
+    .map((filePath) => path.relative(repoDir, filePath).replaceAll(path.sep, "/"))
+    .filter((filePath) => filePath && filePath !== ".." && !filePath.startsWith("../"));
+}
 
 /**
  * Sanitize a string before passing it as `git commit -m <message>`.
@@ -202,6 +229,7 @@ export async function writeAssetToSource(
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const normalized = content.endsWith("\n") ? content : `${content}\n`;
   fs.writeFileSync(filePath, normalized, "utf8");
+  recordWriteTargetPath(source, filePath);
 
   // Non-fatal portability advisory (review 13, D1): flag absolute host home
   // paths in the written content. These make the stash non-portable and leak
@@ -239,6 +267,7 @@ export async function deleteAssetFromSource(
     );
   }
   fs.unlinkSync(filePath);
+  recordWriteTargetPath(source, filePath);
 
   return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
 }
@@ -252,9 +281,10 @@ export async function deleteAssetFromSource(
  * primary stash stay non-committing here — the primary stash is committed by
  * the existing improve auto-sync boundary).
  *
- * For a git target it delegates to `saveGitStash(name, message, writable, …)`,
- * which stages `.akm/` + sibling assets together (`git add -A`), commits once,
- * and pushes when the target is writable, has a remote, and `push !== false`.
+ * For a git target it delegates to `saveGitStash(name, message, writable, …)`
+ * with the exact paths recorded by the write/delete helpers (plus any explicit
+ * caller paths), commits once, and pushes when the target is writable, has a
+ * remote, and `push !== false`.
  *
  * The push intent honours a deprecated `options.pushOnCommit` on the source
  * config (mapped onto the batch push gate) when `push` is not explicitly set.
@@ -262,7 +292,7 @@ export async function deleteAssetFromSource(
 export function commitWriteTargetBoundary(
   target: ResolvedWriteTarget,
   message: string,
-  options?: { push?: boolean },
+  options?: { push?: boolean; paths?: string[] },
 ): void {
   if (target.source.kind !== "git") return;
 
@@ -274,12 +304,16 @@ export function commitWriteTargetBoundary(
   const push = options?.push ?? (target.config.options?.pushOnCommit === true ? true : undefined);
 
   const writable = resolveWritable(target.config);
-  // Commit against the already-resolved repo directory (target.source.path)
-  // rather than re-resolving the stash by name through config. The write helper
-  // resolved this exact path; the boundary commit must operate on the SAME
-  // directory so the staged batch matches what was just written.
+  const repoDir = target.source.repoPath ?? target.source.path;
+  const changedPaths = new Set(listGitChangedPaths(repoDir));
+  const paths = [...new Set([...(options?.paths ?? []), ...takeGitTargetPaths(target.source)])]
+    .map((filePath) => filePath.replaceAll(path.sep, "/"))
+    .filter((filePath) => changedPaths.has(filePath));
+  // Assets may live under <repo>/content, but git synchronization always runs
+  // against the repository root.
   saveGitStash(undefined, message, writable, {
-    repoDir: target.source.path,
+    repoDir,
+    paths,
     ...(push === undefined ? {} : { push }),
   });
 }
@@ -315,6 +349,30 @@ export interface ResolvedWriteTarget {
   config: SourceConfigEntry;
 }
 
+/** Enumerate enabled writable targets, deduplicated by materialized content root. */
+export function resolveWritableTargets(akmConfig: AkmConfig): ResolvedWriteTarget[] {
+  const byRoot = new Map<string, ResolvedWriteTarget>();
+  for (const runtime of resolveConfiguredSources(akmConfig)) {
+    if (runtime.enabled === false || !resolveWritable({ type: runtime.type, writable: runtime.writable })) continue;
+    const target = adaptConfiguredSource(runtime);
+    const root = path.resolve(target.source.path);
+    const existing = byRoot.get(root);
+    if (!existing || target.source.name === akmConfig.defaultWriteTarget) byRoot.set(root, target);
+  }
+  if (byRoot.size === 0) {
+    try {
+      const stashDir = resolveStashDir({ readOnly: true });
+      byRoot.set(path.resolve(stashDir), {
+        source: { kind: "filesystem", name: "stash", path: stashDir },
+        config: { type: "filesystem", path: stashDir, name: "stash", writable: true },
+      });
+    } catch {
+      // No active working stash; configured writable targets above are complete.
+    }
+  }
+  return [...byRoot.values()];
+}
+
 /**
  * Resolve the destination for a write per locked decision 3:
  *
@@ -326,8 +384,13 @@ export interface ResolvedWriteTarget {
  * The legacy `first-writable-in-source-array-order` fallback is *not* used —
  * see plan §6 decision 3 for the rationale.
  */
-export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string): ResolvedWriteTarget {
+export function resolveWriteTarget(
+  akmConfig: AkmConfig,
+  explicitTarget?: string,
+  options: { requireWritable?: boolean } = {},
+): ResolvedWriteTarget {
   const configuredSources = resolveConfiguredSources(akmConfig);
+  const requireWritable = options.requireWritable !== false;
 
   // 1. Explicit --target wins.
   if (explicitTarget) {
@@ -344,7 +407,7 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
     // effective writable flag (filesystem defaults to true; everything else
     // defaults to false) so unset values are interpreted correctly.
     const effectiveWritable = resolveWritable({ type: match.type, writable: match.writable });
-    if (!effectiveWritable) {
+    if (requireWritable && !effectiveWritable) {
       throw new ConfigError(
         `source ${explicitTarget} is not writable`,
         "INVALID_CONFIG_FILE",
@@ -364,7 +427,7 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
       // ConfigError, rather than surfacing as a generic UsageError after
       // path-building has already begun.
       const effectiveWritable = resolveWritable({ type: match.type, writable: match.writable });
-      if (!effectiveWritable) {
+      if (requireWritable && !effectiveWritable) {
         throw new ConfigError(
           `defaultWriteTarget "${akmConfig.defaultWriteTarget}" is not writable`,
           "INVALID_CONFIG_FILE",
@@ -479,8 +542,8 @@ export function formatRefForMessage(ref: AssetRef): string {
  * `git` by the config loader, so this mapping is straightforward.
  */
 function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
-  const writePath = pathFromConfiguredSource(runtime);
-  if (!writePath) {
+  const repoPath = pathFromConfiguredSource(runtime);
+  if (!repoPath) {
     throw new ConfigError(
       `Source "${runtime.name}" has no resolvable on-disk path; writes are unsupported for this entry.`,
       "INVALID_CONFIG_FILE",
@@ -504,15 +567,26 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
   const config: SourceConfigEntry = {
     type: runtime.type,
     name: runtime.name,
-    ...(writePath !== undefined ? { path: writePath } : {}),
+    ...(repoPath !== undefined ? { path: repoPath } : {}),
     ...(runtime.writable !== undefined ? { writable: runtime.writable } : {}),
     ...(runtime.options ? { options: runtime.options } : {}),
   };
 
   return {
-    source: { kind, name: runtime.name, path: writePath },
+    source: {
+      kind,
+      name: runtime.name,
+      path: kind === "git" ? resolveGitContentRoot(repoPath) : repoPath,
+      ...(kind === "git" ? { repoPath } : {}),
+    },
     config,
   };
+}
+
+/** Resolve the asset root inside a git checkout while preserving root-layout repos. */
+export function resolveGitContentRoot(repoPath: string): string {
+  const contentPath = path.join(repoPath, "content");
+  return fs.existsSync(contentPath) && fs.statSync(contentPath).isDirectory() ? contentPath : repoPath;
 }
 
 function pathFromConfiguredSource(runtime: ConfiguredSource): string | undefined {

@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Explicit, crash-resumable 0.9 migration coordination.** `akm migrate
+  status` classifies config, `state.db`, and `workflow.db` independently;
+  `akm migrate apply [--config <prepared>]` creates a verified,
+  installation-scoped backup before sealing ledgers or applying pending
+  migrations. Apply and restore use authenticated phase journals, exact
+  artifact fingerprints, bounded streaming I/O, SQLite integrity checks,
+  active-writer barriers, WAL/SHM-safe publication, and idempotent recovery.
+  Routine reads and current database opens no longer depend on a historical
+  cutover bundle. See `docs/migration/release-notes/0.9.0.md`.
 - **Workflow orchestration engine (experimental).** akm can now execute
   multi-step workflows as deterministic **YAML programs**, driven either by a
   native engine or by any agent session. This is a new, self-contained
@@ -283,16 +292,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   but never written — their citing files are reported in `readOnlyCiters` as
   manual follow-ups. Output:
   `{ok, from, to, rewrote: [{file, count}], readOnlyCiters, utilityPreserved}`;
-  a successful move appends an `mv` event. The operation spans FS + DB and is
-  not transactional, but its ordering (plan rewrites → apply citer edits →
-  rename last → re-key index last) makes an interrupted run safely
-  re-runnable; with no local index built, the rename still succeeds and the
-  next `akm index` picks it up, and `utilityPreserved: false` discloses when
-  an existing index could not be re-keyed (the ranking history then resets
-  on the next full index). Added to the v1 §9.4 command surface as an
-  Experimental-tier additive entry (see `STABILITY.md`).
+  a successful move appends an exactly-once `mv` event. A durable mutation
+  journal stages citer rewrites and the asset publication, preserves
+  source-qualified utility/salience history, and resumes index/state
+  finalization after interruption. Divergent citers and late-created targets
+  fail closed instead of being overwritten. Added to the v1 §9.4 command
+  surface as an Experimental-tier additive entry (see `STABILITY.md`).
 
 ### Changed
+
+- **Improve target identity is now end-to-end and source-qualified.** Explicit
+  targets govern reads, generated proposals, triage promotion, consolidation,
+  retrieval signals, cooldowns, and replay state. Duplicate bare refs in other
+  sources no longer affect the selected corpus. Generated lessons and
+  provenance follow stash placement conventions and canonical `xrefs`.
+- **Writable Git boundaries commit only operation-owned paths.** Improve,
+  proposal, supersedes, and direct write flows preserve unrelated staged or
+  dirty work, including files beside generated assets in `content/` layouts.
 
 - **Directory (scope/domain) tokens now always merge into `tags` at index
   time**, even when an asset sets explicit `tags:` frontmatter. Previously
@@ -334,6 +350,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Proposal promotion, reversion, and rejection are durable and recoverable.**
+  Acceptance and reversion persist target ownership and content fingerprints,
+  publish atomically across filesystem layouts, index immediately, commit exact
+  Git paths, and emit idempotent lifecycle events. Crash recovery and legacy
+  accepted proposals fail closed on ambiguous targets instead of clobbering
+  another source.
+- **Engine/setup/health behavior now matches the effective improve plan.**
+  Built-in strategies compose over one baseline, setup preserves independent
+  general and LLM defaults, native OpenCode SDK execution does not require an
+  unused fallback, and health checks each enabled process and credential.
 - **Check-in directives now survive plain-text output and `workflow
   status`** (check-in review C2/M1): `formatWorkflowNextPlain` and
   `formatWorkflowStatusPlain` render the `CONTINUE` directive, and every

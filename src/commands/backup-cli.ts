@@ -16,10 +16,10 @@ function requireVersion(value: string): void {
 }
 
 export const backupCommand = defineGroupCommand({
-  meta: { name: "backup", description: "Create or restore a versioned migration recovery bundle" },
+  meta: { name: "backup", description: "Create or restore a verified migration recovery run" },
   subCommands: {
     create: defineJsonCommand({
-      meta: { name: "create", description: "Create the immutable pre-0.9 migration recovery bundle" },
+      meta: { name: "create", description: "Create a unique installation-scoped migration recovery run" },
       args: {
         for: { type: "string", required: true, description: "Migration target version (0.9.0)" },
       },
@@ -36,19 +36,21 @@ export const backupCommand = defineGroupCommand({
       },
     }),
     restore: defineJsonCommand({
-      meta: { name: "restore", description: "Restore the pre-0.9 config and durable databases" },
+      meta: { name: "restore", description: "Restore a recovery run after preserving a rescue snapshot" },
       args: {
         for: { type: "string", required: true, description: "Migration target version (0.9.0)" },
+        run: { type: "string", description: "Backup run ID (defaults to the newest applicable run)" },
         confirm: { type: "boolean", default: false, description: "Confirm destructive restoration" },
       },
       run({ args }) {
         requireVersion(args.for);
-        const result = restoreMigrationBackup(args.confirm);
+        const result = restoreMigrationBackup(args.confirm, args.run);
         output("backup", {
           action: "restore",
           for: MIGRATION_BACKUP_VERSION,
           path: result.path,
           restored: true,
+          rescuePath: result.rescuePath,
           manifest: result.manifest,
         });
       },

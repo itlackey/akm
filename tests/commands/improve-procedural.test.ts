@@ -38,6 +38,7 @@ import { resolveImproveStrategy, resolveProcessEnabled } from "../../src/command
 import { akmProcedural, normalizeSequence } from "../../src/commands/improve/procedural";
 import type { AkmReflectResult } from "../../src/commands/improve/reflect";
 import { listProposals } from "../../src/commands/proposal/repository";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
@@ -339,22 +340,33 @@ describe("procedural — single workflow-proposal emission (AC1)", () => {
           outcomeData: "deploy succeeded cleanly",
         });
       }
+      const conventions = path.join(stash, "facts", "conventions", "assets");
+      fs.mkdirSync(conventions, { recursive: true });
+      fs.writeFileSync(
+        path.join(conventions, "workflow.md"),
+        "---\ncategory: convention\n---\n\nWORKFLOW_OUTPUT_RULE\n",
+      );
+      fs.writeFileSync(path.join(conventions, "skill.md"), "---\ncategory: convention\n---\n\nSKILL_OUTPUT_RULE\n");
       await buildIndex(stash);
 
       let calls = 0;
+      let prompt = "";
       const res = await akmProcedural({
         stashDir: stash,
         config: proceduralEnabledConfig(),
         sourceRun: "run-ac1",
         minRecurrence: 3,
         maxProposalsPerRun: 3,
-        proceduralLlmFn: async () => {
+        proceduralLlmFn: async (value) => {
           calls += 1;
+          prompt = value;
           return deployWorkflowJson();
         },
       });
 
       expect(calls).toBe(1);
+      expect(prompt).toContain("WORKFLOW_OUTPUT_RULE");
+      expect(prompt).not.toContain("SKILL_OUTPUT_RULE");
       expect(res.proposalsEmitted).toBe(1);
 
       const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "procedural");
@@ -367,6 +379,7 @@ describe("procedural — single workflow-proposal emission (AC1)", () => {
       const body = proposal.payload.content ?? "";
       const parsed = parseWorkflow(body, { path: proposal.ref });
       expect(parsed.ok).toBe(true);
+      expect(parseFrontmatter(body).data.xrefs).toEqual(["memory:s1", "memory:s2", "memory:s3"]);
       if (parsed.ok) {
         expect(parsed.document.steps.length).toBe(DEPLOY_SEQUENCE.length);
         for (const step of parsed.document.steps) {
@@ -421,6 +434,48 @@ describe("procedural — single workflow-proposal emission (AC1)", () => {
     },
     TIMEOUT_MS,
   );
+});
+
+describe("procedural — source-scoped corpus", () => {
+  test("excludes ordered actions indexed from unrelated read-only sources", async () => {
+    const selected = isolatedStash();
+    const readOnly = fs.mkdtempSync(path.join(path.dirname(selected), "readonly-source-"));
+    cleanups.push(() => fs.rmSync(readOnly, { recursive: true, force: true }));
+    for (const name of ["selected-a", "selected-b", "selected-c"]) {
+      writeOrderedActionsAsset(selected, { name, orderedActions: DEPLOY_SEQUENCE, outcomeData: "success" });
+    }
+    for (const name of ["foreign-a", "foreign-b", "foreign-c"]) {
+      writeOrderedActionsAsset(readOnly, {
+        name,
+        orderedActions: ["Delete database", "Restart everything"],
+        outcomeData: "success",
+      });
+    }
+    const config = proceduralEnabledConfig();
+    config.sources = [
+      { type: "filesystem", name: "selected", path: selected, writable: true },
+      { type: "filesystem", name: "readonly", path: readOnly, writable: false },
+    ];
+    config.defaultWriteTarget = "selected";
+    saveConfig(config);
+    await akmIndex({ full: true });
+    const prompts: string[] = [];
+
+    const result = await akmProcedural({
+      stashDir: selected,
+      config,
+      minRecurrence: 3,
+      proceduralLlmFn: async (prompt) => {
+        prompts.push(prompt);
+        return deployWorkflowJson();
+      },
+    });
+
+    expect(result.clustersFormed).toBe(1);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("run tests");
+    expect(prompts[0]).not.toContain("delete database");
+  });
 });
 
 // ── AC2: thresholds / success filtering / one-off rejection ─────────────────────

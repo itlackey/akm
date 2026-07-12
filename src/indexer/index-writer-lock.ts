@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -19,7 +20,7 @@ const INDEX_WRITER_LOCK_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 const INDEX_WRITER_WAIT_MS = 100;
 const DEFAULT_INDEX_WRITER_MAX_WAIT_MS = 10 * 60 * 1000;
 
-const heldLocks = new Map<string, { depth: number; exitHandler: () => void; ownership: LockOwnership }>();
+const leaseContext = new AsyncLocalStorage<Set<string>>();
 
 export interface IndexWriterLease {
   lockPath: string;
@@ -52,27 +53,19 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw signal.reason instanceof Error ? signal.reason : new Error("index writer wait aborted");
 }
 
-function releaseHeldLock(lockPath: string): void {
-  const held = heldLocks.get(lockPath);
-  if (!held) return;
-  held.depth -= 1;
-  if (held.depth > 0) return;
-  heldLocks.delete(lockPath);
-  process.off("exit", held.exitHandler);
-  releaseLock(held.ownership);
-}
-
-function retainHeldLock(lockPath: string, ownership?: LockOwnership): IndexWriterLease {
-  const existing = heldLocks.get(lockPath);
-  if (existing) {
-    existing.depth += 1;
-    return { lockPath, release: () => releaseHeldLock(lockPath) };
-  }
-  if (!ownership) throw new Error(`Missing ownership for index writer lock at ${lockPath}.`);
+function createLease(lockPath: string, ownership: LockOwnership): IndexWriterLease {
   const exitHandler = () => releaseLock(ownership);
   process.on("exit", exitHandler);
-  heldLocks.set(lockPath, { depth: 1, exitHandler, ownership });
-  return { lockPath, release: () => releaseHeldLock(lockPath) };
+  let released = false;
+  return {
+    lockPath,
+    release: () => {
+      if (released) return;
+      released = true;
+      process.off("exit", exitHandler);
+      releaseLock(ownership);
+    },
+  };
 }
 
 export async function acquireIndexWriterLease(
@@ -92,14 +85,10 @@ export async function acquireIndexWriterLease(
     const releaseBarrier = tryAcquireMaintenanceBarrier();
     if (releaseBarrier) {
       try {
-        if (heldLocks.has(lockPath)) {
-          options.onAcquired?.({ waitedMs: Date.now() - startedAt });
-          return retainHeldLock(lockPath);
-        }
         const ownership = tryAcquireLockSync(lockPath, buildPayload(options.purpose));
         if (ownership) {
           options.onAcquired?.({ waitedMs: Date.now() - startedAt });
-          return retainHeldLock(lockPath, ownership);
+          return createLease(lockPath, ownership);
         }
 
         const probe = probeLock(lockPath, { staleAfterMs: INDEX_WRITER_LOCK_STALE_AFTER_MS });
@@ -131,15 +120,28 @@ export async function withIndexWriterLease<T>(
   options: AcquireIndexWriterLeaseOptions,
   run: () => Promise<T>,
 ): Promise<T> {
-  const lease = await acquireIndexWriterLease(options);
-  if (!lease) {
-    throw new Error(`index writer lease unavailable for ${options.purpose}`);
-  }
-  try {
-    return await run();
-  } finally {
-    lease.release();
-  }
+  const lockPath = getIndexWriterLockPath();
+  const inherited = leaseContext.getStore();
+  if (inherited?.has(lockPath)) return run();
+
+  const context = inherited ?? new Set<string>();
+  const execute = async (): Promise<T> => {
+    const lease = await acquireIndexWriterLease(options);
+    if (!lease) throw new Error(`index writer lease unavailable for ${options.purpose}`);
+    context.add(lockPath);
+    try {
+      return await run();
+    } finally {
+      context.delete(lockPath);
+      lease.release();
+    }
+  };
+  return inherited ? execute() : leaseContext.run(context, execute);
+}
+
+/** Asset writes and index rebuilds share one lease so scans cannot publish stale snapshots. */
+export function withAssetMutationLease<T>(purpose: string, run: () => Promise<T>): Promise<T> {
+  return withIndexWriterLease({ purpose }, run);
 }
 
 export function probeIndexWriterLease() {

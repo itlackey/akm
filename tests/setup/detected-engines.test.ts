@@ -50,21 +50,43 @@ describe("setup detected engine identity", () => {
     expect(result.config.defaults?.engine).toBe("other");
   });
 
-  test("rejects a preferred name occupied by the conflicting engine kind", () => {
+  test("selects a detected LLM as both defaults when no general default exists", () => {
+    const result = upsertDetectedLlmEngine(base(), {
+      provider: "local",
+      endpoint: "http://localhost:9000/v1",
+      model: "m",
+    });
+    expect(result.config.defaults).toMatchObject({ engine: result.name, llmEngine: result.name });
+  });
+
+  test("promotes the existing LLM default when detecting a secondary LLM", () => {
+    const config: AkmConfig = {
+      ...base(),
+      engines: { cloud: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "m" } },
+      defaults: { llmEngine: "cloud" },
+    };
+    const result = upsertDetectedLlmEngine(config, {
+      provider: "local",
+      endpoint: "http://localhost:9000/v1",
+      model: "local-model",
+    });
+    expect(result.config.defaults).toMatchObject({ engine: "cloud", llmEngine: "cloud" });
+  });
+
+  test("uses the first numeric suffix when the preferred name is occupied by another engine kind", () => {
     const config: AkmConfig = {
       ...base(),
       engines: { local: { kind: "agent", platform: "claude" } },
     };
-    expect(() =>
-      upsertDetectedLlmEngine(config, {
-        provider: "local",
-        endpoint: "http://localhost:9000/v1",
-        model: "m",
-      }),
-    ).toThrow(/conflicts with configured agent engine/);
+    const result = upsertDetectedLlmEngine(config, {
+      provider: "local",
+      endpoint: "http://localhost:9000/v1",
+      model: "m",
+    });
+    expect(result.name).toBe("local-2");
   });
 
-  test("uses a fingerprint-derived suffix for same-kind collisions and finds it on rerun", () => {
+  test("uses the first-free numeric suffix for same-kind collisions and finds it on rerun", () => {
     const config: AkmConfig = {
       ...base(),
       engines: { local: { kind: "llm", endpoint: "http://localhost:8000/v1", model: "other" } },
@@ -74,7 +96,7 @@ describe("setup detected engine identity", () => {
       endpoint: "http://localhost:9000/v1",
       model: "m",
     });
-    expect(first.name).toMatch(/^local-[0-9a-f]{8}$/);
+    expect(first.name).toBe("local-2");
     const second = upsertDetectedLlmEngine(first.config, {
       provider: "local",
       endpoint: "http://localhost:9000/v1/chat/completions",
@@ -82,6 +104,21 @@ describe("setup detected engine identity", () => {
     });
     expect(second).toMatchObject({ name: first.name, reused: true });
     expect(second.config.engines?.[first.name]).toEqual(first.config.engines?.[first.name]);
+  });
+
+  test("skips occupied numeric suffixes in order", () => {
+    const result = upsertDetectedLlmEngine(
+      {
+        ...base(),
+        engines: {
+          local: { kind: "llm", endpoint: "http://localhost:7000/v1", model: "one" },
+          "local-2": { kind: "llm", endpoint: "http://localhost:8000/v1", model: "two" },
+        },
+      },
+      { provider: "local", endpoint: "http://localhost:9000/v1", model: "three" },
+    );
+
+    expect(result.name).toBe("local-3");
   });
 
   test("derives the same collision name regardless of unrelated engine insertion order", () => {

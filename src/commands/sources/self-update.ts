@@ -6,7 +6,7 @@ import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, IS_WINDOWS } from "../../core/common";
+import { fetchWithRetry, IS_WINDOWS, ResponseTooLargeError, readBodyWithByteCap } from "../../core/common";
 import { warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
@@ -17,8 +17,76 @@ const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
 const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
 const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
+const MIGRATION_CONTRACT_VERSION = "0.9.0-rc.0";
+const MAX_BINARY_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+const MAX_CHECKSUM_METADATA_BYTES = 1024 * 1024;
 
 export type InstallMethod = UpgradeCheckResponse["installMethod"];
+
+export interface UpgradeMigrationCommand {
+  preflight(akmBin: string): void;
+  stagedPreflight(akmBin: string): void;
+  apply(akmBin: string): void;
+}
+
+export interface SelfUpdateDependencies {
+  execPath: string;
+  migration: UpgradeMigrationCommand;
+}
+
+export function defaultMigrationCommand(preparedConfigPath?: string): UpgradeMigrationCommand {
+  const configArgs = preparedConfigPath ? ["--config", preparedConfigPath] : [];
+  return {
+    preflight: (akmBin) => runRequiredCommand(akmBin, ["migrate", "status"], "Migration preflight"),
+    stagedPreflight: (akmBin) =>
+      runRequiredCommand(akmBin, ["migrate", "status", ...configArgs], "Staged migration preflight"),
+    apply: (akmBin) => runRequiredCommand(akmBin, ["migrate", "apply", ...configArgs], "Migration apply"),
+  };
+}
+
+async function streamResponseToFile(
+  response: Response,
+  destination: string,
+  maxBytes: number,
+): Promise<{ byteSize: number; sha256: string }> {
+  const declaredText = response.headers.get("content-length");
+  if (declaredText) {
+    const declared = Number(declaredText);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ResponseTooLargeError(response.url || "binary download", maxBytes, declared);
+    }
+  }
+  if (!response.body) throw new Error("Binary download response did not provide a streaming body.");
+
+  const fd = fs.openSync(destination, "w", 0o600);
+  const reader = response.body.getReader();
+  const hash = createHash("sha256");
+  let byteSize = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      byteSize += value.byteLength;
+      if (byteSize > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ResponseTooLargeError(response.url || "binary download", maxBytes, byteSize);
+      }
+      hash.update(value);
+      let written = 0;
+      while (written < value.byteLength) written += fs.writeSync(fd, value, written, value.byteLength - written);
+    }
+    fs.fdatasyncSync(fd);
+    return { byteSize, sha256: hash.digest("hex") };
+  } catch (error) {
+    removeFileBestEffort(destination);
+    throw error;
+  } finally {
+    reader.releaseLock();
+    fs.closeSync(fd);
+  }
+}
 
 /** Signals used by detectInstallMethod; extracted for testability. */
 export interface InstallSignals {
@@ -91,7 +159,9 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
     throw new Error(`Failed to check for updates: ${response.status} ${response.statusText}`);
   }
 
-  const release = (await response.json()) as { tag_name?: string };
+  const release = JSON.parse(await readBodyWithByteCap(response, MAX_CHECKSUM_METADATA_BYTES)) as {
+    tag_name?: string;
+  };
   const latestTag = release.tag_name ?? "";
   const latestVersion = latestTag.replace(/^v/, "");
 
@@ -105,11 +175,13 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
 
 export async function performUpgrade(
   check: UpgradeCheckResponse,
-  opts?: { force?: boolean; skipChecksum?: boolean; skipPostUpgrade?: boolean },
+  opts?: { force?: boolean; skipChecksum?: boolean; skipPostUpgrade?: boolean; migrationConfig?: string },
+  dependencies?: Partial<SelfUpdateDependencies>,
 ): Promise<UpgradeResponse> {
   const { currentVersion, latestVersion, installMethod } = check;
   const force = opts?.force === true;
   const skipPostUpgrade = opts?.skipPostUpgrade === true;
+  const migration = dependencies?.migration ?? defaultMigrationCommand(opts?.migrationConfig);
 
   // All install methods can short-circuit here unless the user explicitly forces an upgrade.
   if (!check.updateAvailable && !force) {
@@ -122,6 +194,18 @@ export async function performUpgrade(
     };
   }
 
+  if (
+    latestVersion &&
+    semverOrder(currentVersion, MIGRATION_CONTRACT_VERSION) < 0 &&
+    semverOrder(latestVersion, MIGRATION_CONTRACT_VERSION) >= 0
+  ) {
+    throw new Error(
+      "AKM 0.8 does not implement the migrate command or the --migration-config upgrade contract, so self-update cannot safely cross into 0.9. " +
+        "Prepare the 0.9 config and an independent backup, install or stage the 0.9 binary manually, then use the new binary to run: " +
+        "akm migrate apply --config <prepared-0.9.json>. See docs/migration/v0.8-to-v0.9.md.",
+    );
+  }
+
   const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
   if (packageManagerCommand) {
     if (!latestVersion) {
@@ -129,6 +213,8 @@ export async function performUpgrade(
         "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/akm/releases",
       );
     }
+
+    migration.preflight("akm");
 
     const result = childProcess.spawnSync(packageManagerCommand.command, packageManagerCommand.args, {
       encoding: "utf8",
@@ -146,6 +232,8 @@ export async function performUpgrade(
         `Failed to upgrade akm via ${installMethod}: ${details}\nRun manually: ${packageManagerCommand.displayCommand}`,
       );
     }
+
+    migration.apply("akm");
 
     return {
       currentVersion,
@@ -178,13 +266,35 @@ export async function performUpgrade(
   const binaryName = getAkmBinaryName();
   const binaryUrl = `https://github.com/${REPO}/releases/download/${tag}/${binaryName}`;
   const checksumsUrl = `https://github.com/${REPO}/releases/download/${tag}/checksums.txt`;
+  const execPath = dependencies?.execPath ?? process.execPath;
+  const execDir = path.dirname(execPath);
+  const execName = path.basename(execPath);
+  const stagedPath = IS_WINDOWS
+    ? path.join(execDir, `.${execName}.new.${process.pid}`)
+    : path.join(execDir, `.${execName}.tmp.${process.pid}`);
+  const backupPath = `${execPath}${IS_WINDOWS ? ".old" : ".bak"}`;
 
   // Download binary
   const binaryResponse = await fetchWithRetry(binaryUrl);
   if (!binaryResponse.ok) {
     throw new Error(`Failed to download binary: ${binaryResponse.status} ${binaryResponse.statusText}`);
   }
-  const binaryData = new Uint8Array(await binaryResponse.arrayBuffer());
+  let downloaded: { byteSize: number; sha256: string };
+  try {
+    downloaded = await streamResponseToFile(binaryResponse, stagedPath, MAX_BINARY_DOWNLOAD_BYTES);
+    if (!IS_WINDOWS) fs.chmodSync(stagedPath, 0o755);
+  } catch (err) {
+    removeFileBestEffort(stagedPath);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM") {
+      throw new Error(
+        `Permission denied writing to ${execDir}.\n` +
+          `${IS_WINDOWS ? "Try running as Administrator." : "Run: sudo akm upgrade"}\n` +
+          `Or re-run the install script: curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash`,
+      );
+    }
+    throw err;
+  }
 
   // Download and verify checksum (mandatory — upgrade is blocked if checksums cannot be fetched)
   let checksumVerified = false;
@@ -203,10 +313,10 @@ export async function performUpgrade(
         );
       }
     } else {
-      const checksumsText = await checksumsResponse.text();
+      const checksumsText = await readBodyWithByteCap(checksumsResponse, MAX_CHECKSUM_METADATA_BYTES);
       const expectedHash = parseChecksumForFile(checksumsText, binaryName);
       if (expectedHash) {
-        const actualHash = createHash("sha256").update(binaryData).digest("hex");
+        const actualHash = downloaded.sha256;
         if (actualHash !== expectedHash) {
           throw new Error(
             `Checksum mismatch for ${binaryName}.\n` + `Expected: ${expectedHash}\n` + `Got:      ${actualHash}`,
@@ -231,6 +341,7 @@ export async function performUpgrade(
       err instanceof Error &&
       (err.message.includes("Checksum mismatch") || err.message.includes("Checksum verification failed"))
     ) {
+      removeFileBestEffort(stagedPath);
       throw err;
     }
     // Network or parse failure
@@ -239,6 +350,7 @@ export async function performUpgrade(
         `WARNING: Could not fetch or parse checksums: ${err instanceof Error ? err.message : String(err)}. Proceeding because --skip-checksum was provided.`,
       );
     } else {
+      removeFileBestEffort(stagedPath);
       throw new Error(
         `Checksum verification failed: ${err instanceof Error ? err.message : String(err)}. ` +
           `Use --skip-checksum to bypass (not recommended).`,
@@ -246,93 +358,42 @@ export async function performUpgrade(
     }
   }
 
-  const execPath = process.execPath;
-  const execDir = path.dirname(execPath);
-  const execName = path.basename(execPath);
-
-  if (IS_WINDOWS) {
-    // Windows: rename running exe, write new one, clean up old on success
-    const oldPath = `${execPath}.old`;
-    try {
-      fs.renameSync(execPath, oldPath);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM" || code === "EACCES") {
-        throw new Error(
-          `Permission denied. Cannot rename ${execPath}.\n` +
-            `Try running as Administrator, or re-download from https://github.com/${REPO}/releases`,
-        );
-      }
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to rename ${execPath}: ${detail}`);
-    }
-    try {
-      fs.writeFileSync(execPath, binaryData);
-    } catch (err) {
-      // Restore from old
-      fs.renameSync(oldPath, execPath);
-      throw err;
-    }
-    // Best-effort cleanup of .old
-    try {
-      fs.unlinkSync(oldPath);
-    } catch {
-      // Windows may lock the old exe — it will be cleaned up on next startup or manually
-    }
-  } else {
-    // Unix: write to temp file, chmod +x, atomic rename
-    const tmpPath = path.join(execDir, `.${execName}.tmp.${process.pid}`);
-    const bakPath = `${execPath}.bak`;
-    try {
-      fs.writeFileSync(tmpPath, binaryData);
-      fs.chmodSync(tmpPath, 0o755);
-    } catch (err) {
-      // Clean up temp file on failure
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        /* ignore */
-      }
-
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EACCES" || code === "EPERM") {
-        throw new Error(
-          `Permission denied writing to ${execDir}.\n` +
-            `Run: sudo akm upgrade\n` +
-            `Or re-run the install script: curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash`,
-        );
-      }
-      throw err;
-    }
-
-    // Backup current, then atomic rename
-    try {
-      fs.copyFileSync(execPath, bakPath);
-      fs.renameSync(tmpPath, execPath);
-    } catch (err) {
-      // Restore from backup if rename failed
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        /* ignore */
-      }
-      try {
-        if (fs.existsSync(bakPath) && !fs.existsSync(execPath)) {
-          fs.renameSync(bakPath, execPath);
-        }
-      } catch {
-        /* ignore */
-      }
-      throw err;
-    }
-
-    // Cleanup backup
-    try {
-      fs.unlinkSync(bakPath);
-    } catch {
-      /* ignore */
-    }
+  try {
+    migration.preflight(execPath);
+    migration.stagedPreflight(stagedPath);
+  } catch (err) {
+    removeFileBestEffort(stagedPath);
+    throw err;
   }
+
+  if (fs.existsSync(backupPath)) {
+    removeFileBestEffort(stagedPath);
+    throw new Error(`Refusing to overwrite retained previous binary at ${backupPath}.`);
+  }
+
+  try {
+    if (IS_WINDOWS) fs.renameSync(execPath, backupPath);
+    else fs.copyFileSync(execPath, backupPath);
+    fs.renameSync(stagedPath, execPath);
+  } catch (err) {
+    removeFileBestEffort(stagedPath);
+    if (!fs.existsSync(execPath) && fs.existsSync(backupPath)) {
+      fs.renameSync(backupPath, execPath);
+    }
+    throw err;
+  }
+
+  try {
+    migration.apply(execPath);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Migration apply failed; the new binary remains installed and the previous binary retained at ${backupPath}: ${detail}`,
+    );
+  }
+
+  // Keep the previous binary available until migration apply has completed.
+  removeFileBestEffort(backupPath);
 
   return {
     currentVersion,
@@ -341,33 +402,20 @@ export async function performUpgrade(
     installMethod,
     binaryPath: execPath,
     checksumVerified,
-    // For binary installs, the new binary now lives at execPath; spawn it
-    // directly so the post-upgrade work runs against the new code.
     postUpgrade: runPostUpgradeTasks(execPath, { skip: skipPostUpgrade }),
   };
 }
 
 /**
- * Run the post-upgrade tasks against the *new* binary as a child process.
- *
- * Why a child process: the running akm process still has the old code in
- * memory. Calling loadConfig()/akmIndex() in-process would use the old
- * implementations and miss any DB_VERSION / config-key changes the new
- * release introduces.
- *
- * The new binary's `akm index` does the work for us:
- *   1. loadConfig() runs at startup — auto-migrates legacy `stashes` →
- *      `sources` if the on-disk config still uses the old key.
- *   2. ensureSchema() converges index.db forward via its idempotent baseline
- *      schema + additive migrations (no destructive rebuild).
- *   3. The full reindex repopulates entries + workflow_documents + FTS.
+ * Rebuild the derived index after the explicit migration command succeeds.
+ * Migration and indexing are intentionally separate lifecycle steps.
  */
 function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {
   if (opts.skip) {
     return {
       ok: true,
       skipped: true,
-      message: "Skipped post-upgrade tasks. Run `akm index` manually to migrate config and rebuild the index.",
+      message: "Migration completed; skipped the index rebuild. Run `akm index` manually to rebuild the index.",
     };
   }
   try {
@@ -380,7 +428,7 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
       return {
         ok: false,
         skipped: false,
-        message: `Post-upgrade tasks could not start: ${result.error.message}. Run \`akm index\` manually.`,
+        message: `Migration completed, but the index rebuild could not start: ${result.error.message}. Run \`akm index\` manually.`,
       };
     }
     if (result.status !== 0) {
@@ -389,22 +437,45 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
         ok: false,
         skipped: false,
         exitCode: result.status,
-        message: `Post-upgrade \`akm index\` failed (${detail}). Run \`akm index\` manually.`,
+        message: `Migration completed, but post-upgrade \`akm index\` failed (${detail}). Run \`akm index\` manually.`,
       };
     }
     return {
       ok: true,
       skipped: false,
       exitCode: 0,
-      message: "Config migrated (if needed) and index rebuilt against the new binary.",
+      message: "Migration completed and the index was rebuilt against the new binary.",
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       skipped: false,
-      message: `Post-upgrade tasks failed: ${detail}. Run \`akm index\` manually.`,
+      message: `Migration completed, but the index rebuild failed: ${detail}. Run \`akm index\` manually.`,
     };
+  }
+}
+
+function runRequiredCommand(akmBin: string, args: string[], label: string): void {
+  const result = childProcess.spawnSync(akmBin, args, {
+    encoding: "utf8",
+    env: process.env,
+    stdio: "pipe",
+  });
+  if (result.error) {
+    throw new Error(`${label} could not start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`;
+    throw new Error(`${label} failed (${detail}).`);
+  }
+}
+
+function removeFileBestEffort(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // Cleanup is best-effort; the primary operation determines success.
   }
 }
 

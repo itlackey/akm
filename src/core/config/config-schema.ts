@@ -610,9 +610,9 @@ const ImproveProfileProcessesSchema = z
     // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
     // a thin wrapper around `processes.distill.enabled`. Keep the migration
     // hint so a stale config gets an actionable message rather than silently
-    // doing nothing. All OTHER unknown process keys are tolerated (passthrough)
-    // — see the unknown-key policy in this file's header. Hard-rejecting them
-    // turned benign cross-version skew into INVALID_CONFIG_FILE failures.
+    // doing nothing. Other unknown process keys remain preserved for
+    // cross-version compatibility, but an enabled one is rejected below because
+    // this version cannot execute it.
     if ("feedbackDistillation" in (val as Record<string, unknown>)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -620,6 +620,20 @@ const ImproveProfileProcessesSchema = z
           "feedbackDistillation was removed in 0.8.0 — use processes.distill.enabled instead. " +
           "It now controls both the orchestration gate and the LLM-call gate.",
       });
+    }
+    for (const [name, process] of Object.entries(val as Record<string, unknown>)) {
+      if (
+        !(name in IMPROVE_PROCESS_ENGINE_CAPABILITIES) &&
+        process !== null &&
+        typeof process === "object" &&
+        (process as { enabled?: unknown }).enabled === true
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [name],
+          message: `Unknown enabled improve process "${name}"`,
+        });
+      }
     }
   });
 

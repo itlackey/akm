@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { sleepSync } from "../../runtime";
-import { writeFileAtomic } from "../common";
+import { MAX_CONFIG_FILE_BYTES, readTextFileWithLimit, writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
 import { getCacheDir, getConfigDir } from "../paths";
@@ -27,7 +27,7 @@ import { getCacheDir, getConfigDir } from "../paths";
  */
 export function readConfigText(configPath: string): string | undefined {
   try {
-    return fs.readFileSync(configPath, "utf8");
+    return readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;

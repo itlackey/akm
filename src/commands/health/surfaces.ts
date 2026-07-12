@@ -20,6 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { MAX_CONFIG_FILE_BYTES, readTextFileWithLimit } from "../../core/common";
 import { CURRENT_CONFIG_VERSION } from "../../core/config/config-schema";
 import { compareConfigVersion } from "../../core/config/config-version";
 import type { HealthCheckResult } from "./types";
@@ -110,7 +111,10 @@ export function collectSecretPermsAdvisory(
 export function collectConfigSkewAdvisory(configPath: string): HealthCheckResult | undefined {
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    raw = JSON.parse(readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file")) as Record<
+      string,
+      unknown
+    >;
   } catch {
     return undefined;
   }

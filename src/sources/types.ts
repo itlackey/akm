@@ -403,10 +403,8 @@ export interface UpgradeResponse {
   checksumVerified?: boolean;
   message?: string;
   /**
-   * Result of the post-upgrade tasks (config auto-migration via loadConfig +
-   * `akm index` rebuild). Spawned as a child process running the *new* binary
-   * because the running process still has the old code in memory. Absent when
-   * the upgrade was a no-op or the user passed `--skip-post-upgrade`.
+   * Result of the derived-index rebuild after explicit migration preflight and
+   * apply. Absent when the upgrade was a no-op.
    */
   postUpgrade?: {
     ok: boolean;

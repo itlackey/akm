@@ -122,9 +122,12 @@ export const upgradeCommand = defineJsonCommand({
     },
     "skip-post-upgrade": {
       type: "boolean",
-      description:
-        "Skip the post-upgrade `akm index` rebuild (config auto-migration still runs on next `akm` invocation)",
+      description: "Skip the post-upgrade index rebuild (migration preflight and apply still run)",
       default: false,
+    },
+    "migration-config": {
+      type: "string",
+      description: "For 0.9+ upgrades, pass an operator-prepared config only to the new binary's migration apply",
     },
   },
   async run({ args }) {
@@ -135,7 +138,8 @@ export const upgradeCommand = defineJsonCommand({
     }
     const skipChecksum = args["skip-checksum"];
     const skipPostUpgrade = args["skip-post-upgrade"];
-    const result = await performUpgrade(check, { force: args.force, skipChecksum, skipPostUpgrade });
+    const migrationConfig = args["migration-config"];
+    const result = await performUpgrade(check, { force: args.force, skipChecksum, skipPostUpgrade, migrationConfig });
     output("upgrade", result);
   },
 });

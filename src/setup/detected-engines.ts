@@ -2,9 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { createHash } from "node:crypto";
 import type { AkmConfig, EngineConfig, HarnessId } from "../core/config/config";
-import { ConfigError } from "../core/errors";
 
 const CHAT_SUFFIX = "/chat/completions";
 
@@ -95,23 +93,11 @@ function availableName(config: AkmConfig, preferred: string, fingerprint: string
     if (engineFingerprint(engine) === fingerprint) return name;
   }
   const base = slug(preferred);
-  const expectedKind = fingerprint.startsWith("llm:") ? "llm" : "agent";
-  const baseEngine = config.engines?.[base];
-  if (baseEngine && baseEngine.kind !== expectedKind) {
-    throw new ConfigError(
-      `Detected ${expectedKind} engine name ${JSON.stringify(base)} conflicts with configured ${baseEngine.kind} engine of the same name. Rename one engine before rerunning setup.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
   if (!config.engines?.[base]) return base;
-  const suffix = createHash("sha256").update(fingerprint).digest("hex").slice(0, 8);
-  const candidate = `${base}-${suffix}`;
-  const collision = config.engines?.[candidate];
-  if (!collision || engineFingerprint(collision) === fingerprint) return candidate;
-  throw new ConfigError(
-    `Detected engine identity collision at ${JSON.stringify(candidate)}. Choose an explicit engine name before rerunning setup.`,
-    "INVALID_CONFIG_FILE",
-  );
+  for (let suffix = 2; ; suffix++) {
+    const candidate = `${base}-${suffix}`;
+    if (!config.engines?.[candidate]) return candidate;
+  }
 }
 
 /** Insert or reuse an LLM engine by canonical endpoint without modifying a match. */
@@ -144,6 +130,7 @@ export function upsertDetectedLlmEngine(
   ) {
     defaults.llmEngine = name;
   }
+  if (!defaults.engine) defaults.engine = defaults.llmEngine ?? name;
   return { config: { ...config, engines, defaults }, name, reused };
 }
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +26,11 @@ import {
 import { validateProposal } from "../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../src/core/config/config";
 import { readEvents } from "../src/core/events";
+import { getDbPath, getIndexWriterLockPath } from "../src/core/paths";
+import { openStateDatabase } from "../src/core/state-db";
+import { closeDatabase, openExistingDatabase } from "../src/indexer/db/db";
+import { indexWrittenAssets } from "../src/indexer/index-written-assets";
+import { akmIndex } from "../src/indexer/indexer";
 import { makeConfig } from "./_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
@@ -63,6 +68,18 @@ afterEach(() => {
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repos.\n`;
+
+function indexedEntry(filePath: string): Record<string, unknown> | undefined {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    const row = db.prepare("SELECT entry_json FROM entries WHERE file_path = ?").get(filePath) as {
+      entry_json: string;
+    } | null;
+    return row ? (JSON.parse(row.entry_json) as Record<string, unknown>) : undefined;
+  } finally {
+    closeDatabase(db);
+  }
+}
 
 describe("createProposal / listProposals / getProposal", () => {
   test("round-trip: create → list → show → accept materialises asset and emits promoted event", async () => {
@@ -111,7 +128,7 @@ describe("createProposal / listProposals / getProposal", () => {
     expect((events.events[0]?.metadata as Record<string, unknown> | undefined)?.proposalId).toBe(created.id);
   });
 
-  test("reject path: archive contains entry, status rejected, rejected event emitted", () => {
+  test("reject path: archive contains entry, status rejected, rejected event emitted", async () => {
     const stash = makeStashDir();
     const createdResult2 = createProposal(stash, {
       ref: "lesson:bad-idea",
@@ -122,7 +139,7 @@ describe("createProposal / listProposals / getProposal", () => {
     if (isProposalSkipped(createdResult2)) throw new Error("unexpected skip");
     const created = createdResult2;
 
-    const result = akmProposalReject({ stashDir: stash, id: created.id, reason: "duplicate of existing lesson" });
+    const result = await akmProposalReject({ stashDir: stash, id: created.id, reason: "duplicate of existing lesson" });
     expect(result.ok).toBe(true);
     expect(result.proposal.status).toBe("rejected");
     expect(result.proposal.review?.reason).toBe("duplicate of existing lesson");
@@ -284,11 +301,11 @@ describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
     if (isProposalSkipped(createdResult3)) throw new Error("unexpected skip");
     const created = createdResult3;
     // First reject moves it to the archive.
-    akmProposalReject({ stashDir: stash, id: created.id });
+    await akmProposalReject({ stashDir: stash, id: created.id });
     // Second reject must fail with a typed UsageError (.code load-bearing).
     let thrown: unknown;
     try {
-      akmProposalReject({ stashDir: stash, id: created.id });
+      await akmProposalReject({ stashDir: stash, id: created.id });
     } catch (err) {
       thrown = err;
     }
@@ -742,6 +759,184 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
 // ── Phase 6C — Proposal reversion (Advantage D6c) ───────────────────────────
 
 describe("Phase 6C: promoteProposal captures backup; revertProposal restores it", () => {
+  test("accept waits for the shared asset-mutation lease", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const created = createProposal(stash, {
+      ref: "lesson:serialized-proposal",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    const assetPath = path.join(stash, "lessons", "serialized-proposal.md");
+    const lockPath = getIndexWriterLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }), "utf8");
+
+    const accepting = akmProposalAccept({ stashDir: stash, id: created.id, config });
+    await Bun.sleep(150);
+    expect(fs.existsSync(assetPath)).toBe(false);
+    fs.rmSync(lockPath, { force: true });
+    await accepting;
+    expect(fs.existsSync(assetPath)).toBe(true);
+  });
+
+  test("reject waits for the shared asset-mutation lease", async () => {
+    const stash = makeStashDir();
+    const created = createProposal(stash, {
+      ref: "lesson:serialized-reject",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    const lockPath = getIndexWriterLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }), "utf8");
+
+    const rejecting = Promise.resolve(
+      akmProposalReject({ stashDir: stash, id: created.id, reason: "serialized rejection" }),
+    );
+    await Bun.sleep(150);
+    expect(getProposal(stash, created.id).status).toBe("pending");
+    fs.rmSync(lockPath, { force: true });
+    await rejecting;
+    expect(getProposal(stash, created.id).status).toBe("rejected");
+  });
+
+  test("accept refuses to overwrite when the existing asset backup cannot be read", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const assetPath = path.join(stash, "lessons", "backup-read-failure.md");
+    const original =
+      "---\ndescription: Original backup content\nwhen_to_use: Testing strict backup reads\n---\n\nORIGINAL.\n";
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:backup-read-failure",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    const originalRead = fs.readFileSync;
+    const readSpy = spyOn(fs, "readFileSync").mockImplementation(((
+      file: fs.PathOrFileDescriptor,
+      ...args: unknown[]
+    ) => {
+      if (path.resolve(String(file)) === path.resolve(assetPath)) throw new Error("injected backup read failure");
+      return originalRead(file, ...(args as [BufferEncoding?]));
+    }) as typeof fs.readFileSync);
+
+    await expect(akmProposalAccept({ stashDir: stash, id: created.id, config })).rejects.toThrow("backup");
+    readSpy.mockRestore();
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+    expect(getProposal(stash, created.id).status).toBe("pending");
+  });
+
+  test("revert waits for the shared asset-mutation lease", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const assetPath = path.join(stash, "lessons", "serialized-revert.md");
+    const original =
+      "---\ndescription: Original serialized revert\nwhen_to_use: Testing mutation serialization\n---\n\nORIGINAL.\n";
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:serialized-revert",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    const lockPath = getIndexWriterLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }), "utf8");
+
+    const reverting = akmProposalRevert({ stashDir: stash, id: created.id, config });
+    await Bun.sleep(150);
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("Prefer rg over grep");
+    fs.rmSync(lockPath, { force: true });
+    await reverting;
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+  });
+
+  test("accept indexes the promoted asset immediately", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    fs.writeFileSync(path.join(stash, "memories", "index-seed.md"), "Index seed.\n", "utf8");
+    await akmIndex({ stashDir: stash });
+
+    const created = createProposal(stash, {
+      ref: "lesson:immediate-index",
+      source: "distill",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: accepted zanzibar marker\nwhen_to_use: Verifying proposal indexing\n---\n\nIndexed immediately.\n",
+      },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
+  });
+
+  test("revert reindexes the restored asset immediately", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const lessonPath = path.join(stash, "lessons", "revert-index.md");
+    const original =
+      "---\ndescription: restored orchid marker\nwhen_to_use: Verifying proposal revert indexing\n---\n\nOriginal.\n";
+    fs.writeFileSync(lessonPath, original, "utf8");
+    await akmIndex({ stashDir: stash });
+
+    const created = createProposal(stash, {
+      ref: "lesson:revert-index",
+      source: "distill",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: accepted zanzibar marker\nwhen_to_use: Verifying proposal revert indexing\n---\n\nAccepted.\n",
+      },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    // Establish the accepted index state independently so this test isolates
+    // the revert path rather than depending on the accept-path assertion above.
+    await indexWrittenAssets(stash, [accepted.assetPath]);
+    expect(indexedEntry(lessonPath)?.description).toBe("accepted zanzibar marker");
+
+    await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    expect(indexedEntry(lessonPath)?.description).toBe("restored orchid marker");
+  });
+
+  test("revert removes the accepted index row when restored workflow content is unindexable", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const workflowDir = path.join(stash, "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    const workflowPath = path.join(workflowDir, "revert-unindexable.md");
+    fs.writeFileSync(workflowPath, "---\ndescription: Broken original\n---\n\nNo workflow heading.\n", "utf8");
+    fs.writeFileSync(path.join(stash, "memories", "workflow-index-seed.md"), "Index seed.\n", "utf8");
+    await akmIndex({ stashDir: stash });
+    const created = createProposal(stash, {
+      ref: "workflow:revert-unindexable",
+      source: "propose",
+      force: true,
+      payload: {
+        content:
+          "---\ndescription: Valid accepted workflow\n---\n\n# Workflow: Accepted\n\n## Step: First\nStep ID: first\n\n### Instructions\nRun.\n",
+      },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    expect(indexedEntry(workflowPath)).toBeDefined();
+
+    await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    expect(indexedEntry(workflowPath)).toBeUndefined();
+  });
+
   test("backup is captured when target asset exists; backupContent present on archived proposal", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
@@ -822,6 +1017,270 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const revertedEvents = readEvents({ type: "proposal_reverted" });
     expect(revertedEvents.events.length).toBe(1);
     expect(revertedEvents.events[0]?.ref).toBe("lesson:rg-over-grep");
+  });
+
+  test("reverting proposal A refuses to clobber content accepted from proposal B", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const assetPath = path.join(stash, "lessons", "stacked-proposals.md");
+    fs.writeFileSync(
+      assetPath,
+      "---\ndescription: Original stacked content\nwhen_to_use: Testing revert ownership\n---\n\nORIGINAL.\n",
+      "utf8",
+    );
+    const aContent =
+      "---\ndescription: Proposal A accepted content\nwhen_to_use: Testing revert ownership\n---\n\nPROPOSAL A.\n";
+    const bContent =
+      "---\ndescription: Proposal B accepted content\nwhen_to_use: Testing revert ownership\n---\n\nPROPOSAL B.\n";
+    const proposalA = createProposal(stash, {
+      ref: "lesson:stacked-proposals",
+      source: "distill",
+      force: true,
+      payload: { content: aContent },
+    });
+    if (isProposalSkipped(proposalA)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: proposalA.id, config });
+    expect(getProposal(stash, proposalA.id).acceptedContentHash).toBeDefined();
+
+    const proposalB = createProposal(stash, {
+      ref: "lesson:stacked-proposals",
+      source: "distill",
+      force: true,
+      payload: { content: bContent },
+    });
+    if (isProposalSkipped(proposalB)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: proposalB.id, config });
+
+    await expect(akmProposalRevert({ stashDir: stash, id: proposalA.id, config })).rejects.toThrow(
+      /changed|hash|content/i,
+    );
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(bContent);
+    expect(getProposal(stash, proposalA.id).status).toBe("accepted");
+  });
+
+  test("legacy accepted proposal with backup derives ownership conservatively and can revert", async () => {
+    const stash = makeStashDir();
+    const other = makeStashDir();
+    const config = {
+      stashDir: stash,
+      sources: [
+        { type: "filesystem", name: "primary", path: stash, writable: true },
+        { type: "filesystem", name: "other", path: other, writable: true },
+      ],
+      defaultWriteTarget: "primary",
+    } as AkmConfig;
+    const assetPath = path.join(stash, "lessons", "legacy-safe-revert.md");
+    const otherPath = path.join(other, "lessons", "legacy-safe-revert.md");
+    const original =
+      "---\ndescription: Legacy original content\nwhen_to_use: Testing legacy revert ownership\n---\n\nORIGINAL.\n";
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:legacy-safe-revert",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    delete metadata.acceptedContentHash;
+    delete metadata.acceptedTarget;
+    state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
+    state.close();
+
+    fs.writeFileSync(otherPath, "Unrelated wrong-target content.\n", "utf8");
+    await akmProposalRevert({ stashDir: stash, id: created.id, config, target: "other" });
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+    expect(fs.readFileSync(otherPath, "utf8")).toBe("Unrelated wrong-target content.\n");
+    const reverted = getProposal(stash, created.id);
+    expect(reverted.acceptedTarget?.source).toBe("primary");
+    expect(reverted.acceptedTarget?.path).toBe(assetPath);
+    expect(reverted.acceptedContentHash).toBeDefined();
+  });
+
+  test("legacy revert rejects identical accepted-content copies across writable roots as ambiguous", async () => {
+    const stash = makeStashDir();
+    const other = makeStashDir();
+    const config = {
+      stashDir: stash,
+      sources: [
+        { type: "filesystem", name: "primary", path: stash, writable: true },
+        { type: "filesystem", name: "other", path: other, writable: true },
+      ],
+      defaultWriteTarget: "primary",
+    } as AkmConfig;
+    const assetPath = path.join(stash, "lessons", "legacy-ambiguous-revert.md");
+    const otherPath = path.join(other, "lessons", "legacy-ambiguous-revert.md");
+    const original =
+      "---\ndescription: Legacy ambiguity original\nwhen_to_use: Testing cross-target ownership attacks\n---\n\nORIGINAL.\n";
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:legacy-ambiguous-revert",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config, target: "primary" });
+    fs.writeFileSync(otherPath, fs.readFileSync(assetPath));
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    delete metadata.acceptedContentHash;
+    delete metadata.acceptedTarget;
+    state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
+    state.close();
+
+    await expect(akmProposalRevert({ stashDir: stash, id: created.id, config, target: "other" })).rejects.toThrow(
+      /ambiguous|multiple|more than one/i,
+    );
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(VALID_LESSON);
+    expect(fs.readFileSync(otherPath, "utf8")).toBe(VALID_LESSON);
+    expect(getProposal(stash, created.id).status).toBe("accepted");
+  });
+
+  test("legacy revert restores an absent accepted asset only when one writable root can own the ref", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const assetPath = path.join(stash, "lessons", "legacy-absent-revert.md");
+    const original =
+      "---\ndescription: Legacy absent original\nwhen_to_use: Testing deterministic absent restoration\n---\n\nORIGINAL.\n";
+    fs.writeFileSync(assetPath, original, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:legacy-absent-revert",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    delete metadata.acceptedContentHash;
+    delete metadata.acceptedTarget;
+    state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
+    state.close();
+    fs.unlinkSync(assetPath);
+
+    await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+    expect(getProposal(stash, created.id).acceptedTarget?.path).toBe(assetPath);
+  });
+
+  test("legacy revert rejects an absent accepted asset when multiple writable roots can own the ref", async () => {
+    const stash = makeStashDir();
+    const other = makeStashDir();
+    const config = {
+      stashDir: stash,
+      sources: [
+        { type: "filesystem", name: "primary", path: stash, writable: true },
+        { type: "filesystem", name: "other", path: other, writable: true },
+      ],
+      defaultWriteTarget: "primary",
+    } as AkmConfig;
+    const assetPath = path.join(stash, "lessons", "legacy-absent-ambiguous.md");
+    fs.writeFileSync(
+      assetPath,
+      "---\ndescription: Legacy absent ambiguous original\nwhen_to_use: Testing absent ambiguity\n---\n\nORIGINAL.\n",
+      "utf8",
+    );
+    const created = createProposal(stash, {
+      ref: "lesson:legacy-absent-ambiguous",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config, target: "primary" });
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    delete metadata.acceptedContentHash;
+    delete metadata.acceptedTarget;
+    state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
+    state.close();
+    fs.unlinkSync(assetPath);
+
+    await expect(akmProposalRevert({ stashDir: stash, id: created.id, config })).rejects.toThrow(
+      /ambiguous|multiple|writable target/i,
+    );
+    expect(fs.existsSync(assetPath)).toBe(false);
+    expect(fs.existsSync(path.join(other, "lessons", "legacy-absent-ambiguous.md"))).toBe(false);
+    expect(getProposal(stash, created.id).status).toBe("accepted");
+  });
+
+  test("legacy accepted proposal refuses revert when current content differs from accepted payload", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const assetPath = path.join(stash, "lessons", "legacy-diverged-revert.md");
+    fs.writeFileSync(
+      assetPath,
+      "---\ndescription: Legacy original content\nwhen_to_use: Testing legacy divergence\n---\n\nORIGINAL.\n",
+      "utf8",
+    );
+    const created = createProposal(stash, {
+      ref: "lesson:legacy-diverged-revert",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    delete metadata.acceptedContentHash;
+    delete metadata.acceptedTarget;
+    state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
+    state.close();
+    fs.writeFileSync(assetPath, `${VALID_LESSON}\nNEWER EDIT\n`, "utf8");
+
+    await expect(akmProposalRevert({ stashDir: stash, id: created.id, config })).rejects.toThrow(/changed|content/i);
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("NEWER EDIT");
+  });
+
+  test("revert is bound to the source/root/path used by accept", async () => {
+    const stash = makeStashDir();
+    const other = makeStashDir();
+    const config = {
+      stashDir: stash,
+      sources: [
+        { type: "filesystem", name: "primary", path: stash, writable: true },
+        { type: "filesystem", name: "other", path: other, writable: true },
+      ],
+      defaultWriteTarget: "primary",
+    } as AkmConfig;
+    const original =
+      "---\ndescription: Bound original content\nwhen_to_use: Testing target ownership binding\n---\n\nORIGINAL.\n";
+    fs.writeFileSync(path.join(stash, "lessons", "bound-revert.md"), original, "utf8");
+    const created = createProposal(stash, {
+      ref: "lesson:bound-revert",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    await akmProposalAccept({ stashDir: stash, id: created.id, config, target: "primary" });
+    fs.writeFileSync(path.join(other, "lessons", "bound-revert.md"), VALID_LESSON, "utf8");
+
+    await expect(akmProposalRevert({ stashDir: stash, id: created.id, config, target: "other" })).rejects.toThrow(
+      /target|source|path|bound/i,
+    );
+    expect(fs.readFileSync(path.join(other, "lessons", "bound-revert.md"), "utf8")).toBe(VALID_LESSON);
+    expect(getProposal(stash, created.id).status).toBe("accepted");
   });
 
   test("revert on a non-accepted proposal fails with UsageError(INVALID_FLAG_VALUE)", async () => {

@@ -28,12 +28,14 @@ import { warnVerbose } from "../core/warn";
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import {
   closeDatabase,
+  deleteEntriesByIds,
   getEntryCount,
   openExistingDatabase,
   rebuildFts,
   upsertEntry,
   upsertWorkflowDocument,
 } from "./db/db";
+import { withIndexWriterLease } from "./index-writer-lock";
 import { generateMetadataFlat } from "./passes/metadata";
 import { buildSearchText } from "./search/search-fields";
 
@@ -58,73 +60,98 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
  * first read (`ensureIndex`) or an explicit `akm index`, which also cover
  * embeddings and the other passes this fast path skips.
  */
-export async function indexWrittenAssets(stashDir: string, filePaths: string[]): Promise<void> {
+export async function indexWrittenAssets(
+  stashDir: string,
+  filePaths: string[],
+  options: { recoverMoves?: boolean } = {},
+): Promise<boolean> {
   try {
-    const dbPath = getDbPath();
-    if (!fs.existsSync(dbPath)) return;
-
-    // The full walk never descends into dot-directories (they hold state like
-    // `.meta/`, `.stash.json`), and `shouldIndexStashFile` relies on the walker
-    // for that — mirror it here so this fast path indexes exactly what a full
-    // run would.
-    const files = filePaths.filter((f) => {
-      if (!fs.existsSync(f)) return false;
-      const rel = path.relative(stashDir, f);
-      return !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
-    });
-    if (files.length === 0) return;
-
-    // Generate metadata BEFORE opening the DB so the write window stays
-    // short. One call per file keeps the entry↔path pairing exact.
-    const pairs: Array<{ file: string; entry: Awaited<ReturnType<typeof generateMetadataFlat>>["entries"][number] }> =
-      [];
-    for (const file of files) {
-      const generated = await generateMetadataFlat(stashDir, [file]);
-      const entry = generated.entries[0];
-      // Workflows also carry a workflow_documents side-table upsert — handled
-      // below, mirroring the full walk — since `akm mv` rewrites citer files
-      // that can be workflows.
-      if (entry) pairs.push({ file, entry });
-    }
-    if (pairs.length === 0) return;
-
-    const db = openExistingDatabase(dbPath);
-    try {
-      db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
-      if (getEntryCount(db) === 0) return;
-      for (const { file, entry } of pairs) {
-        const entryKey = `${stashDir}:${entry.type}:${entry.name}`;
-        let entryWithSize = entry;
-        try {
-          entryWithSize = { ...entry, fileSize: fs.statSync(file).size };
-        } catch {
-          // stat raced a delete — index without the size, like the full walk does.
-        }
-        const entryId = upsertEntry(
-          db,
-          entryKey,
-          path.dirname(file),
-          file,
-          stashDir,
-          entryWithSize,
-          buildSearchText(entry),
-        );
-        if (entry.type === "workflow") {
-          // Same contract as the full walk (indexer.ts): the renderer cached
-          // the parsed document during metadata generation; persist it so the
-          // workflow runtime never sees an entry without its document.
-          const doc = takeWorkflowDocument(entry);
-          if (doc) upsertWorkflowDocument(db, entryId, doc, fs.readFileSync(file));
-        }
+    return await withIndexWriterLease({ purpose: "index-written-assets" }, async () => {
+      if (options.recoverMoves !== false) {
+        const { recoverInterruptedMoveTransactions } = await import("../commands/mv-cli");
+        await recoverInterruptedMoveTransactions(stashDir);
       }
-      rebuildFts(db, { incremental: true });
-    } finally {
-      closeDatabase(db);
-    }
+      const dbPath = getDbPath();
+      if (!fs.existsSync(dbPath)) return true;
+
+      // The full walk never descends into dot-directories (they hold state like
+      // `.meta/`, `.stash.json`), and `shouldIndexStashFile` relies on the walker
+      // for that — mirror it here so this fast path indexes exactly what a full
+      // run would.
+      const files = filePaths.filter((f) => {
+        const rel = path.relative(stashDir, f);
+        return !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
+      });
+      if (files.length === 0) return true;
+
+      // Generate metadata BEFORE opening the DB so the write window stays
+      // short. One call per file keeps the entry↔path pairing exact.
+      const pairs: Array<{
+        file: string;
+        entry: Awaited<ReturnType<typeof generateMetadataFlat>>["entries"][number];
+      }> = [];
+      const unindexable = new Set<string>();
+      for (const file of files) {
+        if (!fs.existsSync(file)) {
+          unindexable.add(file);
+          continue;
+        }
+        const generated = await generateMetadataFlat(stashDir, [file]);
+        const entry = generated.entries[0];
+        // Workflows also carry a workflow_documents side-table upsert — handled
+        // below, mirroring the full walk — since `akm mv` rewrites citer files
+        // that can be workflows.
+        if (entry) pairs.push({ file, entry });
+        else unindexable.add(file);
+      }
+
+      const db = openExistingDatabase(dbPath);
+      try {
+        db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
+        if (getEntryCount(db) === 0) return true;
+        for (const file of unindexable) {
+          const rows = db.prepare("SELECT id FROM entries WHERE file_path = ?").all(file) as Array<{ id: number }>;
+          deleteEntriesByIds(
+            db,
+            rows.map((row) => row.id),
+          );
+        }
+        for (const { file, entry } of pairs) {
+          const entryKey = `${stashDir}:${entry.type}:${entry.name}`;
+          let entryWithSize = entry;
+          try {
+            entryWithSize = { ...entry, fileSize: fs.statSync(file).size };
+          } catch {
+            // stat raced a delete — index without the size, like the full walk does.
+          }
+          const entryId = upsertEntry(
+            db,
+            entryKey,
+            path.dirname(file),
+            file,
+            stashDir,
+            entryWithSize,
+            buildSearchText(entry),
+          );
+          if (entry.type === "workflow") {
+            // Same contract as the full walk (indexer.ts): the renderer cached
+            // the parsed document during metadata generation; persist it so the
+            // workflow runtime never sees an entry without its document.
+            const doc = takeWorkflowDocument(entry);
+            if (doc) upsertWorkflowDocument(db, entryId, doc, fs.readFileSync(file));
+          }
+        }
+        if (pairs.length > 0 || unindexable.size > 0) rebuildFts(db, { incremental: true });
+      } finally {
+        closeDatabase(db);
+      }
+      return true;
+    });
   } catch (error) {
     warnVerbose(
       "Write-path index update skipped (asset appears after the next full index):",
       error instanceof Error ? error.message : String(error),
     );
+    return false;
   }
 }

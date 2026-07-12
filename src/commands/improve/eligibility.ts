@@ -23,6 +23,7 @@ import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
 import { isDistillRefusedInputType } from "./distill";
 import { isStrategyFilteredForAllPasses } from "./improve-strategies";
+import { improveStateReadRefs } from "./source-identity";
 
 // Eligibility / candidate-selection predicates for improve. Free functions
 // (no akmImprove closure state) extracted from improve.ts to shrink the
@@ -345,14 +346,21 @@ export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean 
  * metadata events are ignored so a stray `akm feedback <ref>` invocation
  * without a flag doesn't trigger downstream re-processing.
  */
-export function buildLatestFeedbackTsMap(refs: ReadonlyArray<string>, sinceIso: string): Map<string, string> {
+export function buildLatestFeedbackTsMap(
+  refs: ReadonlyArray<string>,
+  sinceIso: string,
+  sourceName?: string,
+  includeLegacyBare = false,
+): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
-  const refSet = new Set(refs);
+  const refByDurableKey = new Map(
+    refs.flatMap((ref) => improveStateReadRefs(ref, sourceName, includeLegacyBare).map((key) => [key, ref])),
+  );
   const { events } = readEvents({ type: "feedback", since: sinceIso });
   for (const e of events) {
-    const ref = e.ref;
-    if (!ref || !refSet.has(ref)) continue;
+    const ref = e.ref ? refByDurableKey.get(e.ref) : undefined;
+    if (!ref) continue;
     const meta = e.metadata as { signal?: unknown; note?: unknown } | undefined;
     const hasSignal = meta !== undefined && (typeof meta.signal === "string" || typeof meta.note === "string");
     if (!hasSignal) continue;
@@ -374,15 +382,19 @@ export function buildLatestFeedbackTsMap(refs: ReadonlyArray<string>, sinceIso: 
 export function buildLatestProposalTsMap(
   refs: ReadonlyArray<string>,
   source: "reflect" | "distill",
+  sourceName?: string,
+  includeLegacyBare = false,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
-  const refSet = new Set(refs);
+  const refByDurableKey = new Map(
+    refs.flatMap((ref) => improveStateReadRefs(ref, sourceName, includeLegacyBare).map((key) => [key, ref])),
+  );
   const eventType = source === "reflect" ? "reflect_invoked" : "distill_invoked";
   const { events } = readEvents({ type: eventType });
   for (const e of events) {
-    const ref = e.ref;
-    if (!ref || !refSet.has(ref)) continue;
+    const ref = e.ref ? refByDurableKey.get(e.ref) : undefined;
+    if (!ref) continue;
     // For distill_invoked we only count attempts that produced (or attempted
     // to produce) a real proposal — config_disabled / parse-error outcomes
     // should not move the signal-delta cursor forward.

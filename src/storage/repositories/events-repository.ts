@@ -95,6 +95,40 @@ export function insertEvent(
   }
 }
 
+/** Strict idempotent event insert for durable mutation journals. */
+export function insertEventOnce(
+  db: Database,
+  input: {
+    eventType: string;
+    ts: string;
+    ref?: string;
+    metadata: Record<string, unknown>;
+    idempotencyKey: string;
+    idempotencyMetadataKey?: string;
+  },
+): number {
+  const rows = db
+    .prepare("SELECT id, metadata_json FROM events WHERE event_type = ? AND ref IS ? ORDER BY id")
+    .all(input.eventType, input.ref ?? null) as Array<{ id: number; metadata_json: string }>;
+  for (const row of rows) {
+    try {
+      const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+      if (metadata[input.idempotencyMetadataKey ?? "proposalTransactionId"] === input.idempotencyKey) return row.id;
+    } catch {
+      // Corrupt unrelated event metadata cannot satisfy this idempotency key.
+    }
+  }
+  const result = db
+    .prepare(
+      `INSERT INTO events (event_type, ts, ref, metadata_json)
+       VALUES (?, ?, ?, ?)
+       RETURNING id`,
+    )
+    .get(input.eventType, input.ts, input.ref ?? null, JSON.stringify(input.metadata)) as { id: number } | undefined;
+  if (!result) throw new Error(`Failed to persist ${input.eventType} event.`);
+  return result.id;
+}
+
 export interface ReadStateEventsOptions {
   /** Monotonic id lower bound: only return rows with id > sinceId. */
   sinceId?: number;

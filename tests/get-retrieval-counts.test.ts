@@ -2,10 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { getRetrievalCounts } from "../src/indexer/db/db";
-import { ensureUsageEventsSchema } from "../src/indexer/usage/usage-events";
+import { getLastUseMsByRef } from "../src/commands/improve/salience";
+import { getRetrievalCounts, openIndexDatabase, upsertEntry, upsertUtilityScore } from "../src/indexer/db/db";
 import type { Database as AkmDatabase } from "../src/storage/database";
 
 /**
@@ -24,8 +23,7 @@ describe("getRetrievalCounts", () => {
   let db: AkmDatabase;
 
   beforeEach(() => {
-    db = new Database(":memory:") as unknown as AkmDatabase;
-    ensureUsageEventsSchema(db);
+    db = openIndexDatabase(":memory:");
   });
 
   afterEach(() => {
@@ -108,5 +106,67 @@ describe("getRetrievalCounts", () => {
 
     const counts = getRetrievalCounts(db, ["agent:reviewer"]);
     expect(counts.get("agent:reviewer")).toBe(1);
+  });
+
+  test("source-scoped counts exclude duplicate signals from other origins and legacy bare rows", () => {
+    seed("show", "team//skill:duplicate");
+    seed("search", "team//skill:duplicate");
+    seed("show", "readonly//skill:duplicate");
+    seed("show", "skill:duplicate");
+
+    const scoped = (
+      getRetrievalCounts as unknown as (
+        database: AkmDatabase,
+        refs: string[],
+        options: { sourceName: string },
+      ) => Map<string, number>
+    )(db, ["skill:duplicate"], { sourceName: "team" });
+
+    expect(scoped.get("skill:duplicate")).toBe(2);
+  });
+
+  test("last-use recency selects the duplicate from the requested source root", () => {
+    db.close();
+    db = openIndexDatabase(":memory:");
+    const selectedRoot = "/tmp/selected-source";
+    const otherRoot = "/tmp/other-source";
+    const selectedId = upsertEntry(
+      db,
+      `${selectedRoot}:skill:duplicate`,
+      `${selectedRoot}/skills`,
+      `${selectedRoot}/skills/duplicate.md`,
+      selectedRoot,
+      { type: "skill", name: "duplicate" } as never,
+      "selected",
+    );
+    const otherId = upsertEntry(
+      db,
+      `${otherRoot}:skill:duplicate`,
+      `${otherRoot}/skills`,
+      `${otherRoot}/skills/duplicate.md`,
+      otherRoot,
+      { type: "skill", name: "duplicate" } as never,
+      "other",
+    );
+    upsertUtilityScore(db, selectedId, {
+      utility: 1,
+      showCount: 1,
+      searchCount: 0,
+      selectRate: 0,
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+    });
+    upsertUtilityScore(db, otherId, {
+      utility: 1,
+      showCount: 1,
+      searchCount: 0,
+      selectRate: 0,
+      lastUsedAt: "2026-06-01T00:00:00.000Z",
+    });
+
+    const recency = (
+      getLastUseMsByRef as unknown as (database: AkmDatabase, refs: string[], stashDir: string) => Map<string, number>
+    )(db, ["skill:duplicate"], selectedRoot);
+
+    expect(recency.get("skill:duplicate")).toBe(Date.parse("2026-01-01T00:00:00.000Z"));
   });
 });

@@ -17,6 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
+import { buildLatestFeedbackTsMap, buildLatestProposalTsMap } from "../../../src/commands/improve/eligibility";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import type { AssetSalienceRow } from "../../../src/commands/improve/salience";
@@ -26,6 +27,7 @@ import {
   isContentEncodingRow,
   upsertAssetSalience,
 } from "../../../src/commands/improve/salience";
+import { shouldReadLegacyBareImproveState } from "../../../src/commands/improve/source-identity";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
@@ -142,6 +144,65 @@ afterEach(() => {
 });
 
 // ── Reflect signal-delta ────────────────────────────────────────────────────
+
+describe("source-qualified durable eligibility keys", () => {
+  test("defaultWriteTarget stash retains legacy state while other named sources remain isolated", () => {
+    expect(
+      shouldReadLegacyBareImproveState("stash", "/tmp/historical", {
+        semanticSearchMode: "off",
+        defaultWriteTarget: "stash",
+        sources: [{ type: "filesystem", name: "stash", path: "/tmp/historical", writable: true }],
+      }),
+    ).toBe(true);
+    expect(
+      shouldReadLegacyBareImproveState("team", "/tmp/team", {
+        semanticSearchMode: "off",
+        defaultWriteTarget: "stash",
+        sources: [
+          { type: "filesystem", name: "stash", path: "/tmp/historical", writable: true },
+          { type: "filesystem", name: "team", path: "/tmp/team", writable: true },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  test("duplicate bare refs read feedback and cooldown timestamps only from the selected source", () => {
+    appendEvent(
+      { eventType: "feedback", ref: "primary//memory:auth-tips", metadata: { signal: "negative" } },
+      { now: () => OLDER_MS },
+    );
+    appendEvent(
+      { eventType: "feedback", ref: "team//memory:auth-tips", metadata: { signal: "positive" } },
+      { now: () => NEWER_MS },
+    );
+    appendEvent({ eventType: "reflect_invoked", ref: "primary//memory:auth-tips" }, { now: () => OLDER_MS });
+    appendEvent({ eventType: "reflect_invoked", ref: "team//memory:auth-tips" }, { now: () => NEWER_MS });
+
+    expect(buildLatestFeedbackTsMap(["memory:auth-tips"], new Date(0).toISOString(), "team")).toEqual(
+      new Map([["memory:auth-tips", new Date(NEWER_MS).toISOString()]]),
+    );
+    expect(buildLatestProposalTsMap(["memory:auth-tips"], "reflect", "team")).toEqual(
+      new Map([["memory:auth-tips", new Date(NEWER_MS).toISOString()]]),
+    );
+  });
+
+  test("legacy bare feedback and proposal cursors apply only when local fallback is explicit", () => {
+    appendEvent(
+      { eventType: "feedback", ref: "memory:legacy", metadata: { signal: "negative" } },
+      { now: () => NEWER_MS },
+    );
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:legacy" }, { now: () => OLDER_MS });
+
+    expect(buildLatestFeedbackTsMap(["memory:legacy"], new Date(0).toISOString(), "local", true)).toEqual(
+      new Map([["memory:legacy", new Date(NEWER_MS).toISOString()]]),
+    );
+    expect(buildLatestProposalTsMap(["memory:legacy"], "reflect", "local", true)).toEqual(
+      new Map([["memory:legacy", new Date(OLDER_MS).toISOString()]]),
+    );
+    expect(buildLatestFeedbackTsMap(["memory:legacy"], new Date(0).toISOString(), "team", false)).toEqual(new Map());
+    expect(buildLatestProposalTsMap(["memory:legacy"], "reflect", "team", false)).toEqual(new Map());
+  });
+});
 
 describe("reflect signal-delta eligibility", () => {
   test("new feedback after last reflect proposal → eligible", async () => {
@@ -648,6 +709,40 @@ describe("P0-A high-retrieval fallback (zero-feedback assets)", () => {
     });
 
     expect(reflected).not.toContain("memory:rarely");
+  });
+
+  test("duplicate retrieval signals qualify only the selected source", async () => {
+    const historicalStash = makeTempDir("akm-p0a-historical-");
+    const teamStash = makeTempDir("akm-p0a-team-");
+    writeMemory(teamStash, "duplicate", "Team-owned duplicate.");
+    await buildIndex(teamStash);
+    seedRetrievals("readonly//memory:duplicate", 6);
+    const config = configWithoutPoolGuard();
+    config.stashDir = historicalStash;
+    config.sources = [{ type: "filesystem", name: "team", path: teamStash, writable: true }];
+    config.defaultWriteTarget = "team";
+    const reflected: string[] = [];
+    const run = () =>
+      akmImprove({
+        scope: "memory",
+        target: "team",
+        config,
+        minRetrievalCount: 1,
+        ensureIndexFn: async () => false,
+        reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+        reflectFn: async ({ ref }) => {
+          if (ref) reflected.push(ref);
+          return okReflect(ref ?? "");
+        },
+        distillFn: async ({ ref }) => okDistill(ref ?? ""),
+      });
+
+    await run();
+    expect(reflected).not.toContain("memory:duplicate");
+
+    seedRetrievals("team//memory:duplicate", 1);
+    await run();
+    expect(reflected).toContain("memory:duplicate");
   });
 
   test("P0-A fires at most once per asset (prior reflect proposal blocks re-rescue)", async () => {

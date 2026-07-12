@@ -77,7 +77,7 @@ const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
 };
 
 export async function stepScheduledTasks(deps: ScheduledTasksDeps = DEFAULT_SCHEDULED_TASKS_DEPS): Promise<void> {
-  const embedded = listEmbeddedTasks();
+  const embedded = listEmbeddedTasks().filter((task) => task.enabled);
   if (embedded.length === 0) return;
 
   // Snapshot current state so we can diff against the user's selection.

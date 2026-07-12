@@ -7,7 +7,9 @@
     "memoryInference": { "enabled": false },
     "graphExtraction": { "enabled": false },
     "extract": { "enabled": false },
-    "triage": { "enabled": true, "applyMode": "queue", "policy": "personal-stash", "maxAcceptsPerRun": 100 }
+    "triage": { "enabled": true, "applyMode": "queue", "policy": "personal-stash", "maxAcceptsPerRun": 100 },
+    "validation": { "enabled": false },
+    "proactiveMaintenance": { "enabled": false }
   },
   "sync": { "enabled": true, "push": true }
 }

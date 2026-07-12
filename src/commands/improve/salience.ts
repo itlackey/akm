@@ -47,6 +47,7 @@
  * @module salience
  */
 
+import path from "node:path";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
 import { getAllEntries, getUtilityScoresByIds } from "../../indexer/db/db";
@@ -636,14 +637,16 @@ export function buildRankChangeReport(
  * @param indexDb - An open read-capable index database connection.
  * @param refs    - The set of asset refs to look up.
  */
-export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[]): Map<string, number> {
+export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[], stashDir?: string): Map<string, number> {
   const result = new Map<string, number>();
   if (refs.length === 0) return result;
 
   const refSet = new Set(refs);
   const allEntries = getAllEntries(indexDb);
+  const selectedRoot = stashDir ? path.resolve(stashDir) : undefined;
   const idToRef = new Map<number, string>();
   for (const indexed of allEntries) {
+    if (selectedRoot && path.resolve(indexed.stashDir) !== selectedRoot) continue;
     const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
     if (refSet.has(ref)) idToRef.set(indexed.id, ref);
   }

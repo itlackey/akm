@@ -7,8 +7,8 @@ import {
 
 // Phase 2: triage is a first-class improve process. These guard that a triage
 // block under `processes` parses and is accepted, that the triage-specific
-// fields validate, and that genuinely-unknown process keys are still rejected
-// by the `ImproveProfileProcessesSchema` superRefine.
+// fields validate, and that enabled unknown process keys are rejected by the
+// `ImproveProfileProcessesSchema` superRefine.
 
 describe("triage improve-process config schema", () => {
   test("a triage block under processes parses and is accepted", () => {
@@ -55,17 +55,21 @@ describe("triage improve-process config schema", () => {
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
   });
 
-  test("a genuinely-unknown process key is tolerated (lenient unknown-key policy)", () => {
-    // Unknown process keys are no longer rejected — cross-version config skew
-    // (a newer akm writing a process key an older schema lacks) must not break
-    // loading. Known process shapes are still validated.
-    const result = ImproveProfileConfigSchema.safeParse({
+  test("an enabled unknown process is rejected instead of disappearing from the execution plan", () => {
+    const enabled = ImproveProfileConfigSchema.safeParse({
       processes: {
         triage: { enabled: true },
-        notARealProcess: { enabled: true },
+        reflecct: { enabled: true, engine: "missing" },
       },
     });
-    expect(result.success).toBe(true);
+    expect(enabled.success).toBe(false);
+    if (enabled.success) throw new Error("fixture must fail validation");
+    expect(enabled.error.issues[0]?.path).toEqual(["processes", "reflecct"]);
+    expect(enabled.error.issues[0]?.message).toContain("Unknown enabled improve process");
+
+    expect(ImproveProfileConfigSchema.safeParse({ processes: { futureProcess: { enabled: false } } }).success).toBe(
+      true,
+    );
   });
 
   test("triage may select an agent engine while missing engines are rejected", () => {

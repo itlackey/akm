@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmExtract, parseSinceArg, resolveStandaloneExtractPlan } from "../src/commands/improve/extract";
+import {
+  akmExtract,
+  deriveExtractCandidateRef,
+  parseSinceArg,
+  resolveStandaloneExtractPlan,
+} from "../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../src/commands/improve/extract-prompt";
 import { listProposals } from "../src/commands/proposal/repository";
 import { isValidDescription } from "../src/commands/proposal/validators/proposal-quality-validators";
@@ -14,6 +19,7 @@ import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { AkmConfig } from "../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../src/core/config/config-schema";
 import { UsageError } from "../src/core/errors";
+import { readEvents } from "../src/core/events";
 import { detectTruncatedDescription } from "../src/core/text-truncation";
 import type {
   SessionData,
@@ -165,6 +171,22 @@ describe("parseSinceArg", () => {
   });
   test("throws UsageError on garbage input", () => {
     expect(() => parseSinceArg("not-a-duration", Date.now())).toThrow(UsageError);
+  });
+});
+
+describe("extract candidate placement", () => {
+  test("uses flat fallback instead of trusting a model-provided knowledge domain", () => {
+    const candidate = {
+      type: "knowledge" as const,
+      name: "project-a/oauth-refresh-race",
+      description: "OAuth refresh races can invalidate a newly rotated token during concurrent requests.",
+      body: "Concurrent refresh requests must serialize token rotation so an older response cannot replace a newer token.",
+      confidence: 0.95,
+      evidence: "concurrent refresh failure in the session",
+    };
+    const source = { harness: "claude-code", sessionId: "s1", filePath: "/tmp/s1", projectHint: "project-a" };
+
+    expect(deriveExtractCandidateRef(candidate, source)).toBe("knowledge:oauth-refresh-race");
   });
 });
 
@@ -394,9 +416,83 @@ describe("akmExtract — candidate → proposal routing", () => {
     // Body must contain description in YAML frontmatter so accept-time validator passes
     expect(lessonProp?.payload.content).toMatch(/description:.*VPN/);
     expect(lessonProp?.payload.content).toMatch(/when_to_use:/);
-    // Sources field tracks the originating session
-    expect(lessonProp?.payload.content).toMatch(/sources:/);
-    expect(lessonProp?.payload.content).toMatch(/session:claude-code:ses_abc/);
+    // Session indexing is disabled, so the proposal must not cite an asset that
+    // does not exist.
+    expect(parseFrontmatter(lessonProp?.payload.content ?? "").data.xrefs).toBeUndefined();
+    const event = readEvents({ type: "extract_invoked" }).events.at(-1);
+    expect(event?.ref).toBeUndefined();
+    expect(event?.metadata?.sessionId).toBe("ses_abc");
+  });
+
+  test("adds session xrefs only after the session asset is written", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_live", Date.now() - 60_000);
+    const config = configEnabled(stash);
+    const extractProcess = config.improve?.strategies?.extract?.processes?.extract;
+    if (extractProcess) extractProcess.indexSessions = true;
+
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_live",
+      stashDir: stash,
+      config,
+      harnesses: [makeFakeHarness([session])],
+      generateSessionSummary: async () => ({
+        summary: "The session established a reliable deployment ordering rule.",
+        keyTopics: ["deployments"],
+        tags: ["deploy"],
+      }),
+      chat: async () =>
+        JSON.stringify({
+          candidates: [
+            {
+              type: "lesson",
+              name: "vpn-before-deploy",
+              description: "Production deployments require the VPN connection before the deployment script starts.",
+              when_to_use: "When starting a production deployment from a new shell.",
+              body: "Connect the VPN before invoking the deployment script.",
+              confidence: 0.95,
+              evidence: "The session demonstrated the required ordering.",
+            },
+          ],
+        }),
+    });
+
+    const proposal = listProposals(stash, { status: "pending" }).find((p) => p.source === "extract");
+    expect(fs.existsSync(path.join(stash, "sessions", "claude", "ses_live.md"))).toBe(true);
+    expect(parseFrontmatter(proposal?.payload.content ?? "").data.xrefs).toEqual(["session:claude/ses_live"]);
+  });
+
+  test("places scope-born candidates under the canonical project slug", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_scoped", Date.now() - 60_000);
+    session.ref.projectHint = "Project A";
+
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_scoped",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeFakeHarness([session])],
+      chat: async () =>
+        JSON.stringify({
+          candidates: [
+            {
+              type: "memory",
+              name: "vpn-deploy-order",
+              description: "Production deploys require the VPN connection before the deployment script starts.",
+              body: "The deployment script stalls during its stage push when the corporate VPN is disconnected.",
+              confidence: 0.95,
+              evidence: "the deploy failed before the VPN was connected",
+            },
+          ],
+        }),
+    });
+
+    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
+    expect(pending.map((p) => p.ref)).toEqual(["memory:project-a/vpn-deploy-order"]);
+    const parsed = parseFrontmatter(pending[0]?.payload.content ?? "");
+    expect(parsed.data.xrefs).toBeUndefined();
   });
 
   test("repairs a truncated description so the auto-accept validator passes (#556)", async () => {
@@ -601,6 +697,31 @@ describe("akmExtract — candidate → proposal routing", () => {
 });
 
 describe("akmExtract — LLM call wiring", () => {
+  test("injects only conventions for candidate output types", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_standards", Date.now() - 60_000);
+    const conventions = path.join(stash, "facts", "conventions", "assets");
+    fs.mkdirSync(conventions, { recursive: true });
+    fs.writeFileSync(path.join(conventions, "memory.md"), "---\ncategory: convention\n---\n\nMEMORY_OUTPUT_RULE\n");
+    fs.writeFileSync(path.join(conventions, "skill.md"), "---\ncategory: convention\n---\n\nSKILL_OUTPUT_RULE\n");
+    let prompt = "";
+
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "ses_standards",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeFakeHarness([session])],
+      chat: async (_config, messages) => {
+        prompt = messages.at(-1)?.content ?? "";
+        return JSON.stringify({ candidates: [], rationale_if_empty: "No durable candidates were identified." });
+      },
+    });
+
+    expect(prompt).toContain("MEMORY_OUTPUT_RULE");
+    expect(prompt).not.toContain("SKILL_OUTPUT_RULE");
+  });
+
   test("passes EXTRACT_JSON_SCHEMA as responseSchema", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_schema", Date.now() - 60_000);

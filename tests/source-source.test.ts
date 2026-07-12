@@ -102,6 +102,22 @@ describe("resolveSourceEntries", () => {
     }
   });
 
+  test("git sources index content/ when that layout exists", () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-git-content-"));
+    try {
+      const contentRoot = path.join(repoRoot, "content");
+      fs.mkdirSync(path.join(contentRoot, "knowledge"), { recursive: true });
+      saveConfig({
+        semanticSearchMode: "off",
+        sources: [{ type: "git", path: repoRoot, name: "git-content" }],
+      });
+      const sources = resolveSourceEntries();
+      expect(sources[1]?.path).toBe(contentRoot);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   test("skips non-existent stash paths", () => {
     saveConfig({
       semanticSearchMode: "off",

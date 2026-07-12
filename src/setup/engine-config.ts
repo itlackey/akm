@@ -11,6 +11,8 @@ type AgentEngine = Extract<EngineConfig, { kind: "agent" }>;
 export interface AgentEngineSelection {
   default?: string;
   engines?: Record<string, EngineConfig>;
+  /** Explicit setup choice to disable agentic features. */
+  disabled?: true;
 }
 
 export function readCurrentLlmEngine(config: AkmConfig): LlmConnectionConfig | undefined {
@@ -44,6 +46,7 @@ export function writeLlmEngine(config: AkmConfig, llm: LlmConnectionConfig | und
     if (engines[name]?.kind === "llm") delete engines[name];
     const defaults = { ...(config.defaults ?? {}) };
     delete defaults.llmEngine;
+    if (defaults.engine === name) delete defaults.engine;
     return { engines, defaults };
   }
   if (config.engines?.[name] && config.engines[name].kind !== "llm") {
@@ -66,7 +69,7 @@ export function writeLlmEngine(config: AkmConfig, llm: LlmConnectionConfig | und
         ...(capabilities?.structuredOutput !== undefined ? { supportsJsonSchema: capabilities.structuredOutput } : {}),
       },
     },
-    defaults: { ...(config.defaults ?? {}), llmEngine: name },
+    defaults: { ...(config.defaults ?? {}), engine: config.defaults?.engine ?? name, llmEngine: name },
   };
 }
 
@@ -82,8 +85,15 @@ export function writeAgentEngines(config: AkmConfig, selection: AgentEngineSelec
     }
   }
   const defaults = { ...(config.defaults ?? {}) };
-  if (!selection?.default) delete defaults.engine;
-  else defaults.engine = selection.default;
+  if (selection?.disabled) {
+    const currentDefault = defaults.engine;
+    if (currentDefault && config.engines?.[currentDefault]?.kind === "agent") {
+      const llmDefault = defaults.llmEngine;
+      if (llmDefault && config.engines?.[llmDefault]?.kind === "llm") defaults.engine = llmDefault;
+      else delete defaults.engine;
+    }
+  }
+  if (selection?.default) defaults.engine = selection.default;
   const engines = { ...(config.engines ?? {}), ...(selection?.engines ?? {}) };
   if (selection?.default && engines[selection.default] && engines[selection.default].kind !== "agent") {
     throw new ConfigError(

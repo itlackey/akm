@@ -7,6 +7,7 @@ import path from "node:path";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
+import { resolveGitContentRoot } from "../../core/write-source";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
@@ -170,8 +171,7 @@ function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   // that subdirectory. This is a content-layout convention, not a provider
   // capability — keep it here.
   if (GIT_STASH_TYPES.has(entry.type)) {
-    const contentDir = path.join(dir, "content");
-    return isValidDirectory(contentDir) ? contentDir : dir;
+    return resolveGitContentRoot(dir);
   }
   return dir;
 }

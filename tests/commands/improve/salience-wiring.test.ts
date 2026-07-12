@@ -16,6 +16,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import type { AkmDistillResult } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectOptions, AkmReflectResult } from "../../../src/commands/improve/reflect";
@@ -170,6 +172,36 @@ describe("WS-1 wiring — first run (empty table)", () => {
       const row = getAssetSalience(db, "skill:beta");
       expect(row).toBeDefined();
       expect(row?.rank_score).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("salience and plasticity counters are keyed by the selected source", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "shared", "Shared source-local content.");
+    await buildIndex(stash);
+    const config = {
+      ...minimalConfig(),
+      stashDir: stash,
+      sources: [{ type: "filesystem" as const, name: "team", path: stash, writable: true }],
+      defaultWriteTarget: "team",
+    };
+
+    await akmImprove({
+      target: "team",
+      scope: "skill",
+      config,
+      ...noopIndexFns,
+      reflectFn: async ({ ref }) => noChangeReflect(ref ?? ""),
+      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
+    });
+
+    const db = openStateDatabase();
+    try {
+      expect(getAssetSalience(db, "team//skill:shared")).toBeDefined();
+      expect(getAssetSalience(db, "skill:shared")).toBeUndefined();
+      expect(getConsecutiveNoOps(db, "team//skill:shared")).toBeGreaterThan(0);
     } finally {
       db.close();
     }
@@ -619,6 +651,44 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
 //      via 'high-salience' (score < 1.0).
 
 describe("#608 high-salience admission gate", () => {
+  test("legacy bare salience applies to a named local stash but not a different named source", async () => {
+    const localStash = isolatedStash();
+    const teamStash = fs.mkdtempSync(path.join(path.dirname(localStash), "akm-team-source-"));
+    cleanups.push(() => fs.rmSync(teamStash, { recursive: true, force: true }));
+    writeSkill(localStash, "legacy-local", "Legacy local salience should survive the cutover.");
+    writeSkill(teamStash, "legacy-team", "Another source must not inherit local salience.");
+    await buildIndex(localStash);
+    const stateDb = openStateDatabase();
+    try {
+      for (const ref of ["skill:legacy-local", "skill:legacy-team"]) {
+        upsertAssetSalience(stateDb, ref, {
+          encoding: 0.82,
+          outcome: 0,
+          retrieval: 0,
+          rankScore: 0.2,
+          encodingSource: "content",
+        });
+      }
+    } finally {
+      stateDb.close();
+    }
+
+    const localConfig = configWithSalience({ salienceThreshold: 0.75 });
+    localConfig.stashDir = localStash;
+    localConfig.sources = [{ type: "filesystem", name: "local", path: localStash, writable: true }];
+    localConfig.defaultWriteTarget = "local";
+    const localLanes = await runAndCaptureLanes({ stash: localStash, config: localConfig, target: "local" });
+    expect(localLanes.get("skill:legacy-local")).toBe("high-salience");
+
+    await buildIndex(teamStash);
+    const teamConfig = configWithSalience({ salienceThreshold: 0.75 });
+    teamConfig.stashDir = localStash;
+    teamConfig.sources = [{ type: "filesystem", name: "team", path: teamStash, writable: true }];
+    teamConfig.defaultWriteTarget = "team";
+    const teamLanes = await runAndCaptureLanes({ stash: teamStash, config: teamConfig, target: "team" });
+    expect(teamLanes.has("skill:legacy-team")).toBe(false);
+  });
+
   test("zero-feedback ref with encoding_salience >= threshold is reflected with eligibilitySource='high-salience'", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "novel-skill", "A genuinely novel skill with critical error handling.");
@@ -807,12 +877,14 @@ async function runAndCaptureLanes(opts: {
   limit?: number;
   scope?: string;
   requireFeedbackSignal?: boolean;
+  target?: string;
 }): Promise<Map<string, string | undefined>> {
   const lanes = new Map<string, string | undefined>();
   await akmImprove({
     scope: (opts.scope ?? "skill") as never,
     stashDir: opts.stash,
     config: opts.config,
+    ...(opts.target ? { target: opts.target } : {}),
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.requireFeedbackSignal !== undefined ? { requireFeedbackSignal: opts.requireFeedbackSignal } : {}),
     ...noopIndexFns,
@@ -995,6 +1067,38 @@ describe("#610 bounded replay budget", () => {
     expect(replay).toContain("skill:conv-a");
     expect(replay).not.toContain("skill:conv-b");
     expect(replay.length).toBe(1); // budget=2, but only 1 non-converged candidate
+  });
+
+  test("source-qualified convergence state suppresses replay for the selected source", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "qualified-converged", "Converged in the team source.");
+    await buildIndex(stash);
+    seedSalience("team//skill:qualified-converged", 0.9, 3);
+    const config = configWithSalience({ replayBudget: 1 });
+    config.sources = [{ type: "filesystem", name: "team", path: stash, writable: true }];
+    config.defaultWriteTarget = "team";
+
+    const lanes = await runAndCaptureLanes({ stash, config, target: "team" });
+
+    expect(lanes.has("skill:qualified-converged")).toBe(false);
+  });
+
+  test("legacy bare convergence remains effective for a named historical local stash", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "legacy-active", "Legacy local replay candidate.");
+    writeSkill(stash, "legacy-converged", "Legacy local converged candidate.");
+    await buildIndex(stash);
+    seedSalience("skill:legacy-active", 0.9, 0);
+    seedSalience("skill:legacy-converged", 0.95, 3);
+    const config = configWithSalience({ replayBudget: 2, salienceThreshold: 1 });
+    config.stashDir = stash;
+    config.sources = [{ type: "filesystem", name: "local", path: stash, writable: true }];
+    config.defaultWriteTarget = "local";
+
+    const lanes = await runAndCaptureLanes({ stash, config, target: "local" });
+
+    expect(lanes.get("skill:legacy-active")).toBe("replay");
+    expect(lanes.has("skill:legacy-converged")).toBe(false);
   });
 
   // ── Replay candidate ordering: top rank_score wins, ref-string tie-break ────

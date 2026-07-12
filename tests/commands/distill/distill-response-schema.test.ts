@@ -237,7 +237,7 @@ describe("assembleStructuredDistillMarkdown — knowledge kind", () => {
     expect(out).toContain("description:");
   });
 
-  test("knowledge serialises sources when present", () => {
+  test("knowledge serialises source refs as canonical xrefs when present", () => {
     const out = assembleStructuredDistillMarkdown(
       {
         description: "Durable guidance.",
@@ -246,7 +246,7 @@ describe("assembleStructuredDistillMarkdown — knowledge kind", () => {
       },
       "knowledge",
     );
-    expect(out).toContain("sources:");
+    expect(out).toContain("xrefs:");
     expect(out).toContain('"skill:deploy"');
     expect(out).toContain('"knowledge:vpn-policy"');
   });

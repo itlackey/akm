@@ -106,6 +106,20 @@ describe("health checks characterization (WS9)", () => {
         confidence: "high",
         message: "No default engine is configured.",
       },
+      {
+        name: "default-llm-engine",
+        kind: "deterministic",
+        status: "unknown",
+        confidence: "high",
+        message: "No default LLM engine is configured.",
+      },
+      {
+        name: "active-improve-strategy",
+        kind: "deterministic",
+        status: "unknown",
+        confidence: "high",
+        message: findCheck(result.hardChecks, "active-improve-strategy").message,
+      },
     ]);
 
     expect(result.advisories.map(project)).toEqual([
@@ -238,6 +252,8 @@ describe("health checks characterization (WS9)", () => {
       "task-log-backing",
       "active-runs",
       "default-engine",
+      "default-llm-engine",
+      "active-improve-strategy",
     ]);
     expect(result.advisories.map((c) => c.name)).toEqual([
       "collapse-churn-detector",

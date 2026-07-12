@@ -66,6 +66,28 @@ describe("parseWorkflow", () => {
     expect(doc.steps[1].completionCriteria).toBeUndefined();
   });
 
+  test("accepts canonical xrefs in workflow frontmatter", () => {
+    const withXrefs = VALID_WORKFLOW.replace(
+      "params:\n",
+      "xrefs:\n  - memory:project-a/deploy-order\n  - lesson:project-a/release-checks\nparams:\n",
+    );
+
+    expect(parse(withXrefs).ok).toBe(true);
+  });
+
+  test("rejects xrefs that are not an array of canonical asset refs", () => {
+    for (const xrefs of [
+      "xrefs: memory:deploy-order\n",
+      "xrefs:\n  - not-a-ref\n",
+      "xrefs:\n  - environment:production\n",
+      "xrefs:\n  - memory:deploy-order\n  - 42\n",
+    ]) {
+      const result = parse(VALID_WORKFLOW.replace("params:\n", `${xrefs}params:\n`));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.errors.some((error) => error.message.includes("xrefs"))).toBe(true);
+    }
+  });
+
   test("attaches accurate SourceRef line spans to steps and instructions", () => {
     const result = parse(VALID_WORKFLOW);
     expectOk(result);

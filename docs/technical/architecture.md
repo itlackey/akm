@@ -174,10 +174,13 @@ The flow:
 
 Git-backed targets are committed in a single batch at the operation boundary via
 `commitWriteTargetBoundary(target, message, { push })`, which delegates to
-`saveGitStash`: `git add -A` (staging `.akm/` + sibling assets as one complete
-commit), a guarded commit, and a push gated on `writable && hasRemote &&
-push !== false`. The old per-asset commit/push path (`options.pushOnCommit`) is
-deprecated and no longer commits per asset.
+`saveGitStash`: write/delete helpers carry their exact changed paths to the
+boundary, which stages and commits only those files (so unrelated staged work,
+including work under the same asset directory, is not included). Improve
+auto-sync similarly subtracts the Git dirty-path baseline captured at invocation
+start. Push remains gated on `writable && hasRemote && push !== false`. The old
+per-asset commit/push path (`options.pushOnCommit`) is deprecated and no longer
+commits per asset.
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
 `filesystem`, `false` for everything else. `writable: true` on `website` or
@@ -186,6 +189,20 @@ refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: explicit `--target` →
 `config.defaultWriteTarget` → working stash (`config.stashDir`) → `ConfigError`.
+
+### Improve durable-state transition
+
+Improve state written after the source-identity cutover uses
+`source//type:name` keys. Pre-cutover bare feedback, proposal-cursor, salience,
+and convergence rows are read as a fallback only when the selected source root
+equals the configured historical `stashDir`. A qualified row takes precedence.
+Named sources at any other root never read bare rows, preventing a duplicate ref
+from inheriting the local stash's history. New writes are always qualified, so
+the fallback naturally becomes irrelevant as local assets accumulate new state.
+
+Retrieval demand is scoped separately through usage-event entry IDs and selected
+source roots, with qualified refs covering detached events. Improve never merges
+retrieval counts or last-use timestamps solely by bare ref across sources.
 
 ---
 

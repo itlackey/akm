@@ -81,18 +81,41 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Reflect-only pass — no extract, distill, consolidate, memoryInference, or graphExtraction.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
       },
       "memoryInference": {
+        "enabled": false,
+      },
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
         "enabled": false,
       },
       "reflect": {
@@ -107,8 +130,14 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "workflow",
         ],
         "enabled": true,
+        "limit": 25,
       },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
@@ -131,18 +160,38 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": true,
+        "minPoolSize": 500,
       },
       "distill": {
         "allowedTypes": [
           "memory",
         ],
         "enabled": true,
+        "requirePlannedRefs": true,
+      },
+      "extract": {
+        "enabled": true,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": true,
       },
       "memoryInference": {
         "enabled": true,
+      },
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": true,
+        "maxPerRun": 15,
+      },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
+        "enabled": false,
       },
       "reflect": {
         "allowedTypes": [
@@ -156,9 +205,14 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "workflow",
         ],
         "enabled": true,
+        "limit": 25,
       },
       "triage": {
         "applyMode": "queue",
+        "enabled": true,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": true,
       },
     },
@@ -177,10 +231,25 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Memory and lesson improvement only — no distill, consolidate, or graphExtraction.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
+      },
+      "extract": {
+        "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
@@ -188,14 +257,31 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "memoryInference": {
         "enabled": true,
       },
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
+        "enabled": false,
+      },
       "reflect": {
         "allowedTypes": [
           "memory",
           "lesson",
         ],
         "enabled": true,
+        "limit": 25,
       },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
@@ -214,13 +300,25 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Full-corpus graph extraction pass — rebuilds graph relationships across all stash files. Disables all other sub-processes. Use via \`akm improve --strategy graph-refresh\` or the embedded \`graph-refresh-weekly\` task.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": true,
@@ -229,10 +327,37 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "memoryInference": {
         "enabled": false,
       },
-      "reflect": {
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
         "enabled": false,
       },
+      "recombine": {
+        "enabled": false,
+      },
+      "reflect": {
+        "allowedTypes": [
+          "agent",
+          "command",
+          "knowledge",
+          "lesson",
+          "memory",
+          "skill",
+          "wiki",
+          "workflow",
+        ],
+        "enabled": false,
+        "limit": 25,
+      },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
@@ -251,10 +376,18 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Frequent extract + inference pass — sessions, memory inference, graph, reflect.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": true,
@@ -270,10 +403,37 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "memoryInference": {
         "enabled": true,
       },
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
+        "enabled": false,
+      },
       "reflect": {
+        "allowedTypes": [
+          "agent",
+          "command",
+          "knowledge",
+          "lesson",
+          "memory",
+          "skill",
+          "wiki",
+          "workflow",
+        ],
         "enabled": true,
+        "limit": 25,
       },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
@@ -300,10 +460,18 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
@@ -311,10 +479,37 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "memoryInference": {
         "enabled": false,
       },
-      "reflect": {
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
         "enabled": false,
       },
+      "recombine": {
+        "enabled": false,
+      },
+      "reflect": {
+        "allowedTypes": [
+          "agent",
+          "command",
+          "knowledge",
+          "lesson",
+          "memory",
+          "skill",
+          "wiki",
+          "workflow",
+        ],
+        "enabled": false,
+        "limit": 25,
+      },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
@@ -341,10 +536,18 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "minPoolSize": 0,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
@@ -352,14 +555,39 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "memoryInference": {
         "enabled": false,
       },
-      "reflect": {
+      "proactiveMaintenance": {
+        "dueDays": 30,
         "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
+        "enabled": false,
+      },
+      "reflect": {
+        "allowedTypes": [
+          "agent",
+          "command",
+          "knowledge",
+          "lesson",
+          "memory",
+          "skill",
+          "wiki",
+          "workflow",
+        ],
+        "enabled": false,
+        "limit": 25,
       },
       "triage": {
         "applyMode": "queue",
         "enabled": true,
         "maxAcceptsPerRun": 100,
         "policy": "personal-stash",
+      },
+      "validation": {
+        "enabled": false,
       },
     },
     "sync": {
@@ -377,19 +605,36 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Synthesis-only — cross-episodic recombination (#609). Opt-in periodic pass; all generative/extract passes off. (Procedural compilation (#615) is held OFF until cross-project scoping lands — it over-fits one-off sequences, 0% accept.)",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
       },
       "memoryInference": {
         "enabled": false,
+      },
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
       },
       "procedural": {
         "enabled": false,
@@ -398,9 +643,25 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "enabled": true,
       },
       "reflect": {
+        "allowedTypes": [
+          "agent",
+          "command",
+          "knowledge",
+          "lesson",
+          "memory",
+          "skill",
+          "wiki",
+          "workflow",
+        ],
         "enabled": false,
+        "limit": 25,
       },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
@@ -419,13 +680,18 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Reflect + distill sustaining pass — reflect, distill, memoryInference, proposal triage (promote), and the proactive-maintenance lane; consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
         "allowedTypes": [
           "memory",
         ],
         "enabled": true,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
@@ -447,6 +713,12 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "enabled": true,
         "maxPerRun": 15,
       },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
+        "enabled": false,
+      },
       "reflect": {
         "allowedTypes": [
           "agent",
@@ -459,6 +731,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "workflow",
         ],
         "enabled": true,
+        "limit": 25,
       },
       "triage": {
         "applyMode": "promote",
@@ -468,9 +741,13 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "maxDiffLines": 200,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": false,
+      },
     },
     "sync": {
       "enabled": false,
+      "push": true,
     },
   },
   "name": "reflect-distill",
@@ -483,16 +760,25 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
         "allowedTypes": [
           "memory",
         ],
         "enabled": true,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
@@ -504,6 +790,12 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "dueDays": 30,
         "enabled": true,
         "maxPerRun": 100,
+      },
+      "procedural": {
+        "enabled": false,
+      },
+      "recombine": {
+        "enabled": false,
       },
       "reflect": {
         "allowedTypes": [
@@ -517,6 +809,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "workflow",
         ],
         "enabled": true,
+        "limit": 25,
       },
       "triage": {
         "applyMode": "promote",
@@ -526,9 +819,13 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "maxDiffLines": 200,
         "policy": "personal-stash",
       },
+      "validation": {
+        "enabled": false,
+      },
     },
     "sync": {
       "enabled": false,
+      "push": true,
     },
   },
   "name": "proactive-maintenance",
@@ -541,18 +838,38 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     "description": "Recombine-only pass — cross-episodic recombination (#609) over graph entities, excluding session/checkpoint telemetry; all generative/extract/triage passes off.",
     "processes": {
       "consolidate": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "minPoolSize": 500,
       },
       "distill": {
+        "allowedTypes": [
+          "memory",
+        ],
         "enabled": false,
+        "requirePlannedRefs": true,
       },
       "extract": {
         "enabled": false,
+        "triage": {
+          "enabled": true,
+          "minScore": 2,
+        },
       },
       "graphExtraction": {
         "enabled": false,
       },
       "memoryInference": {
+        "enabled": false,
+      },
+      "proactiveMaintenance": {
+        "dueDays": 30,
+        "enabled": false,
+        "maxPerRun": 15,
+      },
+      "procedural": {
         "enabled": false,
       },
       "recombine": {
@@ -569,13 +886,30 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "relatednessSource": "both",
       },
       "reflect": {
+        "allowedTypes": [
+          "agent",
+          "command",
+          "knowledge",
+          "lesson",
+          "memory",
+          "skill",
+          "wiki",
+          "workflow",
+        ],
         "enabled": false,
+        "limit": 25,
       },
       "triage": {
+        "applyMode": "queue",
+        "enabled": false,
+        "policy": "personal-stash",
+      },
+      "validation": {
         "enabled": false,
       },
     },
     "sync": {
+      "enabled": true,
       "message": "akm recombine: {accepted} accepted, {refs} refs @ {timestamp}",
       "push": true,
     },

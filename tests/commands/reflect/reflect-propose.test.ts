@@ -20,6 +20,7 @@ import { akmReflect } from "../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../src/commands/proposal/propose";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../src/core/events";
+import { akmIndex } from "../../../src/indexer/indexer";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
 import { quietQualityGateConfig } from "../../_helpers/factories";
 import {
@@ -143,6 +144,39 @@ afterEach(() => {
 // ── reflect ─────────────────────────────────────────────────────────────────
 
 describe("akm reflect", () => {
+  test("loads a duplicate ref only from the selected source root", async () => {
+    const selected = makeStashDir();
+    const other = makeStashDir();
+    fs.writeFileSync(
+      path.join(selected, "lessons", "rg-over-grep.md"),
+      "---\ndescription: Selected lesson\nwhen_to_use: Selected source\n---\n\nSELECTED SOURCE BODY\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(other, "lessons", "rg-over-grep.md"),
+      "---\ndescription: Other lesson\nwhen_to_use: Other source\n---\n\nOTHER SOURCE BODY\n",
+      "utf8",
+    );
+    await akmIndex({ stashDir: other, full: true });
+    let prompt = "";
+
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      sourceName: "team",
+      stashDir: selected,
+      config: quietQualityGateConfig(),
+      runAgentOptions: {
+        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
+          prompt = cmd.at(-1) ?? "";
+        }),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prompt).toContain("SELECTED SOURCE BODY");
+    expect(prompt).not.toContain("OTHER SOURCE BODY");
+  });
+
   test("redacts an echoed engine environment credential before proposal persistence", async () => {
     const sentinel = "REFLECT-ECHO-SENTINEL";
     const stash = makeStashDir();

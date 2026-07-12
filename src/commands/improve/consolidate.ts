@@ -7,16 +7,16 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { resolveStashDir, timestampForFilename } from "../../core/common";
+import { timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 // Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
+import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
@@ -46,6 +46,7 @@ import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
   deleteAssetFromSource,
+  type ResolvedWriteTarget,
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
@@ -70,6 +71,7 @@ import {
 } from "../../storage/repositories/consolidation-repository";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { durableImproveRef } from "./source-identity";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -272,6 +274,8 @@ export interface AkmConsolidateOptions {
    */
   improveProfile?: ImproveProfileConfig;
   target?: string; // which source to target; defaults to primary writable stash
+  /** Write target resolved by the parent improve invocation. */
+  writeTarget?: ResolvedWriteTarget;
   dryRun?: boolean; // generate AI plan but skip all writes
   /**
    * Confidence threshold (0-100). Undefined disables auto-accept and enables
@@ -781,15 +785,15 @@ function backupFile(filePath: string, backupDir: string, name: string): void {
 // ── WS-3b: Generation frontmatter injection ───────────────────────────────────
 
 /**
- * Inject `generation` and `source_refs` into merged content.
+ * Inject `generation` and canonical `xrefs` into merged content.
  * generation = max(sourceGenerations) + 1.
- * source_refs = UNION of the provided provenance refs (participants + their
- * cited sources) with anything already present in the merged frontmatter —
+ * xrefs = UNION of the provided provenance refs (participants + their cited
+ * sources) with anything already present in xrefs or legacy source_refs —
  * R5 §4.2: the old set-if-absent behavior dropped second-generation
  * provenance whenever the LLM emitted its own (partial) source_refs.
  * Fails open — returns original content if frontmatter can't be parsed.
  */
-function injectGenerationFrontmatter(
+export function injectGenerationFrontmatter(
   mergedContent: string,
   sourceGenerations: number[],
   provenanceRefs: string[],
@@ -797,12 +801,23 @@ function injectGenerationFrontmatter(
   try {
     const parsed = parseFrontmatter(mergedContent);
     const existingFm = parsed.data as Record<string, unknown>;
-    const existingRefs = Array.isArray(existingFm.source_refs) ? existingFm.source_refs.map(String) : [];
+    const existingRefs = [
+      ...(Array.isArray(existingFm.xrefs) ? existingFm.xrefs.map(String) : []),
+      ...(Array.isArray(existingFm.source_refs) ? existingFm.source_refs.map(String) : []),
+    ];
+    const canonicalRefs = [...existingRefs, ...provenanceRefs].flatMap((ref) => {
+      try {
+        return [refToString(parseAssetRef(ref))];
+      } catch {
+        return [];
+      }
+    });
     const updatedFm: Record<string, unknown> = {
       ...existingFm,
       generation: computeMergedGeneration(sourceGenerations),
-      source_refs: [...new Set([...existingRefs, ...provenanceRefs])],
+      xrefs: [...new Set(canonicalRefs)],
     };
+    delete updatedFm.source_refs;
     return assembleAssetFromString(serializeFrontmatter(updatedFm), parsed.content);
   } catch {
     return mergedContent; // fail open
@@ -946,6 +961,33 @@ export function makeConsolidateResult(
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
+function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: AkmConfig): ResolvedWriteTarget {
+  if (opts.writeTarget) {
+    return {
+      ...opts.writeTarget,
+      source: { ...opts.writeTarget.source, path: path.resolve(opts.writeTarget.source.path) },
+    };
+  }
+  if (opts.target && !path.isAbsolute(opts.target)) {
+    const target = resolveWriteTarget(config, opts.target);
+    return { ...target, source: { ...target.source, path: path.resolve(target.source.path) } };
+  }
+
+  // Programmatic callers historically supplied an absolute stash path. Normalize
+  // it immediately into the same unambiguous write-target shape used by named sources.
+  const explicitRoot = opts.target ?? opts.stashDir;
+  if (explicitRoot) {
+    const root = path.resolve(explicitRoot);
+    return {
+      source: { kind: "filesystem", name: "stash", path: root },
+      config: { type: "filesystem", name: "stash", path: root, writable: true },
+    };
+  }
+
+  const target = resolveWriteTarget(config);
+  return { ...target, source: { ...target.source, path: path.resolve(target.source.path) } };
+}
+
 export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
   const startMs = Date.now();
   // Derive a stable PROV-DM token for this run. Callers (e.g. akmImprove)
@@ -953,8 +995,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // standalone `akm consolidate` gets a self-contained token.
   const sourceRun = opts.sourceRun ?? `consolidate-${startMs}`;
   const config = opts.config ?? loadConfig();
+  const writeTarget = resolveConsolidationWriteTarget(opts, config);
+  opts = { ...opts, target: writeTarget.source.name, writeTarget };
   opts = { ...opts, improveProfile: opts.improveProfile ?? resolveImproveStrategy(undefined, config).config };
-  const stashDir = opts.stashDir ?? resolveStashDir();
+  const stashDir = writeTarget.source.path;
 
   if (!resolveProcessEnabled("consolidate", opts.improveProfile ?? resolveImproveStrategy(undefined, config).config)) {
     return makeConsolidateResult({
@@ -1086,7 +1130,7 @@ async function narrowConsolidationPool(
   warnings: string[],
   sharedStateDb: Database | undefined,
 ): Promise<NarrowPoolResult> {
-  let memories = loadMemoriesForSource(opts.target, stashDir, warnings);
+  let memories = loadMemoriesForSource(opts.writeTarget?.source.path, stashDir, warnings);
 
   // Pre-flight: filter out stale DB entries whose files no longer exist on
   // disk. Without this, memories deleted by a prior run (but not yet
@@ -1250,7 +1294,7 @@ async function narrowConsolidationPool(
         try {
           cachedMap = getConsolidationJudgedMap(
             dbForJudged,
-            memories.map((m) => `memory:${m.name}`),
+            memories.map((m) => durableImproveRef(`memory:${m.name}`, opts.target)),
           );
         } catch {
           cachedMap = new Map();
@@ -1260,7 +1304,7 @@ async function narrowConsolidationPool(
           cachedMap = withStateDb((localDb) =>
             getConsolidationJudgedMap(
               localDb,
-              memories.map((m) => `memory:${m.name}`),
+              memories.map((m) => durableImproveRef(`memory:${m.name}`, opts.target)),
             ),
           );
         } catch {
@@ -1274,7 +1318,7 @@ async function narrowConsolidationPool(
       const cur = currentHashByName.get(m.name);
       // No readable hash → keep (fail open; let the LLM judge it).
       if (cur === undefined) return true;
-      const cached = cachedMap.get(`memory:${m.name}`);
+      const cached = cachedMap.get(durableImproveRef(`memory:${m.name}`, opts.target));
       // Skip only when previously judged AND content is byte-identical since.
       return !(cached !== undefined && cached.content_hash === cur);
     });
@@ -1508,7 +1552,7 @@ async function planConsolidation(
   // Consolidate output merges memories (non-wiki) → stash authoring standards.
   // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
   // per chunk).
-  const standardsContext = resolveStashStandards(stashDir);
+  const standardsContext = resolveStandardsContext("memory:_consolidated", stashDir);
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
@@ -1736,7 +1780,7 @@ async function planConsolidation(
         const hash = currentHashByName.get(name);
         if (hash === undefined) continue;
         upsertConsolidationJudged(db, {
-          entryKey: `memory:${name}`,
+          entryKey: durableImproveRef(`memory:${name}`, opts.target),
           contentHash: hash,
           judgedAt,
           outcome,
@@ -1777,6 +1821,7 @@ async function planConsolidation(
 async function applyConsolidationPlan(
   config: AkmConfig,
   stashDir: string,
+  target: ResolvedWriteTarget,
   sourceRun: string,
   memories: MemoryEntry[],
   warnings: string[],
@@ -1794,7 +1839,6 @@ async function applyConsolidationPlan(
   promoted: string[];
 }> {
   // -- Phase B + writes -------------------------------------------------------
-  const target = resolveWriteTarget(config);
   const timestamp = timestampForFilename();
   const backupDir = getBackupDir(stashDir, timestamp);
 
@@ -1985,6 +2029,7 @@ async function akmConsolidateInner(
     await applyConsolidationPlan(
       config,
       stashDir,
+      opts.writeTarget as ResolvedWriteTarget,
       sourceRun,
       memories,
       warnings,
@@ -2065,6 +2110,7 @@ export interface ConsolidateOpContext {
     mergedSecondaries: number;
   };
   pushSkipReason: (op: ConsolidateOpKind | "unknown", ref: string, reason: string) => void;
+  generateMergedContentFn?: typeof generateMergedContent;
 }
 
 /** Execute one `merge` op (behavior-identical to the former inlined branch). */
@@ -2156,7 +2202,7 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
     return;
   }
 
-  const mergeResult = await generateMergedContent(
+  const mergeResult = await (ctx.generateMergedContentFn ?? generateMergedContent)(
     config,
     op.primary,
     primaryBody,
@@ -2227,6 +2273,27 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
     return;
   }
 
+  const allParticipants = [op.primary, ...op.secondaries];
+  // Generation and provenance are mandatory merge metadata, independent of
+  // whether the optional anti-collapse refusal/advisory checks are enabled.
+  const participantInfo = allParticipants.map((ref) => {
+    const e = memoryByRef.get(ref);
+    if (!e) return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
+    try {
+      const raw = fs.readFileSync(e.filePath, "utf8");
+      const parsed = parseFrontmatter(raw);
+      const fm = parsed.data as Record<string, unknown>;
+      const sourceRefs = [
+        ...(Array.isArray(fm.xrefs) ? fm.xrefs.map(String) : []),
+        ...(Array.isArray(fm.source_refs) ? fm.source_refs.map(String) : []),
+      ];
+      return { ref, generation: readAssetGeneration(fm), body: stripFrontmatterBody(raw), sourceRefs };
+    } catch {
+      return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
+    }
+  });
+  const sourceGenerations = participantInfo.map((p) => p.generation);
+
   // WS-3b: Anti-collapse generation guard (step 8a).
   // DEFAULT ON since R5 (opt out via antiCollapse.enabled: false). Refuses
   // to merge two assets both above generation N (default 2) — prevents the
@@ -2237,24 +2304,6 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
       | AntiCollapseConfig
       | undefined) ?? {};
   if (antiCollapseConfig.enabled !== false) {
-    const allParticipants = [op.primary, ...op.secondaries];
-    // One read per participant: generation counter, stripped body (for the
-    // information floor), and existing source_refs (for the provenance union).
-    const participantInfo = allParticipants.map((ref) => {
-      const e = memoryByRef.get(ref);
-      if (!e) return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
-      try {
-        const raw = fs.readFileSync(e.filePath, "utf8");
-        const parsed = parseFrontmatter(raw);
-        const fm = parsed.data as Record<string, unknown>;
-        const sourceRefs = Array.isArray(fm.source_refs) ? fm.source_refs.map(String) : [];
-        return { ref, generation: readAssetGeneration(fm), body: stripFrontmatterBody(raw), sourceRefs };
-      } catch {
-        return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
-      }
-    });
-    const sourceGenerations = participantInfo.map((p) => p.generation);
-
     const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
     if (generationCheck.refused) {
       warnings.push(`Merge: ${generationCheck.reason}`);
@@ -2276,21 +2325,21 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
         );
       }
     }
+  }
 
-    // Inject generation counter into merged content frontmatter (step 8a).
-    // merged.generation = max(sourceGenerations) + 1. source_refs is the
-    // UNION of participants + everything they already cited (R5 §4.2 —
-    // the old set-if-absent behavior dropped second-generation provenance).
-    const provenanceUnion = [...new Set([...allParticipants, ...participantInfo.flatMap((p) => p.sourceRefs)])];
-    mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, provenanceUnion);
+  // merged.generation = max(sourceGenerations) + 1. xrefs is the UNION of
+  // participants + canonical and legacy provenance already carried by them.
+  const provenanceUnion = [...new Set([...allParticipants, ...participantInfo.flatMap((p) => p.sourceRefs)])];
+  mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, provenanceUnion);
 
+  if (antiCollapseConfig.enabled !== false) {
     // R5 §4.2: merge-information floor — ADVISORY in v1. A merge that
     // shrinks provenance or genericizes below the retention floor is
     // counted + warned, never refused (promotion path: design doc §7).
     try {
       const mergedParsed = parseFrontmatter(mergedContent);
       const mergedFm = mergedParsed.data as Record<string, unknown>;
-      const mergedSourceRefs = Array.isArray(mergedFm.source_refs) ? mergedFm.source_refs.map(String) : [];
+      const mergedSourceRefs = Array.isArray(mergedFm.xrefs) ? mergedFm.xrefs.map(String) : [];
       const floorCheck = checkMergeInformationFloor(
         mergedParsed.content,
         mergedSourceRefs,
@@ -2446,16 +2495,23 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     return;
   }
 
-  let knowledgeRef = op.knowledgeRef;
-  try {
-    parseAssetRef(knowledgeRef);
-  } catch {
-    const slug = op.knowledgeRef
+  const proposedName =
+    op.knowledgeRef
       .replace(/^knowledge:/, "")
-      .replace(/[^a-z0-9-]/gi, "-")
-      .toLowerCase();
-    knowledgeRef = `knowledge:${slug}`;
-    warnings.push(`Normalized invalid ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
+      .split("/")
+      .filter(Boolean)
+      .at(-1) ??
+    entry.name.split("/").filter(Boolean).at(-1) ??
+    "promoted-memory";
+  const slug = proposedName
+    .replace(/[^a-z0-9-]/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+  const knowledgeRef = `knowledge:${slug}`;
+  parseAssetRef(knowledgeRef);
+  if (knowledgeRef !== op.knowledgeRef) {
+    warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   }
 
   // Idempotency: check pending proposals by target ref
@@ -2585,6 +2641,9 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     const mergedBodyFm: Record<string, unknown> = {
       ...(parsedMemory.data ?? {}),
       description,
+      xrefs: [
+        ...new Set([...(Array.isArray(parsedMemory.data?.xrefs) ? parsedMemory.data.xrefs.map(String) : []), op.ref]),
+      ],
     };
     const serializedMergedFm = serializeFrontmatter(mergedBodyFm);
     const proposalContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
@@ -2612,7 +2671,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
       sourceRun,
       payload: {
         content: proposalContent,
-        frontmatter: { description },
+        frontmatter: { description, xrefs: [op.ref] },
       },
       ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
     });
@@ -2856,12 +2915,20 @@ function loadMemoriesForSource(source: string | undefined, stashDir: string, war
     const memoriesDir = path.join(source ?? stashDir, "memories");
     const fsStashDir = source ?? stashDir;
     if (fs.existsSync(memoriesDir)) {
-      for (const fname of fs.readdirSync(memoriesDir)) {
-        if (!fname.endsWith(".md")) continue;
-        const filePath = path.join(memoriesDir, fname);
-        const name = fname.replace(/\.md$/, "");
-        if (!isConsolidationEligibleMemoryName(name)) continue;
-        memories.push({ name, filePath, description: "", tags: [], stashDir: fsStashDir });
+      const pending = [memoriesDir];
+      while (pending.length > 0) {
+        const current = pending.pop() as string;
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+          const filePath = path.join(current, entry.name);
+          if (entry.isDirectory()) {
+            pending.push(filePath);
+            continue;
+          }
+          if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+          const name = path.relative(memoriesDir, filePath).replace(/\.md$/, "").split(path.sep).join("/");
+          if (!isConsolidationEligibleMemoryName(name)) continue;
+          memories.push({ name, filePath, description: "", tags: [], stashDir: fsStashDir });
+        }
       }
     }
     if (memories.length > 0) {

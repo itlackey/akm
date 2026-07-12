@@ -6,7 +6,10 @@
     "consolidate": { "enabled": false },
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": false },
-    "triage": { "enabled": false }
+    "extract": { "enabled": false },
+    "triage": { "enabled": false },
+    "validation": { "enabled": false },
+    "proactiveMaintenance": { "enabled": false }
   },
   "sync": { "enabled": true, "push": true }
 }

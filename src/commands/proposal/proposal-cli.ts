@@ -250,7 +250,7 @@ const proposalRejectCommand = defineJsonCommand({
         if (args["dry-run"]) {
           results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
         } else {
-          const result = akmProposalReject({ id: proposal.id, reason: String(args.reason) });
+          const result = await akmProposalReject({ id: proposal.id, reason: String(args.reason) });
           results.push(result);
         }
       }
@@ -271,7 +271,7 @@ const proposalRejectCommand = defineJsonCommand({
       process.stderr.write("Aborted.\n");
       return;
     }
-    const result = akmProposalReject({ id: args.id as string, reason: String(args.reason) });
+    const result = await akmProposalReject({ id: args.id as string, reason: String(args.reason) });
     output("proposal-reject", result);
   },
 });
@@ -475,6 +475,7 @@ const proposalDrainCommand = defineJsonCommand({
       result = await withLlmStage("drain", () =>
         drainProposals({
           stashDir,
+          config: cfg,
           policy,
           applyMode,
           maxAccepts,

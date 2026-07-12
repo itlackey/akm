@@ -813,7 +813,7 @@ export async function stepAgentConnection(
       ].join("\n"),
       "Warning",
     );
-    return undefined;
+    return { disabled: true };
   }
 
   if (agentChoice === "same-connection") {

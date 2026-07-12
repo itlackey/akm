@@ -132,6 +132,17 @@ describe("engine resolution", () => {
     }
   });
 
+  test("lowers an OpenCode SDK engine without requiring an LLM fallback", () => {
+    const resolved = resolveEngine("native-sdk", {
+      engines: { "native-sdk": { kind: "agent", platform: "opencode-sdk" } },
+      defaults: { engine: "native-sdk" },
+    });
+    expect(resolved).toMatchObject({ kind: "sdk", engine: "native-sdk" });
+    if (resolved.kind !== "sdk") throw new Error("fixture must lower to SDK");
+    expect(resolved.fallbackConnection).toBeUndefined();
+    expect(resolved.fallbackCredential).toBeUndefined();
+  });
+
   test("applies exact timeout precedence and preserves explicit null in direct HTTP materialization", () => {
     const defaults = resolveLlmEngineUse(config, [{ engine: "fast" }]);
     expect(defaults.timeoutMs).toBe(600_000);

@@ -5,10 +5,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { acquireMaintenanceActivitySync } from "../core/maintenance-barrier";
-import { ensureMigrationBackup, getMigrationBackupDir } from "../core/migration-backup";
+import { assertNoPendingMigrationOperation } from "../core/migration-operation";
 import { getWorkflowDbPath } from "../core/paths";
 import { type Database, openDatabase } from "../storage/database";
-import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
+import {
+  assertCurrentMigrationLedger,
+  assertMigrationLedger,
+  type Migration,
+  runMigrations as runSqliteMigrations,
+} from "../storage/engines/sqlite-migrations";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 
 /**
@@ -49,24 +54,33 @@ import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 
 export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
   const isCanonical = path.resolve(dbPath) === path.resolve(getWorkflowDbPath());
+  if (isCanonical) assertNoPendingMigrationOperation();
   const releaseActivity = isCanonical ? acquireMaintenanceActivitySync("workflow-db") : undefined;
   let db: Database | undefined;
   try {
-    // Preserve an originally absent workflow.db in the recovery manifest. SQLite
-    // creates the file at open time, so the cutover bundle must exist first.
-    if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
+    if (isCanonical) assertNoPendingMigrationOperation();
+    const existed = fs.existsSync(dbPath);
     const dir = path.dirname(dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    if (existed) {
+      const preflight = openDatabase(dbPath, { readonly: true });
+      try {
+        if (isCanonical) assertCurrentMigrationLedger(preflight, WORKFLOW_MIGRATIONS);
+        else assertMigrationLedger(preflight, WORKFLOW_MIGRATIONS);
+      } finally {
+        preflight.close();
+      }
+    }
     db = openDatabase(dbPath);
     // #589: 30 s busy timeout, matching index.db / state.db. Without it the
     // default is 0 ms, so any concurrent writer fails immediately with
     // SQLITE_BUSY. #628: journal_mode is configurable via AKM_SQLITE_JOURNAL_MODE.
     applyStandardPragmas(db, { dataDir: dir });
     ensureBaseSchema(db);
-    runMigrations(db, { ensureCutoverBackup: isCanonical });
+    runMigrations(db, { applyPending: !(isCanonical && existed) });
     if (!releaseActivity) return db;
     const openedDb = db;
     let closed = false;
@@ -161,7 +175,7 @@ function ensureBaseSchema(db: Database): void {
  * All workflow.db migrations in application order. New migrations are
  * APPENDED — never inserted in the middle or reordered.
  */
-const MIGRATIONS: Migration[] = [
+export const WORKFLOW_MIGRATIONS: readonly Migration[] = [
   // ── Migration 001 — add scope_key column ────────────────────────────────────
   //
   // Adds the `scope_key` column to `workflow_runs` so runs can be partitioned
@@ -400,11 +414,13 @@ function bootstrapPreVersioningDb(db: Database): void {
  *
  * Called automatically by {@link openWorkflowDatabase}.
  */
-export function runMigrations(db: Database, options?: { ensureCutoverBackup?: boolean }): void {
-  runSqliteMigrations(db, MIGRATIONS, {
+export function runMigrations(
+  db: Database,
+  options?: { applyPending?: boolean; generationMarker?: { operationId: string; phase: string } },
+): void {
+  runSqliteMigrations(db, WORKFLOW_MIGRATIONS, {
     bootstrap: bootstrapPreVersioningDb,
-    beforeMigration(migration) {
-      if (options?.ensureCutoverBackup && migration.id === "010-ir-v3-engine") ensureMigrationBackup();
-    },
+    applyPending: options?.applyPending,
+    generationMarker: options?.generationMarker,
   });
 }

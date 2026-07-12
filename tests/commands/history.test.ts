@@ -95,24 +95,27 @@ describe("akmHistory programmatic API", () => {
     }
   });
 
-  test("filters per-asset history when --ref is provided", async () => {
+  test("bare refs include legacy and source-qualified history while qualified refs stay exact", async () => {
     const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1 });
-      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:beta", entry_id: 2 });
-      insertUsageEvent(db, {
-        event_type: "feedback",
-        entry_ref: "memory:alpha",
-        entry_id: 1,
-        signal: "negative",
-      });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "stash//memory:alpha", entry_id: 2 });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "team//memory:alpha", entry_id: 3 });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "team//memory:alpha-extra", entry_id: 4 });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "memory:beta", entry_id: 5 });
 
-      const result = await akmHistory({ db, ref: "memory:alpha" });
-      expect(result.ref).toBe("memory:alpha");
-      expect(result.totalCount).toBe(2);
-      expect(result.entries.every((entry) => entry.ref === "memory:alpha")).toBe(true);
-      expect(result.entries.map((entry) => entry.eventType)).toEqual(["show", "feedback"]);
+      const bare = await akmHistory({ db, ref: "memory:alpha" });
+      expect(bare.ref).toBe("memory:alpha");
+      expect(bare.entries.map((entry) => entry.ref)).toEqual([
+        "memory:alpha",
+        "stash//memory:alpha",
+        "team//memory:alpha",
+      ]);
+
+      const qualified = await akmHistory({ db, ref: "stash//memory:alpha" });
+      expect(qualified.ref).toBe("stash//memory:alpha");
+      expect(qualified.entries.map((entry) => entry.ref)).toEqual(["stash//memory:alpha"]);
     } finally {
       closeDatabase(db);
     }
@@ -168,6 +171,49 @@ describe("akmHistory programmatic API", () => {
 });
 
 describe("akm history CLI", () => {
+  test("canonicalizes bare ref filters without collapsing stored refs or qualified source identity", async () => {
+    sandboxStash();
+    saveConfig({ semanticSearchMode: "off" });
+    const bareRef = `memory:history-boundary-${process.pid}`;
+    const entryRefs = [
+      bareRef,
+      `stash//${bareRef}`,
+      `team//${bareRef}`,
+      `team//${bareRef}-extra`,
+      `memory:history-unrelated-${process.pid}`,
+    ];
+    const db = openIndexDatabase(getDbPath());
+    try {
+      ensureUsageEventsSchema(db);
+      for (const entryRef of entryRefs) {
+        insertUsageEvent(db, { event_type: "show", entry_ref: entryRef });
+      }
+    } finally {
+      closeDatabase(db);
+    }
+
+    try {
+      const bareResult = await runCli(["history", "--ref", bareRef, "--format=json"]);
+      expect(bareResult.status).toBe(0);
+      const bare = parseJsonOutput(bareResult);
+      expect((bare.entries as Array<{ ref: string }>).map((entry) => entry.ref)).toEqual(entryRefs.slice(0, 3));
+
+      const qualifiedResult = await runCli(["history", "--ref", `stash//${bareRef}`, "--format=json"]);
+      expect(qualifiedResult.status).toBe(0);
+      const qualified = parseJsonOutput(qualifiedResult);
+      expect((qualified.entries as Array<{ ref: string }>).map((entry) => entry.ref)).toEqual([`stash//${bareRef}`]);
+    } finally {
+      const cleanupDb = openIndexDatabase(getDbPath());
+      try {
+        cleanupDb
+          .prepare(`DELETE FROM usage_events WHERE entry_ref IN (${entryRefs.map(() => "?").join(", ")})`)
+          .run(...entryRefs);
+      } finally {
+        closeDatabase(cleanupDb);
+      }
+    }
+  });
+
   test("emits a JSON envelope matching the existing CLI conventions", async () => {
     const stashDir = sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
@@ -187,7 +233,7 @@ describe("akm history CLI", () => {
     expect(typeof perAssetJson.totalCount).toBe("number");
     expect(Array.isArray(perAssetJson.entries)).toBe(true);
     const entries = perAssetJson.entries as Array<Record<string, unknown>>;
-    expect(entries.some((entry) => entry.eventType === "feedback" && entry.ref === "memory:alpha")).toBe(true);
+    expect(entries.some((entry) => entry.eventType === "feedback" && entry.ref === "stash//memory:alpha")).toBe(true);
 
     // Stash-wide history.
     const stashWide = await runCli(["history", "--format=json"]);
@@ -203,7 +249,7 @@ describe("akm history CLI", () => {
       const events = db
         .prepare("SELECT entry_ref, event_type FROM usage_events WHERE event_type = 'feedback'")
         .all() as Array<{ entry_ref: string; event_type: string }>;
-      expect(events.find((event) => event.entry_ref === "memory:alpha")).toBeDefined();
+      expect(events.find((event) => event.entry_ref === "stash//memory:alpha")).toBeDefined();
     } finally {
       closeDatabase(db);
     }

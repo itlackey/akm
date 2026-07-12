@@ -282,12 +282,6 @@ function healSandboxEnv(): void {
     safeMkdir(akmDir);
   }
 
-  // Tests that override config/data but intentionally keep the harness cache
-  // must not inherit an immutable bundle bound to another test's source paths.
-  // Per-test caches are left intact so stable beforeAll fixtures can reuse them.
-  const sharedMigrationBackups = path.join(SANDBOX_ENV.XDG_CACHE_HOME, "akm", "migration-backups");
-  if (fs.existsSync(sharedMigrationBackups)) safeRm(sharedMigrationBackups);
-
   // Backstop ("at all costs"): HOME MUST be inside the temp root. If anything
   // ever leaves it pointing at the real home, fail HARD before a test can run.
   if (!isUnderTmp(process.env.HOME ?? "")) {

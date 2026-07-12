@@ -274,16 +274,24 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
       timeoutMs: hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : DEFAULT_AGENT_TIMEOUT_MS,
     };
   }
-  const fallback = resolveLlmEngineUse(config, [{ engine: engine.llmEngine ?? config.defaults?.llmEngine }]);
-  if (!fallback) throw new ConfigError(`SDK engine "${name}" has no fallback LLM engine.`, "LLM_NOT_CONFIGURED");
+  const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
+  const fallback = fallbackName
+    ? resolveLlmEngineUse(config, [{ engine: fallbackName }], { optional: true })
+    : undefined;
   return {
     kind: "sdk",
     engine: name,
     profile,
-    fallbackConnection: fallback.connection,
-    ...(fallback.credential ? { fallbackCredential: fallback.credential } : {}),
-    fallbackTimeoutMs: fallback.timeoutMs,
-    timeoutMs: hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : fallback.timeoutMs,
+    ...(fallback
+      ? {
+          fallbackConnection: fallback.connection,
+          ...(fallback.credential ? { fallbackCredential: fallback.credential } : {}),
+          fallbackTimeoutMs: fallback.timeoutMs,
+        }
+      : {}),
+    timeoutMs: hasOwn(engine, "timeoutMs")
+      ? (engine.timeoutMs ?? null)
+      : (fallback?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),
   };
 }
 

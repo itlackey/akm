@@ -266,12 +266,18 @@ export const configCommand = defineGroupCommand({
     migrate: defineJsonCommand({
       meta: {
         name: "migrate",
-        description:
-          "Diagnose whether the user config is already in the current schema. Never writes or translates config.",
+        description: "Compatibility alias for the canonical top-level migrate status/apply coordinator.",
       },
-      async run() {
+      args: {
+        config: {
+          type: "string",
+          description: "Path to an operator-prepared current-version config to validate and install",
+        },
+        dryRun: { type: "boolean", default: false, description: "Validate and report without changing files" },
+      },
+      async run({ args }) {
         const { runConfigMigrate } = await import("../cli/config-migrate.js");
-        await runConfigMigrate();
+        await runConfigMigrate({ preparedConfigPath: args.config, dryRun: args.dryRun });
       },
     }),
     enable: defineJsonCommand({

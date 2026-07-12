@@ -21,6 +21,7 @@ export {
 } from "./git-provider";
 export {
   isGitBackedStash,
+  listGitChangedPaths,
   resolveWritableOverride,
   type SaveGitStashResult,
   saveGitStash,
