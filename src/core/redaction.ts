@@ -225,19 +225,19 @@ export function isEnvPassthroughValueSafeToExpose(name: string, value: string | 
 
 interface NormalizedText {
   text: string;
-  starts: number[];
-  ends: number[];
+  starts: Int32Array;
+  sourceLength: number;
 }
 
 function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedText {
   let text = "";
-  const starts: number[] = [];
-  const ends: number[] = [];
-  const append = (decoded: string, start: number, end: number): void => {
+  const starts = new Int32Array(value.length);
+  let mappingLength = 0;
+  const append = (decoded: string, start: number): void => {
     text += decoded;
     for (let index = 0; index < decoded.length; index++) {
-      starts.push(start);
-      ends.push(end);
+      starts[mappingLength] = start;
+      mappingLength++;
     }
   };
 
@@ -250,7 +250,7 @@ function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedTe
         index += 3;
       }
       try {
-        append(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)), start, index);
+        append(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)), start);
         continue;
       } catch {
         index = start;
@@ -262,25 +262,23 @@ function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedTe
     if (codePoint === undefined) break;
     const character = String.fromCodePoint(codePoint);
     index += character.length;
-    append(plusAsSpace && character === "+" ? " " : character, start, index);
+    append(plusAsSpace && character === "+" ? " " : character, start);
   }
 
-  return { text, starts, ends };
+  return { text, starts, sourceLength: value.length };
 }
 
-function addMappedMatches(
-  ranges: Array<{ start: number; end: number }>,
-  haystack: NormalizedText,
-  needle: string,
-): void {
+function addMappedMatches(coverageDelta: Int32Array, haystack: NormalizedText, needle: string): void {
   if (!needle) return;
   let offset = 0;
   while (offset <= haystack.text.length - needle.length) {
     const match = haystack.text.indexOf(needle, offset);
     if (match < 0) break;
     const start = haystack.starts[match];
-    const end = haystack.ends[match + needle.length - 1];
-    if (start !== undefined && end !== undefined) ranges.push({ start, end });
+    const normalizedEnd = match + needle.length;
+    const end = normalizedEnd < haystack.text.length ? haystack.starts[normalizedEnd] : haystack.sourceLength;
+    coverageDelta[start]++;
+    coverageDelta[end]--;
     offset = match + Math.max(needle.length, 1);
   }
 }
@@ -299,28 +297,31 @@ export function redactSensitiveText(text: string, sensitiveValues: Iterable<stri
     for (const value of values) redacted = redacted.replaceAll(value, "[REDACTED]");
     return redacted;
   }
-  const ranges: Array<{ start: number; end: number }> = [];
-  const normalizedLiteralPlus = normalizeEncodedText(text, false);
-  const normalizedForm = normalizeEncodedText(text, true);
-  for (const value of values) {
-    addMappedMatches(ranges, normalizedLiteralPlus, normalizeEncodedText(value, false).text);
-    addMappedMatches(ranges, normalizedForm, normalizeEncodedText(value, true).text);
-  }
-  if (ranges.length === 0) return text;
-  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
-  const merged: Array<{ start: number; end: number }> = [];
-  for (const range of ranges) {
-    const previous = merged.at(-1);
-    if (previous && range.start < previous.end) previous.end = Math.max(previous.end, range.end);
-    else merged.push({ ...range });
-  }
+  const coverageDelta = new Int32Array(text.length + 1);
+  const addMatchesForMode = (plusAsSpace: boolean): void => {
+    const haystack = normalizeEncodedText(text, plusAsSpace);
+    for (const value of values) {
+      addMappedMatches(coverageDelta, haystack, normalizeEncodedText(value, plusAsSpace).text);
+    }
+  };
+  addMatchesForMode(false);
+  if (text.includes("+")) addMatchesForMode(true);
   let redacted = "";
+  let coverage = 0;
   let offset = 0;
-  for (const range of merged) {
-    redacted += `${text.slice(offset, range.start)}[REDACTED]`;
-    offset = range.end;
+  let found = false;
+  for (let index = 0; index <= text.length; index++) {
+    const wasCovered = coverage > 0;
+    coverage += coverageDelta[index];
+    const isCovered = coverage > 0;
+    if (!wasCovered && isCovered) {
+      redacted += `${text.slice(offset, index)}[REDACTED]`;
+      found = true;
+    } else if (wasCovered && !isCovered) {
+      offset = index;
+    }
   }
-  return redacted + text.slice(offset);
+  return found ? redacted + text.slice(offset) : text;
 }
 
 /** Recursively redact string leaves before a structured value crosses a durable/output boundary. */
