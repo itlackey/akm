@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { isProcessAlive } from "./common";
 
@@ -41,6 +42,11 @@ export type LockProbeResult =
       rawContent?: string;
       identity?: LockFileIdentity;
     };
+
+export interface ReclaimStaleLockOptions {
+  /** Test seam for a replacement installed after quarantine verification. */
+  afterQuarantineVerified?: () => void;
+}
 
 interface LockFileIdentity {
   dev: number;
@@ -129,23 +135,50 @@ export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeR
 }
 
 /**
- * Reclaim a stale sentinel only when the path still names the exact file that
- * was probed. A stale decision never authorizes deleting a lock that another
- * process installed in the probe/delete window.
+ * Atomically quarantine the sentinel currently at `lockPath`, then delete it
+ * only when the quarantined inode is the one that was probed as stale. The
+ * canonical path is never unlinked after verification: once rename succeeds,
+ * a concurrent acquisition can install a replacement there and that replacement
+ * survives cleanup of the quarantined stale inode.
  */
-export function reclaimStaleLock(lockPath: string, probe: Extract<LockProbeResult, { state: "stale" }>): boolean {
+export function reclaimStaleLock(
+  lockPath: string,
+  probe: Extract<LockProbeResult, { state: "stale" }>,
+  options?: ReclaimStaleLockOptions,
+): boolean {
   if (probe.rawContent === undefined || probe.identity === undefined) return false;
-  let current: ReturnType<typeof readLockSnapshot>;
+  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
   try {
-    current = readLockSnapshot(lockPath);
+    fs.renameSync(lockPath, quarantinePath);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+
+  let quarantined: ReturnType<typeof readLockSnapshot>;
+  try {
+    quarantined = readLockSnapshot(quarantinePath);
   } catch {
+    quarantined = undefined;
+  }
+  if (
+    !quarantined ||
+    quarantined.rawContent !== probe.rawContent ||
+    !sameIdentity(quarantined.identity, probe.identity)
+  ) {
+    try {
+      // Restore without replacing a lock that was acquired after quarantine.
+      fs.linkSync(quarantinePath, lockPath);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    releaseLock(quarantinePath);
     return false;
   }
-  if (!current || current.rawContent !== probe.rawContent || !sameIdentity(current.identity, probe.identity)) {
-    return false;
-  }
+
+  options?.afterQuarantineVerified?.();
   try {
-    fs.unlinkSync(lockPath);
+    fs.unlinkSync(quarantinePath);
     return true;
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;

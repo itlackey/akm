@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmAssetType } from "../../core/common";
+import { acquireMaintenanceActivitySync } from "../../core/maintenance-barrier";
 import { getStateDbPath } from "../../core/state-db";
 import { type Database, openDatabase } from "../../storage/database";
 import { type DbSearchResult, getUtilityScoresByIds } from "../db/db";
@@ -89,32 +90,37 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
   try {
     const dbPath = getStateDbPath();
     if (!fs.existsSync(dbPath)) return result; // improve loop has never run here
+    const releaseActivity = acquireMaintenanceActivitySync("state-db");
     const idByRef = new Map<string, number>();
-    for (const item of items) {
-      idByRef.set(makeAssetRef(item.entry.type as AkmAssetType, item.entry.name), item.id);
-    }
-    const stateDb = openDatabase(dbPath, { readonly: true });
     try {
-      try {
-        stateDb.exec("PRAGMA busy_timeout = 250");
-      } catch {
-        // pragma failure on a readonly handle is fine — default timeout applies
+      for (const item of items) {
+        idByRef.set(makeAssetRef(item.entry.type as AkmAssetType, item.entry.name), item.id);
       }
-      const refs = [...idByRef.keys()];
-      const CHUNK = 500;
-      for (let i = 0; i < refs.length; i += CHUNK) {
-        const chunk = refs.slice(i, i + CHUNK);
-        const placeholders = chunk.map(() => "?").join(",");
-        const rows = stateDb
-          .prepare(`SELECT asset_ref, rank_score FROM asset_salience WHERE asset_ref IN (${placeholders})`)
-          .all(...chunk) as Array<{ asset_ref: string; rank_score: number }>;
-        for (const row of rows) {
-          const id = idByRef.get(row.asset_ref);
-          if (id !== undefined) result.set(id, row.rank_score);
+      const stateDb = openDatabase(dbPath, { readonly: true });
+      try {
+        try {
+          stateDb.exec("PRAGMA busy_timeout = 250");
+        } catch {
+          // pragma failure on a readonly handle is fine — default timeout applies
         }
+        const refs = [...idByRef.keys()];
+        const CHUNK = 500;
+        for (let i = 0; i < refs.length; i += CHUNK) {
+          const chunk = refs.slice(i, i + CHUNK);
+          const placeholders = chunk.map(() => "?").join(",");
+          const rows = stateDb
+            .prepare(`SELECT asset_ref, rank_score FROM asset_salience WHERE asset_ref IN (${placeholders})`)
+            .all(...chunk) as Array<{ asset_ref: string; rank_score: number }>;
+          for (const row of rows) {
+            const id = idByRef.get(row.asset_ref);
+            if (id !== undefined) result.set(id, row.rank_score);
+          }
+        }
+      } finally {
+        stateDb.close();
       }
     } finally {
-      stateDb.close();
+      releaseActivity();
     }
   } catch {
     // Fail open — search must never break because state.db is unavailable.

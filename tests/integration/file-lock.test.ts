@@ -95,6 +95,26 @@ describe("reclaimStaleLock", () => {
     expect(reclaimStaleLock(lock, stale)).toBe(false);
     expect(fs.existsSync(lock)).toBe(true);
   });
+
+  test("a replacement acquired after quarantine verification survives stale cleanup", () => {
+    const lock = path.join(dir, "post-verification-replacement.lock");
+    fs.writeFileSync(lock, "2147480000");
+    const stale = probeLock(lock);
+    expect(stale.state).toBe("stale");
+    if (stale.state !== "stale") throw new Error("expected stale lock");
+
+    let replacementAcquired = false;
+    expect(
+      reclaimStaleLock(lock, stale, {
+        afterQuarantineVerified: () => {
+          replacementAcquired = tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, owner: "replacement" }));
+        },
+      }),
+    ).toBe(true);
+
+    expect(replacementAcquired).toBe(true);
+    expect(fs.readFileSync(lock, "utf8")).toContain("replacement");
+  });
 });
 
 describe("lock release on process.exit (SIGTERM-leak regression, #improve.lock)", () => {

@@ -47,6 +47,8 @@ const SIGNED_QUERY_KEYS = new Set([
   "idtoken",
   "key",
   "oauthcode",
+  "oauthtoken",
+  "oauthverifier",
   "password",
   "refreshtoken",
   "secret",
@@ -73,6 +75,12 @@ function hasCredentialParameter(params: URLSearchParams): boolean {
   return false;
 }
 
+function hasCredentialFragment(fragment: string): boolean {
+  if (fragment.includes("=") && hasCredentialParameter(new URLSearchParams(fragment))) return true;
+  const nestedQuery = fragment.indexOf("?");
+  return nestedQuery >= 0 && hasCredentialParameter(new URLSearchParams(fragment.slice(nestedQuery + 1)));
+}
+
 function hasCredentialBearingUrl(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -80,8 +88,7 @@ function hasCredentialBearingUrl(value: string): boolean {
     const url = new URL(trimmed);
     if (url.username || url.password) return true;
     if (hasCredentialParameter(url.searchParams)) return true;
-    const fragment = url.hash.slice(1);
-    return fragment.includes("=") && hasCredentialParameter(new URLSearchParams(fragment));
+    return hasCredentialFragment(url.hash.slice(1));
   } catch {
     // Fail closed for malformed URL-like values carrying the same credential shapes.
     if (/^[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@/i.test(trimmed)) return true;
@@ -93,7 +100,7 @@ function hasCredentialBearingUrl(value: string): boolean {
     }
     if (fragment >= 0) {
       const fragmentText = trimmed.slice(fragment + 1);
-      if (fragmentText.includes("=") && hasCredentialParameter(new URLSearchParams(fragmentText))) return true;
+      if (hasCredentialFragment(fragmentText)) return true;
     }
     return false;
   }

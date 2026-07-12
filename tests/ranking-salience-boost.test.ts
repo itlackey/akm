@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { upsertAssetSalience } from "../src/commands/improve/salience";
+import { acquireMaintenanceBarrier } from "../src/core/maintenance-barrier";
 import { getStateDbPath, openStateDatabase } from "../src/core/state-db";
 import type { StashEntry } from "../src/indexer/passes/metadata";
 import { loadSalienceRankScores, type RankedEntryInput } from "../src/indexer/search/ranking";
@@ -97,5 +98,22 @@ describe("R2 — loadSalienceRankScores (state.db read path)", () => {
     expect(scores.size).toBe(0);
     // The read-only search path must not have created or migrated state.db.
     expect(fs.existsSync(dbPath)).toBe(false);
+  });
+
+  test("coordinates the canonical read-only handle with the maintenance barrier", () => {
+    const db = openStateDatabase();
+    try {
+      upsertAssetSalience(db, "lesson:hot", { encoding: 0.8, outcome: 0.5, retrieval: 0.9, rankScore: 0.77 });
+    } finally {
+      db.close();
+    }
+    const items = [makeRanked(11, "hot")];
+    const releaseBarrier = acquireMaintenanceBarrier();
+    try {
+      expect(loadSalienceRankScores(items).size).toBe(0);
+    } finally {
+      releaseBarrier();
+    }
+    expect(loadSalienceRankScores(items).get(11)).toBeCloseTo(0.77, 9);
   });
 });
