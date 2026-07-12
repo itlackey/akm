@@ -20,7 +20,6 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import * as agentBarrel from "../../src/integrations/agent";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { AgentFailureReason, SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
 import { runAgent } from "../../src/integrations/agent/spawn";
@@ -107,9 +106,8 @@ function makeFakeTimerFns() {
 }
 
 describe("`runAgent` seam (v1 spec §9.7, §12.2)", () => {
-  test("`runAgent` is exported from both the spawn module and the agent barrel", () => {
+  test("`runAgent` is exported from the low-level spawn module", () => {
     expect(typeof runAgent).toBe("function");
-    expect(agentBarrel.runAgent).toBe(runAgent);
   });
 
   test("captured-stdio success returns `ok: true` with stdout/stderr strings", async () => {

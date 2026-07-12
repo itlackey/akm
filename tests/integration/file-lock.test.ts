@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  _setStaleReclaimInterleaveForTests,
   probeLock,
   reclaimStaleLock,
   releaseLock,
@@ -14,6 +15,7 @@ import {
   tryAcquireLockSync,
 } from "../../src/core/file-lock";
 import { type Cleanup, sandboxXdgDataHome } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 const FILE_LOCK_MODULE = path.resolve(import.meta.dir, "../../src/core/file-lock.ts");
 
@@ -94,6 +96,23 @@ describe("reclaimStaleLock", () => {
 
     expect(reclaimStaleLock(lock, stale)).toBe(false);
     expect(fs.existsSync(lock)).toBe(true);
+  });
+
+  test("does not delete a replacement installed after internal verification but before delete", () => {
+    const lock = path.join(dir, "post-verification-adversarial.lock");
+    fs.writeFileSync(lock, "2147480000");
+    const stale = probeLock(lock);
+    expect(stale.state).toBe("stale");
+    if (stale.state !== "stale") throw new Error("expected stale lock");
+
+    overrideSeam(_setStaleReclaimInterleaveForTests, (verifiedPath) => {
+      expect(verifiedPath).toBe(lock);
+      fs.rmSync(lock);
+      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, owner: "replacement" }));
+    });
+
+    expect(reclaimStaleLock(lock, stale)).toBe(false);
+    expect(fs.readFileSync(lock, "utf8")).toContain("replacement");
   });
 });
 

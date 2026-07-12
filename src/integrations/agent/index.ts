@@ -50,4 +50,3 @@ export type {
   SpawnedSubprocess,
   SpawnFn,
 } from "./spawn";
-export { runAgent } from "./spawn";

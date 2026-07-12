@@ -16,6 +16,7 @@ const disposers: Array<{ cleanup: () => void }> = [];
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
+const improveCliPath = path.join(repoRoot, "src", "commands", "improve", "improve-cli.ts");
 
 function makeStashDir(): string {
   const stash: SandboxedDir = sandboxMakeStashDir();
@@ -51,6 +52,8 @@ interface CliRun {
   roots: string[];
   artifactBefore: string[];
 }
+
+const SIGNAL_HANDLERS_READY = "AKM_TEST_SIGNAL_HANDLERS_READY";
 
 function runCli(args: string[], stashDir: string): CliRun {
   // Fresh XDG_DATA_HOME per call so each run writes its own state.db. Use the
@@ -212,6 +215,7 @@ describe("akm improve CLI dry-run artifact boundary", () => {
 
     // Stderr should NOT contain the "improve result written to" hint.
     expect(result.stderr).not.toContain("improve result written to");
+    expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
   });
 
   test("two consecutive dry-runs persist neither invocation", () => {
@@ -237,6 +241,7 @@ describe("akm improve CLI dry-run artifact boundary", () => {
 
     expect(JSON.parse(result.stdout).strategy).toBe("quick");
     expect(readImproveRuns(result.xdgData)).toEqual([]);
+    expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
   });
 
   test("preflight errors create no artifact and never persist a result", () => {
@@ -244,6 +249,17 @@ describe("akm improve CLI dry-run artifact boundary", () => {
     expect(result.status).toBe(78);
     expect(result.stdout).toBe("");
     expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "UNKNOWN_IMPROVE_STRATEGY" });
+    expect(readImproveRuns(result.xdgData)).toEqual([]);
+    expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
+  });
+
+  test("runtime exceptions create no artifact and never persist a dry-run result", () => {
+    // Strategy resolution succeeds before runImproveSession. This invalid scope
+    // throws from akmImprove after the session's signal handlers are installed.
+    const result = runCli(["improve", "not-an-asset-type", "--dry-run"], stashDir);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
     expect(readImproveRuns(result.xdgData)).toEqual([]);
     expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
   });
@@ -261,7 +277,36 @@ describe("akm improve CLI dry-run artifact boundary", () => {
     }
     const roots = [cache.dir, config.dir, data.dir, state.dir, stashDir];
     const before = snapshotRoots(roots);
-    const child = spawn("bun", [cliPath, "improve", "--dry-run"], {
+    const preload = sandboxMakeStashDir();
+    disposers.push(preload);
+    const preloadPath = path.join(preload.dir, "signal-ready.mjs");
+    const wrapperPath = path.join(preload.dir, "in-flight-improve.mjs");
+    fs.writeFileSync(
+      preloadPath,
+      [
+        `const originalOnce = process.once;`,
+        `const installed = new Set();`,
+        `process.once = function (event, listener) {`,
+        `  const result = originalOnce.call(this, event, listener);`,
+        `  if (event === "SIGTERM" || event === "SIGINT" || event === "SIGHUP") installed.add(event);`,
+        `  if (installed.size === 3) {`,
+        `    installed.clear();`,
+        `    queueMicrotask(() => process.stderr.write(${JSON.stringify(`${SIGNAL_HANDLERS_READY}\n`)}));`,
+        `  }`,
+        `  return result;`,
+        `};`,
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        `import { _setAkmImproveForTests } from ${JSON.stringify(improveCliPath)};`,
+        `_setAkmImproveForTests(() => new Promise(() => {}));`,
+        `process.env.AKM_NODE_ENTRY = "1";`,
+        `await import(${JSON.stringify(cliPath)});`,
+      ].join("\n"),
+    );
+    const child = spawn("bun", ["--preload", preloadPath, wrapperPath, "improve", "--dry-run"], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -274,14 +319,29 @@ describe("akm improve CLI dry-run artifact boundary", () => {
       },
     });
     const stderrChunks: Buffer[] = [];
-    child.stderr.on("data", (chunk) => stderrChunks.push(Buffer.from(chunk)));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("CLI did not install SIGTERM handlers in time")), 10_000);
+      const onData = (chunk: Buffer) => {
+        stderrChunks.push(Buffer.from(chunk));
+        if (!Buffer.concat(stderrChunks).toString("utf8").includes(SIGNAL_HANDLERS_READY)) return;
+        clearTimeout(timeout);
+        child.off("close", onClose);
+        resolve();
+      };
+      const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
+        clearTimeout(timeout);
+        reject(new Error(`CLI exited before installing SIGTERM handlers (code=${code}, signal=${signal})`));
+      };
+      child.stderr.on("data", onData);
+      child.once("close", onClose);
+    });
     child.kill("SIGTERM");
     const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       child.once("close", (code, signal) => resolve({ code, signal }));
     });
     expect(exit.code === 143 || exit.signal === "SIGTERM").toBe(true);
     const stderr = Buffer.concat(stderrChunks).toString("utf8");
+    expect(stderr).toContain(SIGNAL_HANDLERS_READY);
     if (exit.code === 143) expect(stderr).toContain("dry-run state was not persisted");
     expect(readImproveRuns(data.dir)).toEqual([]);
     expect(snapshotRoots(roots)).toEqual(before);

@@ -7,9 +7,9 @@ Security fixes are made on the latest minor release line of `akm-cli`. The
 
 | Version | Supported |
 | --- | --- |
-| 0.8.x  | ✅ active |
-| 0.7.x  | ❌ no longer maintained |
-| < 0.7  | ❌ no longer maintained |
+| 0.9.x | ✅ active |
+| 0.8.x | ❌ no longer maintained |
+| < 0.8 | ❌ no longer maintained |
 
 ## Reporting a vulnerability
 
@@ -82,12 +82,11 @@ for assets containing secrets or private notes.
 
 ## Known non-issues
 
-- **`akm` requires Bun or the prebuilt binary** — Node.js is not supported
-  in 0.8.0 because Bun-specific APIs are used in hot paths. This is a
-  compatibility limitation, not a security risk; the prebuilt binary is a
-  Bun-compiled standalone executable.
+- **`akm` requires Bun, Node.js >= 20.12, or the prebuilt binary.** Older
+  Node.js versions are unsupported because required runtime APIs are missing.
+  This is a compatibility limitation, not a security risk.
 - **Workflows can read any file the akm process can read.** This is not a
   bug — see "Threat model" above.
-- **`bun install -g akm-cli` runs the preinstall hook.** The hook only
-  emits an error message and exits non-zero on Node.js; it does not phone
-  home or write outside the install directory.
+- **Installing `akm-cli` runs the preinstall hook.** The hook only validates
+  the runtime version and exits non-zero when it is unsupported; it does not
+  phone home or write outside the install directory.

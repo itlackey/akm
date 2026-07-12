@@ -12,7 +12,7 @@ const NON_USER_FACING_DOC_DIRS = new Set([
   "posts",
   "reviews",
 ]);
-const ACTIVE_ROOT_DOCS = ["README.md", ".github/README.npm.md", "STABILITY.md"];
+const ACTIVE_ROOT_DOCS = ["README.md", ".github/README.npm.md", "SECURITY.md", "STABILITY.md"];
 const HELP_DOCS_ROOT = path.join(repoRoot, "src", "assets", "help");
 
 export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "technical", "architecture.md");

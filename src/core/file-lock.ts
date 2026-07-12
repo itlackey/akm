@@ -49,6 +49,13 @@ interface LockFileIdentity {
   mtimeMs: number;
 }
 
+let staleReclaimInterleaveForTests: ((lockPath: string) => void) | undefined;
+
+/** Test seam for an ownership change after stale verification but before delete. */
+export function _setStaleReclaimInterleaveForTests(fake?: (lockPath: string) => void): void {
+  staleReclaimInterleaveForTests = fake;
+}
+
 function readLockSnapshot(lockPath: string): { rawContent: string; identity: LockFileIdentity } | undefined {
   let fd: number;
   try {
@@ -136,6 +143,15 @@ export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeR
 export function reclaimStaleLock(lockPath: string, probe: Extract<LockProbeResult, { state: "stale" }>): boolean {
   if (probe.rawContent === undefined || probe.identity === undefined) return false;
   let current: ReturnType<typeof readLockSnapshot>;
+  try {
+    current = readLockSnapshot(lockPath);
+  } catch {
+    return false;
+  }
+  if (!current || current.rawContent !== probe.rawContent || !sameIdentity(current.identity, probe.identity)) {
+    return false;
+  }
+  staleReclaimInterleaveForTests?.(lockPath);
   try {
     current = readLockSnapshot(lockPath);
   } catch {
