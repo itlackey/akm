@@ -808,12 +808,15 @@ hardcoded) via the config-root `modelAliases` key:
 ```jsonc
 {
   "modelAliases": {
-    "fast":     { "*": "claude-haiku-4-5" },
-    "balanced": { "*": "claude-sonnet-4-6" },
+    "fast":     { "llm": "claude-haiku-4-5", "*": "claude-haiku-4-5" },
+    "balanced": { "llm": "claude-sonnet-4-6", "*": "claude-sonnet-4-6" },
     "deep":     { "claude": "claude-fable-5", "opencode": "opencode/claude-fable-5", "*": "claude-fable-5" }
   }
 }
 ```
+
+For an LLM engine, resolution checks its engine-name column, then `llm`, then
+`*`. Agent engines check their harness platform and then `*`.
 
 The built-in aliases `fable`, `opus`, `sonnet`, and `haiku` resolve per
 platform with no config. Point `deep` work (review, verification, judging) at

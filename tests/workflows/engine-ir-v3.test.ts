@@ -477,6 +477,42 @@ describe("workflow engine v3 contracts", () => {
     expect(work.list.units[0]?.invocation?.model).toBe("fallback/exact");
   });
 
+  test("direct and frozen fallback paths use the shared llm alias tier with exact attribution", () => {
+    const parsed = parseWorkflowProgram(
+      "version: 2\nname: review\ndefaults: { engine: sdk }\nsteps:\n  - id: review\n    unit: { instructions: Review }\n",
+      SOURCE,
+    );
+    if (!parsed.ok) throw new Error("fixture must parse");
+    const frozen = compileResolveFreezeWorkflow(
+      {
+        ref: "workflow:review",
+        path: SOURCE.path,
+        sourcePath: "/tmp",
+        title: "review",
+        steps: [],
+        program: parsed.program,
+      },
+      {
+        configVersion: "0.9.0",
+        engines: {
+          sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "fallback" },
+          fallback: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "economy" },
+        },
+        defaults: { engine: "sdk", llmEngine: "fallback" },
+        modelAliases: { economy: { llm: "provider/exact-fallback", "*": "wrong" } },
+      } as never,
+    );
+    const root = frozen.plan.steps[0]?.root;
+    if (!root || root.kind !== "unit") throw new Error("fixture root must be unit");
+
+    expect(root.invocation).toMatchObject({ engine: "sdk", model: "provider/exact-fallback" });
+    expect(frozen.plan.execution?.engines.fallback).toMatchObject({
+      name: "fallback",
+      kind: "llm",
+      model: "provider/exact-fallback",
+    });
+  });
+
   test("freeze preserves merged per-invocation LLM settings and explicit null timeout", () => {
     const parsed = parseWorkflowProgram(
       "version: 2\nname: direct\ndefaults:\n  engine: direct\n  timeout: none\n  llm: { temperature: 0.2, extra_params: { seed: 7 } }\nsteps:\n  - id: review\n    unit:\n      instructions: Review\n      llm: { max_tokens: 77, enable_thinking: true }\n",

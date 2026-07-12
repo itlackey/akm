@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
-import { rethrowIfTestIsolationError } from "../core/errors";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
+import { ConfigError, rethrowIfTestIsolationError } from "../core/errors";
+import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../core/file-lock";
 import { acquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
 import type { InstallKind } from "../registry/types";
@@ -43,7 +43,7 @@ export interface LockfileEntry {
 const LOCK_MAX_RETRIES = 3;
 const LOCK_RETRY_DELAY_MS = 100;
 
-async function acquireLockSentinel(): Promise<boolean> {
+async function acquireLockSentinel(): Promise<() => void> {
   const sentinelPath = getLockfileLockPath();
   // Ensure the directory exists before attempting to create the sentinel.
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
@@ -51,7 +51,7 @@ async function acquireLockSentinel(): Promise<boolean> {
     const releaseBarrier = acquireMaintenanceBarrier();
     try {
       if (tryAcquireLockSync(sentinelPath, String(process.pid))) {
-        return true; // Sentinel created — we own the lock.
+        return () => releaseLockIfOwned(sentinelPath, process.pid);
       }
       if (probeLock(sentinelPath).state === "stale") {
         releaseLock(sentinelPath);
@@ -65,12 +65,10 @@ async function acquireLockSentinel(): Promise<boolean> {
       await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
     }
   }
-  // Best-effort: proceed without the lock rather than failing the install.
-  return false;
-}
-
-function releaseLockSentinel(): void {
-  releaseLock(getLockfileLockPath());
+  throw new ConfigError(
+    `Could not acquire lockfile sentinel at ${sentinelPath}; refusing to write without exclusive ownership.`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
 // ── Read / Write ────────────────────────────────────────────────────────────
@@ -90,7 +88,7 @@ export function readLockfile(): LockfileEntry[] {
   }
 }
 
-export function writeLockfile(entries: LockfileEntry[]): void {
+function writeLockfileUnlocked(entries: LockfileEntry[]): void {
   // Always write to $DATA — never to the legacy $CONFIG location.
   const lockfilePath = getLockfilePath();
   const dir = path.dirname(lockfilePath);
@@ -98,25 +96,34 @@ export function writeLockfile(entries: LockfileEntry[]): void {
   writeFileAtomic(lockfilePath, `${JSON.stringify(entries, null, 2)}\n`);
 }
 
+export async function writeLockfile(entries: LockfileEntry[]): Promise<void> {
+  const release = await acquireLockSentinel();
+  try {
+    writeLockfileUnlocked(entries);
+  } finally {
+    release();
+  }
+}
+
 export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
-  const acquired = await acquireLockSentinel();
+  const release = await acquireLockSentinel();
   try {
     const entries = readLockfile();
     const withoutExisting = entries.filter((e) => e.id !== entry.id);
-    writeLockfile([...withoutExisting, entry]);
+    writeLockfileUnlocked([...withoutExisting, entry]);
   } finally {
-    if (acquired) releaseLockSentinel();
+    release();
   }
 }
 
 export async function removeLockEntry(id: string): Promise<void> {
   if (!fs.existsSync(getDataDir())) return;
-  const acquired = await acquireLockSentinel();
+  const release = await acquireLockSentinel();
   try {
     const entries = readLockfile();
-    writeLockfile(entries.filter((e) => e.id !== id));
+    writeLockfileUnlocked(entries.filter((e) => e.id !== id));
   } finally {
-    if (acquired) releaseLockSentinel();
+    release();
   }
 }
 

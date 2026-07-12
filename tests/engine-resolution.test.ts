@@ -78,6 +78,30 @@ describe("engine resolution", () => {
     expect(JSON.stringify(resolved)).not.toContain(process.env.FAST_API_KEY ?? "not-set");
   });
 
+  test("resolves direct and SDK fallback models through engine, llm, then wildcard alias tiers", () => {
+    const tiered = {
+      ...config,
+      engines: {
+        ...config.engines,
+        fast: { ...config.engines.fast, model: "economy", apiKey: undefined },
+      },
+      modelAliases: {
+        economy: { fast: "engine-exact", llm: "llm-exact", "*": "wildcard-exact" },
+      },
+    };
+    expect(resolveLlmEngineUse(tiered, [{ engine: "fast" }]).connection.model).toBe("engine-exact");
+    const sdk = resolveEngine("sdk", tiered);
+    expect(sdk.kind === "sdk" && sdk.fallbackConnection?.model).toBe("engine-exact");
+
+    const llmTier = {
+      ...tiered,
+      modelAliases: { economy: { llm: "llm-exact", "*": "wildcard-exact" } },
+    };
+    expect(resolveLlmEngineUse(llmTier, [{ engine: "fast" }]).connection.model).toBe("llm-exact");
+    const wildcard = { ...tiered, modelAliases: { economy: { "*": "wildcard-exact" } } };
+    expect(resolveLlmEngineUse(wildcard, [{ engine: "fast" }]).connection.model).toBe("wildcard-exact");
+  });
+
   test("materializes an explicit symbolic credential only at dispatch", () => {
     process.env.FAST_API_KEY = "engine-secret";
     const resolved = resolveLlmEngineUse(config, [{ engine: "fast" }]);

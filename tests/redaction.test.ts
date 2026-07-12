@@ -3,7 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { redactSensitiveText, redactSensitiveValue } from "../src/core/redaction";
+import {
+  ENV_PASSTHROUGH_REDACTION_ALLOWLIST,
+  isEnvPassthroughValueSafeToExpose,
+  redactSensitiveText,
+  redactSensitiveValue,
+} from "../src/core/redaction";
 
 describe("redactSensitiveText", () => {
   test("redacts exact values longest-first without treating them as patterns", () => {
@@ -23,5 +28,33 @@ describe("redactSensitiveText", () => {
     expect(redacted).toEqual({
       "[REDACTED]": [{ echoed: "[REDACTED]" }],
     });
+  });
+});
+
+describe("environment passthrough redaction policy", () => {
+  test("keeps ordinary values for every explicitly classified allowlisted name", () => {
+    for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
+      expect(isEnvPassthroughValueSafeToExpose(name, "ordinary-runtime-value"), name).toBe(true);
+    }
+  });
+
+  test("rejects URL userinfo and signed query credentials under every allowlisted name", () => {
+    for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
+      expect(isEnvPassthroughValueSafeToExpose(name, "https://user:password@example.test/v1"), name).toBe(false);
+      expect(
+        isEnvPassthroughValueSafeToExpose(
+          name,
+          "https://example.test/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret",
+        ),
+        name,
+      ).toBe(false);
+    }
+  });
+
+  test("allows unsigned endpoint queries but rejects non-allowlisted names", () => {
+    expect(isEnvPassthroughValueSafeToExpose("LLM_BASE_URL", "https://example.test/v1?api-version=2026-01-01")).toBe(
+      true,
+    );
+    expect(isEnvPassthroughValueSafeToExpose("CUSTOM_VALUE", "ordinary-runtime-value")).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import type { SemanticSearchStatus } from "../../indexer/search/semantic-status";
 import { resolveEngine } from "../../integrations/agent/engine-resolution";
+import { resolveModel } from "../../integrations/agent/model-aliases";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import {
   type HealthCheckResult,
@@ -108,19 +109,33 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
     const binaryAvailable = (version.status ?? 1) === 0;
     const fallbackEngine = configuredEngine.llmEngine ?? config.defaults?.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-    if (fallbackEngine) {
+    let sdkRunner: Extract<RunnerSpec, { kind: "sdk" }> | undefined;
+    const resolve = deps.resolveEngine ?? resolveEngine;
+    try {
+      const resolved = resolve(engineName, config);
+      if (resolved.kind === "sdk") sdkRunner = resolved;
+    } catch {
+      sdkRunner = undefined;
+    }
+    if (sdkRunner?.fallbackConnection) {
+      fallback = { kind: "llm", connection: sdkRunner.fallbackConnection };
+    } else if (fallbackEngine) {
       try {
-        const resolved = (deps.resolveEngine ?? resolveEngine)(fallbackEngine, config);
+        const resolved = resolve(fallbackEngine, config);
         if (resolved.kind === "llm") fallback = resolved;
       } catch {
         fallback = undefined;
       }
     }
+    const configuredModel = configuredEngine.model
+      ? resolveModel(configuredEngine.model, "opencode-sdk", configuredEngine.modelAliases, config.modelAliases)
+      : undefined;
+    const effectiveModel = sdkRunner?.profile.model ?? configuredModel ?? fallback?.connection.model;
     const missing = [
       !packageAvailable ? "@opencode-ai/sdk package" : undefined,
       !binaryAvailable ? `${binary} binary` : undefined,
-      !configuredEngine.model ? "explicit SDK model" : undefined,
       !fallback ? "fallback LLM connection" : undefined,
+      !effectiveModel ? "effective SDK model" : undefined,
     ].filter((value): value is string => value !== undefined);
     return {
       name: "default-agent-engine",
@@ -139,7 +154,9 @@ export function runAgentProbe(deps: AgentProbeDependencies = {}): HealthCheckRes
         binaryAvailable,
         package: "@opencode-ai/sdk",
         packageAvailable,
-        model: configuredEngine.model ?? null,
+        model: effectiveModel ?? null,
+        configuredModel: configuredModel ?? null,
+        modelSource: configuredModel ? "sdk" : effectiveModel ? "fallback" : null,
         fallbackEngine: fallbackEngine ?? null,
         fallbackEndpoint: fallback?.connection.endpoint ?? null,
         fallbackModel: fallback?.connection.model ?? null,

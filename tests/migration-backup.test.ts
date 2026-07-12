@@ -13,7 +13,13 @@ import {
   restoreMigrationBackup,
   verifyMigrationBackup,
 } from "../src/core/migration-backup";
-import { getConfigPath, getDataDir, getStateDbPathInDataDir, getWorkflowDbPath } from "../src/core/paths";
+import {
+  getConfigPath,
+  getDataDir,
+  getLockfileLockPath,
+  getStateDbPathInDataDir,
+  getWorkflowDbPath,
+} from "../src/core/paths";
 import { openStateDatabase } from "../src/core/state-db";
 import { acquireIndexWriterLease } from "../src/indexer/index-writer-lock";
 import { openWorkflowDatabase } from "../src/workflows/db";
@@ -123,6 +129,17 @@ describe("0.9 migration backup", () => {
       fs.writeFileSync(lockPath, String(process.pid));
       expect(() => restoreMigrationBackup(true)).toThrow(/locks or workflow leases are active/);
       fs.rmSync(lockPath);
+    }
+  });
+
+  test("refuses restore while a lockfile writer owns its sentinel", () => {
+    createMigrationBackup();
+    fs.mkdirSync(path.dirname(getLockfileLockPath()), { recursive: true });
+    fs.writeFileSync(getLockfileLockPath(), String(process.pid), { flag: "wx" });
+    try {
+      expect(() => restoreMigrationBackup(true)).toThrow(/akm\.lock\.lck/);
+    } finally {
+      fs.rmSync(getLockfileLockPath(), { force: true });
     }
   });
 

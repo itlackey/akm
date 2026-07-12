@@ -137,12 +137,20 @@ type SdkServerFactory = (options: {
   config?: Record<string, unknown>;
   port?: number;
   env: Record<string, string>;
-  startupTimeoutMs: number | null;
+  startupSignal: AbortSignal;
 }) => Promise<SdkServer>;
 
-// Server registry — one server per complete server-material signature, started
-// lazily and reused across calls.
-const _servers = new Map<string, Promise<SdkServer>>();
+interface SharedServerStart {
+  promise: Promise<SdkServer>;
+  controller: AbortController;
+  waiters: number;
+  server?: SdkServer;
+}
+
+// Server registry — one server per complete server-material signature. Caller
+// deadlines race the shared promise independently; they never become startup
+// configuration inherited by later callers.
+const _servers = new Map<string, SharedServerStart>();
 
 // Resolved servers by registry key, mirrored from `_servers` as each start
 // promise settles. This exists so closeServer() can close started servers
@@ -204,7 +212,7 @@ export function __setServerFactory(factory: SdkServerFactory | null): void {
  */
 export async function closeServer(): Promise<void> {
   const closes: Promise<unknown>[] = [];
-  for (const [key, pending] of _servers) {
+  for (const [key, entry] of _servers) {
     const resolved = _resolvedServers.get(key);
     if (resolved) {
       // Synchronous close — safe from the 'exit' hook.
@@ -214,15 +222,10 @@ export async function closeServer(): Promise<void> {
         /* ignore */
       }
     } else {
-      // Still starting: close on arrival. This branch can never complete
-      // inside the 'exit' hook (no microtasks there), but it keeps
-      // mid-start test teardown leak-free.
-      closes.push(
-        pending
-          .then((s) => s.server.close())
-          .catch(() => {})
-          .finally(() => _serverPorts.delete(key)),
-      );
+      // Still starting: cancel the real managed spawn immediately. A custom
+      // factory may ignore the signal; the registry settlement handler closes
+      // any late result without awaiting it and pinning shutdown indefinitely.
+      entry.controller.abort();
     }
   }
   _servers.clear();
@@ -454,7 +457,7 @@ async function createManagedOpencode(options: {
   config?: Record<string, unknown>;
   port?: number;
   env: Record<string, string>;
-  startupTimeoutMs: number | null;
+  startupSignal: AbortSignal;
 }): Promise<SdkServer> {
   const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
     throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
@@ -503,17 +506,13 @@ async function createManagedOpencode(options: {
 
   const url = await new Promise<string>((resolve, reject) => {
     let output = "";
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
     const cleanupStartup = (): void => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
       proc.stdout?.off("data", onStdoutData);
       proc.stderr?.off("data", onStderrData);
       proc.off("exit", onExit);
       proc.off("error", onError);
+      options.startupSignal.removeEventListener("abort", onAbort);
     };
     const fail = (err: Error): void => {
       if (settled) return;
@@ -555,16 +554,13 @@ async function createManagedOpencode(options: {
     const onError = (err: Error): void => {
       fail(err instanceof Error ? err : new Error(String(err)));
     };
-    if (options.startupTimeoutMs !== null) {
-      timer = setTimeout(() => {
-        fail(new Error(`Timeout waiting for the OpenCode server to start after ${options.startupTimeoutMs}ms`));
-      }, options.startupTimeoutMs);
-      timer.unref?.();
-    }
+    const onAbort = (): void => fail(new Error("OpenCode server startup cancelled because no callers are waiting"));
     proc.stdout?.on("data", onStdoutData);
     proc.stderr?.on("data", onStderrData);
     proc.on("exit", onExit);
     proc.on("error", onError);
+    if (options.startupSignal.aborted) onAbort();
+    else options.startupSignal.addEventListener("abort", onAbort, { once: true });
   });
 
   // Handshake done: from here on the child must never hold akm open. Its
@@ -582,7 +578,7 @@ async function startServer(
   sdkConfig: Record<string, unknown>,
   env: Record<string, string>,
   registryKey: string,
-  startupTimeoutMs: number | null,
+  startupSignal: AbortSignal,
 ): Promise<SdkServer> {
   const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
@@ -591,17 +587,18 @@ async function startServer(
     config?: Record<string, unknown>;
     port?: number;
     env: Record<string, string>;
-    startupTimeoutMs: number | null;
+    startupSignal: AbortSignal;
   } = {
     bin: profile.bin,
     ...(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {}),
     env,
-    startupTimeoutMs,
+    startupSignal,
   };
 
   // Every cached server receives a separately reserved port. This avoids both
   // inter-entry contention and collisions with an unrelated process on 4096.
   options.port = await allocateFreePort(registryKey);
+  if (startupSignal.aborted) throw new Error("OpenCode server startup cancelled because no callers are waiting");
 
   const server = await factory(options);
   if (!server) throw new Error("Failed to initialise OpenCode SDK server.");
@@ -621,37 +618,58 @@ async function startServer(
  * start (the registry stores the in-flight promise). A failed start is
  * evicted so the next call can retry instead of caching the error forever.
  */
-async function getOrStartServer(
+function getOrStartServer(
   profile: AgentProfile,
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
   envSource: NodeJS.ProcessEnv = process.env,
-  startupTimeoutMs: number | null = null,
-): Promise<SdkServer> {
-  if (_testServer) return _testServer;
+): { promise: Promise<SdkServer>; release(): void } {
+  if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
   const sdkConfig = buildSdkConfig(profile, llmConfig);
   const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
   const key = serverRegistryKey(profile, serverEnv);
-  let pending = _servers.get(key);
-  if (!pending) {
-    pending = startServer(profile, sdkConfig, serverEnv, key, startupTimeoutMs);
-    _servers.set(key, pending);
-    pending.then(
+  let entry = _servers.get(key);
+  if (!entry) {
+    const controller = new AbortController();
+    entry = {
+      promise: startServer(profile, sdkConfig, serverEnv, key, controller.signal),
+      controller,
+      waiters: 0,
+    };
+    const started = entry;
+    _servers.set(key, started);
+    started.promise.then(
       (server) => {
-        // Mirror into the synchronously-closable registry (see closeServer)
-        // — but only while this start is still the live entry (closeServer
-        // may have cleared the registry mid-start).
-        if (_servers.get(key) === pending) _resolvedServers.set(key, server);
+        if (_servers.get(key) === started) {
+          started.server = server;
+          _resolvedServers.set(key, server);
+        } else {
+          void server.server.close();
+        }
       },
       () => {
-        if (_servers.get(key) === pending) {
+        if (_servers.get(key) === started) {
           _servers.delete(key);
           _serverPorts.delete(key);
         }
       },
     );
   }
-  return pending;
+  entry.waiters++;
+  let released = false;
+  return {
+    promise: entry.promise,
+    release() {
+      if (released) return;
+      released = true;
+      entry.waiters--;
+      if (entry.waiters === 0 && !entry.server && _servers.get(key) === entry) {
+        _servers.delete(key);
+        _serverPorts.delete(key);
+        entry.controller.abort();
+      }
+    },
+  };
 }
 
 /**
@@ -792,16 +810,14 @@ export async function runOpencodeSdk(
   if (_testServer) {
     client = _testServer.client;
   } else {
+    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource);
     try {
-      const startup = await raceSdkOperation(
-        getOrStartServer(profile, llmConfig, opts.env, opts.envSource, remainingTimeoutMs()),
-        {
-          timeoutMs: remainingTimeoutMs(),
-          setTimeoutFn: setTimeoutImpl,
-          clearTimeoutFn: clearTimeoutImpl,
-          signal: opts.signal,
-        },
-      );
+      const startup = await raceSdkOperation(startupHandle.promise, {
+        timeoutMs: remainingTimeoutMs(),
+        setTimeoutFn: setTimeoutImpl,
+        clearTimeoutFn: clearTimeoutImpl,
+        signal: opts.signal,
+      });
       if (startup === SDK_OPERATION_ABORTED) {
         return {
           ok: false,
@@ -835,6 +851,8 @@ export async function runOpencodeSdk(
         reason: "spawn_failed" as AgentFailureReason,
         error: String(e),
       };
+    } finally {
+      startupHandle.release();
     }
   }
 

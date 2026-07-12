@@ -9,7 +9,7 @@ import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import { getHarness } from "../harnesses";
 import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
-import { resolveModel } from "./model-aliases";
+import { resolveLlmModel, resolveModel } from "./model-aliases";
 import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
 
@@ -193,6 +193,7 @@ export function resolveLlmEngineUse(
   for (const key of Object.keys(connection)) {
     if (connection[key] === undefined) delete connection[key];
   }
+  connection.model = resolveLlmModel(connection.model as string, name, config.modelAliases);
   return {
     engine: name,
     connection: connection as Omit<LlmConnectionConfig, "apiKey" | "timeoutMs">,
