@@ -99,11 +99,36 @@ function collectCredentialParameters(params: URLSearchParams, values?: Set<strin
   return found;
 }
 
+function collectEncodedCredentialParameters(raw: string, values?: Set<string>): boolean {
+  let found = false;
+  for (const part of raw.split("&")) {
+    const separator = part.indexOf("=");
+    if (separator < 0) continue;
+    const rawKey = part.slice(0, separator);
+    const rawValue = part.slice(separator + 1);
+    let key = rawKey;
+    try {
+      key = decodeURIComponent(rawKey.replaceAll("+", " "));
+    } catch {
+      // Keep the raw key so malformed credential-shaped input still fails closed.
+    }
+    if (!SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) continue;
+    found = true;
+    if (rawValue) values?.add(rawValue);
+  }
+  return found;
+}
+
 function collectCredentialFragment(fragment: string, values?: Set<string>): boolean {
-  let found = fragment.includes("=") && collectCredentialParameters(new URLSearchParams(fragment), values);
+  const directDecoded = fragment.includes("=") && collectCredentialParameters(new URLSearchParams(fragment), values);
+  const directEncoded = fragment.includes("=") && collectEncodedCredentialParameters(fragment, values);
+  let found = directDecoded || directEncoded;
   const nestedQuery = fragment.indexOf("?");
   if (nestedQuery >= 0) {
-    found = collectCredentialParameters(new URLSearchParams(fragment.slice(nestedQuery + 1)), values) || found;
+    const query = fragment.slice(nestedQuery + 1);
+    const decoded = collectCredentialParameters(new URLSearchParams(query), values);
+    const encoded = collectEncodedCredentialParameters(query, values);
+    found = decoded || encoded || found;
   }
   return found;
 }
@@ -117,13 +142,16 @@ function inspectCredentialBearingUrl(value: string, values?: Set<string>): boole
     for (const userInfo of [url.username, url.password]) {
       if (!userInfo) continue;
       found = true;
+      values?.add(userInfo);
       try {
         values?.add(decodeURIComponent(userInfo));
       } catch {
         values?.add(userInfo);
       }
     }
-    found = collectCredentialParameters(url.searchParams, values) || found;
+    const decodedQuery = collectCredentialParameters(url.searchParams, values);
+    const encodedQuery = collectEncodedCredentialParameters(url.search.slice(1), values);
+    found = decodedQuery || encodedQuery || found;
     return collectCredentialFragment(url.hash.slice(1), values) || found;
   } catch {
     // Fail closed for malformed URL-like values carrying the same credential shapes.
@@ -132,7 +160,9 @@ function inspectCredentialBearingUrl(value: string, values?: Set<string>): boole
     const fragment = trimmed.indexOf("#");
     if (query >= 0) {
       const queryText = trimmed.slice(query + 1, fragment >= 0 ? fragment : undefined);
-      found = collectCredentialParameters(new URLSearchParams(queryText), values) || found;
+      const decodedQuery = collectCredentialParameters(new URLSearchParams(queryText), values);
+      const encodedQuery = collectEncodedCredentialParameters(queryText, values);
+      found = decodedQuery || encodedQuery || found;
     }
     if (fragment >= 0) {
       const fragmentText = trimmed.slice(fragment + 1);

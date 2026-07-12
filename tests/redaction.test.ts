@@ -112,11 +112,21 @@ describe("collectSensitiveValues", () => {
       expect.arrayContaining([
         queryUrl,
         fragmentUrl,
+        "registration%2Btoken",
         "registration+token",
+        "urn%3Aexample%3Arequest%3A123",
         "urn:example:request:123",
+        "state%20token",
         "state token",
         "header.payload.signature",
       ]),
+    );
+  });
+
+  test("redacts a percent-encoded credential echoed without its containing URL", () => {
+    const url = "https://issuer.test/callback#access_token=oidc%2Ftoken%2Bsentinel";
+    expect(redactSensitiveText("provider echoed oidc%2Ftoken%2Bsentinel", collectSensitiveValues([url]))).toBe(
+      "provider echoed [REDACTED]",
     );
   });
 });
