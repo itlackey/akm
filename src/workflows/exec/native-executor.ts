@@ -135,7 +135,7 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
+import { isEnvPassthroughValueSafeToExpose, redactSensitiveValue } from "../../core/redaction";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
@@ -1218,12 +1218,11 @@ function collectWorkflowDispatchSensitiveValues(
 }
 
 function redactUnitOutcome(outcome: UnitOutcome, sensitiveValues: readonly string[]): UnitOutcome {
-  return {
-    ...outcome,
-    ...(outcome.text !== undefined ? { text: redactSensitiveText(outcome.text, sensitiveValues) } : {}),
-    ...(outcome.error !== undefined ? { error: redactSensitiveText(outcome.error, sensitiveValues) } : {}),
-    ...(outcome.result !== undefined ? { result: redactSensitiveValue(outcome.result, sensitiveValues) } : {}),
-  };
+  const redacted = redactSensitiveValue(outcome, sensitiveValues);
+  if (outcome.failureReason !== undefined && redacted.failureReason !== outcome.failureReason) {
+    redacted.failureReason = "reported_failure";
+  }
+  return redacted;
 }
 
 /**

@@ -305,13 +305,15 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   const exactModel = workUnit.invocation.model;
   const inputHash = workUnit.resolved.inputHash;
   const journalId = workUnit.journalBaseId;
+  const sensitiveValues = await collectReportedUnitSensitiveValues(workUnit);
+  const sessionId = input.sessionId === undefined ? undefined : redactSensitiveText(input.sessionId, sensitiveValues);
 
   // ── running: claim / heartbeat, never advances the spine ───────────────────
   if (input.status === "running") {
     // The claim holder: the driver's --session-id, else a token we mint and
     // return so the driver can reuse it (as --session-id) to heartbeat and
     // finish the SAME claim. First unexpired claim wins.
-    const holder = input.sessionId ?? `claim:${randomUUID()}`;
+    const holder = sessionId ?? `claim:${randomUUID()}`;
     const claimExpiresAt = new Date(nowFn().getTime() + CLAIM_TTL_MS).toISOString();
     const claimed = await withWorkflowRunsRepo((repo) =>
       repo.transaction((): "claim" | "heartbeat" => {
@@ -379,7 +381,6 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   }
 
   // ── completed / failed: validate, guard, write, maybe finalize ─────────────
-  const sensitiveValues = await collectReportedUnitSensitiveValues(workUnit);
   const { resultJson, failureReason } = prepareResult(input, workUnit, sensitiveValues);
   const thisTokens = input.tokens ?? 0;
 
@@ -389,7 +390,7 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   // one budgeted step) serialize on the write lock — each sees the other's row
   // and the row is always internally consistent.
   const status: Exclude<WorkflowRunUnitStatus, "pending" | "running"> = input.status;
-  const holder = input.sessionId ?? null;
+  const holder = sessionId ?? null;
   const writeResult = await withWorkflowRunsRepo((repo) =>
     repo.transaction((): UnitWriteOutcome => {
       const existing = repo.getUnit(runId, journalId);
@@ -484,7 +485,7 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
         resultJson,
         tokens: carriedTokens,
         failureReason,
-        sessionId: input.sessionId ?? null,
+        sessionId: sessionId ?? null,
         finishedAt: nowIso,
       });
       // A `tokens-cross` verdict: this unit's OWN tokens push the run total over
@@ -1380,9 +1381,10 @@ async function settleSpine(args: {
  *     unknown external reason is recorded for observability without ever
  *     triggering retry.
  */
-export function normalizeFailureReason(raw: string | undefined): string {
+export function normalizeFailureReason(raw: string | undefined, sensitiveValues: readonly string[] = []): string {
   const trimmed = raw?.trim();
   if (!trimmed) return "reported_failure";
+  if (redactSensitiveText(trimmed, sensitiveValues) !== trimmed) return "reported_failure";
   if ((PROGRAM_RETRY_REASONS as readonly string[]).includes(trimmed)) return trimmed;
   const slug = trimmed
     .toLowerCase()
@@ -1404,7 +1406,7 @@ function prepareResult(
         input.resultRaw !== undefined && input.resultRaw !== ""
           ? JSON.stringify(redactSensitiveText(input.resultRaw, sensitiveValues))
           : null,
-      failureReason: normalizeFailureReason(input.failureReason),
+      failureReason: normalizeFailureReason(input.failureReason, sensitiveValues),
     };
   }
   // completed

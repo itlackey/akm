@@ -2268,6 +2268,35 @@ steps:
     expect(JSON.stringify(rows)).toContain("[REDACTED]");
   });
 
+  test("redacts sensitive values from every durable outcome metadata field", async () => {
+    const sentinel = "WORKFLOW-METADATA-SENTINEL";
+    seedRun({ steps: [{ id: "build", title: "Build" }] });
+    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: {},
+      evidence: {},
+      resolveEnv: async () => ({ TOKEN: sentinel }),
+      dispatcher: async () => ({
+        ok: false,
+        text: `text-${sentinel}`,
+        error: `error-${sentinel}`,
+        failureReason: `provider-${sentinel}`,
+        sessionId: `session-${sentinel}`,
+      }),
+    });
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
+
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+    expect(JSON.stringify(rows)).not.toContain(sentinel);
+    expect(result.units[0].failureReason).toBe("reported_failure");
+    expect(result.units[0].sessionId).toBe("session-[REDACTED]");
+    expect(rows[0].failure_reason).toBe("reported_failure");
+    expect(rows[0].session_id).toBe("session-[REDACTED]");
+  });
+
   test("redacts a credential-bearing URL from an allowlisted engine passthrough", async () => {
     const credentialUrl = "https://example.test/oauth/callback?client_secret=WORKFLOW-URL-SENTINEL";
     seedRun({ steps: [{ id: "build", title: "Build" }] });

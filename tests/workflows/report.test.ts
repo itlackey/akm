@@ -306,7 +306,7 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
 });
 
 describe("workflow report — sensitive output", () => {
-  test("redacts echoed engine, env-asset, and secret-binding values before manual report persistence", async () => {
+  test("redacts echoed values and outcome metadata before manual report persistence", async () => {
     const engineSentinel = "MANUAL-REPORT-ENGINE-SENTINEL";
     const envSentinel = "MANUAL-REPORT-ENV-SENTINEL";
     const secretSentinel = "MANUAL-REPORT-SECRET-SENTINEL";
@@ -344,8 +344,10 @@ steps:
           reportWorkflowUnit({
             target: RUN_ID,
             unitId,
-            status: "completed",
+            status: "failed",
             resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrl}`,
+            failureReason: `provider-${secretSentinel}`,
+            sessionId: `session-${secretSentinel}`,
             summaryJudge: null,
           }),
       );
@@ -355,6 +357,8 @@ steps:
         expect(JSON.stringify(rows)).not.toContain(sentinel);
       }
       expect(JSON.stringify(rows)).toContain("[REDACTED]");
+      expect(rows[0].failure_reason).toBe("reported_failure");
+      expect(rows[0].session_id).toBe("session-[REDACTED]");
     } finally {
       stash.cleanup();
     }
