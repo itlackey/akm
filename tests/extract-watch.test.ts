@@ -390,6 +390,7 @@ describe("watch-mode — AC4 default unchanged", () => {
       process: Object.freeze({ enabled: true }),
       llmConfig: Object.freeze({ endpoint: "https://startup.test/v1", model: "startup-model" }),
       timeoutMs: 1000,
+      embeddingConfig: undefined,
     };
     const changedPlan: ResolvedExtractPlan = {
       strategy: "changed",
@@ -397,6 +398,7 @@ describe("watch-mode — AC4 default unchanged", () => {
       process: Object.freeze({ enabled: true }),
       llmConfig: Object.freeze({ endpoint: "https://changed.test/v1", model: "changed-model" }),
       timeoutMs: 2000,
+      embeddingConfig: undefined,
     };
     const liveOptions = {
       dryRun: true,
