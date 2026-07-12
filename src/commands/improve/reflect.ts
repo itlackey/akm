@@ -32,7 +32,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { ImproveProfileConfig, LlmConnectionConfig, LlmProfileConfig } from "../../core/config/config";
+import type { ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
@@ -102,10 +102,7 @@ export interface AkmReflectOptions {
    * Optional chat seam for the proposal quality gate (R-5 / #374).
    * Defaults to {@link chatCompletion}. Injected in tests to avoid real LLM calls.
    */
-  chat?: (
-    config: import("../../core/config/config").LlmConnectionConfig,
-    messages: import("../../llm/client").ChatMessage[],
-  ) => Promise<string>;
+  chat?: typeof chatCompletion;
   /**
    * Override the loaded AkmConfig (test seam + for the quality gate).
    * Needed by R-5 to access the selected strategy's proposal quality gate
@@ -841,7 +838,7 @@ export interface RunReflectViaLlmOptions {
   /** LLM connection config. `supportsJsonSchema` controls structured-output mode. */
   connection: LlmProfileConfig;
   /** Hard timeout for the LLM request in ms. */
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   /** Prior draft for Self-Refine critique (injected on iterations > 0). */
   priorDraft?: string;
   /** Current refinement iteration (0-based). */
@@ -852,7 +849,7 @@ export interface RunReflectViaLlmOptions {
    */
   responseSchema?: Record<string, unknown>;
   /** Test seam: override the chat function (avoids real LLM calls in tests). */
-  chat?: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+  chat?: typeof chatCompletion;
   /**
    * Hard output-token cap forwarded directly to `chatCompletion` as `max_tokens`.
    * Derived from the same blended-bound formula used by {@link checkReflectSize}
@@ -891,18 +888,11 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
   }
 
   try {
-    let stdout: string;
-    if (opts.chat) {
-      // Test seam: injected chat function (two-arg signature, no responseSchema).
-      stdout = await opts.chat(opts.connection, messages);
-    } else {
-      // Production path: full chatCompletion with optional structured-output schema
-      // and optional hard max_tokens cap (derived from source body size).
-      stdout = await chatCompletion(opts.connection, messages, {
-        ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
-        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-      });
-    }
+    const stdout = await (opts.chat ?? chatCompletion)(opts.connection, messages, {
+      ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
+      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    });
     return {
       ok: true,
       stdout,
@@ -1184,7 +1174,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           runReflectViaLlm({
             prompt,
             connection: spec.connection,
-            timeoutMs: typeof opts.timeoutMs === "number" ? opts.timeoutMs : undefined,
+            ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
             priorDraft,
             iteration: iter,
             responseSchema: REFLECT_JSON_SCHEMA,

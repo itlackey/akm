@@ -381,9 +381,8 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
 
         let injectedAtSpawn: string | undefined;
         let promptDirectory: string | undefined;
-        __setServerFactory(((_options: { config?: Record<string, unknown> }) => {
-          // Synchronous prefix — where the real SDK snapshots process.env.
-          injectedAtSpawn = process.env[ENV_KEY];
+        __setServerFactory(((options: { config?: Record<string, unknown>; env: Record<string, string> }) => {
+          injectedAtSpawn = options.env[ENV_KEY];
           return Promise.resolve({
             client: {
               session: {
@@ -407,7 +406,7 @@ describe("defaultUnitDispatcher — sdk env bindings + cwd (R2)", () => {
         expect(result.text).toBe("sdk-ok");
         expect(result.failureReason).toBeUndefined();
         expect(injectedAtSpawn).toBe("injected");
-        expect(process.env[ENV_KEY]).toBeUndefined(); // overlay restored
+        expect(process.env[ENV_KEY]).toBeUndefined(); // process-wide env was never mutated
         expect(promptDirectory).toBe("/tmp/akm-worktrees/r/u");
       });
     } finally {

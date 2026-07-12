@@ -238,6 +238,17 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
   expect(events).toHaveLength(0);
 });
 
+test("explicit timeoutMs null disables the wrapper timer instead of selecting the default", async () => {
+  const result = await tryLlmFeature(
+    "graph_extraction",
+    configWith({ graph_extraction: true }),
+    () => new Promise<string>((resolve) => setTimeout(() => resolve("completed"), 20)),
+    "fallback",
+    { timeoutMs: null },
+  );
+  expect(result).toBe("completed");
+});
+
 // ── #284 GAP-LOW: parametrise over the stable feature keys ─────────────────
 //
 // Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`

@@ -271,6 +271,25 @@ describe("buildSdkConfig — model alias resolution", () => {
     });
     expect(cfg.model).toBe("akm-custom/qwen3-30b-a3b");
   });
+
+  test("slash-qualified profile models still route through akm-custom", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const cfg = buildSdkConfig({
+      ...baseProfile,
+      model: "openrouter/anthropic/claude-sonnet-4",
+      endpoint: "http://localhost:1234/v1",
+    });
+    expect(cfg.model).toBe("akm-custom/openrouter/anthropic/claude-sonnet-4");
+  });
+
+  test("inherits the fallback LLM model and routes it through akm-custom", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const cfg = buildSdkConfig(baseProfile, {
+      endpoint: "http://localhost:1234/v1/chat/completions",
+      model: "fallback/provider/model",
+    });
+    expect(cfg.model).toBe("akm-custom/fallback/provider/model");
+  });
 });
 
 // ── P0.5 seams: usage + sessionId + cooperative abort ─────────────────────────
@@ -520,19 +539,16 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
   const ENV_KEY = "OPENCODE_SDK_TEST_INJECTED";
 
   interface FactoryCall {
-    /** process.env[ENV_KEY] snapshotted in the factory's SYNCHRONOUS prefix. */
+    /** Exact child environment supplied to the factory. */
     injectedValue: string | undefined;
   }
 
   /**
-   * Fake `createOpencode`. Snapshots the injected env var SYNCHRONOUSLY —
-   * exactly where the real SDK's `spawn` reads `process.env` — so the test
-   * proves injection reaches the child-spawn window and nothing later.
+   * Fake managed factory. Reads the exact child env passed to production spawn.
    */
   function makeFactory(calls: FactoryCall[], capture: PromptCapture) {
-    return (_options: { config?: Record<string, unknown> }) => {
-      // Synchronous prefix: the real createOpencodeServer spawns here.
-      calls.push({ injectedValue: process.env[ENV_KEY] });
+    return (options: { config?: Record<string, unknown>; env: Record<string, string> }) => {
+      calls.push({ injectedValue: options.env[ENV_KEY] });
       return Promise.resolve(makeFakeServer(capture).server as never) as never;
     };
   }
@@ -547,9 +563,29 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
 
     expect(res.ok).toBe(true);
     expect(calls).toHaveLength(1);
-    // The injection was live exactly when the SDK snapshots the child env…
+    // The immutable environment given to the child contains the binding...
     expect(calls[0].injectedValue).toBe("reached-the-child");
-    // …and the overlay never leaked out of the synchronous window.
+    // ...without ever mutating process-wide state.
+    expect(process.env[ENV_KEY]).toBeUndefined();
+  });
+
+  test("an async factory receives the dispatch env after yielding without a process.env overlay", async () => {
+    const calls: FactoryCall[] = [];
+    __setServerFactory((async (options: { env: Record<string, string> }) => {
+      await Promise.resolve();
+      calls.push({ injectedValue: options.env[ENV_KEY] });
+      return makeFakeServer({}).server as never;
+    }) as never);
+
+    const pending = runOpencodeSdk(baseProfile, "p", {
+      env: { [ENV_KEY]: "async-child-value" },
+      timeoutMs: null,
+    });
+    expect(process.env[ENV_KEY]).toBeUndefined();
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([{ injectedValue: "async-child-value" }]);
     expect(process.env[ENV_KEY]).toBeUndefined();
   });
 
@@ -644,7 +680,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     expect(ports[1]).not.toBe(ports[2]);
   });
 
-  test("registry identity includes endpoint, materialized key, bin, provider config, and env", async () => {
+  test("registry identity matches the executable and exact canonical child env", async () => {
     const calls: Array<{ bin?: string; port?: number }> = [];
     __setServerFactory(((options: { bin?: string; port?: number }) => {
       calls.push(options);
@@ -680,8 +716,24 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     await runOpencodeSdk(baseProfile, "p", { env, timeoutMs: null }, { ...baseConnection, provider: "provider-b" });
     await runOpencodeSdk({ ...baseProfile, model: "model-b" }, "p", { env, timeoutMs: null }, baseConnection);
 
-    expect(calls).toHaveLength(7);
+    // provider is SDK metadata only and does not alter the spawned child; it
+    // therefore reuses the base server rather than inventing a false identity.
+    expect(calls).toHaveLength(6);
     expect(calls.map((call) => call.bin)).toContain("other-opencode");
-    expect(new Set(calls.map((call) => call.port)).size).toBe(7);
+    expect(new Set(calls.map((call) => call.port)).size).toBe(6);
+  });
+
+  test("envSource participates in both child materialization and registry identity", async () => {
+    const values: Array<string | undefined> = [];
+    __setServerFactory(((options: { env: Record<string, string> }) => {
+      values.push(options.env.SOURCE_ONLY);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+
+    await runOpencodeSdk(baseProfile, "p", { envSource: { SOURCE_ONLY: "one" }, timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: { SOURCE_ONLY: "one" }, timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: { SOURCE_ONLY: "two" }, timeoutMs: null });
+
+    expect(values).toEqual(["one", "two"]);
   });
 });

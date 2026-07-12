@@ -105,10 +105,10 @@ export interface TryLlmFeatureOptions {
   /**
    * Hard timeout in milliseconds. Defaults to 600_000 (10 minutes) — generous
    * enough for any local model on a single-threaded server. Pass `0` or a
-   * negative value to disable the wrapper-level timeout (the underlying `fn`
-   * may still time out via its own transport timeout).
+   * negative value or `null` to disable the wrapper-level timeout (the
+   * underlying `fn` may still time out via its own transport timeout).
    */
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   /**
    * Optional warning sink. Receives a structured `{ feature, reason, error }`
    * record on every fallback. Default: the wrapper is silent.
@@ -152,9 +152,9 @@ export async function tryLlmFeature<T>(
     return resolveFallback();
   }
 
-  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = opts && Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : DEFAULT_TIMEOUT_MS;
   try {
-    if (timeoutMs <= 0) {
+    if (timeoutMs === null || timeoutMs <= 0) {
       return await fn();
     }
     return await runWithTimeout(fn, timeoutMs, feature);

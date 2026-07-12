@@ -24,7 +24,7 @@ import { appendEvent } from "../../core/events";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { materializeLlmConnection, resolveEngine } from "../../integrations/agent/engine-resolution";
+import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
 import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
@@ -166,18 +166,13 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   };
   const sensitiveValues = collectDispatchSensitiveValues(runner, runOptions);
   result = await executeRunner(runner, prompt, runOptions, {
-    llm: async (spec, llmPrompt) => {
+    llm: async (spec, llmPrompt, opts) => {
       const { chatCompletion } = await import("../../llm/client.js");
       const started = Date.now();
       try {
-        const stdout = await chatCompletion(
-          materializeLlmConnection({
-            engine: spec.engine ?? engineName,
-            connection: spec.connection,
-            timeoutMs: spec.timeoutMs ?? null,
-          }),
-          [{ role: "user", content: llmPrompt }],
-        );
+        const stdout = await chatCompletion(spec.connection, [{ role: "user", content: llmPrompt }], {
+          ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+        });
         return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
       } catch (error) {
         return {

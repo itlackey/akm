@@ -154,9 +154,22 @@ describe("engine resolution", () => {
     if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
     expect(lowered.profile.model).toBe("provider/exact");
     expect(lowered.profile.modelIsExact).toBe(true);
-    expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection).model).toBe("provider/exact");
+    expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection).model).toBe("akm-custom/provider/exact");
     expect(resolveDispatchModel({ model: "provider/exact", modelIsExact: true }, lowered.profile, "opencode-sdk")).toBe(
       "provider/exact",
     );
+  });
+
+  test("canonicalizes a harness alias before agent model lowering", () => {
+    const resolved = resolveEngine("legacy-claude", {
+      engines: {
+        "legacy-claude": { kind: "agent", platform: "claude-code", model: "sonnet" },
+      },
+    });
+    if (resolved.kind !== "agent") throw new Error("fixture must lower to an agent");
+    expect(resolved.profile.platform).toBe("claude");
+    expect(resolved.profile.bin).toBe("claude");
+    expect(resolved.profile.model).toBe("claude-sonnet-4-6");
+    expect(resolved.profile.modelIsExact).toBe(true);
   });
 });
