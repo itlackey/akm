@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { acquireMaintenanceActivitySync } from "../core/maintenance-barrier";
 import { ensureMigrationBackup, getMigrationBackupDir } from "../core/migration-backup";
 import { getWorkflowDbPath } from "../core/paths";
 import { type Database, openDatabase } from "../storage/database";
@@ -48,22 +49,50 @@ import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 
 export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
   const isCanonical = path.resolve(dbPath) === path.resolve(getWorkflowDbPath());
-  // Preserve an originally absent workflow.db in the recovery manifest. SQLite
-  // creates the file at open time, so the cutover bundle must exist first.
-  if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
-  const dir = path.dirname(dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  const releaseActivity = isCanonical ? acquireMaintenanceActivitySync("workflow-db") : undefined;
+  let db: Database | undefined;
+  try {
+    // Preserve an originally absent workflow.db in the recovery manifest. SQLite
+    // creates the file at open time, so the cutover bundle must exist first.
+    if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
+    const dir = path.dirname(dbPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
-  const db = openDatabase(dbPath);
-  // #589: 30 s busy timeout, matching index.db / state.db. Without it the
-  // default is 0 ms, so any concurrent writer fails immediately with
-  // SQLITE_BUSY. #628: journal_mode is configurable via AKM_SQLITE_JOURNAL_MODE.
-  applyStandardPragmas(db, { dataDir: dir });
-  ensureBaseSchema(db);
-  runMigrations(db, { ensureCutoverBackup: isCanonical });
-  return db;
+    db = openDatabase(dbPath);
+    // #589: 30 s busy timeout, matching index.db / state.db. Without it the
+    // default is 0 ms, so any concurrent writer fails immediately with
+    // SQLITE_BUSY. #628: journal_mode is configurable via AKM_SQLITE_JOURNAL_MODE.
+    applyStandardPragmas(db, { dataDir: dir });
+    ensureBaseSchema(db);
+    runMigrations(db, { ensureCutoverBackup: isCanonical });
+    if (!releaseActivity) return db;
+    const openedDb = db;
+    let closed = false;
+    return {
+      prepare: openedDb.prepare.bind(openedDb),
+      exec: openedDb.exec.bind(openedDb),
+      run: openedDb.run.bind(openedDb),
+      transaction: openedDb.transaction.bind(openedDb),
+      get inTransaction() {
+        return openedDb.inTransaction;
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        try {
+          openedDb.close();
+        } finally {
+          releaseActivity();
+        }
+      },
+    };
+  } catch (error) {
+    db?.close();
+    releaseActivity?.();
+    throw error;
+  }
 }
 
 export function closeWorkflowDatabase(db: Database): void {

@@ -346,9 +346,13 @@ task configuration surface.
 Migration restore holds a global maintenance barrier from its final blocker
 check through artifact replacement. Index writers, improve/extract process
 locks, lockfile writers, workflow lease claims, and every canonical `state.db`
-handle register under the same barrier before starting. State handles retain
-their activity registration until close, so task, event, proposal, and other
-durable-state writers cannot overlap artifact replacement.
+or `workflow.db` handle register under the same barrier before starting. State
+and workflow handles retain their activity registration until close, so task,
+event, proposal, workflow-run, and other durable-state access cannot overlap
+artifact replacement. Restore's own read-only workflow blocker scan uses the
+barrier it already owns rather than recursively registering an activity. Scoped
+barrier ownership is reentrant for nested repository opens in the same sync or
+async execution context; unrelated work and child processes remain excluded.
 
 ---
 

@@ -11,7 +11,7 @@ import { parseConfigText, withConfigLock } from "./config/config-io";
 import { CURRENT_CONFIG_VERSION } from "./config/config-schema";
 import { ConfigError } from "./errors";
 import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
-import { withMaintenanceStartBarrier } from "./maintenance-barrier";
+import { acquireMaintenanceActivitySync, withMaintenanceStartBarrier } from "./maintenance-barrier";
 import {
   getCacheDir,
   getConfigPath,
@@ -223,16 +223,29 @@ function backupSqlite(source: string, destination: string): void {
   const stat = fs.statSync(source);
   if (!stat.isFile())
     throw new ConfigError(`SQLite backup source is not a regular file: ${source}`, "INVALID_CONFIG_FILE");
+  const resolvedSource = path.resolve(source);
+  const activityName =
+    resolvedSource === path.resolve(getWorkflowDbPath())
+      ? "workflow-db"
+      : resolvedSource === path.resolve(getStateDbPathInDataDir())
+        ? "state-db"
+        : undefined;
+  const releaseActivity = activityName ? acquireMaintenanceActivitySync(activityName) : undefined;
   // The source was stat-verified above. Opening without Bun's `create:false`
   // avoids bun:sqlite's SQLITE_MISUSE for that unsupported false option while
   // retaining Node's ordinary existing-file behavior.
-  const db = openDatabase(source);
+  let db: ReturnType<typeof openDatabase> | undefined;
   try {
+    db = openDatabase(source);
     db.exec("PRAGMA busy_timeout = 10000");
     db.exec("PRAGMA wal_checkpoint(FULL)");
     db.exec(`VACUUM INTO ${sqliteQuote(destination)}`);
   } finally {
-    db.close();
+    try {
+      db?.close();
+    } finally {
+      releaseActivity?.();
+    }
   }
   fs.chmodSync(destination, 0o600);
   const fd = fs.openSync(destination, "r");
@@ -374,6 +387,9 @@ function activeRestoreLocks(): string[] {
 function activeWorkflowClaims(): string[] {
   const workflowPath = getWorkflowDbPath();
   if (!fs.existsSync(workflowPath)) return [];
+  // Restore already owns the maintenance barrier for this handle's complete
+  // lifetime. Registering a normal workflow-db activity here would re-enter
+  // that barrier and deadlock against ourselves.
   const db = openDatabase(workflowPath, { readonly: true });
   try {
     const runsTable = db

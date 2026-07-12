@@ -4,6 +4,8 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
+import { openDatabase } from "../storage/database";
 import { isProcessAlive } from "./common";
 
 // Shared primitives for sentinel-style file locks across akm. The four
@@ -79,6 +81,65 @@ function sameIdentity(left: LockFileIdentity, right: LockFileIdentity): boolean 
   return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
 }
 
+function operationMutexPath(lockPath: string): string {
+  // `.sensitive` is an established non-asset suffix across stash walkers. The
+  // mutex may sit beside a secret/env lock and must never surface as an asset.
+  return path.join(path.dirname(lockPath), `.${path.basename(lockPath)}.operations.sensitive`);
+}
+
+/**
+ * Serialize every mutation of one canonical lock path. SQLite's write lock is
+ * released by the OS when a process dies, so this mutex needs no stale-owner
+ * deletion protocol (which would reproduce the same check/rename race it is
+ * meant to prevent).
+ */
+function withLockOperationMutex<T>(lockPath: string, run: () => T): T {
+  const db = openDatabase(operationMutexPath(lockPath));
+  let began = false;
+  try {
+    db.exec("PRAGMA busy_timeout = 30000");
+    for (let attempt = 0; attempt < 5 && !began; attempt += 1) {
+      db.exec("BEGIN IMMEDIATE");
+      began = db.inTransaction;
+      if (!began) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
+    }
+    if (!began) throw new Error(`Could not acquire lock operation mutex for ${lockPath}.`);
+    const result = run();
+    db.exec("COMMIT");
+    began = false;
+    return result;
+  } catch (error) {
+    if (began && db.inTransaction) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // Preserve the operation failure.
+      }
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
+function tryAcquireLockRaw(lockPath: string, payload: string): boolean {
+  try {
+    fs.writeFileSync(lockPath, payload, { flag: "wx" });
+    return true;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+}
+
+function releaseLockRaw(lockPath: string): void {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // Sentinel already gone — fine.
+  }
+}
+
 /**
  * Atomically create a sentinel at `lockPath` with `payload` as the body.
  * Returns true if we now own the lock, false if a sentinel already
@@ -90,13 +151,7 @@ function sameIdentity(left: LockFileIdentity, right: LockFileIdentity): boolean 
  * (improve.ts records pid + startedAt so audit can correlate runs).
  */
 export function tryAcquireLockSync(lockPath: string, payload: string): boolean {
-  try {
-    fs.writeFileSync(lockPath, payload, { flag: "wx" });
-    return true;
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
-    throw err;
-  }
+  return withLockOperationMutex(lockPath, () => tryAcquireLockRaw(lockPath, payload));
 }
 
 /**
@@ -135,11 +190,10 @@ export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeR
 }
 
 /**
- * Atomically quarantine the sentinel currently at `lockPath`, then delete it
- * only when the quarantined inode is the one that was probed as stale. The
- * canonical path is never unlinked after verification: once rename succeeds,
- * a concurrent acquisition can install a replacement there and that replacement
- * survives cleanup of the quarantined stale inode.
+ * Revalidate and quarantine the probed sentinel while holding the same operation
+ * mutex used by acquisitions. A newer owner therefore cannot be renamed in the
+ * check/quarantine window, and a third contender cannot acquire until cleanup
+ * has completed.
  */
 export function reclaimStaleLock(
   lockPath: string,
@@ -147,42 +201,56 @@ export function reclaimStaleLock(
   options?: ReclaimStaleLockOptions,
 ): boolean {
   if (probe.rawContent === undefined || probe.identity === undefined) return false;
-  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
-  try {
-    fs.renameSync(lockPath, quarantinePath);
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
-
-  let quarantined: ReturnType<typeof readLockSnapshot>;
-  try {
-    quarantined = readLockSnapshot(quarantinePath);
-  } catch {
-    quarantined = undefined;
-  }
-  if (
-    !quarantined ||
-    quarantined.rawContent !== probe.rawContent ||
-    !sameIdentity(quarantined.identity, probe.identity)
-  ) {
+  const expectedContent = probe.rawContent;
+  const expectedIdentity = probe.identity;
+  return withLockOperationMutex(lockPath, () => {
+    let current: ReturnType<typeof readLockSnapshot>;
     try {
-      // Restore without replacing a lock that was acquired after quarantine.
-      fs.linkSync(quarantinePath, lockPath);
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      current = readLockSnapshot(lockPath);
+    } catch {
+      return false;
     }
-    releaseLock(quarantinePath);
-    return false;
-  }
-  options?.afterQuarantineVerified?.();
-  try {
-    fs.unlinkSync(quarantinePath);
-    return true;
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
+    if (!current || current.rawContent !== expectedContent || !sameIdentity(current.identity, expectedIdentity)) {
+      return false;
+    }
+
+    const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+    try {
+      fs.renameSync(lockPath, quarantinePath);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+
+    let quarantined: ReturnType<typeof readLockSnapshot>;
+    try {
+      quarantined = readLockSnapshot(quarantinePath);
+    } catch {
+      quarantined = undefined;
+    }
+    if (
+      !quarantined ||
+      quarantined.rawContent !== expectedContent ||
+      !sameIdentity(quarantined.identity, expectedIdentity)
+    ) {
+      try {
+        // Restore without replacing a non-cooperating lock installed after quarantine.
+        fs.linkSync(quarantinePath, lockPath);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      releaseLockRaw(quarantinePath);
+      return false;
+    }
+    options?.afterQuarantineVerified?.();
+    try {
+      fs.unlinkSync(quarantinePath);
+      return true;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+  });
 }
 
 /**
@@ -191,11 +259,8 @@ export function reclaimStaleLock(
  * release locks we own (after a successful tryAcquireLockSync).
  */
 export function releaseLock(lockPath: string): void {
-  try {
-    fs.unlinkSync(lockPath);
-  } catch {
-    // Sentinel already gone — fine.
-  }
+  if (!fs.existsSync(lockPath) && !fs.existsSync(operationMutexPath(lockPath))) return;
+  withLockOperationMutex(lockPath, () => releaseLockRaw(lockPath));
 }
 
 /**
@@ -208,16 +273,17 @@ export function releaseLock(lockPath: string): void {
  * deletion / PID-reuse footgun). Synchronous so it is valid inside an exit handler.
  */
 export function releaseLockIfOwned(lockPath: string, ownerPid: number): void {
-  let rawContent: string;
-  try {
-    rawContent = fs.readFileSync(lockPath, "utf8");
-  } catch {
-    // Absent or unreadable — nothing of ours to release.
-    return;
-  }
-  if (extractHolderPid(rawContent) === ownerPid) {
-    releaseLock(lockPath);
-  }
+  if (!fs.existsSync(lockPath) && !fs.existsSync(operationMutexPath(lockPath))) return;
+  withLockOperationMutex(lockPath, () => {
+    let rawContent: string;
+    try {
+      rawContent = fs.readFileSync(lockPath, "utf8");
+    } catch {
+      // Absent or unreadable — nothing of ours to release.
+      return;
+    }
+    if (extractHolderPid(rawContent) === ownerPid) releaseLockRaw(lockPath);
+  });
 }
 
 /**

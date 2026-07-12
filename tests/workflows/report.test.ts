@@ -523,11 +523,11 @@ describe("workflow report — running claim + stale surfacing", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     try {
       expect(settled).toBe(false);
-      await withWorkflowRunsRepo((repo) => expect(repo.getUnit(RUN_ID, ua)).toBeNull());
     } finally {
       release();
     }
     expect((await pending).status).toBe("running");
+    await withWorkflowRunsRepo((repo) => expect(repo.getUnit(RUN_ID, ua)?.status).toBe("running"));
   });
 
   test("--status running claims a unit (started_at + last_checkin_at) without advancing the spine", async () => {

@@ -6,7 +6,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { acquireMaintenanceActivity, acquireMaintenanceBarrier } from "../src/core/maintenance-barrier";
+import {
+  acquireMaintenanceActivity,
+  acquireMaintenanceBarrier,
+  withMaintenanceStartBarrier,
+} from "../src/core/maintenance-barrier";
 import {
   createMigrationBackup,
   getMigrationBackupDir,
@@ -225,6 +229,26 @@ describe("0.9 migration backup", () => {
       state.close();
     }
     restoreMigrationBackup(true);
+  });
+
+  test("restore refuses for the full lifetime of a workflow.db handle", () => {
+    createMigrationBackup();
+    const workflow = openWorkflowDatabase();
+    try {
+      workflow.prepare("SELECT COUNT(*) AS count FROM workflow_runs").get();
+      expect(() => restoreMigrationBackup(true)).toThrow(/maintenance-activities.*workflow-db/);
+    } finally {
+      workflow.close();
+    }
+    restoreMigrationBackup(true);
+  });
+
+  test("a canonical workflow.db handle can register inside its owning maintenance barrier", () => {
+    createMigrationBackup();
+    withMaintenanceStartBarrier(() => {
+      const workflow = openWorkflowDatabase();
+      workflow.close();
+    });
   });
 
   test("canonical database opens capture both historical databases before migrations 017 and 010", () => {
