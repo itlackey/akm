@@ -33,8 +33,9 @@ import { assertNever } from "../../core/assert";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { materializeLlmConnection } from "./engine-resolution";
 import type { AgentProfile } from "./profiles";
-import type { RunnerSpec } from "./runner";
+import { type DispatchedLlmRunner, materializeLlmRunnerConnection, type RunnerSpec } from "./runner";
 import { type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
 
 /**
@@ -106,7 +107,7 @@ export interface RunnerSeams {
    * caller (reflect's `runReflectViaLlm` vs drain's `chatCompletion`), so it is
    * supplied rather than defaulted. Receives the narrowed `llm` spec and prompt.
    */
-  llm?: (spec: Extract<RunnerSpec, { kind: "llm" }>, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
+  llm?: (spec: DispatchedLlmRunner, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Override for the `agent` runner kind. Defaults to {@link runAgent}. */
   runAgent?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Override for the `sdk` runner kind. Defaults to {@link runOpencodeSdk}. */
@@ -136,12 +137,15 @@ export async function executeRunner(
     ...(opts.cwd === undefined && workspace ? { cwd: workspace } : {}),
   });
   let result: AgentRunResult;
+  const dispatchSensitiveValues: string[] = [];
   switch (spec.kind) {
     case "llm": {
       if (!seams.llm) {
         throw new Error("executeRunner: an `llm` runner requires a `seams.llm` handler (no default LLM dispatch).");
       }
-      result = await seams.llm(spec, prompt, withSpecOptions(spec.timeoutMs));
+      const connection = materializeLlmRunnerConnection(spec);
+      if (connection.apiKey) dispatchSensitiveValues.push(connection.apiKey);
+      result = await seams.llm({ ...spec, connection }, prompt, withSpecOptions(spec.timeoutMs));
       break;
     }
     case "agent": {
@@ -151,11 +155,25 @@ export async function executeRunner(
     }
     case "sdk": {
       const run = seams.runSdk ?? runOpencodeSdk;
+      const fallbackConnection = spec.fallbackConnection
+        ? materializeLlmConnection({
+            engine: spec.engine ?? "unnamed-sdk-fallback",
+            connection: spec.fallbackConnection,
+            ...(spec.fallbackCredential ? { credential: spec.fallbackCredential } : {}),
+            timeoutMs:
+              spec.fallbackTimeoutMs !== undefined
+                ? spec.fallbackTimeoutMs
+                : Object.hasOwn(spec.fallbackConnection, "timeoutMs")
+                  ? (spec.fallbackConnection.timeoutMs ?? null)
+                  : null,
+          })
+        : undefined;
+      if (fallbackConnection?.apiKey) dispatchSensitiveValues.push(fallbackConnection.apiKey);
       result = await run(
         spec.profile,
         prompt,
         withSpecOptions(spec.timeoutMs, spec.profile.workspace),
-        spec.fallbackConnection,
+        fallbackConnection,
       );
       break;
     }
@@ -163,5 +181,5 @@ export async function executeRunner(
       // Exhaustiveness arm: a 4th RunnerSpec kind becomes a compile error here.
       return assertNever(spec);
   }
-  return redactResult(result, collectDispatchSensitiveValues(spec, opts));
+  return redactResult(result, [...collectDispatchSensitiveValues(spec, opts), ...dispatchSensitiveValues]);
 }

@@ -72,7 +72,8 @@ export interface CredentialDescriptor {
 
 export interface ResolvedLlmUse {
   engine: string;
-  connection: Omit<LlmConnectionConfig, "apiKey" | "timeoutMs">;
+  /** Frozen connection fields only; resolution never places apiKey or timeoutMs here. */
+  connection: LlmConnectionConfig;
   credential?: CredentialDescriptor;
   timeoutMs: number | null;
 }
@@ -196,7 +197,7 @@ export function resolveLlmEngineUse(
   connection.model = resolveLlmModel(connection.model as string, name, config.modelAliases);
   return {
     engine: name,
-    connection: connection as Omit<LlmConnectionConfig, "apiKey" | "timeoutMs">,
+    connection: connection as LlmConnectionConfig,
     credential: resolveCredential(name, engine, config),
     timeoutMs: effectiveTimeout(engine, layers, DEFAULT_LLM_TIMEOUT_MS),
   };
@@ -278,7 +279,9 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     kind: "sdk",
     engine: name,
     profile,
-    fallbackConnection: materializeLlmConnection(fallback),
+    fallbackConnection: fallback.connection,
+    ...(fallback.credential ? { fallbackCredential: fallback.credential } : {}),
+    fallbackTimeoutMs: fallback.timeoutMs,
     timeoutMs: hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : fallback.timeoutMs,
   };
 }
@@ -289,7 +292,13 @@ export function resolveEngine(name: string, config: EngineResolutionConfig): Run
   if (engine.kind === "llm") {
     const resolved = resolveLlmEngineUse(config, [{ engine: name }]);
     if (!resolved) throw new ConfigError(`LLM engine "${name}" could not be resolved.`, "LLM_NOT_CONFIGURED");
-    return { kind: "llm", engine: name, connection: materializeLlmConnection(resolved), timeoutMs: resolved.timeoutMs };
+    return {
+      kind: "llm",
+      engine: name,
+      connection: resolved.connection,
+      ...(resolved.credential ? { credential: resolved.credential } : {}),
+      timeoutMs: resolved.timeoutMs,
+    };
   }
   return lowerAgentEngine(name, engine, config);
 }

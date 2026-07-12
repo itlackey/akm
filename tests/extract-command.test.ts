@@ -21,7 +21,7 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../src/integrations/session-logs/types";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
@@ -718,6 +718,32 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(plan.process.maxTotalChars).toBe(4321);
   });
 
+  test("an unset symbolic credential does not block dry-run planning with no dispatch", async () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {});
+    const engine = config.engines?.["extract-special"];
+    if (engine?.kind !== "llm") throw new Error("fixture must use an LLM engine");
+    engine.apiKey = "$EXTRACT_REQUIRED_API_KEY";
+
+    await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
+      const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
+      expect(plan.runner?.credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
+      expect(plan.runner?.connection.apiKey).toBeUndefined();
+
+      const result = await akmExtract({
+        type: "claude-code",
+        dryRun: true,
+        stashDir: stash,
+        config,
+        resolvedPlan: plan,
+        harnesses: [makeFakeHarness([])],
+        skipTracking: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.sessionsProcessed).toBe(0);
+    });
+  });
+
   test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
     const stash = makeStashDir();
     const config = configWithStrategy(stash, {
@@ -741,13 +767,12 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.hotProbation)).toBe(true);
     expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
-    expect(plan.llmConfig).toMatchObject({
+    expect(plan.runner?.connection).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
       temperature: 0.2,
       maxTokens: 321,
       supportsJsonSchema: false,
-      timeoutMs: 55_000,
     });
     expect(plan.process.maxTotalChars).toBe(1234);
 
@@ -756,8 +781,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
       timeoutMs: 45_000,
     });
     expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
-    expect(timeoutOverridePlan.llmConfig?.timeoutMs).toBe(45_000);
-    expect(timeoutOverridePlan.llmConfig?.model).toBe("process-model");
+    expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
+    expect(timeoutOverridePlan.runner?.connection.model).toBe("process-model");
 
     const engine = config.engines?.["extract-special"];
     if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
@@ -813,7 +838,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
           engine: "extract-special",
           enabled: true,
           process: Object.freeze({ enabled: true }),
-          llmConfig: null,
+          runner: null,
           timeoutMs: 600_000,
           embeddingConfig: config.embedding,
         }),

@@ -16,6 +16,7 @@ import { openStateDatabase, withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, getRetrievalCounts, getZeroResultSearches, openExistingDatabase } from "../../indexer/db/db";
 import { countUsageEventsByType } from "../../indexer/usage/usage-events";
+import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import { persistPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
@@ -381,7 +382,9 @@ export async function runConsolidationPass(args: {
           // Active profile for this improve run — lets consolidate's secondary
           // process-config reads honor `--profile <name>` instead of `default`.
           improveProfile,
-          llmConfig: resolvedPlan.processes.consolidate.runner?.connection ?? null,
+          llmConfig: resolvedPlan.processes.consolidate.runner
+            ? materializeLlmRunnerConnection(resolvedPlan.processes.consolidate.runner)
+            : null,
           autoTriggered: volumeTriggered,
           // Tie consolidate proposals back to this improve invocation so
           // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
@@ -582,8 +585,8 @@ async function runSessionExtractPass(args: {
       engine: extractRunner.engine,
       enabled: true,
       process: resolvedPlan.processes.extract.config,
-      llmConfig: extractRunner?.connection ?? null,
-      timeoutMs: extractRunner?.timeoutMs ?? extractRunner?.connection.timeoutMs ?? 600_000,
+      runner: extractRunner,
+      timeoutMs: extractRunner.timeoutMs === undefined ? 600_000 : extractRunner.timeoutMs,
       embeddingConfig: Object.freeze(structuredClone(extractConfig.embedding)),
     });
     const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
@@ -753,7 +756,8 @@ export async function runValidationAndRepairPass(args: {
 
   // Schema repair pass: attempt to fix validation failures via LLM before skipping.
   if (validationFailures.length > 0) {
-    const llmCfg = resolvedPlan.processes.validation.runner?.connection;
+    const validationRunner = resolvedPlan.processes.validation.runner;
+    const llmCfg = validationRunner ? materializeLlmRunnerConnection(validationRunner) : undefined;
     if (llmCfg) {
       const result = await withLlmStage(
         "validation",

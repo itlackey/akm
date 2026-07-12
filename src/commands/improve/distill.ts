@@ -73,7 +73,7 @@ import { withStateDb } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
 import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/db/db";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
-import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { tryLlmFeature } from "../../llm/feature-gate";
 import {
@@ -729,8 +729,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const chat = options.chat ?? chatCompletion;
   const distillLlm = Object.hasOwn(options, "llmConfig")
     ? (options.llmConfig ?? undefined)
-    : (resolveImproveProcessRunner(options.improveProfile, "distill", config)?.connection ??
-      getDefaultLlmConfig(config));
+    : (() => {
+        const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
+        return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
+      })();
   const lookup = options.lookupFn ?? defaultLookup;
   const readEventsImpl = options.readEventsFn ?? readEvents;
   // R1 opt-out must flow into every computeSalience call this command makes so

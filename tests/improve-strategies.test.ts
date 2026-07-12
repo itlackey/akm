@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveImprovePlan, resolveImproveStrategy } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
+import { withEnvSync } from "./_helpers/sandbox";
 
 describe("resolveImproveStrategy", () => {
   test("deep-merges the default baseline, selected built-in, and user strategy", () => {
@@ -45,7 +46,7 @@ describe("resolveImproveStrategy", () => {
 describe("resolveImprovePlan", () => {
   const llm = { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "base" };
 
-  test("materializes one fallback connection for every enabled process before dispatch", () => {
+  test("resolves one frozen fallback connection for every enabled process before dispatch", () => {
     const plan = resolveImprovePlan("quick", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
@@ -118,6 +119,29 @@ describe("resolveImprovePlan", () => {
     const sourceExtract = config.improve?.strategies?.all?.processes?.extract;
     if (sourceExtract?.hotProbation) sourceExtract.hotProbation.enabled = false;
     expect(plan.processes.extract.config.hotProbation?.enabled).toBe(true);
+  });
+
+  test("retains symbolic credentials in the frozen improve plan", () => {
+    withEnvSync({ IMPROVE_PLAN_API_KEY: "plan-secret-sentinel" }, () => {
+      const plan = resolveImprovePlan("quick", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        engines: {
+          default: {
+            ...llm,
+            apiKey: "$IMPROVE_PLAN_API_KEY",
+          },
+        },
+        defaults: { llmEngine: "default" },
+      });
+
+      expect(plan.processes.reflect.runner?.credential).toEqual({
+        names: ["IMPROVE_PLAN_API_KEY"],
+        required: true,
+      });
+      expect(plan.processes.reflect.runner?.connection.apiKey).toBeUndefined();
+      expect(JSON.stringify(plan)).not.toContain("plan-secret-sentinel");
+    });
   });
 
   test("preflights default fallbacks and accepts an agent triage judgment", () => {

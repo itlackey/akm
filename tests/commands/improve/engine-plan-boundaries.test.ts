@@ -264,7 +264,7 @@ describe("improve engine-plan boundaries", () => {
         resolvedPlan: plan,
       });
       expect((reflectOptions?.runner as { connection?: { model?: string } }).connection?.model).toBe("reflect-model");
-      expect((reflectOptions?.llmConfig as { model?: string }).model).toBe("reflect-model");
+      expect(reflectOptions?.llmConfig).toBeUndefined();
       expect(reflectOptions?.config).toBe(config);
       expect((distillOptions?.llmConfig as { model?: string }).model).toBe("distill-model");
       expect(distillOptions?.config).toBe(config);

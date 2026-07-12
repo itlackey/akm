@@ -138,17 +138,17 @@ function cloneAndFreeze<T>(value: T): Readonly<T> {
   return clone;
 }
 
-/** Resolve and materialize every enabled process before improve emits signals or performs I/O. */
+/** Resolve every enabled process structurally before improve emits signals or performs I/O. */
 export function resolveImprovePlan(
   name: string | undefined,
   config: AkmConfig,
   options: { repairValidationFailures?: boolean } = {},
 ): ResolvedImprovePlan {
   const strategy = resolveImproveStrategy(name, config);
-  return materializeImprovePlan(strategy, config, options);
+  return buildImprovePlan(strategy, config, options);
 }
 
-function materializeImprovePlan(
+function buildImprovePlan(
   strategy: SelectedStrategy,
   config: AkmConfig,
   options: { repairValidationFailures?: boolean },

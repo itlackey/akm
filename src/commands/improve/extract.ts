@@ -40,8 +40,12 @@ import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { materializeLlmConnection, resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
-import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
+import { resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
+import {
+  materializeLlmRunnerConnection,
+  type RunnerSpec,
+  resolveImproveProcessRunner,
+} from "../../integrations/agent/runner";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
@@ -276,10 +280,12 @@ export interface ResolvedExtractPlan {
   engine: string;
   enabled: boolean;
   process: Readonly<ImproveProcessConfig>;
-  llmConfig: Readonly<LlmProfileConfig> | null;
+  runner: Readonly<ExtractLlmRunner> | null;
   timeoutMs: number | null;
   embeddingConfig: Readonly<AkmConfig["embedding"]>;
 }
+
+type ExtractLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
 
 function cloneAndFreeze<T>(value: T): Readonly<T> {
   const clone = structuredClone(value);
@@ -313,7 +319,13 @@ export function resolveStandaloneExtractPlan(
       "LLM_NOT_CONFIGURED",
     );
   }
-  const llmConfig = materializeLlmConnection(resolved);
+  const runner: ExtractLlmRunner = {
+    kind: "llm",
+    engine: resolved.engine,
+    connection: resolved.connection,
+    ...(resolved.credential ? { credential: resolved.credential } : {}),
+    timeoutMs: resolved.timeoutMs,
+  };
   return Object.freeze({
     strategy: selected.name,
     engine: resolved.engine,
@@ -321,7 +333,7 @@ export function resolveStandaloneExtractPlan(
     // but its improve-stage enablement gate does not disable this command.
     enabled: true,
     process,
-    llmConfig: cloneAndFreeze(llmConfig),
+    runner: cloneAndFreeze(runner),
     timeoutMs: resolved.timeoutMs,
     embeddingConfig: cloneAndFreeze(config.embedding),
   });
@@ -497,7 +509,7 @@ async function processSession(
   sessionRef: SessionRef,
   stashDir: string,
   config: AkmConfig,
-  llmConfig: LlmProfileConfig,
+  getLlmConfig: () => LlmProfileConfig,
   chat: NonNullable<AkmExtractOptions["chat"]>,
   ctx: ProposalsContext | undefined,
   sourceRun: string,
@@ -668,7 +680,7 @@ async function processSession(
     "session_extraction",
     config,
     async () => {
-      llmRaw = await chat(llmConfig, [{ role: "user", content: prompt }], {
+      llmRaw = await chat(getLlmConfig(), [{ role: "user", content: prompt }], {
         timeoutMs,
         responseSchema: EXTRACT_JSON_SCHEMA,
       });
@@ -892,14 +904,11 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
 
   // Improve supplies its invocation-owned connection. Standalone extract
   // resolves the selected process engine, then defaults.llmEngine.
-  let llmConfig: LlmProfileConfig | null | undefined = options.resolvedPlan
-    ? options.resolvedPlan.llmConfig
-    : options.llmConfig;
-  if (!llmConfig && !options.resolvedPlan) {
-    const runnerSpec = resolveImproveProcessRunner(activeProfile, "extract", config);
-    llmConfig = runnerSpec?.connection;
-  }
-  if (!llmConfig) {
+  const runnerSpec = options.resolvedPlan
+    ? options.resolvedPlan.runner
+    : resolveImproveProcessRunner(activeProfile, "extract", config);
+  const fixedLlmConfig = options.resolvedPlan ? undefined : options.llmConfig;
+  if (!runnerSpec && !fixedLlmConfig) {
     throw new ConfigError(
       "No LLM engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
       "LLM_NOT_CONFIGURED",
@@ -910,9 +919,13 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     ? options.resolvedPlan.timeoutMs
     : Object.hasOwn(options, "timeoutMs")
       ? (options.timeoutMs ?? null)
-      : Object.hasOwn(llmConfig, "timeoutMs")
-        ? (llmConfig.timeoutMs ?? null)
-        : 600_000;
+      : runnerSpec?.timeoutMs !== undefined
+        ? runnerSpec.timeoutMs
+        : fixedLlmConfig && Object.hasOwn(fixedLlmConfig, "timeoutMs")
+          ? (fixedLlmConfig.timeoutMs ?? null)
+          : 600_000;
+  const getLlmConfig = (): LlmProfileConfig =>
+    runnerSpec ? materializeLlmRunnerConnection(runnerSpec) : (fixedLlmConfig as LlmProfileConfig);
   // Pre-filter budget — process config can raise it for large-context models.
   const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
   // #595/#596 — minimum raw session size; sessions below it skip the LLM call
@@ -953,7 +966,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       "session_extraction",
       config,
       async () => {
-        raw = await chatForSummary(llmConfig, [{ role: "user", content: buildSessionSummaryPrompt(data) }], {
+        raw = await chatForSummary(getLlmConfig(), [{ role: "user", content: buildSessionSummaryPrompt(data) }], {
           timeoutMs,
           responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
         });
@@ -1163,7 +1176,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         summary,
         stashDir,
         config,
-        llmConfig,
+        getLlmConfig,
         chat,
         options.ctx,
         sourceRun,

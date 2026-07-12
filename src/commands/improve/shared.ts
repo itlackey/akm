@@ -12,7 +12,7 @@
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig } from "../../core/config/config";
 import { warn } from "../../core/warn";
-import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
 
 /** Normalize an unknown thrown value to a human-readable message string. */
@@ -58,7 +58,9 @@ export function resolveImproveLlmFn(
     : resolveImproveProcessRunner(opts.activeProfile, opts.processKey, config);
   const llmConfig = planOwnsResolution
     ? (opts.llmConfig ?? undefined)
-    : (runnerSpec?.connection ?? getDefaultLlmConfig(config));
+    : runnerSpec
+      ? materializeLlmRunnerConnection(runnerSpec)
+      : getDefaultLlmConfig(config);
   if (!llmConfig) return undefined;
   return async (prompt: string) => {
     const messages: ChatMessage[] = [

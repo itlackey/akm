@@ -45,7 +45,7 @@ import { getTaskLogDir } from "../core/paths";
 import { withStateDb } from "../core/state-db";
 import { error } from "../core/warn";
 import type { AgentRunResult, RunAgentOptions } from "../integrations/agent";
-import { materializeLlmConnection, resolveEngine, resolveLlmEngineUse } from "../integrations/agent/engine-resolution";
+import { resolveEngine, resolveLlmEngineUse } from "../integrations/agent/engine-resolution";
 import { resolveModel } from "../integrations/agent/model-aliases";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { executeRunner, type RunnerSeams } from "../integrations/agent/runner-dispatch";
@@ -417,7 +417,8 @@ async function runPromptTask(input: {
     runner = {
       kind: "llm",
       engine: resolved.engine,
-      connection: materializeLlmConnection(resolved),
+      connection: resolved.connection,
+      ...(resolved.credential ? { credential: resolved.credential } : {}),
       timeoutMs: resolved.timeoutMs,
     };
   } else {
