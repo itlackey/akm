@@ -124,9 +124,20 @@ describe("collectSensitiveValues", () => {
   });
 
   test("redacts a percent-encoded credential echoed without its containing URL", () => {
-    const url = "https://issuer.test/callback#access_token=oidc%2Ftoken%2Bsentinel";
-    expect(redactSensitiveText("provider echoed oidc%2Ftoken%2Bsentinel", collectSensitiveValues([url]))).toBe(
-      "provider echoed [REDACTED]",
-    );
+    for (const [url, echoes] of [
+      [
+        "https://issuer.test/callback#access_token=oidc%2Ftoken%2Bsentinel",
+        ["oidc%2Ftoken%2Bsentinel", "oidc%2ftoken%2bsentinel", "oidc/token+sentinel"],
+      ],
+      ["https://issuer.test/callback#access_token=space%20token", ["space%20token", "space+token", "space token"]],
+      ["https://issuer.test/callback#access_token=plus+token", ["plus%20token", "plus+token", "plus token"]],
+    ] as const) {
+      const sensitive = collectSensitiveValues([url]);
+      for (const echo of echoes) {
+        expect(redactSensitiveText(`provider echoed ${echo}`, sensitive), `${url}: ${echo}`).toBe(
+          "provider echoed [REDACTED]",
+        );
+      }
+    }
   });
 });

@@ -99,6 +99,23 @@ function collectCredentialParameters(params: URLSearchParams, values?: Set<strin
   return found;
 }
 
+function addEncodedCredentialVariants(rawValue: string, values?: Set<string>): void {
+  if (!rawValue || !values) return;
+  values.add(rawValue);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawValue.replaceAll("+", " "));
+  } catch {
+    return;
+  }
+  if (!decoded) return;
+  values.add(decoded);
+  const encoded = encodeURIComponent(decoded);
+  values.add(encoded);
+  values.add(encoded.replaceAll("%20", "+"));
+  values.add(encoded.replace(/%[0-9A-F]{2}/g, (sequence) => sequence.toLowerCase()));
+}
+
 function collectEncodedCredentialParameters(raw: string, values?: Set<string>): boolean {
   let found = false;
   for (const part of raw.split("&")) {
@@ -114,7 +131,7 @@ function collectEncodedCredentialParameters(raw: string, values?: Set<string>): 
     }
     if (!SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) continue;
     found = true;
-    if (rawValue) values?.add(rawValue);
+    addEncodedCredentialVariants(rawValue, values);
   }
   return found;
 }
