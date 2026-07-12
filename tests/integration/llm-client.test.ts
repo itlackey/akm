@@ -1,6 +1,154 @@
 import { describe, expect, jest, test } from "bun:test";
 import type { LlmConnectionConfig } from "../../src/core/config/config";
-import { chatCompletion, LlmCallError, parseEmbeddedJsonResponse, redactErrorBody } from "../../src/llm/client";
+import {
+  chatCompletion,
+  LlmCallError,
+  parseEmbeddedJsonResponse,
+  probeLlmCapabilities,
+  redactErrorBody,
+} from "../../src/llm/client";
+
+function createRequestServer(respond: (body: Record<string, unknown>) => Response): {
+  url: string;
+  server: ReturnType<typeof Bun.serve>;
+} {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      return respond((await request.json()) as Record<string, unknown>);
+    },
+  });
+  return { url: `http://localhost:${server.port}`, server };
+}
+
+describe("chatCompletion JSON Schema payload", () => {
+  const messages = [{ role: "user" as const, content: "Return a result" }];
+  const responseSchema = {
+    type: "object",
+    properties: { result: { type: "string" } },
+    required: ["result"],
+    additionalProperties: false,
+  };
+
+  test("sends the exact OpenAI-compatible wrapper including a stable schema name", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const { url, server } = createRequestServer((body) => {
+      requestBody = body;
+      return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
+    });
+    try {
+      await chatCompletion({ endpoint: url, model: "test-model", supportsJsonSchema: true }, messages, {
+        responseSchema,
+      });
+      expect(requestBody).toEqual({
+        model: "test-model",
+        messages,
+        temperature: 0.3,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "akm_response",
+            schema: responseSchema,
+            strict: true,
+          },
+        },
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("preserves prompt-contract mode when schema support is not enabled", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const { url, server } = createRequestServer((body) => {
+      requestBody = body;
+      return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
+    });
+    try {
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages, { responseSchema });
+      expect(requestBody).toEqual({
+        model: "test-model",
+        messages,
+        temperature: 0.3,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("probeLlmCapabilities JSON Schema response", () => {
+  test("sends the exact schema wrapper required by vLLM and accepts the expected response", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const { url, server } = createRequestServer((body) => {
+      requestBody = body;
+      const responseFormat = body.response_format as
+        | { type?: unknown; json_schema?: { name?: unknown; schema?: unknown; strict?: unknown } }
+        | undefined;
+      if (typeof responseFormat?.json_schema?.name !== "string") {
+        return Response.json(
+          { detail: [{ type: "missing", loc: ["body", "response_format", "json_schema", "name"] }] },
+          { status: 400 },
+        );
+      }
+      return Response.json({
+        choices: [{ message: { content: '{"ok":true,"ingest":true,"lint":true}' } }],
+      });
+    });
+    try {
+      const result = await probeLlmCapabilities({ endpoint: url, model: "test-model" });
+      expect(result).toEqual({ reachable: true, structuredOutput: true });
+      expect(requestBody).toEqual({
+        model: "test-model",
+        messages: [
+          {
+            role: "system",
+            content: "You return only valid JSON. No prose, no markdown fences.",
+          },
+          {
+            role: "user",
+            content: 'Return exactly this JSON object and nothing else: {"ok": true, "ingest": true, "lint": true}',
+          },
+        ],
+        temperature: 0,
+        max_tokens: 64,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "akm_response",
+            schema: {
+              type: "object",
+              properties: {
+                ok: { type: "boolean", const: true },
+                ingest: { type: "boolean", const: true },
+                lint: { type: "boolean", const: true },
+              },
+              required: ["ok", "ingest", "lint"],
+              additionalProperties: false,
+            },
+            strict: true,
+          },
+        },
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("does not advertise structured output for a response that violates the probe schema", async () => {
+    const { url, server } = createRequestServer(() =>
+      Response.json({ choices: [{ message: { content: '{"ok":true,"ingest":true,"lint":false}' } }] }),
+    );
+    try {
+      await expect(probeLlmCapabilities({ endpoint: url, model: "test-model" })).resolves.toEqual({
+        reachable: true,
+        structuredOutput: false,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+});
 
 // ── redactErrorBody ─────────────────────────────────────────────────────────
 
