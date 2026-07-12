@@ -31,6 +31,7 @@ import {
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
+import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import type { Database } from "../../storage/database";
@@ -284,7 +285,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             task: options.task,
             // Active strategy supplies non-engine process tuning.
             ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan.processes.reflect.runner?.connection,
             config: options.config,
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
@@ -583,7 +583,9 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               // Active profile so distill's per-process reads honor `--profile`.
               ...(improveProfile ? { improveProfile } : {}),
               config: options.config,
-              llmConfig: resolvedPlan.processes.distill.runner?.connection ?? null,
+              llmConfig: resolvedPlan.processes.distill.runner
+                ? materializeLlmRunnerConnection(resolvedPlan.processes.distill.runner)
+                : null,
               // Attribution: carry the eligibility lane so distill stamps it on the
               // distill_invoked event and the persisted proposal.
               ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -812,7 +814,9 @@ export async function runImprovePostLoopStage(args: {
             stashDir: primaryStashDir,
             config: options.config ?? loadConfig(),
             improveProfile,
-            llmConfig: resolvedPlan?.processes.recombine.runner?.connection ?? null,
+            llmConfig: resolvedPlan?.processes.recombine.runner
+              ? materializeLlmRunnerConnection(resolvedPlan.processes.recombine.runner)
+              : null,
             ...(options.runId ? { sourceRun: options.runId } : {}),
             ...(budgetSignal ? { signal: budgetSignal } : {}),
             eligibilitySource: "recombine",
@@ -854,7 +858,9 @@ export async function runImprovePostLoopStage(args: {
             stashDir: primaryStashDir,
             config: options.config ?? loadConfig(),
             ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan?.processes.procedural.runner?.connection ?? null,
+            llmConfig: resolvedPlan?.processes.procedural.runner
+              ? materializeLlmRunnerConnection(resolvedPlan.processes.procedural.runner)
+              : null,
             ...(options.runId ? { sourceRun: options.runId } : {}),
             ...(budgetSignal ? { signal: budgetSignal } : {}),
             eligibilitySource: "procedural",
@@ -1038,7 +1044,11 @@ export async function runImproveMaintenancePasses(args: {
               memoryInferenceFn({
                 config,
                 ...(resolvedPlan
-                  ? { llmConfig: resolvedPlan.processes.memoryInference.runner?.connection ?? null }
+                  ? {
+                      llmConfig: resolvedPlan.processes.memoryInference.runner
+                        ? materializeLlmRunnerConnection(resolvedPlan.processes.memoryInference.runner)
+                        : null,
+                    }
                   : {}),
                 sources,
                 signal: budgetSignal,
@@ -1155,7 +1165,11 @@ export async function runImproveMaintenancePasses(args: {
               graphExtractionFn({
                 config,
                 ...(resolvedPlan
-                  ? { llmConfig: resolvedPlan.processes.graphExtraction.runner?.connection ?? null }
+                  ? {
+                      llmConfig: resolvedPlan.processes.graphExtraction.runner
+                        ? materializeLlmRunnerConnection(resolvedPlan.processes.graphExtraction.runner)
+                        : null,
+                    }
                   : {}),
                 sources,
                 signal: budgetSignal,

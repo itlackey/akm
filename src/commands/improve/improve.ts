@@ -31,6 +31,7 @@ import { akmIndex } from "../../indexer/indexer";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
+import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -584,7 +585,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               _earlyConfig,
               undefined,
               improveProfile,
-              resolvedPlan.processes.consolidate.runner?.connection ?? null,
+              resolvedPlan.processes.consolidate.runner
+                ? materializeLlmRunnerConnection(resolvedPlan.processes.consolidate.runner)
+                : null,
             ),
           { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
         );

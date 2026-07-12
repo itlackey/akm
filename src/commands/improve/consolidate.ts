@@ -58,7 +58,7 @@ import {
   getNeighborsByEntryId,
   openExistingDatabase,
 } from "../../indexer/db/db";
-import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { tryLlmFeature } from "../../llm/feature-gate";
@@ -886,7 +886,7 @@ function archiveMemory(
  */
 function resolveConsolidateLlmConfig(config: AkmConfig, activeProfile?: ImproveProfileConfig) {
   const runnerSpec = resolveImproveProcessRunner(activeProfile, "consolidate", config);
-  if (runnerSpec) return runnerSpec.connection;
+  if (runnerSpec) return materializeLlmRunnerConnection(runnerSpec);
   return getDefaultLlmConfig(config);
 }
 

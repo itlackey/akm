@@ -562,17 +562,18 @@ checklist did not exercise.
       reports the missing artifact with a structured envelope.
 - [ ] `akm health --since 24h` filters telemetry to the last 24 hours.
 
-#### `akm config migrate` + `AKM_NO_AUTO_MIGRATE=1`
+#### `akm config migrate` diagnosis
 
-- [ ] Drop in a pre-0.8.0 `config.json` (legacy top-level `llm` / `agent` /
-      `features` blocks). `akm config migrate --dry-run` prints the
-      transformed shape without writing.
-- [ ] `akm config migrate` rewrites the file, writes a timestamped backup to
-      `$DATA/config-backups/`, and sets `configVersion: "0.8.0"`.
-- [ ] `AKM_NO_AUTO_MIGRATE=1 akm config list` loads a legacy config for the
-      current run without touching the file on disk (no backup written).
-- [ ] `akm config migrate --no-wait` fails immediately rather than blocking
-      when another migrate holds the lock.
+- [ ] With no config file, `akm config migrate` reports `status: "absent"` and
+      does not create one.
+- [ ] With a valid 0.9 config, `akm config migrate` reports `status: "current"`
+      and leaves the file byte-for-byte unchanged.
+- [ ] With a pre-0.9 profile config, `akm config migrate` fails with
+      `UNSUPPORTED_CONFIG_VERSION`, explains that profile-to-engine conversion
+      is manual, and does not rewrite or back up the file.
+- [ ] `AKM_NO_AUTO_MIGRATE=1 akm config list` behaves exactly like the command
+      without that retired variable: legacy config is rejected and disk is not
+      modified.
 
 #### Task `.md` → `.yml` migration verification
 

@@ -41,7 +41,7 @@ import contradictionJudgeTemplate from "../../../assets/prompts/contradiction-ju
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { getDefaultLlmConfig, type ImproveProfileConfig } from "../../../core/config/config";
-import { resolveImproveProcessRunner } from "../../../integrations/agent/runner";
+import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { tryLlmFeature } from "../../../llm/feature-gate";
 
@@ -234,8 +234,10 @@ export async function detectAndWriteContradictions(
     resolvedLlmConfig === null
       ? undefined
       : (resolvedLlmConfig ??
-        resolveImproveProcessRunner(strategy, "consolidate", config)?.connection ??
-        getDefaultLlmConfig(config));
+        (() => {
+          const runner = resolveImproveProcessRunner(strategy, "consolidate", config);
+          return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
+        })());
   if (!contradictionLlm) return result;
 
   // Collect derived memories grouped by parent.

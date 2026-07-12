@@ -32,6 +32,7 @@ import {
   type WatchEventSource,
 } from "../src/commands/improve/extract-watch";
 import type { AkmConfig } from "../src/core/config/config";
+import { materializeLlmRunnerConnection } from "../src/integrations/agent/runner";
 import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
 import { OpenCodeProvider } from "../src/integrations/harnesses/opencode/session-log";
 import { getWatchTargets } from "../src/integrations/session-logs";
@@ -389,7 +390,12 @@ describe("watch-mode — AC4 default unchanged", () => {
       engine: "startup-engine",
       enabled: true,
       process: Object.freeze({ enabled: true }),
-      llmConfig: Object.freeze({ endpoint: "https://startup.test/v1", model: "startup-model" }),
+      runner: Object.freeze({
+        kind: "llm",
+        engine: "startup-engine",
+        connection: { endpoint: "https://startup.test/v1", model: "startup-model" },
+        timeoutMs: 1000,
+      }),
       timeoutMs: 1000,
       embeddingConfig: undefined,
     };
@@ -398,7 +404,12 @@ describe("watch-mode — AC4 default unchanged", () => {
       engine: "changed-engine",
       enabled: true,
       process: Object.freeze({ enabled: true }),
-      llmConfig: Object.freeze({ endpoint: "https://changed.test/v1", model: "changed-model" }),
+      runner: Object.freeze({
+        kind: "llm",
+        engine: "changed-engine",
+        connection: { endpoint: "https://changed.test/v1", model: "changed-model" },
+        timeoutMs: 2000,
+      }),
       timeoutMs: 2000,
       embeddingConfig: undefined,
     };
@@ -420,7 +431,39 @@ describe("watch-mode — AC4 default unchanged", () => {
     expect(received?.type).toBe("claude-code");
     expect(received?.config).toBe(startupConfig);
     expect(received?.resolvedPlan).toBe(startupPlan);
-    expect(received?.resolvedPlan?.llmConfig?.model).toBe("startup-model");
+    expect(received?.resolvedPlan?.runner?.connection.model).toBe("startup-model");
+  });
+
+  test("a frozen watch plan reads a rotated credential at each trigger dispatch", async () => {
+    const plan: ResolvedExtractPlan = {
+      strategy: "watch",
+      engine: "watch-engine",
+      enabled: true,
+      process: Object.freeze({ enabled: true }),
+      runner: Object.freeze({
+        kind: "llm",
+        engine: "watch-engine",
+        connection: { endpoint: "https://watch.test/v1/chat/completions", model: "watch-model" },
+        credential: { names: ["WATCH_ROTATING_API_KEY"] as [string], required: true },
+        timeoutMs: 1000,
+      }),
+      timeoutMs: 1000,
+      embeddingConfig: undefined,
+    };
+    const seen: string[] = [];
+    const trigger = createExtractWatchTrigger({ resolvedPlan: plan }, async (options) => {
+      const runner = options.resolvedPlan?.runner;
+      if (!runner) throw new Error("fixture requires a runner");
+      seen.push(materializeLlmRunnerConnection(runner).apiKey ?? "");
+    });
+
+    await withEnv({ WATCH_ROTATING_API_KEY: "watch-key-1" }, async () => {
+      await trigger("claude-code");
+      await withEnv({ WATCH_ROTATING_API_KEY: "watch-key-2" }, () => trigger("claude-code"));
+    });
+
+    expect(seen).toEqual(["watch-key-1", "watch-key-2"]);
+    expect(plan.runner?.connection.apiKey).toBeUndefined();
   });
 });
 

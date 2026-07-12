@@ -9,6 +9,7 @@ import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 // X3: the unified RunnerSpec dispatch seam (executeRunner in runner-dispatch.ts).
 import { executeRunner, type RunnerSeams } from "../../../src/integrations/agent/runner-dispatch";
+import { withEnv } from "../../_helpers/sandbox";
 
 function okResult(stdout: string): AgentRunResult {
   return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: 1 };
@@ -83,7 +84,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
 
   test("uses the spec timeout when the caller does not provide one and passes SDK fallback connection", async () => {
     const fallbackConnection = { endpoint: "https://example.test/v1/chat/completions", model: "fallback" };
-    let received: { timeoutMs?: number | null; fallback?: typeof fallbackConnection } | undefined;
+    let received: { timeoutMs?: number | null; fallback?: LlmConnectionConfig } | undefined;
     const spec: RunnerSpec = { kind: "sdk", engine: "sdk", profile: sdkProfile, timeoutMs: null, fallbackConnection };
 
     await executeRunner(
@@ -98,7 +99,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       },
     );
 
-    expect(received).toEqual({ timeoutMs: null, fallback: fallbackConnection });
+    expect(received).toEqual({ timeoutMs: null, fallback: { ...fallbackConnection, timeoutMs: null } });
   });
 
   test("(c) {kind:'llm'} routes to the llm handler seam with the connection", async () => {
@@ -121,8 +122,39 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
 
     expect(result.stdout).toBe("from-llm");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.connection).toBe(llmConnection);
+    expect(calls[0]?.connection).toEqual({ ...llmConnection, timeoutMs: null });
     expect(calls[0]?.prompt).toBe("llm-prompt");
+  });
+
+  test("materializes the current symbolic credential for every dispatch", async () => {
+    const seen: string[] = [];
+    const spec: RunnerSpec = {
+      kind: "llm",
+      engine: "rotating",
+      connection: llmConnection,
+      credential: { names: ["ROTATING_RUNNER_API_KEY"], required: true },
+      timeoutMs: 1234,
+    };
+    const dispatch = () =>
+      executeRunner(
+        spec,
+        "prompt",
+        {},
+        {
+          llm: async (resolved) => {
+            seen.push(resolved.connection.apiKey ?? "");
+            return okResult("ok");
+          },
+        },
+      );
+
+    await withEnv({ ROTATING_RUNNER_API_KEY: "first-key" }, async () => {
+      await dispatch();
+      await withEnv({ ROTATING_RUNNER_API_KEY: "second-key" }, dispatch);
+    });
+
+    expect(seen).toEqual(["first-key", "second-key"]);
+    expect(spec.connection.apiKey).toBeUndefined();
   });
 
   test("(d) a bogus kind hits the assertNever exhaustiveness arm", async () => {

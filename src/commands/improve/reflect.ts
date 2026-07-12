@@ -50,6 +50,7 @@ import {
   type RejectedProposalContext,
 } from "../../integrations/agent/prompts";
 import {
+  materializeLlmRunnerConnection,
   type RunnerSpec,
   resolveImproveProcessRunner,
   runnerIsLlm,
@@ -1400,7 +1401,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       assetContent ?? "",
       chatFn,
       undefined,
-      runnerIsLlm(runnerSpec) ? runnerSpec.connection : undefined,
+      runnerIsLlm(runnerSpec) ? materializeLlmRunnerConnection(runnerSpec) : undefined,
     );
     if (!judgeResult.pass) {
       // Quality gate rejected the proposal — surface as parse_error so the

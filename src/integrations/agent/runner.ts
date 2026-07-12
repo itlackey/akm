@@ -9,22 +9,57 @@ import type {
   LlmConnectionConfig,
 } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { materializeLlmConnection, type ResolvedLlmUse, resolveEngine, resolveLlmEngineUse } from "./engine-resolution";
+import {
+  type CredentialDescriptor,
+  materializeLlmConnection,
+  type ResolvedLlmUse,
+  resolveEngine,
+  resolveLlmEngineUse,
+} from "./engine-resolution";
 import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
 
 export type ProcessSection = "improve" | "index" | "search" | string;
 
 export type RunnerSpec =
-  | { kind: "llm"; engine?: string; connection: LlmConnectionConfig; timeoutMs?: number | null }
+  | {
+      kind: "llm";
+      engine?: string;
+      connection: LlmConnectionConfig;
+      credential?: CredentialDescriptor;
+      timeoutMs?: number | null;
+    }
   | { kind: "agent"; engine?: string; profile: AgentProfile; timeoutMs?: number | null }
   | {
       kind: "sdk";
       engine?: string;
       profile: AgentProfile;
       fallbackConnection?: LlmConnectionConfig;
+      fallbackCredential?: CredentialDescriptor;
+      fallbackTimeoutMs?: number | null;
       timeoutMs?: number | null;
     };
+
+export type DispatchedLlmRunner = Omit<Extract<RunnerSpec, { kind: "llm" }>, "connection"> & {
+  connection: LlmConnectionConfig;
+};
+
+/** Resolve the current credential value for one frozen LLM runner at dispatch. */
+export function materializeLlmRunnerConnection(runner: Extract<RunnerSpec, { kind: "llm" }>): LlmConnectionConfig {
+  const connectionWithLegacyTimeout = runner.connection as LlmConnectionConfig;
+  const timeoutMs =
+    runner.timeoutMs !== undefined
+      ? runner.timeoutMs
+      : Object.hasOwn(connectionWithLegacyTimeout, "timeoutMs")
+        ? (connectionWithLegacyTimeout.timeoutMs ?? null)
+        : null;
+  return materializeLlmConnection({
+    engine: runner.engine ?? "unnamed",
+    connection: runner.connection,
+    ...(runner.credential ? { credential: runner.credential } : {}),
+    timeoutMs,
+  });
+}
 
 export function runnerIsLlm(runner: RunnerSpec): runner is Extract<RunnerSpec, { kind: "llm" }> {
   return runner.kind === "llm";
@@ -41,7 +76,8 @@ export function resolveDefaultLlmRunner(config: AkmConfig, timeoutMs?: number | 
   return {
     kind: "llm",
     engine: resolved.engine,
-    connection: materializeLlmConnection(resolved),
+    connection: resolved.connection,
+    ...(resolved.credential ? { credential: resolved.credential } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : { timeoutMs: resolved.timeoutMs }),
   };
 }
@@ -62,7 +98,8 @@ export function resolveTriageJudgmentRunner(
       return {
         kind: "llm",
         engine: resolved.engine,
-        connection: materializeLlmConnection(resolved),
+        connection: resolved.connection,
+        ...(resolved.credential ? { credential: resolved.credential } : {}),
         timeoutMs: resolved.timeoutMs,
       };
     }
@@ -122,7 +159,7 @@ export function resolveImproveProcessLlmUse(
     : resolveLlmEngineUse(config, layers);
 }
 
-/** Materialize the LLM runner selected by an improve strategy and process. */
+/** Resolve the LLM runner selected by an improve strategy and process without reading credentials. */
 export function resolveImproveProcessRunner(
   strategy: ImproveProfileConfig | undefined,
   processName: string,
@@ -134,7 +171,8 @@ export function resolveImproveProcessRunner(
   return {
     kind: "llm",
     engine: resolved.engine,
-    connection: materializeLlmConnection(resolved),
+    connection: resolved.connection,
+    ...(resolved.credential ? { credential: resolved.credential } : {}),
     timeoutMs: resolved.timeoutMs,
   };
 }
