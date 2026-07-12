@@ -721,17 +721,43 @@ describe("akmExtract — engine + strategy config resolution", () => {
   test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
     const stash = makeStashDir();
     const config = configWithStrategy(stash, {
+      engine: "default",
+      model: "process-model",
+      timeoutMs: 55_000,
+      llm: { temperature: 0.2, maxTokens: 321 },
       maxTotalChars: 1234,
       hotProbation: { enabled: true },
       schemaSimilarity: { enabled: false },
     });
-    const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special", timeoutMs: 45_000 });
+    const strategy = config.improve?.strategies?.extract;
+    if (strategy) {
+      strategy.engine = "default";
+      strategy.model = "strategy-model";
+      strategy.timeoutMs = 70_000;
+      strategy.llm = { temperature: 0.1, supportsJsonSchema: false };
+    }
+    const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.hotProbation)).toBe(true);
-    expect(plan.llmConfig?.model).toBe("extract-special-model");
+    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
+    expect(plan.llmConfig).toMatchObject({
+      endpoint: "http://192.168.0.205:1234/v1/chat/completions",
+      model: "process-model",
+      temperature: 0.2,
+      maxTokens: 321,
+      supportsJsonSchema: false,
+      timeoutMs: 55_000,
+    });
     expect(plan.process.maxTotalChars).toBe(1234);
-    expect(plan.timeoutMs).toBe(45_000);
+
+    const timeoutOverridePlan = resolveStandaloneExtractPlan(config, {
+      engine: "extract-special",
+      timeoutMs: 45_000,
+    });
+    expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
+    expect(timeoutOverridePlan.llmConfig?.timeoutMs).toBe(45_000);
+    expect(timeoutOverridePlan.llmConfig?.model).toBe("process-model");
 
     const engine = config.engines?.["extract-special"];
     if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
@@ -765,7 +791,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
         });
       },
     });
-    expect(receivedModel).toBe("extract-special-model");
+    expect(receivedModel).toBe("process-model");
+    expect(plan.engine).toBe("extract-special");
     expect(plan.process.hotProbation?.enabled).toBe(true);
     const proposal = listProposals(stash, { status: "pending" }).find(
       (item) => item.ref === "memory:frozen-hot-probation",
@@ -783,6 +810,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
         config,
         resolvedPlan: Object.freeze({
           strategy: "extract",
+          engine: "extract-special",
           enabled: true,
           process: Object.freeze({ enabled: true }),
           llmConfig: null,

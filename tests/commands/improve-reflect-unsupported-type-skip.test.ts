@@ -35,6 +35,7 @@ import { REFLECT_ALLOWED_TYPES } from "../../src/commands/improve/reflect";
 import { saveConfig } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -55,7 +56,7 @@ function makeTempDir(prefix: string): string {
 
 async function indexStash(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 

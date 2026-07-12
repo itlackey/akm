@@ -34,6 +34,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -49,7 +50,7 @@ afterEach(() => {
 });
 
 async function indexStash(stashDir: string): Promise<void> {
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 

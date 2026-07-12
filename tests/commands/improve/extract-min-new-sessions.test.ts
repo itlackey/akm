@@ -26,6 +26,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import type { SessionLogHarness, SessionSummary } from "../../../src/integrations/session-logs/types";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -60,7 +61,7 @@ function fakeHarness(count: number): SessionLogHarness {
 
 /** Config enabling extract with a specific minNewSessions threshold. */
 function configWithMinNewSessions(minNewSessions: number | undefined): AkmConfig {
-  return {
+  return withTestImproveLlm({
     configVersion: "0.9.0",
     semanticSearchMode: "off",
     improve: {
@@ -74,7 +75,7 @@ function configWithMinNewSessions(minNewSessions: number | undefined): AkmConfig
         },
       },
     },
-  } as unknown as AkmConfig;
+  } as unknown as AkmConfig);
 }
 
 /**
@@ -106,7 +107,7 @@ beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
-  saveConfig({ configVersion: "0.9.0", semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ configVersion: "0.9.0", semanticSearchMode: "off" }));
 });
 
 afterEach(() => {
@@ -172,7 +173,7 @@ describe("#554 extract minNewSessions gate", () => {
       // active profile's minNewSessions was silently ignored. Here only the
       // ACTIVE profile ("racy") sets it; default does not. 1 new session < 3 must
       // still skip — proving the gate reads the resolved active profile.
-      const config = {
+      const config = withTestImproveLlm({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
         improve: {
@@ -181,7 +182,7 @@ describe("#554 extract minNewSessions gate", () => {
             racy: { processes: { consolidate: { enabled: false }, extract: { enabled: true, minNewSessions: 3 } } },
           },
         },
-      } as unknown as AkmConfig;
+      } as unknown as AkmConfig);
 
       await akmImprove({
         scope: "memory",

@@ -28,6 +28,7 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import type { SessionLogHarness, SessionSummary } from "../../../src/integrations/session-logs/types";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -76,12 +77,12 @@ function makeConfig(args: { defaultExtractEnabled: boolean; strategy?: { name: s
     };
   }
   return {
-    config: {
+    config: withTestImproveLlm({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
       improve: { strategies: improve },
       defaults: { improveStrategy: "default" },
-    } as AkmConfig,
+    } as AkmConfig),
   };
 }
 
@@ -109,7 +110,7 @@ beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 });
 
 afterEach(() => {

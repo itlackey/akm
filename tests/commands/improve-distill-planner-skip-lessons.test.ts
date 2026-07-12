@@ -40,6 +40,7 @@ import type { AkmReflectOptions, AkmReflectResult } from "../../src/commands/imp
 import { saveConfig } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
 import { akmIndex } from "../../src/indexer/indexer";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -112,7 +113,7 @@ function makeFixtureStash(): string {
 
 async function indexStash(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 

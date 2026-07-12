@@ -386,6 +386,7 @@ describe("watch-mode — AC4 default unchanged", () => {
     const changedConfig: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const startupPlan: ResolvedExtractPlan = {
       strategy: "startup",
+      engine: "startup-engine",
       enabled: true,
       process: Object.freeze({ enabled: true }),
       llmConfig: Object.freeze({ endpoint: "https://startup.test/v1", model: "startup-model" }),
@@ -394,6 +395,7 @@ describe("watch-mode — AC4 default unchanged", () => {
     };
     const changedPlan: ResolvedExtractPlan = {
       strategy: "changed",
+      engine: "changed-engine",
       enabled: true,
       process: Object.freeze({ enabled: true }),
       llmConfig: Object.freeze({ endpoint: "https://changed.test/v1", model: "changed-model" }),

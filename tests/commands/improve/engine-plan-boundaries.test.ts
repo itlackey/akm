@@ -44,7 +44,6 @@ describe("improve engine-plan boundaries", () => {
         config: {
           configVersion: "0.9.0",
           semanticSearchMode: "off",
-          improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
         },
         ensureIndexFn,
       }),

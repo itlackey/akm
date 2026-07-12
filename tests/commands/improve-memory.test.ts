@@ -15,6 +15,7 @@ import type { MemoryInferenceResult } from "../../src/indexer/passes/memory-infe
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
 import { writeMemory } from "../_helpers/assets";
 import { makeProposal } from "../_helpers/factories";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 
@@ -26,7 +27,7 @@ function makeTempDir(prefix: string): string {
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -341,10 +342,10 @@ describe("akm improve memory cleanup", () => {
       // extract" because this test does not configure an LLM. Disable extract
       // here so the test's `memoryCleanup?.warnings` assertion is not
       // contaminated by host-env-dependent extract failures.
-      config: {
+      config: withTestImproveLlm({
         semanticSearchMode: "off",
         improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
-      },
+      }),
       ensureIndexFn: async () => false,
       reindexFn: async ({ stashDir: reindexStashDir }) => {
         await akmIndex({ stashDir: reindexStashDir, full: true });
@@ -710,13 +711,15 @@ describe("akm improve memory cleanup", () => {
       "utf8",
     );
 
-    saveConfig({
-      semanticSearchMode: "off",
-      sources: [
-        { type: "filesystem", name: "local", path: stashDir, writable: true },
-        { type: "website", name: "docs-site", url: websiteUrl },
-      ],
-    });
+    saveConfig(
+      withTestImproveLlm({
+        semanticSearchMode: "off",
+        sources: [
+          { type: "filesystem", name: "local", path: stashDir, writable: true },
+          { type: "website", name: "docs-site", url: websiteUrl },
+        ],
+      }),
+    );
 
     const reflectedRefs: string[] = [];
     const distilledRefs: string[] = [];

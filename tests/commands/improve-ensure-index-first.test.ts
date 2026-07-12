@@ -22,6 +22,7 @@ import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { writeLesson } from "../_helpers/assets";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -73,7 +74,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
   test("empty entries table on entry still produces non-empty plannedRefs after the call", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-stash-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 
     // Seed two lessons on disk.
     writeLesson(stashDir, "prefer-ripgrep", "Prefer ripgrep over grep", "Searching large repos");
@@ -147,7 +148,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
   test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-dryrun-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 
     writeLesson(stashDir, "single-lesson", "Single lesson", "Trigger");
 

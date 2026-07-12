@@ -22,6 +22,7 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 
 const TIMEOUT_MS = 20_000;
 
@@ -50,7 +51,7 @@ function writeMemory(stashDir: string, name: string, body: string): void {
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -104,6 +105,7 @@ beforeEach(() => {
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-no-hang-config-");
   process.env.AKM_DATA_DIR = makeTempDir("akm-no-hang-data-");
   process.env.AKM_STATE_DIR = makeTempDir("akm-no-hang-state-");
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 });
 
 afterEach(() => {

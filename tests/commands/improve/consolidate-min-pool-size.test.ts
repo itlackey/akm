@@ -26,6 +26,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -41,7 +42,7 @@ function writeMemory(name: string, body: string): void {
 
 /** Config with the consolidate process enabled and a specific minPoolSize. */
 function configWithMinPoolSize(minPoolSize: number): AkmConfig {
-  return {
+  return withTestImproveLlm({
     semanticSearchMode: "off",
     improve: {
       strategies: {
@@ -50,7 +51,7 @@ function configWithMinPoolSize(minPoolSize: number): AkmConfig {
         },
       },
     },
-  } as unknown as AkmConfig;
+  } as unknown as AkmConfig);
 }
 
 /** Drive an improve(memory) run with no LLM connection configured. */
@@ -75,7 +76,7 @@ beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 });
 
 afterEach(() => {

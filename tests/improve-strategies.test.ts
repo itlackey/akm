@@ -247,6 +247,15 @@ describe("resolveImprovePlan", () => {
     ).toThrow('Engine "wrong" is not an LLM engine.');
   });
 
+  test("rejects an enabled model-backed process with no runner even when no model fields express intent", () => {
+    expect(() =>
+      resolveImprovePlan("quick", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+      }),
+    ).toThrow('Enabled improve process "reflect" requires an LLM engine.');
+  });
+
   test("does not require a validation engine when repair is disabled", () => {
     const plan = resolveImprovePlan(
       "quick",

@@ -325,9 +325,9 @@ External coding agents are reachable via two execution paths:
   `"timeout" | "spawn_failed" | "non_zero_exit" | "parse_error"`. Callers
   never see raw process errors.
 
-**SDK path** (`src/integrations/agent/sdk-runner.ts`):
+**SDK path** (`src/integrations/harnesses/opencode-sdk/sdk-runner.ts`):
 
-- `runAgentSdk(profile, prompt, opts, llmConfig?)` uses the embedded
+- `runOpencodeSdk(profile, prompt, opts, llmConfig?)` uses the embedded
   `@opencode-ai/sdk` instead of `Bun.spawn`. No agent CLI binary is required.
 - Selected by an agent engine whose `platform` is `"opencode-sdk"`. Its optional
   `llmEngine` (then `defaults.llmEngine`) supplies the LLM fallback connection.
