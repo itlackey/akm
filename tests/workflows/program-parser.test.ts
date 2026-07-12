@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { EXTRA_PARAMS_CREDENTIAL_KEYS, EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS } from "../../src/core/extra-params";
 import { looksLikeWorkflowProgram, parseWorkflowProgram } from "../../src/workflows/program/parser";
 import {
   PROGRAM_ISOLATION_KINDS,
@@ -232,6 +233,24 @@ describe("parseWorkflowProgram — happy paths", () => {
     expect(program.steps[0].source.path).toBe("workflows/test.yaml");
     expect(program.steps[0].source.start).toBe(4);
     expect(program.steps[1].source.start).toBe(7);
+  });
+});
+
+describe("parseWorkflowProgram — extra_params security", () => {
+  test("rejects protected request fields and normalized credentials inside arrays", () => {
+    const protectedErrors = parseErrors(
+      withSteps(
+        "  - id: review\n    unit:\n      instructions: Review\n      llm:\n        extra_params:\n          max_tokens: 1\n",
+      ),
+    );
+    expect(protectedErrors.join(" ")).toContain("protected by AKM");
+
+    const credentialErrors = parseErrors(
+      withSteps(
+        "  - id: review\n    unit:\n      instructions: Review\n      llm:\n        extra_params:\n          provider:\n            - auth:\n                - API-Key: leak\n",
+      ),
+    );
+    expect(credentialErrors.join(" ")).toContain("cannot carry credentials");
   });
 });
 
@@ -760,5 +779,15 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   test("budget block keys match the parser's vocabulary", () => {
     expect(Object.keys(schema.definitions.budget.properties ?? {}).sort()).toEqual(["max_tokens", "max_units"]);
     expect("budget" in schema.properties).toBe(true);
+  });
+
+  test("extra_params documents top-level protection and recursive credential semantics", () => {
+    const schema = JSON.parse(
+      fs.readFileSync(path.resolve(import.meta.dir, "../../schemas/akm-workflow.json"), "utf8"),
+    );
+    const extraParams = schema.definitions.extraParams;
+    expect(extraParams["x-akm-protectedTopLevelNormalizedKeys"]).toEqual(EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS);
+    expect(extraParams["x-akm-recursivelyForbiddenNormalizedKeys"]).toEqual(EXTRA_PARAMS_CREDENTIAL_KEYS);
+    expect(schema.definitions.extraParamValue.anyOf[1].items.$ref).toBe("#/definitions/extraParamValue");
   });
 });

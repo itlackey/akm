@@ -6,6 +6,7 @@ import path from "node:path";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
+import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import { HARNESS_BY_ID } from "../harnesses";
 import { resolveModel } from "./model-aliases";
 import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
@@ -120,6 +121,22 @@ function resolveCredential(
     : { names: [specific], required: false };
 }
 
+/** Collect materialized engine credentials for output and persistence redaction. */
+export function collectEngineCredentialValues(
+  config: EngineResolutionConfig,
+  envSource: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const values = new Set<string>();
+  for (const [name, engine] of Object.entries(config.engines ?? {})) {
+    if (engine.kind !== "llm") continue;
+    for (const envVar of resolveCredential(name, engine, config)?.names ?? []) {
+      const value = envSource[envVar]?.trim();
+      if (value) values.add(value);
+    }
+  }
+  return [...values];
+}
+
 function effectiveTimeout(engine: { timeoutMs?: number | null }, layers: readonly EngineUseConfig[]): number | null {
   for (let index = layers.length - 1; index >= 0; index--) {
     if (hasOwn(layers[index] ?? {}, "timeoutMs")) return layers[index]?.timeoutMs ?? null;
@@ -181,6 +198,15 @@ export function resolveLlmEngineUse(
 
 /** Read a resolved symbolic credential only at the runtime dispatch boundary. */
 export function materializeLlmConnection(resolved: ResolvedLlmUse): LlmConnectionConfig {
+  if (resolved.connection.extraParams !== undefined) {
+    const issue = validateExtraParams(resolved.connection.extraParams)[0];
+    if (issue) {
+      throw new ConfigError(
+        formatExtraParamsIssue(`Engine "${resolved.engine}" extraParams`, issue),
+        "INVALID_CONFIG_FILE",
+      );
+    }
+  }
   let apiKey: string | undefined;
   for (const name of resolved.credential?.names ?? []) {
     const candidate = process.env[name]?.trim();

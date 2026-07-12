@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDefaultLlmConfig, loadUserConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
+import { validateConfigShape } from "../src/core/config/config-schema";
 import { configSet } from "../src/core/config/config-walker";
 import { ConfigError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
@@ -107,7 +108,7 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).toThrow(ConfigError);
   });
 
-  test("rejects normalized protected and secret extraParams keys inside arrays", () => {
+  test("rejects normalized protected top-level keys and secret keys inside arrays", () => {
     writeConfig({
       configVersion: "0.9.0",
       engines: {
@@ -115,7 +116,7 @@ describe("0.9 config contract", () => {
           kind: "llm",
           endpoint: "https://example.test/v1/chat/completions",
           model: "test",
-          extraParams: { provider: [{ "Response-Format": {} }, { auth: [{ API_KEY: "leak" }] }] },
+          extraParams: { "Response-Format": {}, provider: [{ auth: [{ API_KEY: "leak" }] }] },
         },
       },
     });
@@ -137,5 +138,56 @@ describe("0.9 config contract", () => {
       improve: { strategies: { default: { processes: { reflect: { engine: "reviewer" } } } } },
     });
     expect(() => loadUserConfig()).toThrow(ConfigError);
+  });
+
+  test("cross-validates default strategies, strategy engines, and nested judgment engines", () => {
+    const base = {
+      configVersion: "0.9.0",
+      engines: {
+        llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" },
+        agent: { kind: "agent", platform: "pi" },
+      },
+    };
+    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "missing" } }).ok).toBe(false);
+    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "quick" } }).ok).toBe(true);
+    expect(validateConfigShape({ ...base, improve: { strategies: { custom: { engine: "agent" } } } }).ok).toBe(false);
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "agent" } } } } } },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "llm" } } } } } },
+      }).ok,
+    ).toBe(true);
+  });
+
+  test("normalizes model aliases to lowercase and rejects case-insensitive collisions", () => {
+    const normalized = validateConfigShape({
+      configVersion: "0.9.0",
+      engines: { agent: { kind: "agent", platform: "pi", modelAliases: { FAST: "model-a" } } },
+      modelAliases: { DEEP: { pi: "model-b" } },
+    });
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.value.engines?.agent?.modelAliases).toEqual({ fast: "model-a" });
+      expect(normalized.value.modelAliases).toEqual({ deep: { pi: "model-b" } });
+    }
+
+    expect(
+      validateConfigShape({
+        configVersion: "0.9.0",
+        engines: { agent: { kind: "agent", platform: "pi", modelAliases: { FAST: "a", fast: "b" } } },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateConfigShape({
+        configVersion: "0.9.0",
+        modelAliases: { DEEP: { pi: "a" }, deep: { pi: "b" } },
+      }).ok,
+    ).toBe(false);
   });
 });

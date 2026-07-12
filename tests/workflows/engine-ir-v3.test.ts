@@ -115,6 +115,20 @@ describe("workflow engine v3 contracts", () => {
     expect(() => decodeWorkflowPlanV3(extra)).toThrow("not referenced");
   });
 
+  test("strict decoder rejects unsafe extraParams in snapshots and invocation overlays", () => {
+    const snapshot = frozenPlan();
+    const engine = snapshot.execution?.engines.fast;
+    if (!engine || engine.kind !== "llm") throw new Error("fixture engine must be LLM");
+    engine.extraParams = { provider: [{ API_KEY: "leak" }] };
+    expect(() => decodeWorkflowPlanV3(snapshot)).toThrow("cannot carry credentials");
+
+    const invocation = frozenPlan();
+    const root = invocation.steps[0]?.root;
+    if (!root || root.kind !== "unit" || !root.invocation) throw new Error("fixture root must be a unit invocation");
+    root.invocation.llm = { extraParams: { response_format: {} } };
+    expect(() => decodeWorkflowPlanV3(invocation)).toThrow("protected by AKM");
+  });
+
   test("freeze resolves an engine once and keeps only symbolic credentials", () => {
     const parsed = parseWorkflowProgram(
       "version: 2\nname: review\ndefaults: { engine: fast }\nsteps:\n  - id: review\n    unit: { instructions: Review }\n",

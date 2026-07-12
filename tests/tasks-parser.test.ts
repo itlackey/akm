@@ -56,6 +56,18 @@ describe("parseTaskDocument", () => {
     }
   });
 
+  test("rejects protected and recursively credential-shaped extraParams", () => {
+    const parse = (extra: string[]) =>
+      parseTaskDocument({
+        yaml: ["version: 2", 'schedule: "@daily"', "prompt: Review", "llm:", "  extraParams:", ...extra].join("\n"),
+        filePath: "/stash/tasks/review.yml",
+        id: "review",
+      });
+    expect(() => parse(["    response_format: {}"])).toThrow(UsageError);
+    expect(() => parse(["    provider:", "      - auth:", "          - API_KEY: leak"])).toThrow(UsageError);
+    expect(parse(["    provider:", "      nested:", "        model: allowed"]).target.kind).toBe("prompt");
+  });
+
   test("classifies block scalar, asset, and file prompt sources", () => {
     const yaml = ["version: 2", 'schedule: "@daily"', "prompt: |", "  Line one.", "  Line two.", ""].join("\n");
     const task = parseTaskDocument({ yaml, filePath: "/stash/tasks/digest.yml", id: "digest" });

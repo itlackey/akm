@@ -30,6 +30,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { decodeImproveResult } from "../../core/improve-result";
+import { redactSensitiveValue } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
 import { recordImproveRun } from "../../storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "./improve";
@@ -87,8 +88,10 @@ export function writeImproveResultFile(
   runId: string,
   result: AkmImproveResult,
   startedAt?: string,
+  sensitiveValues: readonly string[] = [],
 ): string {
   const decoded = decodeImproveResult(result);
+  const persistedResult = redactSensitiveValue(result, sensitiveValues);
   withStateDb((db) => {
     const completedAt = new Date().toISOString();
     // startedAt is the ISO timestamp captured at process launch (passed from the
@@ -103,13 +106,13 @@ export function writeImproveResultFile(
       completedAt,
       stashDir,
       dryRun: Boolean(result.dryRun),
-      legacyProfile: decoded.legacyProfile,
-      strategy: decoded.strategy,
+      legacyProfile: redactSensitiveValue(decoded.legacyProfile, sensitiveValues),
+      strategy: redactSensitiveValue(decoded.strategy, sensitiveValues),
       scopeMode: result.scope?.mode ?? "all",
-      scopeValue: result.scope?.value ?? null,
-      guidance: result.guidance ?? null,
+      scopeValue: persistedResult.scope?.value ?? null,
+      guidance: persistedResult.guidance ?? null,
       ok: Boolean(result.ok),
-      result,
+      result: persistedResult,
     });
   });
   return relativeImproveResultPath(runId);
@@ -151,24 +154,31 @@ export function recordTerminatedImproveRun(
     dryRun?: boolean;
     strategy: string;
     errorMessage?: string;
+    sensitiveValues?: readonly string[];
   },
 ): void {
   const completedAt = new Date().toISOString();
-  const minimalResult: AkmImproveResult = {
-    schemaVersion: 2,
-    ok: false,
-    strategy: ctx.strategy,
-    scope: { mode: ctx.scopeMode ?? "all", ...(ctx.scopeValue ? { value: ctx.scopeValue } : {}) },
-    dryRun: Boolean(ctx.dryRun),
-    memorySummary: { eligible: 0, derived: 0 },
-    actions: [],
-    plannedRefs: [],
-    terminated: {
-      reason,
-      at: completedAt,
-      ...(ctx.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+  const persistedReason = redactSensitiveValue(reason, ctx.sensitiveValues ?? []);
+  const persistedScopeValue = redactSensitiveValue(ctx.scopeValue, ctx.sensitiveValues ?? []);
+  const persistedStrategy = redactSensitiveValue(ctx.strategy, ctx.sensitiveValues ?? []);
+  const minimalResult: AkmImproveResult = redactSensitiveValue(
+    {
+      schemaVersion: 2,
+      ok: false,
+      strategy: persistedStrategy,
+      scope: { mode: ctx.scopeMode ?? "all", ...(persistedScopeValue ? { value: persistedScopeValue } : {}) },
+      dryRun: Boolean(ctx.dryRun),
+      memorySummary: { eligible: 0, derived: 0 },
+      actions: [],
+      plannedRefs: [],
+      terminated: {
+        reason: persistedReason,
+        at: completedAt,
+        ...(ctx.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+      },
     },
-  };
+    ctx.sensitiveValues ?? [],
+  );
 
   withStateDb((db) => {
     recordImproveRun(db, {
@@ -177,17 +187,19 @@ export function recordTerminatedImproveRun(
       completedAt,
       stashDir,
       dryRun: Boolean(ctx.dryRun),
-      strategy: ctx.strategy,
+      strategy: persistedStrategy,
       scopeMode: ctx.scopeMode ?? "all",
-      scopeValue: ctx.scopeValue ?? null,
+      scopeValue: persistedScopeValue ?? null,
       guidance: null,
       ok: false,
       result: minimalResult,
       metadata: {
         terminated: {
-          reason,
+          reason: persistedReason,
           at: completedAt,
-          ...(ctx.errorMessage ? { errorMessage: ctx.errorMessage } : {}),
+          ...(ctx.errorMessage
+            ? { errorMessage: redactSensitiveValue(ctx.errorMessage, ctx.sensitiveValues ?? []) }
+            : {}),
         },
       },
     });

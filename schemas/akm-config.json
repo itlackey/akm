@@ -142,7 +142,7 @@
               "llmEngine": {
                 "type": "string",
                 "maxLength": 63,
-                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
               }
             },
             "required": [
@@ -152,6 +152,10 @@
             "additionalProperties": true
           }
         ]
+      },
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
       }
     },
     "defaults": {
@@ -160,17 +164,17 @@
         "engine": {
           "type": "string",
           "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
         },
         "llmEngine": {
           "type": "string",
           "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
         },
         "improveStrategy": {
           "type": "string",
           "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
         }
       },
       "additionalProperties": true
@@ -265,7 +269,7 @@
             "engine": {
               "type": "string",
               "maxLength": 63,
-              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
             },
             "model": {
               "type": "string",
@@ -341,7 +345,7 @@
           "engine": {
             "type": "string",
             "maxLength": 63,
-            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
           },
           "model": {
             "type": "string",
@@ -689,7 +693,7 @@
               "engine": {
                 "type": "string",
                 "maxLength": 63,
-                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
               },
               "model": {
                 "type": "string",
@@ -746,7 +750,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -1103,7 +1107,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -1159,7 +1163,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -1516,7 +1520,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -1572,7 +1576,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -1929,7 +1933,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -1985,7 +1989,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -2342,7 +2346,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -2398,7 +2402,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -2755,7 +2759,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -2811,7 +2815,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -3168,7 +3172,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -3224,7 +3228,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -3581,7 +3585,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -3637,7 +3641,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -3994,7 +3998,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -4050,7 +4054,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -4407,7 +4411,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -4463,7 +4467,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -4820,7 +4824,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -4876,7 +4880,7 @@
                       "engine": {
                         "type": "string",
                         "maxLength": 63,
-                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                       },
                       "model": {
                         "type": "string",
@@ -5233,7 +5237,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -5319,6 +5323,10 @@
               }
             },
             "additionalProperties": true
+          },
+          "propertyNames": {
+            "maxLength": 63,
+            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
           }
         },
         "utilityDecay": {
@@ -5624,7 +5632,7 @@
                   "llmEngine": {
                     "type": "string",
                     "maxLength": 63,
-                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                   }
                 },
                 "required": [
@@ -5634,6 +5642,10 @@
                 "additionalProperties": true
               }
             ]
+          },
+          "propertyNames": {
+            "maxLength": 63,
+            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
           }
         },
         "defaults": {
@@ -5642,17 +5654,17 @@
             "engine": {
               "type": "string",
               "maxLength": 63,
-              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
             },
             "llmEngine": {
               "type": "string",
               "maxLength": 63,
-              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
             },
             "improveStrategy": {
               "type": "string",
               "maxLength": 63,
-              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
             }
           },
           "additionalProperties": true
@@ -5747,7 +5759,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -5823,7 +5835,7 @@
               "engine": {
                 "type": "string",
                 "maxLength": 63,
-                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
               },
               "model": {
                 "type": "string",
@@ -6171,7 +6183,7 @@
                   "engine": {
                     "type": "string",
                     "maxLength": 63,
-                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                   },
                   "model": {
                     "type": "string",
@@ -6228,7 +6240,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -6585,7 +6597,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -6641,7 +6653,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -6998,7 +7010,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -7054,7 +7066,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -7411,7 +7423,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -7467,7 +7479,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -7824,7 +7836,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -7880,7 +7892,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -8237,7 +8249,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -8293,7 +8305,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -8650,7 +8662,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -8706,7 +8718,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -9063,7 +9075,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -9119,7 +9131,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -9476,7 +9488,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -9532,7 +9544,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -9889,7 +9901,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -9945,7 +9957,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -10302,7 +10314,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -10358,7 +10370,7 @@
                           "engine": {
                             "type": "string",
                             "maxLength": 63,
-                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                           },
                           "model": {
                             "type": "string",
@@ -10715,7 +10727,7 @@
                               "engine": {
                                 "type": "string",
                                 "maxLength": 63,
-                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                               },
                               "model": {
                                 "type": "string",
@@ -10801,6 +10813,10 @@
                   }
                 },
                 "additionalProperties": true
+              },
+              "propertyNames": {
+                "maxLength": 63,
+                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
               }
             },
             "utilityDecay": {
@@ -11089,7 +11105,7 @@
         "engine": {
           "type": "string",
           "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
         },
         "model": {
           "type": "string",
@@ -11446,7 +11462,7 @@
             "engine": {
               "type": "string",
               "maxLength": 63,
-              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
             },
             "model": {
               "type": "string",
@@ -11502,7 +11518,7 @@
         "engine": {
           "type": "string",
           "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
         },
         "model": {
           "type": "string",
@@ -11559,7 +11575,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -11916,7 +11932,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -11972,7 +11988,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -12329,7 +12345,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -12385,7 +12401,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -12742,7 +12758,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -12798,7 +12814,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -13155,7 +13171,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -13211,7 +13227,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -13568,7 +13584,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -13624,7 +13640,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -13981,7 +13997,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -14037,7 +14053,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -14394,7 +14410,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -14450,7 +14466,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -14807,7 +14823,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -14863,7 +14879,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -15220,7 +15236,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -15276,7 +15292,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -15633,7 +15649,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",
@@ -15689,7 +15705,7 @@
                 "engine": {
                   "type": "string",
                   "maxLength": 63,
-                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                 },
                 "model": {
                   "type": "string",
@@ -16046,7 +16062,7 @@
                     "engine": {
                       "type": "string",
                       "maxLength": 63,
-                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
                     },
                     "model": {
                       "type": "string",

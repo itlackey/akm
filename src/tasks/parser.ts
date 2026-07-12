@@ -38,6 +38,7 @@
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { UsageError } from "../core/errors";
+import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { TASK_SCHEMA_VERSION, type TaskDocument, type TaskPromptTarget, type TaskTarget } from "./schema";
 
 export interface ParseTaskInput {
@@ -347,11 +348,14 @@ function readLlmOverrides(value: unknown, filePath: string): TaskPromptTarget["l
       throw new UsageError(`Key "llm.${key}" must be a boolean. File: ${filePath}`, "INVALID_FLAG_VALUE");
     }
   }
-  if (
-    data.extraParams !== undefined &&
-    (!data.extraParams || typeof data.extraParams !== "object" || Array.isArray(data.extraParams))
-  ) {
-    throw new UsageError(`Key "llm.extraParams" must be a mapping. File: ${filePath}`, "INVALID_FLAG_VALUE");
+  if (data.extraParams !== undefined) {
+    const issue = validateExtraParams(data.extraParams)[0];
+    if (issue) {
+      throw new UsageError(
+        `${formatExtraParamsIssue('Key "llm.extraParams"', issue)}. File: ${filePath}`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
   }
   return data as TaskPromptTarget["llm"];
 }

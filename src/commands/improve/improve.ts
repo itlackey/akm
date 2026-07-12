@@ -21,6 +21,7 @@ import type {
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
+import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../indexer/db/db";
@@ -29,6 +30,7 @@ import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexe
 import { akmIndex } from "../../indexer/indexer";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
@@ -408,6 +410,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
+  const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
   const selectedStrategy = resolveImproveStrategy(options.strategy, _earlyConfig);
   preflightImproveStrategyEngines(selectedStrategy, _earlyConfig);
   const improveProfile = selectedStrategy.config;
@@ -1220,7 +1223,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
         metadata: {
           strategy: selectedStrategy.name,
-          error: errMessage(err),
+          error: redactSensitiveText(errMessage(err), improveSensitiveValues),
           durationMs: Date.now() - startMs,
         },
       },

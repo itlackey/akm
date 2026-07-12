@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { ENGINE_NAME_PATTERN_SOURCE } from "../../src/core/config/engine-semantics";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const schemaPath = path.join(repoRoot, "schemas", "akm-config.json");
@@ -51,6 +52,20 @@ describe("config schema drift pins", () => {
     expect(props.llm).toBeUndefined();
     expect(props.agent).toBeUndefined();
     expect(props.features).toBeUndefined();
+  });
+
+  test("engine and improve-strategy property names match runtime grammar and reserved prefixes", () => {
+    const schema = readSchema();
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    const engineNames = properties.engines.propertyNames as { maxLength?: number; pattern?: string };
+    const improve = properties.improve as { properties?: Record<string, Record<string, unknown>> };
+    const strategyNames = improve.properties?.strategies?.propertyNames as { maxLength?: number; pattern?: string };
+    expect(engineNames).toEqual({ maxLength: 63, pattern: ENGINE_NAME_PATTERN_SOURCE });
+    expect(strategyNames).toEqual(engineNames);
+
+    const pattern = new RegExp(engineNames.pattern ?? "");
+    for (const name of ["default", "fast-2", "a"]) expect(pattern.test(name)).toBe(true);
+    for (const name of ["Fast", "two--dashes", "akm-internal", "-leading"]) expect(pattern.test(name)).toBe(false);
   });
 
   test("search.graphBoost confidence knobs match runtime", () => {

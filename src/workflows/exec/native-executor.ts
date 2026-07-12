@@ -135,7 +135,7 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText } from "../../core/redaction";
+import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
@@ -1226,19 +1226,11 @@ function collectWorkflowDispatchSensitiveValues(
 }
 
 function redactUnitOutcome(outcome: UnitOutcome, sensitiveValues: readonly string[]): UnitOutcome {
-  const redactValue = (value: unknown): unknown => {
-    if (typeof value === "string") return redactSensitiveText(value, sensitiveValues);
-    if (Array.isArray(value)) return value.map(redactValue);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redactValue(child)]));
-    }
-    return value;
-  };
   return {
     ...outcome,
     ...(outcome.text !== undefined ? { text: redactSensitiveText(outcome.text, sensitiveValues) } : {}),
     ...(outcome.error !== undefined ? { error: redactSensitiveText(outcome.error, sensitiveValues) } : {}),
-    ...(outcome.result !== undefined ? { result: redactValue(outcome.result) } : {}),
+    ...(outcome.result !== undefined ? { result: redactSensitiveValue(outcome.result, sensitiveValues) } : {}),
   };
 }
 

@@ -36,7 +36,13 @@
  */
 import { z } from "zod";
 import type { InstalledStashEntry } from "../../registry/types";
+import { validateExtraParams } from "../extra-params";
 import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "./config-types";
+import {
+  BUILTIN_IMPROVE_STRATEGY_NAMES,
+  ENGINE_NAME_PATTERN_SOURCE,
+  IMPROVE_PROCESS_ENGINE_CAPABILITIES,
+} from "./engine-semantics";
 
 /** Persisted config schema version. Package prerelease/patch versions do not change this value. */
 export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
@@ -60,14 +66,13 @@ const httpUrl = z.string().refine((v) => v.startsWith("http://") || v.startsWith
   message: "endpoint must start with http:// or https://",
 });
 
-const ENGINE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const ENGINE_NAME_PATTERN = new RegExp(ENGINE_NAME_PATTERN_SOURCE);
 const ENV_REFERENCE_PATTERN = /^\$[A-Za-z_][A-Za-z0-9_]*$|^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 
 const engineName = z
   .string()
   .max(63)
-  .regex(ENGINE_NAME_PATTERN, "engine names must be lowercase kebab-case")
-  .refine((value) => !value.startsWith("akm-"), "engine names beginning with akm- are reserved");
+  .regex(ENGINE_NAME_PATTERN, "names must be lowercase kebab-case and must not begin with reserved akm-");
 
 const chatCompletionsEndpoint = z.string().superRefine((value, ctx) => {
   try {
@@ -86,53 +91,42 @@ const chatCompletionsEndpoint = z.string().superRefine((value, ctx) => {
   }
 });
 
-const PROTECTED_EXTRA_PARAM_KEYS = new Set([
-  "model",
-  "messages",
-  "temperature",
-  "maxtokens",
-  "responseformat",
-  "stream",
-  "streamoptions",
-  "enablethinking",
-]);
-const SECRET_EXTRA_PARAM_KEYS = new Set([
-  "authorization",
-  "headers",
-  "apikey",
-  "token",
-  "password",
-  "secret",
-  "cookie",
-  "setcookie",
-]);
+const ExtraParamsSchema = z.record(z.unknown()).superRefine((value, ctx) => {
+  for (const issue of validateExtraParams(value)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: issue.path, message: issue.message });
+  }
+});
 
-function normalizedParamKey(key: string): string {
-  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+function normalizeAliasKeys(raw: unknown, ctx: z.RefinementCtx): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const normalized: Record<string, unknown> = {};
+  const originalByKey = new Map<string, string>();
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const lower = key.toLowerCase();
+    const previous = originalByKey.get(lower);
+    if (previous !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `alias collides case-insensitively with ${previous}`,
+      });
+      continue;
+    }
+    originalByKey.set(lower, key);
+    normalized[lower] = value;
+  }
+  return normalized;
 }
 
-const ExtraParamsSchema = z.record(z.unknown()).superRefine((value, ctx) => {
-  const visit = (entry: unknown, path: (string | number)[]): void => {
-    if (Array.isArray(entry)) {
-      entry.forEach((child, index) => {
-        visit(child, [...path, index]);
-      });
-      return;
-    }
-    if (!entry || typeof entry !== "object") return;
-    for (const [key, child] of Object.entries(entry as Record<string, unknown>)) {
-      const normalized = normalizedParamKey(key);
-      if (PROTECTED_EXTRA_PARAM_KEYS.has(normalized)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: `${key} is protected by AKM` });
-      }
-      if (SECRET_EXTRA_PARAM_KEYS.has(normalized)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: `${key} cannot carry credentials` });
-      }
-      visit(child, [...path, key]);
-    }
-  };
-  visit(value, []);
-});
+const ModelAliasMapSchema = z.preprocess(
+  (raw, ctx) => normalizeAliasKeys(raw, ctx),
+  z.record(z.string().min(1), z.string().min(1)),
+);
+
+const GlobalModelAliasesSchema = z.preprocess(
+  (raw, ctx) => normalizeAliasKeys(raw, ctx),
+  z.record(z.string().min(1), z.record(z.string().min(1), z.string().min(1))),
+);
 
 // ── Feedback failure modes (F-3 / #384) ─────────────────────────────────────
 
@@ -244,7 +238,7 @@ export const AgentProfileConfigSchema = z
     // this profile's CLI. Highest-precedence tier in resolveModel
     // (integrations/agent/model-aliases.ts) — beats the config-root
     // `modelAliases` table and the built-in opus/sonnet/haiku entries.
-    modelAliases: z.record(z.string().min(1), z.string().min(1)).optional(),
+    modelAliases: ModelAliasMapSchema.optional(),
   })
   .passthrough();
 
@@ -297,7 +291,7 @@ const AgentEngineSchema = z
     workspace: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    modelAliases: z.record(z.string().min(1), z.string().min(1)).optional(),
+    modelAliases: ModelAliasMapSchema.optional(),
     llmEngine: engineName.optional(),
   })
   .passthrough()
@@ -1177,7 +1171,7 @@ export const AkmConfigShape = {
   // builder resolves against ("claude", "opencode", "opencode-sdk", or a
   // custom profile's name for the default builder) — unknown keys are inert.
   // Precedence: profile modelAliases > this table > built-in aliases.
-  modelAliases: z.record(z.string().min(1), z.record(z.string().min(1), z.string().min(1))).optional(),
+  modelAliases: GlobalModelAliasesSchema.optional(),
   stashDir: nonEmptyString.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("auto"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
@@ -1254,42 +1248,63 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       message: "llmEngine must name an LLM engine",
     });
   }
-  const llmOnlyProcesses = new Set([
-    "reflect",
-    "distill",
-    "consolidate",
-    "memoryInference",
-    "graphExtraction",
-    "extract",
-    "validation",
-    "recombine",
-    "procedural",
-  ]);
+  const defaultStrategy = config.defaults?.improveStrategy;
+  if (
+    defaultStrategy &&
+    !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
+    !config.improve?.strategies?.[defaultStrategy]
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["defaults", "improveStrategy"],
+      message: "improveStrategy does not name a built-in or configured strategy",
+    });
+  }
   for (const [strategyName, strategy] of Object.entries(config.improve?.strategies ?? {})) {
     const strategyEngine = strategy.engine;
-    if (strategyEngine && !config.engines?.[strategyEngine]) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["improve", "strategies", strategyName, "engine"],
-        message: "engine does not name a configured engine",
-      });
+    if (strategyEngine) {
+      const engine = config.engines?.[strategyEngine];
+      if (!engine || engine.kind !== "llm") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["improve", "strategies", strategyName, "engine"],
+          message: engine ? "strategy engine must be an LLM engine" : "engine does not name a configured engine",
+        });
+      }
     }
     for (const [processName, process] of Object.entries(strategy.processes ?? {})) {
-      const processEngine = (process as { engine?: string }).engine ?? strategyEngine;
-      if (!processEngine) continue;
-      const engine = config.engines?.[processEngine];
-      if (!engine) {
+      const processConfig = process as { engine?: string; judgment?: { engine?: string } };
+      const capability =
+        IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName as keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES];
+      if (processConfig.engine && capability === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
-          message: "engine does not name a configured engine",
+          message: `${processName} does not dispatch an engine`,
         });
-      } else if (llmOnlyProcesses.has(processName) && engine.kind !== "llm") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
-          message: `${processName} requires an LLM engine`,
-        });
+      } else {
+        const processEngine = processConfig.engine ?? strategyEngine;
+        if (processEngine && capability === "llm") {
+          const engine = config.engines?.[processEngine];
+          if (!engine || engine.kind !== "llm") {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
+              message: engine ? `${processName} requires an LLM engine` : "engine does not name a configured engine",
+            });
+          }
+        }
+      }
+      const judgmentEngine = processConfig.judgment?.engine;
+      if (judgmentEngine) {
+        const engine = config.engines?.[judgmentEngine];
+        if (!engine || engine.kind !== "llm") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["improve", "strategies", strategyName, "processes", processName, "judgment", "engine"],
+            message: engine ? "judgment requires an LLM engine" : "engine does not name a configured engine",
+          });
+        }
       }
     }
   }

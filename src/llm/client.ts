@@ -14,6 +14,7 @@
 
 import { fetchWithTimeout } from "../core/common";
 import { type LlmConnectionConfig, type LlmProfileConfig, resolveSecret } from "../core/config/config";
+import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import { redactSensitiveText } from "../core/redaction";
 import { warnVerbose } from "../core/warn";
@@ -329,6 +330,10 @@ async function chatCompletionAttempt(
   options: ChatCompletionOptions | undefined,
   timeoutMs: number | null,
 ): Promise<string> {
+  if (config.extraParams !== undefined) {
+    const issue = validateExtraParams(config.extraParams)[0];
+    if (issue) throw new Error(formatExtraParamsIssue("LLM extraParams", issue));
+  }
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const resolvedKey = resolveSecret(config.apiKey);
   if (resolvedKey) {

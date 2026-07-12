@@ -82,6 +82,20 @@ describe("engine resolution", () => {
     expect(materializeLlmConnection(resolved)?.apiKey).toBe("engine-secret");
   });
 
+  test("revalidates extraParams at the dispatch boundary", () => {
+    expect(() =>
+      materializeLlmConnection({
+        engine: "bypassed-validation",
+        connection: {
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "test",
+          extraParams: { nested: [{ Authorization: "leak" }] },
+        },
+        timeoutMs: null,
+      }),
+    ).toThrow("cannot carry credentials");
+  });
+
   test("uses the agent platform, rather than the engine name, to lower an SDK engine", () => {
     const resolved = resolveEngine("sdk", config);
     expect(resolved.kind).toBe("sdk");

@@ -9,10 +9,12 @@ import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getCacheDir } from "../../core/paths";
+import { redactSensitiveText } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { parseFlagValue } from "../../output/context";
 import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { refreshCanarySet } from "./collapse-detector";
@@ -194,7 +196,9 @@ export const improveCommand = defineCommand({
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
-      const selectedStrategyName = resolveImproveStrategy(strategyArg, loadConfig()).name;
+      const effectiveConfig = loadConfig();
+      const selectedStrategyName = resolveImproveStrategy(strategyArg, effectiveConfig).name;
+      const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
       // so the resolved profile `sync` block wins by default.
@@ -219,7 +223,7 @@ export const improveCommand = defineCommand({
       // was minted at end-of-run, so SIGTERM'd runs (cron timeout) left no
       // row in improve_runs and effectively disappeared from `akm health`.
       const runId = buildImproveRunId();
-      const primaryStashDir = resolveSourceEntries(undefined, loadConfig())[0]?.path;
+      const primaryStashDir = resolveSourceEntries(undefined, effectiveConfig)[0]?.path;
       const scopeArg = getStringArg(args, "scope");
       const inferredScopeMode = (scopeArg ?? "").includes(":") ? "ref" : scopeArg ? "type" : "all";
 
@@ -237,7 +241,8 @@ export const improveCommand = defineCommand({
             scopeValue: scopeArg ?? null,
             dryRun: Boolean(dryRun),
             strategy: selectedStrategyName,
-            ...(errorMessage ? { errorMessage } : {}),
+            ...(errorMessage ? { errorMessage: redactSensitiveText(errorMessage, sensitiveValues) } : {}),
+            sensitiveValues,
           });
         } catch (err) {
           process.stderr.write(
@@ -326,7 +331,7 @@ export const improveCommand = defineCommand({
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso);
+          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.

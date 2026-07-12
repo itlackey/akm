@@ -157,8 +157,9 @@ describe("akm reflect", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(JSON.stringify(listProposals(stash))).not.toContain(sentinel);
-    expect(JSON.stringify(listProposals(stash))).toContain("[REDACTED]");
+    const durable = JSON.stringify({ result, proposals: listProposals(stash), events: readEvents().events });
+    expect(durable).not.toContain(sentinel);
+    expect(durable).toContain("[REDACTED]");
   });
   test("happy path: produces a queued proposal with source=reflect", async () => {
     const stash = makeStashDir();

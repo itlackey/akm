@@ -43,7 +43,7 @@ import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText } from "../../core/redaction";
+import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import type { WorkflowRunStatus } from "../../sources/types";
 import {
   type WorkflowRunUnitRow,
@@ -1406,7 +1406,7 @@ function prepareResult(
         "INVALID_FLAG_VALUE",
       );
     }
-    return { resultJson: JSON.stringify(redactReportedValue(parsed, sensitiveValues)), failureReason: null };
+    return { resultJson: JSON.stringify(redactSensitiveValue(parsed, sensitiveValues)), failureReason: null };
   }
   // Free-text unit: journal the text as a JSON string EXACTLY as the executor
   // does — `native-executor.ts` finishUnit uses `outcome.text ? JSON.stringify… :
@@ -1443,17 +1443,6 @@ async function collectReportedUnitSensitiveValues(workUnit: StepWorkUnit): Promi
   collectEngine(workUnit.engine);
   collectEngine(workUnit.fallbackEngine);
   return [...values];
-}
-
-function redactReportedValue(value: unknown, sensitiveValues: readonly string[]): unknown {
-  if (typeof value === "string") return redactSensitiveText(value, sensitiveValues);
-  if (Array.isArray(value)) return value.map((child) => redactReportedValue(child, sensitiveValues));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, redactReportedValue(child, sensitiveValues)]),
-    );
-  }
-  return value;
 }
 
 /** How the guarded unit write resolved inside the SQLite transaction. */
