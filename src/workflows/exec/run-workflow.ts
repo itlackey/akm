@@ -64,6 +64,7 @@
 
 import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
+import { withMaintenanceStartBarrierAsync } from "../../core/maintenance-barrier";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunSummary } from "../../sources/types";
 import { withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
@@ -252,15 +253,17 @@ function leaseExpiry(): string {
  * arbiter — two racing invocations cannot both win.
  */
 async function acquireRunLease(runId: string, holder: string): Promise<void> {
-  await withWorkflowRunsRepo((repo) => {
-    if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
-    const row = repo.getRunById(runId);
-    throw new UsageError(
-      `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
-        `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
-        `wait for that invocation to finish or for the lease to expire.`,
-    );
-  });
+  await withMaintenanceStartBarrierAsync(() =>
+    withWorkflowRunsRepo((repo) => {
+      if (repo.acquireEngineLease(runId, holder, leaseExpiry(), new Date().toISOString())) return;
+      const row = repo.getRunById(runId);
+      throw new UsageError(
+        `Workflow run ${runId} is already being driven by engine ${row?.engine_lease_holder ?? "(unknown)"} ` +
+          `(run lease expires ${row?.engine_lease_until ?? "(unknown)"}). A second \`akm workflow run\` would race it — ` +
+          `wait for that invocation to finish or for the lease to expire.`,
+      );
+    }),
+  );
 }
 
 /**

@@ -1,5 +1,5 @@
 {
-  "description": "Full-corpus graph extraction pass — rebuilds graph relationships across all stash files. Disables all other sub-processes. Use via `akm improve --profile graph-refresh` or the embedded `graph-refresh-weekly` task.",
+  "description": "Full-corpus graph extraction pass — rebuilds graph relationships across all stash files. Disables all other sub-processes. Use via `akm improve --strategy graph-refresh` or the embedded `graph-refresh-weekly` task.",
   "processes": {
     "reflect": { "enabled": false },
     "distill": { "enabled": false },

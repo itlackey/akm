@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { createHash } from "node:crypto";
 import type { AkmConfig, EngineConfig, HarnessId } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 
@@ -103,10 +104,14 @@ function availableName(config: AkmConfig, preferred: string, fingerprint: string
     );
   }
   if (!config.engines?.[base]) return base;
-  for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${base}-${suffix}`;
-    if (!config.engines?.[candidate]) return candidate;
-  }
+  const suffix = createHash("sha256").update(fingerprint).digest("hex").slice(0, 8);
+  const candidate = `${base}-${suffix}`;
+  const collision = config.engines?.[candidate];
+  if (!collision || engineFingerprint(collision) === fingerprint) return candidate;
+  throw new ConfigError(
+    `Detected engine identity collision at ${JSON.stringify(candidate)}. Choose an explicit engine name before rerunning setup.`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
 /** Insert or reuse an LLM engine by canonical endpoint without modifying a match. */

@@ -42,14 +42,10 @@ Each type maps to a canonical source directory through `src/core/asset/asset-spe
 ## Sources and Source Providers
 
 A **source** is a directory plus a way to refresh it from upstream. There are
-exactly two source provider types in v1:
+exactly four source provider types:
 
 - `filesystem` — a local path the user owns
 - `git` — a git working tree mirrored under akm's cache
-
-Two additional cache-backed kinds materialise files into the cache before
-indexing:
-
 - `website` — recrawled and converted to markdown
 - `npm` — installed into the cache
 
@@ -282,7 +278,11 @@ its symbolic credential until dispatch.
 `executeRunner()` is the sole exhaustive switch over `RunnerSpec`. Callers pass
 their own LLM handler for the LLM arm; agent and SDK arms use the harness runner.
 An explicit missing or incompatible engine is an error and never falls through to
-another configured engine.
+another configured engine. Workflow v3 plans freeze the CPU-derived or configured
+`maxConcurrency` cap, exact models, symbolic credentials, and effective timeout.
+Timeout authority lives on each frozen invocation, not in engine catalog entries;
+an SDK invocation still derives its default timeout from its fallback LLM engine
+when the SDK engine does not set one.
 
 ### In-tree LLM helpers (`src/llm/`)
 
@@ -332,7 +332,13 @@ External coding agents are reachable via two execution paths:
 Prompt tasks are versioned task YAML v2 assets. They resolve `engine` from the
 task or `defaults.engine`; LLM prompt tasks use plain chat completion and agent
 prompt tasks use the spawn or SDK runner. Task run history writes metadata v2
-with an `engine`; older metadata is exposed only as `legacyProfile`.
+with an `engine`; historical v1 metadata remains readable without being an active
+task configuration surface.
+
+Migration restore holds a global maintenance barrier from its final blocker
+check through artifact replacement. Index writers, improve/extract process
+locks, lockfile writers, and workflow lease claims briefly take the same barrier
+while starting, so no operation can enter between the check and restore.
 
 ---
 
@@ -347,7 +353,7 @@ with an `engine`; older metadata is exposed only as `legacyProfile`.
 | `src/core/config/config.ts` | config loading, validation, env resolution (re-export shim at `src/core/config.ts`) |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
-| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 4 workers) |
+| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/sources/source-provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |

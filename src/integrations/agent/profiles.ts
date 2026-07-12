@@ -53,9 +53,9 @@ export interface AgentProfile {
   readonly model?: string;
   /** The model has already been lowered through all alias tables. */
   readonly modelIsExact?: boolean;
-  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from profiles.llm[defaults.llm].endpoint. */
+  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from the selected fallback LLM engine. */
   readonly endpoint?: string;
-  /** API key for sdkMode endpoint. If absent, inherits from profiles.llm[defaults.llm].apiKey. */
+  /** API key for sdkMode endpoint. If absent, inherits from the selected fallback LLM engine. */
   readonly apiKey?: string;
   /**
    * Which AgentCommandBuilder handles argv construction. Defaults to profile.name.

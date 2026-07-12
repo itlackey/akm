@@ -20,7 +20,7 @@
  * the parent without re-running the LLM.
  *
  * Disabling — two orthogonal gates:
- *   1. `profiles.improve.default.processes.memoryInference.enabled = false`
+ *   1. The selected strategy sets `processes.memoryInference.enabled = false`
  *      blocks the pass at the feature-flag layer (no network call may ever
  *      issue). Historically the v1 spec §14 gate, superseded by the 0.8.0
  *      profile shape.
@@ -156,7 +156,7 @@ interface MemoryRecord {
  *
  * Two orthogonal gates:
  *
- *   1. **Feature gate** — `profiles.improve.default.processes.memoryInference.enabled`
+ *   1. **Feature gate** — the selected strategy's `processes.memoryInference.enabled`
  *      (defaults to `true`). When `false`, no network call may issue regardless
  *      of per-pass settings.
  *   2. **Per-pass gate** — `resolveIndexPassLLM("memory", config)` (which
@@ -190,7 +190,7 @@ export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): P
   const inferTelemetry: MemoryInferTelemetry = {};
 
   // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
-  // (profiles.improve.default.processes.memoryInference.enabled). Defaults to
+  // (selected strategy's processes.memoryInference.enabled). Defaults to
   // enabled when the key is absent.
   if (!invocationOwnsConnection && !isProcessEnabled("index", "memory_inference", config)) return result;
 

@@ -7,6 +7,7 @@ import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { probeLock, releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../core/file-lock";
+import { withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
 import { warn } from "../../core/warn";
 
 // #607 Lock Decomposition: fine-grained per-process locks replace the single
@@ -39,6 +40,17 @@ export function processLockPath(lockBaseDir: string, lockName: keyof typeof PROC
 }
 
 export function tryAcquireProcessLock(
+  lockPath: string,
+  staleAfterMs: number,
+  skipIfLocked: boolean | undefined,
+  lockLabel: string,
+): "acquired" | "skipped" {
+  return withMaintenanceStartBarrier(() =>
+    tryAcquireProcessLockUnlocked(lockPath, staleAfterMs, skipIfLocked, lockLabel),
+  );
+}
+
+function tryAcquireProcessLockUnlocked(
   lockPath: string,
   staleAfterMs: number,
   skipIfLocked: boolean | undefined,

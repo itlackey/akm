@@ -11,6 +11,7 @@ import { parseConfigText, withConfigLock } from "./config/config-io";
 import { CURRENT_CONFIG_VERSION } from "./config/config-schema";
 import { ConfigError } from "./errors";
 import { probeLock, releaseLock, tryAcquireLockSync } from "./file-lock";
+import { withMaintenanceStartBarrier } from "./maintenance-barrier";
 import {
   getCacheDir,
   getConfigPath,
@@ -404,23 +405,25 @@ export function restoreMigrationBackup(confirm: boolean): MigrationBackupResult 
   }
   return withConfigLock(() =>
     withMigrationBackupLock(() => {
-      const blockers = [...activeRestoreLocks(), ...activeWorkflowLeases()];
-      if (blockers.length > 0) {
-        throw new ConfigError(
-          `Refusing restore while AKM locks or workflow leases are active: ${blockers.join(", ")}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      const bundlePath = getMigrationBackupDir();
-      const manifest = verifyMigrationBackup(bundlePath);
-      for (const name of ARTIFACT_NAMES) {
-        const artifact = manifest.artifacts[name];
-        if (artifact.present) restoreArtifact(path.join(bundlePath, name), artifact.sourcePath);
-        else fs.rmSync(artifact.sourcePath, { force: true });
-        fs.rmSync(`${artifact.sourcePath}-wal`, { force: true });
-        fs.rmSync(`${artifact.sourcePath}-shm`, { force: true });
-      }
-      return { path: bundlePath, created: false, manifest };
+      return withMaintenanceStartBarrier(() => {
+        const blockers = [...activeRestoreLocks(), ...activeWorkflowLeases()];
+        if (blockers.length > 0) {
+          throw new ConfigError(
+            `Refusing restore while AKM locks or workflow leases are active: ${blockers.join(", ")}.`,
+            "INVALID_CONFIG_FILE",
+          );
+        }
+        const bundlePath = getMigrationBackupDir();
+        const manifest = verifyMigrationBackup(bundlePath);
+        for (const name of ARTIFACT_NAMES) {
+          const artifact = manifest.artifacts[name];
+          if (artifact.present) restoreArtifact(path.join(bundlePath, name), artifact.sourcePath);
+          else fs.rmSync(artifact.sourcePath, { force: true });
+          fs.rmSync(`${artifact.sourcePath}-wal`, { force: true });
+          fs.rmSync(`${artifact.sourcePath}-shm`, { force: true });
+        }
+        return { path: bundlePath, created: false, manifest };
+      });
     }),
   );
 }

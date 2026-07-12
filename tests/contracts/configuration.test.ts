@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AkmConfigSchema } from "../../src/core/config/config-schema";
-import { CONFIG_DOC_PATH, extractSection, readDoc } from "./spec-helpers";
+import { CONFIG_DOC_PATH, extractSection, readDoc } from "./contract-helpers";
 
 describe("current engine and strategy configuration contract", () => {
   const docs = readDoc(CONFIG_DOC_PATH);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 
 // Current orchestration invariants:
 //   * search → indexer.search(q); registry hits never merge into source hits.

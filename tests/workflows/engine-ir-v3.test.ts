@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { UsageError } from "../../src/core/errors";
+import { cpuDerivedUnitConcurrency } from "../../src/workflows/concurrency-policy";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { compileResolveFreezeWorkflow } from "../../src/workflows/ir/freeze";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
@@ -40,7 +41,6 @@ function frozenPlan(): WorkflowPlanGraph {
           kind: "llm",
           endpoint: "https://example.test/v1/chat/completions",
           model: "qwen",
-          timeoutMs: null,
           credential: { names: ["FAST_API_KEY"], required: true },
           concurrency: 1,
         },
@@ -150,7 +150,6 @@ describe("workflow engine v3 contracts", () => {
       kind: "llm",
       endpoint: "https://example.test/v1/chat/completions",
       model: "unused-model",
-      timeoutMs: null,
       concurrency: 1,
     };
     expect(() => decodeWorkflowPlanV3(extra)).toThrow("not referenced");
@@ -204,6 +203,8 @@ describe("workflow engine v3 contracts", () => {
       kind: "llm",
       credential: { names: ["FAST_API_KEY"], required: true },
     });
+    expect(frozen.plan.execution?.maxConcurrency).toBe(cpuDerivedUnitConcurrency());
+    expect(frozen.plan.execution?.engines.fast).not.toHaveProperty("timeoutMs");
     expect(canonicalPlanJson(frozen.plan)).not.toContain(process.env.FAST_API_KEY ?? "unavailable-secret");
     expect(() => decodeWorkflowPlanV3(frozen.plan)).not.toThrow();
   });
@@ -426,6 +427,7 @@ describe("workflow engine v3 contracts", () => {
     if (!root || root.kind !== "unit") throw new Error("fixture root must be unit");
     expect(root.invocation).toEqual({ engine: "sdk", model: "agent/exact", timeoutMs: 600_000 });
     expect(frozen.plan.execution?.engines.fallback).toMatchObject({ kind: "llm", model: "fallback/exact" });
+    expect(frozen.plan.execution?.engines.fallback).not.toHaveProperty("timeoutMs");
     expect(frozen.plan.steps[0]?.gate.judge).toEqual({
       engine: "fallback",
       model: "fallback/exact",
@@ -539,7 +541,6 @@ describe("workflow engine v3 contracts", () => {
         kind: "llm",
         endpoint: "https://example.test/v1/chat/completions",
         model: "qwen",
-        timeoutMs: null,
         concurrency: 1,
       };
       return {
@@ -562,7 +563,6 @@ describe("workflow engine v3 contracts", () => {
       kind: "llm",
       endpoint: "https://example.test/v1/chat/completions",
       model: "qwen",
-      timeoutMs: null,
       concurrency: 1,
     };
     expect(() => decodeWorkflowPlanV3(engines)).toThrow("exceeds 64 entries");

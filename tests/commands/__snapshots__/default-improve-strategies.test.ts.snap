@@ -297,7 +297,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: graph-refresh 1`] = `
 {
   "config": {
-    "description": "Full-corpus graph extraction pass — rebuilds graph relationships across all stash files. Disables all other sub-processes. Use via \`akm improve --profile graph-refresh\` or the embedded \`graph-refresh-weekly\` task.",
+    "description": "Full-corpus graph extraction pass — rebuilds graph relationships across all stash files. Disables all other sub-processes. Use via \`akm improve --strategy graph-refresh\` or the embedded \`graph-refresh-weekly\` task.",
     "processes": {
       "consolidate": {
         "allowedTypes": [

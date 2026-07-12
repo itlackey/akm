@@ -64,7 +64,7 @@ describe("setup detected engine identity", () => {
     ).toThrow(/conflicts with configured agent engine/);
   });
 
-  test("uses stable numeric suffixes for same-kind fingerprints and finds the suffix on rerun", () => {
+  test("uses a fingerprint-derived suffix for same-kind collisions and finds it on rerun", () => {
     const config: AkmConfig = {
       ...base(),
       engines: { local: { kind: "llm", endpoint: "http://localhost:8000/v1", model: "other" } },
@@ -74,14 +74,39 @@ describe("setup detected engine identity", () => {
       endpoint: "http://localhost:9000/v1",
       model: "m",
     });
-    expect(first.name).toBe("local-2");
+    expect(first.name).toMatch(/^local-[0-9a-f]{8}$/);
     const second = upsertDetectedLlmEngine(first.config, {
       provider: "local",
       endpoint: "http://localhost:9000/v1/chat/completions",
       model: "changed",
     });
-    expect(second).toMatchObject({ name: "local-2", reused: true });
-    expect(second.config.engines?.["local-2"]).toEqual(first.config.engines?.["local-2"]);
+    expect(second).toMatchObject({ name: first.name, reused: true });
+    expect(second.config.engines?.[first.name]).toEqual(first.config.engines?.[first.name]);
+  });
+
+  test("derives the same collision name regardless of unrelated engine insertion order", () => {
+    const candidate = { provider: "local", endpoint: "http://localhost:9000/v1", model: "m" };
+    const left = upsertDetectedLlmEngine(
+      {
+        ...base(),
+        engines: {
+          local: { kind: "llm", endpoint: "http://localhost:8000/v1", model: "other" },
+          zed: { kind: "agent", platform: "opencode" },
+        },
+      },
+      candidate,
+    );
+    const right = upsertDetectedLlmEngine(
+      {
+        ...base(),
+        engines: {
+          alpha: { kind: "agent", platform: "claude" },
+          local: { kind: "llm", endpoint: "http://localhost:7000/v1", model: "other" },
+        },
+      },
+      candidate,
+    );
+    expect(right.name).toBe(left.name);
   });
 
   test("chooses the same fingerprint match regardless of config insertion order", () => {

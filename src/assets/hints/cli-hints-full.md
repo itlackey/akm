@@ -60,7 +60,7 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | memory | `content` (recalled context) |
 | env | `keys` (key names only — values and comment text never returned) |
 | secret | `name` only (the whole file is the value — never returned) |
-| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. To ingest sources, `akm wiki ingest <name>` dispatches the configured agent (defaults.agent or `--profile`) to execute the ingest workflow. |
+| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. To ingest sources, `akm wiki ingest <name>` dispatches the configured agent (`defaults.engine` or `--engine`) to execute the ingest workflow. |
 
 ## Capture Knowledge While You Work
 
@@ -103,15 +103,15 @@ akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug
 akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
-akm wiki ingest research                       # Dispatch defaults.agent to run the ingest workflow on this wiki
-akm wiki ingest research --profile claude --model sonnet  # Override profile and model
-akm wiki ingest research --timeout-ms 600000   # Override agent CLI timeout (default: profile setting)
+akm wiki ingest research                       # Dispatch defaults.engine to run the ingest workflow on this wiki
+akm wiki ingest research --engine claude --model sonnet  # Override engine and model
+akm wiki ingest research --timeout-ms 600000   # Override the invocation timeout
 akm wiki remove research -y                    # Delete pages/schema/index/log; preserves raw/ (--force is a deprecated alias for -y)
 akm wiki remove research -y --with-sources     # Full nuke, including raw/
 ```
 
 **For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`
-dispatches the configured agent (defaults.agent or `--profile`) to execute
+dispatches the configured agent (`defaults.engine` or `--engine`) to execute
 the wiki's ingest workflow end-to-end — schema read, source dedup, search,
 page create/update, log entry, lint, reindex.** Wiki pages are also addressable as
 `wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
@@ -209,13 +209,13 @@ akm sync my-skills -m "Update patterns"      # Sync named stash with message
 The `--sync` / `--no-sync` and `--push` / `--no-push` flags control this:
 
 ```sh
-akm improve                                   # auto-sync per profile default (default/thorough: on; quick/memory-focus: off)
+akm improve                                   # auto-sync per strategy default (default/thorough: on; quick/memory-focus: off)
 akm improve --no-sync                         # skip the end-of-run commit
 akm improve --no-push                         # commit but skip push for this run
-akm improve --sync                            # force sync even on profiles that disable it
+akm improve --sync                            # force sync even on strategies that disable it
 ```
 
-Profile sync defaults: `default` and `thorough` auto-commit + push; `quick` and
+Strategy sync defaults: `default` and `thorough` auto-commit + push; `quick` and
 `memory-focus` skip sync entirely. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm add` opts a remote git stash into push-on-sync:

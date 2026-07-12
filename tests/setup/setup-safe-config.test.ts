@@ -18,11 +18,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-
+import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigLockPath } from "../../src/core/config/config-io";
 import { getConfigPath } from "../../src/core/paths";
-import { runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
+import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -30,6 +30,7 @@ import {
   sandboxXdgDataHome,
   sandboxXdgStateHome,
   withEnv,
+  withMockedFetch,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 
@@ -47,6 +48,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _setAkmInitForTests();
   cleanup?.();
   cleanup = undefined;
 });
@@ -76,6 +78,58 @@ function seedFullConfig(): void {
 }
 
 describe("runSetupFromConfig — deep merge", () => {
+  test("three-way rebase preserves disjoint edits and rejects same-field edits", () => {
+    const original = { output: { format: "json", detail: "brief" } };
+    const desired = { output: { format: "text", detail: "brief" } };
+    expect(rebaseSetupChanges(original, desired, { output: { format: "json", detail: "full" } })).toEqual({
+      output: { format: "text", detail: "full" },
+    });
+    expect(() => rebaseSetupChanges(original, desired, { output: { format: "yaml", detail: "brief" } })).toThrow(
+      /Setup config conflict at output\.format/,
+    );
+  });
+
+  test("detects a same-field race before stash initialization", async () => {
+    seedFullConfig();
+    const seeded = readWrittenConfig();
+    seeded.engines = {
+      ...(seeded.engines as Record<string, unknown>),
+      fast: {
+        kind: "llm",
+        endpoint: "https://example.test/v1/chat/completions",
+        model: "test-model",
+      },
+    };
+    seeded.defaults = { ...(seeded.defaults as Record<string, unknown>), llmEngine: "fast" };
+    fs.writeFileSync(getConfigPath(), `${JSON.stringify(seeded)}\n`);
+    resetConfigCache();
+    let initCalls = 0;
+    _setAkmInitForTests(async () => {
+      initCalls += 1;
+      return { stashDir: "/unused", created: true, configPath: getConfigPath(), defaultStashUpdated: false };
+    });
+
+    await withMockedFetch(
+      async () => {
+        await expect(
+          runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }), probe: true }),
+        ).rejects.toThrow(/Setup config conflict at output\.format/);
+      },
+      () => {
+        const concurrent = readWrittenConfig();
+        concurrent.output = { ...(concurrent.output as Record<string, unknown>), format: "yaml" };
+        fs.writeFileSync(getConfigPath(), `${JSON.stringify(concurrent)}\n`);
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: '{"ok":true,"ingest":true,"lint":true}' } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+
+    expect(initCalls).toBe(0);
+    expect((readWrittenConfig().output as Record<string, unknown>).format).toBe("yaml");
+  });
+
   test("partial --file updates a nested key but preserves sibling subkeys", async () => {
     seedFullConfig();
 

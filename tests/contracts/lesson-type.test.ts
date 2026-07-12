@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ASSET_SPECS, TYPE_DIRS } from "../../src/core/asset/asset-spec";
 import { lintLessonContent } from "../../src/core/lesson-lint";
 
-describe("current lesson asset contract", () => {
+describe("lesson asset contract", () => {
   test("`lesson` is registered as a well-known asset type at runtime", () => {
     expect(ASSET_SPECS.lesson).toBeDefined();
     expect(TYPE_DIRS.lesson).toBe("lessons");

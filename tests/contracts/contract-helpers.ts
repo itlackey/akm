@@ -16,7 +16,7 @@ export function readDoc(p: string): string {
  * Extract a section by its heading line (e.g. "## 9. Locked contracts for v1").
  * Returns an empty string if the heading is not present.
  *
- * Used by contract tests to scope their assertions to a single spec
+ * Used by contract tests to scope their assertions to one current-document
  * section so unrelated edits elsewhere in the doc don't cause false
  * positives.
  */

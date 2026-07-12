@@ -7,6 +7,7 @@ import path from "node:path";
 import { writeFileAtomic } from "../core/common";
 import { rethrowIfTestIsolationError } from "../core/errors";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
+import { acquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
 import type { InstallKind } from "../registry/types";
 // `InstallKind` is the install/registry source discriminator — exactly the
@@ -47,12 +48,17 @@ async function acquireLockSentinel(): Promise<boolean> {
   // Ensure the directory exists before attempting to create the sentinel.
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
-    if (tryAcquireLockSync(sentinelPath, String(process.pid))) {
-      return true; // Sentinel created — we own the lock.
-    }
-    if (probeLock(sentinelPath).state === "stale") {
-      releaseLock(sentinelPath);
-      continue; // Reclaimed — retry immediately.
+    const releaseBarrier = acquireMaintenanceBarrier();
+    try {
+      if (tryAcquireLockSync(sentinelPath, String(process.pid))) {
+        return true; // Sentinel created — we own the lock.
+      }
+      if (probeLock(sentinelPath).state === "stale") {
+        releaseLock(sentinelPath);
+        continue; // Reclaimed — retry immediately.
+      }
+    } finally {
+      releaseBarrier();
     }
     // Another process holds the lock — wait briefly before retrying.
     if (attempt < LOCK_MAX_RETRIES - 1) {

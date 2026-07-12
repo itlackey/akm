@@ -95,7 +95,7 @@ function resolveSchemaAt(path: Path): z.ZodTypeAny | undefined {
       }
       schema = next;
     } else if (schema instanceof z.ZodRecord) {
-      // Records (profiles.llm, profiles.agent, profiles.improve, sources, etc.)
+      // Named records (engines, improve.strategies, sources, etc.)
       // accept any string key — descend into the value schema.
       schema = schema._def.valueType;
     } else if (schema instanceof z.ZodUnion) {

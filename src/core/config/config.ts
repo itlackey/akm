@@ -6,7 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../errors";
 import { ensureMigrationBackupWithConfigLockHeld } from "../migration-backup";
-import { backupExistingConfig, parseConfigText, readConfigText, withConfigLock, writeConfigAtomic } from "./config-io";
+import {
+  acquireConfigLock,
+  backupExistingConfig,
+  parseConfigText,
+  readConfigText,
+  withConfigLock,
+  writeConfigAtomic,
+} from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
 import type {
   AkmConfig,
@@ -329,6 +336,36 @@ export function mutateConfig(
     writeConfigAtomic(configPath, sanitizeConfigForWrite(next));
     return { config: next, written: true };
   });
+}
+
+/**
+ * Mutate config while holding the write lock across one validated pre-commit
+ * side effect. Setup uses this to reject a three-way conflict before creating
+ * its stash, while preventing another config writer from racing the final save.
+ */
+export async function mutateConfigWithPrecommit<T>(
+  mutate: (current: AkmConfig) => AkmConfig,
+  precommit: (next: AkmConfig) => Promise<T>,
+): Promise<ConfigMutationResult & { precommit: T }> {
+  cachedConfig = undefined;
+  const configPath = getConfigPath();
+  const release = acquireConfigLock();
+  try {
+    const text = readConfigText(configPath);
+    const current =
+      text === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : parseAndValidateConfigText(text, configPath);
+    const mutated = mutate(current);
+    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const precommitResult = await precommit(next);
+    if (mutated === current) return { config: current, written: false, precommit: precommitResult };
+    ensureMigrationBackupWithConfigLockHeld();
+    if (text !== undefined) backupExistingConfig(configPath);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(next));
+    return { config: next, written: true, precommit: precommitResult };
+  } finally {
+    release();
+  }
 }
 
 /**

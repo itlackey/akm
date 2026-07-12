@@ -70,6 +70,16 @@ the LLM engine used as that SDK engine's fallback connection.
 `defaults.engine` names an LLM or agent engine. `defaults.llmEngine` must name
 an LLM engine. There is no first-engine fallback.
 
+Index passes select engines through `index.defaults.engine` or
+`index.<pass>.engine`. Per-pass `model`, `timeoutMs`, and `llm` fields are
+invocation overrides; `enabled: false` disables that pass. Connection fields
+such as `endpoint`, `provider`, and `apiKey` belong only on named engines.
+
+`workflow.maxConcurrency` is the native workflow engine ceiling. An explicit
+value is clamped to `1..64`. When absent, AKM derives the cap once from the CPU
+count (`min(16, max(1, cores - 2))`) and freezes it into the run plan, so resume
+does not change policy on a different host or after config edits.
+
 ## Strategies
 
 Improve presets live under `improve.strategies`; invoke one with

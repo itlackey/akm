@@ -157,8 +157,8 @@ const LlmCapabilitiesSchema = z
   .passthrough();
 
 /**
- * Connection config used for both top-level `llm` (after migration) and
- * `profiles.llm[*]`. `model` is required at schema level — partial entries
+ * OpenAI-compatible connection fields shared by named LLM engines and bounded
+ * internal call helpers. `model` is required at schema level — partial entries
  * created by `akm config set llm.endpoint <url>` (where model is left absent)
  * are normalized to `model: ""` *before* Zod sees them by the load-time
  * pre-Zod migrator hook, so this strict shape gates CLI writes without
@@ -177,7 +177,6 @@ export const LlmConnectionConfigSchema = z
     capabilities: LlmCapabilitiesSchema.optional(),
     extraParams: ExtraParamsSchema.optional(),
     contextLength: positiveInt.optional(),
-    judgeModel: z.string().min(1).optional(),
     enableThinking: z.boolean().optional(),
   })
   .passthrough();
@@ -941,9 +940,7 @@ const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = [
 ] as const;
 
 const INDEX_PASS_RETIRED_KEYS = new Set([
-  "llm",
   "endpoint",
-  "model",
   "provider",
   "apiKey",
   "baseUrl",
@@ -957,16 +954,16 @@ const INDEX_PASS_KNOWN_KEYS = new Set([
   "model",
   "timeoutMs",
   "enabled",
+  "llm",
   "graphExtractionBatchSize",
   "graphExtractionIncludeTypes",
-  "memoryInferenceBatchSize",
   "lazyGraphExtraction",
 ]);
 
 /**
  * Per-pass `index.<pass>` entry. Uses preprocess + manual validation so we can
- * emit the legacy parser's targeted error messages ("Duplicate LLM provider
- * configuration", "Unknown key `index.<pass>.<key>`", "expected a boolean")
+ * emit targeted error messages ("Retired or misplaced engine setting",
+ * "Unknown key `index.<pass>.<key>`")
  * instead of Zod's generic `Unrecognized key` / `Expected boolean, received
  * string` strings — keeps `akm` startup errors actionable.
  */
@@ -990,9 +987,9 @@ export const IndexPassConfigSchema = z.preprocess(
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            `Unknown key \`${[...(ctx.path ?? []), key].join(".")}\`. Per-pass entries support \`llm\` ` +
-            "(boolean opt-out), `graphExtractionBatchSize`, `graphExtractionIncludeTypes`, " +
-            "`memoryInferenceBatchSize`, and `lazyGraphExtraction`.",
+            `Unknown key \`${[...(ctx.path ?? []), key].join(".")}\`. Per-pass entries support ` +
+            "`engine`, `model`, `timeoutMs`, `enabled`, `llm`, `graphExtractionBatchSize`, " +
+            "`graphExtractionIncludeTypes`, and `lazyGraphExtraction`.",
         });
         return raw;
       }
@@ -1008,7 +1005,6 @@ export const IndexPassConfigSchema = z.preprocess(
       llm: LlmInvocationOverridesSchema.optional(),
       graphExtractionBatchSize: positiveInt.optional(),
       graphExtractionIncludeTypes: z.array(z.enum(GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED)).nonempty().optional(),
-      memoryInferenceBatchSize: positiveInt.optional(),
       lazyGraphExtraction: z.boolean().optional(),
     })
     .passthrough(),
@@ -1039,8 +1035,8 @@ const StalenessDetectionSchema = z
  * for the two most common type-shape mistakes:
  *   - An array at the `index` block.
  *   - A non-object at `index.<passName>`.
- * Inner field validation (graphExtractionIncludeTypes enum, llm boolean,
- * provider-key rejection) is delegated to {@link IndexPassConfigSchema}.
+ * Inner field validation (graphExtractionIncludeTypes enum, invocation
+ * overrides, provider-key rejection) is delegated to {@link IndexPassConfigSchema}.
  */
 export const IndexConfigSchema = z.preprocess(
   (raw, ctx) => {
@@ -1049,7 +1045,7 @@ export const IndexConfigSchema = z.preprocess(
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "enrichment": { "llm": false } }`).',
+          'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "enrichment": { "enabled": false } }`).',
       });
       return raw;
     }
@@ -1058,7 +1054,7 @@ export const IndexConfigSchema = z.preprocess(
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `Invalid \`index.${passName}\` config: expected an object like \`{ "llm": false }\`.`,
+          message: `Invalid \`index.${passName}\` config: expected an object like \`{ "enabled": false }\`.`,
         });
         return raw;
       }

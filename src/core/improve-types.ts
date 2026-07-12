@@ -366,7 +366,7 @@ export interface AkmImproveResult {
   consolidation?: ConsolidateResult;
   /**
    * Session-extract pass results (one entry per available harness). Present
-   * when `profiles.improve.default.processes.extract.enabled` is true (default)
+   * when the selected strategy's `processes.extract.enabled` is true (default)
    * and at least one harness reports `isAvailable() === true`.
    */
   extract?: AkmExtractResult[];

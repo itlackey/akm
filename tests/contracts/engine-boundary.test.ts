@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
-import { ARCHITECTURE_PATH, extractSection, readDoc } from "./spec-helpers";
+import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 
 // Current execution boundary invariants:
 //   * In-tree LLM helpers are bounded, single-shot, stateless — no shells,

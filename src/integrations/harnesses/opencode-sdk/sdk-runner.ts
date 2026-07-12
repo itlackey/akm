@@ -7,7 +7,7 @@
  *
  * Uses the embedded `@opencode-ai/sdk` instead of `Bun.spawn`. Requires no
  * agent CLI binary to be installed. The user provides an OpenAI-compatible
- * endpoint (or inherits from config.llm) for the SDK.
+ * endpoint (or inherits from the selected fallback LLM engine) for the SDK.
  *
  * This is the runtime surface of the {@link OpencodeSdkHarness} (`id =
  * 'opencode-sdk'`). It is the dispatch path for `sdkMode` profiles; it exposes
@@ -289,7 +289,7 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
  * and config-root alias tables apply here.
  */
 export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
-  // Resolve endpoint and model: profile fields take precedence over config.llm
+  // Resolve endpoint and model: profile fields take precedence over the fallback connection.
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
   const apiKey = profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey;
   const profileModel = profile.model
