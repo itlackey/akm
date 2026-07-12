@@ -31,8 +31,6 @@ export type IrIsolation = "none" | "worktree";
 export type IrMapReducer = "collect" | "vote";
 export type IrInstructionTemplating = "expressions" | "verbatim";
 export type IrRuntimeKind = "llm" | "agent" | "sdk";
-/** Legacy internal spelling retained for source-level test migration only. */
-export type IrRunnerKind = IrRuntimeKind | "inherit";
 
 export interface IrRetry {
   max: number;
@@ -89,15 +87,7 @@ export interface IrUnitNode {
   id: string;
   instructions: string;
   templating?: IrInstructionTemplating;
-  invocation?: IrInvocation;
-  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
-  runner?: IrRunnerKind;
-  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
-  profile?: string;
-  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
-  model?: string;
-  /** @deprecated v2 in-memory compatibility; never accepted by the v3 decoder. */
-  timeoutMs?: number | null;
+  invocation: IrInvocation;
   schema?: Record<string, unknown>;
   retry?: IrRetry;
   onError: IrOnError;
@@ -156,7 +146,7 @@ export interface WorkflowPlanGraph {
   params?: string[];
   paramSchemas?: Record<string, Record<string, unknown>>;
   budget?: IrBudget;
-  execution?: { maxConcurrency: number; engines: Record<string, FrozenEngineSnapshot> };
+  execution: { maxConcurrency: number; engines: Record<string, FrozenEngineSnapshot> };
   steps: IrStepPlan[];
 }
 
@@ -739,6 +729,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function fail(message: string): never {
   throw new UsageError(`Invalid frozen workflow plan: ${message}.`);
 }
-
-/** Removed v2 type name retained only as a TypeScript migration aid. */
-export type IrAgentNode = IrUnitNode;

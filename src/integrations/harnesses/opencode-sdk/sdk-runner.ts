@@ -10,7 +10,7 @@
  * endpoint (or inherits from the selected fallback LLM engine) for the SDK.
  *
  * This is the runtime surface of the {@link OpencodeSdkHarness} (`id =
- * 'opencode-sdk'`). It is the dispatch path for `sdkMode` profiles; it exposes
+ * 'opencode-sdk'`). It is the dispatch path for SDK runner specs; it exposes
  * no native session logs of its own (`capabilities.sessionLogs = false`).
  *
  * ## Per-call cwd and env (redesign addendum R2, open seam decision 1)
@@ -85,7 +85,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { type LlmConnectionConfig, resolveSecret } from "../../../core/config/config";
+import type { LlmConnectionConfig } from "../../../core/config/config";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import { resolveModel } from "../../agent/model-aliases";
@@ -290,9 +290,8 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
  * and config-root alias tables apply here.
  */
 export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
-  // Resolve endpoint and model: profile fields take precedence over the fallback connection.
-  const endpoint = profile.endpoint ?? llmConfig?.endpoint;
-  const apiKey = profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey;
+  const endpoint = llmConfig?.endpoint;
+  const apiKey = llmConfig?.apiKey;
   const profileModel = profile.model
     ? profile.modelIsExact
       ? profile.model

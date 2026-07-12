@@ -73,7 +73,7 @@ akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --target my-other-stash    # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
-akm workflow validate workflows/foo.md         # Validate a workflow file or ref; lists every error
+akm workflow validate workflows/foo.yaml       # Validate a YAML v2/markdown workflow or ref; lists every error
 akm workflow next workflow:ship-release        # Start or resume the next workflow step
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
@@ -155,7 +155,7 @@ akm secret remove secret:deploy-token                       # Delete the secret
 
 ## Workflows
 
-Step-based workflows stored as `<stashDir>/workflows/<name>.md`.
+Workflows live under `<stashDir>/workflows/` as markdown or YAML v2 (`.yaml`/`.yml`).
 
 Ref-based workflow commands are scoped to the current project/worktree/directory,
 so one active run does not block unrelated directories from starting the same

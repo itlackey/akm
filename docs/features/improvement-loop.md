@@ -95,11 +95,11 @@ akm proposal list            # review what was generated
 **End-of-run auto-sync:** For git-backed stashes (detected by a `.git`
 directory), `akm improve` automatically commits all changes as a single batch
 at the end of the run — the same operation as `akm sync`. The `default` and
-`thorough` profiles also push if the stash is writable. The `quick` and
-`memory-focus` profiles skip sync entirely (lightweight passes should not
+`thorough` strategies also push if the stash is writable. The `quick` and
+`memory-focus` strategies skip sync entirely (lightweight passes should not
 auto-commit). Use `--no-sync` to disable for any single run, or `--no-push`
-to commit without pushing. Profile sync behavior can be configured via the
-`sync` block under `profiles.improve.<name>` in your config.
+to commit without pushing. Strategy sync behavior can be configured via the
+`sync` block under `improve.strategies.<name>` in your config.
 
 ## akm proposal (list, show, diff, accept, reject, revert)
 

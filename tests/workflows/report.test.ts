@@ -161,7 +161,12 @@ function seedRun(opts: {
 
 /** The content-derived unit ids the engine (and brief) would compute for a step. */
 function unitIds(p: WorkflowPlanGraph, stepIndex: number, params: Record<string, unknown>): string[] {
-  const computed = computeStepWorkList(p.steps[stepIndex], { runId: RUN_ID, params, stepOutputs: {} });
+  const computed = computeStepWorkList(p.steps[stepIndex], {
+    runId: RUN_ID,
+    params,
+    stepOutputs: {},
+    engines: p.execution.engines,
+  });
   if (!computed.ok) throw new Error(computed.error);
   return computed.list.units.map((u) => u.unitId);
 }

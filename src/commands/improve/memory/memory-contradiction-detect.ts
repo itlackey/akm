@@ -315,7 +315,7 @@ export async function detectAndWriteContradictions(
             ]);
           },
           null, // Fallback: null means "skip" — gate disabled or LLM call failed.
-          { strategy },
+          { enabled: strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false },
         );
 
         totalPairsChecked++;

@@ -50,8 +50,7 @@ import {
 } from "./eligibility";
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
-import { resolveProcessEnabled } from "./improve-profiles";
-import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveImprovePlan, resolveProcessEnabled } from "./improve-strategies";
 // #607 per-process lock primitives live in ./locks. Imported for internal use;
 // resetHeldProcessLocks is re-exported (the test seam imports it from here).
 import {
@@ -1472,7 +1471,7 @@ export interface ImproveRunContext {
   budgetMs: number;
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
   /** Engine/materialized-connection snapshot shared by every process in this run. */
   resolvedPlan: ResolvedImprovePlan;
   /**

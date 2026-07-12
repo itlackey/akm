@@ -14,7 +14,7 @@ git (the 08-F1 recovery pattern — see step 3).
    override with `AKM_CONFIG_DIR`). This file is gitignored on the host, so the
    recovery source is the ONE versioned copy committed to the stash git
    (08-F1 pattern). Copy that file into place — it carries the cron-load-bearing
-   improve profiles that are otherwise unrecoverable.
+   improve strategies that are otherwise unrecoverable.
 4. **Provide secrets/env.** `config.json` references API keys via `${VAR}`
    placeholders; export those environment variables (or restore your env/secret
    assets) so LLM/embedding profiles resolve. Never commit the resolved values.

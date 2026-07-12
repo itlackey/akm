@@ -61,7 +61,7 @@ import {
 import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import { tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import {
   type ConsolidationJudgedRow,
@@ -69,7 +69,7 @@ import {
   upsertConsolidationJudged,
 } from "../../storage/repositories/consolidation-repository";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
-import { resolveImproveStrategy } from "./improve-strategies";
+import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -956,7 +956,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   opts = { ...opts, improveProfile: opts.improveProfile ?? resolveImproveStrategy(undefined, config).config };
   const stashDir = opts.stashDir ?? resolveStashDir();
 
-  if (!isLlmFeatureEnabled(config, "memory_consolidation", opts.improveProfile)) {
+  if (!resolveProcessEnabled("consolidate", opts.improveProfile ?? resolveImproveStrategy(undefined, config).config)) {
     return makeConsolidateResult({
       dryRun: opts.dryRun ?? false,
       target: opts.target ?? stashDir,
@@ -1625,7 +1625,7 @@ async function planConsolidation(
           }
         },
         { ok: false as const, error: fallbackError },
-        { strategy: opts.improveProfile },
+        { enabled: true },
       );
 
     let raw = await callChunkLlm(`chunk ${chunkIdx + 1} failed`);
@@ -2947,7 +2947,7 @@ async function generateMergedContent(
       }
     },
     { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
-    { strategy: activeProfile },
+    { enabled: true },
   );
 
   if (!result.ok) {

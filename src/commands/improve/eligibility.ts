@@ -7,6 +7,7 @@ import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AkmAssetType, isAssetType } from "../../core/common";
+import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import type { ImproveEligibleRef } from "../../core/improve-types";
@@ -15,8 +16,7 @@ import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
 import { isDistillRefusedInputType } from "./distill";
-import type { ImproveProfileConfig } from "./improve-profiles";
-import { isStrategyFilteredForAllPasses } from "./improve-profiles";
+import { isStrategyFilteredForAllPasses } from "./improve-strategies";
 
 // Eligibility / candidate-selection predicates for improve. Free functions
 // (no akmImprove closure state) extracted from improve.ts to shrink the

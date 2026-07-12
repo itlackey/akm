@@ -356,10 +356,13 @@ export async function mutateConfigWithPrecommit<T>(
       text === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : parseAndValidateConfigText(text, configPath);
     const mutated = mutate(current);
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
-    const precommitResult = await precommit(next);
-    if (mutated === current) return { config: current, written: false, precommit: precommitResult };
+    // Setup's pre-commit may initialize the stash. Prove the rebase and final
+    // config are valid, then require the recovery snapshots before that first
+    // external side effect.
     ensureMigrationBackupWithConfigLockHeld();
     if (text !== undefined) backupExistingConfig(configPath);
+    const precommitResult = await precommit(next);
+    if (mutated === current) return { config: current, written: false, precommit: precommitResult };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     writeConfigAtomic(configPath, sanitizeConfigForWrite(next));
     return { config: next, written: true, precommit: precommitResult };

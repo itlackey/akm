@@ -49,15 +49,15 @@ import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/rep
 import { canonicalJson as canonicalJsonString, decodeCanonicalPlan } from "../ir/plan-hash";
 import type {
   FrozenEngineSnapshot,
-  IrAgentNode,
   IrInvocation,
   IrIsolation,
   IrMapReducer,
   IrOnError,
   IrRetry,
   IrRouteSpec,
-  IrRunnerKind,
+  IrRuntimeKind,
   IrStepPlan,
+  IrUnitNode,
   WorkflowPlanGraph,
 } from "../ir/schema";
 import {
@@ -125,8 +125,8 @@ export interface WorkListInput {
   params: Record<string, unknown>;
   /** Prior steps' promoted artifacts, keyed by step id (`stepOutputsFromEvidence`). */
   stepOutputs: Record<string, unknown>;
-  /** Frozen catalog for v3 dispatch. Undefined only for historical test fixtures. */
-  engines?: Record<string, FrozenEngineSnapshot>;
+  /** Frozen catalog for v3 dispatch. */
+  engines: Record<string, FrozenEngineSnapshot>;
   /**
    * Gate-loop attempt, 1-based (absent = 1). Attempts >= 2 journal their units
    * under `<unitId>~l<loop>` and thread {@link gateFeedback} into every prompt.
@@ -152,12 +152,11 @@ export interface StepWorkUnit {
   isFanOut: boolean;
   /** Journal id root for attempt 0 (`<unitId>` or `<unitId>~l<loop>` in a gate loop). */
   journalBaseId: string;
-  runner: IrRunnerKind;
+  runner: IrRuntimeKind;
   /** Frozen catalog entry used at dispatch. */
   engine?: FrozenEngineSnapshot;
   fallbackEngine?: Extract<FrozenEngineSnapshot, { kind: "llm" }>;
   invocation?: IrInvocation;
-  profile?: string;
   model?: string;
   /** Resolved timeout (unit override else engine default); null = no timeout. */
   timeoutMs: number | null;
@@ -171,7 +170,7 @@ export interface StepWorkUnit {
 }
 
 export interface StepWorkList {
-  template: IrAgentNode;
+  template: IrUnitNode;
   reducer: IrMapReducer;
   isFanOut: boolean;
   /** Per-step concurrency (map `concurrency`; 1 for a solo step). */
@@ -285,17 +284,13 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
 
   const gateLoop = input.gateLoop ?? 1;
   const frozenInvocation = template.invocation;
-  const frozenEngine = frozenInvocation && input.engines ? input.engines[frozenInvocation.engine] : undefined;
-  const runner: IrRunnerKind = frozenEngine
-    ? frozenEngine.kind === "llm"
-      ? "llm"
-      : frozenEngine.runnerKind
-    : (template.runner ?? "inherit");
-  const timeoutMs = frozenInvocation
-    ? frozenInvocation.timeoutMs
-    : template.timeoutMs === undefined
-      ? DEFAULT_UNIT_TIMEOUT_MS
-      : template.timeoutMs;
+  if (!frozenInvocation) return { ok: false, error: `Step "${plan.stepId}" has no frozen invocation.` };
+  const frozenEngine = input.engines?.[frozenInvocation.engine];
+  if (!frozenEngine) {
+    return { ok: false, error: `Step "${plan.stepId}" references missing frozen engine "${frozenInvocation.engine}".` };
+  }
+  const runner: IrRuntimeKind = frozenEngine.kind === "llm" ? "llm" : frozenEngine.runnerKind;
+  const timeoutMs = frozenInvocation.timeoutMs;
 
   const units: StepWorkUnit[] = items.map((item, index) => {
     const unitId = unitIds[index];
@@ -334,8 +329,8 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
       // computed (engine, brief, and report all call computeStepWorkList), so
       // the byte-identical hash across surfaces is structural, not coincidental.
       //
-      // Included beyond the R4 baseline (prompt/runner/model/schema): profile,
-      // resolved timeoutMs, the env asset ref NAMES, and isolation — each
+      // Included beyond the R4 baseline (prompt/runner/model/schema): resolved
+      // timeoutMs, the env asset ref NAMES, and isolation — each
       // reaches dispatch (native-executor's UnitDispatchRequest) and a changed
       // one yields a materially different call. `env` carries NAMES ONLY, never
       // resolved values: hashing a resolved secret would leak it into a
@@ -350,31 +345,18 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
       // process.cwd()) are NOT plan-frozen. The frozen plan is the identity
       // boundary (redesign addendum determinism bar #2): config drift under an
       // in-flight run is out of scope by design.
-      const dispatch = frozenEngine ? transitiveDispatchSnapshot(frozenEngine, input.engines ?? {}) : undefined;
+      const dispatch = transitiveDispatchSnapshot(frozenEngine, input.engines ?? {});
       const inputHash = createHash("sha256")
         .update(
-          canonicalJsonString(
-            frozenEngine
-              ? {
-                  hashVersion: 3,
-                  prompt,
-                  dispatch,
-                  invocation: frozenInvocation,
-                  schema: template.schema ?? null,
-                  env: template.env ?? null,
-                  isolation: template.isolation ?? "none",
-                }
-              : {
-                  prompt,
-                  runner,
-                  profile: template.profile ?? null,
-                  model: template.model ?? null,
-                  schema: template.schema ?? null,
-                  timeoutMs,
-                  env: template.env ?? null,
-                  isolation: template.isolation ?? null,
-                },
-          ),
+          canonicalJsonString({
+            hashVersion: 3,
+            prompt,
+            dispatch,
+            invocation: frozenInvocation,
+            schema: template.schema ?? null,
+            env: template.env ?? null,
+            isolation: template.isolation ?? "none",
+          }),
         )
         .digest("hex");
       resolved = { ok: true, prompt, inputHash };
@@ -388,7 +370,7 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
       isFanOut,
       journalBaseId,
       runner,
-      ...(frozenEngine ? { engine: frozenEngine } : {}),
+      engine: frozenEngine,
       ...(frozenEngine?.kind === "agent" &&
       frozenEngine.fallbackLlmEngine &&
       input.engines?.[frozenEngine.fallbackLlmEngine]?.kind === "llm"
@@ -399,13 +381,8 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
             >,
           }
         : {}),
-      ...(frozenInvocation ? { invocation: frozenInvocation } : {}),
-      ...(template.profile ? { profile: template.profile } : {}),
-      ...(frozenInvocation?.model
-        ? { model: frozenInvocation.model }
-        : template.model
-          ? { model: template.model }
-          : {}),
+      invocation: frozenInvocation,
+      ...(frozenInvocation.model ? { model: frozenInvocation.model } : {}),
       timeoutMs,
       ...(template.schema ? { schema: template.schema } : {}),
       ...(template.env ? { env: template.env } : {}),

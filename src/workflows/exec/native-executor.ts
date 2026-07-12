@@ -460,7 +460,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     runId: ctx.runId,
     params: ctx.params,
     stepOutputs: stepOutputsFromEvidence(ctx.evidence),
-    ...(ctx.engines ? { engines: ctx.engines } : {}),
+    engines: ctx.engines ?? {},
     ...(ctx.gateLoop !== undefined ? { gateLoop: ctx.gateLoop } : {}),
     ...(ctx.gateFeedback ? { gateFeedback: ctx.gateFeedback } : {}),
   });
@@ -523,7 +523,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   let worktreeBase: string | undefined;
   if (willDispatch && template.isolation === "worktree") {
     const engine = template.invocation ? ctx.engines?.[template.invocation.engine] : undefined;
-    if (engine?.kind === "llm" || (!template.invocation && template.runner === "llm")) {
+    if (engine?.kind === "llm") {
       return failedStep(
         dispatched,
         `Step "${plan.stepId}" declares isolation: worktree on an llm unit — the llm runner has no ` +
@@ -576,6 +576,13 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   });
 
   let outcomes: Array<UnitOutcome | undefined>;
+  const selectedEngine = template.invocation ? ctx.engines?.[template.invocation.engine] : undefined;
+  const selectedLlmEngine =
+    selectedEngine?.kind === "llm"
+      ? selectedEngine
+      : selectedEngine?.kind === "agent" && selectedEngine.fallbackLlmEngine
+        ? ctx.engines?.[selectedEngine.fallbackLlmEngine]
+        : undefined;
   try {
     outcomes = await scheduleUnits(
       workUnits,
@@ -595,6 +602,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
         concurrency: workList.list.concurrency,
         signal,
         maxConcurrency: ctx.maxConcurrency,
+        ...(selectedLlmEngine?.kind === "llm" ? { llmConcurrency: selectedLlmEngine.concurrency } : {}),
       },
     );
   } finally {

@@ -1,5 +1,10 @@
-# Migrating to akm v1
+# Historical pre-1.0 migration plan
 
+> **Archived.** This guide records the superseded pre-1.0 plan for users on a
+> 0.6.x or 0.7.x pre-release. It is not current configuration guidance. For the
+> engine/strategy and YAML v2 cutover, use
+> [`../migration/v0.8-to-v0.9.md`](../migration/v0.8-to-v0.9.md).
+>
 > **Audience.** This guide is for users on a 0.6.x or 0.7.x **pre-release**
 > upgrading toward v1.0. If you are still on 0.5.x, read
 > [`v0.5-to-v0.6.md`](v0.5-to-v0.6.md) first — it covers the older refactor

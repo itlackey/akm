@@ -14,6 +14,7 @@ import recombineOnly from "../../assets/improve-strategies/recombine-only.json" 
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import synthesize from "../../assets/improve-strategies/synthesize.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
+import { parseAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -26,7 +27,6 @@ import {
   resolveImproveProcessRunner,
   resolveTriageJudgmentRunner,
 } from "../../integrations/agent/runner";
-import { resolveProcessEnabled } from "./improve-profiles";
 
 /** 0.9 public name for the improve preset configuration. */
 export type ImproveStrategyConfig = ImproveProfileConfig;
@@ -34,6 +34,56 @@ export type ImproveStrategyConfig = ImproveProfileConfig;
 export interface SelectedStrategy {
   name: string;
   config: ImproveStrategyConfig;
+}
+
+export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate", string[]> = {
+  reflect: ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"],
+  distill: ["memory"],
+  consolidate: ["memory"],
+};
+
+const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
+  reflect: true,
+  distill: true,
+  consolidate: true,
+  memoryInference: true,
+  graphExtraction: true,
+  validation: true,
+  extract: true,
+  triage: false,
+  proactiveMaintenance: false,
+  recombine: false,
+  procedural: false,
+};
+
+/** Resolve process enablement from the selected strategy, the sole improve authority. */
+export function resolveProcessEnabled(
+  processName: keyof NonNullable<ImproveProfileConfig["processes"]> | string,
+  strategy: ImproveProfileConfig,
+): boolean {
+  const processes = strategy.processes as Record<string, { enabled?: boolean } | undefined> | undefined;
+  const entry = processes?.[processName];
+  if (entry && typeof entry.enabled === "boolean") return entry.enabled;
+  return IMPROVE_PROCESS_DEFAULTS[processName] ?? false;
+}
+
+export function shouldSkipRef(
+  ref: string,
+  processName: "reflect" | "distill" | "consolidate",
+  strategy: ImproveProfileConfig,
+): { skip: boolean; reason: string } {
+  const process = strategy.processes?.[processName];
+  if (process?.enabled === false) return { skip: true, reason: "process-disabled" };
+
+  const parsed = parseAssetRef(ref);
+  const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
+  if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
+  if (parsed.type === "wiki" && parsed.name.split("/")[1] === "raw") return { skip: true, reason: "raw-wiki" };
+  return { skip: false, reason: "" };
+}
+
+export function isStrategyFilteredForAllPasses(ref: string, strategy: ImproveProfileConfig): boolean {
+  return shouldSkipRef(ref, "reflect", strategy).skip && shouldSkipRef(ref, "distill", strategy).skip;
 }
 
 const BUILTIN_STRATEGIES: Record<string, ImproveStrategyConfig> = {

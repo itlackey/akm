@@ -3,20 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Frontends → Workflow Plan Graph (IR v2) compilers.
+ * Frontends -> unresolved workflow plan compilers.
  *
- * Two frontends, one IR (redesign addendum, R1):
+ * Two frontends, one source-plan shape. Engine resolution in `freeze.ts`
+ * lowers this shape into the only executable format, workflow IR v3.
  *
  *   - {@link compileWorkflowProgram} — YAML orchestration programs
  *     (`program/parser.ts`). Pure and deterministic; performs FULL expression
  *     validation (closed `${{ … }}` grammar, earlier-step references,
  *     whole-value contexts, `item`/`item_index` scoping) and MERGES the
- *     program's `defaults` block into every unit node so the frozen plan is
- *     self-contained. Returns accumulated `WorkflowError`s rather than
- *     throwing.
+ *     Returns accumulated `WorkflowError`s rather than throwing.
  *   - {@link compileWorkflowPlan} — classic LINEAR markdown workflows
- *     (`parser.ts`), the stable CLI contract: one `agent` node per step with
- *     `runner: inherit` and the fail-fast default, exactly as today. The P1
+ *     (`parser.ts`), the stable CLI contract: one unit node per step with the
+ *     fail-fast default. The P1
  *     markdown orchestration grammar is gone — this path is linear-only.
  *
  * Node-id convention (stable, unique within a plan):
@@ -28,21 +27,64 @@
 import { type ExpressionAst, formatReference, listReferences, parseTemplate } from "../program/expressions";
 import type { ProgramDefaults, ProgramStep, ProgramUnit, WorkflowProgram } from "../program/schema";
 import type { WorkflowDocument, WorkflowError, WorkflowStep } from "../schema";
-import {
-  type IrAgentNode,
-  type IrExecNode,
-  type IrGateNode,
-  type IrStepPlan,
-  WORKFLOW_IR_VERSION,
-  type WorkflowPlanGraph,
-} from "./schema";
+import type { IrIsolation, IrMapReducer, IrOnError, IrRetry, IrRouteSpec } from "./schema";
+
+export interface WorkflowUnitDraft {
+  kind: "unit";
+  id: string;
+  instructions: string;
+  templating: "expressions" | "verbatim";
+  schema?: Record<string, unknown>;
+  retry?: IrRetry;
+  onError: IrOnError;
+  env?: string[];
+  isolation?: IrIsolation;
+  source?: import("../schema").SourceRef;
+}
+
+export interface WorkflowMapDraft {
+  kind: "map";
+  id: string;
+  over: string;
+  template: WorkflowUnitDraft;
+  concurrency?: number;
+  reducer: IrMapReducer;
+  source?: import("../schema").SourceRef;
+}
+
+export interface WorkflowGateDraft {
+  kind: "gate";
+  id: string;
+  stepId: string;
+  criteria: string[];
+  maxLoops?: number;
+  required?: boolean;
+}
+
+export interface WorkflowStepDraft {
+  stepId: string;
+  title: string;
+  sequenceIndex: number;
+  root?: WorkflowUnitDraft | WorkflowMapDraft;
+  route?: IrRouteSpec;
+  outputSchema?: Record<string, unknown>;
+  gate: WorkflowGateDraft;
+}
+
+export interface WorkflowPlanDraft {
+  title: string;
+  params?: string[];
+  paramSchemas?: Record<string, Record<string, unknown>>;
+  budget?: { maxTokens?: number; maxUnits?: number };
+  steps: WorkflowStepDraft[];
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Frontend A — YAML workflow program
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type WorkflowProgramCompileResult =
-  | { ok: true; plan: WorkflowPlanGraph; warnings: WorkflowError[] }
+  | { ok: true; plan: WorkflowPlanDraft; warnings: WorkflowError[] }
   | { ok: false; errors: WorkflowError[] };
 
 /**
@@ -63,7 +105,7 @@ export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgra
   const errors: WorkflowError[] = [];
   const allStepIds = new Set(program.steps.map((s) => s.id));
   const earlierStepIds = new Set<string>();
-  const steps: IrStepPlan[] = [];
+  const steps: WorkflowStepDraft[] = [];
 
   program.steps.forEach((step, index) => {
     const check = { allStepIds, earlierStepIds, errors };
@@ -111,7 +153,6 @@ export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgra
     // `workflow validate` / `workflow start`, never persisted onto the run row.
     warnings: collectProgramWarnings(program),
     plan: {
-      irVersion: WORKFLOW_IR_VERSION,
       title: program.name,
       ...(paramNames.length > 0 ? { params: paramNames } : {}),
       // Reviewer #12: freeze the per-param schemas into the plan so `--params`
@@ -133,8 +174,12 @@ export function compileWorkflowProgram(program: WorkflowProgram): WorkflowProgra
   };
 }
 
-function compileProgramStep(step: ProgramStep, index: number, defaults: ProgramDefaults | undefined): IrStepPlan {
-  const gate: IrGateNode = {
+function compileProgramStep(
+  step: ProgramStep,
+  index: number,
+  defaults: ProgramDefaults | undefined,
+): WorkflowStepDraft {
+  const gate: WorkflowGateDraft = {
     kind: "gate",
     id: `${step.id}.gate`,
     stepId: step.id,
@@ -147,7 +192,7 @@ function compileProgramStep(step: ProgramStep, index: number, defaults: ProgramD
     ...(step.gate?.required !== undefined ? { required: step.gate.required } : {}),
   };
 
-  let root: IrExecNode | undefined;
+  let root: WorkflowUnitDraft | WorkflowMapDraft | undefined;
   if (step.unit) {
     root = compileProgramUnit(step.unit, step.id, defaults);
   } else if (step.map) {
@@ -184,25 +229,18 @@ function compileProgramStep(step: ProgramStep, index: number, defaults: ProgramD
 }
 
 /**
- * Lower one program unit into an agent node, merging the run-level `defaults`
- * block (frozen resolution — addendum: "the plan is self-contained"). Per-unit
- * declarations always win; the fail-fast `on_error` default applies last.
+ * Lower one source unit into the unresolved structural plan. Engine/model/time
+ * settings remain on the parsed source until the single freeze boundary.
  */
-function compileProgramUnit(unit: ProgramUnit, id: string, defaults: ProgramDefaults | undefined): IrAgentNode {
-  const model = unit.model ?? defaults?.model;
-  const timeoutMs = unit.timeoutMs !== undefined ? unit.timeoutMs : defaults?.timeoutMs;
+function compileProgramUnit(unit: ProgramUnit, id: string, defaults: ProgramDefaults | undefined): WorkflowUnitDraft {
   return {
-    kind: "agent",
+    kind: "unit",
     id,
     instructions: unit.instructions,
     // YAML program instructions are `${{ … }}` templates (validated above);
     // the executor resolves them per unit.
     templating: "expressions",
-    runner: unit.runner ?? defaults?.runner ?? "inherit",
-    ...(unit.profile !== undefined ? { profile: unit.profile } : {}),
-    ...(model !== undefined ? { model } : {}),
     ...(unit.output !== undefined ? { schema: unit.output } : {}),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     // TODO(R2): retry dispatch is engine-rework scope; carried through now.
     ...(unit.retry ? { retry: { max: unit.retry.max, on: [...unit.retry.on] } } : {}),
     onError: unit.onError ?? defaults?.onError ?? "fail",
@@ -394,23 +432,21 @@ function collectUndeclaredParamWarnings(step: ProgramStep, declared: Set<string>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Compile a markdown `WorkflowDocument` to IR v2. Pure and deterministic: the
- * same document always compiles to the same plan. Linear workflows — the
- * stable contract — produce one `agent` node per step (`runner: inherit`,
- * fail-fast) guarded by its gate, identical behavior to today's step loop.
+ * Compile a markdown `WorkflowDocument` to an unresolved structural plan. Pure
+ * and deterministic: the same document always compiles to the same plan.
+ * Linear workflows produce one fail-fast unit per step guarded by its gate.
  */
-export function compileWorkflowPlan(document: WorkflowDocument): WorkflowPlanGraph {
+export function compileWorkflowPlan(document: WorkflowDocument): WorkflowPlanDraft {
   const params = document.parameters?.map((p) => p.name);
   return {
-    irVersion: WORKFLOW_IR_VERSION,
     title: document.title,
     ...(params && params.length > 0 ? { params } : {}),
     steps: document.steps.map(compileMarkdownStep),
   };
 }
 
-function compileMarkdownStep(step: WorkflowStep): IrStepPlan {
-  const gate: IrGateNode = {
+function compileMarkdownStep(step: WorkflowStep): WorkflowStepDraft {
+  const gate: WorkflowGateDraft = {
     kind: "gate",
     id: `${step.id}.gate`,
     stepId: step.id,
@@ -422,14 +458,13 @@ function compileMarkdownStep(step: WorkflowStep): IrStepPlan {
     title: step.title,
     sequenceIndex: step.sequenceIndex,
     root: {
-      kind: "agent",
+      kind: "unit",
       id: step.id,
       instructions: step.instructions.text,
       // Stable contract: markdown instructions are opaque data, passed to the
       // agent byte-exact. A literal `${{ … }}` (GitHub Actions syntax, docs of
       // the YAML format) is content here, never expression grammar.
       templating: "verbatim",
-      runner: "inherit",
       // Markdown has no failure-policy surface; the fail-fast default applies.
       onError: "fail",
       source: step.instructions.source,

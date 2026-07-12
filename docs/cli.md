@@ -499,10 +499,12 @@ Author, inspect, and execute structured workflow assets.
 
 ```sh
 akm workflow template
+akm workflow template --yaml                  # Print a YAML v2 program starter
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
+akm workflow create review.yaml --from ./review.yaml
 akm workflow validate workflow:ship-release    # Validate a workflow ref
-akm workflow validate ./workflows/release.md   # Validate a workflow file
+akm workflow validate ./workflows/review.yaml  # Validate YAML v2 or markdown
 akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow next workflow:ship-release
 akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
@@ -517,9 +519,9 @@ Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `template` | Print a valid starter workflow markdown document |
-| `create <name>` | Validate and write a workflow under `workflows/<name>.md` |
-| `validate <ref\|path>` | Validate a workflow markdown file or ref and print any errors |
+| `template` | Print a markdown starter, or a YAML v2 program with `--yaml` |
+| `create <name>` | Validate and write markdown (`<name>`) or YAML v2 (`<name>.yaml` / `.yml`) under `workflows/` |
+| `validate <ref\|path>` | Validate a workflow markdown/YAML file or ref and print any errors |
 | `start <ref>` | Create a new persisted workflow run |
 | `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
 | `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |

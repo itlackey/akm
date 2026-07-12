@@ -30,7 +30,7 @@
  */
 
 import { assertNever } from "../../core/assert";
-import { type LlmConnectionConfig, resolveSecret } from "../../core/config/config";
+import type { LlmConnectionConfig } from "../../core/config/config";
 import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk";
 import type { AgentProfile } from "./profiles";
@@ -75,7 +75,6 @@ export function collectDispatchSensitiveValues(
   if (spec.kind === "llm") addConnection(spec.connection);
   if (spec.kind === "sdk") addConnection(spec.fallbackConnection);
   if (spec.kind !== "llm") {
-    add(resolveSecret(spec.profile.apiKey));
     for (const value of Object.values(spec.profile.env ?? {})) add(value);
     for (const name of spec.profile.envPassthrough) {
       if (!ENV_PASSTHROUGH_REDACTION_ALLOWLIST.has(name)) add(envSource[name]);

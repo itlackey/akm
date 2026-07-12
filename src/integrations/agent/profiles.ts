@@ -47,16 +47,10 @@ export interface AgentProfile {
   readonly timeoutMs?: number;
   /** How the wrapper should attempt to parse stdout. */
   readonly parseOutput: AgentParseMode;
-  /** Use embedded @opencode-ai/sdk instead of Bun.spawn. Requires no CLI binary. */
-  readonly sdkMode?: boolean;
-  /** Model to use when sdkMode is true (e.g. "anthropic/claude-sonnet-4-5", "ollama/qwen2.5-coder"). */
+  /** Exact or alias-resolved model selected for this dispatch. */
   readonly model?: string;
   /** The model has already been lowered through all alias tables. */
   readonly modelIsExact?: boolean;
-  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from the selected fallback LLM engine. */
-  readonly endpoint?: string;
-  /** API key for sdkMode endpoint. If absent, inherits from the selected fallback LLM engine. */
-  readonly apiKey?: string;
   /**
    * Which AgentCommandBuilder handles argv construction. Defaults to profile.name.
    * Override in config.json to map a custom profile to a known platform builder.

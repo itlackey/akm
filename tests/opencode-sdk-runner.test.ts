@@ -28,7 +28,6 @@ const baseProfile: AgentProfile = {
   stdio: "captured",
   envPassthrough: [],
   parseOutput: "text",
-  sdkMode: true,
 };
 
 /** Records the body/query passed to the session calls so tests can assert forwarding. */
@@ -291,7 +290,6 @@ describe("buildSdkConfig — model alias resolution", () => {
     stdio: "captured",
     envPassthrough: [],
     parseOutput: "text",
-    sdkMode: true,
   };
 
   test("profile.modelAliases resolves before the SDK config is built", async () => {
@@ -324,28 +322,32 @@ describe("buildSdkConfig — model alias resolution", () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
     const plain = buildSdkConfig({ ...baseProfile, model: "anthropic/claude-sonnet-4-6" });
     expect(plain.model).toBe("anthropic/claude-sonnet-4-6");
-    const prefixed = buildSdkConfig({ ...baseProfile, model: "my-local-model", endpoint: "http://localhost:1234/v1" });
+    const prefixed = buildSdkConfig(
+      { ...baseProfile, model: "my-local-model" },
+      { endpoint: "http://localhost:1234/v1/chat/completions", model: "fallback" },
+    );
     expect(prefixed.model).toBe("akm-custom/my-local-model");
   });
 
   test("alias resolving to an unqualified string still gets akm-custom prefix with endpoint", async () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-    const cfg = buildSdkConfig({
-      ...baseProfile,
-      model: "fast",
-      modelAliases: { fast: "qwen3-30b-a3b" },
-      endpoint: "http://localhost:1234/v1",
-    });
+    const cfg = buildSdkConfig(
+      {
+        ...baseProfile,
+        model: "fast",
+        modelAliases: { fast: "qwen3-30b-a3b" },
+      },
+      { endpoint: "http://localhost:1234/v1/chat/completions", model: "fallback" },
+    );
     expect(cfg.model).toBe("akm-custom/qwen3-30b-a3b");
   });
 
   test("slash-qualified profile models still route through akm-custom", async () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-    const cfg = buildSdkConfig({
-      ...baseProfile,
-      model: "openrouter/anthropic/claude-sonnet-4",
-      endpoint: "http://localhost:1234/v1",
-    });
+    const cfg = buildSdkConfig(
+      { ...baseProfile, model: "openrouter/anthropic/claude-sonnet-4" },
+      { endpoint: "http://localhost:1234/v1/chat/completions", model: "fallback" },
+    );
     expect(cfg.model).toBe("akm-custom/openrouter/anthropic/claude-sonnet-4");
   });
 
@@ -369,7 +371,6 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     stdio: "captured",
     envPassthrough: [],
     parseOutput: "text",
-    sdkMode: true,
   };
 
   test("token usage from the AssistantMessage is surfaced (previously discarded)", async () => {

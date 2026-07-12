@@ -30,7 +30,6 @@ const sdkProfile: AgentProfile = {
   stdio: "captured",
   envPassthrough: [],
   parseOutput: "text",
-  sdkMode: true,
   model: "anthropic/claude-sonnet-4-5",
 };
 

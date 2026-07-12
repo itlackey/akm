@@ -298,7 +298,7 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
         `report a result against. This is an authoring/data error in the workflow; fix it and start a new run.`,
     );
   }
-  if (!workUnit.engine || !workUnit.invocation || workUnit.runner === "inherit") {
+  if (!workUnit.engine || !workUnit.invocation) {
     throw new UsageError(`Unit "${workUnit.unitId}" has no complete frozen engine attribution.`);
   }
   const engineName = workUnit.engine.name;
@@ -867,7 +867,7 @@ function buildStepContext(
     runId,
     params: next.run.params ?? {},
     stepOutputs,
-    ...(plan.execution ? { engines: plan.execution.engines } : {}),
+    engines: plan.execution.engines,
     gateLoop,
     ...(gateFeedback ? { gateFeedback } : {}),
   });
@@ -1302,7 +1302,7 @@ async function settleSpine(args: {
         runId,
         params: state.run.params ?? {},
         stepOutputs,
-        ...(plan.execution ? { engines: plan.execution.engines } : {}),
+        engines: plan.execution.engines,
         gateLoop,
         ...(gateFeedback ? { gateFeedback } : {}),
       });

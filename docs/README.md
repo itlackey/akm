@@ -28,7 +28,6 @@
 ## Upgrading
 
 - [Roadmap](roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
-- [v1 migration guide](migration/v1.md) -- The path from 0.x to v1.0
 - [v0.8 -> v0.9 migration guide](migration/v0.8-to-v0.9.md) -- Current-cycle breaking changes
 - [Release notes (latest: 0.9.0)](migration/release-notes/0.9.0.md) -- Per-release notes; see the [release-notes index](migration/release-notes/README.md) for every version
 - [v0.5 -> v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting

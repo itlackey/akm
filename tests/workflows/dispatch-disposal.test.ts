@@ -261,7 +261,7 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
       });
     }) as never);
 
-    const profile = { name: "mysdk", bin: "opencode", args: [], sdkMode: true } as never;
+    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
     // Populate the registry: the default (no-env) server plus an env-keyed one
     // on its own OS-allocated port.
     await runOpencodeSdk(profile, "p", { timeoutMs: null });
@@ -291,7 +291,7 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
         resolveFactory = resolve;
       });
     }) as never);
-    const profile = { name: "mysdk", bin: "opencode", args: [], sdkMode: true } as never;
+    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
     const running = runOpencodeSdk(profile, "p", { timeoutMs: null });
     await started;
 

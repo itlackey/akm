@@ -132,21 +132,21 @@ akm feedback workflow:deploy-to-prod --positive --reason "Completed without issu
 ## akm agent — dispatching with a stash agent asset
 
 `akm agent` can embody a stash agent asset (type `agent:`) to apply that
-agent's system prompt, model, and tool policy to any task. Pass the agent
-asset ref as the second positional argument after the profile name.
+agent's system prompt, model, and tool policy to any task. Select the named
+agent engine with `--engine` and pass the asset ref positionally.
 
 ```sh
 # Embody an agent asset and run a task:
-akm agent opencode agent:code-reviewer --prompt "review src/"
+akm agent agent:code-reviewer --engine opencode --prompt "review src/"
 
 # Model override with a built-in alias (overrides the asset's modelHint):
-akm agent claude agent:planner --model sonnet --prompt "plan the sprint"
+akm agent agent:planner --engine claude --model sonnet --prompt "plan the sprint"
 
 # Exact platform model ID override:
-akm agent opencode agent:code-reviewer --model opencode/claude-opus-4-7 --prompt "audit the API"
+akm agent agent:code-reviewer --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
 
 # Interactive launch with an agent asset (no prompt — interactive session):
-akm agent opencode agent:architect
+akm agent agent:architect --engine opencode
 ```
 
 **Built-in model aliases** — `fable`, `opus`, `sonnet`, and `haiku` are
@@ -159,15 +159,14 @@ resolved per platform automatically:
 | `sonnet` | `opencode/claude-sonnet-4-6` | `claude-sonnet-4-6` |
 | `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
-Per-profile `modelAliases` in config can extend or override this table.
+Per-engine `modelAliases` in config can extend or override this table.
 
 **Platform dispatch** — when a system prompt, model, or tool policy is
 present, akm builds the CLI argv using the platform builder for the
-profile. `opencode` profiles use `opencode run [--system-prompt "..."]
-[--model <id>] "<prompt>"`. `claude` profiles use `claude
+engine. `opencode` engines use `opencode run [--system-prompt "..."]
+[--model <id>] "<prompt>"`. `claude` engines use `claude
 [--system-prompt "..."] [--model <id>] [--allowedTools ...] --print
-"<prompt>"`. Custom profiles may set `commandBuilder` in config to map to
-a known builder.
+"<prompt>"`. Engine platform selection chooses the registered command builder.
 
 ## See also
 

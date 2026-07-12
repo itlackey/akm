@@ -128,6 +128,31 @@ steps:
 `;
 
 describe("executeStepPlan — fan-out", () => {
+  test("caps SDK fan-out by the frozen fallback LLM engine concurrency", async () => {
+    seedRun({ params: { files: ["a", "b", "c", "d"] }, steps: [{ id: "review", title: "Review files" }] });
+    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    let inFlight = 0;
+    let peak = 0;
+
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflow:demo",
+      params: { files: ["a", "b", "c", "d"] },
+      evidence: {},
+      maxConcurrency: 4,
+      dispatcher: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { ok: true, text: "reviewed" };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(peak).toBe(1);
+  });
+
   test("dispatches one unit per item over ${{ params.files }}, resolves ${{ item }}, persists unit rows", async () => {
     seedRun({ params: { files: ["a.ts", "b.ts", "c.ts"] }, steps: [{ id: "review", title: "Review files" }] });
     const prompts: string[] = [];
@@ -2180,11 +2205,13 @@ steps:
     params: Record<string, unknown>,
     count = Number.POSITIVE_INFINITY,
   ): Promise<void> {
+    const engines = catalogs.get(stepPlan);
+    if (!engines) throw new Error("fixture requires a frozen engine catalog");
     const wl = computeStepWorkList(stepPlan, {
       runId: RUN_ID,
       params,
       stepOutputs: {},
-      engines: catalogs.get(stepPlan),
+      engines,
     });
     if (!wl.ok) throw new Error(wl.error);
     const now = new Date().toISOString();

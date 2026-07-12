@@ -415,10 +415,10 @@ Workflows now include authoring, validation, execution, and recovery flows.
       writes converted markdown into `wikis/my-wiki/raw/` without crawling.
 - [ ] Re-running the same explicit slug with `--as raw-source` fails rather than
       overwriting.
-- [ ] `akm wiki ingest my-wiki` dispatches the configured agent profile (from
-      `defaults.agent` or `--profile`) to execute the ingest workflow. Without
-      an accessible profile it fails with a clear `UsageError` pointing at
-      `profiles.agent`.
+- [ ] `akm wiki ingest my-wiki` dispatches the configured agent engine (from
+      `defaults.engine` or `--engine`) to execute the ingest workflow. Without
+      an accessible engine it fails with a clear `UsageError` pointing at
+      `engines`.
 - [ ] `akm wiki lint my-wiki` returns deterministic findings or a clean pass;
       findings may exit non-zero but should still be structured and not crash.
 - [ ] `akm show wiki:my-wiki` returns the same summary class as
@@ -481,7 +481,7 @@ These are core auditability flows to validate in `0.9.x`.
 
 ## 15. Proposal Queue and Agent-Backed Commands
 
-These require configured external agent profiles and, for `distill`, LLM config.
+These require configured engines and, for `distill`, an LLM engine.
 Run only inside the sandbox.
 
 ### 15.1 Proposal queue (no external agent required if seeded by prior steps)
@@ -499,7 +499,7 @@ Run only inside the sandbox.
 
 - [ ] `akm improve skill:k8s-deploy --task "tighten the description"` either
       queues a proposal successfully or fails with a structured config/usage
-      envelope if no agent profile is configured.
+      envelope if no engine is configured.
 - [ ] `akm improve skill qa-generated-skill --task "simple review helper"`
       either queues a proposal successfully or fails structurally if the agent
       runtime is not configured.
@@ -508,7 +508,7 @@ Run only inside the sandbox.
 ### 15.3 improve / lesson
 
 - [ ] `akm improve skill:k8s-deploy` returns `outcome: "skipped"` when
-      `profiles.improve.default.processes.distill.enabled` is
+      `improve.strategies.default.processes.distill.enabled` is
       `false`, or queues a lesson proposal when enabled.
 - [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
       accepts valid refs.
@@ -521,12 +521,12 @@ Run only inside the sandbox.
 ## 16. Config and Migration
 
 - [ ] `akm config list` reports current state.
-- [ ] `akm config set profiles.llm.default '{"endpoint":"http://localhost:1234/v1"}'`
-      persists the whole named LLM profile entry.
-- [ ] `akm config set profiles.llm.default.endpoint http://localhost:1234/v1`
+- [ ] `akm config set engines.default '{"kind":"llm","endpoint":"http://localhost:1234/v1/chat/completions","model":"qwen3"}'`
+      persists the whole named LLM engine entry.
+- [ ] `akm config set engines.default.endpoint http://localhost:1234/v1/chat/completions`
       updates the subkey.
-- [ ] `akm config get profiles.llm.default.endpoint` reads it back.
-- [ ] `akm config unset profiles.llm.default.apiKey` removes the subkey cleanly.
+- [ ] `akm config get engines.default.endpoint` reads it back.
+- [ ] `akm config unset engines.default.apiKey` removes the subkey cleanly.
 - [ ] `akm config set defaultWriteTarget <source-name>` now works.
 - [ ] `akm help migrate 0.6.0` prints bundled migration notes.
 - [ ] `akm help migrate v0.6.0-rc1` normalizes to the stable note.

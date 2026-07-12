@@ -75,7 +75,7 @@ import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/d
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
+import { tryLlmFeature } from "../../llm/feature-gate";
 import {
   createProposal,
   isProposalSkipped,
@@ -101,7 +101,7 @@ import {
 import { buildClsContext, checkDistillFidelity } from "./distill-guards";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
-import { resolveImproveStrategy } from "./improve-strategies";
+import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { computeSalience, upsertAssetSalience } from "./salience";
 
 // Re-exported for `reflect.ts`, which applies the same LLM-as-judge gate to
@@ -978,7 +978,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     },
     null as string | null,
     {
-      strategy: options.improveProfile,
+      enabled: resolveProcessEnabled(
+        "distill",
+        options.improveProfile ?? resolveImproveStrategy(undefined, config).config,
+      ),
       onFallback: (evt) => {
         fallbackReason = evt.reason;
         // Log the fallback reason; the caller (raw === null path) handles
@@ -1115,7 +1118,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // D-5 / #388: Three-band system — review_needed band queues a proposal
   // with review_needed outcome rather than auto-rejecting.
   let lessonJudgeConfidence: number | undefined;
-  if (isLlmFeatureEnabled(config, "lesson_quality_gate", options.improveProfile)) {
+  if (options.improveProfile?.processes?.distill?.qualityGate?.enabled ?? true) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
     const judgeResult = await runLessonQualityJudge(

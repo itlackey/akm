@@ -100,7 +100,7 @@ echo "# Notes" | akm wiki stash research - --as my-notes
 akm wiki pages research
 akm wiki search research "attention mechanism"
 akm wiki lint research       # structural checks: orphans, broken xrefs, stale index
-akm wiki ingest research     # dispatch defaults.agent to run the ingest workflow
+akm wiki ingest research     # dispatch defaults.engine to run the ingest workflow
 ```
 
 Three layers: **raw sources** (`raw/`) that you never edit after stashing,
