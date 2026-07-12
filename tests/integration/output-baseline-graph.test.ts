@@ -70,7 +70,12 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   const xdgConfig = makeTempDir("akm-output-config-");
   const xdgData = makeTempDir("akm-output-data-");
   const xdgState = makeTempDir("akm-output-state-");
-  if (config) writeConfig(xdgConfig, config);
+  // Semantic off keeps auto-index stderr deterministic: with the default
+  // ("auto") the local embedder fetches its model from huggingface.co and a
+  // blocked/offline fetch emits "Embedding generation failed" on stderr,
+  // tripping the stderr-cleanliness check below. This test suite pins output
+  // shapes, not semantic ranking.
+  writeConfig(xdgConfig, { semanticSearchMode: "off", ...(config ?? {}) });
 
   const child = spawn("bun", [CLI, ...args], {
     stdio: ["ignore", "pipe", "pipe"],

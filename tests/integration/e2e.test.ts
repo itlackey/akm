@@ -317,9 +317,14 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(topHit.description).toBeTruthy();
   });
 
-  test.skipIf(!!process.env.CI)("search ranks keyword-relevant results higher (FTS-only)", async () => {
+  test("search ranks keyword-relevant results higher (FTS-only)", async () => {
     // NOTE: This test uses FTS keyword matching (BM25), not semantic/vector search.
-    const result = await akmSearch({ query: "summarize commit changes", type: "any" });
+    // The query tokens must all appear in the fixture's indexed fields (FTS5
+    // AND-joins tokens): summarize-diff's description is "Summarize git diff
+    // changes into a concise developer-friendly report". The previous query
+    // ("summarize commit changes") only ever matched via semantic embeddings,
+    // so it returned 0 hits on offline machines despite the FTS-only intent.
+    const result = await akmSearch({ query: "summarize git diff changes", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);
     // Git scripts should rank higher than docker scripts for this query
@@ -419,12 +424,19 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
-  test.skipIf(!!process.env.CI)("agent asks 'set up local dev environment' → docker-compose ranks high", async () => {
-    const result = await akmSearch({ query: "set up local development environment" });
-    const names = result.hits.map((h) => h.name.toLowerCase());
-    // Docker compose should appear because its intent says "start local development services"
-    expect(names.some((n) => n.includes("compose") || n.includes("docker"))).toBe(true);
-  });
+  // Needs semantic embeddings: the natural-language query tokens are not all
+  // present in the fixture's indexed fields, so FTS (AND-joined tokens) alone
+  // returns nothing. Opt in with AKM_SEMANTIC_TESTS=1 (downloads the local
+  // embedding model on first run — see AGENTS.md).
+  test.skipIf(!process.env.AKM_SEMANTIC_TESTS)(
+    "agent asks 'set up local dev environment' → docker-compose ranks high",
+    async () => {
+      const result = await akmSearch({ query: "set up local development environment" });
+      const names = result.hits.map((h) => h.name.toLowerCase());
+      // Docker compose should appear because its intent says "start local development services"
+      expect(names.some((n) => n.includes("compose") || n.includes("docker"))).toBe(true);
+    },
+  );
 
   test("agent asks 'check code quality' → lint script ranks high", async () => {
     const result = await akmSearch({ query: "check code quality style" });
@@ -433,22 +445,36 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(names.some((n) => n.includes("lint") || n.includes("eslint"))).toBe(true);
   });
 
-  test.skipIf(!!process.env.CI)("agent asks 'review my pull request' → code-review skill found", async () => {
-    const result = await akmSearch({ query: "review pull request code changes" });
-    expect(result.hits.length).toBeGreaterThan(0);
-    // Skill ref contains "code-review" (directory name), even though display name is "SKILL"
-    expect(
-      result.hits.some(
-        (h) => (isLocalHit(h) && h.ref.includes("code-review")) || h.description?.toLowerCase().includes("review"),
-      ),
-    ).toBe(true);
-  });
+  // Needs semantic embeddings: the natural-language query tokens are not all
+  // present in the fixture's indexed fields, so FTS (AND-joined tokens) alone
+  // returns nothing. Opt in with AKM_SEMANTIC_TESTS=1 (downloads the local
+  // embedding model on first run — see AGENTS.md).
+  test.skipIf(!process.env.AKM_SEMANTIC_TESTS)(
+    "agent asks 'review my pull request' → code-review skill found",
+    async () => {
+      const result = await akmSearch({ query: "review pull request code changes" });
+      expect(result.hits.length).toBeGreaterThan(0);
+      // Skill ref contains "code-review" (directory name), even though display name is "SKILL"
+      expect(
+        result.hits.some(
+          (h) => (isLocalHit(h) && h.ref.includes("code-review")) || h.description?.toLowerCase().includes("review"),
+        ),
+      ).toBe(true);
+    },
+  );
 
-  test.skipIf(!!process.env.CI)("agent asks 'help me design the system' → architect agent found", async () => {
-    const result = await akmSearch({ query: "system design architecture" });
-    expect(result.hits.length).toBeGreaterThan(0);
-    expect(result.hits.some((h) => h.name.includes("architect"))).toBe(true);
-  });
+  // Needs semantic embeddings: the natural-language query tokens are not all
+  // present in the fixture's indexed fields, so FTS (AND-joined tokens) alone
+  // returns nothing. Opt in with AKM_SEMANTIC_TESTS=1 (downloads the local
+  // embedding model on first run — see AGENTS.md).
+  test.skipIf(!process.env.AKM_SEMANTIC_TESTS)(
+    "agent asks 'help me design the system' → architect agent found",
+    async () => {
+      const result = await akmSearch({ query: "system design architecture" });
+      expect(result.hits.length).toBeGreaterThan(0);
+      expect(result.hits.some((h) => h.name.includes("architect"))).toBe(true);
+    },
+  );
 
   test("agent workflow: search → show (end-to-end)", async () => {
     // Step 1: Agent searches for a script to run tests
@@ -1566,14 +1592,21 @@ describe("Scenario: Zero-config progressive improvement", () => {
     expect(reloaded.entries[0].quality).not.toBe("generated");
   });
 
-  test("semantic search finds user-edited metadata after re-index", async () => {
-    // Re-index to pick up manual edits in the search index
-    await akmIndex({ stashDir });
+  // Needs semantic embeddings: the natural-language query tokens are not all
+  // present in the fixture's indexed fields, so FTS (AND-joined tokens) alone
+  // returns nothing. Opt in with AKM_SEMANTIC_TESTS=1 (downloads the local
+  // embedding model on first run — see AGENTS.md).
+  test.skipIf(!process.env.AKM_SEMANTIC_TESTS)(
+    "semantic search finds user-edited metadata after re-index",
+    async () => {
+      // Re-index to pick up manual edits in the search index
+      await akmIndex({ stashDir });
 
-    const result = await akmSearch({ query: "format code style" });
-    expect(result.hits.length).toBeGreaterThan(0);
-    expect(result.hits.some((h) => h.name.includes("prettier"))).toBe(true);
-  });
+      const result = await akmSearch({ query: "format code style" });
+      expect(result.hits.length).toBeGreaterThan(0);
+      expect(result.hits.some((h) => h.name.includes("prettier"))).toBe(true);
+    },
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

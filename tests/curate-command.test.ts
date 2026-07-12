@@ -208,11 +208,18 @@ describe("curate command", () => {
 
   test("--shape summary is rejected on curate (only valid on show)", async () => {
     const stashDir = makeStash();
+    // Semantic off keeps stderr limited to the error envelope this test
+    // parses: with the default ("auto") the local embedder fetches its model
+    // from huggingface.co during auto-index, and an offline/blocked fetch
+    // prepends an "Embedding generation failed" warning to stderr.
+    const xdgConfig = makeTempDir("akm-curate-config-");
+    fs.mkdirSync(path.join(xdgConfig, "akm"), { recursive: true });
+    fs.writeFileSync(path.join(xdgConfig, "akm", "config.json"), JSON.stringify({ semanticSearchMode: "off" }));
     const res = await withEnv(
       {
         AKM_STASH_DIR: stashDir,
         XDG_CACHE_HOME: makeTempDir("akm-curate-cache-"),
-        XDG_CONFIG_HOME: makeTempDir("akm-curate-config-"),
+        XDG_CONFIG_HOME: xdgConfig,
         XDG_DATA_HOME: makeTempDir("akm-curate-data-"),
       },
       async () => {

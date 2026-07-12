@@ -5,6 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// chmod-ing the install dir read-only is a no-op when running as root
+// (permission bits are not enforced for uid 0), so install.sh's writability
+// probe never selects the sudo branch. CI runners are non-root.
+const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const INSTALL_SCRIPT = path.join(PROJECT_ROOT, "install.sh");
 const BASH_PATH = resolveCommand("bash");
@@ -248,7 +253,7 @@ describe("install.sh", () => {
     expect(result.stdout + result.stderr).toContain("curl or wget is required");
   });
 
-  test("uses sudo mv when install dir is not writable", () => {
+  test.skipIf(runningAsRoot)("uses sudo mv when install dir is not writable", () => {
     const harness = createHarness({ installDirWritable: false, useSudo: true });
     const result = harness.run();
 
@@ -290,7 +295,7 @@ describe("install.sh", () => {
     expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
   });
 
-  test("fails clearly when sudo is required but unavailable", () => {
+  test.skipIf(runningAsRoot)("fails clearly when sudo is required but unavailable", () => {
     const harness = createHarness({ installDirWritable: false, useSudo: true, sudoSucceeds: false });
     const result = harness.run();
 
