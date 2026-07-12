@@ -77,6 +77,60 @@ describe("akm config set --silent / --layer (#463)", () => {
     expect(stdout).toContain("claude");
   });
 
+  test("dotted kind writes preserve complete agent and LLM discriminators", async () => {
+    const { agentResult, llmResult } = await withEnv(freshEnv(), async () => {
+      await runCliCapture(["config", "set", "--silent", "engines.agent", claudeEngine]);
+      await runCliCapture([
+        "config",
+        "set",
+        "--silent",
+        "engines.llm",
+        '{"kind":"llm","endpoint":"https://example.test/v1/chat/completions","model":"test"}',
+      ]);
+      const agentResult = await runCliCapture(["--json", "config", "set", "engines.agent.kind", "agent"]);
+      const llmResult = await runCliCapture(["--json", "config", "set", "engines.llm.kind", "llm"]);
+      return { agentResult, llmResult };
+    });
+
+    expect(agentResult.code).toBe(0);
+    expect(JSON.parse(agentResult.stdout).engines.agent.kind).toBe("agent");
+    expect(llmResult.code).toBe(0);
+    expect(JSON.parse(llmResult.stdout).engines.llm.kind).toBe("llm");
+  });
+
+  test("incomplete dotted discriminators fail without persisting a rewritten kind", async () => {
+    const { setResult, getResult } = await withEnv(freshEnv(), async () => {
+      const setResult = await runCliCapture(["--json", "config", "set", "engines.new-agent.kind", "agent"]);
+      const getResult = await runCliCapture(["--json", "config", "get", "engines.new-agent.kind"]);
+      return { setResult, getResult };
+    });
+
+    expect(setResult.code).toBe(78);
+    expect(JSON.parse(setResult.stderr)).toMatchObject({ ok: false, code: "INVALID_CONFIG_FILE" });
+    expect(getResult.code).toBe(0);
+    expect(JSON.parse(getResult.stdout)).toBeNull();
+  });
+
+  test("incomplete kind transitions fail atomically and preserve the prior engine", async () => {
+    const { transitionResult, getResult } = await withEnv(freshEnv(), async () => {
+      await runCliCapture([
+        "config",
+        "set",
+        "--silent",
+        "engines.engine",
+        '{"kind":"llm","endpoint":"https://example.test/v1/chat/completions","model":"test"}',
+      ]);
+      const transitionResult = await runCliCapture(["--json", "config", "set", "engines.engine.kind", "agent"]);
+      const getResult = await runCliCapture(["--json", "config", "get", "engines.engine.kind"]);
+      return { transitionResult, getResult };
+    });
+
+    expect(transitionResult.code).toBe(78);
+    expect(JSON.parse(transitionResult.stderr)).toMatchObject({ ok: false, code: "INVALID_CONFIG_FILE" });
+    expect(getResult.code).toBe(0);
+    expect(JSON.parse(getResult.stdout)).toBe("llm");
+  });
+
   test("--layer user is accepted (no-op alias for the current user-only model)", async () => {
     const { status } = await runCli([
       "config",

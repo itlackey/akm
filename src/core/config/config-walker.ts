@@ -78,9 +78,10 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
  * AkmConfig schema. Returns `undefined` if any path segment doesn't match a
  * known schema field.
  */
-function resolveSchemaAt(path: Path): z.ZodTypeAny | undefined {
+function resolveSchemaAt(path: Path, config?: Record<string, unknown>, raw?: string): z.ZodTypeAny | undefined {
   let schema: z.ZodTypeAny = AkmConfigBaseSchema;
-  for (const segment of path) {
+  let existing: unknown = config;
+  for (const [index, segment] of path.entries()) {
     schema = unwrap(schema);
     if (schema instanceof z.ZodObject) {
       const next = (schema.shape as Record<string, z.ZodTypeAny>)[segment];
@@ -89,30 +90,66 @@ function resolveSchemaAt(path: Path): z.ZodTypeAny | undefined {
         const catchall = (schema._def as { catchall?: z.ZodTypeAny }).catchall;
         if (catchall && !(catchall instanceof z.ZodNever)) {
           schema = catchall;
-          continue;
+        } else {
+          return undefined;
         }
-        return undefined;
+      } else {
+        schema = next;
       }
-      schema = next;
     } else if (schema instanceof z.ZodRecord) {
       // Named records (engines, improve.strategies, sources, etc.)
       // accept any string key — descend into the value schema.
       schema = schema._def.valueType;
     } else if (schema instanceof z.ZodUnion) {
-      const option = (schema._def.options as z.ZodTypeAny[]).find((candidate) => {
-        const unwrapped = unwrap(candidate);
-        return unwrapped instanceof z.ZodObject && segment in unwrapped.shape;
-      });
+      const option = selectUnionObjectOption(
+        schema._def.options as z.ZodTypeAny[],
+        segment,
+        existing,
+        index === path.length - 1 ? raw : undefined,
+      );
       if (!option) return undefined;
-      schema = (unwrap(option) as z.ZodObject<z.ZodRawShape>).shape[segment] as z.ZodTypeAny;
+      schema = option.shape[segment] as z.ZodTypeAny;
     } else {
       // Cannot descend into a non-object schema.
       return undefined;
     }
+    existing = isPlainObject(existing) ? existing[segment] : undefined;
   }
   // Preserve leaf refinements/transforms for validation. Traversal unwraps at
   // the start of each loop iteration, while coercion unwraps independently.
   return schema;
+}
+
+function selectUnionObjectOption(
+  candidates: z.ZodTypeAny[],
+  segment: string,
+  existing: unknown,
+  raw?: string,
+): z.ZodObject<z.ZodRawShape> | undefined {
+  const options = candidates
+    .map((candidate) => unwrap(candidate))
+    .filter((candidate): candidate is z.ZodObject<z.ZodRawShape> => candidate instanceof z.ZodObject);
+
+  if (raw !== undefined) {
+    const requested = options.find((option) => {
+      const leaf = option.shape[segment];
+      if (!leaf || !(unwrap(leaf) instanceof z.ZodLiteral)) return false;
+      return leaf.safeParse(coerceForSchema(leaf, raw, segment)).success;
+    });
+    if (requested) return requested;
+  }
+
+  if (isPlainObject(existing)) {
+    const selected = options.find((option) =>
+      Object.entries(option.shape).some(
+        ([key, field]) =>
+          key in existing && unwrap(field) instanceof z.ZodLiteral && field.safeParse(existing[key]).success,
+      ),
+    );
+    if (selected) return segment in selected.shape ? selected : undefined;
+  }
+
+  return options.find((option) => segment in option.shape);
 }
 
 /**
@@ -122,7 +159,7 @@ function resolveSchemaAt(path: Path): z.ZodTypeAny | undefined {
  */
 export function configGet(config: Record<string, unknown>, dotted: string): unknown {
   const path = parsePath(dotted);
-  const schema = resolveSchemaAt(path);
+  const schema = resolveSchemaAt(path, config);
   if (!schema) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
   }
@@ -153,7 +190,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   // #454: apiKey paths are not persistable. Throw at set time.
   rejectApiKeyPath(path, dotted);
 
-  const schema = resolveSchemaAt(path);
+  const schema = resolveSchemaAt(path, config, raw);
   const symbolicApiKey =
     (path[0] === "engines" && path[2] === "apiKey") ||
     (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey");
@@ -228,7 +265,7 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
     throw new UsageError("configVersion cannot be removed through config unset.", "INVALID_FLAG_VALUE");
   }
   // Validate the path resolves to a real schema field (so typos don't no-op).
-  const schema = resolveSchemaAt(path);
+  const schema = resolveSchemaAt(path, config);
   if (!schema) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
   }
@@ -309,7 +346,7 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
     return raw;
   }
   if (target instanceof z.ZodLiteral) {
-    return target._def.value;
+    return typeof target._def.value === "string" ? raw : target._def.value;
   }
   if (target instanceof z.ZodArray || target instanceof z.ZodObject || target instanceof z.ZodRecord) {
     if (raw === "" || raw === "null") return undefined;
