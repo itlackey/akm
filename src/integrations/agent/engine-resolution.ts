@@ -7,7 +7,7 @@ import type { LlmConnectionConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
-import { HARNESS_BY_ID } from "../harnesses";
+import { getHarness } from "../harnesses";
 import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { resolveModel } from "./model-aliases";
 import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
@@ -234,30 +234,31 @@ export function materializeLlmConnection(resolved: ResolvedLlmUse): LlmConnectio
 }
 
 function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: EngineResolutionConfig): RunnerSpec {
-  const harness = HARNESS_BY_ID.get(engine.platform);
+  const harness = getHarness(engine.platform);
   if (!harness?.capabilities.agentDispatch) {
     throw new ConfigError(
       `Engine "${name}" names a platform that cannot dispatch agents: ${engine.platform}.`,
       "INVALID_CONFIG_FILE",
     );
   }
-  const sdk = engine.platform === "opencode-sdk";
-  const builtin = getBuiltinAgentProfile(engine.platform);
+  const platform = harness.id;
+  const sdk = platform === "opencode-sdk";
+  const builtin = getBuiltinAgentProfile(platform);
   const profile: AgentProfile = {
     name,
-    platform: engine.platform,
-    bin: engine.bin ?? builtin?.bin ?? (sdk ? "opencode" : engine.platform),
+    platform,
+    bin: engine.bin ?? builtin?.bin ?? (sdk ? "opencode" : platform),
     args: engine.args ?? builtin?.args ?? [],
     stdio: "captured",
     ...(builtin?.env ? { env: builtin.env } : {}),
     envPassthrough: builtin?.envPassthrough ?? [],
     parseOutput: "text",
-    commandBuilder: builtin?.commandBuilder ?? engine.platform,
+    commandBuilder: builtin?.commandBuilder ?? platform,
     ...(sdk ? { sdkMode: true } : {}),
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model
       ? {
-          model: resolveModel(engine.model, engine.platform, engine.modelAliases, config.modelAliases),
+          model: resolveModel(engine.model, platform, engine.modelAliases, config.modelAliases),
           modelIsExact: true,
         }
       : {}),

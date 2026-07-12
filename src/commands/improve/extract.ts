@@ -611,7 +611,7 @@ async function processSession(
       return llmRaw;
     },
     "",
-    timeoutMs === null ? undefined : { timeoutMs },
+    { timeoutMs },
   );
 
   if (llmResult === "" && !llmRaw) {
@@ -897,7 +897,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         return raw;
       },
       "",
-      timeoutMs === null ? undefined : { timeoutMs },
+      { timeoutMs },
     );
     return parseSessionSummary(raw);
   };

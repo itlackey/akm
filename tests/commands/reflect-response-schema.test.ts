@@ -201,6 +201,23 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     expect(capturedCalls.length).toBe(1);
     expect(capturedCalls[0].responseSchema).toBeUndefined();
   });
+
+  for (const timeoutMs of [1, null] as const) {
+    test(`forwards normalized timeoutMs=${String(timeoutMs)} to an injected chat transport`, async () => {
+      let received: number | null | undefined;
+      await runReflectViaLlm({
+        prompt: "test prompt",
+        connection: fakeLlmConnection(),
+        iteration: 0,
+        timeoutMs,
+        chat: async (_config, _messages, options) => {
+          received = options?.timeoutMs;
+          return "stub";
+        },
+      });
+      expect(received).toBe(timeoutMs);
+    });
+  }
 });
 
 describe("akmReflect — passes REFLECT_JSON_SCHEMA when dispatching via the llm RunnerSpec", () => {

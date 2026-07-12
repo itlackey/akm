@@ -431,11 +431,11 @@ async function runPromptTask(input: {
     const platform = runner.profile.platform;
     if (!platform) throw new Error(`Engine "${engineName}" resolved without a platform.`);
     const model = requestedModel
-      ? resolveModel(requestedModel, platform, undefined, config.modelAliases)
+      ? resolveModel(requestedModel, platform, runner.profile.modelAliases, runner.profile.globalModelAliases)
       : runner.profile.model;
     runner = {
       ...runner,
-      profile: { ...runner.profile, ...(model ? { model } : {}) },
+      profile: { ...runner.profile, ...(model ? { model, modelIsExact: true } : {}) },
       ...(promptTarget.timeoutMs !== undefined ? { timeoutMs: promptTarget.timeoutMs } : {}),
     };
   }

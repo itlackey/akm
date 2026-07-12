@@ -30,18 +30,12 @@
  *
  *   - **env is PER-SERVER (keyed registry).** The SDK exposes NO per-call or
  *     per-session env surface; the only way env reaches tool child processes
- *     is the `opencode serve` process environment, which
- *     `createOpencodeServer` copies from `process.env` **synchronously**
- *     (its `spawn` call runs before its first `await`, so the snapshot is
- *     taken inside our call frame). {@link getOrStartServer} therefore keys
- *     servers by a hash of all server-affecting material (canonical endpoint,
- *     materialized key, binary, provider config, and full env entries), overlays
- *     the bindings onto `process.env` for exactly the
- *     synchronous prefix of the `createOpencode` call, and restores the
- *     previous values before awaiting. JavaScript's single-threaded event
- *     loop makes that overlay window atomic: no concurrently-running akm
- *     code can observe the mutated environment. Identical material shares one
- *     server; any material difference receives a separate server.
+ *     is the `opencode serve` process environment. {@link getOrStartServer}
+ *     snapshots and materializes the complete child environment for each
+ *     dispatch, passes it directly to the managed spawn (never mutating
+ *     `process.env`), and hashes that exact canonical environment for registry
+ *     identity. Identical child material shares one server; any material
+ *     difference receives a separate server.
  *
  * This is what removed the workflow engine's `env_unsupported` hard-fail for
  * the sdk runner: injection genuinely reaches the child, because tool
@@ -85,8 +79,8 @@
  *     ({@link SERVER_KILL_GRACE_MS}) that escalates to SIGKILL and is cleared
  *     on cooperative exit, so stubborn children cannot survive parent exit and
  *     stale timers cannot signal a reused PID;
- *   - the spawn (and its `process.env` snapshot) stays in the SYNCHRONOUS
- *     prefix of the factory call, preserving the env-overlay contract above.
+ *   - the spawn receives the immutable per-dispatch environment directly, so
+ *     asynchronous factory setup cannot race a temporary process-wide overlay.
  */
 
 import { spawn } from "node:child_process";
@@ -142,6 +136,7 @@ type SdkServerFactory = (options: {
   bin?: string;
   config?: Record<string, unknown>;
   port?: number;
+  env: Record<string, string>;
 }) => Promise<SdkServer>;
 
 // Server registry — one server per complete server-material signature, started
@@ -189,11 +184,9 @@ export function __setTestServer(server: SdkServer | null): void {
 /**
  * Test-only seam: replace the `createOpencode` factory so the env-keyed
  * server registry (module doc, *Per-call cwd and env*) can be exercised
- * without the real SDK. The fake MUST read whatever `process.env` state it
- * cares about in its SYNCHRONOUS prefix — exactly like the real
- * `createOpencodeServer`, whose `spawn` snapshot happens before its first
- * await — because the runner restores the env overlay as soon as the factory
- * call returns its promise. Pass `null` to clear.
+ * without the real SDK. The complete child environment is supplied as
+ * `options.env`, so async factories observe the same immutable values as the
+ * production spawn. Pass `null` to clear.
  */
 export function __setServerFactory(factory: SdkServerFactory | null): void {
   _serverFactory = factory;
@@ -299,11 +292,12 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
   // Resolve endpoint and model: profile fields take precedence over config.llm
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
   const apiKey = profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey;
-  const model = profile.model
+  const profileModel = profile.model
     ? profile.modelIsExact
       ? profile.model
       : resolveModel(profile.model, "opencode-sdk", profile.modelAliases, profile.globalModelAliases)
     : undefined;
+  const model = profileModel ?? llmConfig?.model;
 
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
@@ -318,32 +312,33 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
         },
       },
     };
-    // Use the custom provider's model if not already qualified
-    if (model && !model.includes("/")) {
-      sdkConfig.model = `akm-custom/${model}`;
-    }
+    // The first path segment selects the OpenCode provider. Model IDs may
+    // themselves contain slashes, but still belong to this custom endpoint.
+    if (model) sdkConfig.model = model.startsWith("akm-custom/") ? model : `akm-custom/${model}`;
   }
   return sdkConfig;
 }
 
-/** Digest every materialized value that can change the managed server. */
-function serverRegistryKey(
-  profile: AgentProfile,
-  llmConfig: LlmConnectionConfig | undefined,
-  env: Record<string, string> | undefined,
-): string {
-  const endpoint = profile.endpoint ?? llmConfig?.endpoint;
-  const material = {
-    bin: profile.bin,
-    endpoint: canonicalProviderBase(endpoint),
-    apiKey: (profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey) ?? null,
-    provider: llmConfig?.provider ?? null,
-    config: buildSdkConfig(profile, llmConfig),
-    env: Object.fromEntries(Object.entries(env ?? {}).sort(([a], [b]) => a.localeCompare(b))),
-  };
+/** Digest the executable and exact environment received by the child. */
+function serverRegistryKey(profile: AgentProfile, env: Record<string, string>): string {
+  const material = { bin: profile.bin, env };
   return createHash("sha256")
     .update(JSON.stringify(canonicalize(material)))
     .digest("hex");
+}
+
+function buildServerEnv(
+  config: Record<string, unknown>,
+  bindings: Record<string, string> | undefined,
+  envSource: NodeJS.ProcessEnv,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(envSource)) {
+    if (value !== undefined) env[key] = value;
+  }
+  for (const [key, value] of Object.entries(bindings ?? {})) env[key] = value;
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
+  return env;
 }
 
 function canonicalProviderBase(endpoint: string | undefined): string | null {
@@ -367,26 +362,6 @@ function canonicalize(value: unknown): unknown {
     );
   }
   return value;
-}
-
-/**
- * Overlay `env` onto `process.env`, returning a restore function. The
- * overlay is intended to live only for the SYNCHRONOUS prefix of the server
- * factory call (module doc): mutation → factory() → restore happens in one
- * uninterruptible event-loop turn, so no other code observes it.
- */
-function overlayProcessEnv(env: Record<string, string>): () => void {
-  const previous = new Map<string, string | undefined>();
-  for (const [key, value] of Object.entries(env)) {
-    previous.set(key, process.env[key]);
-    process.env[key] = value;
-  }
-  return () => {
-    for (const [key, prior] of previous) {
-      if (prior === undefined) delete process.env[key];
-      else process.env[key] = prior;
-    }
-  };
 }
 
 /**
@@ -450,7 +425,7 @@ export function __setServeCommand(argv: string[] | null): void {
 /**
  * Spawn-owning replacement for the SDK's `createOpencode` (module doc,
  * *Managed server spawn*). Mirrors `createOpencodeServer`'s contract — the
- * `spawn` (and its `process.env` snapshot) happens in the SYNCHRONOUS prefix,
+ * `spawn` receives the factory's immutable environment directly,
  * `OPENCODE_CONFIG_CONTENT` carries the config, the handshake parses the
  * "opencode server listening on <url>" line — but manages the child so its
  * handle can never pin akm's event loop:
@@ -463,6 +438,7 @@ async function createManagedOpencode(options: {
   bin?: string;
   config?: Record<string, unknown>;
   port?: number;
+  env: Record<string, string>;
 }): Promise<SdkServer> {
   const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
     throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
@@ -470,10 +446,8 @@ async function createManagedOpencode(options: {
 
   const port = options.port ?? DEFAULT_SDK_PORT;
   const argv = _serveCommand ?? [options.bin ?? "opencode", "serve", "--hostname=127.0.0.1", `--port=${port}`];
-  // Synchronous prefix: the env snapshot (incl. any binding overlay in the
-  // caller's frame) is taken HERE, before the first await below.
   const proc = spawn(argv[0] as string, argv.slice(1), {
-    env: { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {}) },
+    env: options.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -586,39 +560,23 @@ async function createManagedOpencode(options: {
 
 async function startServer(
   profile: AgentProfile,
-  llmConfig: LlmConnectionConfig | undefined,
-  env: Record<string, string> | undefined,
+  sdkConfig: Record<string, unknown>,
+  env: Record<string, string>,
   registryKey: string,
 ): Promise<SdkServer> {
   const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
-  const sdkConfig = buildSdkConfig(profile, llmConfig);
-  const options: { bin?: string; config?: Record<string, unknown>; port?: number } = {
+  const options: { bin?: string; config?: Record<string, unknown>; port?: number; env: Record<string, string> } = {
     bin: profile.bin,
     ...(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {}),
+    env,
   };
 
   // Every cached server receives a separately reserved port. This avoids both
   // inter-entry contention and collisions with an unrelated process on 4096.
   options.port = await allocateFreePort(registryKey);
 
-  // Env injection (module doc): the SDK's createOpencodeServer snapshots
-  // process.env synchronously (its spawn precedes its first await), so the
-  // overlay only needs to survive the factory's synchronous prefix. Restore
-  // BEFORE awaiting, so nothing else ever runs under the mutated env.
-  let pending: Promise<SdkServer>;
-  if (env && Object.keys(env).length > 0) {
-    const restore = overlayProcessEnv(env);
-    try {
-      pending = factory(options);
-    } finally {
-      restore();
-    }
-  } else {
-    pending = factory(options);
-  }
-
-  const server = await pending;
+  const server = await factory(options);
   if (!server) throw new Error("Failed to initialise OpenCode SDK server.");
 
   if (!_exitHookInstalled) {
@@ -640,12 +598,15 @@ async function getOrStartServer(
   profile: AgentProfile,
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
+  envSource: NodeJS.ProcessEnv = process.env,
 ): Promise<SdkServer> {
   if (_testServer) return _testServer;
-  const key = serverRegistryKey(profile, llmConfig, env);
+  const sdkConfig = buildSdkConfig(profile, llmConfig);
+  const serverEnv = buildServerEnv(sdkConfig, env, envSource);
+  const key = serverRegistryKey(profile, serverEnv);
   let pending = _servers.get(key);
   if (!pending) {
-    pending = startServer(profile, llmConfig, env, key);
+    pending = startServer(profile, sdkConfig, serverEnv, key);
     _servers.set(key, pending);
     pending.then(
       (server) => {
@@ -796,7 +757,7 @@ export async function runOpencodeSdk(
 
   let client: SdkClient;
   try {
-    ({ client } = await getOrStartServer(profile, llmConfig, opts.env));
+    ({ client } = await getOrStartServer(profile, llmConfig, opts.env, opts.envSource));
   } catch (e) {
     return {
       ok: false,

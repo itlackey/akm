@@ -274,6 +274,42 @@ describe("runTask — prompt target", () => {
     }
   });
 
+  test("lowers a prompt-task model through the selected agent engine aliases exactly once", async () => {
+    writeTask(
+      "agent-model",
+      ["version: 2", 'schedule: "@daily"', "prompt: review this", "engine: reviewer", "model: fast", ""].join("\n"),
+    );
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          reviewer: {
+            kind: "agent",
+            platform: "opencode",
+            modelAliases: { fast: "provider/exact-model" },
+          },
+        },
+        defaults: { engine: "reviewer" },
+      }),
+    );
+    let captured: { model?: string; modelIsExact?: boolean } = {};
+
+    const result = await runTask("agent-model", {
+      stashDir,
+      logDir,
+      runAgentImpl: async (profile) => {
+        captured = { model: profile.model, modelIsExact: profile.modelIsExact };
+        return { ok: true, exitCode: 0, stdout: "reviewed", stderr: "", durationMs: 1 };
+      },
+      now: () => new Date("2025-01-01T00:00:00Z"),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(captured).toEqual({ model: "provider/exact-model", modelIsExact: true });
+  });
+
   test("redacts echoed agent credentials before task logs are persisted", async () => {
     const sentinel = "TASK-ECHO-SENTINEL";
     writeTask("redacted", ["version: 2", 'schedule: "@daily"', "prompt: say hello", "engine: opencode", ""].join("\n"));

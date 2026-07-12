@@ -231,6 +231,64 @@ describe("chatCompletion error redaction", () => {
   });
 });
 
+describe("chatCompletion direct HTTP timeout and abort semantics", () => {
+  function delayedServer(delayMs: number): ReturnType<typeof Bun.serve> {
+    return Bun.serve({
+      port: 0,
+      async fetch() {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return Response.json({ choices: [{ message: { content: "delayed-ok" } }] });
+      },
+    });
+  }
+
+  test("a 1ms per-dispatch timeout aborts a real HTTP request", async () => {
+    const server = delayedServer(50);
+    try {
+      await expect(
+        chatCompletion(
+          { endpoint: `http://localhost:${server.port}`, model: "test-model" },
+          [{ role: "user", content: "hi" }],
+          { timeoutMs: 1 },
+        ),
+      ).rejects.toMatchObject({ code: "timeout" });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("explicit null overrides a configured timeout and installs no internal timer", async () => {
+    const server = delayedServer(20);
+    try {
+      const output = await chatCompletion(
+        { endpoint: `http://localhost:${server.port}`, model: "test-model", timeoutMs: 1 },
+        [{ role: "user", content: "hi" }],
+        { timeoutMs: null },
+      );
+      expect(output).toBe("delayed-ok");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("external abort still cancels a real HTTP request when timeout is null", async () => {
+    const server = delayedServer(100);
+    const controller = new AbortController();
+    try {
+      const pending = chatCompletion(
+        { endpoint: `http://localhost:${server.port}`, model: "test-model" },
+        [{ role: "user", content: "hi" }],
+        { timeoutMs: null, signal: controller.signal },
+      );
+      setTimeout(() => controller.abort(), 5);
+      await expect(pending).rejects.toMatchObject({ code: "network_error" });
+      await expect(pending).rejects.toThrow("Request aborted");
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
 // ── HTML / non-JSON response categorization (#497) ──────────────────────────
 
 function createResponseServer(
