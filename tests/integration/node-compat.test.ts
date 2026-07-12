@@ -111,6 +111,16 @@ function setupStorage(): void {
   cleanup = storage.cleanup;
 }
 
+function configureEngine(name: string, engine: Record<string, unknown>, defaults: Record<string, string>): void {
+  const setEngine = nodeRun(["config", "set", `engines.${name}`, JSON.stringify(engine)], nodeEnv);
+  assertNoBoundaryLeak(setEngine, `config set engine ${name}`);
+  expect(setEngine.status).toBe(0);
+
+  const setDefaults = nodeRun(["config", "set", "defaults", JSON.stringify(defaults)], nodeEnv);
+  assertNoBoundaryLeak(setDefaults, `config set defaults for ${name}`);
+  expect(setDefaults.status).toBe(0);
+}
+
 // ── Guard ────────────────────────────────────────────────────────────────────
 
 beforeAll(() => {
@@ -733,6 +743,7 @@ describe("workflow smoke parity", () => {
 
   test.skipIf(!ENABLED)("workflow create + start + status round-trips through workflow.db on Node", () => {
     setupStorage();
+    configureEngine("workflow-smoke", { kind: "agent", platform: "opencode" }, { engine: "workflow-smoke" });
     const created = nodeRun(["workflow", "create", "smoke-flow"], nodeEnv);
     assertNoBoundaryLeak(created, "workflow create");
     expect(created.status).toBe(0);
@@ -766,16 +777,17 @@ describe("workflow smoke parity", () => {
 /** The exact ESM-boundary symptom the bare-`require` fix removes. */
 const REQUIRE_NOT_DEFINED = "require is not defined";
 
-/** Configure a default LLM profile pointing at a closed local port (fast ECONNREFUSED). */
+/** Configure a default LLM engine pointing at a closed local port (fast ECONNREFUSED). */
 function configureDeadLlm(): void {
-  // The profile must be set atomically: `endpoint` and `model` are both required,
-  // so setting either leaf alone fails whole-config validation.
-  const set = nodeRun(
-    ["config", "set", "profiles.llm.default", '{"endpoint":"http://127.0.0.1:1","model":"smoke-model"}'],
-    nodeEnv,
+  configureEngine(
+    "smoke-llm",
+    {
+      kind: "llm",
+      endpoint: "http://127.0.0.1:1/v1/chat/completions",
+      model: "smoke-model",
+    },
+    { engine: "smoke-llm", llmEngine: "smoke-llm" },
   );
-  assertNoBoundaryLeak(set, "config set llm");
-  expect(set.status).toBe(0);
 }
 
 /** Write a one-step workflow WITH completion criteria so the summary judge fires. */

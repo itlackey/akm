@@ -49,7 +49,11 @@ describe("scheduleUnits", () => {
   test("honours declared concurrency up to the cap", async () => {
     const probe = concurrencyProbe();
     // Pin the cap: the real CPU-derived cap varies by machine (min 1 on 2 cores).
-    await scheduleUnits([1, 2, 3, 4, 5, 6], probe.dispatch, { concurrency: 3, maxConcurrency: 8 });
+    await scheduleUnits([1, 2, 3, 4, 5, 6], probe.dispatch, {
+      concurrency: 3,
+      maxConcurrency: 8,
+      hostConcurrency: 8,
+    });
     expect(probe.peak()).toBe(3);
   });
 
@@ -76,7 +80,11 @@ describe("scheduleUnits", () => {
     // A declared/cap concurrency far above the number of items must not spin up
     // more in-flight dispatches than there are items to dispatch.
     const probe = concurrencyProbe();
-    const results = await scheduleUnits([1, 2, 3], probe.dispatch, { concurrency: 32, maxConcurrency: 16 });
+    const results = await scheduleUnits([1, 2, 3], probe.dispatch, {
+      concurrency: 32,
+      maxConcurrency: 16,
+      hostConcurrency: 16,
+    });
     expect(results).toEqual([2, 4, 6]);
     expect(probe.peak()).toBe(3);
   });
@@ -169,7 +177,11 @@ describe("scheduleUnits — workflow.maxConcurrency config knob", () => {
 
     const probe = concurrencyProbe();
     // Seam of 4 wins over the configured 2.
-    await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, { concurrency: 8, maxConcurrency: 4 });
+    await scheduleUnits([1, 2, 3, 4, 5, 6, 7, 8], probe.dispatch, {
+      concurrency: 8,
+      maxConcurrency: 4,
+      hostConcurrency: 4,
+    });
     expect(probe.peak()).toBe(4);
   });
 });

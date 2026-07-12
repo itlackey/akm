@@ -145,11 +145,50 @@ export async function runMemorySafetyCase(c: EvalCase, ctx: EvalContext): Promis
   const sandbox = createSandbox({ fixture: fixtureAbs, prefix: "akm-eval-mem-", inheritEnv: true });
   try {
     const cli = makeAkmCli(ctx.akmBin, sandbox.env, { record: ctx.recording });
+    const backup = cli.createMigrationBackup();
+    if (backup.status !== 0) {
+      return errorResult(c, `akm backup create failed (exit ${backup.status}): ${backup.stderr.trim()}`, start);
+    }
+    const configDir = path.join(sandbox.stashDir, ".akm");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      `${JSON.stringify(
+        {
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          defaults: { improveStrategy: "memory-safety" },
+          improve: {
+            strategies: {
+              "memory-safety": {
+                processes: {
+                  reflect: { enabled: false },
+                  distill: { enabled: false },
+                  consolidate: { enabled: false },
+                  memoryInference: { enabled: false },
+                  graphExtraction: { enabled: false },
+                  extract: { enabled: false },
+                  validation: { enabled: false },
+                  proactiveMaintenance: { enabled: false },
+                  triage: { enabled: false },
+                  recombine: { enabled: false },
+                  procedural: { enabled: false },
+                },
+                sync: { enabled: false },
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
     const idx = cli.index();
     if (idx.status !== 0) {
       return errorResult(c, `akm index failed (exit ${idx.status}): ${idx.stderr.trim()}`, start);
     }
-    const imp = cli.improve(["--json-to-stdout", ...improveArgs]);
+    const imp = cli.improve(["--json-to-stdout", "--strategy", "memory-safety", ...improveArgs]);
     if (imp.status !== 0) {
       return errorResult(c, `akm improve failed (exit ${imp.status}): ${imp.stderr.trim()}`, start);
     }
