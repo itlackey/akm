@@ -117,6 +117,220 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`fable` built-in model alias** — resolves to `claude-fable-5`
   (`opencode/claude-fable-5` on opencode); recommended resolution target for
   the `deep` workflow model tier.
+- **`akm lint` now checks the frontmatter xref channels for broken refs.**
+  The existing `missing-ref` check additionally scans the `xrefs:`,
+  `supersededBy:`, and `contradictedBy:` frontmatter keys of non-wiki markdown
+  assets (memories, knowledge, lessons, facts, agents, commands, skills,
+  workflows) — the channels the stash back-linking conventions route
+  provenance and correction links through, and previously the only ref channel
+  with zero checking. Dangling refs are flagged with a detail naming the key
+  (`missing ref: <ref> (frontmatter <key>; resolved to <relPath>)`). The
+  `refs: []` body-scan carve-out does not suppress the new pass; `lint_skip:
+  [missing-ref]` suppresses both; non-ref values (URLs, `raw/<slug>`,
+  `<placeholder>` templates, shell vars) are ignored; refs resolving in a
+  configured extra stash root stay clean. **Note for `--fail-on-flagged` CI
+  users:** stashes with already-dangling xrefs (e.g. from past renames) will
+  gain new `missing-ref` findings on upgrade — fix the refs or add
+  `lint_skip: [missing-ref]` per file. `sources:`, `source_refs:`, and
+  `evidenceSources:` are deliberately not checked (wiki `sources:` is covered
+  by `akm wiki lint`; the latter two legitimately point at merged-away
+  assets).
+- **`--xref <ref>` on `akm remember` and `akm import` — write-time
+  cross-references with validation.** The stash back-linking conventions route
+  provenance and associative links through `xrefs:` frontmatter, but neither
+  CLI write flow could express them (remember always generated its own
+  frontmatter block; import wrote content verbatim). The new repeatable flag
+  records refs in the written asset's `xrefs:` frontmatter list, which the
+  indexer folds into search hints — the new asset becomes findable from
+  searches for its source. `remember` merges the refs into its generated
+  frontmatter (composes with `--tag`/scope flags; does not trigger the
+  tags-required check); `import` dedupe-appends into the document's existing
+  frontmatter, or adds a block when the document has none — never a nested
+  second block. A document whose existing frontmatter is not a parseable YAML
+  mapping aborts the import (exit 2, nothing written) rather than being
+  rewritten lossily; importing it without `--xref` still preserves it
+  verbatim. Every ref is validated before anything is written, against the
+  write target plus all configured sources (read-only cross-stash sources
+  count): an unresolvable ref fails with the standard usage envelope (exit 2)
+  and leaves the stash untouched. The conventions' ~5-xref cap stays soft —
+  exceeding it warns on stderr but still writes. Additionally, a type-root
+  write (no `--path`, flat name) into a stash carrying convention facts now
+  returns an additive `hint` output key pointing at the stash's placement
+  conventions (`fact:conventions/organization` when that fact exists), so CLI
+  writers see the conventions that LLM flows already receive by injection.
+- **`--supersedes <ref>` on `akm remember` and `akm import` — atomic
+  correction + demotion of the superseded asset.** The stash conventions'
+  corrections pattern needs TWO writes (the new correction asset with an xref
+  to what it corrects, plus a metadata edit demoting the old asset), which
+  previously meant hand-editing the old file's frontmatter and remembering to
+  reindex it. The new repeatable flag does both: the correction is written
+  with the old ref folded into its `xrefs:` (correction provenance), and the
+  old asset gains `beliefState: superseded` +
+  `supersededBy: [<new ref>]` via the shared `writeSupersededEdge` primitive
+  (sibling of `writeContradictEdge`) — a metadata-only frontmatter edit that
+  preserves every other key and the body byte-for-byte, sorted-set-appended
+  and idempotent across re-runs. The mutated old file is reindexed by the
+  write path, so `--belief current` hides it and ranking demotes it
+  immediately. An unresolvable ref is input validation: exit 2 with the
+  standard `{ok:false,error,code}` envelope and NOTHING written or demoted
+  (no partial correction); a ref resolving to the asset being written itself
+  (self-supersede via `--force` overwrite) is rejected the same way instead
+  of letting a correction demote itself. An old asset that resolves only
+  outside the write target and the working stash (in a read-only source, or
+  in a writable source that is not this write's target) is not mutated: the
+  correction still writes, stderr warns, and the JSON output reports the
+  additive `superseded: [{ref, applied: false, reason}]` key (`applied: true`
+  on success) — the reason names the `--target` remedy when one exists. An
+  old asset whose existing frontmatter is not parseable YAML is likewise
+  skipped (`applied: false`) rather than rewritten through the lossy lenient
+  parser. On a git write target the demotion is ordered before the
+  batch-at-boundary commit, so the correction and the demoted old asset land
+  in one commit.
+- **Ref-prefix search queries — `akm search "<type>:<prefix>/"` now enumerates
+  that subtree.** A query shaped like a ref prefix (trailing slash required:
+  `memory:projectA/`; a bare `memory:` lists the whole type) translates to a
+  typed index enumeration narrowed to entry names under the prefix, instead of
+  degenerating into the AND-token FTS query its sanitized form used to produce
+  (`"memory projectA"` — noise, since `entry_type` is not an FTS column). The
+  listing is recursive and `/`-boundary exact (`projectA/` cannot leak a
+  sibling `projectAlpha/…` scope), matches names case-insensitively (the CLI
+  lowercases queries; on-disk scope directories may carry mixed case), and
+  composes with `--limit`, `--belief`, `--filter`, and named `--source`
+  narrowing exactly like the existing empty-query enumeration — hits carry the
+  fixed browse score `1` in deterministic listing order, not a relevance
+  ranking. The parsed type is explicit intent: a bare `session:` enumerates
+  sessions just like `--type session` (the default session exclusion is an
+  untyped-path policy), while an explicit `--type` flag always wins over the
+  type parsed from the query (the branch fires only on untyped searches). A
+  full ref without the trailing slash (`memory:projectA/auth-tip`) stays an
+  ordinary keyword search — resolving a single ref is `akm show`'s job.
+  **Stable-surface note:** `akm search` is Stable; this changes results for a
+  query shape that previously returned noise or nothing. A user literally
+  keyword-searching for the string `memory:x/` loses the old fuzzy token
+  behavior — accepted as negligible.
+- **The `category:` frontmatter key is now captured into the index** as
+  `entry.category` (entry_json only — no schema migration). The key already
+  drives convention-fact prompt injection (`resolveStashStandards`) and the
+  fact linter, but the indexer never captured it, so no category-keyed search
+  or ranking policy was implementable. Captured for all markdown asset types
+  alongside `beliefState` (trimmed; blank/non-string values ignored; no
+  default invented), and whitelisted through the `.stash.json` entry
+  round-trip. Search results and ranking are unchanged — this is capture
+  only (a unit test pins that `category` never enters the FTS search
+  fields). **Requires a reindex to take effect** for existing entries. The
+  companion rank-time demotion of `category: convention` facts on untyped
+  queries was NOT shipped: the prescribed measurement (full skeleton
+  convention facts plus a real `knowledge/auth` asset, untyped `auth` query,
+  semantic off) shows no crowding — FTS is exact-first, so prefix expansion
+  onto the facts' tokens only happens when nothing matches the query exactly,
+  and a real domain asset always outranks the facts. That invariant is pinned
+  by `tests/search-convention-fact-demotion.test.ts`, which becomes the
+  regression guard if a demotion contributor is ever revisited.
+- **Config-gated indexing of the self-situating body opening —
+  `index.indexBodyOpening` (default `false`).** Body prose is not indexed
+  (the FTS `content` column carries only TOC headings and parameters), which
+  is why the stash conventions route orientation into
+  `description:`/`when_to_use:`. With the new flag enabled, the metadata pass
+  captures the first prose paragraph of each markdown asset body — skipping
+  headings (ATX and setext), fenced code blocks, thematic breaks, and a
+  leading nested frontmatter block (only when its content is actually
+  frontmatter-shaped: prose wrapped in decorative `---` lines is captured,
+  not discarded); capped at 280 chars with word-boundary truncation and a
+  trailing ellipsis — into `entry.bodyOpening`, which folds into the
+  lowest-weight `content` FTS column (bm25 weight 1.0, so a name match always
+  outranks a body-opening-only match) and into the search/embedding text.
+  Secret and env files are never read for it, and session-kind memories
+  (`akm_memory_kind` in outer or nested inner frontmatter) are excluded —
+  their bodies are raw transcripts. Both indexing walks and write-path
+  indexing honor the flag (the metadata pass reads the user config directly).
+  With the flag absent or `false`, entries and search fields stay
+  byte-identical to before. **Costs of toggling (either direction):** indexed
+  text changes, so collapse-detector canary recall baselines shift — re-mint
+  via `akm improve canary --refresh` — and embeddings are NOT regenerated for
+  entries that already have one, while incremental runs re-extract only
+  changed files. Run `akm index --full` after toggling: it re-extracts every
+  entry and wipes embeddings so they rebuild from the new text; until then
+  `akm index` warns that the flag differs from the state the index was built
+  with. The conventions' `description:`/`when_to_use:` orientation routing
+  remains primary — this flag makes body openings additionally pay retrieval
+  rent, it does not replace structured metadata. See `docs/configuration.md`.
+- **`akm mv <ref> <new-name>` — rename with inbound-xref rewrite and
+  utility-history preservation (Experimental).** The stash conventions'
+  forced-rename procedure ("grep and fix inbound xrefs in the same pass") was
+  agent-executable except for the part only the CLI can do: a rename used to
+  mint a new index row, orphaning the `utility_scores` /
+  `utility_scores_scoped` / embeddings / salience rows keyed by entry id —
+  the "rename resets learned ranking" cost the conventions warn about. The
+  new verb does the whole pass: it moves the file (a memory's `.derived.md`
+  twin moves together, keeping the `entry_key + ".derived"` belief-inheritance
+  coupling), rewrites inbound refs across the writable stash's markdown files
+  — body prose, frontmatter ref-list keys (`xrefs:`/`refs:`/`supersededBy:`/
+  …), and fenced code blocks — with complete-ref boundary matching (a longer
+  ref sharing the old ref as a prefix is untouched), and re-keys the index
+  row **in place** so the row id and every id-keyed ranking table survive;
+  the moved row and rewritten citers are FTS-refreshed so search reflects the
+  new name immediately. Scope v1: flat-markdown asset types (`memory`,
+  `knowledge`, `command`, `agent`, `workflow`, `lesson`, `session`, `fact`)
+  in the primary writable stash only, and the source ref must be the
+  canonical spelling — a ref that resolves only through one of lint's
+  fallback resolutions (knowledge-subdir alias, direct-path) is rejected
+  naming the canonical ref, since a fallback-keyed move would strand the
+  index row and dangle canonical citers. Wiki refs, cross-type targets,
+  existing targets, unresolvable refs, type-root escapes, `.derived` twin
+  refs as the source (rename the base — the twin follows), and target names
+  ending in `.derived` (reserved twin suffix) are rejected with the
+  standard envelope (exit 2, nothing moved). Read-only sources are scanned
+  but never written — their citing files are reported in `readOnlyCiters` as
+  manual follow-ups. Output:
+  `{ok, from, to, rewrote: [{file, count}], readOnlyCiters, utilityPreserved}`;
+  a successful move appends an `mv` event. The operation spans FS + DB and is
+  not transactional, but its ordering (plan rewrites → apply citer edits →
+  rename last → re-key index last) makes an interrupted run safely
+  re-runnable; with no local index built, the rename still succeeds and the
+  next `akm index` picks it up, and `utilityPreserved: false` discloses when
+  an existing index could not be re-keyed (the ranking history then resets
+  on the next full index). Added to the v1 §9.4 command surface as an
+  Experimental-tier additive entry (see `STABILITY.md`).
+
+### Changed
+
+- **Directory (scope/domain) tokens now always merge into `tags` at index
+  time**, even when an asset sets explicit `tags:` frontmatter. Previously
+  explicit tags suppressed all path-derived tags, so a nested asset like
+  `memory:projectA/auth-tip` with `tags: [auth]` silently lost the exact
+  tag-match ranking boost for its scope token unless the author restated it.
+  The merged tokens come from the canonical ref subpath
+  (`extractDirTagsFromName`), which also fixes the flat-walk indexing path
+  losing directory segments in the empty-tags fallback. Filename tokens are
+  still auto-derived only when `tags` is empty (they already live in the FTS
+  name column and aliases), and the empty-tags fallback itself is unchanged.
+  **Operator notes:** the change takes effect on the next reindex and alters
+  indexed tag text for nested assets with explicit tags, so collapse-detector
+  canary recall baselines may shift — re-mint them with `akm improve canary
+  --refresh`. Embeddings are not regenerated when indexed text changes; the
+  drift here is small (the merged tokens already appear in the name field),
+  but a purge/re-embed picks up the new text exactly.
+- **Demoting belief states now cap an entry's final search score**
+  (superseded ≤ 0.25, contradicted ≤ 0.2, archived ≤ 0.15, deprecated ≤
+  0.28). The existing additive belief penalties are applied inside the
+  multiplicative boost sum on a min-max-normalized FTS base (rank-1 vs rank-2
+  base can differ by up to 0.7), so a superseded incumbent that was the best
+  keyword match stayed clamp-pinned at 1.0 above its own correction — the
+  demotion was invisible exactly when the corrections pattern needs it. The
+  ceiling is applied once at the end of the single scoring pipeline (sort
+  order and displayed scores stay consistent); demoted entries remain listed
+  under the default `--belief all`, keep their relative ordering, and the
+  `--belief` filter axis is unchanged. Semantic-only hits are judged against
+  the `search.minScore` floor by their pre-ceiling score, so a ceiling below
+  the floor (archived 0.15 < default 0.2) ranks the hit last instead of
+  silently dropping it. Ordering changes only for stashes containing
+  belief-flagged assets.
+- **`mutateFrontmatter` (belief-edge writers: supersede/contradict edges,
+  belief refresh) now preserves the body bytes verbatim** when the file
+  already has a frontmatter block, instead of re-normalizing the
+  fence-to-body separator through `assembleAsset`. A metadata edit is no
+  longer a (whitespace-level) content edit; files gaining their first
+  frontmatter block still use the canonical shape.
 
 ### Fixed
 

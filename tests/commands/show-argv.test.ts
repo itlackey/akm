@@ -95,6 +95,10 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
 describe("entrypoint global --shape=summary ordering", () => {
   test("allows global --shape=summary before show", async () => {
     const storage = useStorage();
+    // Semantic off keeps stderr empty as asserted below: with the default
+    // ("auto") the local embedder fetches its model from huggingface.co
+    // during auto-index, and an offline/blocked fetch warns on stderr.
+    fs.writeFileSync(path.join(storage.configDir, "akm", "config.json"), JSON.stringify({ semanticSearchMode: "off" }));
     writeFixture(
       path.join(storage.stashDir, "commands", "release.md"),
       "---\ndescription: Release\n---\nRun release {{version}}\n",

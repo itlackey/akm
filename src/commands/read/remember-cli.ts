@@ -15,7 +15,13 @@ import {
   runAutoHeuristics,
   runLlmEnrich,
 } from "../remember";
-import { assertFlatAssetName, inferAssetName, writeMarkdownAsset } from "./knowledge";
+import {
+  assertFlatAssetName,
+  inferAssetName,
+  resolveSupersedesForWrite,
+  resolveXrefsForWrite,
+  writeMarkdownAsset,
+} from "./knowledge";
 import { akmSearch } from "./search";
 
 // ── Helper: similar memory search ────────────────────────────────────────────
@@ -82,6 +88,16 @@ export const rememberCommand = defineJsonCommand({
       type: "string",
       description: "Source reference (URL, asset ref, file path, or any free-form string)",
     },
+    xref: {
+      type: "string",
+      description:
+        "Cross-reference ref recorded in the memory's `xrefs:` frontmatter (repeatable: --xref knowledge:auth-flow --xref memory:vpn-note). Each ref must resolve in the write target or a configured source; an unresolvable ref aborts the write.",
+    },
+    supersedes: {
+      type: "string",
+      description:
+        "Ref of an existing asset this memory corrects (repeatable: --supersedes memory:projectA/old-note). Writes the correction with an xref to the old asset AND demotes the old asset (`beliefState: superseded` + `supersededBy`, a metadata-only edit) so ranking prefers the correction and `--belief current` hides the stale version. An unresolvable or self-referencing ref aborts the write; a ref outside the write target and working stash still writes the correction but skips the demotion (reported as applied: false).",
+    },
     auto: {
       type: "boolean",
       description: "Apply heuristic tagging (code, subjective, source, observed_at) from the body",
@@ -129,6 +145,25 @@ export const rememberCommand = defineJsonCommand({
     // only exposes the last value for repeated string flags.
     const rawTags = parseAllFlagValues("--tag");
 
+    // Collect and validate --xref occurrences (repeatable, same argv pattern
+    // as --tag). Validation happens BEFORE any write: an unresolvable ref is
+    // input validation (UsageError → exit 2) and must leave the stash
+    // untouched. Refs resolvable only in a configured extra stash source are
+    // accepted (cross-stash provenance).
+    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), args.target);
+
+    // Collect and validate --supersedes occurrences (repeatable). Same
+    // before-any-write validation contract: an unresolvable ref exits 2 with
+    // nothing written AND nothing demoted (no partial correction). The
+    // superseded refs fold into the new memory's xrefs automatically
+    // (correction provenance per the back-linking conventions); the demotion
+    // itself runs inside writeMarkdownAsset, ordered before the git boundary
+    // commit.
+    const supersedes = resolveSupersedesForWrite(parseAllFlagValues("--supersedes"), args.target);
+    for (const s of supersedes) {
+      if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
+    }
+
     // Collect scope flags. Scope alone counts as structured metadata so we
     // emit frontmatter, but it does NOT trigger the "tags required" check —
     // memory + scope (no tags) is a valid combination for multi-tenant use.
@@ -140,7 +175,10 @@ export const rememberCommand = defineJsonCommand({
     const hasScope = Object.keys(scopeFields).length > 0;
 
     const hasTagRequiringArgs = rawTags.length > 0 || !!args.expires || !!args.source || !!args.description;
-    const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto;
+    // --xref counts as structured metadata (it must land in frontmatter) but,
+    // like scope, does NOT trigger the tags-required check — provenance
+    // without tags is a valid write.
+    const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto || xrefs.length > 0;
 
     if (!hasStructuredArgs) {
       // Phase 1B / Rec 7: even the zero-flag hot-path emits
@@ -162,6 +200,7 @@ export const rememberCommand = defineJsonCommand({
         force: args.force,
         target: args.target,
         path: args.path,
+        supersedes,
       });
       appendEvent({
         eventType: "remember",
@@ -242,6 +281,7 @@ export const rememberCommand = defineJsonCommand({
       description,
       tags,
       source,
+      xrefs,
       observed_at,
       expires,
       subjective,
@@ -252,14 +292,20 @@ export const rememberCommand = defineJsonCommand({
 
     const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
 
+    // Derive the asset slug from the body, exactly like the hot path above:
+    // `contentWithFrontmatter` starts with the `---` fence, which
+    // inferAssetName would slugify to "" and fall back to a random
+    // memory-<epoch>-<rand> name.
     const result = await writeMarkdownAsset({
       type: "memory",
       content: contentWithFrontmatter,
       name: args.name,
       fallbackPrefix: "memory",
+      preferredName: inferAssetName(body, "memory"),
       force: args.force,
       target: args.target,
       path: args.path,
+      supersedes,
     });
     appendEvent({
       eventType: "remember",

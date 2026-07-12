@@ -40,7 +40,13 @@ function resolveEventSource(): UsageEventSource | undefined {
 export const searchCommand = defineJsonCommand({
   meta: { name: "search", description: "Search the stash" },
   args: {
-    query: { type: "positional", description: "Search query (omit to list all assets)", required: false, default: "" },
+    query: {
+      type: "positional",
+      description:
+        'Search query (omit to list all assets). A ref-prefix query — "<type>:<prefix>/" or bare "<type>:" — enumerates that subtree/type instead of keyword-matching; an explicit --type wins over the parsed type.',
+      required: false,
+      default: "",
+    },
     type: {
       type: "string",
       description:

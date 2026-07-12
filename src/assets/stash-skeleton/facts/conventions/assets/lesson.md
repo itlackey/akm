@@ -41,3 +41,9 @@ Use a lesson to record:
 - Create a new lesson only when the trigger or failure mode is meaningfully different.
 - Deprecate or revise stale lessons instead of allowing contradictory guidance to accumulate.
 - When a lesson becomes broadly normative, consider promoting the stable rule into a `fact:conventions/...` asset.
+
+## Placement & linking
+
+- Lessons are **scope-born**: file them under the **project/client** they were
+  learned in (`lesson:projectA/token-refresh-gotcha`) and xref the asset the
+  lesson corrects or refines.

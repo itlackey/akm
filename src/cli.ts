@@ -90,6 +90,7 @@ import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { extractCommand } from "./commands/improve/extract-cli";
 import { improveCommand } from "./commands/improve/improve-cli";
+import { mvCommand } from "./commands/mv-cli";
 import { hintsCommand, lessonsCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
@@ -557,6 +558,7 @@ export const main = defineCommand({
     import: importKnowledgeCommand,
     sync: syncCommand,
     clone: cloneCommand,
+    mv: mvCommand,
     registry: registryCommand,
     config: configCommand,
     feedback: feedbackCommand,

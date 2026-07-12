@@ -12,6 +12,8 @@ akm search "<query>" --source both            # Also search registries
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
+akm search "memory:projectA/"                 # Enumerate a typed subtree (ref-prefix; trailing slash required)
+akm search "knowledge:"                       # List every asset of a type
 ```
 
 | Flag | Values | Default |
@@ -22,6 +24,12 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
 | `--detail` | `brief`, `normal`, `full` | `brief` |
 | `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
+
+Ref-prefix queries (`"<type>:<prefix>/"` or a bare `"<type>:"`) return a
+deterministic listing, not a relevance ranking. A full ref without the
+trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword search —
+resolving a single ref is `akm show`'s job — and an explicit `--type` flag
+wins over the type parsed from the query.
 
 ## Curate
 
@@ -68,7 +76,11 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm remember "note" --target my-other-stash    # Route write to a named writable stash source
+akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable; ref must resolve)
+akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the old asset (beliefState: superseded)
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
+akm import ./doc.md --xref knowledge:auth-flow # Merge provenance xrefs into the imported doc's frontmatter
+akm import ./new.md --supersedes knowledge:old # Import a correction AND demote the doc it replaces
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --target my-other-stash    # Route import to a named writable stash source
@@ -185,6 +197,28 @@ akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 ```
 
 When `--dest` is provided, `akm init` is not required first.
+
+## Move / Rename (Experimental)
+
+Rename an asset within its type directory in the primary writable stash. Prefer
+NOT renaming (a ref is chosen once); when a rename is forced, `akm mv` does the
+whole convention pass: it moves the file (a memory's `.derived.md` twin moves
+together), rewrites inbound refs across the writable stash — body prose,
+frontmatter ref lists (`xrefs:`/`refs:`/`supersededBy:`), and fenced examples —
+and re-keys the index row in place so the asset's learned ranking history
+survives.
+
+```sh
+akm mv memory:projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
+akm mv memory:solo memory:renamed-solo             # Same-type ref-shaped target also accepted
+```
+
+Wiki refs, cross-type targets, existing targets, `../` escapes, non-canonical
+source spellings (the error names the canonical ref), `.derived` twin sources
+(rename the base — the twin follows), and `.derived`-suffixed target names are
+rejected (exit 2, nothing moved). Read-only sources are scanned but never
+written — their citing files come back in `readOnlyCiters` as manual
+follow-ups. Verify with `akm lint` (missing-ref) afterwards.
 
 ## Sync
 

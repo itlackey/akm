@@ -26,6 +26,11 @@ import { runConfigValidate } from "../src/cli/config-validate";
 import { loadUserConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
 
+// chmod-based write-failure simulation is a no-op when running as root
+// (permission bits are not enforced for uid 0), so these tests can only
+// exercise the failure path as a non-root user. CI runners are non-root.
+const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
 // ── Test isolation ────────────────────────────────────────────────────────────
 
 function makeTmpDir(): string {
@@ -234,31 +239,34 @@ describe("auto-migration banner (WS-2)", () => {
     expect(disk.configVersion).toBeUndefined();
   });
 
-  test("migration write failure throws ConfigError with AKM_NO_AUTO_MIGRATE=1 in the message", () => {
-    writeConfig(legacyConfig());
-    // Make the config dir read-only so the write fails
-    const configDir = path.dirname(configPath());
-    let chmodDone = false;
-    try {
-      fs.chmodSync(configDir, 0o500); // r-x: cannot write
-      chmodDone = true;
-      expect(() => {
-        resetConfigCache();
-        loadUserConfig();
-      }).toThrow(ConfigError);
-      // Also assert that hint or message contains AKM_NO_AUTO_MIGRATE=1
+  test.skipIf(runningAsRoot)(
+    "migration write failure throws ConfigError with AKM_NO_AUTO_MIGRATE=1 in the message",
+    () => {
+      writeConfig(legacyConfig());
+      // Make the config dir read-only so the write fails
+      const configDir = path.dirname(configPath());
+      let chmodDone = false;
       try {
-        resetConfigCache();
-        loadUserConfig();
-      } catch (err) {
-        const e = err as ConfigError;
-        const combined = `${e.message} ${e.hint() ?? ""}`;
-        expect(combined).toContain("AKM_NO_AUTO_MIGRATE=1");
+        fs.chmodSync(configDir, 0o500); // r-x: cannot write
+        chmodDone = true;
+        expect(() => {
+          resetConfigCache();
+          loadUserConfig();
+        }).toThrow(ConfigError);
+        // Also assert that hint or message contains AKM_NO_AUTO_MIGRATE=1
+        try {
+          resetConfigCache();
+          loadUserConfig();
+        } catch (err) {
+          const e = err as ConfigError;
+          const combined = `${e.message} ${e.hint() ?? ""}`;
+          expect(combined).toContain("AKM_NO_AUTO_MIGRATE=1");
+        }
+      } finally {
+        if (chmodDone) fs.chmodSync(configDir, 0o700);
       }
-    } finally {
-      if (chmodDone) fs.chmodSync(configDir, 0o700);
-    }
-  });
+    },
+  );
 
   test("no banner for an already-migrated 0.8.0 config", () => {
     writeConfig({ configVersion: "0.8.0", stashDir: "/my/stash" });

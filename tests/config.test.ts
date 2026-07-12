@@ -19,6 +19,11 @@ import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { setQuiet } from "../src/core/warn";
 
+// chmod-based write-failure simulation is a no-op when running as root
+// (permission bits are not enforced for uid 0), so these tests can only
+// exercise the failure path as a non-root user. CI runners are non-root.
+const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
 }
@@ -1142,7 +1147,7 @@ describe("auto-migration in loadConfig", () => {
     expect(loaded.profiles?.llm?.default?.endpoint).toBe("http://localhost:11434");
   });
 
-  test("throws ConfigError when migrated write fails (no infinite re-run loop) (#461)", () => {
+  test.skipIf(runningAsRoot)("throws ConfigError when migrated write fails (no infinite re-run loop) (#461)", () => {
     delete process.env.AKM_NO_AUTO_MIGRATE;
 
     const configPath = getConfigPath();

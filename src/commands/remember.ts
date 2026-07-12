@@ -35,6 +35,14 @@ export interface MemoryFrontmatterFields {
   description?: string;
   tags?: string[];
   source?: string;
+  /**
+   * Cross-reference refs (`type:name`) collected via `--xref` (repeatable).
+   * Persisted as the `xrefs:` frontmatter list — the channel the stash
+   * back-linking conventions mandate for provenance/associative links; the
+   * indexer folds these into the asset's search hints. An empty array is
+   * treated the same as absent.
+   */
+  xrefs?: string[];
   observed_at?: string;
   expires?: string;
   subjective?: boolean;
@@ -89,6 +97,7 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.description?.trim()) obj.description = fields.description;
   if (fields.tags && fields.tags.length > 0) obj.tags = fields.tags;
   if (fields.source?.trim()) obj.source = fields.source;
+  if (fields.xrefs && fields.xrefs.length > 0) obj.xrefs = fields.xrefs;
   if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;

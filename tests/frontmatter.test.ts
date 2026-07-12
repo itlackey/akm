@@ -1,6 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar } from "../src/core/asset/frontmatter";
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  mutateFrontmatter,
+  parseFrontmatter,
+  parseFrontmatterBlock,
+  parseYamlScalar,
+} from "../src/core/asset/frontmatter";
 import { asNonEmptyString } from "../src/core/common";
+import { makeSandboxDir, type SandboxedDir } from "./_helpers/sandbox";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
 
@@ -187,6 +195,84 @@ describe("parseFrontmatterBlock", () => {
     expect(result).not.toBeNull();
     expect(result?.frontmatter).toBe("key: val");
     expect(result?.content).toBe("");
+  });
+});
+
+// ── mutateFrontmatter ───────────────────────────────────────────────────────
+//
+// SPEC-5 (stash-conventions-code-spec.md): a frontmatter mutation is a
+// METADATA edit, not a content edit. When the file already has a frontmatter
+// block, only the block is replaced and the body bytes are kept verbatim —
+// including a writer's single-newline fence-to-body separator and a missing
+// trailing newline, both of which routing through `assembleAsset` would
+// silently re-normalize. Files gaining their FIRST block still take the
+// canonical `assembleAsset` shape.
+
+describe("mutateFrontmatter", () => {
+  const disposers: SandboxedDir[] = [];
+
+  afterEach(() => {
+    for (const d of disposers.splice(0)) d.cleanup();
+  });
+
+  function writeTmpFile(content: string): string {
+    const sandbox = makeSandboxDir("akm-mutate-fm");
+    disposers.push(sandbox);
+    const filePath = path.join(sandbox.dir, "asset.md");
+    fs.writeFileSync(filePath, content, "utf8");
+    return filePath;
+  }
+
+  test("existing block: body bytes preserved verbatim (single-newline separator, no trailing newline)", () => {
+    // Hot-path writer shape: one newline after the closing fence, body does
+    // not end in a newline. assembleAsset would insert a blank-line separator
+    // and force a trailing newline — a whitespace content edit.
+    const body = "Body line without trailing newline";
+    const filePath = writeTmpFile(`---\ncaptureMode: hot\n---\n${body}`);
+
+    const wrote = mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, beliefState: "superseded" }));
+    expect(wrote).toBe(true);
+
+    const raw = fs.readFileSync(filePath, "utf8");
+    const block = parseFrontmatterBlock(raw);
+    expect(block?.content).toBe(body);
+    expect(raw.endsWith("\n")).toBe(false);
+    const parsed = parseFrontmatter(raw);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("superseded");
+  });
+
+  test("existing block: leading blank lines in the body survive the round-trip", () => {
+    const filePath = writeTmpFile("---\nk: v\n---\n\n\nSpaced body.\n");
+    const before = parseFrontmatterBlock(fs.readFileSync(filePath, "utf8"));
+
+    mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, extra: 1 }));
+
+    const after = parseFrontmatterBlock(fs.readFileSync(filePath, "utf8"));
+    expect(after?.content).toBe(before?.content);
+  });
+
+  test("file gaining its FIRST block uses the canonical assembleAsset shape", () => {
+    const filePath = writeTmpFile("Plain incumbent body.\n");
+
+    const wrote = mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, beliefState: "superseded" }));
+    expect(wrote).toBe(true);
+
+    const raw = fs.readFileSync(filePath, "utf8");
+    expect(raw.startsWith("---\n")).toBe(true);
+    expect(raw.endsWith("\n")).toBe(true);
+    const parsed = parseFrontmatter(raw);
+    expect(parsed.data.beliefState).toBe("superseded");
+    expect(parsed.content.replace(/^\n+/, "")).toBe("Plain incumbent body.\n");
+  });
+
+  test("mutator returning null skips the write and leaves the file byte-identical", () => {
+    const original = "---\nk: v\n---\nBody.\n";
+    const filePath = writeTmpFile(original);
+
+    const wrote = mutateFrontmatter(filePath, () => null);
+    expect(wrote).toBe(false);
+    expect(fs.readFileSync(filePath, "utf8")).toBe(original);
   });
 });
 

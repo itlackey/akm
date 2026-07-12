@@ -7,6 +7,8 @@
  *
  * These transform a raw user query into an FTS5-safe MATCH expression. They
  * touch no database state, so they are unit-testable with zero DB setup.
+ * `parseRefPrefixQuery` is the one non-FTS helper: it decides whether a raw
+ * query should bypass FTS entirely (SPEC-4 ref-prefix enumeration).
  */
 
 /**
@@ -56,4 +58,45 @@ export function buildPrefixQuery(ftsQuery: string): string | null {
   if (!hasPrefix) return null;
 
   return prefixTokens.join(" ");
+}
+
+/**
+ * SPEC-4 — parse a ref-prefix query (`akm search "<type>:<prefix>/"`).
+ *
+ * Decides whether a raw query is a typed subtree-enumeration request rather
+ * than an ordinary keyword search. Matching is deliberately conservative: the
+ * trimmed query must be EXACTLY
+ *
+ *   - `<known-type>:`           → enumerate the whole type (namePrefix `""`), or
+ *   - `<known-type>:<prefix>/`  → enumerate names under `<prefix>/`.
+ *
+ * The trailing slash is REQUIRED for a non-empty prefix — and is RETAINED in
+ * the returned `namePrefix` — so that a plain `entry.name.startsWith(namePrefix)`
+ * check gives exact `/`-boundary subtree semantics (`"projecta/"` cannot match
+ * a sibling `projectalpha/…` scope). Bare refs like `memory:a/b` therefore
+ * stay ordinary searches (resolving one ref is `akm show` territory), and any
+ * interior whitespace disqualifies (prose mentioning a ref is still prose).
+ *
+ * `knownTypes` is passed in by the caller (e.g. `getAssetTypes()`) to keep
+ * this module dependency-free.
+ *
+ * Returns `null` when the query is not a ref-prefix request.
+ */
+export function parseRefPrefixQuery(
+  query: string,
+  knownTypes: readonly string[],
+): { type: string; namePrefix: string } | null {
+  const trimmed = query.trim();
+  if (trimmed.length === 0 || /\s/.test(trimmed)) return null;
+
+  const colon = trimmed.indexOf(":");
+  if (colon <= 0) return null;
+
+  const type = trimmed.slice(0, colon);
+  if (!knownTypes.includes(type)) return null;
+
+  const rest = trimmed.slice(colon + 1);
+  if (rest === "") return { type, namePrefix: "" };
+  if (rest.endsWith("/")) return { type, namePrefix: rest };
+  return null;
 }

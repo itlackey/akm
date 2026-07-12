@@ -26,7 +26,7 @@ import {
   TYPE_DIRS,
 } from "../src/core/asset/asset-spec";
 import { ASSET_TYPE_SET, ASSET_TYPES, isAssetType } from "../src/core/common";
-import type { StashEntry } from "../src/indexer/passes/metadata";
+import { generateMetadata, type StashEntry } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyScoreContributors, type RankingContext } from "../src/indexer/search/ranking-contributors";
 
@@ -96,6 +96,48 @@ describe("pinned facts rank above ordinary facts", () => {
     applyScoreContributors(pinned, ctx);
     applyScoreContributors(plain, ctx);
     expect(pinned.score).toBeGreaterThan(plain.score);
+  });
+});
+
+describe("fact category is captured into the index entry (SPEC-6)", () => {
+  // SPEC-6 (docs/design/stash-conventions-code-spec.md): the `category:`
+  // frontmatter key — which already drives resolveStashStandards' prompt
+  // injection and the fact linter — must also land on the indexed StashEntry
+  // so category-keyed policies (e.g. rank-time handling of convention facts)
+  // are implementable at all. Read through a typed accessor so this file
+  // compiles before the `category?: string` field lands on StashEntry.
+  function entryCategory(entry: StashEntry | undefined): string | undefined {
+    return (entry as (StashEntry & { category?: string }) | undefined)?.category;
+  }
+
+  test("convention and meta categories land on entry.category; a fact without one stays undefined", async () => {
+    const stashRoot = makeTempStash();
+    const factsRoot = path.join(stashRoot, "facts");
+    const files: Record<string, string> = {
+      "conventions/organization.md":
+        "---\ncategory: convention\ndescription: house placement rules\n---\n\n# Org\n\nBody.\n",
+      "active-projects.md":
+        "---\ncategory: meta\ndescription: canonical project slugs\n---\n\n# Projects\n\n- projectA\n",
+      "team/tool-stack.md": "---\ndescription: team stack\n---\n\nWe use Bun.\n",
+    };
+    for (const [rel, body] of Object.entries(files)) {
+      const full = path.join(factsRoot, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, body, "utf8");
+    }
+
+    const stash = await generateMetadata(
+      factsRoot,
+      "fact",
+      Object.keys(files).map((rel) => path.join(factsRoot, rel)),
+    );
+    const byName = new Map(stash.entries.map((e) => [e.name, e]));
+    expect(byName.size).toBe(3);
+    expect(entryCategory(byName.get("conventions/organization"))).toBe("convention");
+    expect(entryCategory(byName.get("active-projects"))).toBe("meta");
+    // No default is invented — a category-less fact carries no category.
+    expect(entryCategory(byName.get("team/tool-stack"))).toBeUndefined();
+    cleanup();
   });
 });
 

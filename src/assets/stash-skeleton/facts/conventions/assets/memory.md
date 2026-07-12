@@ -36,3 +36,12 @@ Use a memory when a future agent would make a better decision by knowing a speci
 - Consolidate repeated memories into a clearer fact or knowledge asset.
 - Convert broad, stable conventions into `fact` assets.
 - Archive memories that are no longer current rather than letting stale context keep influencing agents.
+
+## Placement & linking
+
+- Memories are **scope-born**: file them under the **current project/client**
+  slug (`memory:projectA/auth-token-refresh`) — the working context is the
+  answer, so no per-asset judgment is needed. Add the subject as a tag
+  (`tags: [auth, projectA]`) for cross-cutting recall.
+- When a memory turns out to be domain-general, **append** a new
+  `knowledge:<domain>/…` asset that xrefs it — never rename the memory up a rung.

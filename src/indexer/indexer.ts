@@ -374,6 +374,15 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   setMeta(db, "stashDirs", JSON.stringify(sourceDirs));
   setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
 
+  // Stash-organization conventions (SPEC-8): track which `index.indexBodyOpening`
+  // state the index was built with, and warn while the flag diverges from it.
+  const bodyOpeningWarning = reconcileBodyOpeningIndexState(
+    db,
+    config.index?.indexBodyOpening === true,
+    ctx.full || !isIncremental,
+  );
+  if (bodyOpeningWarning) warn(bodyOpeningWarning);
+
   warnIfVecMissing(db);
 
   const totalEntries = getEntryCount(db);
@@ -403,6 +412,47 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
 
   // suppress unused warning — sources was previously used inline
   void sources;
+}
+
+/**
+ * Stash-organization conventions (SPEC-8): reconcile the `index.indexBodyOpening`
+ * flag with the state the index was last FULLY built with (index_meta key
+ * `indexBodyOpening`), returning a warning message while they diverge.
+ *
+ * Incremental runs re-extract only changed files (and embeddings are only
+ * generated for rows lacking one), so a flag toggle leaves the index MIXED
+ * until a full rebuild — `akm index --full` re-extracts every entry and wipes
+ * embeddings so they regenerate from the new text. The warning therefore
+ * repeats on every incremental run until a full walk records the flag state
+ * as applied.
+ *
+ * A missing meta key on an incremental run means the index predates this
+ * feature, i.e. it was necessarily built with the flag OFF — so the absent
+ * key reads (and is seeded) as "0", never as the current flag value. This
+ * keeps the most likely real toggle scenario — upgrade, enable the flag, run
+ * a plain `akm index` — warning until `--full` runs (review finding).
+ *
+ * Exported for tests; production's only caller is the finalize phase above.
+ */
+export function reconcileBodyOpeningIndexState(
+  db: Database,
+  flagEnabled: boolean,
+  isFullWalk: boolean,
+): string | undefined {
+  const bodyOpeningFlag = flagEnabled ? "1" : "0";
+  const prevBodyOpeningFlag = getMeta(db, "indexBodyOpening") ?? "0";
+  // Only a full walk (which includes the first build ever) may record the
+  // current flag as the applied state; incremental runs preserve — or, for a
+  // pre-feature index, seed — the state of the last full build.
+  setMeta(db, "indexBodyOpening", isFullWalk ? bodyOpeningFlag : prevBodyOpeningFlag);
+  if (isFullWalk || prevBodyOpeningFlag === bodyOpeningFlag) return undefined;
+  return (
+    `index.indexBodyOpening is ${flagEnabled ? "enabled" : "disabled"} but the index was built with it ` +
+    `${flagEnabled ? "disabled" : "enabled"}. Incremental runs only re-extract changed files, so ` +
+    "indexed text and embeddings are stale for unchanged entries. Run `akm index --full` to apply the new " +
+    "setting everywhere (embeddings regenerate), and re-mint collapse-detector canary baselines via " +
+    "`akm improve canary --refresh` if you use them."
+  );
 }
 
 // ── Clean pass ───────────────────────────────────────────────────────────────

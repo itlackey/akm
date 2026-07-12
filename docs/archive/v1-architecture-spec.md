@@ -731,6 +731,20 @@ hints | config *`.
 - `propose <type> <name> [--task ...]` — produce generation proposals into
   the proposal queue (§11, §12).
 
+**Shipped post-0.9 as Experimental-tier additions** (additive to this frozen
+surface — a new top-level command in v1.x only registers an output shape;
+renaming or removing it later is still major; see STABILITY.md):
+- `mv <ref> <new-name>` — rename an asset within its type directory in the
+  primary writable stash. Moves the file (a memory's `.derived.md` twin moves
+  together), rewrites inbound refs across the writable stash's markdown files
+  in the same pass, and re-keys the index row in place so the asset's
+  accumulated usage-ranking history (utility scores, embeddings, salience)
+  survives the rename. The source must be the asset's canonical ref spelling
+  (lint-resolver fallback spellings are rejected naming the canonical ref),
+  and a `.derived` twin can never move alone. Read-only sources are scanned
+  but never written; their citing files are reported as manual follow-ups.
+  Wiki refs are rejected (wikis carry their own xref + lint system).
+
 **`Planned for v1`** (declared by this spec, implemented across milestones
 0.9 – 1.0):
 - `agent <profile> [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]`

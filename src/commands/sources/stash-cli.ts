@@ -29,8 +29,9 @@
 import path from "node:path";
 import { defineCommand } from "citty";
 import * as p from "../../cli/clack";
-import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
+import { defineJsonCommand, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -40,7 +41,14 @@ import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { akmIndex } from "../../indexer/indexer";
 import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
-import { readKnowledgeInput, writeMarkdownAsset } from "../read/knowledge";
+import {
+  inferAssetName,
+  mergeXrefsIntoContent,
+  readKnowledgeInput,
+  resolveSupersedesForWrite,
+  resolveXrefsForWrite,
+  writeMarkdownAsset,
+} from "../read/knowledge";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 
@@ -197,21 +205,58 @@ export const importKnowledgeCommand = defineJsonCommand({
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
     },
+    xref: {
+      type: "string",
+      description:
+        "Cross-reference ref merged into the document's `xrefs:` frontmatter (repeatable: --xref knowledge:auth-flow). Existing frontmatter is preserved (dedupe-append, never a nested block); a document whose frontmatter is not parseable YAML aborts the import rather than being rewritten lossily. Each ref must resolve in the write target or a configured source; an unresolvable ref aborts the import.",
+    },
+    supersedes: {
+      type: "string",
+      description:
+        "Ref of an existing asset this document corrects (repeatable: --supersedes knowledge:legacy-guide). Imports the correction with an xref to the old asset AND demotes the old asset (`beliefState: superseded` + `supersededBy`, a metadata-only edit) so ranking prefers the correction and `--belief current` hides the stale version. An unresolvable or self-referencing ref aborts the import; a ref outside the write target and working stash still imports the correction but skips the demotion (reported as applied: false).",
+    },
   },
   async run({ args }) {
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
     assertFlatAssetName(args.name);
+    // Collect and validate --xref occurrences (repeatable; citty only exposes
+    // the last value, so read argv directly). Validation happens BEFORE any
+    // read/write so an unresolvable ref (UsageError → exit 2) leaves the
+    // stash untouched.
+    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), args.target);
+    // Collect and validate --supersedes occurrences (repeatable). Same
+    // before-any-read/write contract: an unresolvable ref exits 2 with nothing
+    // imported AND nothing demoted. The superseded refs fold into the imported
+    // doc's xrefs automatically (correction provenance); the demotion runs
+    // inside writeMarkdownAsset, ordered before the git boundary commit.
+    const supersedes = resolveSupersedesForWrite(parseAllFlagValues("--supersedes"), args.target);
+    for (const s of supersedes) {
+      if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
+    }
     const stashDir = resolveWriteTarget(loadConfig(), args.target).source.path;
     const { content, preferredName } = await readKnowledgeInput(args.source, { stashDir });
+    // Imported docs may carry their own frontmatter: merge (dedupe-append)
+    // BEFORE the write so write-path indexing sees the final content and no
+    // second frontmatter block is ever nested.
+    // The slug must come from the document BODY: a merged (or self-carried)
+    // frontmatter block puts the `---` fence on the first line, which
+    // inferAssetName would slugify to "" and fall back to a random
+    // knowledge-<epoch>-<rand> name. A stdin import (no filename-derived
+    // preferredName) therefore pre-infers the name from the pre-merge
+    // content's PARSED body — not the raw text, whose first line is the fence
+    // whenever the piped doc carries its own frontmatter — so --xref/
+    // --supersedes never change the slug and a frontmattered doc gets its
+    // heading-derived slug on every path.
     const result = await writeMarkdownAsset({
       type: "knowledge",
-      content,
+      content: mergeXrefsIntoContent(content, xrefs),
       name: args.name ?? (isHttpUrl(args.source) ? preferredName : undefined),
       fallbackPrefix: "knowledge",
-      preferredName,
+      preferredName: preferredName ?? inferAssetName(parseFrontmatter(content).content, "knowledge"),
       force: args.force,
       target: args.target,
       path: args.path,
+      supersedes,
     });
     appendEvent({
       eventType: "import",
