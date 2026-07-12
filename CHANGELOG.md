@@ -254,6 +254,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with. The conventions' `description:`/`when_to_use:` orientation routing
   remains primary — this flag makes body openings additionally pay retrieval
   rent, it does not replace structured metadata. See `docs/configuration.md`.
+- **`akm mv <ref> <new-name>` — rename with inbound-xref rewrite and
+  utility-history preservation (Experimental).** The stash conventions'
+  forced-rename procedure ("grep and fix inbound xrefs in the same pass") was
+  agent-executable except for the part only the CLI can do: a rename used to
+  mint a new index row, orphaning the `utility_scores` /
+  `utility_scores_scoped` / embeddings / salience rows keyed by entry id —
+  the "rename resets learned ranking" cost the conventions warn about. The
+  new verb does the whole pass: it moves the file (a memory's `.derived.md`
+  twin moves together, keeping the `entry_key + ".derived"` belief-inheritance
+  coupling), rewrites inbound refs across the writable stash's markdown files
+  — body prose, frontmatter ref-list keys (`xrefs:`/`refs:`/`supersededBy:`/
+  …), and fenced code blocks — with complete-ref boundary matching (a longer
+  ref sharing the old ref as a prefix is untouched), and re-keys the index
+  row **in place** so the row id and every id-keyed ranking table survive;
+  the moved row and rewritten citers are FTS-refreshed so search reflects the
+  new name immediately. Scope v1: flat-markdown asset types (`memory`,
+  `knowledge`, `command`, `agent`, `workflow`, `lesson`, `session`, `fact`)
+  in the primary writable stash only, and the source ref must be the
+  canonical spelling — a ref that resolves only through one of lint's
+  fallback resolutions (knowledge-subdir alias, direct-path) is rejected
+  naming the canonical ref, since a fallback-keyed move would strand the
+  index row and dangle canonical citers. Wiki refs, cross-type targets,
+  existing targets, unresolvable refs, type-root escapes, `.derived` twin
+  refs as the source (rename the base — the twin follows), and target names
+  ending in `.derived` (reserved twin suffix) are rejected with the
+  standard envelope (exit 2, nothing moved). Read-only sources are scanned
+  but never written — their citing files are reported in `readOnlyCiters` as
+  manual follow-ups. Output:
+  `{ok, from, to, rewrote: [{file, count}], readOnlyCiters, utilityPreserved}`;
+  a successful move appends an `mv` event. The operation spans FS + DB and is
+  not transactional, but its ordering (plan rewrites → apply citer edits →
+  rename last → re-key index last) makes an interrupted run safely
+  re-runnable; with no local index built, the rename still succeeds and the
+  next `akm index` picks it up, and `utilityPreserved: false` discloses when
+  an existing index could not be re-keyed (the ranking history then resets
+  on the next full index). Added to the v1 §9.4 command surface as an
+  Experimental-tier additive entry (see `STABILITY.md`).
 
 ### Changed
 

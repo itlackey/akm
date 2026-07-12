@@ -849,6 +849,63 @@ When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm setup` first.
 
+### mv (Experimental)
+
+Rename an asset **within its type directory** in the primary writable stash.
+`akm mv` is the CLI half of the stash conventions' forced-rename procedure
+("grep and fix inbound xrefs in the same pass"): it moves the file, rewrites
+inbound refs across the writable stash, and re-keys the search-index row **in
+place** — the row id survives, so the asset's accumulated usage-ranking
+history (utility scores, embeddings, salience) is preserved instead of
+resetting the way a delete-and-recreate rename would.
+
+```sh
+akm mv memory:projectA/old-note projectA/new-note   # Rename (target is a name; subdirectories allowed)
+akm mv memory:solo memory:renamed-solo              # Same-type ref-shaped target also accepted
+akm mv knowledge:guides/old guides/new              # Body refs, xrefs:/refs: lists, and fenced examples all rewritten
+```
+
+What it does, in order (designed to be safely re-runnable if interrupted):
+
+1. **Validates everything first** — a failure exits `2` with the standard
+   error envelope and moves nothing. Rejected: wiki refs (wikis have their
+   own xref + lint system — use `akm wiki lint`), cross-type targets
+   (`memory:` → `knowledge:`), an already-existing target, an unresolvable
+   source ref, targets escaping the type root (`../`), non-canonical source
+   spellings (a ref that resolves only through one of lint's fallback
+   resolutions, e.g. a knowledge-subdir alias — the error names the
+   canonical ref to use), a `.derived` twin ref as the source (rename the
+   base; the twin moves with it), and target names ending in `.derived`
+   (reserved distilled-twin suffix). Supported types: `memory`, `knowledge`,
+   `command`, `agent`, `workflow`, `lesson`, `session`, `fact`
+   (flat-markdown layouts; multi-file `skill` directories are out of scope
+   for now).
+2. **Plans the inbound-ref rewrite** across every markdown file in the
+   writable stash — body prose, frontmatter ref-list keys (`xrefs:`, `refs:`,
+   `supersededBy:`, …), and fenced code blocks (a rename must not leave stale
+   examples). Matching is complete-ref boundary matching: a longer ref that
+   shares the old ref as a prefix is untouched.
+3. **Applies the citer edits, then renames the file last.** A memory's
+   `.derived.md` twin moves together with its base.
+4. **Re-keys the index row in place and refreshes search** — the new name and
+   the rewritten citers are immediately findable. With no local index built
+   yet, the rename still succeeds (the index picks the file up on the next
+   `akm index`).
+
+Read-only sources are scanned but **never written**: their citing files are
+reported in `readOnlyCiters` as manual follow-ups.
+
+Output shape:
+`{ok, from, to, rewrote: [{file, count}], readOnlyCiters: [{file, count}], utilityPreserved}`.
+`utilityPreserved` is `false` when an existing index could not be re-keyed
+(unreadable/locked, or the moved file's row sat under an unexpected key) —
+the move still succeeds, but the asset's ranking history resets on the next
+`akm index`.
+A successful move appends an `mv` event to the events stream; a failed one
+appends nothing. Verify a rename dangled nothing with `akm lint` (its
+`missing-ref` check covers body text and the frontmatter xref channels).
+Listed as **Experimental** in `STABILITY.md`.
+
 ### sync
 
 Stage and commit local changes in a git-backed stash. If the stash has a

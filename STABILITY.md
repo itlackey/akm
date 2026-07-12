@@ -95,6 +95,14 @@ for scripted use.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
   contradiction edges, and the consolidate journal are observable but
   the algorithm that writes them is tuning across patch releases.
+- **`akm mv`** — rename an asset within its type directory in the primary
+  writable stash, with inbound-ref rewrite across the stash's markdown files
+  and an in-place index re-key that preserves the asset's accumulated
+  usage-ranking history. New verb (an Experimental-tier additive entry on the
+  v1 §9.4 command surface): the JSON output shape
+  (`from`/`to`/`rewrote`/`readOnlyCiters`/`utilityPreserved`), the supported
+  asset-type set, and the validation rules may change while the rename flow
+  matures.
 - **`akm workflow run` + YAML workflow programs** — orchestrated workflows
   are written as YAML programs (`workflows/*.yaml`, `version: 1`, validated
   against `schemas/akm-workflow.json`) with `${{ … }}` expressions, per-step

@@ -190,6 +190,28 @@ akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 
 When `--dest` is provided, `akm init` is not required first.
 
+## Move / Rename (Experimental)
+
+Rename an asset within its type directory in the primary writable stash. Prefer
+NOT renaming (a ref is chosen once); when a rename is forced, `akm mv` does the
+whole convention pass: it moves the file (a memory's `.derived.md` twin moves
+together), rewrites inbound refs across the writable stash — body prose,
+frontmatter ref lists (`xrefs:`/`refs:`/`supersededBy:`), and fenced examples —
+and re-keys the index row in place so the asset's learned ranking history
+survives.
+
+```sh
+akm mv memory:projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
+akm mv memory:solo memory:renamed-solo             # Same-type ref-shaped target also accepted
+```
+
+Wiki refs, cross-type targets, existing targets, `../` escapes, non-canonical
+source spellings (the error names the canonical ref), `.derived` twin sources
+(rename the base — the twin follows), and `.derived`-suffixed target names are
+rejected (exit 2, nothing moved). Read-only sources are scanned but never
+written — their citing files come back in `readOnlyCiters` as manual
+follow-ups. Verify with `akm lint` (missing-ref) afterwards.
+
 ## Sync
 
 Commit local changes in a git-backed stash. Behaviour adapts automatically.

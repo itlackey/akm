@@ -31,6 +31,11 @@ const SHIPPED_COMMANDS = [
   "help",
   "hints",
   "config",
+  // SPEC-7 (stash organization conventions): `mv` shipped post-0.9 as an
+  // Experimental-tier ADDITIVE entry on the frozen surface (§9.4 allows new
+  // top-level commands in v1.x provided they register an output shape;
+  // renaming/removing later is still major). See STABILITY.md.
+  "mv",
 ] as const;
 
 // The proposal queue is exposed as the `proposal` noun group (0.8 CLI
