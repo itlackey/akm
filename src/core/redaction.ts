@@ -223,28 +223,66 @@ export function isEnvPassthroughValueSafeToExpose(name: string, value: string | 
   }
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+interface NormalizedText {
+  text: string;
+  starts: number[];
+  ends: number[];
 }
 
-function percentEncodedBytePattern(byte: number): string {
-  return `%${byte
-    .toString(16)
-    .padStart(2, "0")
-    .split("")
-    .map((digit) => (/[a-f]/.test(digit) ? `[${digit}${digit.toUpperCase()}]` : digit))
-    .join("")}`;
+function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedText {
+  let text = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const append = (decoded: string, start: number, end: number): void => {
+    text += decoded;
+    for (let index = 0; index < decoded.length; index++) {
+      starts.push(start);
+      ends.push(end);
+    }
+  };
+
+  for (let index = 0; index < value.length; ) {
+    if (value[index] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(index + 1, index + 3))) {
+      const start = index;
+      const bytes: number[] = [];
+      while (value[index] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(index + 1, index + 3))) {
+        bytes.push(Number.parseInt(value.slice(index + 1, index + 3), 16));
+        index += 3;
+      }
+      try {
+        append(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)), start, index);
+        continue;
+      } catch {
+        index = start;
+      }
+    }
+
+    const start = index;
+    const codePoint = value.codePointAt(index);
+    if (codePoint === undefined) break;
+    const character = String.fromCodePoint(codePoint);
+    index += character.length;
+    append(plusAsSpace && character === "+" ? " " : character, start, index);
+  }
+
+  return { text, starts, ends };
 }
 
-function encodedEquivalentPattern(value: string): string | undefined {
-  if (!value || value.length > 2048 || value.includes("://") || value.includes("%")) return undefined;
-  return [...value]
-    .map((character) => {
-      if (character === " ") return "(?: |\\+|%20)";
-      const encoded = [...Buffer.from(character)].map(percentEncodedBytePattern).join("");
-      return `(?:${escapeRegExp(character)}|${encoded})`;
-    })
-    .join("");
+function addMappedMatches(
+  ranges: Array<{ start: number; end: number }>,
+  haystack: NormalizedText,
+  needle: string,
+): void {
+  if (!needle) return;
+  let offset = 0;
+  while (offset <= haystack.text.length - needle.length) {
+    const match = haystack.text.indexOf(needle, offset);
+    if (match < 0) break;
+    const start = haystack.starts[match];
+    const end = haystack.ends[match + needle.length - 1];
+    if (start !== undefined && end !== undefined) ranges.push({ start, end });
+    offset = match + Math.max(needle.length, 1);
+  }
 }
 
 /**
@@ -255,13 +293,28 @@ export function redactSensitiveText(text: string, sensitiveValues: Iterable<stri
   const values = [...new Set(sensitiveValues)]
     .filter((value) => value.length > 0)
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
-  let redacted = text;
+  const ranges: Array<{ start: number; end: number }> = [];
+  const normalizedLiteralPlus = normalizeEncodedText(text, false);
+  const normalizedForm = normalizeEncodedText(text, true);
   for (const value of values) {
-    redacted = redacted.replaceAll(value, "[REDACTED]");
-    const encodedPattern = encodedEquivalentPattern(value);
-    if (encodedPattern) redacted = redacted.replace(new RegExp(encodedPattern, "g"), "[REDACTED]");
+    addMappedMatches(ranges, normalizedLiteralPlus, normalizeEncodedText(value, false).text);
+    addMappedMatches(ranges, normalizedForm, normalizeEncodedText(value, true).text);
   }
-  return redacted;
+  if (ranges.length === 0) return text;
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && range.start < previous.end) previous.end = Math.max(previous.end, range.end);
+    else merged.push({ ...range });
+  }
+  let redacted = "";
+  let offset = 0;
+  for (const range of merged) {
+    redacted += `${text.slice(offset, range.start)}[REDACTED]`;
+    offset = range.end;
+  }
+  return redacted + text.slice(offset);
 }
 
 /** Recursively redact string leaves before a structured value crosses a durable/output boundary. */
