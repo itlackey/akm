@@ -43,16 +43,31 @@ export function activeMarkdownDocs(): string[] {
   return docs.sort();
 }
 
+function withoutRetiredSections(doc: string): string {
+  const lines = doc.split("\n");
+  const kept: string[] = [];
+  let ignoredHeadingDepth: number | undefined;
+  for (const line of lines) {
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      const depth = heading[1].length;
+      if (ignoredHeadingDepth !== undefined && depth <= ignoredHeadingDepth) ignoredHeadingDepth = undefined;
+      if (/\b(?:legacy|migration|retired)\b/i.test(heading[2])) ignoredHeadingDepth = depth;
+    }
+    if (ignoredHeadingDepth === undefined) kept.push(line);
+  }
+  return kept.join("\n");
+}
+
 export function retiredExecutionExamples(doc: string): string[] {
   const findings: string[] = [];
-  for (const match of doc.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)) {
-    const code = match[1];
-    if (/^\s*["']?(?:profiles|profile|runner)["']?\s*:/m.test(code)) findings.push("profile/runner");
-    if (/(?:^|\s)--(?:profile|runner)(?=$|[=\s])/m.test(code)) findings.push("profile/runner");
-    if (/defaults\.agent/.test(code)) findings.push("defaults.agent");
-    if (/"defaults"\s*:\s*\{[^{}]*"agent"\s*:/s.test(code)) findings.push("defaults.agent");
-    if (/^\s*defaults:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+agent\s*:/m.test(code)) findings.push("defaults.agent");
-  }
+  const activeDoc = withoutRetiredSections(doc);
+  if (/(?:^|[{,]\s*)["']?(?:profiles|profile|runner)["']?\s*:/m.test(activeDoc)) findings.push("profile/runner");
+  if (/(?:^|\s)--(?:profile|runner)(?:$|[=\s`.,;)])/m.test(activeDoc)) findings.push("profile/runner");
+  if (/\bdefaults\.agent\b/.test(activeDoc)) findings.push("defaults.agent");
+  if (/"defaults"\s*:\s*\{[^{}]*"agent"\s*:/s.test(activeDoc)) findings.push("defaults.agent");
+  if (/^\s*defaults:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+agent\s*:/m.test(activeDoc)) findings.push("defaults.agent");
+  if (/\bllm\.endpoint\b/.test(activeDoc)) findings.push("llm.endpoint");
   return [...new Set(findings)];
 }
 

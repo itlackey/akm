@@ -2298,28 +2298,32 @@ steps:
   });
 
   test("redacts a credential-bearing URL from an allowlisted engine passthrough", async () => {
-    const credentialUrl = "https://example.test/oauth/callback?client_secret=WORKFLOW-URL-SENTINEL";
+    const deviceCodeUrl = "https://example.test/oauth/device?device_code=WORKFLOW-DEVICE-SENTINEL";
+    const authorizationCodeUrl =
+      "https://example.test/#/oauth/callback?authorization_code=WORKFLOW-AUTHORIZATION-SENTINEL";
     seedRun({ steps: [{ id: "build", title: "Build" }] });
     const frozen = plan(ENV_SOLO_WF);
     const stepPlan = frozen.steps[0];
     const engine = frozen.execution?.engines["test-agent"];
     if (!engine || engine.kind !== "agent") throw new Error("expected frozen agent engine");
-    engine.envPassthrough = ["LLM_BASE_URL"];
+    engine.envPassthrough = ["LLM_BASE_URL", "OPENCODE_CONFIG"];
 
-    const result = await withEnv({ LLM_BASE_URL: credentialUrl }, () =>
+    const result = await withEnv({ LLM_BASE_URL: deviceCodeUrl, OPENCODE_CONFIG: authorizationCodeUrl }, () =>
       executeStepPlan(stepPlan, {
         runId: RUN_ID,
         workflowRef: "workflow:demo",
         params: {},
         evidence: {},
         resolveEnv: async () => ({}),
-        dispatcher: async () => ({ ok: true, text: `echo ${credentialUrl}` }),
+        dispatcher: async () => ({ ok: true, text: `echo ${deviceCodeUrl} ${authorizationCodeUrl}` }),
       }),
     );
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
 
-    expect(JSON.stringify(result)).not.toContain(credentialUrl);
-    expect(JSON.stringify(rows)).not.toContain(credentialUrl);
+    for (const credentialUrl of [deviceCodeUrl, authorizationCodeUrl]) {
+      expect(JSON.stringify(result)).not.toContain(credentialUrl);
+      expect(JSON.stringify(rows)).not.toContain(credentialUrl);
+    }
     expect(JSON.stringify(rows)).toContain("[REDACTED]");
   });
 

@@ -310,7 +310,11 @@ describe("workflow report — sensitive output", () => {
     const engineSentinel = "MANUAL-REPORT-ENGINE-SENTINEL";
     const envSentinel = "MANUAL-REPORT-ENV-SENTINEL";
     const secretSentinel = "MANUAL-REPORT-SECRET-SENTINEL";
-    const allowlistedUrl = "https://example.test/oauth/callback#session_token=MANUAL-REPORT-URL-SENTINEL";
+    const allowlistedUrls = [
+      "https://example.test/oauth/callback?refresh_token=MANUAL-REPORT-REFRESH-SENTINEL",
+      "https://example.test/oauth/callback#id_token=MANUAL-REPORT-ID-SENTINEL",
+      "https://example.test/#/oauth/callback?client_secret=MANUAL-REPORT-CLIENT-SENTINEL",
+    ];
     const stash = makeStashDir();
     fs.mkdirSync(path.join(stash.dir, "secrets"), { recursive: true });
     fs.mkdirSync(path.join(stash.dir, "env"), { recursive: true });
@@ -333,19 +337,25 @@ steps:
     fallback.credential = { names: ["MANUAL_REPORT_TEST_KEY"], required: true };
     const agent = p.execution?.engines["test-agent"];
     if (!agent || agent.kind !== "agent") throw new Error("expected frozen agent engine");
-    agent.envPassthrough = ["LLM_BASE_URL"];
+    agent.envPassthrough = ["LLM_BASE_URL", "OPENCODE_CONFIG", "CLAUDE_CONFIG"];
     seedRun({ plan: p, steps: [{ id: "work" }] });
     const unitId = unitIds(p, 0, {})[0];
 
     try {
       await withEnv(
-        { AKM_STASH_DIR: stash.dir, MANUAL_REPORT_TEST_KEY: engineSentinel, LLM_BASE_URL: allowlistedUrl },
+        {
+          AKM_STASH_DIR: stash.dir,
+          MANUAL_REPORT_TEST_KEY: engineSentinel,
+          LLM_BASE_URL: allowlistedUrls[0],
+          OPENCODE_CONFIG: allowlistedUrls[1],
+          CLAUDE_CONFIG: allowlistedUrls[2],
+        },
         () =>
           reportWorkflowUnit({
             target: RUN_ID,
             unitId,
             status: "failed",
-            resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrl}`,
+            resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrls.join(" ")}`,
             failureReason: `provider-${secretSentinel}`,
             sessionId: `session-${secretSentinel}`,
             summaryJudge: null,
@@ -353,7 +363,7 @@ steps:
       );
       const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
 
-      for (const sentinel of [engineSentinel, envSentinel, secretSentinel, allowlistedUrl]) {
+      for (const sentinel of [engineSentinel, envSentinel, secretSentinel, ...allowlistedUrls]) {
         expect(JSON.stringify(rows)).not.toContain(sentinel);
       }
       expect(JSON.stringify(rows)).toContain("[REDACTED]");

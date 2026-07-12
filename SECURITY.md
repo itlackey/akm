@@ -42,7 +42,7 @@ bugs, but you should be aware of them:
 
 Workflow steps run in your shell with your PATH and your environment
 variables — including any secrets you have exported or loaded via
-`akm vault load`. **Only add workflow sources you trust.** See
+`akm env run` / `akm secret run`. **Only add workflow sources you trust.** See
 [`docs/features/workflows.md` — "Security: workflow sources are executed
 code"](docs/features/workflows.md#security-workflow-sources-are-executed-code)
 for the full discussion.
@@ -61,24 +61,24 @@ maintainer could write a system prompt that instructs the LLM to read
 sensitive files in your working tree and exfiltrate them via the LLM
 response. Audit the prompt body the same way you'd audit a script.
 
-### Vaults are plaintext on disk
+### Environment and secret assets are plaintext on disk
 
-`akm vault` files are `0o600`-permissioned plaintext at
-`<stash>/vaults/<name>.env`. They are protected against other local users
-by filesystem permissions but not encrypted at rest. Do not commit vault
-files to source control — they are `.gitignore`d in the default stash
-layout for that reason. The `akm vault show` / `akm vault list` commands
-never echo values; `akm vault load` produces shell-eval output meant to be
-piped to `eval`, never displayed.
+`env` and `secret` assets are owner-permissioned plaintext under `<stash>/env/`
+and `<stash>/secrets/`. They are protected against other local users by
+filesystem permissions but are not encrypted at rest. Do not commit these
+files to source control. Normal `akm env` and `akm secret` output never echoes
+values; materialize values only at the command boundary with `akm env run`,
+`akm secret run`, or `akm secret path`.
 
 ### Improve / propose / distill send asset content to the configured LLM
 
 `akm improve`, `akm propose`, `akm distill`, `akm reflect`, and `akm
-consolidate` send asset frontmatter and body to whatever LLM endpoint is
-configured in `~/.config/akm/config.json` (under `llm.endpoint`). If you
-have configured a third-party LLM, your asset content goes to that
-third-party. Use a local model (`http://localhost:11434` via Ollama, etc.)
-for assets containing secrets or private notes.
+consolidate` can send asset frontmatter and body to the named LLM engine selected
+by the command, strategy, or current defaults. LLM connections live under
+`engines.<name>` in `~/.config/akm/config.json`. If you configure a third-party
+LLM, your asset content goes to that third party. Use a local engine endpoint
+(for example, `http://localhost:11434/v1/chat/completions` via Ollama) for assets
+containing secrets or private notes.
 
 ## Known non-issues
 

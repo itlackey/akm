@@ -39,6 +39,28 @@ describe("environment passthrough redaction policy", () => {
   });
 
   test("rejects URL userinfo and signed query credentials under every allowlisted name", () => {
+    const oauthCredentialKeys = [
+      "access_token",
+      "actor_token",
+      "assertion",
+      "authorization_code",
+      "auth_req_id",
+      "client_assertion",
+      "client_secret",
+      "code_verifier",
+      "device_code",
+      "id_token",
+      "id_token_hint",
+      "login_hint_token",
+      "logout_hint",
+      "logout_token",
+      "oauth_token",
+      "oauth_verifier",
+      "refresh_token",
+      "software_statement",
+      "subject_token",
+      "user_code",
+    ];
     for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
       expect(isEnvPassthroughValueSafeToExpose(name, "https://user:password@example.test/v1"), name).toBe(false);
       expect(
@@ -48,17 +70,14 @@ describe("environment passthrough redaction policy", () => {
         ),
         name,
       ).toBe(false);
-      for (const url of [
-        "https://example.test/oauth/callback?client_secret=secret",
-        "https://example.test/oauth/callback?session_token=secret",
-        "https://example.test/oauth/callback?code=authorization-code&state=public-state",
-        "https://example.test/oauth/callback?oauth_token=secret",
-        "https://example.test/oauth/callback?oauth_verifier=proof",
-        "https://example.test/oauth/callback#access_token=secret&token_type=bearer",
-        "https://example.test/#/oauth/callback?oauth_token=secret&oauth_verifier=proof",
-        "https://example.test/#/nested/oauth/callback?mode=finish&access_token=secret",
-      ]) {
-        expect(isEnvPassthroughValueSafeToExpose(name, url), `${name}: ${url}`).toBe(false);
+      for (const key of oauthCredentialKeys) {
+        for (const url of [
+          `https://example.test/oauth/callback?${key}=secret&state=public-state`,
+          `https://example.test/oauth/callback#${key}=secret&token_type=bearer`,
+          `https://example.test/#/nested/oauth/callback?mode=finish&${key}=secret`,
+        ]) {
+          expect(isEnvPassthroughValueSafeToExpose(name, url), `${name}: ${url}`).toBe(false);
+        }
       }
     }
   });

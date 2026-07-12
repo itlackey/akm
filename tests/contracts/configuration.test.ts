@@ -53,7 +53,7 @@ describe("current engine and strategy configuration contract", () => {
     expect(extractSection(docs, "## Retired Configuration")).toContain("`profiles`");
   });
 
-  test("active documentation examples do not use retired execution selectors", () => {
+  test("active documentation does not use retired execution selectors", () => {
     const violations = activeMarkdownDocs().flatMap((docPath) =>
       retiredExecutionExamples(readDoc(docPath)).map((kind) => `${docPath}: ${kind}`),
     );
@@ -80,12 +80,14 @@ describe("current engine and strategy configuration contract", () => {
     ).toEqual([]);
   });
 
-  test("retired execution example scan covers profile, runner, and defaults.agent forms", () => {
+  test("retired execution scan covers prose, inline, CLI, JSON, and fenced forms", () => {
     const example = [
+      "Configure `llm.endpoint` before running the command.",
+      "The default remains `defaults.agent`.",
+      "Run `akm wiki ingest docs --profile reviewer`.",
+      "runner: sdk",
       "```yaml",
       "profile: reviewer",
-      "runner: agent",
-      "akm improve --profile=quick",
       "akm workflow run --runner sdk",
       "defaults:",
       "  agent: opencode",
@@ -94,7 +96,18 @@ describe("current engine and strategy configuration contract", () => {
       '{"profiles": {}, "defaults": {"agent": "opencode"}}',
       "```",
     ].join("\n");
-    expect(retiredExecutionExamples(example)).toEqual(["profile/runner", "defaults.agent"]);
+    expect(retiredExecutionExamples(example)).toEqual(["profile/runner", "defaults.agent", "llm.endpoint"]);
+  });
+
+  test("retired execution scan ignores ordinary words, current selectors, and explicit retirement sections", () => {
+    const example = [
+      "Use your shell profile with the workflow runner.",
+      "Configure `engines.fast.endpoint`, `defaults.engine`, and `--engine fast`.",
+      "## Retired Configuration",
+      "`llm.endpoint`, `defaults.agent`, `--profile`, and `runner:` are retired.",
+    ].join("\n");
+    expect(retiredExecutionExamples(example)).toEqual([]);
+    expect(retiredExecutionExamples(extractSection(docs, "## Retired Configuration"))).toEqual([]);
   });
 
   test("PR 714 repro embeds valid engine configs and YAML v2 workflows", () => {
