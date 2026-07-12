@@ -618,7 +618,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (!options.dryRun) {
       // Backstop release on process.exit() (signal handler / budget watchdog),
       // which skips the finally below. Removed in that finally on the normal path.
-      const releaseAllOnExit = (): void => releaseHeldLocksIfOwned(process.pid);
+      const releaseAllOnExit = (): void => releaseHeldLocksIfOwned();
       exitBackstop = releaseAllOnExit;
       process.on("exit", releaseAllOnExit);
 
@@ -638,7 +638,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             options.skipIfLocked,
             "triage",
           );
-          if (triageResult === "skipped") {
+          if (triageResult.state === "skipped") {
             triageDrain = undefined;
           } else {
             try {
@@ -659,7 +659,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             } catch (err) {
               warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
             } finally {
-              releaseProcessLock(triageLPath);
+              releaseProcessLock(triageResult.ownership);
             }
           }
         }

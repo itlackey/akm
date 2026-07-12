@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import { releaseProcessLock, tryAcquireProcessLock } from "../../../src/commands/improve/locks";
 import { probeLock, reclaimStaleLock, tryAcquireLockSync } from "../../../src/core/file-lock";
 
 const [mode, lockPath, readyPath, gatePath, resultPath, payload = String(process.pid)] = process.argv.slice(2);
@@ -17,9 +18,25 @@ function writeResult(value: boolean): void {
   fs.writeFileSync(resultPath, JSON.stringify({ value, pid: process.pid }));
 }
 
-if (mode === "acquire") {
+if (mode === "process-holder") {
+  const acquisition = tryAcquireProcessLock(lockPath, Number(payload), true, "test");
+  writeResult(acquisition.state === "acquired");
   fs.writeFileSync(readyPath, "ready");
-  writeResult(tryAcquireLockSync(lockPath, payload));
+  if (acquisition.state === "acquired") {
+    try {
+      waitForGate();
+    } finally {
+      releaseProcessLock(acquisition.ownership);
+    }
+  }
+} else if (mode === "process-attempt") {
+  const acquisition = tryAcquireProcessLock(lockPath, Number(payload), true, "test");
+  writeResult(acquisition.state === "acquired");
+  fs.writeFileSync(readyPath, "ready");
+  if (acquisition.state === "acquired") releaseProcessLock(acquisition.ownership);
+} else if (mode === "acquire") {
+  fs.writeFileSync(readyPath, "ready");
+  writeResult(Boolean(tryAcquireLockSync(lockPath, payload)));
 } else {
   const probe = probeLock(lockPath);
   if (probe.state !== "stale") throw new Error(`Expected stale lock, got ${probe.state}.`);

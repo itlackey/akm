@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
 import { ConfigError, rethrowIfTestIsolationError } from "../core/errors";
-import { probeLock, reclaimStaleLock, releaseLockIfOwned, tryAcquireLockSync } from "../core/file-lock";
+import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { acquireMaintenanceBarrier } from "../core/maintenance-barrier";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
 import type { InstallKind } from "../registry/types";
@@ -50,8 +50,9 @@ async function acquireLockSentinel(): Promise<() => void> {
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
     const releaseBarrier = acquireMaintenanceBarrier();
     try {
-      if (tryAcquireLockSync(sentinelPath, String(process.pid))) {
-        return () => releaseLockIfOwned(sentinelPath, process.pid);
+      const ownership = tryAcquireLockSync(sentinelPath, createLockPayload());
+      if (ownership) {
+        return () => releaseLock(ownership);
       }
       const probe = probeLock(sentinelPath);
       if (probe.state === "stale" && reclaimStaleLock(sentinelPath, probe)) {

@@ -33,7 +33,14 @@ import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileC
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import {
+  createLockPayload,
+  type LockOwnership,
+  probeLock,
+  reclaimStaleLock,
+  releaseLock,
+  tryAcquireLockSync,
+} from "../../core/file-lock";
 import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state-db";
@@ -163,19 +170,21 @@ function getExtractSessionLockPath(harness: string, sessionId: string, stateDbPa
  * any filesystem error resolves to `true` (proceed) so locking never blocks
  * extraction outright.
  */
-function acquireExtractSessionLock(lockPath: string): boolean {
+function acquireExtractSessionLock(lockPath: string): { proceed: boolean; ownership?: LockOwnership } {
   const releaseBarrier = tryAcquireMaintenanceBarrier();
-  if (!releaseBarrier) return false;
+  if (!releaseBarrier) return { proceed: false };
   try {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    if (tryAcquireLockSync(lockPath, String(process.pid))) return true;
+    let ownership = tryAcquireLockSync(lockPath, createLockPayload());
+    if (ownership) return { proceed: true, ownership };
     const probe = probeLock(lockPath, { staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS });
-    if (probe.state === "held") return false;
+    if (probe.state === "held") return { proceed: false };
     // Absent (released between attempt + probe) or successfully reclaimed stale lock → retry once.
-    if (probe.state === "stale" && !reclaimStaleLock(lockPath, probe)) return false;
-    return tryAcquireLockSync(lockPath, String(process.pid));
+    if (probe.state === "stale" && !reclaimStaleLock(lockPath, probe)) return { proceed: false };
+    ownership = tryAcquireLockSync(lockPath, createLockPayload());
+    return ownership ? { proceed: true, ownership } : { proceed: false };
   } catch {
-    return true;
+    return { proceed: true };
   } finally {
     releaseBarrier();
   }
@@ -1147,14 +1156,15 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     // runs (those that open their own state.db): dry-run is read-only, an
     // injected `stateDb` handle is an in-process/test scenario with no cross-
     // process race, and skip-tracking-off opts out entirely.
-    let sessionLockPath: string | undefined;
+    let sessionLockOwnership: LockOwnership | undefined;
     if (trackingEnabled && !dryRun && !options.stateDb) {
-      sessionLockPath = getExtractSessionLockPath(
+      const sessionLockPath = getExtractSessionLockPath(
         harness.name,
         summary.sessionId,
         options.stateDbPath ?? getStateDbPath(),
       );
-      if (!acquireExtractSessionLock(sessionLockPath)) {
+      const sessionLock = acquireExtractSessionLock(sessionLockPath);
+      if (!sessionLock.proceed) {
         sessions.push({
           sessionId: summary.sessionId,
           harness: harness.name,
@@ -1168,6 +1178,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         skippedCount += 1;
         continue;
       }
+      sessionLockOwnership = sessionLock.ownership;
     }
 
     try {
@@ -1282,7 +1293,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       });
       skippedCount += 1;
     } finally {
-      if (sessionLockPath) releaseLock(sessionLockPath);
+      if (sessionLockOwnership) releaseLock(sessionLockOwnership);
     }
   }
 

@@ -10,7 +10,7 @@ import { writeFileAtomic } from "./common";
 import { parseConfigText, withConfigLock } from "./config/config-io";
 import { CURRENT_CONFIG_VERSION } from "./config/config-schema";
 import { ConfigError } from "./errors";
-import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
+import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
 import { acquireMaintenanceActivitySync, withMaintenanceStartBarrier } from "./maintenance-barrier";
 import {
   getCacheDir,
@@ -180,7 +180,8 @@ function acquireMigrationBackupLock(): () => void {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
   fs.chmodSync(path.dirname(lockPath), 0o700);
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (tryAcquireLockSync(lockPath, String(process.pid))) return () => releaseLock(lockPath);
+    const ownership = tryAcquireLockSync(lockPath, createLockPayload());
+    if (ownership) return () => releaseLock(ownership);
     const probe = probeLock(lockPath);
     if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) {
       continue;
