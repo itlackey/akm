@@ -244,17 +244,25 @@ function normalizeEncodedText(value: string, plusAsSpace: boolean): NormalizedTe
   for (let index = 0; index < value.length; ) {
     if (value[index] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(index + 1, index + 3))) {
       const start = index;
+      let cursor = index;
       const bytes: number[] = [];
-      while (value[index] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(index + 1, index + 3))) {
-        bytes.push(Number.parseInt(value.slice(index + 1, index + 3), 16));
-        index += 3;
+      let decoded: string | undefined;
+      while (value[cursor] === "%" && /^[0-9a-f]{2}$/i.test(value.slice(cursor + 1, cursor + 3))) {
+        bytes.push(Number.parseInt(value.slice(cursor + 1, cursor + 3), 16));
+        cursor += 3;
+        try {
+          decoded = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
+          break;
+        } catch {
+          // Continue until a complete UTF-8 code point has been collected.
+        }
       }
-      try {
-        append(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)), start);
+      if (decoded !== undefined) {
+        index = cursor;
+        append(decoded, start);
         continue;
-      } catch {
-        index = start;
       }
+      index = start;
     }
 
     const start = index;

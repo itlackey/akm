@@ -132,12 +132,12 @@ describe("collectSensitiveValues", () => {
       ["https://issuer.test/callback#access_token=space%20token", ["space%20token", "space+token", "space token"]],
       ["https://issuer.test/callback#access_token=plus+token", ["plus%20token", "plus+token", "plus token"]],
       ["https://issuer.test/callback#state=A%20B%20C%2FD%2BE", ["A%20B%20C%2FD%2BE", "A+B%20C%2fD%2BE", "A B C/D+E"]],
+      ["https://issuer.test/callback?access_token=A", ["%41%42"]],
     ] as const) {
       const sensitive = collectSensitiveValues([url]);
       for (const echo of echoes) {
-        expect(redactSensitiveText(`provider echoed ${echo}`, sensitive), `${url}: ${echo}`).toBe(
-          "provider echoed [REDACTED]",
-        );
+        const expected = echo === "%41%42" ? "provider echoed [REDACTED]%42" : "provider echoed [REDACTED]";
+        expect(redactSensitiveText(`provider echoed ${echo}`, sensitive), `${url}: ${echo}`).toBe(expected);
       }
     }
   });
