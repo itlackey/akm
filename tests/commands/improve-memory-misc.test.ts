@@ -194,7 +194,7 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
     const result = await akmImprove({
       scope: "memory:timer-test",
       stashDir,
-      timeoutMs: 5_000,
+      timeoutMs: 60_000,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => ({

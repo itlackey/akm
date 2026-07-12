@@ -293,6 +293,12 @@ export function redactSensitiveText(text: string, sensitiveValues: Iterable<stri
   const values = [...new Set(sensitiveValues)]
     .filter((value) => value.length > 0)
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  if (values.length === 0) return text;
+  if (!text.includes("%") && !text.includes("+")) {
+    let redacted = text;
+    for (const value of values) redacted = redacted.replaceAll(value, "[REDACTED]");
+    return redacted;
+  }
   const ranges: Array<{ start: number; end: number }> = [];
   const normalizedLiteralPlus = normalizeEncodedText(text, false);
   const normalizedForm = normalizeEncodedText(text, true);
