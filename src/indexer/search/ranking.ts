@@ -13,6 +13,7 @@ import type { GraphBoostContext } from "../graph/graph-boost";
 import type { StashEntry } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
 import {
+  applyBeliefStateScoreCeiling,
   applyContributorAblation,
   applyScoreContributors,
   applyUtilityContributors,
@@ -27,6 +28,15 @@ export interface RankedEntryInput {
   score: number;
   rankingMode: "hybrid" | "semantic" | "fts";
   utilityBoosted?: boolean;
+  /**
+   * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
+   * ceiling clamped this item: the score BEFORE the clamp. The semantic-only
+   * `minScore` floor in db-search checks this instead of the clamped score,
+   * so a ceiling that sits below the floor (e.g. archived 0.15 < default
+   * minScore 0.2) demotes the hit to last place instead of silently DROPPING
+   * a result that would otherwise have listed.
+   */
+  preCeilingScore?: number;
 }
 
 export interface RankEntriesOptions {
@@ -243,6 +253,12 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
   };
   for (const item of options.items) {
     applyUtilityContributors(item, utilityContext, activeUtilityContributors);
+    // SPEC-5: demoting belief states (superseded/contradicted/archived/
+    // deprecated) cap the FINAL score. The additive belief penalty inside the
+    // multiplicative boost sum cannot overcome the FTS min-max normalization
+    // spread, so without the ceiling a superseded incumbent that is the best
+    // keyword match outranks its own correction forever.
+    applyBeliefStateScoreCeiling(item);
   }
 
   return options.items;

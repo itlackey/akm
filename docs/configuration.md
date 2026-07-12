@@ -37,7 +37,7 @@ before editing an existing installation.
   },
   "improve": {
     "strategies": {
-      "default": {
+      "nightly": {
         "engine": "fast",
         "processes": {
           "reflect": {},
@@ -108,9 +108,22 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
 }
 ```
 
-`mode` and `profile` are retired process fields. LLM-only improve processes
-require an LLM engine; an explicit invalid or incompatible engine never falls
-back to another engine.
+LLM-only improve processes require an LLM engine; an explicit invalid or
+incompatible engine never falls back to another engine. Built-in strategies
+are complete presets. User-defined strategies inherit omitted fields from the
+built-in `default` strategy before applying their own overrides.
+
+## Indexing
+
+`index.indexBodyOpening` defaults to `false`. When enabled, AKM captures the
+first prose paragraph of each Markdown asset body, capped at 280 characters,
+into the lowest-weight search content and embedding text. Secret and env files
+are never read for this field, and session-kind memories are excluded.
+
+Changing this option changes indexed text. Run `akm index --full` after
+toggling it so all entries and embeddings are rebuilt consistently. If the
+setting differs from the state used to build the current index, AKM warns until
+that full rebuild completes.
 
 ## Managing Config
 

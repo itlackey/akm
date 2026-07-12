@@ -86,7 +86,7 @@ my-stash/
 
 ## Asset Types
 
-There are eleven asset types:
+There are fourteen asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -102,6 +102,8 @@ There are eleven asset types:
 | **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |
 | **memory** | Context from external systems | Background information the agent should consider |
 | **fact** | A durable stash-level fact | Mostly-static semantic knowledge — personal/team/project details, coding conventions / "constitution", and stash-meta (naming conventions, active projects). `category` scopes it; `pinned: true` marks always-injected core context (see [design note](design/fact-asset-type.md)) |
+| **task** | A scheduled or on-demand automation task | Stored under `tasks/` |
+| **session** | An indexed session summary | Machine-placed under `sessions/<harness>/<id>.md`; excluded from untyped search by default |
 
 ### Classification Taxonomy
 
@@ -221,13 +223,37 @@ skills/projectB/lint-fix.md      →  skill:projectB/lint-fix
 knowledge/clientX/api-guide.md   →  knowledge:clientX/api-guide
 ```
 
-This works for **any** asset type. Search and show treat the prefixed name
-like any other ref, so `akm search "memory:projectA/"` narrows results to
-that subtree.
+This works for **any** asset type. The subpath segments become part of the
+indexed name, so `akm search "projectA" --type memory` narrows results to
+that subtree, and `akm show memory:projectA/auth-tip` resolves the full ref.
+There is also a **ref-prefix query syntax**: `akm search "memory:projectA/"`
+enumerates exactly that subtree (typed, recursive, `/`-boundary exact — a
+sibling `projectAlpha/` scope does not leak), and a bare `akm search
+"memory:"` lists the whole type. Ref-prefix hits are a deterministic listing
+with the fixed browse score `1`, not a relevance ranking. A full ref without
+the trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword
+search — resolving a single ref is `akm show`'s job — and an explicit
+`--type` flag always wins over the type parsed from the query.
 
 **Recommendation:** use physical subdirectories now to organize multi-project
-or multi-team stashes. They survive renames, sort cleanly on disk, and
-require no configuration.
+or multi-team stashes. They sort cleanly on disk and require no configuration.
+Treat the resulting ref as permanent — a raw file rename breaks inbound refs
+and resets the asset's usage-ranking history. When a rename is unavoidable,
+use `akm mv <ref> <new-name>` (Experimental): it rewrites inbound refs across
+the writable stash and re-keys the index row in place so the learned ranking
+history survives. See [cli.md](cli.md#mv-experimental).
+
+**Which subdirectory?** Choose the partition axis by asset **type**:
+scope-born types (`memory`, `lesson`, `task`, `env`, `secret`) take the current
+**project/client** slug; reuse-born types (`knowledge`, `skill`, `wiki`,
+`fact`, `script`) take a stable **domain**; global types (`command`, `agent`,
+`workflow`) stay at the type root or a tool slug. The full rules — depth
+limits, no-volatile-facets, off-axis facets as tags, and how to cross-link for
+retrieval — ship as the `fact:conventions/organization`,
+`fact:conventions/backlinks`, and `fact:conventions/domains` convention facts
+in the stash skeleton, and are surfaced to agents automatically at authoring
+time. See
+[design/stash-organization-conventions.md](design/stash-organization-conventions.md).
 
 Future iterations (no committed dates):
 

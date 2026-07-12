@@ -336,7 +336,25 @@ akm search "deploy" --filter user=alice --filter agent=claude
 
 # Include proposal-queue entries (v1 spec §4.2):
 akm search "deploy" --include-proposed
+
+# Ref-prefix enumeration — list a typed subtree instead of keyword-matching:
+akm search "memory:projectA/"
+akm search "knowledge:"
 ```
+
+A query shaped like a **ref prefix** — `<type>:<prefix>/` with a trailing
+slash, or a bare `<type>:` — is not keyword-matched. It enumerates the type's
+entries whose names start with the prefix: `akm search "memory:projectA/"`
+lists exactly the `projectA/` subtree of memories (recursive, `/`-boundary
+exact — a sibling `projectAlpha/` scope does not leak), and `akm search
+"session:"` lists every session (the parsed type is explicit intent, so the
+default `session` exclusion — an untyped-path policy — does not apply). Hits
+carry the fixed browse score `1` in deterministic listing order, matching the
+empty-query enumeration contract, and compose with `--limit`, `--belief`,
+`--filter`, and named `--source` narrowing. A full ref without the trailing
+slash (`memory:projectA/auth-tip`) stays an ordinary keyword search — use
+`akm show` to resolve a single ref. An explicit `--type` flag wins over the
+type parsed from the query.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
@@ -833,6 +851,92 @@ When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm setup` first.
 
+### mv (Experimental)
+
+Rename an asset **within its type directory** in the primary writable stash.
+`akm mv` is the CLI half of the stash conventions' forced-rename procedure
+("grep and fix inbound xrefs in the same pass"): it moves the file, rewrites
+inbound refs across the writable stash, re-keys the search-index row **in
+place** (the row id survives, and the row's usage-event history is re-pointed
+at the new ref so it survives even a later `akm index --full`), and re-keys
+the `state.db` salience/outcome rows — the asset's accumulated usage-ranking
+history (utility scores, embeddings, salience) is preserved instead of
+resetting the way a delete-and-recreate rename would.
+
+```sh
+akm mv memory:projectA/old-note projectA/new-note   # Rename (target is a name; subdirectories allowed)
+akm mv memory:solo memory:renamed-solo              # Same-type ref-shaped target also accepted
+akm mv knowledge:guides/old guides/new              # Body refs, xrefs:/refs: lists, and fenced examples all rewritten
+```
+
+What it does, in order (designed to be safely re-runnable if interrupted):
+
+1. **Validates everything first** — a failure exits `2` with the standard
+   error envelope and moves nothing. Rejected: wiki refs (wikis have their
+   own xref + lint system — use `akm wiki lint`), workflow refs (workflows
+   may be `.yaml`/`.yml` programs — rename the file manually under
+   `workflows/`, keeping its extension, fix inbound refs in the same pass,
+   and verify with `akm lint`), cross-type targets (`memory:` →
+   `knowledge:`), an already-existing target (including a memory target
+   whose orphaned `<name>.derived.md` twin still exists — a rename must not
+   silently adopt a stranger's distillation), an unresolvable source ref,
+   targets escaping the type root (`../`), non-canonical source spellings
+   (a ref that resolves only through one of lint's fallback resolutions,
+   e.g. a knowledge-subdir alias — the error names the canonical ref to
+   use), a `.derived` twin ref as the source (rename the base; the twin
+   moves with it), and target names ending in `.derived` (reserved
+   distilled-twin suffix). The deterministic `.md`-suffixed alias spelling
+   IS accepted — for the source ref and the target name alike — and is
+   canonicalized before anything is keyed off it (`akm mv memory:foo.md
+   bar.md` behaves exactly like `akm mv memory:foo bar`). Supported types:
+   `memory`, `knowledge`, `command`, `agent`, `lesson`, `session`, `fact`
+   (flat-markdown layouts; multi-file `skill` directories are out of scope
+   for now).
+2. **Plans the inbound-ref rewrite** across every markdown file in the
+   writable stash plus `.yml`/`.yaml` files under `tasks/` (task YAML
+   carries refs in `workflow:`/`prompt:` keys) and under `workflows/`
+   (workflow YAML programs carry refs in their step/instructions text;
+   workflows are rewritten as *citers* even though `workflow:` refs cannot
+   themselves be moved) — body prose, frontmatter
+   ref-list keys (`xrefs:`, `refs:`, `supersededBy:`, …, including
+   flow-style lists like `xrefs: [memory:x]`), and fenced code blocks (a
+   rename must not leave stale examples). Alias spellings the resolver
+   treats as the same asset — the `.md`-suffixed form, the
+   `local//`-prefixed form, and resolver-fallback forms like the
+   knowledge-subdir basename alias — are rewritten to the new **canonical**
+   ref, and a ref followed by sentence punctuation (`See memory:old.`) is
+   rewritten with the punctuation preserved. Matching is complete-ref
+   boundary matching: a longer ref that shares the old ref as a prefix is
+   untouched.
+3. **Creates the target's parent directory, applies the citer edits, then
+   renames the file last.** The parent-dir step comes first so a blocked
+   target (e.g. a path segment that exists as a file) aborts before any
+   citer has been edited. A memory's `.derived.md` twin moves together with
+   its base.
+4. **Re-keys the index row in place and refreshes search** — the new name and
+   the rewritten citers are immediately findable, the row's `usage_events`
+   history is re-pointed at the new ref (so it survives a later
+   `akm index --full`), and the `state.db` `asset_salience` /
+   `asset_outcome` rows (keyed by asset ref) move to the new ref too. With
+   no local index built yet, the rename still succeeds (the index picks the
+   file up on the next `akm index`).
+
+Read-only sources are scanned but **never written**: their citing files are
+reported in `readOnlyCiters` as manual follow-ups.
+
+Output shape:
+`{ok, from, to, rewrote: [{file, count}], readOnlyCiters: [{file, count}], utilityPreserved, warnings?}`.
+`utilityPreserved` is `false` when an existing index could not be re-keyed
+(unreadable/locked, or the moved file's row sat under an unexpected key) —
+the move still succeeds, but the asset's ranking history resets on the next
+`akm index`. When any re-key could not be completed, the additive `warnings`
+array says why (index re-key failure, stranded row, or a `state.db`
+salience re-key failure).
+A successful move appends an `mv` event to the events stream; a failed one
+appends nothing. Verify a rename dangled nothing with `akm lint` (its
+`missing-ref` check covers body text and the frontmatter xref channels).
+Listed as **Experimental** in `STABILITY.md`.
+
 ### sync
 
 Stage and commit local changes in a git-backed stash. If the stash has a
@@ -931,6 +1035,16 @@ akm remember "Long meeting notes..." --enrich
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
 
+# Cite provenance / related assets in frontmatter `xrefs:` (validated at write time):
+akm remember "The token rotation quirk applies to staging too" \
+  --xref knowledge:auth/vendor-x-token-api \
+  --xref memory:projectA/token-quirk
+
+# Correct an existing memory: write the fix AND demote the stale incumbent
+# (beliefState: superseded + supersededBy on the old asset, in one step):
+akm remember "Staging now uses the new gateway endpoint" \
+  --name new-endpoint --supersedes memory:projectA/old-endpoint
+
 # Route the write to a specific writable stash (0.8.0+):
 akm remember "Deployment needs VPN access" --target team-stash
 
@@ -946,6 +1060,8 @@ akm remember "Deployment needs VPN access" --wiki architecture
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
 | `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
+| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge:auth-flow --xref memory:vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
+| `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so ranking prefers the correction and `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working stash still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--target` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
@@ -974,6 +1090,29 @@ multi-tenant / multi-agent contract; the same shape is read back by
 [Configuration → Memory scope](configuration.md#memory-scope) for the
 frontmatter schema and round-trip rules.
 
+**Cross-references** (`--xref`) implement the stash back-linking conventions'
+provenance channel: the refs land in the memory's `xrefs:` frontmatter list,
+which the indexer folds into the asset's search hints, so the new memory is
+findable from searches for its source. Refs are validated before anything is
+written — against the write target plus every configured source, including
+read-only cross-stash sources — so a typo'd ref fails fast (exit 2) instead
+of becoming permanent silent noise. When a write lands at the type root (no
+`--path`, flat name) in a stash that carries convention facts, the JSON output
+includes an additive `hint` key pointing at the stash's placement conventions.
+
+**Corrections** (`--supersedes`) implement the conventions' two-write
+corrections pattern in one command: the new asset is written with an xref to
+what it corrects, and the old asset gets a metadata-only demotion
+(`beliefState: superseded` + `supersededBy: [<new ref>]`) that the write path
+reindexes immediately. The old asset is demoted only when it lives in the
+write target or the working stash — a match in any other configured source
+(read-only, or writable but not this write's target) is reported as
+`applied: false` (with a stderr warning) while the correction still writes;
+so is an old asset whose existing frontmatter is not parseable YAML, which a
+demotion rewrite would corrupt. Validation happens before any write, so a
+typo'd ref, or a ref naming the asset being written itself (exit 2), leaves
+both assets untouched — no partial correction.
+
 ### import
 
 Import a knowledge document. This writes a markdown file into `knowledge/` in
@@ -992,6 +1131,12 @@ akm import ./notes/release.txt --name release-checklist
 akm import - --name scratch-notes < notes.md
 akm import https://example.com/docs/auth
 
+# Cite provenance in the document's frontmatter `xrefs:` (validated at write time):
+akm import ./notes/oauth-quirks.md --xref knowledge:auth/vendor-x-token-api
+
+# Import a corrected doc AND demote the one it replaces (in one step):
+akm import ./notes/modern-guide.md --supersedes knowledge:legacy-guide
+
 # Route the write to a specific writable stash (0.8.0+):
 akm import ./docs/auth-flow.md --target team-stash
 
@@ -1005,6 +1150,8 @@ akm import https://example.com/docs/auth --wiki research
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
+| `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
+| `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
 | `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do
@@ -1013,6 +1160,16 @@ the URL path (for example, `/docs/auth` -> `knowledge/docs/auth.md`).
 
 The source must be a readable file path, a reachable HTTP/HTTPS URL, or `-` to
 read the document from stdin.
+
+`--xref` behaves as on `remember` (validated refs, soft ~5 cap, additive
+`hint` output key on type-root writes), with one import-specific rule: because
+imported documents may already carry frontmatter, the refs are **merged** —
+existing keys are preserved and the `xrefs:` list is dedupe-appended, so the
+result always has exactly one frontmatter block. The merge requires the
+existing block to parse as a YAML mapping; a malformed block aborts the import
+(exit 2, nothing written) instead of silently flattening the values the parser
+could not read. Importing the same document *without* `--xref` always
+preserves it byte-for-byte.
 
 ### feedback
 

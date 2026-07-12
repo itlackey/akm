@@ -467,9 +467,10 @@ export function resolveSecret(value: string | undefined): string | undefined {
 /**
  * Reserved well-known keys on IndexConfig that are NOT per-pass entries.
  * `stalenessDetection` is retired (10-Q3) but stays reserved so a leftover
- * config section is never misread as a pass entry.
+ * config section is never misread as a pass entry. `indexBodyOpening`
+ * (stash-conventions SPEC-8) is a boolean feature flag, not a pass section.
  */
-const INDEX_RESERVED_KEYS = new Set(["metadataEnhance", "stalenessDetection"]);
+const INDEX_RESERVED_KEYS = new Set(["metadataEnhance", "stalenessDetection", "indexBodyOpening"]);
 
 export function getIndexPassConfig(config: IndexConfig | undefined, passName: string): IndexPassConfig | undefined {
   if (!config) return undefined;

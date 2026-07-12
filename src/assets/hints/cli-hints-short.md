@@ -25,11 +25,14 @@ and `workflow list` operate within the current scope only.
 akm search "<query>"                          # Search all sources
 akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type workflow          # Filter to workflow assets
+akm search "memory:projectA/"                 # List a typed subtree (ref-prefix query; trailing slash required)
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm workflow next <ref>                       # Start or resume a workflow
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm remember "note" --target my-stash         # Route write to a named writable stash source
+akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable)
+akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm import ./doc.md --target my-stash         # Route import to a named writable stash source
 akm wiki list                                 # List available wikis
@@ -41,6 +44,7 @@ akm proposal reject skill:my-skill --reason "..."  # Reject by ref
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
+akm mv memory:old-note new-note               # Rename an asset: inbound refs rewritten, ranking history preserved
 akm sync                                      # Commit (and push if writable remote) changes in the primary stash (--no-push to commit only)
 akm improve --no-sync                         # Run improve without the end-of-run auto-commit
 akm improve --no-push                         # Auto-commit but skip push for this run

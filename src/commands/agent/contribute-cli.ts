@@ -134,7 +134,7 @@ export const lintCommand = defineCommand({
   meta: {
     name: "lint",
     description:
-      "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths). Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
+      "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
     fix: {

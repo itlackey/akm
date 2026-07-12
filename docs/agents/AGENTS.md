@@ -8,6 +8,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 akm search "<query>"                          # Search for assets
 akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type workflow          # Filter to workflow assets
+akm search "memory:projectA/"                 # List a typed subtree (ref-prefix query; trailing slash required)
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm show knowledge:my-doc                    # Show a knowledge asset
@@ -24,6 +25,7 @@ akm wiki ingest <name>                        # Dispatch defaults.engine (or --e
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
+akm mv memory:old-note new-note               # Rename an asset: inbound refs rewritten, ranking history preserved
 akm sync                                      # Commit (and push if writable) the primary git stash
 akm sync my-skills -m "Update"               # Sync a named writable git stash
 akm registry search "<query>"                 # Search all registries

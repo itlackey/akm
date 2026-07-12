@@ -22,7 +22,8 @@ import type { StashEntry } from "../passes/metadata";
  *  - description: entry description
  *  - tags: tags + aliases joined
  *  - hints: searchHints + examples + usage + intent fields
- *  - content: TOC headings (lowest-weight catch-all)
+ *  - content: TOC headings + parameters + the config-gated body opening
+ *    (lowest-weight catch-all)
  */
 // NOTE (R5): the collapse detector's frozen canary queries are built from the
 // same surface this function indexes (name tokens / tags / description) and
@@ -70,6 +71,14 @@ export function buildSearchFields(entry: StashEntry): {
       if (param.description) contentParts.push(param.description);
     }
   }
+  // Stash-organization conventions (SPEC-8): the self-situating body opening
+  // (captured by the metadata pass only when `index.indexBodyOpening` is on)
+  // folds into the lowest-weight catch-all column — never name/description/
+  // tags/hints — so orientation prose is retrievable without outranking
+  // structured-field matches. The fold is unconditional on the entry field:
+  // `rebuildFts` rebuilds FTS rows from stored entry_json and must reproduce
+  // the same fields without re-reading config.
+  if (entry.bodyOpening) contentParts.push(entry.bodyOpening);
   const content = contentParts.join(" ").toLowerCase();
 
   return { name, description, tags, hints, content };

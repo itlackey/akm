@@ -150,12 +150,39 @@ function buildRefTypeAlternation(): string {
   return types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 }
 
+/**
+ * Body-ref boundary grammar, shared with `akm mv`'s ref-rewrite pattern —
+ * `src/commands/mv-cli.ts` imports these constants so the two grammars cannot
+ * drift. Any character-class change here retargets both the lint missing-ref
+ * scan and mv's inbound-xref rewriting.
+ *
+ * `REF_BOUNDARY_PREFIX_CLASS_SRC` is the character class a ref may start
+ * after (a ref also matches at line start): whitespace, backtick, quote,
+ * `(`, `[`, or `,` — the `[` admits markdown-link-style refs like
+ * `see [memory:foo]`, which the legacy class silently skipped, and the `,`
+ * admits the ref AFTER a bare comma in a no-space flow list like
+ * `xrefs: [memory:a,memory:b]` (valid YAML). `,` is already a slug
+ * TERMINATOR (excluded from `REF_SLUG_CHAR_CLASS_SRC`), so `a,b` splits
+ * cleanly and adding it here cannot extend any existing match; false
+ * positives are fenced by the type alternation — a comma only starts a match
+ * when a literal `<type>:` follows it.
+ *
+ * `REF_SLUG_CHAR_CLASS_SRC` is the character class a ref's `<type>:<slug>`
+ * token is made of; the first excluded character ends the ref.
+ */
+export const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(,\\[]";
+export const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
+
 // Only the TYPE alternation is registry-derived; the surrounding grammar
 // (boundary prefix, capture group, slug charset) is byte-identical to the
-// legacy hand-written pattern. Deriving the types from `getAssetTypes()` means
-// `env`/`secret` (added in 0.9) are now matched, and the removed `vault` type
-// is not — both follow the registry automatically.
-const REF_RE = new RegExp(`(?:^|[\\s\`"'(])((${buildRefTypeAlternation()}):[^\\s"'\`)\\]>,\\n]+)`, "gm");
+// legacy hand-written pattern, except that the boundary prefix now also
+// admits `[`. Deriving the types from `getAssetTypes()` means `env`/`secret`
+// (added in 0.9) are now matched, and the removed `vault` type is not — both
+// follow the registry automatically.
+const REF_RE = new RegExp(
+  `(?:^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((${buildRefTypeAlternation()}):${REF_SLUG_CHAR_CLASS_SRC}+)`,
+  "gm",
+);
 
 /**
  * Map from ref type to relative path pattern within stashRoot. Returns null to
@@ -194,41 +221,64 @@ export function refToRelPath(refType: string, refName: string): string | null {
  */
 export function refExistsInAnyStash(relPath: string, refType: string, refName: string, stashRoots: string[]): boolean {
   for (const root of stashRoots) {
-    const absPath = path.join(root, relPath);
-    if (fs.existsSync(absPath)) return true;
-    // Multi-file skill layout: directory containing SKILL.md
-    const bareDir = absPath.replace(/\.md$/, "");
-    if (fs.existsSync(bareDir) && fs.existsSync(path.join(bareDir, "SKILL.md"))) return true;
-    // .derived.md variant for memory refs
-    if (refType === "memory") {
-      const derivedPath = path.join(root, "memories", `${refName}.derived.md`);
-      if (fs.existsSync(derivedPath)) return true;
-    }
-    // Knowledge-specific: search subdirectories like knowledge/projects/, knowledge/tools/, etc.
-    if (refType === "knowledge") {
-      try {
-        const knowledgeDir = path.join(root, "knowledge");
-        if (fs.existsSync(knowledgeDir) && fs.statSync(knowledgeDir).isDirectory()) {
-          const entries = fs.readdirSync(knowledgeDir, { withFileTypes: true });
-          for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const subPath = path.join(knowledgeDir, entry.name, `${refName}.md`);
-            if (fs.existsSync(subPath)) return true;
-          }
-        }
-      } catch {
-        // Ignore errors reading directory
-      }
-    }
-    // Fallback: the refName may already encode the full stash-relative path
-    // (e.g. knowledge:skills/foo/references/bar where the file lives at
-    // <stash>/skills/foo/references/bar.md, not <stash>/knowledge/skills/...).
-    const directPath = path.join(root, `${refName}.md`);
-    if (fs.existsSync(directPath)) return true;
-    const directDir = path.join(root, refName);
-    if (fs.existsSync(directDir) && fs.existsSync(path.join(directDir, "SKILL.md"))) return true;
+    if (resolveRefPathInStash(relPath, refType, refName, root) !== null) return true;
   }
   return false;
+}
+
+/**
+ * Resolve the on-disk primary file for a ref within a SINGLE stash root, using
+ * the same reachability rules (in the same order) as
+ * {@link refExistsInAnyStash}, which delegates here. Returns the absolute path
+ * of the file that makes the ref "exist" — for a multi-file skill directory
+ * that is its `SKILL.md` primary — or `null` when the ref does not resolve in
+ * this root.
+ *
+ * Extracted for SPEC-5 (`--supersedes` demotion): write commands need the
+ * superseded asset's actual file to mutate, and forking a second resolver
+ * would drift from lint's. NOT part of the akm-plugins ref-resolver contract
+ * (the contract pins `refToRelPath` + `refExistsInAnyStash`; this is the
+ * shared internal both build on).
+ */
+export function resolveRefPathInStash(relPath: string, refType: string, refName: string, root: string): string | null {
+  const absPath = path.join(root, relPath);
+  if (fs.existsSync(absPath)) return absPath;
+  // Multi-file skill layout: directory containing SKILL.md
+  const bareDir = absPath.replace(/\.md$/, "");
+  if (fs.existsSync(bareDir) && fs.existsSync(path.join(bareDir, "SKILL.md"))) {
+    return path.join(bareDir, "SKILL.md");
+  }
+  // .derived.md variant for memory refs
+  if (refType === "memory") {
+    const derivedPath = path.join(root, "memories", `${refName}.derived.md`);
+    if (fs.existsSync(derivedPath)) return derivedPath;
+  }
+  // Knowledge-specific: search subdirectories like knowledge/projects/, knowledge/tools/, etc.
+  if (refType === "knowledge") {
+    try {
+      const knowledgeDir = path.join(root, "knowledge");
+      if (fs.existsSync(knowledgeDir) && fs.statSync(knowledgeDir).isDirectory()) {
+        const entries = fs.readdirSync(knowledgeDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const subPath = path.join(knowledgeDir, entry.name, `${refName}.md`);
+          if (fs.existsSync(subPath)) return subPath;
+        }
+      }
+    } catch {
+      // Ignore errors reading directory
+    }
+  }
+  // Fallback: the refName may already encode the full stash-relative path
+  // (e.g. knowledge:skills/foo/references/bar where the file lives at
+  // <stash>/skills/foo/references/bar.md, not <stash>/knowledge/skills/...).
+  const directPath = path.join(root, `${refName}.md`);
+  if (fs.existsSync(directPath)) return directPath;
+  const directDir = path.join(root, refName);
+  if (fs.existsSync(directDir) && fs.existsSync(path.join(directDir, "SKILL.md"))) {
+    return path.join(directDir, "SKILL.md");
+  }
+  return null;
 }
 
 /**
@@ -310,6 +360,21 @@ function checkMissingRefs(
 // ── frontmatter refs ─────────────────────────────────────────────────────────
 
 /**
+ * Frontmatter keys that carry cross-reference lists per the stash
+ * organization conventions: `xrefs:` (provenance / associative links),
+ * `supersededBy:` and `contradictedBy:` (belief-state correction links).
+ * The missing-ref check validates each of these in ADDITION to the body /
+ * `refs:` scan — they are the channel the conventions mandate, and a rename
+ * would otherwise dangle them silently.
+ *
+ * `sources:` is deliberately excluded (non-wiki `sources:` was rejected as a
+ * typed channel; wiki `sources:` is checked by lintWiki). `source_refs:` /
+ * `evidenceSources:` are excluded too — they legitimately point at
+ * merged-away or pruned assets (historical provenance).
+ */
+const XREF_FRONTMATTER_KEYS = ["xrefs", "supersededBy", "contradictedBy"] as const;
+
+/**
  * Return the `refs:` array from frontmatter when it is present and is an
  * array of strings; otherwise return `null` to signal the caller should
  * fall back to scanning the body. An empty array (`refs: []`) is also
@@ -352,6 +417,23 @@ function readRefsArray(value: unknown): string[] | null {
     if (typeof entry === "string" && entry.trim()) out.push(entry.trim());
   }
   return out;
+}
+
+/**
+ * Like {@link readRefsArray} but also accepts a single scalar string,
+ * normalizing it to a one-element list. The indexer's
+ * `normalizeNonEmptyStringList` treats `supersededBy: memory:x` and
+ * `supersededBy: [memory:x]` identically — both are live data — so the
+ * frontmatter xref-channel check must validate both shapes; the array-only
+ * reader silently skipped dangling scalar refs. Returns `null` for any other
+ * type (missing key, number, object) and for a blank scalar.
+ */
+function readRefStringOrArray(value: unknown): string[] | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : null;
+  }
+  return readRefsArray(value);
 }
 
 /**
@@ -616,6 +698,42 @@ export abstract class BaseLinter implements AssetLinter {
           detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
           fixed: false,
         });
+      }
+
+      // Frontmatter xref channels (xrefs / supersededBy / contradictedBy).
+      // Runs regardless of the `refs:` body-scan carve-out above — that
+      // carve-out governs only the BODY scan (`refs: []` declares "no
+      // outbound refs in the body", not "skip my correction links").
+      // Non-ref-shaped values (URLs, `raw/<slug>`, `<placeholder>`
+      // templates, shell vars) fall out via checkMissingRefs' guards.
+      //
+      // Gate: runs when the file has a frontmatter block OR when an
+      // authoritative `refs:` list was extracted. On the task/YAML path
+      // (lint/index.ts) ctx.frontmatter is always null and the whole file
+      // IS the body (`body === raw`); the top-level YAML keys land in
+      // ctx.data. Without `refs:` the body scan above already catches ref
+      // values under these keys, so running the pass would double-report —
+      // skip it. With `refs:` present the body scan is suppressed
+      // (refSource is the refs list), so this pass is the ONLY thing that
+      // validates the xref keys — it must run or dangling task xrefs go
+      // unreported. The two cases are mutually exclusive, so no ref is
+      // ever double-reported. Md files without a frontmatter block and
+      // without `refs:` land in the skip branch with empty ctx.data, so
+      // nothing is lost for them either.
+      if (ctx.frontmatter !== null || explicitRefs !== null) {
+        for (const key of XREF_FRONTMATTER_KEYS) {
+          const values = readRefStringOrArray(ctx.data?.[key]);
+          if (values === null) continue;
+          const missingXrefs = checkMissingRefs(values.join("\n"), ctx.stashRoot, ctx.extraStashRoots);
+          for (const { ref, resolvedRelPath } of missingXrefs) {
+            issues.push({
+              file: ctx.relPath,
+              issue: "missing-ref",
+              detail: `missing ref: ${ref} (frontmatter ${key}; resolved to ${resolvedRelPath})`,
+              fixed: false,
+            });
+          }
+        }
       }
     }
 

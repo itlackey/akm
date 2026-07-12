@@ -34,6 +34,17 @@ Use a fact for stable information that future agents should treat as true or nor
 ## Maintenance strategy
 
 - Revise or supersede facts when the durable truth changes.
-- Do not allow contradictory facts to remain equally active.
+- Do not allow contradictory facts to remain equally active: mark the loser
+  `beliefState: superseded` / `supersededBy: [<new ref>]` so ranking demotes it.
 - Promote repeated memories or lessons into facts only when they become stable context.
 - Keep convention and meta facts especially clear, because they steer future asset creation.
+
+## Placement & linking
+
+- Facts are **reuse-born**: give a policy/standard fact a domain-like prefix
+  (`fact:policies/pii-handling`) or the type root for personal/meta facts.
+- Facts are also the **delivery layer** for stash-wide conventions:
+  `category: convention` or `category: meta` facts are surfaced to every non-wiki
+  author, so this is where naming, placement, and linking house-rules live. Keep
+  each one short — they inject into authoring prompts. Reserve `pinned: true` for
+  the small always-injected core.

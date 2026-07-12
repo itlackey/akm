@@ -49,6 +49,13 @@ export type EventType =
   | "update"
   | "remember"
   | "import"
+  /**
+   * SPEC-7 — emitted once per successful `akm mv` rename. `ref` carries the
+   * NEW ref; metadata carries `{from, to, rewroteFiles, readOnlyCiters,
+   * twinMoved}` (counts only — never file contents). A failed mv emits
+   * nothing.
+   */
+  | "mv"
   | "save"
   | "feedback"
   // Proposal substrate (#225). `promoted` and `rejected` are emitted by the

@@ -2,14 +2,17 @@ import { afterAll, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resetConfigCache } from "../src/core/config/config";
 import {
   applyCuratedFrontmatter,
+  extractBodyOpening,
   extractCommentMetadata,
   extractDescriptionFromComments,
   extractPackageMetadata,
   extractTagsFromPath,
   fileNameToDescription,
   generateMetadata,
+  generateMetadataFlat,
   isEnrichmentComplete,
   loadStashFile,
   type StashEntry,
@@ -17,6 +20,8 @@ import {
   validateStashEntry,
   writeStashFile,
 } from "../src/indexer/passes/metadata";
+import { buildSearchFields, buildSearchText } from "../src/indexer/search/search-fields";
+import { sandboxXdgConfigHome, writeSandboxConfig } from "./_helpers/sandbox";
 
 // Renderers auto-register via ensureBuiltinsRegistered in file-context.ts
 
@@ -655,4 +660,758 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
   expect(result?.whenToUse).toBe("for triage");
   expect(result?.lessonStrength).toBe(4);
   expect(result?.evidenceSources).toEqual(["memory:x"]);
+});
+
+// ── SPEC-6: fact `category` capture into the index ───────────────────────────
+//
+// Convention facts are selected for prompt injection by their `category:`
+// frontmatter (resolveStashStandards), but the indexer never captured that key
+// onto StashEntry — so no rank-time or filter policy can see it. SPEC-6 step 1
+// (docs/design/stash-conventions-code-spec.md) captures it in
+// applyCuratedFrontmatter (alongside beliefState) and whitelists it through
+// validateStashEntry so it survives the .stash.json / entry_json round-trip.
+
+/**
+ * SPEC-6 adds `category?: string` to StashEntry. Read it through a typed
+ * accessor so this file still compiles before the implementation lands; the
+ * dependent tests then go red on the runtime value instead of a compile error.
+ */
+function entryCategory(entry: StashEntry | null | undefined): string | undefined {
+  return (entry as (StashEntry & { category?: string }) | null | undefined)?.category;
+}
+
+test("applyCuratedFrontmatter captures category frontmatter onto the entry (SPEC-6)", () => {
+  const entry: StashEntry = { name: "conventions/backlinks", type: "fact" };
+  applyCuratedFrontmatter(entry, { category: "convention" });
+  expect(entryCategory(entry)).toBe("convention");
+});
+
+test("applyCuratedFrontmatter trims category and ignores blank or non-string values (SPEC-6)", () => {
+  const trimmed: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(trimmed, { category: "  meta  " });
+  expect(entryCategory(trimmed)).toBe("meta");
+
+  const blank: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(blank, { category: "   " });
+  expect(entryCategory(blank)).toBeUndefined();
+
+  const nonString: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(nonString, { category: 42 });
+  expect(entryCategory(nonString)).toBeUndefined();
+
+  const absent: StashEntry = { name: "f", type: "fact" };
+  applyCuratedFrontmatter(absent, {});
+  expect(entryCategory(absent)).toBeUndefined();
+});
+
+test("validateStashEntry whitelists category (SPEC-6)", () => {
+  const result = validateStashEntry({ name: "team/tool-stack", type: "fact", category: "convention" });
+  expect(result).not.toBeNull();
+  expect(entryCategory(result)).toBe("convention");
+
+  // Non-string values are dropped, not coerced.
+  const bad = validateStashEntry({ name: "team/tool-stack", type: "fact", category: ["convention"] });
+  expect(bad).not.toBeNull();
+  expect(entryCategory(bad)).toBeUndefined();
+});
+
+test("loadStashFile preserves category on entries (SPEC-6 whitelist round-trip)", () => {
+  const dir = tmpDir();
+  writeFile(
+    path.join(dir, ".stash.json"),
+    JSON.stringify({
+      entries: [{ name: "active-projects", type: "fact", category: "meta", filename: "active-projects.md" }],
+    }),
+  );
+  const result = loadStashFile(dir);
+  expect(result).not.toBeNull();
+  expect(entryCategory(result?.entries[0])).toBe("meta");
+});
+
+test("generateMetadata populates entry.category from fact frontmatter (SPEC-6 end-to-end)", async () => {
+  const factsRoot = tmpDir();
+  const file = path.join(factsRoot, "conventions", "organization.md");
+  writeFile(
+    file,
+    ["---", "category: convention", "description: House placement rules", "---", "", "# Org", "", "Body.", ""].join(
+      "\n",
+    ),
+  );
+
+  const stash = await generateMetadata(factsRoot, "fact", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].name).toBe("conventions/organization");
+  expect(entryCategory(stash.entries[0])).toBe("convention");
+});
+
+test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin)", () => {
+  // SPEC-6 shipped `category` as capture-only metadata: the CHANGELOG claims
+  // "search results and ranking are unchanged". Pin that claim directly so a
+  // future buildSearchFields edit (e.g. SPEC-8's content-field work) cannot
+  // silently start indexing the category value. The sentinel token appears
+  // nowhere else on the entry, so any leak into a field is unambiguous.
+  const base: StashEntry = {
+    name: "conventions/backlinks",
+    type: "fact",
+    description: "how backlinks are declared",
+    tags: ["conventions"],
+  };
+  const withCategory: StashEntry = { ...base, category: "sentinelcategorytoken" };
+
+  // Adding a category leaves every FTS field byte-identical…
+  expect(buildSearchFields(withCategory)).toEqual(buildSearchFields(base));
+  // …and the value never reaches the concatenated search/embedding text.
+  expect(buildSearchText(withCategory)).not.toContain("sentinelcategorytoken");
+});
+
+// ── SPEC-2: merge path-derived scope/domain tokens into tags ─────────────────
+//
+// The stash-organization conventions require the directory (scope/domain)
+// tokens of a nested asset to reach the tags column even when the author set
+// explicit tags. Tokens are derived from the canonical ref subpath
+// (canonicalName), so the stash-walk (generateMetadata) and flat-walk
+// (generateMetadataFlat) paths behave identically. Filename tokens are
+// deliberately NOT merged when explicit tags exist (they already live in the
+// FTS name column and aliases). See
+// docs/design/stash-conventions-code-spec.md SPEC-2.
+
+/** Frontmatter memory doc with an explicit tags list. */
+function memoryDocWithTags(tags: string[]): string {
+  return ["---", "tags:", ...tags.map((t) => `  - ${t}`), "---", "Plain memory body prose."].join("\n");
+}
+
+function sortedTags(entry: StashEntry | undefined): string[] {
+  return [...(entry?.tags ?? [])].sort();
+}
+
+/**
+ * SPEC-2 introduces an exported pure helper on the metadata pass. Loaded
+ * dynamically so this file still compiles (and unrelated tests still run)
+ * before the implementation lands; each dependent test goes red with a clear
+ * missing-export error instead of a module-load failure.
+ */
+async function loadExtractDirTagsFromName(): Promise<(name: string) => string[]> {
+  const mod = (await import("../src/indexer/passes/metadata")) as unknown as Record<string, unknown>;
+  const fn = mod.extractDirTagsFromName;
+  if (typeof fn !== "function") {
+    throw new Error(
+      "SPEC-2 not implemented: expected src/indexer/passes/metadata to export extractDirTagsFromName(name: string): string[]",
+    );
+  }
+  return fn as (name: string) => string[];
+}
+
+test("extractDirTagsFromName tokenizes directory segments of a ref subpath (SPEC-2)", async () => {
+  const extractDirTagsFromName = await loadExtractDirTagsFromName();
+  // Single directory segment, lowercased.
+  expect([...extractDirTagsFromName("projectA/auth-tip")].sort()).toEqual(["projecta"]);
+  // Multiple segments; each split on -/_/. with single-char tokens dropped
+  // (same tokenization as extractTagsFromPath).
+  expect([...extractDirTagsFromName("team-alpha/projectA/note")].sort()).toEqual(["alpha", "projecta", "team"]);
+  expect([...extractDirTagsFromName("client-x/note")].sort()).toEqual(["client"]);
+});
+
+test("extractDirTagsFromName returns no tokens for a name at the type root (SPEC-2)", async () => {
+  const extractDirTagsFromName = await loadExtractDirTagsFromName();
+  // No directory segments: the filename itself must contribute nothing.
+  expect(extractDirTagsFromName("auth-tip")).toEqual([]);
+});
+
+test("generateMetadata merges directory tokens into explicit tags for nested assets (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "projectA", "auth-tip.md");
+  writeFile(file, memoryDocWithTags(["auth"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].name).toBe("projectA/auth-tip");
+  // Explicit tag kept AND the directory scope token added; filename tokens
+  // ("auth-tip" -> "tip") must NOT be merged when explicit tags exist.
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
+});
+
+test("generateMetadata adds no directory tokens for an explicit-tags asset at the type root (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "root-note.md");
+  writeFile(file, memoryDocWithTags(["auth"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  // No directory segments at the type root: explicit tags stay exact — no
+  // filename tokens ("root", "note") sneak in.
+  expect(stash.entries[0].tags).toEqual(["auth"]);
+});
+
+test("generateMetadata keeps the empty-tags path-derived fallback unchanged for nested assets (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "projectA", "auth-tip.md");
+  writeFile(file, "Plain memory body prose with no frontmatter.\n");
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  // Byte-compat with today's extractTagsFromPath fallback: directory AND
+  // filename tokens, deduped.
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta", "tip"]);
+});
+
+test("generateMetadata keeps the empty-tags fallback unchanged at the type root (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "auth-tip.md");
+  writeFile(file, "Plain memory body prose with no frontmatter.\n");
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "tip"]);
+});
+
+test("generateMetadataFlat merges directory tokens from the canonical ref subpath into explicit tags (SPEC-2)", async () => {
+  const stashRoot = tmpDir();
+  const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
+  writeFile(file, memoryDocWithTags(["auth"]));
+
+  const stash = await generateMetadataFlat(stashRoot, [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].type).toBe("memory");
+  // canonicalName is the ref subpath relative to the TYPE root ("memories"),
+  // so "memories" itself is not a tag — only the scope dir "projectA" is.
+  expect(stash.entries[0].name).toBe("projectA/auth-tip");
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
+});
+
+test("flat-walk and stash-walk derive identical tags for a nested asset without explicit tags (SPEC-2)", async () => {
+  // Today the flat walk passes path.dirname(file) as the tag root, so even the
+  // empty-tags fallback loses directory segments there. Deriving tokens from
+  // canonicalName makes both walks agree — and both must carry the scope token.
+  const stashRoot = tmpDir();
+  const memRoot = path.join(stashRoot, "memories");
+  const file = path.join(memRoot, "projectA", "auth-tip.md");
+  writeFile(file, "Plain memory body prose with no frontmatter.\n");
+
+  const flat = await generateMetadataFlat(stashRoot, [file]);
+  const walked = await generateMetadata(memRoot, "memory", [file]);
+  expect(flat.entries).toHaveLength(1);
+  expect(walked.entries).toHaveLength(1);
+  expect(sortedTags(flat.entries[0])).toContain("projecta");
+  expect(sortedTags(flat.entries[0])).toEqual(sortedTags(walked.entries[0]));
+});
+
+test("author-restated scope token is deduped by normalizeTerms after the merge (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "projectA", "pin.md");
+  writeFile(file, memoryDocWithTags(["projectA", "auth"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  const tags = stash.entries[0].tags ?? [];
+  expect(tags.filter((t) => t === "projecta")).toHaveLength(1);
+  expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
+});
+
+test("generateMetadata merges directory tokens into package.json-keyword tags for nested non-md assets (SPEC-2)", async () => {
+  // The other explicit-tags channel: non-md assets get tags from package.json
+  // keywords (Priority 1). A NESTED script must gain its directory token on
+  // top of the keywords, while the root-level case stays exact (pinned by the
+  // "extracts metadata from package.json" test above).
+  const dir = tmpDir();
+  const tool = path.join(dir, "tools", "run.ts");
+  writeFile(tool, `console.log("run")\n`);
+  writeFile(
+    path.join(dir, "package.json"),
+    JSON.stringify({ description: "Git diff summarizer", keywords: ["git", "diff"] }),
+  );
+
+  const stash = await generateMetadata(dir, "script", [tool]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0].name).toBe("tools/run.ts");
+  expect(sortedTags(stash.entries[0])).toEqual(["diff", "git", "tools"]);
+});
+
+test("loadStashFile keeps literal tags for nested-name entries — no dir-token merge (SPEC-2)", () => {
+  // .stash.json-declared entries are hand-curated manifests: the SPEC-2 merge
+  // applies only to file-derived entries via buildEntryFromFile. A nested ref
+  // subpath in a declared entry's name must NOT grow directory tokens.
+  const dir = tmpDir();
+  const stash: StashFile = {
+    entries: [
+      {
+        name: "projectA/deploy",
+        type: "script",
+        description: "deploy projectA services",
+        tags: ["auth"],
+        filename: "deploy.sh",
+      },
+    ],
+  };
+  writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
+
+  const result = loadStashFile(dir);
+  expect(result?.entries).toHaveLength(1);
+  expect(result?.entries[0].name).toBe("projectA/deploy");
+  expect(result?.entries[0].tags).toEqual(["auth"]);
+});
+
+test("multi-token directory segments tokenize like extractTagsFromPath in the merge (SPEC-2)", async () => {
+  const memRoot = tmpDir();
+  const file = path.join(memRoot, "client-x", "billing-tip.md");
+  writeFile(file, memoryDocWithTags(["billing"]));
+
+  const stash = await generateMetadata(memRoot, "memory", [file]);
+  expect(stash.entries).toHaveLength(1);
+  // "client-x" splits to ["client", "x"]; single-char "x" is dropped, and the
+  // raw segment must not survive as a "client x" phrase tag.
+  expect(sortedTags(stash.entries[0])).toEqual(["billing", "client"]);
+});
+
+// ── SPEC-8: config-gated indexing of the self-situating body opening ─────────
+//
+// With `index.indexBodyOpening: true` in the user config, buildEntryFromFile's
+// md branch extracts the first non-heading, non-fence, non-empty paragraph of
+// the body (capped at 280 chars) into a new StashEntry field `bodyOpening`,
+// and buildSearchFields folds it into the lowest-weight `content` FTS field.
+// Default (flag absent or explicitly false) keeps entries and search fields
+// byte-identical to today. Secret/env file bodies are never read; session-kind
+// memories (the `akm_memory_kind` marker in outer OR inner nested frontmatter,
+// the same patterns base-linter recognises) are excluded. See
+// docs/design/stash-conventions-code-spec.md SPEC-8.
+
+/**
+ * SPEC-8 adds `bodyOpening?: string` to StashEntry. Read it through a typed
+ * accessor so this file still compiles before the implementation lands; the
+ * dependent tests then go red on the runtime value instead of a compile error.
+ */
+function entryBodyOpening(entry: StashEntry | null | undefined): string | undefined {
+  return (entry as (StashEntry & { bodyOpening?: string }) | null | undefined)?.bodyOpening;
+}
+
+/**
+ * Run `fn` with an isolated XDG_CONFIG_HOME whose akm config sets
+ * `index.indexBodyOpening` to `flag` (the key — and the whole config file — is
+ * omitted when `flag` is `undefined`, exercising the true default). Resets the
+ * config cache on both sides so the sandboxed value is actually read and
+ * nothing leaks into later tests.
+ */
+async function withIndexBodyOpeningConfig<T>(flag: boolean | undefined, fn: () => Promise<T>): Promise<T> {
+  const cfg = sandboxXdgConfigHome();
+  try {
+    if (flag !== undefined) writeSandboxConfig({ index: { indexBodyOpening: flag } });
+    resetConfigCache();
+    return await fn();
+  } finally {
+    resetConfigCache();
+    cfg.cleanup();
+  }
+}
+
+const OPENING_PARA = "This memory situates the auth-refresh work inside the payments-platform project.";
+
+/** Markdown memory doc with a fixed frontmatter block and the given body lines. */
+function memoryDocWithBody(bodyLines: string[]): string {
+  return ["---", "description: Auth refresh notes", "tags:", "  - auth", "---", "", ...bodyLines, ""].join("\n");
+}
+
+test("flag on: first body paragraph lands in entry.bodyOpening (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "auth-notes.md");
+    writeFile(file, memoryDocWithBody([OPENING_PARA, "", "Second paragraph pangolin prose must not be captured."]));
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    expect(stash.entries).toHaveLength(1);
+    // Short paragraph (< 280 chars): captured whole, byte-exact — and ONLY the
+    // first paragraph (the pangolin paragraph stays out).
+    expect(entryBodyOpening(stash.entries[0])).toBe(OPENING_PARA);
+  });
+});
+
+test("flag on: bodyOpening folds into the content search field, not hints (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "auth-notes.md");
+    writeFile(file, memoryDocWithBody([OPENING_PARA]));
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const fields = buildSearchFields(stash.entries[0]);
+    // Lowest-weight catch-all column carries the (lowercased) opening…
+    expect(fields.content).toContain("situates the auth-refresh work");
+    // …and no higher-weight column picks it up (SPEC-8 explicitly rejects
+    // folding into hints, which carries xrefs/when_to_use).
+    expect(fields.hints).not.toContain("situates");
+    expect(fields.name).not.toContain("situates");
+    expect(fields.description).not.toContain("situates");
+    expect(fields.tags).not.toContain("situates");
+    // The concatenated search/embedding text picks it up via content.
+    expect(buildSearchText(stash.entries[0])).toContain("situates the auth-refresh work");
+  });
+});
+
+test("flag on: a paragraph spanning multiple lines is captured up to the paragraph break (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "wrapped.md");
+    writeFile(
+      file,
+      memoryDocWithBody([
+        "First line of the opening paragraph continues onto",
+        "a second physical line before the paragraph break.",
+        "",
+        "Trailing paragraph stays out.",
+      ]),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const opening = entryBodyOpening(stash.entries[0]);
+    expect(opening).toBeDefined();
+    // Whitespace-normalized comparison: the join character between the two
+    // physical lines (newline vs space) is not pinned, the content is.
+    expect((opening ?? "").replace(/\s+/g, " ").trim()).toBe(
+      "First line of the opening paragraph continues onto a second physical line before the paragraph break.",
+    );
+    expect(opening).not.toContain("Trailing paragraph");
+  });
+});
+
+test("flag on: heading-first bodies skip headings and capture the first prose paragraph (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "heading-first.md");
+    writeFile(
+      file,
+      memoryDocWithBody([
+        "# Auth notes",
+        "",
+        "## Context",
+        "",
+        "The orientation paragraph situates this memory under projectA.",
+        "",
+        "More prose afterwards.",
+      ]),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    expect(entryBodyOpening(stash.entries[0])).toBe("The orientation paragraph situates this memory under projectA.");
+  });
+});
+
+test("flag on: fenced-first bodies skip the fence and capture the first prose paragraph (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "fence-first.md");
+    writeFile(
+      file,
+      memoryDocWithBody([
+        "```bash",
+        "echo fence interior prose that must never be extracted",
+        "```",
+        "",
+        "Fence-follower paragraph provides the orientation prose.",
+      ]),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const opening = entryBodyOpening(stash.entries[0]);
+    expect(opening).toBe("Fence-follower paragraph provides the orientation prose.");
+    expect(opening).not.toContain("fence interior");
+  });
+});
+
+test("flag on: bodyOpening is capped at 280 chars (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    // 70 distinct 7-char words joined by spaces = 559 chars, well over the cap.
+    const words = Array.from({ length: 70 }, (_, i) => `token${String(i).padStart(2, "0")}`);
+    const longPara = words.join(" ");
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "long-opening.md");
+    writeFile(file, memoryDocWithBody([longPara]));
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const opening = entryBodyOpening(stash.entries[0]);
+    expect(opening).toBeDefined();
+    const text = opening ?? "";
+    expect(text.length).toBeLessThanOrEqual(280);
+    // A cap, not a gutting: after allowing for word-boundary trimming and an
+    // optional ellipsis, a substantial prefix of the paragraph must survive
+    // and must be a literal prefix (no reordering / summarising).
+    const stripped = text.replace(/(\.{3}|…)\s*$/, "").trimEnd();
+    expect(stripped.length).toBeGreaterThanOrEqual(250);
+    expect(longPara.startsWith(stripped)).toBe(true);
+  });
+});
+
+test("flag on: frontmatter-only files yield no bodyOpening (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "fm-only.md");
+    writeFile(file, ["---", "description: Facts only", "tags:", "  - auth", "---", ""].join("\n"));
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    expect(stash.entries).toHaveLength(1);
+    expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
+  });
+});
+
+test("flag on: a body with only headings and fences yields no bodyOpening (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "no-prose.md");
+    writeFile(file, memoryDocWithBody(["# Title", "", "## Section", "", "```ts", "const x = 1;", "```"]));
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    expect(stash.entries).toHaveLength(1);
+    expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
+  });
+});
+
+test("flag on: session-kind memories are excluded via the outer akm_memory_kind marker (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "session-outer.md");
+    writeFile(
+      file,
+      [
+        "---",
+        "description: Session checkpoint 2026-07-10",
+        "akm_memory_kind: session_checkpoint",
+        "---",
+        "",
+        "Raw transcript paragraph that must not become bodyOpening.",
+        "",
+      ].join("\n"),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    // Still indexed as a memory — only the body-opening capture is skipped.
+    expect(stash.entries).toHaveLength(1);
+    expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
+    expect(buildSearchText(stash.entries[0])).not.toContain("transcript paragraph");
+  });
+});
+
+test("flag on: session-kind memories are excluded via the inner nested akm_memory_kind marker (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    // `akm remember` wraps the session-capture hook's file in its own
+    // frontmatter; the hook's `akm_memory_kind` block survives at the top of
+    // the body (the nested pattern base-linter's parseInnerFrontmatterBlock
+    // recognises). Neither the marker block nor the transcript may be captured.
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "session-inner.md");
+    writeFile(
+      file,
+      [
+        "---",
+        "description: Session checkpoint",
+        "---",
+        "",
+        "---",
+        "akm_memory_kind: session_checkpoint",
+        "refs: []",
+        "---",
+        "",
+        "Raw transcript prose that must not become bodyOpening.",
+        "",
+      ].join("\n"),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    expect(stash.entries).toHaveLength(1);
+    expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
+    expect(buildSearchText(stash.entries[0])).not.toContain("transcript prose");
+  });
+});
+
+test("flag on: secret files are never read for bodyOpening (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    // Whole-file secret with a .md extension — the strongest temptation for an
+    // md-branch extractor. The existing guard (assetType !== "secret") must
+    // keep the file bytes out of the entry entirely.
+    const stashRoot = tmpDir();
+    const secretFile = path.join(stashRoot, "secrets", "deploy-key.md");
+    writeFile(secretFile, "walrus-credential value paragraph that must never be indexed.\n");
+
+    const stash = await generateMetadataFlat(stashRoot, [secretFile]);
+    expect(stash.entries).toHaveLength(1);
+    expect(stash.entries[0].type).toBe("secret");
+    expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
+    expect(JSON.stringify(stash.entries[0])).not.toContain("walrus");
+    expect(buildSearchText(stash.entries[0])).not.toContain("walrus");
+  });
+});
+
+test("flag on: env files are never read for bodyOpening (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const stashRoot = tmpDir();
+    const envFile = path.join(stashRoot, "env", "ci.env");
+    writeFile(envFile, ["# staging credentials walrus paragraph", "API_KEY=walrus-value-token", ""].join("\n"));
+
+    const stash = await generateMetadataFlat(stashRoot, [envFile]);
+    expect(stash.entries).toHaveLength(1);
+    expect(stash.entries[0].type).toBe("env");
+    expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
+    // Key NAMES may surface (existing behavior); comment text and values never.
+    expect(JSON.stringify(stash.entries[0])).not.toContain("walrus");
+    expect(buildSearchText(stash.entries[0])).not.toContain("walrus");
+  });
+});
+
+test("flag on: flat-walk memories gain bodyOpening through the shared pipeline (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const stashRoot = tmpDir();
+    const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
+    writeFile(file, memoryDocWithBody([OPENING_PARA]));
+
+    const stash = await generateMetadataFlat(stashRoot, [file]);
+    expect(stash.entries).toHaveLength(1);
+    expect(stash.entries[0].type).toBe("memory");
+    expect(entryBodyOpening(stash.entries[0])).toBe(OPENING_PARA);
+  });
+});
+
+test("default (flag absent): no bodyOpening and body prose reaches no search field (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(undefined, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "plain-note.md");
+    writeFile(
+      file,
+      memoryDocWithBody(["The zebrafish opening paragraph situates this memory in the payments platform."]),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const entry = stash.entries[0];
+    expect(entryBodyOpening(entry)).toBeUndefined();
+    // Byte-identical-to-today pin: the sentinel body token appears in NO FTS
+    // field and not in the concatenated search/embedding text.
+    const fields = buildSearchFields(entry);
+    for (const value of Object.values(fields)) {
+      expect(value).not.toContain("zebrafish");
+    }
+    expect(buildSearchText(entry)).not.toContain("zebrafish");
+  });
+});
+
+test("index.indexBodyOpening: false behaves exactly like the default (SPEC-8)", async () => {
+  await withIndexBodyOpeningConfig(false, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "plain-note.md");
+    writeFile(
+      file,
+      memoryDocWithBody(["The zebrafish opening paragraph situates this memory in the payments platform."]),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const entry = stash.entries[0];
+    expect(entryBodyOpening(entry)).toBeUndefined();
+    expect(buildSearchText(entry)).not.toContain("zebrafish");
+  });
+});
+
+// ── SPEC-8 review fixes: extractBodyOpening leading-block + setext handling ──
+//
+// A leading `---`…`---` block is skipped ONLY when its interior actually
+// reads as YAML frontmatter (blank / indented / `key:` lines). Ordinary prose
+// bracketed by decorative thematic breaks is the self-situating opening the
+// feature exists to index and must be captured, not discarded.
+
+test("extractBodyOpening captures prose wrapped in decorative thematic breaks (SPEC-8 review fix)", () => {
+  const body = "---\nThis orientation paragraph situates the work.\n---\n\nDetails follow here.\n";
+  expect(extractBodyOpening(body)).toBe("This orientation paragraph situates the work.");
+});
+
+test("extractBodyOpening still skips a frontmatter-shaped inner block without the session marker (SPEC-8)", () => {
+  const body = [
+    "---",
+    "title: Wrapped doc",
+    "tags:",
+    "  - auth",
+    "created: 2026-07-11",
+    "---",
+    "",
+    "Real opening prose after the nested block.",
+    "",
+  ].join("\n");
+  expect(extractBodyOpening(body)).toBe("Real opening prose after the nested block.");
+});
+
+test("extractBodyOpening treats a lone unclosed leading --- as a thematic break (SPEC-8)", () => {
+  expect(extractBodyOpening("---\n\nOpening prose after a lone break.\n")).toBe("Opening prose after a lone break.");
+});
+
+test("extractBodyOpening skips setext '=' headings instead of capturing underline + title (SPEC-8 review fix)", () => {
+  const body = "Title Of Doc\n=====\n\nProse after the setext heading.\n";
+  expect(extractBodyOpening(body)).toBe("Prose after the setext heading.");
+});
+
+test("extractBodyOpening skips leading HTML comment blocks (PR-715 review)", () => {
+  // The stash skeleton's own convention facts open with a multi-line
+  // <!-- SOFT guidance --> block: comment text is not orientation prose.
+  const body = [
+    "<!--",
+    "  SOFT guidance only — advice, not a contract. Editing this file cannot",
+    "  weaken the gate.",
+    "-->",
+    "",
+    "# Title",
+    "",
+    "The real orientation paragraph.",
+    "",
+  ].join("\n");
+  expect(extractBodyOpening(body)).toBe("The real orientation paragraph.");
+});
+
+test("extractBodyOpening skips single-line HTML comments and comment-ending paragraph boundaries (PR-715 review)", () => {
+  expect(extractBodyOpening("<!-- one-line note -->\n\nActual prose here.\n")).toBe("Actual prose here.");
+  // A comment opening after prose ends the paragraph rather than absorbing it.
+  expect(extractBodyOpening("Lead sentence.\n<!-- trailing machinery -->\nMore text.\n")).toBe("Lead sentence.");
+});
+
+test("extractBodyOpening never splits a surrogate pair at the cap (PR-715 review)", () => {
+  // One long unbroken token forces the no-word-boundary fallback slice; align
+  // an astral-plane char across the cut so a naive slice leaves a lone
+  // high surrogate.
+  const prefix = "x".repeat(278); // next slot (index 278, cap-1=279) lands mid-pair
+  const body = `${prefix}\u{1F600}\u{1F600}after`;
+  const opening = extractBodyOpening(body);
+  expect(opening).toBeDefined();
+  const text = opening as string;
+  const lastBeforeEllipsis = text.charCodeAt(text.length - 2);
+  expect(lastBeforeEllipsis >= 0xd800 && lastBeforeEllipsis <= 0xdbff).toBe(false);
+  // Round-trip through the encoder must not produce a replacement char.
+  expect(new TextDecoder().decode(new TextEncoder().encode(text))).toBe(text);
+});
+
+test("extractBodyOpening keeps prose above a dash row (setext-H2 reading deliberately not applied) (SPEC-8)", () => {
+  // Deliberate pin: a `---` row after captured lines ENDS the paragraph and
+  // keeps it. Dash rows in stash bodies are overwhelmingly decorative breaks
+  // or callout borders (the case the review fix above serves), so CommonMark's
+  // setext-H2 interpretation is not applied to them — unlike `=` rows, which
+  // can only be setext underlines.
+  expect(extractBodyOpening("Ambiguous Title\n---\n\nFollowing prose.\n")).toBe("Ambiguous Title");
+});
+
+test("flag on: a decorative-callout opening is captured end-to-end (SPEC-8 review fix)", async () => {
+  await withIndexBodyOpeningConfig(true, async () => {
+    const memRoot = tmpDir();
+    const file = path.join(memRoot, "callout.md");
+    writeFile(
+      file,
+      memoryDocWithBody(["---", "This orientation paragraph situates the work.", "---", "", "Details follow here."]),
+    );
+
+    const stash = await generateMetadata(memRoot, "memory", [file]);
+    expect(stash.entries).toHaveLength(1);
+    // The callout is NOT mistaken for nested frontmatter (no session marker,
+    // not frontmatter-shaped), so the orientation prose is the capture.
+    expect(entryBodyOpening(stash.entries[0])).toBe("This orientation paragraph situates the work.");
+  });
+});
+
+// ── SPEC-8: bodyOpening survives the .stash.json whitelist ──────────────────
+
+test("validateStashEntry preserves bodyOpening verbatim for .stash.json round-trips (SPEC-8)", () => {
+  const result = validateStashEntry({ name: "auth-notes", type: "memory", bodyOpening: OPENING_PARA });
+  expect(result?.bodyOpening).toBe(OPENING_PARA);
+});
+
+test("validateStashEntry drops blank or non-string bodyOpening (SPEC-8)", () => {
+  expect(validateStashEntry({ name: "a", type: "memory", bodyOpening: "   " })?.bodyOpening).toBeUndefined();
+  expect(validateStashEntry({ name: "b", type: "memory", bodyOpening: 42 })?.bodyOpening).toBeUndefined();
+  expect(validateStashEntry({ name: "c", type: "memory" })?.bodyOpening).toBeUndefined();
 });

@@ -36,3 +36,9 @@ Use an agent when a recurring task benefits from a specialized role, bounded res
 - Add explicit negative guidance when the agent overreaches.
 - Keep role instructions stable and concise; move large background material into knowledge assets.
 - Use lessons to capture operational improvements, then promote stable ones into the agent when they become part of the role.
+
+## Placement & linking
+
+- Agent definitions are usually **global**: keep them at the type root or under a
+  role/domain slug (`agent:reviewer`). Point the agent at the standards and type
+  conventions it must read first via xrefs.

@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { assembleAsset } from "./asset-serialize";
+import { assembleAsset, serializeFrontmatter } from "./asset-serialize";
 
 /**
  * Sub-signal breakdown produced by `scoreEncodingSalience` in encoding-salience.ts.
@@ -138,6 +138,13 @@ function parseFrontmatterLenient(frontmatter: string): Record<string, unknown> {
  * or `null` to skip the write entirely (e.g. for idempotent no-ops). The body
  * content is preserved from the parse.
  *
+ * A frontmatter mutation is a METADATA edit, not a content edit: when the file
+ * already has a frontmatter block, only that block is replaced and the body
+ * bytes are kept verbatim (routing through `assembleAsset` would strip the
+ * body's leading blank lines and force a trailing newline, silently reshaping
+ * assets whose writer used a different separator style). A file gaining its
+ * FIRST frontmatter block goes through the canonical `assembleAsset` shape.
+ *
  * @returns `true` if a write occurred, `false` if the mutator returned `null`.
  */
 export function mutateFrontmatter(
@@ -148,7 +155,11 @@ export function mutateFrontmatter(
   const parsed = parseFrontmatter(raw);
   const nextFrontmatter = mutator(parsed);
   if (nextFrontmatter === null) return false;
-  fs.writeFileSync(filePath, assembleAsset(nextFrontmatter, parsed.content), "utf8");
+  const next =
+    parsed.frontmatter !== null
+      ? `---\n${serializeFrontmatter(nextFrontmatter)}\n---\n${parsed.content}`
+      : assembleAsset(nextFrontmatter, parsed.content);
+  fs.writeFileSync(filePath, next, "utf8");
   return true;
 }
 
