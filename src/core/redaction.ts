@@ -53,24 +53,31 @@ const SIGNED_QUERY_KEYS = new Set([
   "googleaccessid",
   "idtoken",
   "idtokenhint",
+  "initialaccesstoken",
   "key",
   "loginhinttoken",
   "logouthint",
   "logouttoken",
+  "nonce",
   "oauthcode",
   "oauthtoken",
   "oauthverifier",
   "password",
   "refreshtoken",
+  "registrationaccesstoken",
+  "requesturi",
+  "response",
   "secret",
   "sessiontoken",
   "sharedaccesssignature",
   "sig",
   "signature",
   "softwarestatement",
+  "state",
   "subjecttoken",
   "token",
   "usercode",
+  "verifier",
   "xamzcredential",
   "xamzsecuritytoken",
   "xamzsignature",
@@ -82,42 +89,69 @@ function normalizedQueryKey(key: string): string {
   return key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
 }
 
-function hasCredentialParameter(params: URLSearchParams): boolean {
-  for (const key of params.keys()) {
-    if (SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) return true;
+function collectCredentialParameters(params: URLSearchParams, values?: Set<string>): boolean {
+  let found = false;
+  for (const [key, value] of params) {
+    if (!SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) continue;
+    found = true;
+    if (value) values?.add(value);
   }
-  return false;
+  return found;
 }
 
-function hasCredentialFragment(fragment: string): boolean {
-  if (fragment.includes("=") && hasCredentialParameter(new URLSearchParams(fragment))) return true;
+function collectCredentialFragment(fragment: string, values?: Set<string>): boolean {
+  let found = fragment.includes("=") && collectCredentialParameters(new URLSearchParams(fragment), values);
   const nestedQuery = fragment.indexOf("?");
-  return nestedQuery >= 0 && hasCredentialParameter(new URLSearchParams(fragment.slice(nestedQuery + 1)));
+  if (nestedQuery >= 0) {
+    found = collectCredentialParameters(new URLSearchParams(fragment.slice(nestedQuery + 1)), values) || found;
+  }
+  return found;
 }
 
-function hasCredentialBearingUrl(value: string): boolean {
+function inspectCredentialBearingUrl(value: string, values?: Set<string>): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
   try {
     const url = new URL(trimmed);
-    if (url.username || url.password) return true;
-    if (hasCredentialParameter(url.searchParams)) return true;
-    return hasCredentialFragment(url.hash.slice(1));
+    let found = false;
+    for (const userInfo of [url.username, url.password]) {
+      if (!userInfo) continue;
+      found = true;
+      try {
+        values?.add(decodeURIComponent(userInfo));
+      } catch {
+        values?.add(userInfo);
+      }
+    }
+    found = collectCredentialParameters(url.searchParams, values) || found;
+    return collectCredentialFragment(url.hash.slice(1), values) || found;
   } catch {
     // Fail closed for malformed URL-like values carrying the same credential shapes.
-    if (/^[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@/i.test(trimmed)) return true;
+    let found = /^[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@/i.test(trimmed);
     const query = trimmed.indexOf("?");
     const fragment = trimmed.indexOf("#");
     if (query >= 0) {
       const queryText = trimmed.slice(query + 1, fragment >= 0 ? fragment : undefined);
-      if (hasCredentialParameter(new URLSearchParams(queryText))) return true;
+      found = collectCredentialParameters(new URLSearchParams(queryText), values) || found;
     }
     if (fragment >= 0) {
       const fragmentText = trimmed.slice(fragment + 1);
-      if (hasCredentialFragment(fragmentText)) return true;
+      found = collectCredentialFragment(fragmentText, values) || found;
     }
-    return false;
+    return found;
   }
+}
+
+/** Collect exact secrets plus decoded values embedded in credential-bearing URLs. */
+export function collectSensitiveValues(rawValues: Iterable<string | undefined>): string[] {
+  const values = new Set<string>();
+  for (const value of rawValues) {
+    if (value === undefined || value.length === 0) continue;
+    values.add(value);
+    const trimmed = value.trim();
+    if (inspectCredentialBearingUrl(value, values) && trimmed) values.add(trimmed);
+  }
+  return [...values];
 }
 
 /**
@@ -134,7 +168,7 @@ export function isEnvPassthroughValueSafeToExpose(name: string, value: string | 
     case "identifier":
     case "path":
     case "url":
-      return !hasCredentialBearingUrl(value);
+      return !inspectCredentialBearingUrl(value);
     default: {
       const exhaustive: never = classifiedPolicy;
       return exhaustive;

@@ -7,6 +7,7 @@ import type { LlmConnectionConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
+import { collectSensitiveValues } from "../../core/redaction";
 import { getHarness } from "../harnesses";
 import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { resolveLlmModel, resolveModel } from "./model-aliases";
@@ -136,7 +137,7 @@ export function collectEngineCredentialValues(
       if (value) values.add(value);
     }
   }
-  return [...values];
+  return collectSensitiveValues(values);
 }
 
 function effectiveTimeout(

@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  collectSensitiveValues,
   ENV_PASSTHROUGH_REDACTION_ALLOWLIST,
   isEnvPassthroughValueSafeToExpose,
   redactSensitiveText,
@@ -51,15 +52,22 @@ describe("environment passthrough redaction policy", () => {
       "device_code",
       "id_token",
       "id_token_hint",
+      "initial_access_token",
       "login_hint_token",
       "logout_hint",
       "logout_token",
+      "nonce",
       "oauth_token",
       "oauth_verifier",
       "refresh_token",
+      "registration_access_token",
+      "request_uri",
+      "response",
       "software_statement",
+      "state",
       "subject_token",
       "user_code",
+      "verifier",
     ];
     for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
       expect(isEnvPassthroughValueSafeToExpose(name, "https://user:password@example.test/v1"), name).toBe(false);
@@ -83,15 +91,32 @@ describe("environment passthrough redaction policy", () => {
   });
 
   test("allows unsigned endpoint queries but rejects non-allowlisted names", () => {
-    expect(isEnvPassthroughValueSafeToExpose("LLM_BASE_URL", "https://example.test/v1?api-version=2026-01-01")).toBe(
-      true,
-    );
-    expect(
-      isEnvPassthroughValueSafeToExpose(
-        "LLM_BASE_URL",
-        "https://example.test/public/docs?api-version=2026-01-01&language=en#authentication",
-      ),
-    ).toBe(true);
+    for (const url of [
+      "https://example.test/v1?api-version=2026-01-01",
+      "https://example.test/public/docs?api-version=2026-01-01&language=en#authentication",
+      "https://example.test/oauth/authorize?client_id=public-client&redirect_uri=https%3A%2F%2Fapp.test%2Fcallback&response_type=code&scope=openid&code_challenge=public-challenge&code_challenge_method=S256",
+    ]) {
+      expect(isEnvPassthroughValueSafeToExpose("LLM_BASE_URL", url), url).toBe(true);
+    }
     expect(isEnvPassthroughValueSafeToExpose("CUSTOM_VALUE", "ordinary-runtime-value")).toBe(false);
+  });
+});
+
+describe("collectSensitiveValues", () => {
+  test("collects full credential URLs and decoded query and SPA-fragment values", () => {
+    const queryUrl =
+      "https://example.test/callback?registration_access_token=registration%2Btoken&request_uri=urn%3Aexample%3Arequest%3A123";
+    const fragmentUrl = "https://example.test/#/oauth/callback?state=state%20token&response=header.payload.signature";
+
+    expect(collectSensitiveValues([queryUrl, fragmentUrl])).toEqual(
+      expect.arrayContaining([
+        queryUrl,
+        fragmentUrl,
+        "registration+token",
+        "urn:example:request:123",
+        "state token",
+        "header.payload.signature",
+      ]),
+    );
   });
 });

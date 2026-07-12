@@ -22,7 +22,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
-import type { AkmExtractOptions, ResolvedExtractPlan } from "../src/commands/improve/extract";
+import { type AkmExtractOptions, akmExtract, type ResolvedExtractPlan } from "../src/commands/improve/extract";
 import { createExtractWatchTrigger } from "../src/commands/improve/extract-cli";
 import {
   akmExtractWatch,
@@ -32,10 +32,10 @@ import {
   type WatchEventSource,
 } from "../src/commands/improve/extract-watch";
 import type { AkmConfig } from "../src/core/config/config";
-import { materializeLlmRunnerConnection } from "../src/integrations/agent/runner";
 import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
 import { OpenCodeProvider } from "../src/integrations/harnesses/opencode/session-log";
 import { getWatchTargets } from "../src/integrations/session-logs";
+import type { SessionLogHarness } from "../src/integrations/session-logs/types";
 import { makeSandboxDir, withEnv } from "./_helpers/sandbox";
 
 // ── Fake clock ──────────────────────────────────────────────────────────────
@@ -435,11 +435,54 @@ describe("watch-mode — AC4 default unchanged", () => {
   });
 
   test("a frozen watch plan reads a rotated credential at each trigger dispatch", async () => {
+    const endedAt = Date.now();
+    const harness: SessionLogHarness = {
+      name: "claude-code",
+      isAvailable: () => true,
+      *readEvents() {},
+      listSessions: () => [
+        {
+          harness: "claude-code",
+          sessionId: "watch-rotation",
+          filePath: "/tmp/watch-rotation.jsonl",
+          startedAt: endedAt - 60_000,
+          endedAt,
+          title: "Watch credential rotation",
+        },
+      ],
+      readSession: (ref) => ({
+        ref,
+        events: [
+          {
+            harness: "claude-code",
+            text: "Capture enough session content to exercise the real extract LLM dispatch path.",
+            ts: endedAt,
+            sessionId: ref.sessionId,
+            role: "user",
+            filePath: ref.filePath,
+          },
+        ],
+        inlineRefs: [],
+      }),
+    };
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      stashDir: claudeRoot,
+      sources: [{ type: "filesystem", name: "stash", path: claudeRoot, writable: true }],
+      defaultWriteTarget: "stash",
+    };
     const plan: ResolvedExtractPlan = {
       strategy: "watch",
       engine: "watch-engine",
       enabled: true,
-      process: Object.freeze({ enabled: true }),
+      process: Object.freeze({
+        enabled: true,
+        indexSessions: false,
+        minContentChars: 0,
+        schemaSimilarity: { enabled: false },
+        triage: { enabled: false },
+      }),
       runner: Object.freeze({
         kind: "llm",
         engine: "watch-engine",
@@ -451,11 +494,21 @@ describe("watch-mode — AC4 default unchanged", () => {
       embeddingConfig: undefined,
     };
     const seen: string[] = [];
-    const trigger = createExtractWatchTrigger({ resolvedPlan: plan }, async (options) => {
-      const runner = options.resolvedPlan?.runner;
-      if (!runner) throw new Error("fixture requires a runner");
-      seen.push(materializeLlmRunnerConnection(runner).apiKey ?? "");
-    });
+    const trigger = createExtractWatchTrigger(
+      { config, dryRun: true, force: true, resolvedPlan: plan },
+      async (options) => {
+        await akmExtract({
+          ...options,
+          stashDir: claudeRoot,
+          harnesses: [harness],
+          skipTracking: true,
+          chat: async (connection) => {
+            seen.push(connection.apiKey ?? "");
+            return JSON.stringify({ candidates: [] });
+          },
+        });
+      },
+    );
 
     await withEnv({ WATCH_ROTATING_API_KEY: "watch-key-1" }, async () => {
       await trigger("claude-code");

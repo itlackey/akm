@@ -44,7 +44,12 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { acquireMaintenanceActivity } from "../../core/maintenance-barrier";
-import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
+import {
+  collectSensitiveValues,
+  isEnvPassthroughValueSafeToExpose,
+  redactSensitiveText,
+  redactSensitiveValue,
+} from "../../core/redaction";
 import type { WorkflowRunStatus } from "../../sources/types";
 import {
   type WorkflowRunUnitRow,
@@ -1474,7 +1479,7 @@ async function collectReportedUnitSensitiveValues(workUnit: StepWorkUnit): Promi
   };
   collectEngine(workUnit.engine);
   collectEngine(workUnit.fallbackEngine);
-  return [...values];
+  return collectSensitiveValues(values);
 }
 
 /** How the guarded unit write resolved inside the SQLite transaction. */

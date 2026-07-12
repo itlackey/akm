@@ -255,14 +255,15 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
   test("redacts credential-bearing values even when their passthrough names are allowlisted", async () => {
     const userinfo = "https://user:password@example.test/v1";
     const signed = "https://example.test/object?X-Amz-Credential=owner&X-Amz-Signature=signed-secret";
-    const clientAssertion = "https://example.test/token?client_assertion=RUNNER-ASSERTION-SENTINEL";
-    const codeVerifier = "https://example.test/#/oauth/callback?code_verifier=RUNNER-PKCE-SENTINEL";
+    const clientAssertion = "https://example.test/token?client_assertion=RUNNER%2BASSERTION%2BSENTINEL";
+    const codeVerifier = "https://example.test/#/oauth/callback?code_verifier=RUNNER%20PKCE%20SENTINEL";
     const profile: AgentProfile = {
       ...sdkProfile,
       envPassthrough: ["LLM_BASE_URL", "AWS_PROFILE", "OPENCODE_CONFIG", "CLAUDE_CONFIG"],
     };
     const credentialUrls = [userinfo, signed, clientAssertion, codeVerifier];
-    const echoed = credentialUrls.join(" | ");
+    const partialCredentials = ["password", "signed-secret", "RUNNER+ASSERTION+SENTINEL", "RUNNER PKCE SENTINEL"];
+    const echoed = partialCredentials.join(" | ");
 
     const result = await executeRunner(
       { kind: "sdk", profile },
@@ -279,6 +280,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
     );
 
     for (const url of credentialUrls) expect(JSON.stringify(result)).not.toContain(url);
+    for (const secret of partialCredentials) expect(JSON.stringify(result)).not.toContain(secret);
     expect(result.stdout).toBe("[REDACTED] | [REDACTED] | [REDACTED] | [REDACTED]");
   });
 });

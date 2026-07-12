@@ -2298,9 +2298,11 @@ steps:
   });
 
   test("redacts a credential-bearing URL from an allowlisted engine passthrough", async () => {
-    const deviceCodeUrl = "https://example.test/oauth/device?device_code=WORKFLOW-DEVICE-SENTINEL";
+    const deviceCode = "WORKFLOW DEVICE SENTINEL";
+    const authorizationCode = "WORKFLOW+AUTHORIZATION+SENTINEL";
+    const deviceCodeUrl = "https://example.test/oauth/device?device_code=WORKFLOW%20DEVICE%20SENTINEL";
     const authorizationCodeUrl =
-      "https://example.test/#/oauth/callback?authorization_code=WORKFLOW-AUTHORIZATION-SENTINEL";
+      "https://example.test/#/oauth/callback?authorization_code=WORKFLOW%2BAUTHORIZATION%2BSENTINEL";
     seedRun({ steps: [{ id: "build", title: "Build" }] });
     const frozen = plan(ENV_SOLO_WF);
     const stepPlan = frozen.steps[0];
@@ -2315,7 +2317,13 @@ steps:
         params: {},
         evidence: {},
         resolveEnv: async () => ({}),
-        dispatcher: async () => ({ ok: true, text: `echo ${deviceCodeUrl} ${authorizationCodeUrl}` }),
+        dispatcher: async () => ({
+          ok: false,
+          text: `echo ${deviceCode}`,
+          error: `provider echoed ${authorizationCode}`,
+          failureReason: `provider-${deviceCode}`,
+          sessionId: `session-${authorizationCode}`,
+        }),
       }),
     );
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "build"));
@@ -2324,7 +2332,15 @@ steps:
       expect(JSON.stringify(result)).not.toContain(credentialUrl);
       expect(JSON.stringify(rows)).not.toContain(credentialUrl);
     }
+    for (const secret of [deviceCode, authorizationCode]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(JSON.stringify(rows)).not.toContain(secret);
+    }
     expect(JSON.stringify(rows)).toContain("[REDACTED]");
+    expect(result.units[0].failureReason).toBe("reported_failure");
+    expect(result.units[0].sessionId).toBe("session-[REDACTED]");
+    expect(rows[0].failure_reason).toBe("reported_failure");
+    expect(rows[0].session_id).toBe("session-[REDACTED]");
   });
 
   test("a fully-journaled step resumes to completion with a DELETED env asset — the env resolver is never invoked", async () => {
