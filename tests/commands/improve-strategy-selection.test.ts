@@ -58,10 +58,25 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     expect(profile.processes?.memoryInference?.enabled).toBe(false);
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
+    // Built-ins are complete presets. Omitted lanes retain code-default/off
+    // behavior rather than inheriting enabled blocks from the default preset.
+    expect(profile.processes?.validation).toBeUndefined();
+    expect(profile.processes?.proactiveMaintenance).toBeUndefined();
+    expect(profile.processes?.recombine).toBeUndefined();
+    expect(profile.processes?.procedural).toBeUndefined();
     // Sync is enabled (consistent with every built-in): reflect can auto-accept
     // and write, so the run must commit rather than leave a silent backlog.
     // saveGitStash no-ops a clean tree, so this is free when nothing is written.
     expect(profile.sync?.enabled).toBe(true);
+  });
+
+  test("built-in 'graph-refresh' does not inherit omitted default lanes", () => {
+    const profile = resolveImproveStrategy("graph-refresh", MINIMAL_CONFIG).config;
+    expect(profile.processes?.graphExtraction).toMatchObject({ enabled: true, fullScan: true });
+    expect(profile.processes?.validation).toBeUndefined();
+    expect(profile.processes?.proactiveMaintenance).toBeUndefined();
+    expect(profile.processes?.recombine).toBeUndefined();
+    expect(profile.processes?.procedural).toBeUndefined();
   });
 
   test("resolves named built-in 'thorough'", () => {
@@ -162,6 +177,33 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.memoryInference?.enabled).toBe(false);
   });
 
+  test("user-defined strategy inherits the default preset before applying overrides", () => {
+    const config: AkmConfig = {
+      ...MINIMAL_CONFIG,
+      improve: {
+        strategies: {
+          custom: {
+            description: "Custom strategy",
+            processes: {
+              reflect: { allowedTypes: ["memory"] },
+            },
+          },
+        },
+      },
+    };
+    const profile = resolveImproveStrategy("custom", config).config;
+
+    expect(profile.description).toBe("Custom strategy");
+    expect(profile.processes?.reflect).toMatchObject({ enabled: true, limit: 25, allowedTypes: ["memory"] });
+    expect(profile.processes?.validation?.enabled).toBe(true);
+    expect(profile.processes?.proactiveMaintenance).toEqual({ enabled: true, dueDays: 30, maxPerRun: 15 });
+    expect(profile.processes?.distill?.enabled).toBe(true);
+    expect(profile.processes?.consolidate?.enabled).toBe(true);
+    expect(profile.processes?.extract?.enabled).toBe(true);
+    expect(profile.processes?.recombine?.enabled).toBe(false);
+    expect(profile.processes?.procedural?.enabled).toBe(false);
+  });
+
   test("defaults.improveStrategy sets the default strategy name", () => {
     const config: AkmConfig = {
       ...MINIMAL_CONFIG,
@@ -195,11 +237,11 @@ describe("resolveImprovePlan preflight", () => {
     defaults: { llmEngine: "llm" },
   };
 
-  test("preflights validation because it is enabled by default", () => {
+  test("preflights validation when the selected preset enables it", () => {
     expect(() =>
-      resolveImprovePlan("quick", {
+      resolveImprovePlan("default", {
         ...config,
-        improve: { strategies: { quick: { processes: { validation: { engine: "agent" } } } } },
+        improve: { strategies: { default: { processes: { validation: { engine: "agent" } } } } },
       }),
     ).toThrow('Engine "agent" is not an LLM engine.');
   });

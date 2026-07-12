@@ -9,7 +9,7 @@ import { ConfigError } from "../src/core/errors";
 import { withEnvSync } from "./_helpers/sandbox";
 
 describe("resolveImproveStrategy", () => {
-  test("deep-merges the default baseline, selected built-in, and user strategy", () => {
+  test("deep-merges a user override into the selected built-in without default leakage", () => {
     const selected = resolveImproveStrategy("quick", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
@@ -25,6 +25,8 @@ describe("resolveImproveStrategy", () => {
     expect(selected.name).toBe("quick");
     expect(selected.config.processes?.reflect).toMatchObject({ enabled: false, allowedTypes: ["memory"] });
     expect(selected.config.processes?.distill).toBeDefined();
+    expect(selected.config.processes?.validation).toBeUndefined();
+    expect(selected.config.processes?.proactiveMaintenance).toBeUndefined();
   });
 
   test("uses defaults.improveStrategy before the built-in default", () => {
@@ -52,7 +54,7 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       engines: { default: llm, validation: { ...llm, model: "repair" } },
       defaults: { llmEngine: "default" },
-      improve: { strategies: { quick: { processes: { validation: { engine: "validation" } } } } },
+      improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "validation" } } } } },
     });
 
     expect(plan.strategy.name).toBe("quick");
@@ -282,7 +284,7 @@ describe("resolveImprovePlan", () => {
 
   test("does not require a validation engine when repair is disabled", () => {
     const plan = resolveImprovePlan(
-      "quick",
+      "default",
       {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",

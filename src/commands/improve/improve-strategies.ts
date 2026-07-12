@@ -99,9 +99,9 @@ export function resolveImproveStrategy(name: string | undefined, config: AkmConf
       "UNKNOWN_IMPROVE_STRATEGY",
     );
   }
-  const selectedBuiltin = BUILTIN_STRATEGIES[selectedName] ?? {};
+  const baseStrategy = BUILTIN_STRATEGIES[selectedName] ?? BUILTIN_STRATEGIES.default;
   const resolved = deepMergeConfig(
-    deepMergeConfig(BUILTIN_STRATEGIES.default as Record<string, unknown>, selectedBuiltin as Record<string, unknown>),
+    baseStrategy as Record<string, unknown>,
     (userStrategies[selectedName] ?? {}) as Record<string, unknown>,
   ) as ImproveStrategyConfig;
   return { name: selectedName, config: resolved };
