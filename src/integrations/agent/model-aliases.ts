@@ -10,7 +10,8 @@
  *
  * Resolution order (highest → lowest precedence):
  *   1. Profile-level modelAliases from config.json (user-defined)
- *   2. Global modelAliases from config.json — platform column, then "*" fallback
+ *   2. Global modelAliases from config.json — platform column, optional tier
+ *      columns, then "*" fallback
  *   3. Built-in alias table
  *   4. Verbatim pass-through (caller already supplied an exact model ID)
  */
@@ -82,6 +83,7 @@ const BUILTIN_ALIASES: readonly ModelAliasEntry[] = [
  * @param platform Builder platform name ("claude", "opencode", ...).
  * @param custom  Profile-level aliases from config.json — take priority over globals and builtins.
  * @param global  Config-root `modelAliases` tier table (alias → platform → model, `"*"` fallback).
+ * @param fallbackPlatforms Additional global tier columns checked after `platform` and before `"*"`.
  * @returns Resolved model string, or `model` verbatim when no alias matches.
  */
 export function resolveModel(
@@ -89,14 +91,21 @@ export function resolveModel(
   platform: string,
   custom?: PlatformModelMap,
   global?: GlobalModelAliasTable,
+  fallbackPlatforms: readonly string[] = [],
 ): string {
   const key = model.toLowerCase();
   if (custom?.[key]) return custom[key];
   const tier = global?.[key];
-  const fromGlobal = tier?.[platform] ?? tier?.["*"];
+  const fromGlobal =
+    tier?.[platform] ?? fallbackPlatforms.map((fallback) => tier?.[fallback]).find(Boolean) ?? tier?.["*"];
   if (fromGlobal) return fromGlobal;
   const entry = BUILTIN_ALIASES.find((a) => a.alias === key);
   return entry?.platforms[platform] ?? model;
+}
+
+/** Resolve a direct/fallback LLM model through engine-specific, `llm`, then `*` tiers. */
+export function resolveLlmModel(model: string, engine: string, global?: GlobalModelAliasTable): string {
+  return resolveModel(model, engine, undefined, global, ["llm"]);
 }
 
 /** Return all built-in alias entries (for tests and documentation). */

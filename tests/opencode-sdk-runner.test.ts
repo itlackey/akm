@@ -233,6 +233,52 @@ describe("runOpencodeSdk — one end-to-end deadline", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
 
+  test("concurrent callers share startup without inheriting the first caller deadline", async () => {
+    let resolveFactory!: (server: ReturnType<typeof makeFakeServer>["server"]) => void;
+    let factoryStarted!: () => void;
+    const started = new Promise<void>((resolve) => (factoryStarted = resolve));
+    let startupSignal: AbortSignal | undefined;
+    let starts = 0;
+    __setServerFactory(((options: { startupSignal: AbortSignal }) => {
+      starts++;
+      startupSignal = options.startupSignal;
+      factoryStarted();
+      return new Promise((resolve) => (resolveFactory = resolve)) as never;
+    }) as never);
+
+    const short = runOpencodeSdk(baseProfile, "short", { timeoutMs: 15 });
+    const unlimited = runOpencodeSdk(baseProfile, "unlimited", { timeoutMs: null });
+    await started;
+
+    const timedOut = await short;
+    expect(timedOut.reason).toBe("timeout");
+    expect(starts).toBe(1);
+    expect(startupSignal?.aborted).toBe(false);
+
+    resolveFactory(makeFakeServer({}).server);
+    const completed = await unlimited;
+    expect(completed.ok).toBe(true);
+    expect(completed.stdout).toBe("ok-response");
+  });
+
+  test("cancels an unresolved shared startup after its last caller times out", async () => {
+    let factoryStarted!: () => void;
+    const started = new Promise<void>((resolve) => (factoryStarted = resolve));
+    let startupSignal: AbortSignal | undefined;
+    __setServerFactory(((options: { startupSignal: AbortSignal }) => {
+      startupSignal = options.startupSignal;
+      factoryStarted();
+      return new Promise(() => {}) as never;
+    }) as never);
+
+    const pending = runOpencodeSdk(baseProfile, "only", { timeoutMs: 15 });
+    await started;
+    const result = await pending;
+
+    expect(result.reason).toBe("timeout");
+    expect(startupSignal?.aborted).toBe(true);
+  });
+
   test("session creation and prompt share the remaining deadline", async () => {
     const fake = makeFakeServer(
       {},

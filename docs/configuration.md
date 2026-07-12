@@ -67,6 +67,11 @@ An agent engine may set `bin`, `args`, `workspace`, `model`, `timeoutMs`, and
 `modelAliases`. Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection.
 
+Config-root `modelAliases` resolve by exact engine/platform column first, then
+the shared `llm` column for direct and fallback LLM engines, then `"*"`. The
+resolved exact model is used consistently by direct dispatch, SDK fallback,
+health evidence, and frozen workflow plans.
+
 `defaults.engine` names an LLM or agent engine. `defaults.llmEngine` must name
 an LLM engine. There is no first-engine fallback.
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getLockfileLockPath } from "../src/core/paths";
 import {
   type LockfileEntry,
   readLockfile,
@@ -126,50 +127,60 @@ describe("readLockfile", () => {
 // ── writeLockfile ───────────────────────────────────────────────────────────
 
 describe("writeLockfile", () => {
-  test("writes formatted JSON with trailing newline", () => {
+  test("writes formatted JSON with trailing newline", async () => {
     const entries = [validEntry()];
-    writeLockfile(entries);
+    await writeLockfile(entries);
     const raw = fs.readFileSync(getLockfilePath(), "utf8");
     expect(raw.endsWith("\n")).toBe(true);
     expect(JSON.parse(raw)).toEqual(entries);
     expect(raw).toContain("  "); // pretty-printed
   });
 
-  test("creates directory structure if not present", () => {
+  test("creates directory structure if not present", async () => {
     const entries = [validEntry()];
-    writeLockfile(entries);
+    await writeLockfile(entries);
     expect(fs.existsSync(getLockfilePath())).toBe(true);
   });
 
-  test("overwrites existing lockfile atomically", () => {
-    writeLockfile([validEntry({ id: "first" })]);
-    writeLockfile([validEntry({ id: "second" })]);
+  test("overwrites existing lockfile atomically", async () => {
+    await writeLockfile([validEntry({ id: "first" })]);
+    await writeLockfile([validEntry({ id: "second" })]);
     const result = readLockfile();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("second");
   });
 
-  test("does not leave temp file on success", () => {
-    writeLockfile([validEntry()]);
+  test("does not leave temp file on success", async () => {
+    await writeLockfile([validEntry()]);
     const dir = path.dirname(getLockfilePath());
     const files = fs.readdirSync(dir);
     const tmpFiles = files.filter((f) => f.includes(".tmp."));
     expect(tmpFiles).toHaveLength(0);
   });
 
-  test("writes empty array", () => {
-    writeLockfile([]);
+  test("writes empty array", async () => {
+    await writeLockfile([]);
     const raw = fs.readFileSync(getLockfilePath(), "utf8");
     expect(JSON.parse(raw)).toEqual([]);
   });
 
-  test("roundtrips with readLockfile", () => {
+  test("roundtrips with readLockfile", async () => {
     const entries = [
       validEntry({ id: "a", source: "github", ref: "owner/repo" }),
       validEntry({ id: "b", source: "npm", ref: "@scope/pkg" }),
     ];
-    writeLockfile(entries);
+    await writeLockfile(entries);
     expect(readLockfile()).toEqual(entries);
+  });
+
+  test("fails closed when another live writer owns the sentinel", async () => {
+    await writeLockfile([validEntry({ id: "original" })]);
+    fs.writeFileSync(getLockfileLockPath(), String(process.pid), { flag: "wx" });
+
+    await expect(writeLockfile([validEntry({ id: "forbidden" })])).rejects.toThrow(
+      /refusing to write without exclusive ownership/,
+    );
+    expect(readLockfile().map((entry) => entry.id)).toEqual(["original"]);
   });
 });
 
@@ -189,7 +200,7 @@ describe("upsertLockEntry", () => {
   });
 
   test("replaces entry with same id", async () => {
-    writeLockfile([validEntry({ id: "pkg", ref: "old-ref" })]);
+    await writeLockfile([validEntry({ id: "pkg", ref: "old-ref" })]);
     await upsertLockEntry(validEntry({ id: "pkg", ref: "new-ref" }));
     const result = readLockfile();
     expect(result).toHaveLength(1);
@@ -197,7 +208,7 @@ describe("upsertLockEntry", () => {
   });
 
   test("preserves other entries when upserting", async () => {
-    writeLockfile([validEntry({ id: "keep-me", ref: "keep" }), validEntry({ id: "update-me", ref: "old" })]);
+    await writeLockfile([validEntry({ id: "keep-me", ref: "keep" }), validEntry({ id: "update-me", ref: "old" })]);
     await upsertLockEntry(validEntry({ id: "update-me", ref: "new" }));
     const result = readLockfile();
     expect(result).toHaveLength(2);
@@ -208,7 +219,7 @@ describe("upsertLockEntry", () => {
   });
 
   test("appends new entry when id does not exist", async () => {
-    writeLockfile([validEntry({ id: "existing" })]);
+    await writeLockfile([validEntry({ id: "existing" })]);
     await upsertLockEntry(validEntry({ id: "brand-new" }));
     const result = readLockfile();
     expect(result).toHaveLength(2);
@@ -219,7 +230,7 @@ describe("upsertLockEntry", () => {
 
 describe("removeLockEntry", () => {
   test("removes entry by id", async () => {
-    writeLockfile([validEntry({ id: "remove-me" }), validEntry({ id: "keep-me" })]);
+    await writeLockfile([validEntry({ id: "remove-me" }), validEntry({ id: "keep-me" })]);
     await removeLockEntry("remove-me");
     const result = readLockfile();
     expect(result).toHaveLength(1);
@@ -227,7 +238,7 @@ describe("removeLockEntry", () => {
   });
 
   test("no-op when id does not exist", async () => {
-    writeLockfile([validEntry({ id: "existing" })]);
+    await writeLockfile([validEntry({ id: "existing" })]);
     await removeLockEntry("nonexistent");
     const result = readLockfile();
     expect(result).toHaveLength(1);
@@ -241,7 +252,7 @@ describe("removeLockEntry", () => {
   });
 
   test("removes all entries if all match", async () => {
-    writeLockfile([validEntry({ id: "only-one" })]);
+    await writeLockfile([validEntry({ id: "only-one" })]);
     await removeLockEntry("only-one");
     expect(readLockfile()).toEqual([]);
   });

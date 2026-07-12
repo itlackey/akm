@@ -26,7 +26,7 @@ describe("health engine probes", () => {
     expect(result.evidence).toMatchObject({ engine: "fast", runtimeKind: "llm", model: "fallback-model" });
   });
 
-  test("requires the SDK package, binary, explicit model, and fallback connection", () => {
+  test("accepts the SDK fallback model and reports it as the effective model", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
@@ -36,19 +36,22 @@ describe("health engine probes", () => {
       },
       defaults: { engine: "sdk", llmEngine: "fallback" },
     };
-    const missingModel = runAgentProbe({
+    const inheritedModel = runAgentProbe({
       loadConfig: () => config,
       resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
     });
-    expect(missingModel.status).toBe("warn");
-    expect(missingModel.message).toContain("explicit SDK model");
-    expect(missingModel.evidence).toMatchObject({
+    expect(inheritedModel.status).toBe("pass");
+    expect(inheritedModel.message).toBe('SDK engine "sdk" is available.');
+    expect(inheritedModel.evidence).toMatchObject({
       binary: "opencode-test",
       binaryAvailable: true,
       packageAvailable: true,
       fallbackEngine: "fallback",
       fallbackModel: "fallback-model",
+      model: "fallback-model",
+      configuredModel: null,
+      modelSource: "fallback",
     });
 
     const readyConfig: AkmConfig = {
@@ -65,6 +68,7 @@ describe("health engine probes", () => {
     });
     expect(ready.status).toBe("pass");
     expect(ready.message).toBe('SDK engine "sdk" is available.');
+    expect(ready.evidence).toMatchObject({ model: "sdk-model", configuredModel: "sdk-model", modelSource: "sdk" });
   });
 
   test("reports SDK package and binary failures independently", () => {

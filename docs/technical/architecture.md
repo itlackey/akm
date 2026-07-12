@@ -330,6 +330,9 @@ External coding agents are reachable via two execution paths:
   `llmEngine` (then `defaults.llmEngine`) supplies the LLM fallback connection.
 - Manages a single per-process singleton server, creating one fresh session
   per call to avoid history accumulation and unbounded token growth.
+- Concurrent calls share startup by server material, but each call races that
+  startup against its own deadline (including `null`); no caller's timeout is
+  stored in the shared lifecycle.
 
 Prompt tasks are versioned task YAML v2 assets. They resolve `engine` from the
 task or `defaults.engine`; LLM prompt tasks use plain chat completion and agent

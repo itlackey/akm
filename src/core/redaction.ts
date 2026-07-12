@@ -2,30 +2,108 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** Environment values that identify the runtime rather than carry credentials. */
-export const ENV_PASSTHROUGH_REDACTION_ALLOWLIST: ReadonlySet<string> = new Set([
-  "HOME",
-  "PATH",
-  "USER",
-  "LANG",
-  "LC_ALL",
-  "TERM",
-  "TMPDIR",
-  "SYSTEMROOT",
-  "COMSPEC",
-  "PATHEXT",
-  "WINDIR",
-  "TEMP",
-  "TMP",
-  "AKM_EVENT_SOURCE",
-  "OPENCODE_CONFIG",
-  "CLAUDE_CONFIG",
-  "CODEX_CONFIG",
-  "AWS_PROFILE",
-  "AWS_REGION",
-  "LLM_MODEL",
-  "LLM_BASE_URL",
+const ENV_PASSTHROUGH_REDACTION_POLICY = {
+  HOME: "path",
+  PATH: "path",
+  USER: "identifier",
+  LANG: "identifier",
+  LC_ALL: "identifier",
+  TERM: "identifier",
+  TMPDIR: "path",
+  SYSTEMROOT: "path",
+  COMSPEC: "path",
+  PATHEXT: "path",
+  WINDIR: "path",
+  TEMP: "path",
+  TMP: "path",
+  AKM_EVENT_SOURCE: "identifier",
+  OPENCODE_CONFIG: "path",
+  CLAUDE_CONFIG: "path",
+  CODEX_CONFIG: "path",
+  AWS_PROFILE: "identifier",
+  AWS_REGION: "identifier",
+  LLM_MODEL: "identifier",
+  LLM_BASE_URL: "url",
+} as const;
+
+type EnvPassthroughRedactionPolicy =
+  (typeof ENV_PASSTHROUGH_REDACTION_POLICY)[keyof typeof ENV_PASSTHROUGH_REDACTION_POLICY];
+
+/** Environment names whose ordinary values identify runtime configuration rather than credentials. */
+export const ENV_PASSTHROUGH_REDACTION_ALLOWLIST: ReadonlySet<string> = new Set(
+  Object.keys(ENV_PASSTHROUGH_REDACTION_POLICY),
+);
+
+const SIGNED_QUERY_KEYS = new Set([
+  "accesskey",
+  "accesskeyid",
+  "accesstoken",
+  "apikey",
+  "authorization",
+  "credential",
+  "googleaccessid",
+  "key",
+  "password",
+  "secret",
+  "sharedaccesssignature",
+  "sig",
+  "signature",
+  "token",
+  "xamzcredential",
+  "xamzsecuritytoken",
+  "xamzsignature",
+  "xgoogcredential",
+  "xgoogsignature",
 ]);
+
+function normalizedQueryKey(key: string): string {
+  return key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+}
+
+function hasCredentialBearingUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    if (url.username || url.password) return true;
+    for (const key of url.searchParams.keys()) {
+      if (SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) return true;
+    }
+    return false;
+  } catch {
+    // Fail closed for malformed URL-like values carrying the same credential shapes.
+    if (/^[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@/i.test(trimmed)) return true;
+    const query = trimmed.indexOf("?");
+    if (query < 0) return false;
+    for (const keyValue of trimmed.slice(query + 1).split("&")) {
+      const key = keyValue.split("=", 1)[0] ?? "";
+      if (SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) return true;
+    }
+    return false;
+  }
+}
+
+/**
+ * Decide whether an allowlisted passthrough value may cross an output boundary.
+ * The name allowlist never overrides value inspection: URL userinfo and signed
+ * query credentials remain secret even under ordinarily non-secret names.
+ */
+export function isEnvPassthroughValueSafeToExpose(name: string, value: string | undefined): boolean {
+  if (value === undefined) return true;
+  const policy = ENV_PASSTHROUGH_REDACTION_POLICY[name as keyof typeof ENV_PASSTHROUGH_REDACTION_POLICY];
+  if (!policy) return false;
+  const classifiedPolicy: EnvPassthroughRedactionPolicy = policy;
+  switch (classifiedPolicy) {
+    case "identifier":
+    case "path":
+    case "url":
+      return !hasCredentialBearingUrl(value);
+    default: {
+      const exhaustive: never = classifiedPolicy;
+      return exhaustive;
+    }
+  }
+}
 
 /**
  * Replace exact sensitive values in text. Longer values are replaced first so

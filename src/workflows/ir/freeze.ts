@@ -12,7 +12,7 @@ import {
   type EngineUseConfig,
   resolveLlmEngineUse,
 } from "../../integrations/agent/engine-resolution";
-import { resolveModel } from "../../integrations/agent/model-aliases";
+import { resolveLlmModel, resolveModel } from "../../integrations/agent/model-aliases";
 import { getBuiltinAgentProfile } from "../../integrations/agent/profiles";
 import { HARNESS_BY_ID } from "../../integrations/harnesses";
 import { workflowMaxConcurrency } from "../concurrency-policy";
@@ -192,7 +192,7 @@ function exactModel(
     }
     return null;
   }
-  if (engine.kind === "llm") return resolveModel(selected, name, undefined, config.modelAliases);
+  if (engine.kind === "llm") return resolveLlmModel(selected, name, config.modelAliases);
   return resolveModel(selected, engine.platform, engine.modelAliases, config.modelAliases);
 }
 
