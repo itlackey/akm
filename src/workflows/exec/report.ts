@@ -43,7 +43,7 @@ import { randomUUID } from "node:crypto";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { withMaintenanceStartBarrierAsync } from "../../core/maintenance-barrier";
+import { acquireMaintenanceActivity } from "../../core/maintenance-barrier";
 import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import type { WorkflowRunStatus } from "../../sources/types";
 import {
@@ -194,6 +194,15 @@ const FINALIZE_LOCK_TTL_MS = 90_000;
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 export async function reportWorkflowUnit(input: ReportUnitInput): Promise<WorkflowReportResult> {
+  const release = await acquireMaintenanceActivity("workflow-report");
+  try {
+    return await reportWorkflowUnitWithBarrier(input);
+  } finally {
+    release();
+  }
+}
+
+async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<WorkflowReportResult> {
   const nowFn = input.now ?? (() => new Date());
   const nowIso = nowFn().toISOString();
 
@@ -659,6 +668,20 @@ export async function settleWorkflowSpine(input: {
   summaryJudge?: SummaryJudge | null;
   now?: () => Date;
 }): Promise<WorkflowReportResult> {
+  const release = await acquireMaintenanceActivity("workflow-report-settle");
+  try {
+    return await settleWorkflowSpineWithBarrier(input);
+  } finally {
+    release();
+  }
+}
+
+async function settleWorkflowSpineWithBarrier(input: {
+  target: string;
+  expectStep?: string;
+  summaryJudge?: SummaryJudge | null;
+  now?: () => Date;
+}): Promise<WorkflowReportResult> {
   const nowFn = input.now ?? (() => new Date());
   const runId = await resolveRunId(input.target);
   const { next, run: runRow, units } = await snapshotRunForDriver(runId);
@@ -745,9 +768,7 @@ export async function settleWorkflowSpine(input: {
   const holder = `report-settle:${randomUUID()}`;
   const nowIso = nowFn().toISOString();
   const lockExpiry = new Date(nowFn().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
-  const acquired = await withMaintenanceStartBarrierAsync(() =>
-    withWorkflowRunsRepo((repo) => repo.acquireEngineLease(runId, holder, lockExpiry, nowIso)),
-  );
+  const acquired = await withWorkflowRunsRepo((repo) => repo.acquireEngineLease(runId, holder, lockExpiry, nowIso));
   if (!acquired) {
     // A concurrent finalizer/settler holds the lock; report the fresh spine state
     // as idempotent success rather than racing it.
@@ -1043,8 +1064,8 @@ async function finalizeStep(args: {
   const finalizeHolder = `report-finalize:${randomUUID()}`;
   const nowIso = args.now().toISOString();
   const lockExpiry = new Date(args.now().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
-  const acquired = await withMaintenanceStartBarrierAsync(() =>
-    withWorkflowRunsRepo((repo) => repo.acquireEngineLease(runId, finalizeHolder, lockExpiry, nowIso)),
+  const acquired = await withWorkflowRunsRepo((repo) =>
+    repo.acquireEngineLease(runId, finalizeHolder, lockExpiry, nowIso),
   );
   if (!acquired) {
     // A concurrent finalizer holds the lock; it will advance the step exactly

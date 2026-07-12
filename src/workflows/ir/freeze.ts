@@ -175,6 +175,19 @@ function exactModel(
   selected ??= engine.model;
   if (!selected) {
     if (engine.kind === "llm") throw new ConfigError(`LLM engine "${name}" has no model.`, "INVALID_CONFIG_FILE");
+    if (engine.platform === "opencode-sdk") {
+      const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
+      if (fallbackName) {
+        const fallback = engineDefinition(config, fallbackName);
+        if (fallback.kind !== "llm") {
+          throw new ConfigError(
+            `SDK engine "${name}" fallback "${fallbackName}" is not an LLM engine.`,
+            "INVALID_CONFIG_FILE",
+          );
+        }
+        return exactModel(config, fallbackName, fallback, []);
+      }
+    }
     return null;
   }
   if (engine.kind === "llm") return resolveModel(selected, name, undefined, config.modelAliases);

@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { acquireMaintenanceBarrier } from "../src/core/maintenance-barrier";
+import { acquireMaintenanceActivity, acquireMaintenanceBarrier } from "../src/core/maintenance-barrier";
 import {
   createMigrationBackup,
   getMigrationBackupDir,
@@ -151,6 +151,27 @@ describe("0.9 migration backup", () => {
     expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
   });
 
+  test("refuses restore while an external workflow unit claim is live", () => {
+    createMigrationBackup();
+    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getWorkflowDbPath());
+    workflow.exec(`
+      CREATE TABLE workflow_run_units(
+        run_id TEXT,
+        unit_id TEXT,
+        status TEXT,
+        claim_holder TEXT,
+        claim_expires_at TEXT
+      );
+    `);
+    workflow
+      .prepare("INSERT INTO workflow_run_units VALUES (?, ?, 'running', ?, ?)")
+      .run("run-external", "unit-live", "driver-live", new Date(Date.now() + 60_000).toISOString());
+    workflow.close();
+
+    expect(() => restoreMigrationBackup(true)).toThrow(/run=run-external,unit=unit-live,holder=driver-live/);
+  });
+
   test("maintenance barrier excludes new lock starts and restore contenders", async () => {
     createMigrationBackup();
     const release = acquireMaintenanceBarrier();
@@ -163,6 +184,16 @@ describe("0.9 migration backup", () => {
       release();
     }
     restoreMigrationBackup(true);
+  });
+
+  test("restore refuses while an external report path is registered", async () => {
+    createMigrationBackup();
+    const release = await acquireMaintenanceActivity("workflow-report-test");
+    try {
+      expect(() => restoreMigrationBackup(true)).toThrow(/maintenance-activities.*workflow-report-test/);
+    } finally {
+      release();
+    }
   });
 
   test("canonical database opens capture both historical databases before migrations 017 and 010", () => {

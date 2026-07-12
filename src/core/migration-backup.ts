@@ -358,13 +358,21 @@ function activeRestoreLocks(): string[] {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
+  const activityDir = path.join(path.dirname(getLockfileLockPath()), "maintenance-activities");
+  try {
+    for (const entry of fs.readdirSync(activityDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".lock")) lockPaths.push(path.join(activityDir, entry.name));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   return [configLock, ...lockPaths].filter((lockPath) => {
     const probe = probeLock(lockPath);
     return probe.state === "held" && (lockPath !== configLock || probe.holderPid !== process.pid);
   });
 }
 
-function activeWorkflowLeases(): string[] {
+function activeWorkflowClaims(): string[] {
   const workflowPath = getWorkflowDbPath();
   if (!fs.existsSync(workflowPath)) return [];
   const db = openDatabase(workflowPath, { readonly: true });
@@ -372,21 +380,51 @@ function activeWorkflowLeases(): string[] {
     const runsTable = db
       .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workflow_runs'")
       .get();
-    if (!runsTable) return [];
-    const columns = new Set(
-      (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+    const blockers: string[] = [];
+    if (runsTable) {
+      const columns = new Set(
+        (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+      );
+      if (columns.has("engine_lease_holder") && columns.has("engine_lease_until")) {
+        const now = new Date().toISOString();
+        blockers.push(
+          ...(
+            db
+              .prepare(
+                `SELECT id, engine_lease_holder AS holder, engine_lease_until AS expires
+                 FROM workflow_runs
+                 WHERE engine_lease_holder IS NOT NULL AND engine_lease_until IS NOT NULL AND engine_lease_until >= ?`,
+              )
+              .all(now) as Array<{ id: string; holder: string; expires: string }>
+          ).map((lease) => `${workflowPath}#run=${lease.id},holder=${lease.holder},expires=${lease.expires}`),
+        );
+      }
+    }
+    const unitsTable = db
+      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workflow_run_units'")
+      .get();
+    if (!unitsTable) return blockers;
+    const unitColumns = new Set(
+      (db.prepare("PRAGMA table_info(workflow_run_units)").all() as Array<{ name: string }>).map((row) => row.name),
     );
-    if (!columns.has("engine_lease_holder") || !columns.has("engine_lease_until")) return [];
+    if (!unitColumns.has("claim_holder") || !unitColumns.has("claim_expires_at")) return blockers;
     const now = new Date().toISOString();
-    return (
-      db
-        .prepare(
-          `SELECT id, engine_lease_holder AS holder, engine_lease_until AS expires
-           FROM workflow_runs
-           WHERE engine_lease_holder IS NOT NULL AND engine_lease_until IS NOT NULL AND engine_lease_until >= ?`,
-        )
-        .all(now) as Array<{ id: string; holder: string; expires: string }>
-    ).map((lease) => `${workflowPath}#run=${lease.id},holder=${lease.holder},expires=${lease.expires}`);
+    blockers.push(
+      ...(
+        db
+          .prepare(
+            `SELECT run_id AS runId, unit_id AS unitId, claim_holder AS holder, claim_expires_at AS expires
+             FROM workflow_run_units
+             WHERE status = 'running' AND claim_holder IS NOT NULL
+               AND claim_expires_at IS NOT NULL AND claim_expires_at >= ?`,
+          )
+          .all(now) as Array<{ runId: string; unitId: string; holder: string; expires: string }>
+      ).map(
+        (claim) =>
+          `${workflowPath}#run=${claim.runId},unit=${claim.unitId},holder=${claim.holder},expires=${claim.expires}`,
+      ),
+    );
+    return blockers;
   } finally {
     db.close();
   }
@@ -406,7 +444,7 @@ export function restoreMigrationBackup(confirm: boolean): MigrationBackupResult 
   return withConfigLock(() =>
     withMigrationBackupLock(() => {
       return withMaintenanceStartBarrier(() => {
-        const blockers = [...activeRestoreLocks(), ...activeWorkflowLeases()];
+        const blockers = [...activeRestoreLocks(), ...activeWorkflowClaims()];
         if (blockers.length > 0) {
           throw new ConfigError(
             `Refusing restore while AKM locks or workflow leases are active: ${blockers.join(", ")}.`,

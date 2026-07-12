@@ -14,6 +14,7 @@ import {
   saveConfig,
   updateConfig,
 } from "../src/core/config/config";
+import { backupExistingConfig } from "../src/core/config/config-io";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { setQuiet } from "../src/core/warn";
@@ -355,6 +356,20 @@ describe("saveConfig", () => {
 
     const backups = fs.readdirSync(backupDir).filter((name) => name.startsWith("config-") && name.endsWith(".json"));
     expect(backups.length).toBeGreaterThan(0);
+  });
+
+  test("same-millisecond config backups never overwrite each other", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, '{"version":1}\n');
+    const instant = new Date("2026-07-11T12:34:56.789Z");
+    const first = backupExistingConfig(configPath, instant);
+    fs.writeFileSync(configPath, '{"version":2}\n');
+    const second = backupExistingConfig(configPath, instant);
+
+    expect(first?.timestamped).not.toBe(second?.timestamped);
+    expect(fs.readFileSync(first?.timestamped as string, "utf8")).toContain('"version":1');
+    expect(fs.readFileSync(second?.timestamped as string, "utf8")).toContain('"version":2');
   });
 
   test("config backups are written owner-only (0600) — they can carry secrets (08-F4)", () => {

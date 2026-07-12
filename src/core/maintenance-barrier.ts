@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "./errors";
@@ -61,4 +62,17 @@ export async function withMaintenanceStartBarrierAsync<T>(run: () => Promise<T>)
   } finally {
     release();
   }
+}
+
+/** Register a long-lived operation atomically with restore's blocker scan. */
+export async function acquireMaintenanceActivity(name: string): Promise<() => void> {
+  return withMaintenanceStartBarrierAsync(async () => {
+    const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);
+    if (!tryAcquireLockSync(lockPath, JSON.stringify({ pid: process.pid, purpose: name }))) {
+      throw new ConfigError(`Could not register AKM maintenance activity at ${lockPath}.`, "INVALID_CONFIG_FILE");
+    }
+    return () => releaseLockIfOwned(lockPath, process.pid);
+  });
 }

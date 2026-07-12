@@ -436,6 +436,47 @@ describe("workflow engine v3 contracts", () => {
     expect(() => decodeWorkflowPlanV3(frozen.plan)).not.toThrow();
   });
 
+  test("SDK engines without a model freeze their effective fallback model into the invocation", () => {
+    const parsed = parseWorkflowProgram(
+      "version: 2\nname: review\ndefaults: { engine: sdk }\nsteps:\n  - id: review\n    unit: { instructions: Review }\n",
+      SOURCE,
+    );
+    if (!parsed.ok) throw new Error("fixture must parse");
+    const frozen = compileResolveFreezeWorkflow(
+      {
+        ref: "workflow:review",
+        path: SOURCE.path,
+        sourcePath: "/tmp",
+        title: "review",
+        steps: [],
+        program: parsed.program,
+      },
+      {
+        configVersion: "0.9.0",
+        engines: {
+          sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "fallback" },
+          fallback: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "economy" },
+        },
+        defaults: { engine: "sdk", llmEngine: "fallback" },
+        modelAliases: { economy: { fallback: "fallback/exact" } },
+      } as never,
+    );
+    const root = frozen.plan.steps[0]?.root;
+    expect(root?.kind).toBe("unit");
+    if (!root || root.kind !== "unit") throw new Error("fixture root must be unit");
+
+    expect(root.invocation?.model).toBe("fallback/exact");
+    const work = computeStepWorkList(frozen.plan.steps[0], {
+      runId: "run-sdk-fallback",
+      params: {},
+      stepOutputs: {},
+      engines: frozen.plan.execution?.engines,
+    });
+    expect(work.ok).toBe(true);
+    if (!work.ok) throw new Error(work.error);
+    expect(work.list.units[0]?.invocation?.model).toBe("fallback/exact");
+  });
+
   test("freeze preserves merged per-invocation LLM settings and explicit null timeout", () => {
     const parsed = parseWorkflowProgram(
       "version: 2\nname: direct\ndefaults:\n  engine: direct\n  timeout: none\n  llm: { temperature: 0.2, extra_params: { seed: 7 } }\nsteps:\n  - id: review\n    unit:\n      instructions: Review\n      llm: { max_tokens: 77, enable_thinking: true }\n",
