@@ -336,16 +336,16 @@ The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing fi
 | `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
 | `promoted` | `akm proposal accept` | `proposalId`, `source`, `assetPath` |
 | `rejected` | `akm proposal reject` | `proposalId`, `source`, `reason` |
-| `reflect_invoked` | reflect pass inside `akm improve` | `task`, `profile` |
-| `propose_invoked` | `akm propose` | `type`, `name`, `task`, `profile` |
+| `reflect_invoked` | reflect pass inside `akm improve` | `task`, `engine`, `eligibilitySource` |
+| `propose_invoked` | `akm propose` | `type`, `name`, `task`, `engine` |
 | `distill_invoked` | distill pass inside `akm improve` | `outcome` (queued\|skipped\|validation_failed\|quality_rejected), `lessonRef`, `score`, `reason` |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `show` | `akm show` | `type`, `name` |
 | `select` | `akm show` (when preceded by search within 60s) | `query`, `searchTs`, `rankPosition` |
-| `improve_invoked` | `akm improve` | `scope`, `dryRun`, `assetCount` |
+| `improve_invoked` | `akm improve` | `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_skipped` | `akm improve` (cooldown guards) | `reason` (reflect_cooldown\|distill_cooldown\|consolidation_cooldown\|budget_exhausted), `cooldownDays`, `lastEventTs` |
 | `consolidate_completed` | `akm improve` (post-consolidation) | `processed`, `merged` |
-| `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (written\|error), `reason`, `error?` |
+| `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (queued\|error), `reason`, `proposalId?`, `error?` |
 | `reflect_completed` | reflect pass inside `akm improve` (after proposal created) | `proposalId`, `source` |
 | `workflow_started` | workflow engine | `runId` |
 | `workflow_step_completed` | workflow engine (genuine `completed` transition only) | `runId`, `stepId`, `status` |

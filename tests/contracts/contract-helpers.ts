@@ -2,14 +2,43 @@ import fs from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const docsRoot = path.join(repoRoot, "docs");
+const HISTORICAL_DOC_DIRS = new Set(["archive", "incidents", "migration", "posts", "reviews"]);
 
 export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "technical", "architecture.md");
 export const CLI_DOC_PATH = path.join(repoRoot, "docs", "cli.md");
 export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "configuration.md");
 export const MIGRATION_PATH = path.join(repoRoot, "docs", "migration", "v0.8-to-v0.9.md");
+export const PR_714_REPRO_PATH = path.join(repoRoot, "docs", "technical", "pr-714-workflow-validation-repro.md");
 
 export function readDoc(p: string): string {
   return fs.readFileSync(p, "utf8");
+}
+
+export function activeMarkdownDocs(): string[] {
+  const docs: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && HISTORICAL_DOC_DIRS.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(fullPath);
+      else if (entry.isFile() && entry.name.endsWith(".md")) docs.push(fullPath);
+    }
+  };
+  walk(docsRoot);
+  return docs.sort();
+}
+
+export function retiredExecutionExamples(doc: string): string[] {
+  const findings: string[] = [];
+  for (const match of doc.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)) {
+    const code = match[1];
+    if (/^\s*["']?(?:profiles|profile|runner)["']?\s*:/m.test(code)) findings.push("profile/runner");
+    if (/defaults\.agent/.test(code)) findings.push("defaults.agent");
+    if (/"defaults"\s*:\s*\{[^{}]*"agent"\s*:/s.test(code)) findings.push("defaults.agent");
+    if (/^\s*defaults:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+agent\s*:/m.test(code)) findings.push("defaults.agent");
+  }
+  return [...new Set(findings)];
 }
 
 /**
