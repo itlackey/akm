@@ -245,9 +245,8 @@ describe("runAgent — JSON parse mode", () => {
 
 // ── #284 GAP-HIGH 11: timeoutMs precedence ────────────────────────────────
 
-describe("runAgent — timeoutMs precedence", () => {
-  test("options.timeoutMs overrides profile.timeoutMs", async () => {
-    // Both profile and options carry a timeoutMs. Options must win.
+describe("runAgent — timeoutMs authority", () => {
+  test("the invocation timeout controls the spawned process deadline", async () => {
     const observedDeadlinesMs: number[] = [];
     let deadlineCallback: (() => void) | undefined;
     const fakeSet = ((cb: () => void, ms: number) => {
@@ -258,8 +257,7 @@ describe("runAgent — timeoutMs precedence", () => {
     const fakeClear = (() => {}) as unknown as typeof clearTimeout;
 
     const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
-    const profile = makeProfile({ timeoutMs: 999_999 } as Partial<AgentProfile>);
-    const promise = runAgent(profile, "go", {
+    const promise = runAgent(makeProfile(), "go", {
       spawn,
       setTimeoutFn: fakeSet,
       clearTimeoutFn: fakeClear,

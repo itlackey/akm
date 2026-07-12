@@ -295,8 +295,8 @@ function readRejectedProposals(stash: string, ref?: string): RejectedProposalCon
  * The path lives under {@link os.tmpdir} and embeds the (sanitized) ref +
  * timestamp + random suffix so concurrent reflect calls cannot collide.
  *
- * Returns `undefined` for the LLM HTTP runner — the chat-completion transport
- * has no filesystem access (see warning at `src/llm/call-ai.ts:64-71`).
+ * The LLM HTTP runner cannot use this path because chat-completion transport
+ * has no filesystem access.
  */
 function synthesizeReflectDraftPath(ref: string | undefined): string {
   const safeRef = (ref ?? "no-ref").replace(/[^a-z0-9_-]/gi, "_");
@@ -864,7 +864,6 @@ export interface RunReflectViaLlmOptions {
    * so it cannot honour a file-write contract. The reflect dispatcher must NEVER
    * synthesize a draft path when the runner kind is `llm` — the prompt builder
    * is also called WITHOUT `draftFilePath` so it emits the JSON contract instead.
-   * Mirrors the warning at `src/llm/call-ai.ts:64-71`.
    */
   draftFilePath?: string;
 }
@@ -1092,7 +1091,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // Determine whether this dispatch can honour the file-write contract.
   // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
-  // LLM HTTP runner does NOT (see `src/llm/call-ai.ts:64-71`).
+  // LLM HTTP runner does NOT.
   // Test seams (`options.runAgentOptions.spawn`) emulate agent CLI behaviour so
   // they participate as well — tests opt out by simply not writing the file.
   const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);

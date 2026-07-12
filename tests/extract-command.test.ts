@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmExtract, parseSinceArg } from "../src/commands/improve/extract";
+import { akmExtract, parseSinceArg, resolveStandaloneExtractPlan } from "../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../src/commands/improve/extract-prompt";
 import { listProposals } from "../src/commands/proposal/repository";
 import { isValidDescription } from "../src/commands/proposal/validators/proposal-quality-validators";
@@ -700,6 +700,53 @@ describe("akmExtract — engine + strategy config resolution", () => {
       defaults: { llmEngine: "default", improveStrategy: "extract" },
     } as AkmConfig;
   }
+
+  test("standalone selection rejects simultaneous --engine and --strategy", () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {});
+    expect(() => resolveStandaloneExtractPlan(config, { engine: "extract-special", strategy: "extract" })).toThrow(
+      "--engine and --strategy are mutually exclusive",
+    );
+  });
+
+  test("an explicitly selected strategy can disable extract without resolving an engine", () => {
+    const plan = resolveStandaloneExtractPlan(
+      { configVersion: "0.9.0", semanticSearchMode: "off" },
+      { strategy: "quick" },
+    );
+    expect(plan).toMatchObject({ strategy: "quick", enabled: false, llmConfig: null, timeoutMs: null });
+  });
+
+  test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, { maxTotalChars: 1234 });
+    const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special", timeoutMs: 45_000 });
+    expect(Object.isFrozen(plan)).toBe(true);
+    expect(Object.isFrozen(plan.process)).toBe(true);
+    expect(plan.llmConfig?.model).toBe("extract-special-model");
+    expect(plan.process.maxTotalChars).toBe(1234);
+    expect(plan.timeoutMs).toBe(45_000);
+
+    const engine = config.engines?.["extract-special"];
+    if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
+    const process = config.improve?.strategies?.extract?.processes?.extract;
+    if (process) process.maxTotalChars = 9999;
+
+    let receivedModel = "";
+    await akmExtract({
+      type: "claude-code",
+      sessionId: "frozen",
+      stashDir: stash,
+      config,
+      resolvedPlan: plan,
+      harnesses: [makeFakeHarness([fakeSession("frozen", Date.now())])],
+      chat: async (cfg) => {
+        receivedModel = cfg.model;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+    expect(receivedModel).toBe("extract-special-model");
+  });
 
   test("honors processes.extract.engine to pick a non-default LLM", async () => {
     const stash = makeStashDir();

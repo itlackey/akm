@@ -14,7 +14,7 @@
  *     `"disabled" | "timeout" | "error"`.
  */
 import { describe, expect, test } from "bun:test";
-import { resolveProcessEnabled } from "../src/commands/improve/improve-strategies";
+import { resolveImproveStrategy, resolveProcessEnabled } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { isLlmFeatureEnabled, LlmFeatureTimeoutError, tryLlmFeature } from "../src/llm/feature-gate";
 
@@ -81,7 +81,7 @@ function strategyFrom(config: AkmConfig) {
 
 function improveEnabled(config: AkmConfig, key: FeatureKey): boolean | undefined {
   if (key !== "distill") return undefined;
-  return resolveProcessEnabled("distill", strategyFrom(config) ?? {});
+  return resolveProcessEnabled("distill", resolveImproveStrategy(undefined, config).config);
 }
 
 describe("isLlmFeatureEnabled", () => {
@@ -95,7 +95,7 @@ describe("isLlmFeatureEnabled", () => {
     // 0.8.0 unified `feedback_distillation` into the `distill` gate (default true).
     expect(isLlmFeatureEnabled(cfg, "memory_inference")).toBe(true);
     expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
-    expect(resolveProcessEnabled("distill", {})).toBe(true);
+    expect(resolveProcessEnabled("distill", {})).toBe(false);
     expect(isLlmFeatureEnabled(cfg, "metadata_enhance")).toBe(false);
   });
 

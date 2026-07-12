@@ -770,8 +770,7 @@ export async function runOpencodeSdk(
   llmConfig?: LlmConnectionConfig,
 ): Promise<AgentRunResult> {
   const start = Date.now();
-  const timeoutMs: number | null =
-    opts.timeoutMs !== undefined ? opts.timeoutMs : (profile.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS);
+  const timeoutMs: number | null = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const deadline = timeoutMs === null ? null : start + timeoutMs;
   const remainingTimeoutMs = (): number | null => (deadline === null ? null : Math.max(0, deadline - Date.now()));
   const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;

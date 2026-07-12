@@ -1263,18 +1263,14 @@ export function llmFailureReasonFor(
 }
 
 /**
- * Resolve the harness `resultExtractor` for an agent profile, mirroring the
- * platform routing of `getCommandBuilder`: the profile's explicit
- * `commandBuilder` wins, else its name (with the `-headless` builtin-variant
- * suffix stripped, same derivation as BUILTIN_BUILDERS). Unknown/custom
- * platforms resolve to no extractor — raw stdout passes through unchanged.
+ * Resolve the harness `resultExtractor` from the canonical platform frozen
+ * from the named engine. Unknown platforms pass raw stdout through unchanged.
  */
 async function resolveHarnessExtractor(
   profile: import("../../integrations/agent/profiles").AgentProfile,
 ): Promise<import("../../integrations/agent/builder-shared").AgentResultExtractor | undefined> {
   const { getHarness } = await import("../../integrations/harnesses/index.js");
-  const platform = profile.commandBuilder ?? profile.name;
-  const harness = getHarness(platform) ?? getHarness(platform.replace(/-headless$/, ""));
+  const harness = getHarness(profile.platform ?? profile.name);
   return harness?.resultExtractor;
 }
 
@@ -1300,7 +1296,6 @@ function frozenUnitRunner(request: UnitDispatchRequest): ResolvedUnitRunner {
     stdio: "captured" as const,
     envPassthrough: snapshot.envPassthrough,
     parseOutput: "text" as const,
-    commandBuilder: snapshot.commandBuilder,
     ...(snapshot.workspace ? { workspace: snapshot.workspace } : {}),
     ...(request.invocation?.model ? { model: request.invocation.model } : {}),
     ...(request.invocation?.model ? { modelIsExact: true } : {}),

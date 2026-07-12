@@ -6,7 +6,7 @@
  * #609 — recombine / synthesize pass (src/commands/improve/recombine.ts).
  *
  * The recombine pass is a whole-corpus synthesis stage that runs AFTER
- * consolidation and is OPT-IN (default disabled via IMPROVE_PROCESS_DEFAULTS).
+ * consolidation and is OPT-IN (disabled by the built-in default strategy).
  * It clusters memories by RELATEDNESS (shared tags / graph entities — NOT
  * embedding similarity), issues ONE bounded LLM call per cluster to induce a
  * single cross-episodic generalization, and emits the result as a NORMAL

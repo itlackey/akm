@@ -335,7 +335,7 @@ describe("resolveProcessEnabled", () => {
     expect(resolveProcessEnabled("nonExistentProcess", profile)).toBe(false);
   });
 
-  test("profile explicit false overrides IMPROVE_PROCESS_DEFAULTS true", () => {
+  test("resolved strategy carries explicit disabled process behavior", () => {
     const profile = resolveImproveStrategy("quick", MINIMAL_CONFIG).config;
     expect(resolveProcessEnabled("distill", profile)).toBe(false);
     expect(resolveProcessEnabled("consolidate", profile)).toBe(false);
@@ -363,10 +363,10 @@ describe("resolveProcessEnabled", () => {
     expect(resolveProcessEnabled("reflect", profile)).toBe(false);
   });
 
-  test("empty profile falls back to IMPROVE_PROCESS_DEFAULTS", () => {
-    expect(resolveProcessEnabled("reflect", {})).toBe(true);
-    expect(resolveProcessEnabled("distill", {})).toBe(true);
-    expect(resolveProcessEnabled("validation", {})).toBe(true);
+  test("an unresolved empty config has no implicit process behavior", () => {
+    expect(resolveProcessEnabled("reflect", {})).toBe(false);
+    expect(resolveProcessEnabled("distill", {})).toBe(false);
+    expect(resolveProcessEnabled("validation", {})).toBe(false);
     expect(resolveProcessEnabled("unknownThing", {})).toBe(false);
   });
 });

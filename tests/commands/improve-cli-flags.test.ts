@@ -43,3 +43,13 @@ describe("improve CLI flags (0.8.0)", () => {
     expect(parsed.error).toContain("clean");
   });
 });
+
+describe("standalone extract CLI engine boundary", () => {
+  test("rejects --engine with --strategy before resolving either selection", async () => {
+    const result = await runCli(["extract", "--type", "claude-code", "--engine", "fast", "--strategy", "thorough"]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stderr) as { error: string; code?: string };
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.error).toContain("--engine and --strategy are mutually exclusive");
+  });
+});

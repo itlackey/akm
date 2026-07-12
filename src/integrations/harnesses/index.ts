@@ -89,7 +89,7 @@ const HARNESS_BY_ANY_ID: ReadonlyMap<string, AkmHarness> = (() => {
 
 /**
  * Canonical, ordered list of valid harness / platform ids. The Zod
- * `AgentPlatformSchema` enum, the `AgentProfileConfig` platform union, and
+ * `AgentPlatformSchema` enum, the agent-engine platform union, and
  * setup's `DetectedHarness` union all derive from this so they cannot drift.
  */
 export const VALID_HARNESS_IDS = Object.freeze(HARNESS_REGISTRY.map((h) => h.id)) as unknown as readonly [

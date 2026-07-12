@@ -112,7 +112,7 @@ export type AgentResultExtractor = (result: AgentRunResult) => AgentResultExtrac
 
 /** Strategy for building the argv for one agent CLI platform. */
 export interface AgentCommandBuilder {
-  /** Platform identifier — matches profile.name or profile.commandBuilder. */
+  /** Canonical harness platform identifier. */
   readonly platform: string;
   /**
    * Build the concrete command for this platform.

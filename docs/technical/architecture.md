@@ -277,6 +277,9 @@ its symbolic credential until dispatch.
 
 `executeRunner()` is the sole exhaustive switch over `RunnerSpec`. Callers pass
 their own LLM handler for the LLM arm; agent and SDK arms use the harness runner.
+There is no generic `callAi` adapter: LLM-only processes call the bounded
+`chatCompletion()` client with their frozen connection, while mixed runner
+surfaces dispatch a frozen `RunnerSpec` through `executeRunner()`.
 An explicit missing or incompatible engine is an error and never falls through to
 another configured engine. Workflow v3 plans freeze the configured workflow cap,
 exact models, symbolic credentials, selected LLM-engine concurrency, and effective
@@ -381,7 +384,6 @@ while starting, so no operation can enter between the check and restore.
 | `src/workflows/authoring/` | workflow authoring + scope-key helpers |
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
 | `src/workflows/runtime/` | run lifecycle: runs, checkin, document-cache, agent-identity |
-| `src/llm/call-ai.ts` | unified AI adapter: routes to agent CLI/SDK or HTTP LLM with one call |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
 | `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |

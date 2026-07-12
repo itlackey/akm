@@ -276,16 +276,14 @@ describe("getCommandBuilder — platform routing", () => {
     expect(builder.platform).toBe("claude");
   });
 
-  test('getCommandBuilder("opencode-headless") returns opencode builder', async () => {
+  test('getCommandBuilder("opencode-headless") rejects the retired profile alias', async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("opencode-headless");
-    expect(builder.platform).toBe("opencode");
+    expect(() => getCommandBuilder("opencode-headless")).toThrow(/no registered command builder/);
   });
 
-  test('getCommandBuilder("unknown") falls back to default builder (platform === "default")', async () => {
+  test('getCommandBuilder("unknown") rejects an unregistered platform', async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("unknown-platform");
-    expect(builder.platform).toBe("default");
+    expect(() => getCommandBuilder("unknown-platform")).toThrow(/no registered command builder/);
   });
 
   test("custom registry: getCommandBuilder returns custom builder when platform matches", async () => {
@@ -301,7 +299,7 @@ describe("getCommandBuilder — platform routing", () => {
     expect(builder.platform).toBe("my-platform");
   });
 
-  test("custom registry: unknown key still falls back to default", async () => {
+  test("custom registry: unknown key is still rejected", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const myBuilder: AgentCommandBuilder = {
       platform: "my-platform",
@@ -309,9 +307,7 @@ describe("getCommandBuilder — platform routing", () => {
         return { argv: ["my-cli", req.prompt] };
       },
     };
-    // Pass a registry that only has "my-platform"; requesting "other" should fall back.
-    const builder = getCommandBuilder("other", { "my-platform": myBuilder });
-    expect(builder.platform).toBe("default");
+    expect(() => getCommandBuilder("other", { "my-platform": myBuilder })).toThrow(/no registered command builder/);
   });
 });
 
@@ -381,15 +377,9 @@ describe("builders — argument injection guards", () => {
     expect(argv[sepIdx + 1]).toBe("do work");
   });
 
-  test("defaultBuilder: prompt preceded by '--' end-of-options separator", async () => {
+  test("unknown platforms cannot synthesize a generic argv", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("unknown-platform");
-    const profile = makeFakeProfile();
-    const cmd = builder.build(profile, { prompt: "do work" });
-    const argv = cmd.argv as string[];
-    const sepIdx = argv.indexOf("--");
-    expect(sepIdx).toBeGreaterThan(-1);
-    expect(argv[sepIdx + 1]).toBe("do work");
+    expect(() => getCommandBuilder("unknown-platform")).toThrow(/no registered command builder/);
   });
 
   test("opencodeBuilder: throws UsageError when model starts with '--'", async () => {
@@ -426,11 +416,9 @@ describe("builders — argument injection guards", () => {
     );
   });
 
-  test("defaultBuilder: throws UsageError when model starts with '--'", async () => {
+  test("unknown platforms fail before accepting model flags", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("unknown-platform");
-    const profile = makeFakeProfile();
-    expect(() => builder.build(profile, { prompt: "task", model: "--bad" })).toThrow(/model must not start with "--"/);
+    expect(() => getCommandBuilder("unknown-platform")).toThrow(/no registered command builder/);
   });
 
   test("valid model and systemPrompt values do not throw", async () => {
@@ -563,35 +551,33 @@ describe("builder + globalModelAliases integration", () => {
 // ── Registry-derived builders + missing-builder error (P0.5 drift fix) ────────
 
 describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
-  test("canonical ids, -headless variants, and aliases resolve to the harness builder", async () => {
+  test("canonical ids resolve while profile and harness aliases are rejected", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     expect(getCommandBuilder("opencode").platform).toBe("opencode");
-    expect(getCommandBuilder("opencode-headless").platform).toBe("opencode");
     expect(getCommandBuilder("claude").platform).toBe("claude");
-    expect(getCommandBuilder("claude-headless").platform).toBe("claude");
-    // 'claude-code' is the registered alias of the claude harness.
-    expect(getCommandBuilder("claude-code").platform).toBe("claude");
+    expect(() => getCommandBuilder("opencode-headless")).toThrow();
+    expect(() => getCommandBuilder("claude-code")).toThrow();
   });
 
-  test("P2 adapters: codex/gemini/aider (+ -headless) resolve to their harness builders — the missing-builder ConfigError no longer fires", async () => {
+  test("P2 adapters resolve only through canonical harness ids", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     for (const platform of ["codex", "gemini", "aider"]) {
       expect(getCommandBuilder(platform).platform).toBe(platform);
-      expect(getCommandBuilder(`${platform}-headless`).platform).toBe(platform);
+      expect(() => getCommandBuilder(`${platform}-headless`)).toThrow();
     }
   });
 
-  test("the P2 profile additions (copilot, pi, amazonq, openhands) also resolve", async () => {
+  test("the P2 harness additions resolve without profile aliases", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     for (const platform of ["copilot", "pi", "amazonq", "openhands"]) {
       expect(getCommandBuilder(platform).platform).toBe(platform);
-      expect(getCommandBuilder(`${platform}-headless`).platform).toBe(platform);
+      expect(() => getCommandBuilder(`${platform}-headless`)).toThrow();
     }
   });
 
-  test("unknown custom platforms still fall back to the default builder", async () => {
+  test("unknown custom platforms are rejected", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    expect(getCommandBuilder("my-custom-wrapper").platform).toBe("default");
+    expect(() => getCommandBuilder("my-custom-wrapper")).toThrow(/no registered command builder/);
   });
 
   test("a builtin profile whose builder is missing from the injected registry still surfaces the ConfigError", async () => {
@@ -601,6 +587,6 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const { ConfigError } = await import("../../src/core/errors");
     expect(() => getCommandBuilder("codex", {})).toThrow(ConfigError);
-    expect(() => getCommandBuilder("codex", {})).toThrow(/no command builder exists/);
+    expect(() => getCommandBuilder("codex", {})).toThrow(/no registered command builder/);
   });
 });

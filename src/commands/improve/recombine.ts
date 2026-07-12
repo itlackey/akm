@@ -6,7 +6,7 @@
  * #609 — recombine / synthesize pass.
  *
  * A whole-corpus synthesis stage that runs AFTER consolidation and is OPT-IN
- * (default disabled via `IMPROVE_PROCESS_DEFAULTS.recombine`). It clusters
+ * (the built-in default strategy sets `processes.recombine.enabled: false`). It clusters
  * memories by RELATEDNESS (shared tags / graph entities — NEVER embedding
  * similarity), issues ONE bounded LLM call per cluster to induce a single
  * cross-episodic generalization, and emits the result as a NORMAL pending

@@ -32,7 +32,7 @@ import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "../../integrations/harnesses";
 /**
  * Canonical list of valid agent harness / platform ids. Re-exported from the
  * unified harness registry (#562) so the Zod `AgentPlatformSchema` enum, the
- * `AgentProfileConfig` platform union, and setup's `DetectedHarness` union all
+ * agent-engine platform union, and setup's `DetectedHarness` union all
  * derive from one place and cannot drift. Add a harness in
  * `src/integrations/harnesses/index.ts`.
  */
@@ -52,12 +52,6 @@ export type LlmProfileConfig = z.infer<typeof import("./config-schema").LlmProfi
 
 /** A named 0.9 engine (LLM connection or agent platform). */
 export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfigSchema>;
-
-/**
- * Per-agent-profile config (`profiles.agent.<name>`). Fields: `platform`,
- * `bin`, `args`, `workspace`, `model`, `timeoutMs` (null = no timeout).
- */
-export type AgentProfileConfig = z.infer<typeof import("./config-schema").AgentProfileConfigSchema>;
 
 /**
  * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most

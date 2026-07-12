@@ -5,8 +5,8 @@
 /**
  * #615 — procedural-compilation pass.
  *
- * An OPT-IN post-loop improve stage (default disabled via
- * `IMPROVE_PROCESS_DEFAULTS.procedural`). It reads assets that carry an
+ * An OPT-IN post-loop improve stage (the built-in default strategy sets
+ * `processes.procedural.enabled: false`). It reads assets that carry an
  * `orderedActions` frontmatter list (captured by #619), detects RECURRING
  * successful action sequences across sessions (the SAME normalized ordered step
  * list appearing >= `minRecurrence` times with a non-failure `outcomeData`), and

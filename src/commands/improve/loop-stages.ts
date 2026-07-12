@@ -60,7 +60,7 @@ import type {
   ImproveScope,
 } from "./improve";
 import { makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
-import { type ResolvedImprovePlan, resolveProcessEnabled, shouldSkipRef } from "./improve-strategies";
+import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 // The pre-loop preparation pipeline lives in ./preparation.
 import { maybeAutoTuneThreshold } from "./preparation";
@@ -278,13 +278,13 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           // bounded by the wall-clock deadline rather than the default per-profile timeout.
           const reflectBudgetMs = remainingBudgetMs();
           // Use the runner frozen in the invocation plan; no leaf re-resolution.
-          const reflectProfileRunner = resolvedPlan.processes.reflect;
+          const reflectProfileRunner = resolvedPlan.processes.reflect.runner;
           const reflectCallArgs = {
             ref: planned.ref,
             task: options.task,
             // Active strategy supplies non-engine process tuning.
             ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan.processes.reflect?.connection,
+            llmConfig: resolvedPlan.processes.reflect.runner?.connection,
             config: options.config,
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
@@ -310,7 +310,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               // draftMode: skip DB write so each sample doesn't create a proposal.
               samples.push(
                 await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }), {
-                  engine: resolvedPlan.processes.reflect?.engine,
+                  engine: resolvedPlan.processes.reflect.runner?.engine,
                   process: "reflect",
                 }),
               );
@@ -320,7 +320,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
                 ? samples
                 : [
                     await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }), {
-                      engine: resolvedPlan.processes.reflect?.engine,
+                      engine: resolvedPlan.processes.reflect.runner?.engine,
                       process: "reflect",
                     }),
                   ],
@@ -352,7 +352,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             }
           } else {
             reflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
-              engine: resolvedPlan.processes.reflect?.engine,
+              engine: resolvedPlan.processes.reflect.runner?.engine,
               process: "reflect",
             });
           }
@@ -583,12 +583,12 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               // Active profile so distill's per-process reads honor `--profile`.
               ...(improveProfile ? { improveProfile } : {}),
               config: options.config,
-              llmConfig: resolvedPlan.processes.distill?.connection ?? null,
+              llmConfig: resolvedPlan.processes.distill.runner?.connection ?? null,
               // Attribution: carry the eligibility lane so distill stamps it on the
               // distill_invoked event and the persisted proposal.
               ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
             }),
-          { engine: resolvedPlan.processes.distill?.engine, process: "distill" },
+          { engine: resolvedPlan.processes.distill.runner?.engine, process: "distill" },
         );
         actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
         if (distillResult.outcome === "queued" && distillResult.proposal) {
@@ -799,7 +799,7 @@ export async function runImprovePostLoopStage(args: {
   if (
     primaryStashDir &&
     improveProfile &&
-    resolveProcessEnabled("recombine", improveProfile) &&
+    resolvedPlan?.processes.recombine.enabled === true &&
     scope.mode !== "ref" &&
     !options.dryRun
   ) {
@@ -812,7 +812,7 @@ export async function runImprovePostLoopStage(args: {
             stashDir: primaryStashDir,
             config: options.config ?? loadConfig(),
             improveProfile,
-            llmConfig: resolvedPlan?.processes.recombine?.connection,
+            llmConfig: resolvedPlan?.processes.recombine.runner?.connection,
             ...(options.runId ? { sourceRun: options.runId } : {}),
             ...(budgetSignal ? { signal: budgetSignal } : {}),
             eligibilitySource: "recombine",
@@ -826,7 +826,7 @@ export async function runImprovePostLoopStage(args: {
             excludeTags: improveProfile.processes?.recombine?.excludeTags,
             excludeEntities: improveProfile.processes?.recombine?.excludeEntities,
           }),
-        { engine: resolvedPlan?.processes.recombine?.engine, process: "recombine" },
+        { engine: resolvedPlan?.processes.recombine.runner?.engine, process: "recombine" },
       );
     } catch (e) {
       allWarnings.push(`recombine: ${String(e)}`);
@@ -841,7 +841,7 @@ export async function runImprovePostLoopStage(args: {
   if (
     primaryStashDir &&
     improveProfile &&
-    resolveProcessEnabled("procedural", improveProfile) &&
+    resolvedPlan?.processes.procedural.enabled === true &&
     scope.mode !== "ref" &&
     !options.dryRun
   ) {
@@ -854,7 +854,7 @@ export async function runImprovePostLoopStage(args: {
             stashDir: primaryStashDir,
             config: options.config ?? loadConfig(),
             ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan?.processes.procedural?.connection,
+            llmConfig: resolvedPlan?.processes.procedural.runner?.connection,
             ...(options.runId ? { sourceRun: options.runId } : {}),
             ...(budgetSignal ? { signal: budgetSignal } : {}),
             eligibilitySource: "procedural",
@@ -862,7 +862,7 @@ export async function runImprovePostLoopStage(args: {
             minRecurrence: improveProfile.processes?.procedural?.minRecurrence,
             maxProposalsPerRun: improveProfile.processes?.procedural?.maxProposalsPerRun,
           }),
-        { engine: resolvedPlan?.processes.procedural?.engine, process: "procedural" },
+        { engine: resolvedPlan?.processes.procedural.runner?.engine, process: "procedural" },
       );
     } catch (e) {
       allWarnings.push(`procedural: ${String(e)}`);
@@ -1037,7 +1037,9 @@ export async function runImproveMaintenancePasses(args: {
             () =>
               memoryInferenceFn({
                 config,
-                ...(resolvedPlan ? { llmConfig: resolvedPlan.processes.memoryInference?.connection ?? null } : {}),
+                ...(resolvedPlan
+                  ? { llmConfig: resolvedPlan.processes.memoryInference.runner?.connection ?? null }
+                  : {}),
                 sources,
                 signal: budgetSignal,
                 db,
@@ -1049,7 +1051,7 @@ export async function runImproveMaintenancePasses(args: {
                   );
                 },
               }),
-            { engine: resolvedPlan?.processes.memoryInference?.engine, process: "memoryInference" },
+            { engine: resolvedPlan?.processes.memoryInference.runner?.engine, process: "memoryInference" },
           );
           memoryInferenceDurationMs = Date.now() - inferenceStart;
           actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
@@ -1152,7 +1154,9 @@ export async function runImproveMaintenancePasses(args: {
             () =>
               graphExtractionFn({
                 config,
-                ...(resolvedPlan ? { llmConfig: resolvedPlan.processes.graphExtraction?.connection ?? null } : {}),
+                ...(resolvedPlan
+                  ? { llmConfig: resolvedPlan.processes.graphExtraction.runner?.connection ?? null }
+                  : {}),
                 sources,
                 signal: budgetSignal,
                 db,
@@ -1165,7 +1169,7 @@ export async function runImproveMaintenancePasses(args: {
                   ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}),
                 },
               }),
-            { engine: resolvedPlan?.processes.graphExtraction?.engine, process: "graphExtraction" },
+            { engine: resolvedPlan?.processes.graphExtraction.runner?.engine, process: "graphExtraction" },
           );
           graphExtractionDurationMs = Date.now() - extractionStart;
           actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });

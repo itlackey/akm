@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { resolveProcessEnabled } from "../../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { resolveEngine } from "../../../src/integrations/agent/engine-resolution";
 import {
   isProcessEnabled,
   resolveDefaultLlmRunner,
   resolveImproveProcessRunner,
-  resolveRunner,
 } from "../../../src/integrations/agent/runner";
 
 function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
@@ -45,7 +45,7 @@ function makeEngineConfig(): AkmConfig {
       strategies: {
         default: {
           processes: {
-            reflect: { engine: "openai-mini", timeoutMs: 60000 },
+            reflect: { enabled: true, engine: "openai-mini", timeoutMs: 60000 },
             distill: { enabled: true, engine: "openai-judge" },
             consolidate: { enabled: false },
             memoryInference: { enabled: true },
@@ -102,19 +102,19 @@ describe("resolveImproveProcessRunner", () => {
   });
 });
 
-describe("resolveRunner", () => {
-  test("builds an agent runner for a configured opencode profile", () => {
+describe("resolveEngine", () => {
+  test("builds an agent runner for a configured named opencode engine", () => {
     const config = makeEngineConfig();
-    const spec = resolveRunner("agent", "opencode-default", config);
+    const spec = resolveEngine("opencode-default", config);
     expect(spec.kind).toBe("agent");
     if (spec.kind === "agent") {
       expect(spec.profile.bin).toBe("opencode");
     }
   });
 
-  test("builds an sdk runner for a configured opencode-sdk profile", () => {
+  test("builds an sdk runner for a configured named opencode-sdk engine", () => {
     const config = makeEngineConfig();
-    const spec = resolveRunner("sdk", "opencode-sdk", config);
+    const spec = resolveEngine("opencode-sdk", config);
     expect(spec.kind).toBe("sdk");
   });
 });
