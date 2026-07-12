@@ -6,7 +6,7 @@ import { defineCommand } from "citty";
 import { parsePositiveIntFlag } from "../cli/parse-args";
 import { defineJsonCommand, output } from "../cli/shared";
 import type { RegistryConfigEntry } from "../core/config/config";
-import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config/config";
+import { DEFAULT_CONFIG, loadUserConfig, mutateConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { buildRegistryIndex, writeRegistryIndex } from "../registry/build-index";
@@ -52,13 +52,6 @@ export const registryCommand = defineCommand({
             "Warning: registry URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious index.",
           );
         }
-        const config = loadUserConfig();
-        const registries = [...(config.registries ?? [])];
-        // Deduplicate by URL
-        if (registries.some((r) => r.url === args.url)) {
-          output("registry-add", { registries, added: false, message: "Registry URL already configured" });
-          return;
-        }
         const entry: RegistryConfigEntry = { url: args.url };
         if (args.name) entry.name = args.name;
         if (args.provider) entry.provider = args.provider;
@@ -69,9 +62,19 @@ export const registryCommand = defineCommand({
             throw new UsageError("--options must be valid JSON");
           }
         }
-        registries.push(entry);
-        saveConfig({ ...config, registries });
-        output("registry-add", { registries, added: true });
+        let added = false;
+        const updated = mutateConfig((config) => {
+          const registries = [...(config.registries ?? [])];
+          if (registries.some((registry) => registry.url === args.url)) return config;
+          registries.push(entry);
+          added = true;
+          return { ...config, registries };
+        }).config;
+        output("registry-add", {
+          registries: updated.registries ?? [],
+          added,
+          ...(!added ? { message: "Registry URL already configured" } : {}),
+        });
       },
     }),
     remove: defineJsonCommand({
@@ -96,9 +99,21 @@ export const registryCommand = defineCommand({
           process.stderr.write("Aborted.\n");
           return;
         }
-        const removed = registries.splice(idx, 1)[0];
-        saveConfig({ ...config, registries });
-        output("registry-remove", { registries, removed: true, entry: removed });
+        let removed: RegistryConfigEntry | undefined;
+        const updated = mutateConfig((latest) => {
+          const current = [...(latest.registries ?? [])];
+          const currentIndex = current.findIndex(
+            (registry) => registry.url === args.target || registry.name === args.target,
+          );
+          if (currentIndex < 0) return latest;
+          removed = current.splice(currentIndex, 1)[0];
+          return { ...latest, registries: current };
+        }).config;
+        output("registry-remove", {
+          registries: updated.registries ?? [],
+          removed: removed !== undefined,
+          ...(removed ? { entry: removed } : { message: "No matching registry found" }),
+        });
       },
     }),
     search: defineJsonCommand({

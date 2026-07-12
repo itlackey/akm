@@ -28,6 +28,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
+  withEnv,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 
@@ -215,5 +216,28 @@ describe("runSetupWithDefaults — idempotency", () => {
 
     // Nothing to back up on a fresh install → no backup files written.
     expect(fs.existsSync(backupDir())).toBe(false);
+  });
+
+  test("full initialization still performs only setup's one final config write", async () => {
+    const result = await withEnv({ AKM_FORCE_INIT_TMP_STASH: "1" }, () => runSetupWithDefaults({ noInit: false }));
+    expect(result.stashCreated).toBe(true);
+    expect(fs.existsSync(getConfigPath())).toBe(true);
+    expect(fs.existsSync(backupDir())).toBe(false);
+  });
+
+  test("rejects a conflicting engine kind before config or stash side effects", async () => {
+    const stashDir = path.join(process.env.HOME as string, "akm");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await expect(
+      runSetupFromConfig({
+        configJson: JSON.stringify({
+          engines: { agent: { kind: "agent", platform: "claude" } },
+          defaults: { llmEngine: "agent" },
+        }),
+        noInit: false,
+      }),
+    ).rejects.toThrow(/llmEngine must name an LLM engine/);
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+    expect(fs.existsSync(stashDir)).toBe(false);
   });
 });

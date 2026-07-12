@@ -238,10 +238,15 @@ const setupCommand = defineCommand({
       type: "string",
       description: "Stash directory path (overrides stashDir in config or --config JSON)",
     },
+    "no-init": {
+      type: "boolean",
+      default: false,
+      description: "Write configuration without scaffolding the stash directory",
+    },
     probe: {
       type: "boolean",
       default: false,
-      description: "Probe LLM/embedding endpoints after writing config to verify connectivity",
+      description: "Probe LLM/embedding endpoints before writing config to verify connectivity",
     },
     "detect-only": {
       type: "boolean",
@@ -258,7 +263,9 @@ const setupCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const noInit = getHyphenatedBoolean(args, "no-init");
+      // citty treats a leading `no-` as boolean negation on some parse paths,
+      // so retain the raw argv spelling as the authoritative compatibility form.
+      const noInit = getHyphenatedBoolean(args, "no-init") || process.argv.includes("--no-init");
       const detectOnly = args["detect-only"];
       const resetRecommended = args["reset-recommended"];
       if (detectOnly) {

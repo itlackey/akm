@@ -57,9 +57,11 @@
  * @module state-db
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import type { Database, SqlValue } from "../storage/database";
 import { openManagedDatabase, withManagedDb, withManagedDbAsync } from "../storage/managed-db";
+import { ensureMigrationBackup, getMigrationBackupDir } from "./migration-backup";
 import { getDataDir } from "./paths";
 
 // ── Path helper ──────────────────────────────────────────────────────────────
@@ -103,9 +105,15 @@ export function getStateDbPath(): string {
  *     narrow when a post-inference reindex overlapped a parallel event write.
  */
 export function openStateDatabase(dbPath?: string): Database {
+  const canonicalPath = getStateDbPath();
+  const resolvedPath = dbPath ?? canonicalPath;
+  const isCanonical = path.resolve(resolvedPath) === path.resolve(canonicalPath);
+  // This must precede mkdir/open: opening an absent SQLite path creates it and
+  // would make the recovery manifest falsely record a fresh DB as pre-existing.
+  if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
   return openManagedDatabase({
-    path: dbPath ?? getStateDbPath(),
-    init: (db) => runMigrations(db, { ensureCutoverBackup: dbPath === undefined }),
+    path: resolvedPath,
+    init: (db) => runMigrations(db, { ensureCutoverBackup: isCanonical }),
   });
 }
 

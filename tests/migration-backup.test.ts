@@ -12,7 +12,7 @@ import {
   restoreMigrationBackup,
   verifyMigrationBackup,
 } from "../src/core/migration-backup";
-import { getConfigPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../src/core/paths";
+import { getConfigPath, getDataDir, getStateDbPathInDataDir, getWorkflowDbPath } from "../src/core/paths";
 import { openStateDatabase } from "../src/core/state-db";
 import { openWorkflowDatabase } from "../src/workflows/db";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "./_helpers/sandbox";
@@ -90,6 +90,65 @@ describe("0.9 migration backup", () => {
     expect(() => createMigrationBackup()).toThrow(/incomplete or unreadable/);
   });
 
+  test("fails closed when an immutable bundle artifact is checksum-corrupted", () => {
+    seedLegacyConfig();
+    createMigrationBackup();
+    fs.appendFileSync(path.join(getMigrationBackupDir(), "config.json"), "corruption");
+    expect(() => verifyMigrationBackup()).toThrow(/checksum verification/);
+    expect(() => createMigrationBackup()).toThrow(/checksum verification/);
+  });
+
+  test("records fresh canonical databases absent before their first open", () => {
+    const state = openStateDatabase(getStateDbPathInDataDir());
+    state.close();
+    const manifest = verifyMigrationBackup();
+    expect(manifest.artifacts["config.json"].present).toBe(false);
+    expect(manifest.artifacts["state.db"].present).toBe(false);
+    expect(manifest.artifacts["workflow.db"].present).toBe(false);
+    expect(fs.existsSync(getStateDbPathInDataDir())).toBe(true);
+
+    restoreMigrationBackup(true);
+    expect(fs.existsSync(getStateDbPathInDataDir())).toBe(false);
+  });
+
+  test("refuses restore for active improve and extract locks", () => {
+    createMigrationBackup();
+    for (const lockPath of [
+      path.join(getDataDir(), "consolidate.lock"),
+      path.join(getDataDir(), "extract-locks", "extract-opencode-session.lock"),
+    ]) {
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, String(process.pid));
+      expect(() => restoreMigrationBackup(true)).toThrow(/locks or workflow leases are active/);
+      fs.rmSync(lockPath);
+    }
+  });
+
+  test("refuses restore while a workflow engine lease is live", () => {
+    createMigrationBackup();
+    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getWorkflowDbPath());
+    workflow.exec(`
+      CREATE TABLE workflow_runs(
+        id TEXT PRIMARY KEY,
+        engine_lease_holder TEXT,
+        engine_lease_until TEXT
+      );
+    `);
+    const now = Date.now();
+    workflow
+      .prepare("INSERT INTO workflow_runs VALUES (?, ?, ?)")
+      .run("run-live", "holder-live", new Date(now + 60_000).toISOString());
+    workflow.close();
+
+    expect(() => restoreMigrationBackup(true)).toThrow(/run=run-live/);
+    const update = new Database(getWorkflowDbPath());
+    update.prepare("UPDATE workflow_runs SET engine_lease_until = ?").run(new Date(now - 60_000).toISOString());
+    update.close();
+    restoreMigrationBackup(true);
+    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+  });
+
   test("canonical database opens capture both historical databases before migrations 017 and 010", () => {
     seedLegacyConfig();
     fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
@@ -144,8 +203,8 @@ describe("0.9 migration backup", () => {
     }
     workflow.close();
 
-    openStateDatabase().close();
-    openWorkflowDatabase().close();
+    openStateDatabase(getStateDbPathInDataDir()).close();
+    openWorkflowDatabase(getWorkflowDbPath()).close();
 
     const stateBackup = new Database(path.join(getMigrationBackupDir(), "state.db"), { readonly: true });
     const workflowBackup = new Database(path.join(getMigrationBackupDir(), "workflow.db"), { readonly: true });

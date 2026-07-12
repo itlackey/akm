@@ -456,15 +456,16 @@ describe("runSetupWizard", () => {
     expect(setupState.indexCalls).toHaveLength(0);
   });
 
-  test("surfaces bootstrap init failure before saving config", async () => {
+  test("surfaces init failure before saving config", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
     overrideSeam(_setAkmInitForTests, async () => {
       throw new Error("EACCES stash init");
     });
 
-    // akmInit throws before the wizard asks anything — no prompt queue needed
-    // (the strict clack mock will fail loudly if a prompt is ever reached).
+    promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
+    promptState.confirms.push(false, false, false, true);
+    promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
     expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);

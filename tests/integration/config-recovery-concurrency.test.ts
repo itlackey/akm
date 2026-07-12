@@ -116,4 +116,34 @@ describe("locked config mutation", () => {
     expect(result.code).toBe(0);
     expect(fs.existsSync(getConfigPath())).toBe(false);
   });
+
+  test("different config-mutating commands preserve each other's concurrent updates", async () => {
+    const env = { ...process.env };
+    const commands = [
+      ["config", "set", "--silent", "output.detail", "full"],
+      ["registry", "add", "https://registry-one.example/index.json", "--name", "registry-one"],
+      ["add", "https://source-one.example", "--provider", "website", "--name", "source-one"],
+      ["setup", "--yes", "--no-init", "--format", "json"],
+    ];
+    const children = commands.map((args) =>
+      Bun.spawn(["bun", "src/cli.ts", ...args], {
+        cwd: path.resolve(import.meta.dir, "../.."),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    const exits = await Promise.all(children.map((child) => child.exited));
+    const errors = await Promise.all(children.map((child) => new Response(child.stderr).text()));
+    expect(exits, errors.join("\n")).toEqual(new Array(commands.length).fill(0));
+
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as {
+      output: { detail: string };
+      registries: Array<{ name?: string }>;
+      sources: Array<{ name?: string }>;
+    };
+    expect(written.output.detail).toBe("full");
+    expect(written.registries.some((registry) => registry.name === "registry-one")).toBe(true);
+    expect(written.sources.some((source) => source.name === "source-one")).toBe(true);
+  }, 20_000);
 });

@@ -22,7 +22,13 @@ import path from "node:path";
 import * as p from "../cli/clack";
 import { akmInit, type InitResponse } from "../commands/sources/init";
 import type { AkmConfig, EmbeddingConnectionConfig, HarnessId, LlmConnectionConfig } from "../core/config/config";
-import { DEFAULT_CONFIG, loadUserConfig, mutateConfig, parseAndValidateConfigText } from "../core/config/config";
+import {
+  DEFAULT_CONFIG,
+  loadUserConfig,
+  mutateConfig,
+  parseAndValidateConfigText,
+  validateCompleteConfig,
+} from "../core/config/config";
 import { readConfigText } from "../core/config/config-io";
 import { deepMergeConfig } from "../core/config/deep-merge";
 import { ConfigError, UsageError } from "../core/errors";
@@ -152,9 +158,40 @@ function sameConfigValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function configArrayItemKey(value: unknown): string {
+  if (!isPlainRecord(value)) return `value:${JSON.stringify(value)}`;
+  if (typeof value.id === "string") return `id:${value.id}`;
+  if (typeof value.type === "string" && typeof value.url === "string") return `source:${value.type}:url:${value.url}`;
+  if (typeof value.type === "string" && typeof value.path === "string")
+    return `source:${value.type}:path:${path.resolve(value.path)}`;
+  if (typeof value.url === "string") return `url:${value.url}`;
+  if (typeof value.name === "string") return `name:${value.name}`;
+  return `value:${JSON.stringify(value)}`;
+}
+
 /** Reapply only setup's changes to a freshly read config under the final lock. */
 function rebaseSetupChanges(original: unknown, desired: unknown, latest: unknown): unknown {
   if (sameConfigValue(original, desired)) return latest;
+  if (Array.isArray(original) && Array.isArray(desired)) {
+    const latestItems = Array.isArray(latest) ? latest : [];
+    const originalByKey = new Map(original.map((item) => [configArrayItemKey(item), item]));
+    const desiredByKey = new Map(desired.map((item) => [configArrayItemKey(item), item]));
+    const latestByKey = new Map(latestItems.map((item) => [configArrayItemKey(item), item]));
+    const result: unknown[] = [];
+    for (const [key, desiredItem] of desiredByKey) {
+      const originalItem = originalByKey.get(key);
+      result.push(
+        originalByKey.has(key)
+          ? rebaseSetupChanges(originalItem, desiredItem, latestByKey.get(key))
+          : (latestByKey.get(key) ?? desiredItem),
+      );
+    }
+    for (const item of latestItems) {
+      const key = configArrayItemKey(item);
+      if (!originalByKey.has(key) && !desiredByKey.has(key)) result.push(item);
+    }
+    return result;
+  }
   if (!isPlainRecord(original) || !isPlainRecord(desired)) return desired;
   const result: Record<string, unknown> = isPlainRecord(latest) ? { ...latest } : {};
   for (const key of new Set([...Object.keys(original), ...Object.keys(desired)])) {
@@ -359,12 +396,6 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   assertSetupSandbox(resolvedStashDir, opts?.dir != null);
   applyStashIsolationToEnv(resolvedStashDir, opts?.dir != null);
 
-  // Bootstrap directory structure before any prompts so the stash exists
-  // even if the wizard is interrupted after this point.
-  if (!opts?.noInit) {
-    await akmInit({ dir: resolvedStashDir, setDefault: true });
-  }
-
   // Quick connectivity check — skip network-dependent steps when offline
   const online = await isOnline();
   if (!online) {
@@ -465,8 +496,11 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   );
   if (!shouldSave) bail();
 
-  // Save config
-  saveSetupConfig(current, newConfig);
+  validateCompleteConfig(newConfig);
+  if (!opts?.noInit) {
+    await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
+  }
+  const savedConfig = saveSetupConfig(current, newConfig);
 
   if (semanticSearchMode.mode === "off") {
     clearSemanticStatus();
@@ -474,13 +508,13 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 
   if (semanticSearchMode.mode === "auto") {
     if (semanticSearchMode.prepareAssets) {
-      const ready = await prepareSemanticSearchAssets(newConfig);
+      const ready = await prepareSemanticSearchAssets(savedConfig);
       if (!ready.ok) {
         writeSemanticStatus({
           status: "blocked",
           reason: ready.reason as never,
           message: ready.message,
-          providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+          providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
           lastCheckedAt: new Date().toISOString(),
         });
         p.log.warn(
@@ -490,7 +524,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
         writeSemanticStatus({
           status: "pending",
           message: "Semantic prerequisites verified. Building the index to finish activation.",
-          providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+          providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
           lastCheckedAt: new Date().toISOString(),
         });
       }
@@ -498,7 +532,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
       writeSemanticStatus({
         status: "pending",
         message: "Semantic search is enabled, but asset preparation was skipped.",
-        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
         lastCheckedAt: new Date().toISOString(),
       });
       p.log.info(
@@ -514,7 +548,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   try {
     const indexResult = await akmIndex({ stashDir });
     spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
-    if (newConfig.semanticSearchMode === "auto") {
+    if (savedConfig.semanticSearchMode === "auto") {
       if (indexResult.verification.ok) {
         p.log.success(indexResult.verification.message);
       } else {
@@ -527,12 +561,12 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   } catch (err) {
     spin.stop("Indexing failed — you can run `akm index` manually later.");
     p.log.warn(String(err));
-    if (newConfig.semanticSearchMode === "auto") {
+    if (savedConfig.semanticSearchMode === "auto") {
       writeSemanticStatus({
         status: "blocked",
         reason: "index-failed",
         message: String(err),
-        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        providerFingerprint: deriveSemanticProviderFingerprint(savedConfig.embedding),
         lastCheckedAt: new Date().toISOString(),
       });
     }
@@ -576,12 +610,6 @@ export async function runSetupWithDefaults(opts: {
 
   assertSetupSandbox(stashDir, explicitStashDir != null);
   applyStashIsolationToEnv(stashDir, explicitStashDir != null);
-
-  // Bootstrap directory structure first
-  let initResult: InitResponse | undefined;
-  if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir, setDefault: true });
-  }
 
   // Run steps in non-interactive mode (applies defaults, skips prompts)
   const ctx = createSetupContext(current, { nonInteractive: true });
@@ -643,6 +671,11 @@ export async function runSetupWithDefaults(opts: {
     }
   }
 
+  validateCompleteConfig(ctx.config as AkmConfig);
+  let initResult: InitResponse | undefined;
+  if (!opts.noInit) {
+    initResult = await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+  }
   saveSetupConfig(current, ctx.config as AkmConfig);
 
   return {
@@ -880,11 +913,8 @@ export async function runSetupFromConfig(opts: {
     merged = ctx.config;
   }
 
-  // Bootstrap directory structure
-  let initResult: InitResponse | undefined;
-  if (!opts.noInit) {
-    initResult = await akmInit({ dir: stashDir, setDefault: true });
-  }
+  // Reject an invalid merged engine graph before probing or touching the stash.
+  validateCompleteConfig(merged);
 
   // Optional probe
   const mergedLlm = readCurrentLlmEngine(merged);
@@ -905,6 +935,11 @@ export async function runSetupFromConfig(opts: {
     }
   }
 
+  validateCompleteConfig(merged);
+  let initResult: InitResponse | undefined;
+  if (!opts.noInit) {
+    initResult = await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+  }
   saveSetupConfig(current, merged);
 
   return {
