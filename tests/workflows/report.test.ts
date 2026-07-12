@@ -311,9 +311,14 @@ describe("workflow report — sensitive output", () => {
     const envSentinel = "MANUAL-REPORT-ENV-SENTINEL";
     const secretSentinel = "MANUAL-REPORT-SECRET-SENTINEL";
     const allowlistedUrls = [
-      "https://example.test/oauth/callback?refresh_token=MANUAL-REPORT-REFRESH-SENTINEL",
-      "https://example.test/oauth/callback#id_token=MANUAL-REPORT-ID-SENTINEL",
+      "https://example.test/oauth/callback?refresh_token=MANUAL%20REPORT%20REFRESH%20SENTINEL",
+      "https://example.test/oauth/callback#id_token=MANUAL%2BREPORT%2BID%2BSENTINEL",
       "https://example.test/#/oauth/callback?client_secret=MANUAL-REPORT-CLIENT-SENTINEL",
+    ];
+    const partialCredentials = [
+      "MANUAL REPORT REFRESH SENTINEL",
+      "MANUAL+REPORT+ID+SENTINEL",
+      "MANUAL-REPORT-CLIENT-SENTINEL",
     ];
     const stash = makeStashDir();
     fs.mkdirSync(path.join(stash.dir, "secrets"), { recursive: true });
@@ -355,15 +360,15 @@ steps:
             target: RUN_ID,
             unitId,
             status: "failed",
-            resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrls.join(" ")}`,
-            failureReason: `provider-${secretSentinel}`,
-            sessionId: `session-${secretSentinel}`,
+            resultRaw: `echo ${engineSentinel} ${envSentinel} ${secretSentinel} ${allowlistedUrls.join(" ")} ${partialCredentials.join(" ")}`,
+            failureReason: `provider-${partialCredentials[0]}`,
+            sessionId: `session-${partialCredentials[1]}`,
             summaryJudge: null,
           }),
       );
       const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
 
-      for (const sentinel of [engineSentinel, envSentinel, secretSentinel, ...allowlistedUrls]) {
+      for (const sentinel of [engineSentinel, envSentinel, secretSentinel, ...allowlistedUrls, ...partialCredentials]) {
         expect(JSON.stringify(rows)).not.toContain(sentinel);
       }
       expect(JSON.stringify(rows)).toContain("[REDACTED]");

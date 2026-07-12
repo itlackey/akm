@@ -31,7 +31,12 @@
 
 import { assertNever } from "../../core/assert";
 import type { LlmConnectionConfig } from "../../core/config/config";
-import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
+import {
+  collectSensitiveValues,
+  isEnvPassthroughValueSafeToExpose,
+  redactSensitiveText,
+  redactSensitiveValue,
+} from "../../core/redaction";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import { materializeLlmConnection } from "./engine-resolution";
 import type { AgentProfile } from "./profiles";
@@ -83,7 +88,7 @@ export function collectDispatchSensitiveValues(
     }
   }
   for (const value of Object.values(opts.env ?? {})) add(value);
-  return [...values];
+  return collectSensitiveValues(values);
 }
 
 function redactResult(result: AgentRunResult, sensitiveValues: readonly string[]): AgentRunResult {

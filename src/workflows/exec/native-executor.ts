@@ -135,7 +135,7 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { isEnvPassthroughValueSafeToExpose, redactSensitiveValue } from "../../core/redaction";
+import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensitiveValue } from "../../core/redaction";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
@@ -1214,7 +1214,7 @@ function collectWorkflowDispatchSensitiveValues(
   };
   addCredential(workUnit.engine);
   addCredential(workUnit.fallbackEngine);
-  return [...values];
+  return collectSensitiveValues(values);
 }
 
 function redactUnitOutcome(outcome: UnitOutcome, sensitiveValues: readonly string[]): UnitOutcome {
