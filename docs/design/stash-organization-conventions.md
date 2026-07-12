@@ -293,9 +293,18 @@ governance and the typed provenance channel remain genuinely open.
   optimization). Whether the skeleton convention facts should re-adopt the
   idiom over `akm search "<slug>" --type <type>` stays deferred one release so
   older CLI versions aren't taught a query shape they don't support.
-- **Index self-situating body text.** Surface the first body paragraph into an
-  indexed field (or embed body openings) so orientation prose pays retrieval
-  rent.
+- **Index self-situating body text.** Closed by SPEC-8 in
+  [stash-conventions-code-spec.md](stash-conventions-code-spec.md)
+  (implemented, default-off: the `index.indexBodyOpening` config flag makes
+  the metadata pass capture the first prose paragraph of a markdown body —
+  capped at 280 chars; secrets/env and session-kind memories excluded — into
+  `entry.bodyOpening`, folded into the lowest-weight `content` FTS column and
+  the embedding text). Stays default-off until eval evidence (curate goldens)
+  shows lift; toggling requires `akm index --full` (embeddings do not
+  regenerate for already-embedded entries) plus a canary re-mint, and `akm
+  index` warns while the flag diverges from the built state. The
+  `description:`/`when_to_use:` orientation routing the conventions teach
+  remains primary.
 - **Typed provenance channel.** Evaluate `sources:` for all types, indexed
   outside `hints` — it would separate provenance from associative links and
   resolve the xref-cap tension mechanically. Rejected for the shipped

@@ -4342,6 +4342,10 @@
             }
           },
           "additionalProperties": true
+        },
+        "indexBodyOpening": {
+          "type": "boolean",
+          "description": "Index the first prose paragraph of each markdown asset body (capped at 280 chars) into the lowest-weight `content` search column and the embedding text (default false). Secret/env files and session-kind memories are never captured. Toggling the flag changes indexed text: run `akm index --full` afterwards to re-extract every entry and regenerate embeddings, and re-mint collapse-detector canary baselines via `akm improve canary --refresh`."
         }
       },
       "additionalProperties": {
@@ -9143,6 +9147,10 @@
                 }
               },
               "additionalProperties": true
+            },
+            "indexBodyOpening": {
+              "type": "boolean",
+              "description": "Index the first prose paragraph of each markdown asset body (capped at 280 chars) into the lowest-weight `content` search column and the embedding text (default false). Secret/env files and session-kind memories are never captured. Toggling the flag changes indexed text: run `akm index --full` afterwards to re-extract every entry and regenerate embeddings, and re-mint collapse-detector canary baselines via `akm improve canary --refresh`."
             }
           },
           "additionalProperties": {

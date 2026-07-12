@@ -121,6 +121,7 @@ in-place rewrite. Set `AKM_NO_AUTO_MIGRATE=1` to suppress the rewrite.
 | `index.metadataEnhance.enabled` | boolean | `false` | Toggles the `akm index` metadata-enhancement pass. Replaces the legacy `features.index.metadata_enhance` entry. |
 | `index.stalenessDetection.enabled` | boolean | `false` | Toggles the `akm index` staleness-detection pass. |
 | `index.stalenessDetection.thresholdDays` | integer | `90` | Days before a memory is re-evaluated for staleness. |
+| `index.indexBodyOpening` | boolean | `false` | Index the first prose paragraph of each markdown asset body (capped at 280 chars) into the lowest-weight `content` search column and the embedding text. Secret/env files and session-kind memories are never captured. Toggling changes indexed text — see [`index.*`](#index) for the costs. |
 | `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. |
 | `embedding` | object | null (local) | Embedding connection settings. Unchanged from v1. |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`). |
@@ -390,6 +391,23 @@ measuring with `scripts/akm-eval` + the health report.
 | `index.metadataEnhance.enabled` | `false` | LLM-driven description/tag enrichment during `akm index`. |
 | `index.stalenessDetection.enabled` | `false` | Run the staleness-detection validator pass during `akm index`. |
 | `index.stalenessDetection.thresholdDays` | `90` | Days before a memory is re-evaluated for staleness. |
+| `index.indexBodyOpening` | `false` | Capture the first prose paragraph of each markdown asset body into search. |
+
+`index.indexBodyOpening` (default `false`) captures the first prose paragraph
+of each markdown asset body — the stash conventions' "self-situating opening"
+— onto the indexed entry (capped at 280 chars, word-boundary truncated) and
+folds it into the lowest-weight `content` FTS column and the embedding text,
+so orientation prose becomes retrievable without ever outranking
+name/description/tag matches. Secret and env files are never read for it, and
+session-kind memories (the `akm_memory_kind` marker in outer or nested inner
+frontmatter) are excluded — their bodies are raw transcripts. **Costs of
+toggling (either direction):** indexed text changes, so (1) collapse-detector
+canary recall baselines shift — re-mint them with `akm improve canary
+--refresh`; and (2) embeddings are **not** regenerated for entries that
+already have one, and incremental runs only re-extract changed files — run
+`akm index --full` after toggling to re-extract every entry and rebuild
+embeddings from the new text. Until that full run happens, `akm index` warns
+that the flag differs from the state the index was built with.
 
 Any **other** key under `index` is treated as a per-pass entry (keyed by pass
 name, e.g. `index.graph`). Per-pass entries accept: `llm` (boolean — set

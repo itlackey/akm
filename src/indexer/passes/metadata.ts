@@ -12,6 +12,7 @@ import {
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString, isAssetType, writeFileAtomic } from "../../core/common";
+import { loadUserConfig } from "../../core/config/config";
 import { isVerbose, warn } from "../../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
 import { applyMetadataContributors } from "./metadata-contributors";
@@ -173,6 +174,18 @@ export interface StashEntry {
    * without a full table scan.
    */
   derivedFrom?: string;
+  /**
+   * First prose paragraph of the asset body — the conventions' self-situating
+   * opening (stash-conventions SPEC-8). Captured by the metadata pass only
+   * when the `index.indexBodyOpening` config flag is enabled (default off),
+   * capped at {@link BODY_OPENING_MAX_CHARS} chars (word-boundary truncation
+   * with a trailing ellipsis). `buildSearchFields` folds it into the
+   * lowest-weight `content` FTS column whenever present on an entry (the fold
+   * is unconditional so FTS rebuilds from stored entry_json stay faithful).
+   * Never captured for secret/env files or session-kind memories
+   * (`akm_memory_kind` marker in outer or inner nested frontmatter).
+   */
+  bodyOpening?: string;
 }
 
 export interface StashFile {
@@ -385,6 +398,12 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (evidenceSources) result.evidenceSources = evidenceSources;
   if (typeof e.derivedFrom === "string" && e.derivedFrom.trim().length > 0) {
     result.derivedFrom = e.derivedFrom.trim();
+  }
+  // SPEC-8: `bodyOpening` must survive the whitelist so entries round-tripped
+  // through `.stash.json` keep their captured opening. Preserved verbatim —
+  // the extractor already trimmed and capped it at capture time.
+  if (typeof e.bodyOpening === "string" && e.bodyOpening.trim().length > 0) {
+    result.bodyOpening = e.bodyOpening;
   }
   if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
     const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
@@ -1016,6 +1035,166 @@ export function isEnrichmentComplete(entry: StashEntry): boolean {
   return hasDescription && hasTags && hasSearchHints;
 }
 
+// ── Body-opening extraction (stash-conventions SPEC-8) ──────────────────────
+
+/**
+ * Maximum length of a captured self-situating body opening. Bounds index-size
+ * growth and keeps a single verbose opening from dominating the low-weight
+ * `content` FTS column.
+ */
+export const BODY_OPENING_MAX_CHARS = 280;
+
+/**
+ * Minimum characters retained when the cap truncates at a word boundary. A
+ * boundary cut that would retain less than this falls back to a hard cut, so
+ * one pathological long token cannot gut the capture.
+ */
+const BODY_OPENING_MIN_RETAINED_CHARS = 250;
+
+/**
+ * True when `index.indexBodyOpening` is enabled in the user config.
+ *
+ * The gate is the GLOBAL user config, read directly by the metadata pass so
+ * every indexing entry point (stash walk, flat walk, write-path indexing)
+ * honors the flag without parameter plumbing. Fail-open: an unreadable or
+ * invalid config must never break indexing (CLI entry points surface config
+ * errors loudly on their own), so any load failure reads as "off".
+ */
+function isBodyOpeningIndexingEnabled(): boolean {
+  try {
+    return loadUserConfig().index?.indexBodyOpening === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Locate a leading nested frontmatter block in a body: up to three blank
+ * lines, then a `---` line, closed by a later `---` line. Mirrors the
+ * base-linter's `parseInnerFrontmatterBlock` recognition — when `akm
+ * remember` wraps a session-capture hook's file in its own frontmatter, the
+ * hook's `---\nakm_memory_kind: …\n---` block survives at the top of the
+ * body. Returns the open/close line indexes, or `null` when no block opens.
+ * Location only — callers apply their own interior checks (marker scan in
+ * {@link hasSessionMemoryMarker}, shape test in {@link isFrontmatterShaped}).
+ */
+function findInnerFrontmatterBlock(lines: string[]): { open: number; close: number } | null {
+  let i = 0;
+  while (i < lines.length && i < 3 && lines[i].trim() === "") i += 1;
+  if (lines[i] !== "---") return null;
+  for (let j = i + 1; j < lines.length; j += 1) {
+    if (lines[j] === "---") return { open: i, close: j };
+  }
+  return null;
+}
+
+/**
+ * True when the document carries the session-capture `akm_memory_kind`
+ * marker — in the outer frontmatter data OR in a nested inner block at the
+ * top of the body (both producer layouts exist; see base-linter's
+ * `extractFrontmatterRefs`). Session bodies are raw transcripts, never a
+ * self-situating opening.
+ */
+function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): boolean {
+  if (typeof fmData.akm_memory_kind === "string") return true;
+  const lines = body.split(/\r?\n/);
+  const block = findInnerFrontmatterBlock(lines);
+  if (!block) return false;
+  for (let i = block.open + 1; i < block.close; i += 1) {
+    if (/^akm_memory_kind:\s*\S/.test(lines[i])) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the interior of a candidate inner block (located by
+ * {@link findInnerFrontmatterBlock}) actually reads as YAML frontmatter:
+ * every line is blank, indented (a continuation or nested value), or shaped
+ * like a top-level `key:` mapping entry. Ordinary prose bracketed by two
+ * thematic-break `---` lines fails this test, so a decorative opening
+ * callout is treated as the paragraph it is instead of being discarded
+ * (review finding on SPEC-8 — the block finder alone accepts ANY content up
+ * to an arbitrarily distant closing `---`).
+ */
+function isFrontmatterShaped(lines: string[], block: { open: number; close: number }): boolean {
+  for (let i = block.open + 1; i < block.close; i += 1) {
+    const line = lines[i];
+    if (line.trim() === "") continue;
+    if (/^\s/.test(line)) continue; // indented continuation / nested value
+    if (/^[A-Za-z0-9_.-]+:(\s|$)/.test(line)) continue; // top-level key
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Extract the first prose paragraph of a markdown body (frontmatter already
+ * stripped by the caller): skip blank lines, ATX headings, setext `=`
+ * underlines (discarding the heading text above them), thematic breaks,
+ * fenced code blocks (``` or ~~~, including their contents), and a leading
+ * nested frontmatter block — skipped only when its interior is actually
+ * frontmatter-shaped, so prose wrapped in decorative `---` lines is still
+ * captured; then collect consecutive non-blank lines until the paragraph
+ * ends. Deliberate asymmetry: a `---` row after captured prose ENDS the
+ * paragraph and keeps it (favoring the callout/thematic-break reading over
+ * CommonMark's setext-H2), while a `=+` row can only be a setext underline
+ * and so discards the pending lines as heading text. The result is capped at
+ * {@link BODY_OPENING_MAX_CHARS} chars — truncated at the last word boundary
+ * that still retains a substantial prefix, with a trailing ellipsis. Returns
+ * `undefined` when the body has no prose (frontmatter-only files,
+ * headings/fences-only bodies).
+ */
+export function extractBodyOpening(body: string): string | undefined {
+  const lines = body.split(/\r?\n/);
+  const innerBlock = findInnerFrontmatterBlock(lines);
+  const start = innerBlock && isFrontmatterShaped(lines, innerBlock) ? innerBlock.close + 1 : 0;
+
+  const paragraph: string[] = [];
+  let inFence = false;
+  let fenceChar = "";
+  for (let i = start; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim();
+    const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
+    if (inFence) {
+      // Fence interiors are never prose (and may be secrets-adjacent command
+      // text); skip until the matching closing marker.
+      if (fenceMatch && fenceMatch[1][0] === fenceChar) inFence = false;
+      continue;
+    }
+    if (fenceMatch) {
+      if (paragraph.length > 0) break; // a fence ends an open paragraph
+      inFence = true;
+      fenceChar = fenceMatch[1][0];
+      continue;
+    }
+    if (/^=+$/.test(trimmed)) {
+      // A row of `=` is a setext H1 underline: the pending lines are heading
+      // text, not prose — discard them and keep searching. (A bare `=` row
+      // with nothing pending is skipped like any other non-prose divider.)
+      paragraph.length = 0;
+      continue;
+    }
+    const isBlank = trimmed === "";
+    const isHeading = /^#{1,6}(\s|$)/.test(trimmed);
+    const isThematicBreak = /^(-{3,}|\*{3,}|_{3,})$/.test(trimmed);
+    if (isBlank || isHeading || isThematicBreak) {
+      if (paragraph.length > 0) break; // paragraph complete
+      continue; // still searching for the first prose line
+    }
+    paragraph.push(trimmed);
+  }
+
+  const text = paragraph.join("\n");
+  if (!text) return undefined;
+  if (text.length <= BODY_OPENING_MAX_CHARS) return text;
+  // Cap: prefer a word-boundary cut (never mid-token), but only when it keeps
+  // a substantial prefix; append a one-char ellipsis inside the budget.
+  const slice = text.slice(0, BODY_OPENING_MAX_CHARS - 1);
+  const lastBoundary = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\n"), slice.lastIndexOf("\t"));
+  const cut = lastBoundary >= BODY_OPENING_MIN_RETAINED_CHARS ? slice.slice(0, lastBoundary) : slice;
+  return `${cut.trimEnd()}…`;
+}
+
 // ── Metadata Generation ─────────────────────────────────────────────────────
 
 /**
@@ -1083,6 +1262,16 @@ async function buildEntryFromFile(
     if (fmParams) entry.parameters = fmParams;
     // Pass wiki-pattern frontmatter through onto the entry
     applyWikiFrontmatter(entry, parsed.data);
+    // Stash-organization conventions (SPEC-8): config-gated capture of the
+    // self-situating body opening. Default off — enabling it changes indexed
+    // text (collapse-detector canary baselines shift, and embeddings for
+    // already-embedded entries are NOT regenerated; see docs/configuration.md).
+    // Session-kind memories are raw transcripts and are never captured;
+    // secrets never reach this branch (guard above) and env files are not .md.
+    if (isBodyOpeningIndexingEnabled() && !hasSessionMemoryMarker(parsed.data, parsed.content)) {
+      const bodyOpening = extractBodyOpening(parsed.content);
+      if (bodyOpening) entry.bodyOpening = bodyOpening;
+    }
     // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
     if (entry.type === "command") {
       const cmdParams = extractCommandParameters(parsed.content);
