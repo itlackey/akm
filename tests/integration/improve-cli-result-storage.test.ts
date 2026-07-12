@@ -2,30 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Integration tests for the 0.8.0+ default behaviour of `akm improve`:
- *   - Full result is recorded as a row in the `improve_runs` table of state.db
- *     (migration 003).
- *   - Stdout is empty in default mode — the existing `[improve] ...` log
- *     lines on stderr remain the canonical console UX.
- *   - `--json-to-stdout` restores the prior behaviour (full JSON on stdout,
- *     no state.db row written).
- *
- * WHY REAL SUBPROCESSES (moved here from tests/commands/improve-result-to-file.test.ts):
- * these tests run `improve` for real, which opens and WRITES the state.db
- * improve_runs table. In-process, a SQLite write lock on state.db is already
- * held within the test process (the suite keeps DB handles open across the
- * run), so an in-process improve aborts with "state DB busy/locked after
- * retries" — a genuine cross-process contention a fresh subprocess avoids.
- * They also run real improve with 60s timeouts, which fits the integration
- * scope rule. Each spawn mints a fresh XDG_DATA_HOME (via the sandbox helper)
- * passed in the child's env — process.env is never mutated — so every run
- * gets a clean, uncontended state.db that the assertions read back.
- */
+/** Public-CLI regression coverage for the artifact-free improve dry-run boundary. */
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../_helpers/sandbox";
@@ -45,11 +27,29 @@ function makeStashDir(): string {
   return stash.dir;
 }
 
+function writeTestConfig(root: string): void {
+  const configDir = path.join(root, "akm");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: {
+        test: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" },
+      },
+      defaults: { llmEngine: "test" },
+    }),
+  );
+}
+
 interface CliRun {
   status: number;
   stdout: string;
   stderr: string;
   xdgData: string;
+  roots: string[];
+  artifactBefore: string[];
 }
 
 function runCli(args: string[], stashDir: string): CliRun {
@@ -58,15 +58,23 @@ function runCli(args: string[], stashDir: string): CliRun {
   // to spawnSync's env (not process.env) so it never leaks.
   const data = sandboxMakeStashDir();
   const cache = sandboxMakeStashDir();
-  disposers.push(data, cache);
+  const config = sandboxMakeStashDir();
+  const state = sandboxMakeStashDir();
+  disposers.push(data, cache, config, state);
+  writeTestConfig(config.dir);
+  const roots = [cache.dir, config.dir, data.dir, state.dir, stashDir];
+  const artifactBefore = snapshotRoots(roots);
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 60_000,
     env: {
       ...process.env,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: cache.dir,
+      XDG_CONFIG_HOME: config.dir,
       XDG_DATA_HOME: data.dir,
+      XDG_STATE_HOME: state.dir,
     },
   });
   return {
@@ -74,7 +82,28 @@ function runCli(args: string[], stashDir: string): CliRun {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
     xdgData: data.dir,
+    roots,
+    artifactBefore,
   };
+}
+
+function snapshotRoots(roots: string[]): string[] {
+  const entries: string[] = [];
+  const walk = (root: string, current: string): void => {
+    if (!fs.existsSync(current)) return;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(current, entry.name);
+      const relative = `${roots.indexOf(root)}:${path.relative(root, full)}`;
+      if (entry.isDirectory()) {
+        entries.push(`${relative}/`);
+        walk(root, full);
+      } else {
+        entries.push(`${relative}:${createHash("sha256").update(fs.readFileSync(full)).digest("hex")}`);
+      }
+    }
+  };
+  for (const root of roots) walk(root, root);
+  return entries;
 }
 
 /**
@@ -132,32 +161,18 @@ afterEach(() => {
   for (const d of disposers.splice(0)) d.cleanup();
 });
 
-describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape hatch", () => {
+describe("akm improve CLI dry-run artifact boundary", () => {
   let stashDir: string;
   beforeEach(() => {
     stashDir = makeStashDir();
   });
 
-  test("default mode records the full result in state.db improve_runs and emits NOTHING on stdout", () => {
-    // Use --dry-run so the run completes quickly without LLM calls.
+  test("success emits schema v2 and creates no artifact or improve_runs row", () => {
     const result = runCli(["improve", "--dry-run"], stashDir);
     expect(result.status).toBe(0);
-
-    // Stdout is empty — no JSON summary, no envelope, no "result written to" hint.
-    expect(result.stdout).toBe("");
-
-    // The result row landed in state.db with the full body in result_json.
-    const rows = readImproveRuns(result.xdgData);
-    expect(rows.length).toBe(1);
-    expect(rows[0].ok).toBe(1);
-    expect(rows[0].dry_run).toBe(1);
-    expect(rows[0].result.ok).toBe(true);
-    expect(rows[0].result.dryRun).toBe(true);
-    expect(rows[0].profile).toBeNull();
-    expect(rows[0].strategy).toBe("default");
-    expect(rows[0].result.strategy).toBe("default");
-    expect(rows[0].result.memorySummary).toBeDefined();
-    expect(rows[0].result.plannedRefs).toBeDefined();
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(parsed).toMatchObject({ schemaVersion: 2, ok: true, dryRun: true, strategy: "default" });
+    expect(readImproveRuns(result.xdgData)).toEqual([]);
 
     // No legacy on-disk artifact file is authored anymore.
     const runsDir = path.join(stashDir, ".akm", "runs");
@@ -166,9 +181,10 @@ describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape 
     // No "improve result written to" hint on stderr — the existing [improve]
     // log lines from improve.ts are the canonical console UX.
     expect(result.stderr).not.toContain("improve result written to");
+    expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
   });
 
-  test("--json-to-stdout restores prior behaviour: full JSON on stdout, no state.db row written", () => {
+  test("--json-to-stdout remains read-only and does not duplicate dry-run output", () => {
     const result = runCli(["improve", "--dry-run", "--json-to-stdout"], stashDir);
     expect(result.status).toBe(0);
 
@@ -184,7 +200,6 @@ describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape 
     expect(parsed.resultPath).toBeUndefined();
     expect(parsed.summary).toBeUndefined();
 
-    // No improve_runs row written in --json-to-stdout mode.
     const rows = readImproveRuns(result.xdgData);
     expect(rows.length).toBe(0);
 
@@ -199,33 +214,76 @@ describe("akm improve CLI: result-to-state.db default + --json-to-stdout escape 
     expect(result.stderr).not.toContain("improve result written to");
   });
 
-  test("two consecutive default-mode runs produce distinct improve_runs rows", () => {
+  test("two consecutive dry-runs persist neither invocation", () => {
     const a = runCli(["improve", "--dry-run"], stashDir);
     expect(a.status).toBe(0);
-    expect(a.stdout).toBe("");
+    expect(JSON.parse(a.stdout).dryRun).toBe(true);
 
     const b = runCli(["improve", "--dry-run"], stashDir);
     expect(b.status).toBe(0);
-    expect(b.stdout).toBe("");
+    expect(JSON.parse(b.stdout).dryRun).toBe(true);
 
-    // Each run wrote a row into its own state.db (one row per state.db).
     const aRows = readImproveRuns(a.xdgData);
     const bRows = readImproveRuns(b.xdgData);
-    expect(aRows.length).toBe(1);
-    expect(bRows.length).toBe(1);
-    expect(aRows[0].id).not.toEqual(bRows[0].id);
+    expect(aRows).toEqual([]);
+    expect(bRows).toEqual([]);
     // No legacy directory under either stash root.
     expect(fs.existsSync(path.join(stashDir, ".akm", "runs"))).toBe(false);
   });
 
-  test("--strategy persists the effective strategy without populating the historical profile column", () => {
+  test("--strategy appears in stdout without persistence", () => {
     const result = runCli(["improve", "--dry-run", "--strategy", "quick"], stashDir);
     expect(result.status).toBe(0);
 
-    const rows = readImproveRuns(result.xdgData);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].profile).toBeNull();
-    expect(rows[0].strategy).toBe("quick");
-    expect(rows[0].result.strategy).toBe("quick");
+    expect(JSON.parse(result.stdout).strategy).toBe("quick");
+    expect(readImproveRuns(result.xdgData)).toEqual([]);
+  });
+
+  test("preflight errors create no artifact and never persist a result", () => {
+    const result = runCli(["improve", "--dry-run", "--strategy", "missing"], stashDir);
+    expect(result.status).toBe(78);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "UNKNOWN_IMPROVE_STRATEGY" });
+    expect(readImproveRuns(result.xdgData)).toEqual([]);
+    expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
+  });
+
+  test("SIGTERM creates no artifact and never persists a dry-run result", async () => {
+    const data = sandboxMakeStashDir();
+    const cache = sandboxMakeStashDir();
+    const config = sandboxMakeStashDir();
+    const state = sandboxMakeStashDir();
+    disposers.push(data, cache, config, state);
+    writeTestConfig(config.dir);
+    const memories = path.join(stashDir, "memories");
+    for (let index = 0; index < 5_000; index++) {
+      fs.writeFileSync(path.join(memories, `signal-${index}.md`), `---\ndescription: signal ${index}\n---\n\nbody\n`);
+    }
+    const roots = [cache.dir, config.dir, data.dir, state.dir, stashDir];
+    const before = snapshotRoots(roots);
+    const child = spawn("bun", [cliPath, "improve", "--dry-run"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: cache.dir,
+        XDG_CONFIG_HOME: config.dir,
+        XDG_DATA_HOME: data.dir,
+        XDG_STATE_HOME: state.dir,
+      },
+    });
+    const stderrChunks: Buffer[] = [];
+    child.stderr.on("data", (chunk) => stderrChunks.push(Buffer.from(chunk)));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    child.kill("SIGTERM");
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    expect(exit.code === 143 || exit.signal === "SIGTERM").toBe(true);
+    const stderr = Buffer.concat(stderrChunks).toString("utf8");
+    if (exit.code === 143) expect(stderr).toContain("dry-run state was not persisted");
+    expect(readImproveRuns(data.dir)).toEqual([]);
+    expect(snapshotRoots(roots)).toEqual(before);
   });
 });

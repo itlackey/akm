@@ -27,7 +27,7 @@ import {
   writeImproveResultFile,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import { resolveImproveStrategy } from "./improve-strategies";
+import { resolveImprovePlan } from "./improve-strategies";
 
 // R5 — collapse-detector canary set inspection / explicit refresh. The
 // detector NEVER auto-refreshes the canary set (silent re-baselining is how a
@@ -197,7 +197,10 @@ export const improveCommand = defineCommand({
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
-      const selectedStrategyName = resolveImproveStrategy(strategyArg, effectiveConfig).name;
+      // Resolve every enabled model-backed process before logging, signal
+      // lifecycle setup, or any filesystem/database side effect.
+      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig);
+      const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
       // Only set the keys the user actually passed (citty leaves the flag
       // undefined unless `--sync`/`--no-sync` / `--push`/`--no-push` appears),
@@ -208,13 +211,15 @@ export const improveCommand = defineCommand({
       if (syncFlag !== undefined) syncOverride.enabled = syncFlag;
       if (pushFlag !== undefined) syncOverride.push = pushFlag;
 
-      const improveLogFile = path.join(
-        getCacheDir(),
-        "logs",
-        "improve",
-        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
-      );
-      setLogFile(improveLogFile);
+      if (!dryRun) {
+        const improveLogFile = path.join(
+          getCacheDir(),
+          "logs",
+          "improve",
+          `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        );
+        setLogFile(improveLogFile);
+      }
       const startedAtMs = Date.now();
       const startedAtIso = new Date(startedAtMs).toISOString();
 
@@ -232,6 +237,7 @@ export const improveCommand = defineCommand({
       // reason in metadata.terminated.
       let runRecorded = false;
       const persistTerminated = (reason: TerminationReason, errorMessage?: string): void => {
+        if (dryRun) return;
         if (runRecorded) return;
         if (!primaryStashDir) return;
         runRecorded = true;
@@ -268,6 +274,7 @@ export const improveCommand = defineCommand({
                 scope: scopeArg,
                 task: taskArg,
                 dryRun,
+                resolvedPlan,
                 target: targetArg,
                 autoAccept,
                 ...(runId !== undefined ? { runId } : {}),
@@ -291,7 +298,12 @@ export const improveCommand = defineCommand({
             signalSource: process,
             exit: process.exit,
             onTerminate: (reason) => persistTerminated(reason),
-            ack: (message) => process.stderr.write(`[improve] ${message}; recorded terminated run ${runId}\n`),
+            ack: (message) =>
+              process.stderr.write(
+                dryRun
+                  ? `[improve] ${message}; dry-run state was not persisted\n`
+                  : `[improve] ${message}; recorded terminated run ${runId}\n`,
+              ),
           },
         );
       } catch (err) {
@@ -306,9 +318,9 @@ export const improveCommand = defineCommand({
       }
       const durationMs = Date.now() - startedAtMs;
 
-      if (jsonToStdout) {
-        // Legacy / escape-hatch mode: full JSON on stdout, no file write.
-        // Kept for scripts/agents that already pipe to jq.
+      if (dryRun || jsonToStdout) {
+        // A dry-run never persists its result, so stdout is its only result
+        // channel. --json-to-stdout remains the live-run escape hatch.
         output("improve", improveResult);
         process.exit(0);
       }

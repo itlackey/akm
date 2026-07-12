@@ -221,7 +221,7 @@ export async function detectAndWriteContradictions(
   config: AkmConfig,
   chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string> = chatCompletion,
   strategy?: ImproveProfileConfig,
-  resolvedLlmConfig?: LlmConnectionConfig,
+  resolvedLlmConfig?: LlmConnectionConfig | null,
 ): Promise<ContradictionDetectionResult> {
   const result: ContradictionDetectionResult = {
     familiesExamined: 0,
@@ -231,9 +231,11 @@ export async function detectAndWriteContradictions(
   };
 
   const contradictionLlm =
-    resolvedLlmConfig ??
-    resolveImproveProcessRunner(strategy, "consolidate", config)?.connection ??
-    getDefaultLlmConfig(config);
+    resolvedLlmConfig === null
+      ? undefined
+      : (resolvedLlmConfig ??
+        resolveImproveProcessRunner(strategy, "consolidate", config)?.connection ??
+        getDefaultLlmConfig(config));
   if (!contradictionLlm) return result;
 
   // Collect derived memories grouped by parent.

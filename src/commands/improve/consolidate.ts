@@ -282,7 +282,7 @@ export interface AkmConsolidateOptions {
   stashDir?: string;
   config?: AkmConfig;
   /** Pre-resolved connection supplied by the improve invocation plan. */
-  llmConfig?: import("../../core/config/config").LlmConnectionConfig;
+  llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
   /** When true, indicates the run was triggered automatically by volume threshold rather than by the memory_consolidation feature flag. */
   autoTriggered?: boolean;
   /** How to handle stale/incomplete consolidate journals from prior interrupted runs. */
@@ -1365,7 +1365,9 @@ async function planConsolidation(
   //
   // Improve supplies a frozen connection; standalone consolidate resolves its
   // selected strategy/default engine here.
-  const llmConfig = opts.llmConfig ?? resolveConsolidateLlmConfig(config, opts.improveProfile);
+  const llmConfig = Object.hasOwn(opts, "llmConfig")
+    ? (opts.llmConfig ?? undefined)
+    : resolveConsolidateLlmConfig(config, opts.improveProfile);
   const isHttpPath = !!llmConfig;
 
   // Chunk sizing: derive a safe chunk size from the configured model context
@@ -1782,7 +1784,7 @@ async function applyConsolidationPlan(
   accounting: ConsolidateAccounting,
   dedupCollapsed: number,
   activeProfile?: ImproveProfileConfig,
-  llmConfig?: import("../../core/config/config").LlmConnectionConfig,
+  llmConfig?: import("../../core/config/config").LlmConnectionConfig | null,
 ): Promise<{
   merged: number;
   deleted: number;
@@ -1823,7 +1825,7 @@ async function applyConsolidationPlan(
   const opCtx: ConsolidateOpContext = {
     config,
     improveProfile: activeProfile,
-    ...(llmConfig ? { llmConfig } : {}),
+    llmConfig: llmConfig ?? null,
     stashDir,
     sourceRun,
     target,
@@ -1990,7 +1992,9 @@ async function akmConsolidateInner(
       accounting,
       dedupCollapsed,
       opts.improveProfile,
-      opts.llmConfig,
+      Object.hasOwn(opts, "llmConfig")
+        ? (opts.llmConfig ?? null)
+        : (resolveConsolidateLlmConfig(config, opts.improveProfile) ?? null),
     );
 
   const runDurationMs = Date.now() - startMs;
@@ -2044,7 +2048,7 @@ export interface ConsolidateOpContext {
   config: AkmConfig;
   /** Active improve profile for this run, if any (see AkmConsolidateOptions). */
   improveProfile?: ImproveProfileConfig;
-  llmConfig?: import("../../core/config/config").LlmConnectionConfig;
+  llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
   stashDir: string;
   sourceRun: string;
   target: ReturnType<typeof resolveWriteTarget>;
@@ -2884,7 +2888,7 @@ async function generateMergedContent(
   secondaryRefs: string[],
   memoryByRef: Map<string, MemoryEntry>,
   activeProfile?: ImproveProfileConfig,
-  resolvedLlmConfig?: import("../../core/config/config").LlmConnectionConfig,
+  resolvedLlmConfig?: import("../../core/config/config").LlmConnectionConfig | null,
 ): Promise<MergeResult> {
   // Only handle single-secondary merges per design (one call per merge op)
   const secRef = secondaryRefs[0];
@@ -2931,7 +2935,8 @@ async function generateMergedContent(
 
   // Use the same per-process profile resolution as the chunk-plan call above
   // so the merge generation step doesn't silently revert to the default LLM.
-  const llmConfig = resolvedLlmConfig ?? resolveConsolidateLlmConfig(config, activeProfile);
+  const llmConfig =
+    resolvedLlmConfig === null ? undefined : (resolvedLlmConfig ?? resolveConsolidateLlmConfig(config, activeProfile));
   const result = await tryLlmFeature(
     "memory_consolidation",
     config,

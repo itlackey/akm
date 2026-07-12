@@ -27,6 +27,14 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { withMockedFetch } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 15_000;
+const dryRunConfig = {
+  configVersion: "0.9.0" as const,
+  semanticSearchMode: "off" as const,
+  engines: {
+    test: { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "test" },
+  },
+  defaults: { llmEngine: "test" },
+};
 
 const tempDirs: string[] = [];
 let sandboxRoots: Record<"cache" | "config" | "data" | "state", string>;
@@ -142,7 +150,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
       writeMemory(stashDir, "alpha", "Remember alpha details.");
       writeMemory(stashDir, "beta", "Remember beta details too.");
       process.env.AKM_STASH_DIR = stashDir;
-      saveConfig({ semanticSearchMode: "off" });
+      saveConfig(dryRunConfig);
       await akmIndex({ stashDir, full: true });
 
       const before = snapshotSandboxRoots(stashDir);
@@ -173,7 +181,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
       process.env.AKM_STASH_DIR = stashDir;
       const before = snapshotSandboxRoots(stashDir);
 
-      const result = await akmImprove({ stashDir, dryRun: true });
+      const result = await akmImprove({ stashDir, dryRun: true, config: dryRunConfig });
       expect(result.ok).toBe(true);
       expect(result.dryRun).toBe(true);
       expect(result.plannedRefs).toEqual([]);

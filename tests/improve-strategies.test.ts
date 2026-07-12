@@ -76,6 +76,50 @@ describe("resolveImprovePlan", () => {
     expect(Object.isFrozen(plan.processes.reflect.config)).toBe(true);
   });
 
+  test("preflights every enabled model-backed process and deeply freezes nested behavior", () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { default: llm },
+      defaults: { llmEngine: "default" },
+      improve: {
+        strategies: {
+          all: {
+            processes: {
+              reflect: { enabled: true },
+              distill: { enabled: true },
+              consolidate: { enabled: true },
+              memoryInference: { enabled: true },
+              graphExtraction: { enabled: true },
+              extract: { enabled: true, hotProbation: { enabled: true } },
+              validation: { enabled: true },
+              recombine: { enabled: true },
+              procedural: { enabled: true },
+            },
+          },
+        },
+      },
+    };
+    const plan = resolveImprovePlan("all", config);
+    for (const name of [
+      "reflect",
+      "distill",
+      "consolidate",
+      "memoryInference",
+      "graphExtraction",
+      "extract",
+      "validation",
+      "recombine",
+      "procedural",
+    ] as const) {
+      expect(plan.processes[name].runner?.engine).toBe("default");
+    }
+    expect(Object.isFrozen(plan.processes.extract.config.hotProbation)).toBe(true);
+    const sourceExtract = config.improve?.strategies?.all?.processes?.extract;
+    if (sourceExtract?.hotProbation) sourceExtract.hotProbation.enabled = false;
+    expect(plan.processes.extract.config.hotProbation?.enabled).toBe(true);
+  });
+
   test("preflights default fallbacks and accepts an agent triage judgment", () => {
     const plan = resolveImprovePlan("reflect-distill", {
       configVersion: "0.9.0",
@@ -192,7 +236,7 @@ describe("resolveImprovePlan", () => {
         semanticSearchMode: "auto",
         improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
       }),
-    ).toThrow('Improve process "reflect" configures model/llm overrides but has no fallback LLM engine.');
+    ).toThrow('Enabled improve process "reflect" requires an LLM engine.');
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",

@@ -30,7 +30,7 @@ import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
@@ -277,6 +277,18 @@ export interface ResolvedExtractPlan {
   process: Readonly<ImproveProcessConfig>;
   llmConfig: Readonly<LlmProfileConfig> | null;
   timeoutMs: number | null;
+  embeddingConfig: Readonly<AkmConfig["embedding"]>;
+}
+
+function cloneAndFreeze<T>(value: T): Readonly<T> {
+  const clone = structuredClone(value);
+  const freeze = (item: unknown): void => {
+    if (typeof item !== "object" || item === null || Object.isFrozen(item)) return;
+    for (const child of Object.values(item)) freeze(child);
+    Object.freeze(item);
+  };
+  freeze(clone);
+  return clone;
 }
 
 /** Resolve standalone extract selection once before discovery, auto iteration, or watch startup. */
@@ -288,11 +300,7 @@ export function resolveStandaloneExtractPlan(
     throw new UsageError("--engine and --strategy are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
   }
   const selected = resolveImproveStrategy(selection.strategy, config);
-  const process = Object.freeze({ ...(getImproveProcessConfig(config, "extract", selected.config) ?? {}) });
-  const enabled = selection.strategy === undefined || process.enabled === true;
-  if (!enabled) {
-    return Object.freeze({ strategy: selected.name, enabled, process, llmConfig: null, timeoutMs: null });
-  }
+  const process = cloneAndFreeze(getImproveProcessConfig(config, "extract", selected.config) ?? {});
   let llmConfig: LlmProfileConfig | undefined;
   if (selection.engine) {
     const runner = resolveEngine(selection.engine, config);
@@ -316,10 +324,13 @@ export function resolveStandaloneExtractPlan(
       : 600_000;
   return Object.freeze({
     strategy: selected.name,
-    enabled,
+    // `akm extract` is an explicit operation. The strategy supplies behavior,
+    // but its improve-stage enablement gate does not disable this command.
+    enabled: true,
     process,
-    llmConfig: Object.freeze({ ...llmConfig }),
+    llmConfig: cloneAndFreeze(llmConfig),
     timeoutMs,
+    embeddingConfig: cloneAndFreeze(config.embedding),
   });
 }
 
@@ -516,6 +527,7 @@ async function processSession(
     embeddingConfig: AkmConfig["embedding"];
     embedFn?: (text: string) => Promise<number[]>;
   } | null,
+  hotProbationEnabled: boolean,
   // #602 — already-extracted skip moved INSIDE processSession: the content hash
   // can only be computed after readSession, so the skip decision lives here. The
   // prior row + bypass flags are threaded in from the caller. Skipping here still
@@ -734,13 +746,7 @@ async function processSession(
   // When enabled, system-generated extractions enter captureMode: hot-probation
   // so they spend ONE consolidation cycle in probation before the deterministic
   // dedup+quality pass promotes them. Default OFF.
-  // Reads the `default` profile deliberately: this per-session hot-probation
-  // flag lives inside the 18-arg `processSession`, which has no handle to the
-  // active profile, and threading a 19th positional arg for a DEFAULT-OFF flag
-  // isn't worth the param bloat. The extract STAGE toggle (in `akmExtract`,
-  // below) already honors `--profile`.
-  const hotProbationEnabled =
-    (getImproveProcessConfig(config, "extract")?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
+  // The invocation boundary resolves this from the frozen extract process.
 
   for (const candidate of payload.candidates) {
     if (dryRun) {
@@ -860,7 +866,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // Read process behavior from the frozen standalone plan or the active improve
   // strategy. This prevents config changes during watch mode from changing later
   // triggers and prevents one improve strategy from overriding another.
-  const activeProfile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
+  const activeProfile =
+    options.improveProfile ?? (options.resolvedPlan ? undefined : resolveImproveStrategy(undefined, config).config);
   const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig(config, "extract", activeProfile);
   // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
   // (the activeProfile path) — consistent with #593/#594 where the active profile,
@@ -869,7 +876,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // the default improve profile's stage toggle was a footgun — dropping extract
   // from the daily improve profile would silently disable the standalone command.
   const extractEnabled =
-    options.resolvedPlan?.enabled ?? (options.improveProfile ? resolveProcessEnabled("extract", activeProfile) : true);
+    options.resolvedPlan?.enabled ??
+    (options.improveProfile ? resolveProcessEnabled("extract", options.improveProfile) : true);
 
   // Feature-gate early so we get a clean "skipped because disabled" envelope.
   if (!extractEnabled) {
@@ -891,12 +899,12 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
 
   // Improve supplies its invocation-owned connection. Standalone extract
   // resolves the selected process engine, then defaults.llmEngine.
-  let llmConfig: LlmProfileConfig | undefined = options.resolvedPlan
-    ? (options.resolvedPlan.llmConfig ?? undefined)
+  let llmConfig: LlmProfileConfig | null | undefined = options.resolvedPlan
+    ? options.resolvedPlan.llmConfig
     : options.llmConfig;
-  if (!llmConfig) {
+  if (!llmConfig && !options.resolvedPlan) {
     const runnerSpec = resolveImproveProcessRunner(activeProfile, "extract", config);
-    llmConfig = runnerSpec?.connection ?? getDefaultLlmConfig(config) ?? undefined;
+    llmConfig = runnerSpec?.connection;
   }
   if (!llmConfig) {
     throw new ConfigError(
@@ -1087,6 +1095,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // processes.extract.schemaSimilarity.enabled: false. The gate is inert in
   // practice when no derived-layer embeddings exist (empty ctx → no penalty).
   const schemaSimilarityCfg = extractProcess?.schemaSimilarity as SchemaSimilarityConfig | undefined;
+  const hotProbationEnabled = (extractProcess?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
   let schemaSimilarityCtx: {
     config: SchemaSimilarityConfig;
     derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
@@ -1098,7 +1107,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     schemaSimilarityCtx = {
       config: { ...schemaSimilarityCfg, enabled: true },
       derivedEmbeddings,
-      embeddingConfig: config.embedding,
+      embeddingConfig: options.resolvedPlan?.embeddingConfig ?? config.embedding,
       embedFn: options.schemaSimilarityEmbedFn,
     };
   }
@@ -1172,6 +1181,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         triage,
         sessionIndexing,
         schemaSimilarityCtx,
+        hotProbationEnabled,
         prior,
         options.force === true,
         extractStandardsContext,

@@ -32,7 +32,6 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
     detection: false,
     configImport: false,
     runtimeIdentity: false,
-    v1Migration: false,
     ...c,
   };
 }
@@ -40,15 +39,12 @@ function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
 /**
  * OpenCode SDK (embedded-SDK dispatch path).
  *
- * Dispatch-only: no native session logs, but detected at setup and migrated
- * from v1 profile names.
+ * Dispatch-only: no native session logs, but detected at setup.
  */
 export class OpencodeSdkHarness extends BaseHarness {
   readonly id = "opencode-sdk" as const;
   readonly displayName = "OpenCode SDK";
   readonly aliases = [] as const;
-  // Decorated v1 profile names like "opencode-sdk-fast" belong to the SDK path.
-  protected readonly v1ProfilePrefixes = ["opencode-sdk"] as const;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Embedded-SDK dispatch on this machine ⇒ local-runner (the matrix's
   // "local (sdk/cli)" row, SDK half).
@@ -64,6 +60,5 @@ export class OpencodeSdkHarness extends BaseHarness {
   readonly capabilities = caps({
     agentDispatch: true,
     detection: true,
-    v1Migration: true,
   });
 }

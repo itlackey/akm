@@ -127,30 +127,6 @@ export function normalizeHarnessId(id: string): string {
 }
 
 /**
- * Resolve a legacy v1 agent-profile name to its v2 platform id (#566).
- *
- * v1 agent profiles never carried an explicit `platform`; it had to be inferred
- * from the profile name. This is the SINGLE registry-backed resolver that
- * replaces both the old standalone `guessAgentPlatform()` in config-migration
- * and the `name.includes("claude") ? "claude" : "opencode"` heuristic in setup.
- * Each harness owns its own `matchesV1ProfileName()`; an unknown name matches no
- * harness and returns `undefined`, so the caller drops it instead of silently
- * defaulting to `'opencode'`.
- *
- * Harnesses are consulted most-specific-id-first (longest id wins) so a
- * decorated name like `"opencode-sdk-fast"` resolves to `'opencode-sdk'` rather
- * than being over-matched by OpenCode's `"opencode"` prefix.
- */
-const V1_RESOLUTION_ORDER: readonly AkmHarness[] = [...HARNESS_REGISTRY].sort((a, b) => b.id.length - a.id.length);
-
-export function v1ProfilePlatform(name: string): string | undefined {
-  for (const h of V1_RESOLUTION_ORDER) {
-    if (h.matchesV1ProfileName(name)) return h.id;
-  }
-  return undefined;
-}
-
-/**
  * Default agent-profile name for a detected harness id (#566).
  *
  * Used by `akm setup`'s headless/recommended-config path so a newly added

@@ -709,20 +709,26 @@ describe("akmExtract — engine + strategy config resolution", () => {
     );
   });
 
-  test("an explicitly selected strategy can disable extract without resolving an engine", () => {
-    const plan = resolveStandaloneExtractPlan(
-      { configVersion: "0.9.0", semanticSearchMode: "off" },
-      { strategy: "quick" },
-    );
-    expect(plan).toMatchObject({ strategy: "quick", enabled: false, llmConfig: null, timeoutMs: null });
+  test("an explicitly selected strategy supplies settings but cannot disable standalone extract", () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 });
+    const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
+    expect(plan).toMatchObject({ strategy: "extract", enabled: true, timeoutMs: 600_000 });
+    expect(plan.process.enabled).toBe(false);
+    expect(plan.process.maxTotalChars).toBe(4321);
   });
 
   test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
     const stash = makeStashDir();
-    const config = configWithStrategy(stash, { maxTotalChars: 1234 });
+    const config = configWithStrategy(stash, {
+      maxTotalChars: 1234,
+      hotProbation: { enabled: true },
+      schemaSimilarity: { enabled: false },
+    });
     const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special", timeoutMs: 45_000 });
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
+    expect(Object.isFrozen(plan.process.hotProbation)).toBe(true);
     expect(plan.llmConfig?.model).toBe("extract-special-model");
     expect(plan.process.maxTotalChars).toBe(1234);
     expect(plan.timeoutMs).toBe(45_000);
@@ -730,7 +736,10 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const engine = config.engines?.["extract-special"];
     if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
     const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) process.maxTotalChars = 9999;
+    if (process) {
+      process.maxTotalChars = 9999;
+      if (process.hotProbation) process.hotProbation.enabled = false;
+    }
 
     let receivedModel = "";
     await akmExtract({
@@ -742,10 +751,47 @@ describe("akmExtract — engine + strategy config resolution", () => {
       harnesses: [makeFakeHarness([fakeSession("frozen", Date.now())])],
       chat: async (cfg) => {
         receivedModel = cfg.model;
-        return JSON.stringify({ candidates: [] });
+        return JSON.stringify({
+          candidates: [
+            {
+              type: "memory",
+              name: "frozen-hot-probation",
+              description: "Frozen extract settings remain stable throughout a long-running watch invocation.",
+              body: "The invocation plan captures nested extract behavior before watch triggers begin.",
+              confidence: 0.9,
+              evidence: "frozen plan regression test",
+            },
+          ],
+        });
       },
     });
     expect(receivedModel).toBe("extract-special-model");
+    expect(plan.process.hotProbation?.enabled).toBe(true);
+    const proposal = listProposals(stash, { status: "pending" }).find(
+      (item) => item.ref === "memory:frozen-hot-probation",
+    );
+    expect(proposal?.payload.frontmatter?.captureMode).toBe("hot-probation");
+  });
+
+  test("a resolved null runner never falls back to live config at the extract leaf", async () => {
+    const stash = makeStashDir();
+    const config = configWithStrategy(stash, {});
+    await expect(
+      akmExtract({
+        type: "claude-code",
+        stashDir: stash,
+        config,
+        resolvedPlan: Object.freeze({
+          strategy: "extract",
+          enabled: true,
+          process: Object.freeze({ enabled: true }),
+          llmConfig: null,
+          timeoutMs: 600_000,
+          embeddingConfig: config.embedding,
+        }),
+        harnesses: [makeFakeHarness([fakeSession("no-fallback", Date.now())])],
+      }),
+    ).rejects.toThrow("No LLM engine configured for extract");
   });
 
   test("honors processes.extract.engine to pick a non-default LLM", async () => {

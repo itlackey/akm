@@ -43,12 +43,6 @@ export interface AgentDispatchRequest {
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
   /**
-   * Working directory for the subprocess. Consumed by `runAgent` (as the
-   * fallback when `RunAgentOptions.cwd` is absent), not by builders — argv
-   * never encodes a working directory.
-   */
-  cwd?: string;
-  /**
    * Reasoning-effort hint for harnesses that accept one (reserved for the
    * workflow engine's IR `effort` field; no builder consumes it yet).
    */

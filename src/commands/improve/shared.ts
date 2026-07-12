@@ -49,13 +49,16 @@ export function resolveImproveLlmFn(
     tag: string;
     signal?: AbortSignal;
     activeProfile?: ImproveProfileConfig;
-    llmConfig?: LlmConnectionConfig;
+    llmConfig?: LlmConnectionConfig | null;
   },
 ): ((prompt: string) => Promise<string | null>) | undefined {
-  const runnerSpec = opts.llmConfig
+  const planOwnsResolution = Object.hasOwn(opts, "llmConfig");
+  const runnerSpec = planOwnsResolution
     ? undefined
     : resolveImproveProcessRunner(opts.activeProfile, opts.processKey, config);
-  const llmConfig = opts.llmConfig ?? runnerSpec?.connection ?? getDefaultLlmConfig(config);
+  const llmConfig = planOwnsResolution
+    ? (opts.llmConfig ?? undefined)
+    : (runnerSpec?.connection ?? getDefaultLlmConfig(config));
   if (!llmConfig) return undefined;
   return async (prompt: string) => {
     const messages: ChatMessage[] = [
