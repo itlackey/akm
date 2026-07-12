@@ -3,7 +3,7 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const docsRoot = path.join(repoRoot, "docs");
-const HISTORICAL_DOC_DIRS = new Set(["archive", "incidents", "migration", "posts", "reviews"]);
+const NON_USER_FACING_DOC_DIRS = new Set(["archive", "design", "incidents", "migration", "posts", "reviews"]);
 
 export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "technical", "architecture.md");
 export const CLI_DOC_PATH = path.join(repoRoot, "docs", "cli.md");
@@ -19,7 +19,7 @@ export function activeMarkdownDocs(): string[] {
   const docs: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory() && HISTORICAL_DOC_DIRS.has(entry.name)) continue;
+      if (entry.isDirectory() && NON_USER_FACING_DOC_DIRS.has(entry.name)) continue;
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(fullPath);
       else if (entry.isFile() && entry.name.endsWith(".md")) docs.push(fullPath);
