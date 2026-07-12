@@ -58,6 +58,26 @@ export interface CollectedSummary {
   validationFailures: Array<{ ref: string; reason: string }>;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function actionOutcome(action: NonNullable<ImproveResultEnvelope["actions"]>[number]): string {
+  const result = asRecord(action.result);
+  if (typeof result?.outcome === "string") return result.outcome;
+  if (result?.ok === false) return "error";
+  return action.mode;
+}
+
+function actionHasProposal(action: NonNullable<ImproveResultEnvelope["actions"]>[number]): boolean {
+  const result = asRecord(action.result);
+  if (typeof result?.proposalId === "string" && result.proposalId.length > 0) return true;
+  const proposal = asRecord(result?.proposal);
+  return typeof proposal?.id === "string" && proposal.id.length > 0;
+}
+
 function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = { fromImproveRun: "", format: "json" };
   for (let i = 0; i < argv.length; i++) {
@@ -124,18 +144,19 @@ export function summarizeImproveResult(
   let proposalsEmitted = 0;
   for (const a of actions) {
     const mode = a.mode ?? "unknown";
-    const outcome = a.outcome ?? "unknown";
+    const outcome = actionOutcome(a);
     actionsByMode[mode] = (actionsByMode[mode] ?? 0) + 1;
     actionsByOutcome[outcome] = (actionsByOutcome[outcome] ?? 0) + 1;
-    if (a.proposalId) {
+    if (actionHasProposal(a)) {
       proposalsEmitted += 1;
       proposalsByMode[mode] = (proposalsByMode[mode] ?? 0) + 1;
     }
   }
 
-  const cleanup = envelope.memoryCleanup ?? {};
-  const transitions = Array.isArray(cleanup.beliefStateTransitions) ? cleanup.beliefStateTransitions.length : 0;
-  const warnings = Array.isArray(cleanup.warnings) ? cleanup.warnings.length : 0;
+  const cleanup = envelope.memoryCleanup;
+  const archived = cleanup?.archived ?? [];
+  const transitions = cleanup?.beliefStateTransitions.length ?? 0;
+  const warnings = cleanup?.warnings?.length ?? 0;
 
   return {
     schemaVersion: 1,
@@ -161,9 +182,9 @@ export function summarizeImproveResult(
     actionsByOutcome,
     proposalsByMode,
     memoryCleanup: {
-      deletedDerived: cleanup.deletedDerived ?? 0,
-      archivedSuperseded: cleanup.archivedSuperseded ?? 0,
-      archivedStale: cleanup.archivedStale ?? 0,
+      deletedDerived: archived.filter((entry) => entry.reason === "duplicate-derived").length,
+      archivedSuperseded: archived.filter((entry) => entry.reason === "superseded-derived").length,
+      archivedStale: archived.filter((entry) => entry.reason === "obsolete-derived").length,
       transitions,
       warnings,
     },

@@ -998,6 +998,26 @@ const StalenessDetectionSchema = z
   })
   .passthrough();
 
+const IndexDefaultsSchema = z
+  .object({
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
+  })
+  .passthrough();
+
+type IndexConfigOutput = {
+  [key: string]: unknown;
+  defaults?: z.infer<typeof IndexDefaultsSchema>;
+  metadataEnhance?: z.infer<typeof MetadataEnhanceSchema>;
+  stalenessDetection?: z.infer<typeof StalenessDetectionSchema>;
+  graph?: z.infer<typeof IndexPassConfigSchema>;
+  memory?: z.infer<typeof IndexPassConfigSchema>;
+  enrichment?: z.infer<typeof IndexPassConfigSchema>;
+  indexBodyOpening?: boolean;
+};
+
 /**
  * Index config is a union of reserved feature sections and per-pass entries.
  * Passthrough so per-pass entries (keyed by arbitrary pass names like `graph`,
@@ -1017,7 +1037,7 @@ const StalenessDetectionSchema = z
  * Inner field validation (graphExtractionIncludeTypes enum, invocation
  * overrides, provider-key rejection) is delegated to {@link IndexPassConfigSchema}.
  */
-export const IndexConfigSchema = z.preprocess(
+const IndexConfigRuntimeSchema = z.preprocess(
   (raw, ctx) => {
     if (raw === undefined || raw === null) return raw;
     if (Array.isArray(raw)) {
@@ -1079,20 +1099,9 @@ export const IndexConfigSchema = z.preprocess(
   },
   z
     .object({
-      defaults: z
-        .object({
-          engine: engineName.optional(),
-          model: nonEmptyString.optional(),
-          timeoutMs: z.union([positiveInt, z.null()]).optional(),
-          llm: LlmInvocationOverridesSchema.optional(),
-        })
-        .passthrough()
-        .optional(),
+      defaults: IndexDefaultsSchema.optional(),
       metadataEnhance: MetadataEnhanceSchema.optional(),
       stalenessDetection: StalenessDetectionSchema.optional(),
-      graph: IndexPassConfigSchema.optional(),
-      memory: IndexPassConfigSchema.optional(),
-      enrichment: IndexPassConfigSchema.optional(),
       indexBodyOpening: z
         .boolean()
         .optional()
@@ -1104,11 +1113,13 @@ export const IndexConfigSchema = z.preprocess(
             "collapse-detector canary baselines via `akm improve canary --refresh`.",
         ),
     })
-    // The preprocess validates arbitrary named pass entries. Passthrough keeps
-    // extension pass names without imposing an index signature that would
-    // incorrectly require reserved scalar keys to have the pass-object shape.
-    .passthrough(),
+    .catchall(IndexPassConfigSchema),
 );
+
+// The runtime catchall correctly validates arbitrary pass objects, but its
+// inferred string index signature also covers reserved scalar keys. Publish a
+// precise output type while retaining the stricter runtime and JSON schemas.
+export const IndexConfigSchema = IndexConfigRuntimeSchema as z.ZodType<IndexConfigOutput>;
 
 // ── Workflow engine ─────────────────────────────────────────────────────────
 
