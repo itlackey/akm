@@ -451,7 +451,7 @@ describe("runSetupWizard", () => {
     expect(setupState.indexCalls).toHaveLength(0);
   });
 
-  test("commits verified config before surfacing a later init failure", async () => {
+  test("does not commit config when bootstrap init fails", async () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
     overrideSeam(_setAkmInitForTests, async () => {
@@ -463,8 +463,7 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
-    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(true);
-    expect(readSavedConfig().stashDir).toBe(DEFAULT_STASH_DIR);
+    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
     expect(setupState.indexCalls).toHaveLength(0);
   });
 });
