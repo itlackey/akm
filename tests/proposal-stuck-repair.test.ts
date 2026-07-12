@@ -185,6 +185,41 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
     const rejectedAfter = getProposal(stash, rejected.id);
     expect(rejectedAfter.gateDecision?.outcome).toBe("auto-rejected");
   });
+
+  test("an opted-in judgment runner never reopens an authoritative rejection", async () => {
+    const stash = makeStashDir();
+    const proposal = seedProposal(stash, "lesson:judge-must-not-reopen", VALID_EXTRACT);
+    recordGateDecision(stash, proposal.id, {
+      outcome: "auto-rejected",
+      reason: "validation:unsafe",
+      gate: "improve:reflect",
+    });
+    const chat = mock(async () => {
+      throw new Error("authoritative rejection reached judgment");
+    });
+    const acceptFn = fakeAccept();
+    const rejectFn = fakeReject();
+
+    const result = await drainProposals(
+      baseOpts(stash, {
+        judgment: {
+          kind: "llm",
+          engine: "judge",
+          connection: { endpoint: "https://example.test/v1/chat/completions", model: "judge" },
+        },
+      }),
+      acceptFn,
+      rejectFn,
+      { chat },
+    );
+
+    expect(result.promoted).toEqual([]);
+    expect(result.rejected).toEqual([]);
+    expect(chat).not.toHaveBeenCalled();
+    expect(acceptFn).not.toHaveBeenCalled();
+    expect(rejectFn).not.toHaveBeenCalled();
+    expect(getProposal(stash, proposal.id).gateDecision?.outcome).toBe("auto-rejected");
+  });
 });
 
 // ── Bug 2: repairProposalContent ─────────────────────────────────────────────

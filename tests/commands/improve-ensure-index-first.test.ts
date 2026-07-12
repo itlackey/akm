@@ -8,8 +8,8 @@
  * first run after a DB rebuild saw an empty entries table, captured
  * `plannedRefs = []`, and the rebuild only helped the NEXT run.
  *
- * The dry-run path also goes through the new ordering, so this test exercises
- * the bug without needing the full reflect/distill pipeline.
+ * Real runs use this ordering. Dry-runs intentionally consume the existing
+ * index without invoking an index writer.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -99,27 +99,60 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       }
     }
 
-    // OLD code path: collectEligibleRefs runs first → reads empty entries →
-    //                plannedRefs = []  (the bug).
-    // NEW code path: ensureIndex runs first → repopulates entries →
-    //                collectEligibleRefs sees fresh rows → plannedRefs has both.
-    const result = await akmImprove({ dryRun: true, stashDir });
+    let entryCountAtCollect = 0;
+    const result = await akmImprove({
+      stashDir,
+      strategy: "index-order",
+      repairValidationFailures: false,
+      config: {
+        configVersion: "0.9.0",
+        stashDir,
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+        improve: {
+          strategies: {
+            "index-order": {
+              processes: {
+                reflect: { enabled: false },
+                distill: { enabled: false },
+                consolidate: { enabled: false },
+                memoryInference: { enabled: false },
+                graphExtraction: { enabled: false },
+                extract: { enabled: false },
+                validation: { enabled: false },
+                triage: { enabled: false },
+                proactiveMaintenance: { enabled: false },
+                recombine: { enabled: false },
+                procedural: { enabled: false },
+              },
+            },
+          },
+        },
+      },
+      collectEligibleRefsFn: (async () => {
+        const db = openExistingDatabase();
+        try {
+          entryCountAtCollect = getEntryCount(db);
+        } finally {
+          closeDatabase(db);
+        }
+        return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+      }) as never,
+    });
 
     expect(result.ok).toBe(true);
-    expect(result.dryRun).toBe(true);
-    const plannedNames = result.plannedRefs.map((p) => p.ref).sort();
-    expect(plannedNames).toEqual(["lesson:lock-files", "lesson:prefer-ripgrep"]);
+    expect(entryCountAtCollect).toBe(2);
   });
 
-  test("ensureIndex is invoked even when the dry-run early return is taken", async () => {
+  test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-dryrun-");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeLesson(stashDir, "single-lesson", "Single lesson", "Trigger");
 
-    // Drive a no-DB starting state — akmImprove must still build the index
-    // before computing plannedRefs in dry-run mode.
+    // Drive a no-DB starting state. Dry-run must not create one merely to make
+    // planning more complete.
     let ensureCalls = 0;
     let ensureMode: string | undefined;
     const result = await akmImprove({
@@ -133,9 +166,9 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       },
     });
 
-    expect(ensureCalls).toBe(1);
-    expect(ensureMode).toBe("blocking");
+    expect(ensureCalls).toBe(0);
+    expect(ensureMode).toBeUndefined();
     expect(result.ok).toBe(true);
-    expect(result.plannedRefs.map((p) => p.ref)).toContain("lesson:single-lesson");
+    expect(result.plannedRefs).toEqual([]);
   });
 });

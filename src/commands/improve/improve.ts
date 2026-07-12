@@ -153,6 +153,8 @@ export interface AkmImproveOptions {
    */
   proceduralFn?: typeof akmProcedural;
   graphExtractionFn?: typeof runGraphExtractionPass;
+  /** Injectable contradiction-detection seam for invocation-plan boundary tests. */
+  contradictionDetectionFn?: typeof detectAndWriteContradictions;
   /**
    * #554 minNewSessions gate: injectable counter for the number of NEW (unseen,
    * in-window) extract candidate sessions. Defaults to the real
@@ -501,7 +503,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // table (or the index is otherwise empty), the prior run order silently
     // returned plannedRefs=[] and the improve loop no-op'd. Hoisting the call
     // here repopulates the index first so the subsequent query sees fresh data.
-    if (primaryStashDir) {
+    if (primaryStashDir && !options.dryRun) {
       // Probe pre-ensureIndex entry count to drive the loud-fail warning below.
       // Best-effort: a missing DB / unreadable schema is the fresh-install case
       // and not a bug — we silently skip the probe.
@@ -561,17 +563,22 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // M-1 (#367): Run contradiction-detection BEFORE analyzeMemoryCleanup so
     // the SCC resolver in resolveFamilyContradictions has edges to work on.
     // Best-effort: failures are warnings, never fatal.
-    if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
+    if (
+      !options.dryRun &&
+      primaryStashDir &&
+      shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
+    ) {
       try {
         // Reuse the config resolved at the top of the run instead of a second load.
+        const contradictionDetectionFn = options.contradictionDetectionFn ?? detectAndWriteContradictions;
         await withLlmStage(
           "memory-contradiction",
           () =>
-            detectAndWriteContradictions(
+            contradictionDetectionFn(
               primaryStashDir,
               _earlyConfig,
               undefined,
-              undefined,
+              improveProfile,
               resolvedPlan.processes.consolidate?.connection,
             ),
           { engine: resolvedPlan.processes.consolidate?.engine, process: "consolidate" },

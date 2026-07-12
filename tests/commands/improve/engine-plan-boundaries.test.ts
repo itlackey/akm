@@ -8,7 +8,7 @@ import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import { resolveImprovePlan } from "../../../src/commands/improve/improve-strategies";
 import { runImproveLoopStage, runImproveMaintenancePasses } from "../../../src/commands/improve/loop-stages";
-import { runImprovePreparationStage } from "../../../src/commands/improve/preparation";
+import { runImprovePreparationStage, runValidationAndRepairPass } from "../../../src/commands/improve/preparation";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { makeStashDir } from "../../_helpers/sandbox";
 
@@ -84,6 +84,109 @@ describe("improve engine-plan boundaries", () => {
       expect(result.validationFailures).toEqual([{ ref: "lesson:broken", reason: "missing description" }]);
       expect(result.schemaRepairs).toEqual([]);
       expect(result.actionableRefs).toEqual([]);
+    } finally {
+      stash.cleanup();
+    }
+  });
+
+  test("a queued schema repair remains a live structural validation failure", async () => {
+    const stash = makeStashDir();
+    try {
+      const filePath = path.join(stash.dir, "lessons", "queued.md");
+      const original = "---\nwhen_to_use: Testing queued repair\n---\n\nBody.\n";
+      fs.writeFileSync(filePath, original);
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        stashDir: stash.dir,
+        semanticSearchMode: "off",
+        engines: { repair: llm("repair-model") },
+        defaults: { llmEngine: "repair" },
+        improve: {
+          strategies: {
+            repair: { processes: disabledProcesses({ validation: { enabled: true, engine: "repair" } }) },
+          },
+        },
+      };
+      const resolvedPlan = resolveImprovePlan("repair", config);
+      const result = await runValidationAndRepairPass({
+        postCleanupRefs: [{ ref: "lesson:queued", reason: "scope-type", filePath }],
+        options: { config, stashDir: stash.dir },
+        startMs: Date.now(),
+        budgetMs: 60_000,
+        primaryStashDir: stash.dir,
+        resolvedPlan,
+        repairValidationFailures: true,
+        schemaRepairFn: async () => ({
+          repairs: [
+            {
+              ref: "lesson:queued",
+              reason: "missing description",
+              outcome: "queued",
+              proposalId: "proposal-1",
+            },
+          ],
+          repairedRefs: new Set(["lesson:queued"]),
+        }),
+      });
+
+      expect(result.schemaRepairs[0]?.outcome).toBe("queued");
+      expect(result.validationFailureRefs).toEqual(new Set(["lesson:queued"]));
+      expect(fs.readFileSync(filePath, "utf8")).toBe(original);
+    } finally {
+      stash.cleanup();
+    }
+  });
+
+  test("nested contradiction detection receives the resolved selected strategy and connection", async () => {
+    const stash = makeStashDir();
+    try {
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        stashDir: stash.dir,
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        engines: { consolidate: llm("contradiction-model") },
+        improve: {
+          strategies: {
+            contradictions: {
+              processes: disabledProcesses({
+                consolidate: {
+                  enabled: true,
+                  engine: "consolidate",
+                  contradictionDetection: { enabled: true },
+                },
+              }),
+            },
+          },
+        },
+      };
+      let seenStrategy: ImproveProfileConfig | undefined;
+      let seenModel: string | undefined;
+
+      await expect(
+        akmImprove({
+          strategy: "contradictions",
+          config,
+          stashDir: stash.dir,
+          ensureIndexFn: async () => undefined,
+          collectEligibleRefsFn: (async () => ({
+            plannedRefs: [],
+            memorySummary: { eligible: 1, derived: 1 },
+            strategyFilteredRefs: [],
+          })) as never,
+          contradictionDetectionFn: async (_stashDir, _config, _chat, strategy, llmConfig) => {
+            seenStrategy = strategy;
+            seenModel = llmConfig?.model;
+            return { familiesExamined: 0, pairsChecked: 0, edgesWritten: 0, warnings: [] };
+          },
+          runImprovePreparationStageFn: (async () => {
+            throw new Error("stop after contradiction boundary");
+          }) as never,
+        }),
+      ).rejects.toThrow("stop after contradiction boundary");
+
+      expect(seenStrategy?.processes?.consolidate?.contradictionDetection?.enabled).toBe(true);
+      expect(seenModel).toBe("contradiction-model");
     } finally {
       stash.cleanup();
     }

@@ -1293,6 +1293,12 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
               message: engine ? `${processName} requires an LLM engine` : "engine does not name a configured engine",
             });
           }
+        } else if (processConfig.engine && capability === "runner" && !config.engines?.[processConfig.engine]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
+            message: "engine does not name a configured engine",
+          });
         }
       }
       const judgmentEngine = processConfig.judgment?.engine;

@@ -519,7 +519,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     const repair = result.repairs[0];
     expect(repair?.outcome).toBe("queued");
     expect(repair?.proposalId).toBeDefined();
-    expect(result.repairedRefs.has("memory:auth-guide")).toBe(true);
+    expect(result.repairedRefs.has("memory:auth-guide")).toBe(false);
 
     // File should NOT be modified (write went through proposal queue)
     const fileContent = fs.readFileSync(memFile, "utf8");

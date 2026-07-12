@@ -20,7 +20,7 @@
  * that is *not* a side effect on user content.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,6 +28,7 @@ import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { withMockedFetch } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 15_000;
 
@@ -133,6 +134,9 @@ describe("akm improve --dry-run writes nothing to the stash directory", () => {
         scope: "memory",
         stashDir,
         dryRun: true,
+        ensureIndexFn: mock(async () => {
+          throw new Error("dry-run invoked ensureIndex");
+        }),
       });
 
       expect(result.ok).toBe(true);
@@ -169,4 +173,84 @@ describe("akm improve --dry-run writes nothing to the stash directory", () => {
     },
     TIMEOUT_MS,
   );
+
+  test("does not index, call a model, or write contradiction frontmatter", async () => {
+    const stashDir = makeTempDir("akm-dryrun-contradiction-");
+    const memoriesDir = path.join(stashDir, "memories");
+    fs.mkdirSync(memoriesDir, { recursive: true });
+    const firstPath = path.join(memoriesDir, "deploy-a.derived.md");
+    const secondPath = path.join(memoriesDir, "deploy-b.derived.md");
+    fs.writeFileSync(
+      firstPath,
+      "---\ndescription: Deploy through VPN\ninferred: true\nsource: memory:deploy\n---\n\nUse the VPN.\n",
+    );
+    fs.writeFileSync(
+      secondPath,
+      "---\ndescription: Deploy without VPN\ninferred: true\nsource: memory:deploy\n---\n\nDo not use the VPN.\n",
+    );
+    const before = snapshotDir(stashDir);
+    const ensureIndexFn = mock(async () => {
+      throw new Error("dry-run invoked ensureIndex");
+    });
+    const fetchCalls: string[] = [];
+
+    const result = await withMockedFetch(
+      () =>
+        akmImprove({
+          stashDir,
+          dryRun: true,
+          strategy: "dry-safe",
+          ensureIndexFn,
+          collectEligibleRefsFn: (async () => ({
+            plannedRefs: [],
+            memorySummary: { eligible: 2, derived: 2 },
+            strategyFilteredRefs: [],
+          })) as never,
+          config: {
+            configVersion: "0.9.0",
+            stashDir,
+            semanticSearchMode: "off",
+            sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+            engines: {
+              judge: {
+                kind: "llm",
+                endpoint: "https://example.test/v1/chat/completions",
+                model: "judge",
+              },
+            },
+            defaults: { llmEngine: "judge" },
+            improve: {
+              strategies: {
+                "dry-safe": {
+                  processes: {
+                    reflect: { enabled: false },
+                    distill: { enabled: false },
+                    consolidate: { enabled: true, contradictionDetection: { enabled: true } },
+                    memoryInference: { enabled: false },
+                    graphExtraction: { enabled: false },
+                    extract: { enabled: false },
+                    validation: { enabled: false },
+                    triage: { enabled: false },
+                    proactiveMaintenance: { enabled: false },
+                    recombine: { enabled: false },
+                    procedural: { enabled: false },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      (url) => {
+        fetchCalls.push(url);
+        return new Response('{"choices":[{"message":{"content":"{\\"contradicts\\":true}"}}]}');
+      },
+    );
+
+    expect(result.dryRun).toBe(true);
+    expect(ensureIndexFn).not.toHaveBeenCalled();
+    expect(fetchCalls).toEqual([]);
+    expect(diffSnapshots(before, snapshotDir(stashDir))).toEqual([]);
+    expect(fs.readFileSync(firstPath, "utf8")).not.toContain("contradictedBy");
+    expect(fs.readFileSync(secondPath, "utf8")).not.toContain("contradictedBy");
+  });
 });
