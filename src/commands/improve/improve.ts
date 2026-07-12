@@ -168,6 +168,8 @@ export interface AkmImproveOptions {
   extractHarnesses?: SessionLogHarness[];
   ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
+  /** Attempt LLM-driven repair after the unconditional structural validation sweep. Default true. */
+  repairValidationFailures?: boolean;
   /**
    * When true, only assets with recent feedback signals are eligible.
    * Disables the high-retrieval fallback path for type/all scope runs.
@@ -407,7 +409,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
-  const resolvedPlan = resolveImprovePlan(options.strategy, _earlyConfig);
+  const resolvedPlan = resolveImprovePlan(options.strategy, _earlyConfig, {
+    repairValidationFailures: options.repairValidationFailures,
+  });
   const selectedStrategy = resolvedPlan.strategy;
   const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
   const improveProfile = selectedStrategy.config;
@@ -416,6 +420,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // automatically pick up the profile-driven defaults.
   options = {
     ...options,
+    // Pin nested calls and quality gates to the same config snapshot as the
+    // invocation plan. They must never reload a changed config mid-run.
+    config: _earlyConfig,
     autoAccept: options.autoAccept ?? improveProfile.autoAccept,
     // Profile-level limit, then process-level reflect.limit as fallback.
     // CLI --limit takes precedence over both.

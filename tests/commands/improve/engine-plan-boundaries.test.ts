@@ -1,0 +1,234 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import { describe, expect, mock, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { akmImprove } from "../../../src/commands/improve/improve";
+import { resolveImprovePlan } from "../../../src/commands/improve/improve-strategies";
+import { runImproveLoopStage, runImproveMaintenancePasses } from "../../../src/commands/improve/loop-stages";
+import { runImprovePreparationStage } from "../../../src/commands/improve/preparation";
+import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
+import { makeStashDir } from "../../_helpers/sandbox";
+
+const llm = (model: string) => ({
+  kind: "llm" as const,
+  endpoint: "https://example.test/v1/chat/completions",
+  model,
+});
+
+function disabledProcesses(overrides: Record<string, unknown> = {}): ImproveProfileConfig["processes"] {
+  return {
+    reflect: { enabled: false },
+    distill: { enabled: false },
+    consolidate: { enabled: false },
+    memoryInference: { enabled: false },
+    graphExtraction: { enabled: false },
+    extract: { enabled: false },
+    validation: { enabled: false },
+    triage: { enabled: false },
+    proactiveMaintenance: { enabled: false },
+    recombine: { enabled: false },
+    procedural: { enabled: false },
+    ...overrides,
+  } as ImproveProfileConfig["processes"];
+}
+
+describe("improve engine-plan boundaries", () => {
+  test("a missing fallback fails before index or stash side effects", async () => {
+    const ensureIndexFn = mock(async () => undefined);
+    await expect(
+      akmImprove({
+        strategy: "quick",
+        config: {
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
+        },
+        ensureIndexFn,
+      }),
+    ).rejects.toThrow('Improve process "reflect" configures model/llm overrides but has no fallback LLM engine.');
+    expect(ensureIndexFn).not.toHaveBeenCalled();
+  });
+
+  test("structural validation still runs when validation repair is disabled", async () => {
+    const stash = makeStashDir();
+    try {
+      const lessonDir = path.join(stash.dir, "lessons");
+      fs.mkdirSync(lessonDir, { recursive: true });
+      const filePath = path.join(lessonDir, "broken.md");
+      fs.writeFileSync(filePath, "---\nwhen_to_use: Testing\n---\n\nBody.\n");
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        stashDir: stash.dir,
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        defaults: { improveStrategy: "structural" },
+        improve: { strategies: { structural: { processes: disabledProcesses() } } },
+      };
+      const resolvedPlan = resolveImprovePlan("structural", config, { repairValidationFailures: false });
+      const result = await runImprovePreparationStage({
+        scope: { mode: "all" },
+        options: { config, stashDir: stash.dir, repairValidationFailures: false },
+        plannedRefs: [{ ref: "lesson:broken", reason: "scope-type", filePath }],
+        primaryStashDir: stash.dir,
+        memorySummary: { eligible: 0, derived: 0 },
+        reindexFn: async () => undefined,
+        startMs: Date.now(),
+        budgetMs: 60_000,
+        improveProfile: resolvedPlan.strategy.config,
+        resolvedPlan,
+        strategyName: "structural",
+      });
+      expect(result.validationFailures).toEqual([{ ref: "lesson:broken", reason: "missing description" }]);
+      expect(result.schemaRepairs).toEqual([]);
+      expect(result.actionableRefs).toEqual([]);
+    } finally {
+      stash.cleanup();
+    }
+  });
+
+  test("reflect, distill, and their quality gates receive the frozen process connections", async () => {
+    const stash = makeStashDir();
+    try {
+      const memoryDir = path.join(stash.dir, "memories");
+      fs.mkdirSync(memoryDir, { recursive: true });
+      fs.writeFileSync(path.join(memoryDir, "source.md"), "---\ntype: memory\n---\n\nSource.\n");
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        stashDir: stash.dir,
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        engines: { reflect: llm("reflect-model"), distill: llm("distill-model") },
+        improve: {
+          strategies: {
+            split: {
+              processes: disabledProcesses({
+                reflect: { enabled: true, engine: "reflect", allowedTypes: ["memory"] },
+                distill: { enabled: true, engine: "distill", allowedTypes: ["memory"] },
+              }),
+            },
+          },
+        },
+      };
+      const plan = resolveImprovePlan("split", config, { repairValidationFailures: false });
+      let reflectOptions: Record<string, unknown> | undefined;
+      let distillOptions: Record<string, unknown> | undefined;
+      await runImproveLoopStage({
+        scope: { mode: "ref", value: "memory:source" },
+        options: { config, stashDir: stash.dir, selfConsistencyThreshold: 1 },
+        primaryStashDir: stash.dir,
+        reflectFn: async (options) => {
+          reflectOptions = options as unknown as Record<string, unknown>;
+          return {
+            schemaVersion: 2,
+            ok: false,
+            reason: "no_change",
+            error: "stable",
+            ref: "memory:source",
+            engine: "reflect",
+            exitCode: null,
+          };
+        },
+        distillFn: async (options) => {
+          distillOptions = options as unknown as Record<string, unknown>;
+          return {
+            schemaVersion: 1,
+            ok: true,
+            outcome: "skipped",
+            inputRef: options.ref,
+            lessonRef: "lesson:source-lesson",
+          };
+        },
+        loopRefs: [{ ref: "memory:source", reason: "scope-ref" }],
+        actions: [],
+        signalBearingSet: new Set(),
+        distillCooledRefs: new Set(),
+        distillOnlyRefs: [],
+        recentErrors: {},
+        rejectedProposalsByRef: new Map(),
+        utilityMap: new Map(),
+        startMs: Date.now(),
+        budgetMs: 60_000,
+        improveProfile: plan.strategy.config,
+        resolvedPlan: plan,
+      });
+      expect((reflectOptions?.runner as { connection?: { model?: string } }).connection?.model).toBe("reflect-model");
+      expect((reflectOptions?.llmConfig as { model?: string }).model).toBe("reflect-model");
+      expect(reflectOptions?.config).toBe(config);
+      expect((distillOptions?.llmConfig as { model?: string }).model).toBe("distill-model");
+      expect(distillOptions?.config).toBe(config);
+    } finally {
+      stash.cleanup();
+    }
+  });
+
+  test("improve graph extraction passes process-owned includeTypes, batchSize, and topN", async () => {
+    const stash = makeStashDir();
+    try {
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        stashDir: stash.dir,
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        engines: { graph: llm("graph-model") },
+        index: {
+          graph: { graphExtractionIncludeTypes: ["knowledge"], graphExtractionBatchSize: 99 },
+        },
+        improve: {
+          strategies: {
+            graph: {
+              processes: disabledProcesses({
+                graphExtraction: {
+                  enabled: true,
+                  engine: "graph",
+                  fullScan: true,
+                  includeTypes: ["memory"],
+                  batchSize: 2,
+                  topN: 7,
+                },
+              }),
+            },
+          },
+        },
+      };
+      const plan = resolveImprovePlan("graph", config, { repairValidationFailures: false });
+      let seenOptions: Record<string, unknown> | undefined;
+      await runImproveMaintenancePasses({
+        options: {
+          config,
+          stashDir: stash.dir,
+          graphExtractionFn: async (ctx) => {
+            seenOptions = ctx.options as unknown as Record<string, unknown>;
+            return {
+              considered: 0,
+              extracted: 0,
+              totalEntities: 0,
+              totalRelations: 0,
+              written: false,
+              quality: {
+                consideredFiles: 0,
+                extractedFiles: 0,
+                entityCount: 0,
+                relationCount: 0,
+                extractionCoverage: 0,
+                density: 0,
+              },
+            };
+          },
+        },
+        primaryStashDir: stash.dir,
+        actionableRefs: [],
+        memoryRefsForInference: new Set(),
+        allWarnings: [],
+        reindexFn: async () => undefined,
+        improveProfile: plan.strategy.config,
+        resolvedPlan: plan,
+      });
+      expect(seenOptions).toMatchObject({ includeTypes: ["memory"], batchSize: 2, topN: 7 });
+    } finally {
+      stash.cleanup();
+    }
+  });
+});

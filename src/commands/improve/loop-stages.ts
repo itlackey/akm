@@ -5,7 +5,7 @@
 import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { daysToMs } from "../../core/common";
-import { loadConfig } from "../../core/config/config";
+import { DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type {
@@ -19,7 +19,11 @@ import { getDbPath } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
-import { type GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
+import {
+  DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
+  type GraphExtractionResult,
+  runGraphExtractionPass,
+} from "../../indexer/graph/graph-extraction";
 import { withIndexWriterLease } from "../../indexer/index-writer-lock";
 import {
   collectPendingMemories,
@@ -281,7 +285,8 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             task: options.task,
             // Active strategy supplies non-engine process tuning.
             ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan.processes.distill?.connection,
+            llmConfig: resolvedPlan.processes.reflect?.connection,
+            config: options.config,
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
             ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
             eventSource: "improve" as const,
@@ -289,7 +294,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             // (default off when unset), so the running strategy decides.
             lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
             ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
-            ...(reflectProfileRunner ? { runner: reflectProfileRunner } : {}),
+            runner: reflectProfileRunner ?? null,
             // Attribution: carry the eligibility lane so reflect stamps it on
             // the reflect_invoked event and the persisted proposal.
             ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -578,6 +583,8 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               ...(options.stashDir ? { stashDir: options.stashDir } : {}),
               // Active profile so distill's per-process reads honor `--profile`.
               ...(improveProfile ? { improveProfile } : {}),
+              config: options.config,
+              llmConfig: resolvedPlan.processes.distill?.connection ?? null,
               // Attribution: carry the eligibility lane so distill stamps it on the
               // distill_invoked event and the persisted proposal.
               ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -1073,6 +1080,11 @@ export async function runImproveMaintenancePasses(args: {
       // #624 P2: optional incremental high-signal-first cap. Unset = process all
       // eligible (byte-identical to today; no ranking/slice).
       const graphExtractionTopN = improveProfile?.processes?.graphExtraction?.topN;
+      const graphExtractionIncludeTypes = improveProfile?.processes?.graphExtraction?.includeTypes ?? [
+        ...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
+      ];
+      const graphExtractionBatchSize =
+        improveProfile?.processes?.graphExtraction?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
       // Build the set of refs actually touched this run.
       const touchedRefs = new Set<string>();
       for (const r of args.actionableRefs) touchedRefs.add(r.ref);
@@ -1147,7 +1159,12 @@ export async function runImproveMaintenancePasses(args: {
                 db,
                 reEnrich: false,
                 onProgress: progressHandler,
-                options: { candidatePaths, ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}) },
+                options: {
+                  candidatePaths,
+                  includeTypes: graphExtractionIncludeTypes,
+                  batchSize: graphExtractionBatchSize,
+                  ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}),
+                },
               }),
             { engine: resolvedPlan?.processes.graphExtraction?.engine, process: "graphExtraction" },
           );

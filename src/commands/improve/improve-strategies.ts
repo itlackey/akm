@@ -92,17 +92,43 @@ export interface ResolvedImprovePlan {
 }
 
 /** Resolve and materialize every enabled process before improve emits signals or performs I/O. */
-export function resolveImprovePlan(name: string | undefined, config: AkmConfig): ResolvedImprovePlan {
+export function resolveImprovePlan(
+  name: string | undefined,
+  config: AkmConfig,
+  options: { repairValidationFailures?: boolean } = {},
+): ResolvedImprovePlan {
   const strategy = resolveImproveStrategy(name, config);
-  return materializeImprovePlan(strategy, config);
+  return materializeImprovePlan(strategy, config, options);
 }
 
-function materializeImprovePlan(strategy: SelectedStrategy, config: AkmConfig): ResolvedImprovePlan {
+function materializeImprovePlan(
+  strategy: SelectedStrategy,
+  config: AkmConfig,
+  options: { repairValidationFailures?: boolean },
+): ResolvedImprovePlan {
   const processes: Partial<Record<ImproveLlmProcessName, ImproveLlmRunner>> = {};
   for (const processName of LLM_PROCESS_NAMES) {
     if (!resolveProcessEnabled(processName, strategy.config)) continue;
+    // Validation itself is structural and always runs. Only its optional repair
+    // step needs a model, so disabling repair must not create an LLM preflight.
+    if (processName === "validation" && options.repairValidationFailures === false) continue;
     const runner = resolveImproveProcessRunner(strategy.config, processName, config);
-    if (runner) processes[processName] = runner;
+    if (!runner) {
+      const process = strategy.config.processes?.[processName];
+      const hasModelIntent =
+        strategy.config.model !== undefined ||
+        strategy.config.llm !== undefined ||
+        process?.model !== undefined ||
+        process?.llm !== undefined;
+      if (hasModelIntent) {
+        throw new ConfigError(
+          `Improve process "${processName}" configures model/llm overrides but has no fallback LLM engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.${processName}.engine.`,
+          "LLM_NOT_CONFIGURED",
+        );
+      }
+      continue;
+    }
+    processes[processName] = runner;
   }
 
   const triage = strategy.config.processes?.triage;

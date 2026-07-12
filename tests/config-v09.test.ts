@@ -156,7 +156,7 @@ describe("0.9 config contract", () => {
         ...base,
         improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "agent" } } } } } },
       }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       validateConfigShape({
         ...base,

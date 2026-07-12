@@ -410,13 +410,15 @@ export function formatProposalDrainPlain(r: Record<string, unknown>): string {
   const rejected = Array.isArray(r.rejected) ? (r.rejected as unknown[]) : [];
   const deferred = Array.isArray(r.deferred) ? (r.deferred as Array<Record<string, unknown>>) : [];
   const skippedByCap = Array.isArray(r.skippedByCap) ? (r.skippedByCap as unknown[]) : [];
+  const staged = Array.isArray(r.staged) ? (r.staged as unknown[]) : [];
   const prefix = r.dryRun === true ? "[dry-run] " : "";
   const lines = [
-    `${prefix}Drained proposal queue (policy=${policy}, applyMode=${applyMode})`,
+    `${prefix}Drained proposal queue (strategy=${String(r.strategy ?? "?")}, policy=${policy}, applyMode=${applyMode})`,
     `  promoted: ${promoted.length}`,
     `  rejected: ${rejected.length}`,
     `  deferred: ${deferred.length}`,
     `  skippedByCap: ${skippedByCap.length}`,
+    `  staged: ${staged.length}`,
   ];
   for (const d of deferred) {
     lines.push(`    - ${String(d.id ?? "?")} (${String(d.reason ?? "?")})`);

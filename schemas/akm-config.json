@@ -896,6 +896,18 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
                       "fullScan": {
                         "type": "boolean"
                       },
@@ -1306,6 +1318,18 @@
                         "exclusiveMinimum": 0
                       },
                       "topN": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
@@ -1722,6 +1746,18 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
                       "fullScan": {
                         "type": "boolean"
                       },
@@ -2132,6 +2168,18 @@
                         "exclusiveMinimum": 0
                       },
                       "topN": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
@@ -2548,6 +2596,18 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
                       "fullScan": {
                         "type": "boolean"
                       },
@@ -2958,6 +3018,18 @@
                         "exclusiveMinimum": 0
                       },
                       "topN": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
@@ -3374,6 +3446,18 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
                       "fullScan": {
                         "type": "boolean"
                       },
@@ -3784,6 +3868,18 @@
                         "exclusiveMinimum": 0
                       },
                       "topN": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
@@ -4200,6 +4296,18 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
                       "fullScan": {
                         "type": "boolean"
                       },
@@ -4613,6 +4721,18 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
                       "fullScan": {
                         "type": "boolean"
                       },
@@ -5023,6 +5143,18 @@
                         "exclusiveMinimum": 0
                       },
                       "topN": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "includeTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
+                      },
+                      "batchSize": {
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
@@ -6386,6 +6518,18 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
                           "fullScan": {
                             "type": "boolean"
                           },
@@ -6796,6 +6940,18 @@
                             "exclusiveMinimum": 0
                           },
                           "topN": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
@@ -7212,6 +7368,18 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
                           "fullScan": {
                             "type": "boolean"
                           },
@@ -7622,6 +7790,18 @@
                             "exclusiveMinimum": 0
                           },
                           "topN": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
@@ -8038,6 +8218,18 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
                           "fullScan": {
                             "type": "boolean"
                           },
@@ -8448,6 +8640,18 @@
                             "exclusiveMinimum": 0
                           },
                           "topN": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
@@ -8864,6 +9068,18 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
                           "fullScan": {
                             "type": "boolean"
                           },
@@ -9274,6 +9490,18 @@
                             "exclusiveMinimum": 0
                           },
                           "topN": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
@@ -9690,6 +9918,18 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
                           "fullScan": {
                             "type": "boolean"
                           },
@@ -10103,6 +10343,18 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
                           "fullScan": {
                             "type": "boolean"
                           },
@@ -10513,6 +10765,18 @@
                             "exclusiveMinimum": 0
                           },
                           "topN": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "includeTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          },
+                          "batchSize": {
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
@@ -11251,6 +11515,18 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "includeTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "batchSize": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
         "fullScan": {
           "type": "boolean"
         },
@@ -11721,6 +11997,18 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
                 "fullScan": {
                   "type": "boolean"
                 },
@@ -12131,6 +12419,18 @@
                   "exclusiveMinimum": 0
                 },
                 "topN": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
@@ -12547,6 +12847,18 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
                 "fullScan": {
                   "type": "boolean"
                 },
@@ -12957,6 +13269,18 @@
                   "exclusiveMinimum": 0
                 },
                 "topN": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
@@ -13373,6 +13697,18 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
                 "fullScan": {
                   "type": "boolean"
                 },
@@ -13783,6 +14119,18 @@
                   "exclusiveMinimum": 0
                 },
                 "topN": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
@@ -14199,6 +14547,18 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
                 "fullScan": {
                   "type": "boolean"
                 },
@@ -14609,6 +14969,18 @@
                   "exclusiveMinimum": 0
                 },
                 "topN": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
@@ -15025,6 +15397,18 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
                 "fullScan": {
                   "type": "boolean"
                 },
@@ -15438,6 +15822,18 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
                 "fullScan": {
                   "type": "boolean"
                 },
@@ -15848,6 +16244,18 @@
                   "exclusiveMinimum": 0
                 },
                 "topN": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "includeTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "batchSize": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },

@@ -405,6 +405,10 @@ export const ImproveProcessConfigSchema = z
     // high-signal-first sweep). Unset = process all eligible (current
     // behavior). Only meaningful on `graphExtraction`.
     topN: positiveInt.optional(),
+    // Improve-owned graph extraction scope and batching. These are passed to
+    // the invocation directly and never inherited from standalone index.graph.
+    includeTypes: z.array(z.string().min(1)).min(1).optional(),
+    batchSize: positiveInt.optional(),
     // graphExtraction process: full-corpus scan. When true, graph extraction
     // runs on ALL stash files instead of only files touched by actionable refs
     // in the current run. Used by the `graph-refresh` built-in profile / a
@@ -1298,11 +1302,11 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       const judgmentEngine = processConfig.judgment?.engine;
       if (judgmentEngine) {
         const engine = config.engines?.[judgmentEngine];
-        if (!engine || engine.kind !== "llm") {
+        if (!engine) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ["improve", "strategies", strategyName, "processes", processName, "judgment", "engine"],
-            message: engine ? "judgment requires an LLM engine" : "engine does not name a configured engine",
+            message: "engine does not name a configured engine",
           });
         }
       }

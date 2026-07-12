@@ -497,10 +497,10 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   if (!shouldSave) bail();
 
   validateCompleteConfig(newConfig);
+  const savedConfig = saveSetupConfig(current, newConfig);
   if (!opts?.noInit) {
     await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
   }
-  const savedConfig = saveSetupConfig(current, newConfig);
 
   if (semanticSearchMode.mode === "off") {
     clearSemanticStatus();
@@ -672,11 +672,11 @@ export async function runSetupWithDefaults(opts: {
   }
 
   validateCompleteConfig(ctx.config as AkmConfig);
+  saveSetupConfig(current, ctx.config as AkmConfig);
   let initResult: InitResponse | undefined;
   if (!opts.noInit) {
     initResult = await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
   }
-  saveSetupConfig(current, ctx.config as AkmConfig);
 
   return {
     configPath: getConfigPath(),
@@ -936,11 +936,11 @@ export async function runSetupFromConfig(opts: {
   }
 
   validateCompleteConfig(merged);
+  saveSetupConfig(current, merged);
   let initResult: InitResponse | undefined;
   if (!opts.noInit) {
     initResult = await akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
   }
-  saveSetupConfig(current, merged);
 
   return {
     configPath: getConfigPath(),

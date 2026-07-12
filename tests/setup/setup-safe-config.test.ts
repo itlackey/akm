@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { resetConfigCache } from "../../src/core/config/config";
+import { getConfigLockPath } from "../../src/core/config/config-io";
 import { getConfigPath } from "../../src/core/paths";
 import { runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
 import {
@@ -239,5 +240,32 @@ describe("runSetupWithDefaults — idempotency", () => {
     ).rejects.toThrow(/llmEngine must name an LLM engine/);
     expect(fs.existsSync(getConfigPath())).toBe(false);
     expect(fs.existsSync(stashDir)).toBe(false);
+  });
+
+  test("fails a config-lock conflict before initializing the stash", async () => {
+    const stashDir = path.join(process.env.HOME as string, "setup-lock-boundary");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await withEnv(
+      {
+        AKM_STASH_DIR: stashDir,
+        AKM_FORCE_SETUP_TMP_STASH: "1",
+        AKM_FORCE_INIT_TMP_STASH: "1",
+      },
+      async () => {
+        fs.mkdirSync(path.dirname(getConfigLockPath()), { recursive: true });
+        fs.writeFileSync(getConfigLockPath(), String(process.pid));
+        try {
+          await expect(
+            runSetupFromConfig({
+              configJson: JSON.stringify({ stashDir, semanticSearchMode: "off" }),
+              noInit: false,
+            }),
+          ).rejects.toThrow(/Timed out waiting for config lock/);
+          expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(false);
+        } finally {
+          fs.rmSync(getConfigLockPath(), { force: true });
+        }
+      },
+    );
   });
 });
