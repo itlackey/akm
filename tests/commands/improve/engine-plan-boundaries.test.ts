@@ -192,7 +192,7 @@ describe("improve engine-plan boundaries", () => {
     }
   });
 
-  test("reflect, distill, and their quality gates receive the frozen process connections", async () => {
+  test("reflect and distill keep the resolved process connections when live config changes", async () => {
     const stash = makeStashDir();
     try {
       const memoryDir = path.join(stash.dir, "memories");
@@ -216,6 +216,13 @@ describe("improve engine-plan boundaries", () => {
         },
       };
       const plan = resolveImprovePlan("split", config, { repairValidationFailures: false });
+      const reflectEngine = config.engines?.reflect;
+      const distillEngine = config.engines?.distill;
+      if (reflectEngine?.kind === "llm") reflectEngine.model = "changed-reflect-model";
+      if (distillEngine?.kind === "llm") distillEngine.model = "changed-distill-model";
+      const liveProcesses = config.improve?.strategies?.split?.processes;
+      if (liveProcesses?.reflect) liveProcesses.reflect.engine = "distill";
+      if (liveProcesses?.distill) liveProcesses.distill.engine = "reflect";
       let reflectOptions: Record<string, unknown> | undefined;
       let distillOptions: Record<string, unknown> | undefined;
       await runImproveLoopStage({

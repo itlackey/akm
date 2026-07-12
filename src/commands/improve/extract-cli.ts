@@ -23,7 +23,13 @@ import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getAvailableHarnesses, getWatchTargets } from "../../integrations/session-logs";
-import { type AkmExtractResult, akmExtract, type ResolvedExtractPlan, resolveStandaloneExtractPlan } from "./extract";
+import {
+  type AkmExtractOptions,
+  type AkmExtractResult,
+  akmExtract,
+  type ResolvedExtractPlan,
+  resolveStandaloneExtractPlan,
+} from "./extract";
 import { akmExtractWatch, type WatchEvent, type WatchEventSource } from "./extract-watch";
 
 export const extractCommand = defineJsonCommand({
@@ -238,6 +244,20 @@ function createFsWatchEventSource(roots: string[]): WatchEventSource {
   };
 }
 
+type ExtractWatchTriggerOptions = Pick<AkmExtractOptions, "config" | "dryRun" | "force" | "resolvedPlan" | "since">;
+type ExtractFn = (options: AkmExtractOptions) => Promise<unknown>;
+
+/** Snapshot the CLI-resolved watch options once and reuse them for every debounced trigger. */
+export function createExtractWatchTrigger(
+  options: ExtractWatchTriggerOptions,
+  extractFn: ExtractFn = akmExtract,
+): (harnessName: string) => Promise<void> {
+  const snapshot = Object.freeze({ ...options });
+  return async (harnessName) => {
+    await extractFn({ type: harnessName, ...snapshot });
+  };
+}
+
 /**
  * Run `akm extract --watch`: watch every available harness's session-log
  * roots and run extract (debounced, per-harness) on change. Stays alive until
@@ -266,20 +286,18 @@ async function runWatchMode(opts: {
 
   const allRoots = targets.flatMap((t) => t.roots);
   const eventSource = createFsWatchEventSource(allRoots);
+  const onTrigger = createExtractWatchTrigger({
+    dryRun: opts.dryRun,
+    force: opts.force,
+    config: opts.config,
+    resolvedPlan: opts.resolvedPlan,
+    ...(opts.since ? { since: opts.since } : {}),
+  });
   const handle = akmExtractWatch({
     roots: targets,
     eventSource,
     debounceMs: opts.debounceMs,
-    onTrigger: async (harnessName) => {
-      await akmExtract({
-        type: harnessName,
-        dryRun: opts.dryRun,
-        force: opts.force,
-        config: opts.config,
-        resolvedPlan: opts.resolvedPlan,
-        ...(opts.since ? { since: opts.since } : {}),
-      });
-    },
+    onTrigger,
   });
 
   output("extract", {
