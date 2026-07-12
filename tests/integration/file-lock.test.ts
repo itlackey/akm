@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { releaseLock, releaseLockIfOwned, tryAcquireLockSync } from "../../src/core/file-lock";
+import {
+  probeLock,
+  reclaimStaleLock,
+  releaseLock,
+  releaseLockIfOwned,
+  tryAcquireLockSync,
+} from "../../src/core/file-lock";
 import { type Cleanup, sandboxXdgDataHome } from "../_helpers/sandbox";
 
 const FILE_LOCK_MODULE = path.resolve(import.meta.dir, "../../src/core/file-lock.ts");
@@ -46,6 +52,48 @@ describe("releaseLockIfOwned", () => {
 
   test("is a no-op on an absent lock", () => {
     expect(() => releaseLockIfOwned(path.join(dir, "missing.lock"), process.pid)).not.toThrow();
+  });
+});
+
+describe("reclaimStaleLock", () => {
+  let dir: string;
+  let cleanup: Cleanup;
+  beforeEach(() => {
+    const r = sandboxXdgDataHome();
+    dir = r.dir;
+    cleanup = r.cleanup;
+  });
+  afterEach(() => cleanup());
+
+  test("does not delete a replacement lock installed after the stale probe", () => {
+    const lock = path.join(dir, "adversarial.lock");
+    fs.writeFileSync(lock, "2147480000");
+    const stale = probeLock(lock);
+    expect(stale.state).toBe("stale");
+    if (stale.state !== "stale") throw new Error("expected stale lock");
+
+    fs.rmSync(lock);
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, owner: "replacement" }));
+
+    expect(reclaimStaleLock(lock, stale)).toBe(false);
+    expect(fs.readFileSync(lock, "utf8")).toContain("replacement");
+  });
+
+  test("does not delete a same-content replacement with a different file identity", () => {
+    const lock = path.join(dir, "same-content-adversarial.lock");
+    const payload = "2147480000";
+    fs.writeFileSync(lock, payload);
+    const stale = probeLock(lock);
+    expect(stale.state).toBe("stale");
+    if (stale.state !== "stale") throw new Error("expected stale lock");
+
+    const replacement = `${lock}.replacement`;
+    fs.writeFileSync(replacement, payload);
+    fs.rmSync(lock);
+    fs.renameSync(replacement, lock);
+
+    expect(reclaimStaleLock(lock, stale)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
   });
 });
 

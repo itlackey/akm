@@ -33,7 +33,7 @@ import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileC
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
+import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../../core/file-lock";
 import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state-db";
@@ -167,8 +167,8 @@ function acquireExtractSessionLock(lockPath: string): boolean {
     if (tryAcquireLockSync(lockPath, String(process.pid))) return true;
     const probe = probeLock(lockPath, { staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS });
     if (probe.state === "held") return false;
-    // absent (released between attempt + probe) or stale → reclaim and retry once.
-    releaseLock(lockPath);
+    // Absent (released between attempt + probe) or successfully reclaimed stale lock → retry once.
+    if (probe.state === "stale" && !reclaimStaleLock(lockPath, probe)) return false;
     return tryAcquireLockSync(lockPath, String(process.pid));
   } catch {
     return true;

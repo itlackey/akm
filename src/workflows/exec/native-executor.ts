@@ -135,7 +135,7 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
+import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
@@ -1209,7 +1209,7 @@ function collectWorkflowDispatchSensitiveValues(
     }
     for (const name of engine.envPassthrough) {
       const value = process.env[name];
-      if (!ENV_PASSTHROUGH_REDACTION_ALLOWLIST.has(name) && value) values.add(value);
+      if (!isEnvPassthroughValueSafeToExpose(name, value) && value) values.add(value);
     }
   };
   addCredential(workUnit.engine);

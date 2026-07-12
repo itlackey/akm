@@ -18,7 +18,7 @@ import path from "node:path";
 import { sleepSync } from "../../runtime";
 import { writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
-import { probeLock, releaseLock, tryAcquireLockSync } from "../file-lock";
+import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
 import { getCacheDir, getConfigDir } from "../paths";
 
 /**
@@ -223,8 +223,8 @@ export function acquireConfigLock(): () => void {
         "INVALID_CONFIG_FILE",
       );
     }
-    if (probeLock(lockPath).state === "stale") {
-      releaseLock(lockPath);
+    const probe = probeLock(lockPath);
+    if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) {
       continue; // Reclaimed — retry immediately.
     }
     if (attempt < CONFIG_LOCK_MAX_RETRIES - 1) {

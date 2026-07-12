@@ -345,8 +345,10 @@ task configuration surface.
 
 Migration restore holds a global maintenance barrier from its final blocker
 check through artifact replacement. Index writers, improve/extract process
-locks, lockfile writers, and workflow lease claims briefly take the same barrier
-while starting, so no operation can enter between the check and restore.
+locks, lockfile writers, workflow lease claims, and every canonical `state.db`
+handle register under the same barrier before starting. State handles retain
+their activity registration until close, so task, event, proposal, and other
+durable-state writers cannot overlap artifact replacement.
 
 ---
 

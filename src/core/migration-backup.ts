@@ -10,7 +10,7 @@ import { writeFileAtomic } from "./common";
 import { parseConfigText, withConfigLock } from "./config/config-io";
 import { CURRENT_CONFIG_VERSION } from "./config/config-schema";
 import { ConfigError } from "./errors";
-import { probeLock, releaseLock, tryAcquireLockSync } from "./file-lock";
+import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
 import { withMaintenanceStartBarrier } from "./maintenance-barrier";
 import {
   getCacheDir,
@@ -182,8 +182,7 @@ function acquireMigrationBackupLock(): () => void {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (tryAcquireLockSync(lockPath, String(process.pid))) return () => releaseLock(lockPath);
     const probe = probeLock(lockPath);
-    if (probe.state === "stale") {
-      releaseLock(lockPath);
+    if (probe.state === "stale" && reclaimStaleLock(lockPath, probe)) {
       continue;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);

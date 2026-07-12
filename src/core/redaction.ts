@@ -40,11 +40,17 @@ const SIGNED_QUERY_KEYS = new Set([
   "accesstoken",
   "apikey",
   "authorization",
+  "clientsecret",
+  "code",
   "credential",
   "googleaccessid",
+  "idtoken",
   "key",
+  "oauthcode",
   "password",
+  "refreshtoken",
   "secret",
+  "sessiontoken",
   "sharedaccesssignature",
   "sig",
   "signature",
@@ -60,24 +66,34 @@ function normalizedQueryKey(key: string): string {
   return key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
 }
 
+function hasCredentialParameter(params: URLSearchParams): boolean {
+  for (const key of params.keys()) {
+    if (SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) return true;
+  }
+  return false;
+}
+
 function hasCredentialBearingUrl(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
   try {
     const url = new URL(trimmed);
     if (url.username || url.password) return true;
-    for (const key of url.searchParams.keys()) {
-      if (SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) return true;
-    }
-    return false;
+    if (hasCredentialParameter(url.searchParams)) return true;
+    const fragment = url.hash.slice(1);
+    return fragment.includes("=") && hasCredentialParameter(new URLSearchParams(fragment));
   } catch {
     // Fail closed for malformed URL-like values carrying the same credential shapes.
     if (/^[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@/i.test(trimmed)) return true;
     const query = trimmed.indexOf("?");
-    if (query < 0) return false;
-    for (const keyValue of trimmed.slice(query + 1).split("&")) {
-      const key = keyValue.split("=", 1)[0] ?? "";
-      if (SIGNED_QUERY_KEYS.has(normalizedQueryKey(key))) return true;
+    const fragment = trimmed.indexOf("#");
+    if (query >= 0) {
+      const queryText = trimmed.slice(query + 1, fragment >= 0 ? fragment : undefined);
+      if (hasCredentialParameter(new URLSearchParams(queryText))) return true;
+    }
+    if (fragment >= 0) {
+      const fragmentText = trimmed.slice(fragment + 1);
+      if (fragmentText.includes("=") && hasCredentialParameter(new URLSearchParams(fragmentText))) return true;
     }
     return false;
   }
