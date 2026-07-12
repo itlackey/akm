@@ -50,7 +50,7 @@ import {
 } from "./eligibility";
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
-import { type ResolvedImprovePlan, resolveImprovePlan, resolveProcessEnabled } from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 // #607 per-process lock primitives live in ./locks. Imported for internal use;
 // resetHeldProcessLocks is re-exported (the test seam imports it from here).
 import {
@@ -578,9 +578,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               _earlyConfig,
               undefined,
               improveProfile,
-              resolvedPlan.processes.consolidate?.connection,
+              resolvedPlan.processes.consolidate.runner?.connection,
             ),
-          { engine: resolvedPlan.processes.consolidate?.engine, process: "consolidate" },
+          { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
         );
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
@@ -618,7 +618,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // a cleared queue (no `duplicate_pending` collisions) and ensureIndex
       // absorbs triage's promotions for free. Release immediately after —
       // triage.lock is not needed again until the next improve run.
-      if (primaryStashDir && resolveProcessEnabled("triage", improveProfile)) {
+      if (primaryStashDir && resolvedPlan.processes.triage.enabled) {
         if (scope.mode === "ref") {
           warn("[improve] triage pre-pass skipped (single-ref scope never drains the whole queue)");
         } else {

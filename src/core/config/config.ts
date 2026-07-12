@@ -36,7 +36,6 @@ import { warn } from "../warn";
 // Re-export type surface from config-types.ts so call sites don't need to
 // move (the runtime values live here; the types are documentation-only).
 export type {
-  AgentProfileConfig,
   AkmConfig,
   ConfiguredSource,
   EmbeddingConnectionConfig,

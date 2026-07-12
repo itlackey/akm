@@ -6,7 +6,7 @@
  * #615 — procedural-compilation pass (src/commands/improve/procedural.ts).
  *
  * The procedural pass is an OPT-IN post-loop improve stage (default disabled
- * via IMPROVE_PROCESS_DEFAULTS.procedural). It reads assets that carry an
+ * by the built-in default strategy). It reads assets that carry an
  * `orderedActions` frontmatter list (captured by #619), detects RECURRING
  * successful action sequences across sessions (the SAME normalized ordered
  * step list appearing >= `minRecurrence` times with a non-failure

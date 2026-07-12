@@ -253,7 +253,6 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     ...(builtin?.env ? { env: builtin.env } : {}),
     envPassthrough: builtin?.envPassthrough ?? [],
     parseOutput: "text",
-    commandBuilder: builtin?.commandBuilder ?? platform,
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model
       ? {

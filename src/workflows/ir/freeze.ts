@@ -260,7 +260,7 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
     args: [...(engine.args ?? builtin?.args ?? [])],
     workspace: engine.workspace ? path.resolve(engine.workspace) : null,
     envPassthrough: [...(builtin?.envPassthrough ?? [])],
-    commandBuilder: builtin?.commandBuilder ?? engine.platform,
+    commandBuilder: engine.platform,
     fallbackLlmEngine: fallback,
   };
   target[name] = snapshot;

@@ -20,9 +20,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { getStringArg } from "../../cli/parse-args";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { getAvailableHarnesses, getWatchTargets } from "../../integrations/session-logs";
-import { type AkmExtractResult, akmExtract } from "./extract";
+import { type AkmExtractResult, akmExtract, type ResolvedExtractPlan, resolveStandaloneExtractPlan } from "./extract";
 import { akmExtractWatch, type WatchEvent, type WatchEventSource } from "./extract-watch";
 
 export const extractCommand = defineJsonCommand({
@@ -66,7 +67,15 @@ export const extractCommand = defineJsonCommand({
     },
     "timeout-ms": {
       type: "string",
-      description: "Per-session LLM timeout in ms (default 60000).",
+      description: "Per-session LLM timeout in ms (default 600000).",
+    },
+    engine: {
+      type: "string",
+      description: "Named LLM engine for this invocation. Mutually exclusive with --strategy.",
+    },
+    strategy: {
+      type: "string",
+      description: "Improve strategy supplying extract behavior and engine. Mutually exclusive with --engine.",
     },
     watch: {
       type: "boolean",
@@ -87,6 +96,8 @@ export const extractCommand = defineJsonCommand({
     const auto = args.auto === true;
     const dryRun = args["dry-run"] === true;
     const force = args.force === true;
+    const engine = getStringArg(args, "engine");
+    const strategy = getStringArg(args, "strategy");
     const timeoutMs =
       typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
         ? Number.parseInt(args["timeout-ms"], 10)
@@ -96,6 +107,9 @@ export const extractCommand = defineJsonCommand({
         `--timeout-ms must be a positive integer (got "${args["timeout-ms"]}").`,
         "INVALID_FLAG_VALUE",
       );
+    }
+    if (engine && strategy) {
+      throw new UsageError("--engine and --strategy are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
     }
 
     const watch = args.watch === true;
@@ -110,29 +124,37 @@ export const extractCommand = defineJsonCommand({
       );
     }
 
-    if (watch) {
-      await runWatchMode({ debounceMs, dryRun, force, ...(since ? { since } : {}) });
-      return;
-    }
-
-    if (auto && type) {
+    if (!watch && auto && type) {
       throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
     }
-    if (!auto && !type) {
+    if (!watch && !auto && !type) {
       throw new UsageError(
         "--type is required (or pass --auto to try every available harness).",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
 
-    const commonOptions = {
+    const config = loadConfig();
+    const resolvedPlan = resolveStandaloneExtractPlan(config, {
+      ...(engine ? { engine } : {}),
+      ...(strategy ? { strategy } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    });
+
+    if (watch) {
+      await runWatchMode({ debounceMs, dryRun, force, config, resolvedPlan, ...(since ? { since } : {}) });
+      return;
+    }
+
+    const commonOptions = Object.freeze({
       ...(sessionId ? { sessionId } : {}),
       ...(location ? { location } : {}),
       ...(since ? { since } : {}),
       dryRun,
       force,
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    };
+      config,
+      resolvedPlan,
+    });
 
     if (auto) {
       const harnesses = getAvailableHarnesses();
@@ -226,6 +248,8 @@ async function runWatchMode(opts: {
   debounceMs: number;
   dryRun: boolean;
   force: boolean;
+  config: ReturnType<typeof loadConfig>;
+  resolvedPlan: ResolvedExtractPlan;
   since?: string;
 }): Promise<void> {
   const targets = getWatchTargets();
@@ -251,6 +275,8 @@ async function runWatchMode(opts: {
         type: harnessName,
         dryRun: opts.dryRun,
         force: opts.force,
+        config: opts.config,
+        resolvedPlan: opts.resolvedPlan,
         ...(opts.since ? { since: opts.since } : {}),
       });
     },

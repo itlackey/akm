@@ -41,7 +41,7 @@ describe("built-in agent harness profiles", () => {
     if (runner.kind !== "agent") throw new Error("expected agent runner");
     expect(runner.profile.name).toBe("reviewer");
     expect(runner.profile.bin).toBe("opencode");
-    expect(runner.profile.commandBuilder).toBe("opencode");
+    expect(runner.profile.platform).toBe("opencode");
     expect(runner.profile.envPassthrough).toContain("PATH");
     expect(runner.profile.args).toEqual(["--scripted"]);
     expect(runner.timeoutMs).toBe(6_000_000);

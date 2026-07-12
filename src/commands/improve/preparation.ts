@@ -45,7 +45,7 @@ import { type AkmExtractResult, akmExtract, countNewExtractCandidates } from "./
 import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
 import type { AkmImproveOptions, ConsolidationPassResult, ImprovePreparationResult, ImproveScope } from "./improve";
 import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
-import { type ResolvedImprovePlan, resolveProcessEnabled } from "./improve-strategies";
+import type { ResolvedImprovePlan } from "./improve-strategies";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
   computeProxyAdequacy,
@@ -228,7 +228,7 @@ export async function runConsolidationPass(args: {
 
   const baseConfig = options.config ?? loadConfig();
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
-  const hasLlm = resolvedPlan.processes.consolidate !== undefined;
+  const hasLlm = resolvedPlan.processes.consolidate.runner !== null;
   const volumeTriggered =
     typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
   const consolidationConfig = baseConfig;
@@ -381,7 +381,7 @@ export async function runConsolidationPass(args: {
           // Active profile for this improve run — lets consolidate's secondary
           // process-config reads honor `--profile <name>` instead of `default`.
           improveProfile,
-          llmConfig: resolvedPlan.processes.consolidate?.connection,
+          llmConfig: resolvedPlan.processes.consolidate.runner?.connection,
           autoTriggered: volumeTriggered,
           // Tie consolidate proposals back to this improve invocation so
           // accept-rate-per-run aggregation works. Mirrors reflect/propose/extract.
@@ -417,7 +417,7 @@ export async function runConsolidationPass(args: {
           // can flag when consolidation alone exceeded the budget.
           runBudgetMs,
         }),
-      { engine: resolvedPlan.processes.consolidate?.engine, process: "consolidate" },
+      { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
     );
     {
       const consolidateGr = await runAutoAcceptGate(
@@ -572,7 +572,7 @@ async function runSessionExtractPass(args: {
   // `session_extraction` feature flag, which only reads
   // a retired global feature path; the selected strategy is authoritative.)
   // `akmExtract` re-checks the same active profile internally via `improveProfile`.
-  if (resolveProcessEnabled("extract", improveProfile)) {
+  if (resolvedPlan.processes.extract.enabled) {
     const availableHarnesses = options.extractHarnesses ?? getAvailableHarnesses();
     // The guard engages only when minNewSessions > 0; 0 disables it entirely.
     let belowMinNewSessions = false;
@@ -622,13 +622,13 @@ async function runSessionExtractPass(args: {
                 // Thread the ACTIVE profile so extract's internal gate + per-process
                 // config read the running profile, not always `default`.
                 improveProfile,
-                llmConfig: resolvedPlan.processes.extract?.connection,
+                llmConfig: resolvedPlan.processes.extract.runner?.connection,
                 dryRun: options.dryRun ?? false,
                 ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
                 // C2: pin extract's skip-tracking state.db open to the boundary path.
                 ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
               }),
-            { engine: resolvedPlan.processes.extract?.engine, process: "extract" },
+            { engine: resolvedPlan.processes.extract.runner?.engine, process: "extract" },
           );
           extractResults.push(result);
 
@@ -743,7 +743,7 @@ export async function runValidationAndRepairPass(args: {
 
   // Schema repair pass: attempt to fix validation failures via LLM before skipping.
   if (validationFailures.length > 0) {
-    const llmCfg = resolvedPlan.processes.validation?.connection;
+    const llmCfg = resolvedPlan.processes.validation.runner?.connection;
     if (llmCfg) {
       const result = await withLlmStage(
         "validation",
@@ -763,7 +763,7 @@ export async function runValidationAndRepairPass(args: {
             findFilePath: findAssetFilePath,
             isLessonCandidateFn: isLessonCandidate,
           }),
-        { engine: resolvedPlan.processes.validation?.engine, process: "validation" },
+        { engine: resolvedPlan.processes.validation.runner?.engine, process: "validation" },
       );
       schemaRepairs = result.repairs;
       // A repair result is advisory. Only a fresh structural read of the live
@@ -940,8 +940,7 @@ export async function runImprovePreparationStage(args: {
     budgetMs,
     primaryStashDir,
     resolvedPlan,
-    repairValidationFailures:
-      resolveProcessEnabled("validation", improveProfile) && options.repairValidationFailures !== false,
+    repairValidationFailures: resolvedPlan.processes.validation.enabled && options.repairValidationFailures !== false,
   });
 
   // Phase 0.5 — structural hygiene pass
@@ -1275,7 +1274,7 @@ export async function runImprovePreparationStage(args: {
   // runs rotate through the due pool rather than re-selecting the same heads.
   let proactiveRefs: ImproveEligibleRef[] = [];
   let proactiveMaintenanceSummary: { selected: number; dueTotal: number; neverReflected: number } | undefined;
-  const proactiveEnabled = scope.mode !== "ref" && resolveProcessEnabled("proactiveMaintenance", improveProfile);
+  const proactiveEnabled = scope.mode !== "ref" && resolvedPlan.processes.proactiveMaintenance.enabled;
   if (proactiveEnabled) {
     const pmCfg = improveProfile.processes?.proactiveMaintenance;
     const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;

@@ -109,7 +109,7 @@ An append-only log of every mutating action you perform with AKM. Events are sto
 | `select` | `akm show` after a search returning the same ref | `ref`, `entryId` |
 | `promoted` | `akm proposal accept <id>` | `ref` |
 | `rejected` | `akm proposal reject <id>` | `ref` |
-| `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, profile |
+| `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, engine |
 | `reflect_completed` | Reflect phase produced a proposal | `ref` |
 | `improve_reflect_outcome` | Per-asset reflect result | `ref`, `ok`, `durationMs`, `reason` |
 | `propose_invoked` | `akm propose` | `ref` |

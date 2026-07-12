@@ -55,10 +55,25 @@ describe("resolveImprovePlan", () => {
     });
 
     expect(plan.strategy.name).toBe("quick");
-    expect(plan.processes.reflect?.engine).toBe("default");
-    expect(plan.processes.validation?.engine).toBe("validation");
-    expect(plan.processes.validation?.connection.model).toBe("repair");
-    expect(plan.processes.distill).toBeUndefined();
+    expect(plan.processes.reflect.runner?.engine).toBe("default");
+    expect(plan.processes.validation.runner?.engine).toBe("validation");
+    expect(plan.processes.validation.runner?.connection.model).toBe("repair");
+    expect(plan.processes.distill).toMatchObject({ enabled: false, runner: null });
+    expect(Object.keys(plan.processes).sort()).toEqual([
+      "consolidate",
+      "distill",
+      "extract",
+      "graphExtraction",
+      "memoryInference",
+      "proactiveMaintenance",
+      "procedural",
+      "recombine",
+      "reflect",
+      "triage",
+      "validation",
+    ]);
+    expect(Object.isFrozen(plan.processes)).toBe(true);
+    expect(Object.isFrozen(plan.processes.reflect.config)).toBe(true);
   });
 
   test("preflights default fallbacks and accepts an agent triage judgment", () => {
@@ -77,8 +92,8 @@ describe("resolveImprovePlan", () => {
       },
     });
 
-    expect(plan.processes.reflect?.engine).toBe("default");
-    expect(plan.processes.distill?.engine).toBe("default");
+    expect(plan.processes.reflect.runner?.engine).toBe("default");
+    expect(plan.processes.distill.runner?.engine).toBe("default");
     expect(plan.triageJudgment?.kind).toBe("agent");
     expect(plan.triageJudgment?.timeoutMs).toBeNull();
   });
@@ -199,8 +214,8 @@ describe("resolveImprovePlan", () => {
       },
       { repairValidationFailures: false },
     );
-    expect(plan.processes.reflect?.engine).toBe("default");
-    expect(plan.processes.validation).toBeUndefined();
+    expect(plan.processes.reflect.runner?.engine).toBe("default");
+    expect(plan.processes.validation).toMatchObject({ enabled: true, runner: null });
   });
 
   test("rejects LLM-only overrides on an agent triage judgment", () => {

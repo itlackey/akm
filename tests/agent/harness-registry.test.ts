@@ -10,8 +10,8 @@
  *   - the workflow-engine descriptor fields (pattern, structuredOutput,
  *     resume, identityEnv, agentBuilder, resultExtractor) are populated per
  *     the capability matrix;
- *   - `getCommandBuilder` resolves each new id (and its `-headless` builtin
- *     profile variant) to the harness-owned builder.
+ *   - `getCommandBuilder` resolves each canonical id to the harness-owned
+ *     builder and rejects retired profile aliases.
  */
 import { describe, expect, test } from "bun:test";
 import { getCommandBuilder } from "../../src/integrations/agent/builders";
@@ -28,22 +28,19 @@ function requireHarness(id: string) {
 
 describe("HARNESS_REGISTRY — P2 adapter integration", () => {
   test("every registry entry with agentDispatch has a resolvable builder (no throw)", () => {
-    // opencode-sdk dispatches via the embedded SDK (no argv builder); its id
-    // is not a builtin CLI profile, so getCommandBuilder falls back to the
-    // default builder rather than throwing the missing-builder ConfigError.
-    for (const h of AGENT_DISPATCH_HARNESSES) {
+    for (const h of AGENT_DISPATCH_HARNESSES.filter((entry) => entry.agentBuilder)) {
       expect(() => getCommandBuilder(h.id)).not.toThrow();
       expect(getCommandBuilder(h.id)).toBeDefined();
     }
   });
 
-  test("every harness-owned agentBuilder is registered under id, -headless variant, and aliases", () => {
+  test("every harness-owned agentBuilder is registered only under its canonical id", () => {
     for (const h of HARNESS_REGISTRY) {
       if (!h.agentBuilder) continue;
       expect(getCommandBuilder(h.id)).toBe(h.agentBuilder);
-      expect(getCommandBuilder(`${h.id}-headless`)).toBe(h.agentBuilder);
+      expect(() => getCommandBuilder(`${h.id}-headless`)).toThrow();
       for (const alias of h.aliases) {
-        expect(getCommandBuilder(alias)).toBe(h.agentBuilder);
+        expect(() => getCommandBuilder(alias)).toThrow();
       }
     }
   });
@@ -68,10 +65,9 @@ describe("HARNESS_REGISTRY — P2 adapter integration", () => {
       // normalization derives from it).
       expect(h.resultExtractor).toBeDefined();
       expect(typeof h.resultExtractor).toBe("function");
-      // Builtin profiles exist so `### Runner: agent <id>` units resolve.
+      // Canonical internal descriptors exist so named engines can lower.
       expect(getBuiltinAgentProfile(id)).toBeDefined();
-      expect(getBuiltinAgentProfile(`${id}-headless`)).toBeDefined();
-      expect(getBuiltinAgentProfile(`${id}-headless`)?.stdio).toBe("captured");
+      expect(getBuiltinAgentProfile(`${id}-headless`)).toBeUndefined();
     });
   }
 

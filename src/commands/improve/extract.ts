@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -40,6 +40,7 @@ import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { warn } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import { resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
@@ -199,6 +200,8 @@ export interface AkmExtractOptions {
   config?: AkmConfig;
   /** Pre-resolved connection supplied by the improve invocation plan. */
   llmConfig?: LlmProfileConfig;
+  /** Complete standalone invocation plan, resolved once at the CLI boundary. */
+  resolvedPlan?: ResolvedExtractPlan;
   /** Override the harness registry (test seam). */
   harnesses?: SessionLogHarness[];
   /**
@@ -266,6 +269,58 @@ export interface AkmExtractOptions {
    * embedding model. Production leaves this undefined and uses the real `embed`.
    */
   schemaSimilarityEmbedFn?: (text: string) => Promise<number[]>;
+}
+
+export interface ResolvedExtractPlan {
+  strategy: string;
+  enabled: boolean;
+  process: Readonly<ImproveProcessConfig>;
+  llmConfig: Readonly<LlmProfileConfig> | null;
+  timeoutMs: number | null;
+}
+
+/** Resolve standalone extract selection once before discovery, auto iteration, or watch startup. */
+export function resolveStandaloneExtractPlan(
+  config: AkmConfig,
+  selection: { engine?: string; strategy?: string; timeoutMs?: number | null },
+): ResolvedExtractPlan {
+  if (selection.engine && selection.strategy) {
+    throw new UsageError("--engine and --strategy are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
+  }
+  const selected = resolveImproveStrategy(selection.strategy, config);
+  const process = Object.freeze({ ...(getImproveProcessConfig(config, "extract", selected.config) ?? {}) });
+  const enabled = selection.strategy === undefined || process.enabled === true;
+  if (!enabled) {
+    return Object.freeze({ strategy: selected.name, enabled, process, llmConfig: null, timeoutMs: null });
+  }
+  let llmConfig: LlmProfileConfig | undefined;
+  if (selection.engine) {
+    const runner = resolveEngine(selection.engine, config);
+    if (runner.kind !== "llm") {
+      throw new ConfigError(`Engine "${selection.engine}" is not an LLM engine.`, "INVALID_CONFIG_FILE");
+    }
+    llmConfig = runner.connection;
+  } else {
+    llmConfig = resolveImproveProcessRunner(selected.config, "extract", config)?.connection;
+  }
+  if (!llmConfig) {
+    throw new ConfigError(
+      "No LLM engine configured for extract. Set defaults.llmEngine, pass --engine, or select an improve strategy with processes.extract.engine.",
+      "LLM_NOT_CONFIGURED",
+    );
+  }
+  const timeoutMs = Object.hasOwn(selection, "timeoutMs")
+    ? (selection.timeoutMs ?? null)
+    : Object.hasOwn(llmConfig, "timeoutMs")
+      ? (llmConfig.timeoutMs ?? null)
+      : 600_000;
+  return Object.freeze({
+    strategy: selected.name,
+    enabled,
+    process,
+    llmConfig: Object.freeze({ ...llmConfig }),
+    timeoutMs,
+  });
 }
 
 export interface ExtractedSessionResult {
@@ -802,20 +857,19 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const dryRun = options.dryRun ?? false;
   const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
 
-  // Read the per-process extract config + enabled-state from the ACTIVE improve
-  // profile when `akmImprove` threaded it; otherwise fall back to the `default`
-  // profile (the explicit `akm extract` path, which has no active profile). This
-  // is what stops a non-default profile's `extract.enabled` from being silently
-  // overridden by the default profile and vice-versa.
+  // Read process behavior from the frozen standalone plan or the active improve
+  // strategy. This prevents config changes during watch mode from changing later
+  // triggers and prevents one improve strategy from overriding another.
   const activeProfile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
-  const extractProcess = getImproveProcessConfig(config, "extract", activeProfile);
+  const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig(config, "extract", activeProfile);
   // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
   // (the activeProfile path) — consistent with #593/#594 where the active profile,
   // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
   // (no activeProfile) is a direct user/cron action and always runs; gating it on
   // the default improve profile's stage toggle was a footgun — dropping extract
   // from the daily improve profile would silently disable the standalone command.
-  const extractEnabled = options.improveProfile ? resolveProcessEnabled("extract", activeProfile) : true;
+  const extractEnabled =
+    options.resolvedPlan?.enabled ?? (options.improveProfile ? resolveProcessEnabled("extract", activeProfile) : true);
 
   // Feature-gate early so we get a clean "skipped because disabled" envelope.
   if (!extractEnabled) {
@@ -837,7 +891,9 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
 
   // Improve supplies its invocation-owned connection. Standalone extract
   // resolves the selected process engine, then defaults.llmEngine.
-  let llmConfig: LlmProfileConfig | undefined = options.llmConfig;
+  let llmConfig: LlmProfileConfig | undefined = options.resolvedPlan
+    ? (options.resolvedPlan.llmConfig ?? undefined)
+    : options.llmConfig;
   if (!llmConfig) {
     const runnerSpec = resolveImproveProcessRunner(activeProfile, "extract", config);
     llmConfig = runnerSpec?.connection ?? getDefaultLlmConfig(config) ?? undefined;
@@ -849,11 +905,13 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     );
   }
 
-  const timeoutMs = Object.hasOwn(options, "timeoutMs")
-    ? (options.timeoutMs ?? null)
-    : Object.hasOwn(llmConfig, "timeoutMs")
-      ? (llmConfig.timeoutMs ?? null)
-      : 600_000;
+  const timeoutMs = options.resolvedPlan
+    ? options.resolvedPlan.timeoutMs
+    : Object.hasOwn(options, "timeoutMs")
+      ? (options.timeoutMs ?? null)
+      : Object.hasOwn(llmConfig, "timeoutMs")
+        ? (llmConfig.timeoutMs ?? null)
+        : 600_000;
   // Pre-filter budget — process config can raise it for large-context models.
   const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
   // #595/#596 — minimum raw session size; sessions below it skip the LLM call

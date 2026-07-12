@@ -216,30 +216,11 @@ export const EmbeddingConnectionConfigSchema = z
   })
   .passthrough();
 
-// ── Agent profiles ──────────────────────────────────────────────────────────
+// ── Agent engines ───────────────────────────────────────────────────────────
 
 // Derives from the canonical VALID_HARNESS_IDS (#565) so the Zod gate cannot
 // drift from the TS union / parse check / setup detection.
 const AgentPlatformSchema = z.enum(VALID_HARNESS_IDS);
-
-export const AgentProfileConfigSchema = z
-  .object({
-    platform: AgentPlatformSchema,
-    bin: z.string().min(1).optional(),
-    args: z.array(z.string()).optional(),
-    workspace: z.string().min(1).optional(),
-    model: z.string().min(1).optional(),
-    // Per-call timeout (ms) used when a command does not pass an explicit
-    // timeout (e.g. `akm wiki ingest` without `--timeout-ms`). null = no
-    // timeout. Honored by resolveAgentProfile (integrations/agent/config.ts).
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    // Per-profile model aliases: lowercase alias → exact model string for
-    // this profile's CLI. Highest-precedence tier in resolveModel
-    // (integrations/agent/model-aliases.ts) — beats the config-root
-    // `modelAliases` table and the built-in opus/sonnet/haiku entries.
-    modelAliases: ModelAliasMapSchema.optional(),
-  })
-  .passthrough();
 
 export const LlmInvocationOverridesSchema = z
   .object({
@@ -673,16 +654,7 @@ export const ImproveProfileConfigSchema = z
   })
   .passthrough();
 
-/** Legacy in-memory shape retained only so remaining internal callers can be migrated. It is not a root config key. */
-export const ProfilesSchema = z
-  .object({
-    llm: z.record(z.string(), LlmProfileConfigSchema).optional(),
-    agent: z.record(z.string(), AgentProfileConfigSchema).optional(),
-    improve: z.record(z.string(), ImproveProfileConfigSchema).optional(),
-  })
-  .passthrough();
-
-// ── Profiles / defaults ────────────────────────────────────────────────────
+// ── Defaults ───────────────────────────────────────────────────────────────
 
 export const DefaultsSchema = z
   .object({

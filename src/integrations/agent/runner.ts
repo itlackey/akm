@@ -139,8 +139,4 @@ export function resolveImproveProcessRunner(
   };
 }
 
-export function resolveRunner(_mode: "llm" | "agent" | "sdk", engine: string, config: AkmConfig): RunnerSpec {
-  return resolveEngine(engine, config);
-}
-
 export { isProcessEnabled } from "../../llm/feature-gate";

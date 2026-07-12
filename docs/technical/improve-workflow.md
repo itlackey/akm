@@ -74,7 +74,7 @@ flowchart TD
             REFLECT_E -- spawn --> REFLECT_SPAWN[executeRunner\nspawn agent CLI binary\ncaptured stdout]
             REFLECT_SDK --> REFLECT_F
             REFLECT_SPAWN --> REFLECT_F[parseAgentProposalPayload\nextract JSON from stdout]
-            REFLECT_F --> REFLECT_G[createProposal\nstash/.akm/proposals/UUID/proposal.json\nsource: reflect]
+            REFLECT_F --> REFLECT_G[createProposal\nstate.db proposals row\nsource: reflect]
             REFLECT_G --> REFLECT_H([return AkmReflectResult\nok or failure envelope])
         end
 
@@ -121,7 +121,7 @@ flowchart TD
         CON_D -- no --> CON_E
 
         subgraph PHASE_A["Phase A — Plan generation (chunked)"]
-            CON_E[split into 20-memory chunks\n500-char body truncation] --> CON_F[For each chunk:\ncallAi with CONSOLIDATE_SYSTEM_PROMPT]
+            CON_E[split into 20-memory chunks\n500-char body truncation] --> CON_F[For each chunk:\nchatCompletion with frozen consolidate connection]
             CON_F --> CON_G[parseEmbeddedJsonResponse\nvalidate ops: merge / delete / promote]
             CON_G --> CON_H{2+ consecutive failures?} -- yes --> CON_ABORT[push warning, break]
             CON_H -- no --> CON_F
@@ -139,12 +139,12 @@ flowchart TD
         subgraph PHASE_B["Phase B — Write operations"]
             PHASE_B_A[writeJournal .akm/consolidate-journal.json] --> PHASE_B_B[For each op:]
             PHASE_B_B --> PHASE_B_MERGE{op == merge?}
-            PHASE_B_MERGE -- yes --> PHASE_B_M1[generateMergedContent\n2nd callAi for synthesis]
+            PHASE_B_MERGE -- yes --> PHASE_B_M1[generateMergedContent\n2nd chatCompletion for synthesis]
             PHASE_B_M1 --> PHASE_B_M2[backupFile secondaries\nwriteAssetToSource primary\ndeleteAssetFromSource secondaries\nmarkJournalCompleted]
             PHASE_B_MERGE -- no --> PHASE_B_DEL{op == delete?}
             PHASE_B_DEL -- yes --> PHASE_B_D1[backupFile\ndeleteAssetFromSource\nmarkJournalCompleted]
             PHASE_B_DEL -- no --> PHASE_B_PRO{op == promote?}
-            PHASE_B_PRO -- yes --> PHASE_B_P1[idempotency check:\nlistProposals + fs.existsSync\ncreatePropsal source: consolidate\nmarkJournalCompleted]
+            PHASE_B_PRO -- yes --> PHASE_B_P1[idempotency check:\nlistProposals + fs.existsSync\ncreateProposal source: consolidate\nmarkJournalCompleted]
         end
 
         PHASE_B_M2 --> CON_DONE
@@ -233,14 +233,14 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 
 1. Check for an incomplete prior journal at `.akm/consolidate-journal.json`; abort if found.
 2. Load non-`.derived` memory assets from the SQLite index (filesystem fallback if DB unavailable).
-3. Chunk memories into groups of 20 (500-char body truncation). For each chunk, call `callAi` with `CONSOLIDATE_SYSTEM_PROMPT` requesting a JSON plan of `merge` / `delete` / `promote` operations.
+3. Chunk memories into groups of 20 (500-char body truncation). For each chunk, call `chatCompletion` with the frozen consolidate LLM connection and `CONSOLIDATE_SYSTEM_PROMPT`, requesting a JSON plan of `merge` / `delete` / `promote` operations.
 4. `parseEmbeddedJsonResponse` extracts and validates each op. After 2+ consecutive chunk failures the loop aborts early.
 5. `mergePlans` deduplicates across chunks: merge ops win over delete ops for the same ref; promote ops blocked by a concurrent merge op are dropped with a warning.
 
 **Phase B — Write operations:**
 
 1. Write journal to `.akm/consolidate-journal.json` before any mutations (crash recovery).
-2. For each `merge` op: generate merged content via a second `callAi` call, backup secondaries, write merged primary via `writeAssetToSource`, delete secondaries via `deleteAssetFromSource`, mark journal completed.
+2. For each `merge` op: generate merged content via a second `chatCompletion` call using the same frozen connection, backup secondaries, write merged primary via `writeAssetToSource`, delete secondaries via `deleteAssetFromSource`, mark journal completed.
 3. For each `delete` op: backup file, delete via `deleteAssetFromSource`, mark journal completed.
 4. For each `promote` op: idempotency check (pending proposals and existing file); `createProposal` with `source: "consolidate"`; mark journal completed.
 5. Clean up the journal and timestamp-keyed backup directory on success.
@@ -251,7 +251,7 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 - `.akm/consolidate-journal.json` — operation log for crash recovery.
 - `.akm/consolidate-backup/<timestamp>/<name>.md` — backup copies of files before delete/merge.
 - Modified or deleted memory asset files via `writeAssetToSource` / `deleteAssetFromSource`.
-- `<stashRoot>/.akm/proposals/<UUID>/proposal.json` for each `promote` op.
+- A durable row in the `proposals` table in `state.db` for each `promote` op, partitioned by stash path.
 
 ### improve-owned maintenance
 
@@ -278,28 +278,9 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 
 ### Proposal queue
 
-`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It is also used by the memory consolidation promote path in akmConsolidate.
+`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It writes the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record. The legacy `<stash>/.akm/proposals/` tree is import-only and is not an active write path.
 
-**Filesystem layout:**
-
-```
-<stashRoot>/
-  .akm/
-    proposals/
-      <UUID>/
-        proposal.json        ← pending proposal
-      archive/
-        <UUID>/
-          proposal.json      ← accepted or rejected proposal
-    improve.lock             ← PID + startedAt; removed in finally block
-    consolidate-journal.json ← written before Phase B, removed after
-    consolidate-backup/
-      <ISO-timestamp>/
-        <memory-name>.md     ← backup before delete/merge
-    memory-cleanup/          ← belief-state transition log (from applyMemoryCleanup)
-```
-
-**`proposal.json` shape:**
+**Logical proposal shape:**
 
 ```json
 {
@@ -317,7 +298,7 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 }
 ```
 
-Two proposals can share the same `ref` — the UUID directory name prevents filesystem collisions. The dedup guard in `akmImprove` (checking `listProposals(stashDir, { ref: lessonRef })`) skips `akmDistill` when a pending proposal already exists for the derived lesson ref.
+Two proposals can share the same `ref`; their UUID primary keys prevent collisions. The dedup guard in `akmImprove` (checking `listProposals(stashDir, { ref: lessonRef })`) skips `akmDistill` when a pending proposal already exists for the derived lesson ref.
 
 ## Scope restrictions
 
@@ -334,8 +315,9 @@ Before the per-asset loop, `akm improve` builds Sets of all refs that are curren
 | `distill` | `improve.strategies.<name>.processes.distill` | Enables distillation and selects its LLM engine/model/request overrides. |
 | `consolidate` | `improve.strategies.<name>.processes.consolidate` | Enables consolidation and selects its LLM engine/model/request overrides. |
 
-Improve process selection is resolved once by `resolveImprovePlan`; LLM-only
-processes reject an explicit agent engine rather than falling through. With
+Improve process selection is resolved once by `resolveImprovePlan`; the plan
+contains every process's frozen enablement, process config, and resolved runner.
+LLM-only processes reject an explicit agent engine rather than falling through. With
 `--auto-accept` absent, auto-accept uses the selected strategy's threshold.
 
 ## Output shape

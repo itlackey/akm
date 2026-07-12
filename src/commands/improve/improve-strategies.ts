@@ -15,7 +15,7 @@ import reflectDistill from "../../assets/improve-strategies/reflect-distill.json
 import synthesize from "../../assets/improve-strategies/synthesize.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
   BUILTIN_IMPROVE_STRATEGY_NAMES,
@@ -42,29 +42,13 @@ export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate"
   consolidate: ["memory"],
 };
 
-const IMPROVE_PROCESS_DEFAULTS: Record<string, boolean> = {
-  reflect: true,
-  distill: true,
-  consolidate: true,
-  memoryInference: true,
-  graphExtraction: true,
-  validation: true,
-  extract: true,
-  triage: false,
-  proactiveMaintenance: false,
-  recombine: false,
-  procedural: false,
-};
-
 /** Resolve process enablement from the selected strategy, the sole improve authority. */
 export function resolveProcessEnabled(
   processName: keyof NonNullable<ImproveProfileConfig["processes"]> | string,
   strategy: ImproveProfileConfig,
 ): boolean {
   const processes = strategy.processes as Record<string, { enabled?: boolean } | undefined> | undefined;
-  const entry = processes?.[processName];
-  if (entry && typeof entry.enabled === "boolean") return entry.enabled;
-  return IMPROVE_PROCESS_DEFAULTS[processName] ?? false;
+  return processes?.[processName]?.enabled === true;
 }
 
 export function shouldSkipRef(
@@ -127,17 +111,19 @@ export function resolveStrategyProcessEnabled(strategy: SelectedStrategy, proces
   return resolveProcessEnabled(processName, strategy.config);
 }
 
-const LLM_PROCESS_NAMES = Object.entries(IMPROVE_PROCESS_ENGINE_CAPABILITIES)
-  .filter(([, capability]) => capability === "llm")
-  .map(([name]) => name) as Array<keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES>;
-
-export type ImproveLlmProcessName = (typeof LLM_PROCESS_NAMES)[number];
 export type ImproveLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
+export type ImproveProcessName = keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES;
 
-/** Immutable engine selections for one improve invocation. */
+export interface ResolvedImproveProcess {
+  enabled: boolean;
+  config: Readonly<ImproveProcessConfig>;
+  runner: ImproveLlmRunner | null;
+}
+
+/** Complete immutable process behavior for one improve invocation. */
 export interface ResolvedImprovePlan {
   strategy: SelectedStrategy;
-  processes: Partial<Record<ImproveLlmProcessName, ImproveLlmRunner>>;
+  processes: Readonly<Record<ImproveProcessName, ResolvedImproveProcess>>;
   triageJudgment: RunnerSpec | null;
 }
 
@@ -156,36 +142,53 @@ function materializeImprovePlan(
   config: AkmConfig,
   options: { repairValidationFailures?: boolean },
 ): ResolvedImprovePlan {
-  const processes: Partial<Record<ImproveLlmProcessName, ImproveLlmRunner>> = {};
-  for (const processName of LLM_PROCESS_NAMES) {
-    if (!resolveProcessEnabled(processName, strategy.config)) continue;
+  const processes = {} as Record<ImproveProcessName, ResolvedImproveProcess>;
+  for (const processName of Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]) {
+    const processConfig = Object.freeze({ ...(strategy.config.processes?.[processName] ?? {}) });
+    const enabled = processConfig.enabled === true;
+    let runner: ImproveLlmRunner | null = null;
+    if (IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName] !== "llm" || !enabled) {
+      processes[processName] = Object.freeze({ enabled, config: processConfig, runner });
+      continue;
+    }
     // Validation itself is structural and always runs. Only its optional repair
     // step needs a model, so disabling repair must not create an LLM preflight.
-    if (processName === "validation" && options.repairValidationFailures === false) continue;
-    const runner = resolveImproveProcessRunner(strategy.config, processName, config);
-    if (!runner) {
-      const process = strategy.config.processes?.[processName];
+    if (processName !== "validation" || options.repairValidationFailures !== false) {
+      runner = resolveImproveProcessRunner(strategy.config, processName, config);
+    }
+    if (!runner && !(processName === "validation" && options.repairValidationFailures === false)) {
       const hasModelIntent =
         strategy.config.model !== undefined ||
         strategy.config.llm !== undefined ||
-        process?.model !== undefined ||
-        process?.llm !== undefined;
+        processConfig.model !== undefined ||
+        processConfig.llm !== undefined;
       if (hasModelIntent) {
         throw new ConfigError(
           `Improve process "${processName}" configures model/llm overrides but has no fallback LLM engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.${processName}.engine.`,
           "LLM_NOT_CONFIGURED",
         );
       }
-      continue;
     }
-    processes[processName] = runner;
+    processes[processName] = Object.freeze({ enabled, config: processConfig, runner });
   }
 
   const triage = strategy.config.processes?.triage;
   const judgmentOptedIn = triage !== undefined && Object.hasOwn(triage, "judgment");
   const triageJudgment =
-    resolveProcessEnabled("triage", strategy.config) && judgmentOptedIn
+    processes.triage.enabled && judgmentOptedIn
       ? resolveTriageJudgmentRunner(triage.judgment, config, triage, strategy.config)
       : null;
-  return { strategy, processes, triageJudgment };
+  const frozenProcesses = Object.freeze(processes);
+  const frozenStrategy: SelectedStrategy = Object.freeze({
+    name: strategy.name,
+    config: Object.freeze({
+      ...strategy.config,
+      processes: Object.freeze(
+        Object.fromEntries(
+          Object.entries(frozenProcesses).map(([name, process]) => [name, process.config]),
+        ) as NonNullable<ImproveProfileConfig["processes"]>,
+      ),
+    }),
+  });
+  return { strategy: frozenStrategy, processes: frozenProcesses, triageJudgment };
 }
