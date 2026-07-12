@@ -1339,6 +1339,44 @@ test("extractBodyOpening skips setext '=' headings instead of capturing underlin
   expect(extractBodyOpening(body)).toBe("Prose after the setext heading.");
 });
 
+test("extractBodyOpening skips leading HTML comment blocks (PR-715 review)", () => {
+  // The stash skeleton's own convention facts open with a multi-line
+  // <!-- SOFT guidance --> block: comment text is not orientation prose.
+  const body = [
+    "<!--",
+    "  SOFT guidance only — advice, not a contract. Editing this file cannot",
+    "  weaken the gate.",
+    "-->",
+    "",
+    "# Title",
+    "",
+    "The real orientation paragraph.",
+    "",
+  ].join("\n");
+  expect(extractBodyOpening(body)).toBe("The real orientation paragraph.");
+});
+
+test("extractBodyOpening skips single-line HTML comments and comment-ending paragraph boundaries (PR-715 review)", () => {
+  expect(extractBodyOpening("<!-- one-line note -->\n\nActual prose here.\n")).toBe("Actual prose here.");
+  // A comment opening after prose ends the paragraph rather than absorbing it.
+  expect(extractBodyOpening("Lead sentence.\n<!-- trailing machinery -->\nMore text.\n")).toBe("Lead sentence.");
+});
+
+test("extractBodyOpening never splits a surrogate pair at the cap (PR-715 review)", () => {
+  // One long unbroken token forces the no-word-boundary fallback slice; align
+  // an astral-plane char across the cut so a naive slice leaves a lone
+  // high surrogate.
+  const prefix = "x".repeat(278); // next slot (index 278, cap-1=279) lands mid-pair
+  const body = `${prefix}\u{1F600}\u{1F600}after`;
+  const opening = extractBodyOpening(body);
+  expect(opening).toBeDefined();
+  const text = opening as string;
+  const lastBeforeEllipsis = text.charCodeAt(text.length - 2);
+  expect(lastBeforeEllipsis >= 0xd800 && lastBeforeEllipsis <= 0xdbff).toBe(false);
+  // Round-trip through the encoder must not produce a replacement char.
+  expect(new TextDecoder().decode(new TextEncoder().encode(text))).toBe(text);
+});
+
 test("extractBodyOpening keeps prose above a dash row (setext-H2 reading deliberately not applied) (SPEC-8)", () => {
   // Deliberate pin: a `---` row after captured lines ENDS the paragraph and
   // keeps it. Dash rows in stash bodies are overwhelmingly decorative breaks

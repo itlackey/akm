@@ -25,7 +25,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../core/paths";
 import { warnVerbose } from "../core/warn";
-import { closeDatabase, getEntryCount, openExistingDatabase, rebuildFts, upsertEntry } from "./db/db";
+import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
+import {
+  closeDatabase,
+  getEntryCount,
+  openExistingDatabase,
+  rebuildFts,
+  upsertEntry,
+  upsertWorkflowDocument,
+} from "./db/db";
 import { generateMetadataFlat } from "./passes/metadata";
 import { buildSearchText } from "./search/search-fields";
 
@@ -73,10 +81,10 @@ export async function indexWrittenAssets(stashDir: string, filePaths: string[]):
     for (const file of files) {
       const generated = await generateMetadataFlat(stashDir, [file]);
       const entry = generated.entries[0];
-      // Workflows carry a side-table document upsert this fast path doesn't
-      // do; no current caller writes them, but guard so one never lands
-      // half-indexed.
-      if (entry && entry.type !== "workflow") pairs.push({ file, entry });
+      // Workflows also carry a workflow_documents side-table upsert — handled
+      // below, mirroring the full walk — since `akm mv` rewrites citer files
+      // that can be workflows.
+      if (entry) pairs.push({ file, entry });
     }
     if (pairs.length === 0) return;
 
@@ -92,7 +100,14 @@ export async function indexWrittenAssets(stashDir: string, filePaths: string[]):
         } catch {
           // stat raced a delete — index without the size, like the full walk does.
         }
-        upsertEntry(db, entryKey, path.dirname(file), file, stashDir, entryWithSize, buildSearchText(entry));
+        const entryId = upsertEntry(db, entryKey, path.dirname(file), file, stashDir, entryWithSize, buildSearchText(entry));
+        if (entry.type === "workflow") {
+          // Same contract as the full walk (indexer.ts): the renderer cached
+          // the parsed document during metadata generation; persist it so the
+          // workflow runtime never sees an entry without its document.
+          const doc = takeWorkflowDocument(entry);
+          if (doc) upsertWorkflowDocument(db, entryId, doc, fs.readFileSync(file));
+        }
       }
       rebuildFts(db, { incremental: true });
     } finally {

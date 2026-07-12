@@ -1152,6 +1152,7 @@ export function extractBodyOpening(body: string): string | undefined {
   const paragraph: string[] = [];
   let inFence = false;
   let fenceChar = "";
+  let inHtmlComment = false;
   for (let i = start; i < lines.length; i += 1) {
     const trimmed = lines[i].trim();
     const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
@@ -1161,10 +1162,21 @@ export function extractBodyOpening(body: string): string | undefined {
       if (fenceMatch && fenceMatch[1][0] === fenceChar) inFence = false;
       continue;
     }
+    if (inHtmlComment) {
+      // Comment interiors are machinery (the skeleton convention facts open
+      // with a <!-- SOFT guidance --> block), never orientation prose.
+      if (trimmed.includes("-->")) inHtmlComment = false;
+      continue;
+    }
     if (fenceMatch) {
       if (paragraph.length > 0) break; // a fence ends an open paragraph
       inFence = true;
       fenceChar = fenceMatch[1][0];
+      continue;
+    }
+    if (trimmed.startsWith("<!--")) {
+      if (paragraph.length > 0) break; // a comment ends an open paragraph
+      if (!trimmed.includes("-->")) inHtmlComment = true;
       continue;
     }
     if (/^=+$/.test(trimmed)) {
@@ -1191,7 +1203,12 @@ export function extractBodyOpening(body: string): string | undefined {
   // a substantial prefix; append a one-char ellipsis inside the budget.
   const slice = text.slice(0, BODY_OPENING_MAX_CHARS - 1);
   const lastBoundary = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\n"), slice.lastIndexOf("\t"));
-  const cut = lastBoundary >= BODY_OPENING_MIN_RETAINED_CHARS ? slice.slice(0, lastBoundary) : slice;
+  let cut = lastBoundary >= BODY_OPENING_MIN_RETAINED_CHARS ? slice.slice(0, lastBoundary) : slice;
+  // slice() counts UTF-16 code units, so the no-boundary fallback can end on
+  // the high half of a surrogate pair — a lone surrogate that corrupts the
+  // FTS/embedding text. Drop it rather than emit invalid UTF-16.
+  const lastCode = cut.charCodeAt(cut.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) cut = cut.slice(0, -1);
   return `${cut.trimEnd()}…`;
 }
 
