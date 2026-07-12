@@ -44,10 +44,9 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
 import { info, warn } from "../../core/warn";
-import type { RunAgentOptions, runAgent } from "../../integrations/agent";
+import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { executeRunner } from "../../integrations/agent/runner-dispatch";
-import type { runOpencodeSdk } from "../../integrations/harnesses/opencode-sdk";
+import { executeRunner, type RunnerSeams } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject } from "./proposal";
 import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./repository";
@@ -169,9 +168,9 @@ export interface JudgmentSeams {
   /** Test seam for the `llm` runner kind — replaces `chatCompletion`. */
   chat?: (config: RunnerSpec & { kind: "llm" }, messages: ChatMessage[]) => Promise<string>;
   /** Test seam for the `agent` runner kind — replaces `runAgent`. */
-  runAgentFn?: typeof runAgent;
+  runAgentFn?: RunnerSeams["runAgent"];
   /** Test seam for the `sdk` runner kind — replaces `runOpencodeSdk`. */
-  runSdkFn?: typeof runOpencodeSdk;
+  runSdkFn?: RunnerSeams["runSdk"];
 }
 
 // ---------------------------------------------------------------------------

@@ -44,11 +44,11 @@ import {
 import { getTaskLogDir } from "../core/paths";
 import { withStateDb } from "../core/state-db";
 import { error } from "../core/warn";
-import { type AgentRunResult, type RunAgentOptions, runAgent } from "../integrations/agent";
+import type { AgentRunResult, RunAgentOptions } from "../integrations/agent";
 import { materializeLlmConnection, resolveEngine, resolveLlmEngineUse } from "../integrations/agent/engine-resolution";
 import { resolveModel } from "../integrations/agent/model-aliases";
 import type { RunnerSpec } from "../integrations/agent/runner";
-import { executeRunner } from "../integrations/agent/runner-dispatch";
+import { executeRunner, type RunnerSeams } from "../integrations/agent/runner-dispatch";
 import { chatCompletion } from "../llm/client";
 import { spawn } from "../runtime";
 import { resolveAssetPath } from "../sources/resolve";
@@ -85,7 +85,7 @@ export interface RunTaskOptions {
   /** Override stash dir resolution (tests). */
   stashDir?: string;
   /** Override the agent runner (tests). Defaults to {@link runAgent}. */
-  runAgentImpl?: (...args: Parameters<typeof runAgent>) => Promise<AgentRunResult>;
+  runAgentImpl?: RunnerSeams["runAgent"];
   /**
    * Override the workflow runner (tests). Defaults to
    * {@link startWorkflowRun}.
@@ -103,7 +103,7 @@ export interface RunTaskOptions {
 
 export async function runTask(id: string, options: RunTaskOptions = {}): Promise<TaskRunResult> {
   const stashDir = options.stashDir ?? resolveStashDir();
-  const runAgentImpl = options.runAgentImpl ?? runAgent;
+  const runAgentImpl = options.runAgentImpl;
   const startWorkflowRunImpl = options.startWorkflowRunImpl ?? startWorkflowRun;
   const now = options.now ?? (() => new Date());
   const logDir = options.logDir ?? getTaskLogDir();
@@ -393,7 +393,7 @@ async function runPromptTask(input: {
   logPath: string;
   startedAt: Date;
   now: () => Date;
-  runAgentImpl: (...args: Parameters<typeof runAgent>) => Promise<AgentRunResult>;
+  runAgentImpl?: RunnerSeams["runAgent"];
   chatCompletionImpl: typeof chatCompletion;
   agentOptions?: Partial<RunAgentOptions>;
 }): Promise<TaskRunResult> {
@@ -454,7 +454,7 @@ async function runPromptTask(input: {
       env: { AKM_EVENT_SOURCE: "task", ...agentOptions?.env },
     },
     {
-      runAgent: input.runAgentImpl,
+      ...(input.runAgentImpl ? { runAgent: input.runAgentImpl } : {}),
       llm: async (spec, prompt, options) => {
         const started = Date.now();
         const stdout = await input.chatCompletionImpl(spec.connection, [{ role: "user", content: prompt }], {

@@ -68,7 +68,7 @@ describe("current engine and strategy configuration contract", () => {
       .map((name) => path.join("src", "assets", "help", name));
 
     expect(scanned).toEqual(
-      expect.arrayContaining(["README.md", path.join(".github", "README.npm.md"), "STABILITY.md"]),
+      expect.arrayContaining(["README.md", path.join(".github", "README.npm.md"), "SECURITY.md", "STABILITY.md"]),
     );
     expect(scanned.filter((docPath) => docPath.startsWith(path.join("src", "assets", "help")))).toEqual(
       helpDocs.sort(),

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
@@ -38,6 +39,36 @@ function productionSource(filePath: string): string {
 
 function relativeSourcePath(filePath: string): string {
   return path.relative(srcRoot, filePath);
+}
+
+function hasLowLevelRunnerReference(source: string): boolean {
+  if (!/\b(?:runAgent|runOpencodeSdk)\b/.test(source)) return false;
+  const lowLevelNames = new Set(["runAgent", "runOpencodeSdk"]);
+  const sourceFile = ts.createSourceFile("guard.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && lowLevelNames.has(node.text)) {
+      // RunnerSeams uses these as object keys when supplying dispatch overrides;
+      // the value expression, imports, aliases, and property access remain guarded.
+      if (!(ts.isPropertyAssignment(node.parent) && node.parent.name === node)) {
+        found = true;
+        return;
+      }
+    }
+    if (
+      ts.isStringLiteral(node) &&
+      lowLevelNames.has(node.text) &&
+      ts.isElementAccessExpression(node.parent) &&
+      node.parent.argumentExpression === node
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
 }
 
 describe("RunnerSpec dispatch authority", () => {
@@ -101,18 +132,28 @@ describe("RunnerSpec dispatch authority", () => {
     );
   });
 
-  test("low-level agent runners have no production callers outside executeRunner", () => {
+  test("low-level agent runners have no production references outside runner-dispatch", () => {
     const implementations = new Set([
       dispatchAuthority,
       path.join("integrations", "agent", "spawn.ts"),
+      path.join("integrations", "harnesses", "opencode-sdk", "index.ts"),
       path.join("integrations", "harnesses", "opencode-sdk", "sdk-runner.ts"),
     ]);
     const violations = productionTypeScriptFiles()
       .filter((filePath) => !implementations.has(relativeSourcePath(filePath)))
-      .filter((filePath) => /\b(?:runAgent|runOpencodeSdk)\s*\(/.test(productionSource(filePath)))
+      .filter((filePath) => hasLowLevelRunnerReference(productionSource(filePath)))
       .map(relativeSourcePath);
 
     expect(violations).toEqual([]);
+  });
+
+  test("low-level runner reference guard catches aliased imports", () => {
+    const aliasedImports = [
+      `import { runAgent as invoke } from "./spawn";`,
+      `import { runOpencodeSdk as invokeSdk } from "./sdk-runner";`,
+      `const { runAgent: dynamicAlias } = await import("./spawn");`,
+    ].join("\n");
+    expect(hasLowLevelRunnerReference(aliasedImports)).toBe(true);
   });
 
   test("the RunnerSpec three-kind switch exists only at the dispatch authority", () => {

@@ -29,6 +29,13 @@ import {
 import { runImproveSession } from "./improve-session";
 import { resolveImprovePlan } from "./improve-strategies";
 
+let akmImproveForRun: typeof akmImprove = akmImprove;
+
+/** Swap the CLI's improve work implementation in deterministic subprocess tests. */
+export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
+  akmImproveForRun = fake ?? akmImprove;
+}
+
 // R5 — collapse-detector canary set inspection / explicit refresh. The
 // detector NEVER auto-refreshes the canary set (silent re-baselining is how a
 // slow collapse hides); this verb is the only refresh path.
@@ -270,7 +277,7 @@ export const improveCommand = defineCommand({
         improveResult = await runImproveSession(
           {
             runWork: () =>
-              akmImprove({
+              akmImproveForRun({
                 scope: scopeArg,
                 task: taskArg,
                 dryRun,

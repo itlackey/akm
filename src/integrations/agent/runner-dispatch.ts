@@ -32,7 +32,7 @@
 import { assertNever } from "../../core/assert";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { isEnvPassthroughValueSafeToExpose, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
-import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk";
+import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import type { AgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
 import { type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";

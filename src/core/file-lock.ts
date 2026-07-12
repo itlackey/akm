@@ -175,7 +175,6 @@ export function reclaimStaleLock(
     releaseLock(quarantinePath);
     return false;
   }
-
   options?.afterQuarantineVerified?.();
   try {
     fs.unlinkSync(quarantinePath);
