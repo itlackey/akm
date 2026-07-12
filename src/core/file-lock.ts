@@ -50,11 +50,17 @@ export interface ReclaimStaleLockOptions {
   afterQuarantineVerified?: () => void;
 }
 
-interface LockFileIdentity {
+export interface LockFileIdentity {
   dev: number;
   ino: number;
   size: number;
   mtimeMs: number;
+}
+
+export interface LockOwnership {
+  lockPath: string;
+  rawContent: string;
+  identity: LockFileIdentity;
 }
 
 function readLockSnapshot(lockPath: string): { rawContent: string; identity: LockFileIdentity } | undefined {
@@ -122,14 +128,25 @@ function withLockOperationMutex<T>(lockPath: string, run: () => T): T {
   }
 }
 
-function tryAcquireLockRaw(lockPath: string, payload: string): boolean {
+function tryAcquireLockRaw(lockPath: string, payload: string): LockOwnership | undefined {
   try {
     fs.writeFileSync(lockPath, payload, { flag: "wx" });
-    return true;
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return undefined;
     throw err;
   }
+  let snapshot: ReturnType<typeof readLockSnapshot>;
+  try {
+    snapshot = readLockSnapshot(lockPath);
+  } catch (error) {
+    releaseLockRaw(lockPath);
+    throw error;
+  }
+  if (!snapshot) {
+    releaseLockRaw(lockPath);
+    throw new Error(`Could not read newly acquired lock at ${lockPath}.`);
+  }
+  return { lockPath, ...snapshot };
 }
 
 function releaseLockRaw(lockPath: string): void {
@@ -142,7 +159,7 @@ function releaseLockRaw(lockPath: string): void {
 
 /**
  * Atomically create a sentinel at `lockPath` with `payload` as the body.
- * Returns true if we now own the lock, false if a sentinel already
+ * Returns an exact ownership handle if we now own the lock, or undefined if a sentinel already
  * exists (EEXIST). Throws any other error (permissions, missing parent
  * dir, etc.) — callers must ensure the parent directory exists.
  *
@@ -150,8 +167,13 @@ function releaseLockRaw(lockPath: string): void {
  * a small JSON envelope for callers that want richer metadata
  * (improve.ts records pid + startedAt so audit can correlate runs).
  */
-export function tryAcquireLockSync(lockPath: string, payload: string): boolean {
+export function tryAcquireLockSync(lockPath: string, payload: string): LockOwnership | undefined {
   return withLockOperationMutex(lockPath, () => tryAcquireLockRaw(lockPath, payload));
+}
+
+/** Build a PID-bearing payload with a unique token for one acquisition attempt. */
+export function createLockPayload(metadata: Record<string, unknown> = {}): string {
+  return JSON.stringify({ ...metadata, pid: process.pid, lockId: randomUUID() });
 }
 
 /**
@@ -254,35 +276,25 @@ export function reclaimStaleLock(
 }
 
 /**
- * Remove a lock file. Idempotent — silently ignores ENOENT. Used both to
- * reclaim stale locks (after probeLock returns `state: "stale"`) and to
- * release locks we own (after a successful tryAcquireLockSync).
+ * Release only the exact sentinel returned by `tryAcquireLockSync`. Content and
+ * file identity are revalidated while holding the acquisition operation mutex,
+ * so a stale holder cannot remove a successor. Synchronous and idempotent so it
+ * is safe in both `finally` blocks and process exit handlers.
  */
-export function releaseLock(lockPath: string): void {
-  if (!fs.existsSync(lockPath) && !fs.existsSync(operationMutexPath(lockPath))) return;
-  withLockOperationMutex(lockPath, () => releaseLockRaw(lockPath));
-}
-
-/**
- * Release a lock ONLY if it is still owned by `ownerPid`. Safe to call from a
- * `process.exit()` / `'exit'` handler as a backstop: `process.exit()` skips
- * `finally` blocks — so the normal lock-release never runs on signal death
- * (SIGTERM/SIGINT) — but it DOES fire `'exit'` listeners synchronously. Checking
- * ownership first means that if the lock was already released and re-acquired by
- * a different process, this leaves that process's lock intact (no cross-run
- * deletion / PID-reuse footgun). Synchronous so it is valid inside an exit handler.
- */
-export function releaseLockIfOwned(lockPath: string, ownerPid: number): void {
+export function releaseLock(ownership: LockOwnership): void {
+  const { lockPath } = ownership;
   if (!fs.existsSync(lockPath) && !fs.existsSync(operationMutexPath(lockPath))) return;
   withLockOperationMutex(lockPath, () => {
-    let rawContent: string;
+    let current: ReturnType<typeof readLockSnapshot>;
     try {
-      rawContent = fs.readFileSync(lockPath, "utf8");
+      current = readLockSnapshot(lockPath);
     } catch {
       // Absent or unreadable — nothing of ours to release.
       return;
     }
-    if (extractHolderPid(rawContent) === ownerPid) releaseLockRaw(lockPath);
+    if (current && current.rawContent === ownership.rawContent && sameIdentity(current.identity, ownership.identity)) {
+      releaseLockRaw(lockPath);
+    }
   });
 }
 

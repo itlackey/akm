@@ -820,7 +820,7 @@ describe("akmExtract — per-session lock", () => {
     // Pre-create the lock held by THIS (live) process at the path akmExtract derives.
     const lockPath = path.join(stateDir, "extract-locks", "extract-claude-code-ses_locked.lock");
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBeDefined();
 
     let chatCalls = 0;
     const result = await akmExtract({
@@ -859,7 +859,7 @@ describe("akmExtract — per-session lock", () => {
     expect(result.sessionsProcessed).toBe(1);
     // Lock released → a fresh acquire succeeds.
     const lockPath = path.join(stateDir, "extract-locks", "extract-claude-code-ses_free.lock");
-    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBe(true);
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBeDefined();
   });
 });
 

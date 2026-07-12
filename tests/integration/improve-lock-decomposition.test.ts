@@ -32,17 +32,23 @@ describe("#607 lock decomposition — per-process locks", () => {
 
       const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
 
-      expect(tryAcquireLockSync(consolidateLock, payload)).toBe(true);
-      expect(tryAcquireLockSync(reflectDistillLock, payload)).toBe(true);
-      expect(tryAcquireLockSync(triageLock, payload)).toBe(true);
+      const consolidateOwnership = tryAcquireLockSync(consolidateLock, payload);
+      const reflectDistillOwnership = tryAcquireLockSync(reflectDistillLock, payload);
+      const triageOwnership = tryAcquireLockSync(triageLock, payload);
+      expect(consolidateOwnership).toBeDefined();
+      expect(reflectDistillOwnership).toBeDefined();
+      expect(triageOwnership).toBeDefined();
+      if (!consolidateOwnership || !reflectDistillOwnership || !triageOwnership) {
+        throw new Error("expected all independent locks to be acquired");
+      }
 
       expect(fs.existsSync(consolidateLock)).toBe(true);
       expect(fs.existsSync(reflectDistillLock)).toBe(true);
       expect(fs.existsSync(triageLock)).toBe(true);
 
-      releaseLock(consolidateLock);
-      releaseLock(reflectDistillLock);
-      releaseLock(triageLock);
+      releaseLock(consolidateOwnership);
+      releaseLock(reflectDistillOwnership);
+      releaseLock(triageOwnership);
 
       expect(fs.existsSync(consolidateLock)).toBe(false);
       expect(fs.existsSync(reflectDistillLock)).toBe(false);
@@ -57,8 +63,9 @@ describe("#607 lock decomposition — per-process locks", () => {
       const consolidateLock = path.join(lockDir, "consolidate.lock");
       const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
 
-      expect(tryAcquireLockSync(consolidateLock, payload)).toBe(true);
-      expect(tryAcquireLockSync(consolidateLock, payload)).toBe(false);
+      const firstOwnership = tryAcquireLockSync(consolidateLock, payload);
+      expect(firstOwnership).toBeDefined();
+      expect(tryAcquireLockSync(consolidateLock, payload)).toBeUndefined();
 
       const probe = probeLock(consolidateLock, { staleAfterMs: 60 * 60 * 1000 });
       expect(probe.state).toBe("held");
@@ -66,9 +73,12 @@ describe("#607 lock decomposition — per-process locks", () => {
         expect(probe.holderPid).toBe(process.pid);
       }
 
-      releaseLock(consolidateLock);
-      expect(tryAcquireLockSync(consolidateLock, payload)).toBe(true);
-      releaseLock(consolidateLock);
+      if (!firstOwnership) throw new Error("expected first lock acquisition");
+      releaseLock(firstOwnership);
+      const secondOwnership = tryAcquireLockSync(consolidateLock, payload);
+      expect(secondOwnership).toBeDefined();
+      if (!secondOwnership) throw new Error("expected second lock acquisition");
+      releaseLock(secondOwnership);
     },
     TIMEOUT_MS,
   );
@@ -80,17 +90,20 @@ describe("#607 lock decomposition — per-process locks", () => {
       const reflectDistillLock = path.join(lockDir, "reflect-distill.lock");
       const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
 
-      expect(tryAcquireLockSync(consolidateLock, payload)).toBe(true);
-      expect(tryAcquireLockSync(reflectDistillLock, payload)).toBe(true);
+      const consolidateOwnership = tryAcquireLockSync(consolidateLock, payload);
+      const reflectDistillOwnership = tryAcquireLockSync(reflectDistillLock, payload);
+      expect(consolidateOwnership).toBeDefined();
+      expect(reflectDistillOwnership).toBeDefined();
+      if (!consolidateOwnership || !reflectDistillOwnership) throw new Error("expected both locks");
 
-      releaseLock(consolidateLock);
+      releaseLock(consolidateOwnership);
       expect(fs.existsSync(consolidateLock)).toBe(false);
       expect(fs.existsSync(reflectDistillLock)).toBe(true);
 
       const probe = probeLock(reflectDistillLock, { staleAfterMs: 60 * 60 * 1000 });
       expect(probe.state).toBe("held");
 
-      releaseLock(reflectDistillLock);
+      releaseLock(reflectDistillOwnership);
     },
     TIMEOUT_MS,
   );
@@ -116,9 +129,6 @@ describe("#607 lock decomposition — per-process locks", () => {
       if (triageProbe.state === "stale") {
         expect(triageProbe.reason).toBe("pid_dead");
       }
-
-      releaseLock(consolidateLock);
-      releaseLock(triageLock);
     },
     TIMEOUT_MS,
   );

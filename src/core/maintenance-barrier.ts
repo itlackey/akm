@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "./errors";
-import { probeLock, reclaimStaleLock, releaseLockIfOwned, tryAcquireLockSync } from "./file-lock";
+import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "./file-lock";
 import { getMaintenanceBarrierPath } from "./paths";
 
 const heldBarrierContext = new AsyncLocalStorage<{ active: boolean }>();
@@ -21,8 +21,9 @@ export function tryAcquireMaintenanceBarrier(): (() => void) | undefined {
   const lockPath = getMaintenanceBarrierPath();
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (tryAcquireLockSync(lockPath, JSON.stringify({ pid: process.pid, purpose: "maintenance-start" }))) {
-      return () => releaseLockIfOwned(lockPath, process.pid);
+    const ownership = tryAcquireLockSync(lockPath, createLockPayload({ purpose: "maintenance-start" }));
+    if (ownership) {
+      return () => releaseLock(ownership);
     }
     const probe = probeLock(lockPath);
     if (probe.state !== "stale" || !reclaimStaleLock(lockPath, probe)) return undefined;
@@ -97,10 +98,11 @@ export async function acquireMaintenanceActivity(name: string): Promise<() => vo
     const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);
-    if (!tryAcquireLockSync(lockPath, JSON.stringify({ pid: process.pid, purpose: name }))) {
+    const ownership = tryAcquireLockSync(lockPath, createLockPayload({ purpose: name }));
+    if (!ownership) {
       throw new ConfigError(`Could not register AKM maintenance activity at ${lockPath}.`, "INVALID_CONFIG_FILE");
     }
-    return () => releaseLockIfOwned(lockPath, process.pid);
+    return () => releaseLock(ownership);
   });
 }
 
@@ -110,9 +112,10 @@ export function acquireMaintenanceActivitySync(name: string): () => void {
     const directory = path.join(path.dirname(getMaintenanceBarrierPath()), "maintenance-activities");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(directory, `${name}-${process.pid}-${randomUUID()}.lock`);
-    if (!tryAcquireLockSync(lockPath, JSON.stringify({ pid: process.pid, purpose: name }))) {
+    const ownership = tryAcquireLockSync(lockPath, createLockPayload({ purpose: name }));
+    if (!ownership) {
       throw new ConfigError(`Could not register AKM maintenance activity at ${lockPath}.`, "INVALID_CONFIG_FILE");
     }
-    return () => releaseLockIfOwned(lockPath, process.pid);
+    return () => releaseLock(ownership);
   });
 }

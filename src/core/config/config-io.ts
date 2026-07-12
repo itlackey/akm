@@ -18,7 +18,7 @@ import path from "node:path";
 import { sleepSync } from "../../runtime";
 import { writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
-import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
+import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
 import { getCacheDir, getConfigDir } from "../paths";
 
 /**
@@ -214,8 +214,9 @@ export function acquireConfigLock(): () => void {
 
   for (let attempt = 0; attempt < CONFIG_LOCK_MAX_RETRIES; attempt++) {
     try {
-      if (tryAcquireLockSync(lockPath, String(process.pid))) {
-        return () => releaseLock(lockPath);
+      const ownership = tryAcquireLockSync(lockPath, createLockPayload());
+      if (ownership) {
+        return () => releaseLock(ownership);
       }
     } catch (error) {
       throw new ConfigError(
