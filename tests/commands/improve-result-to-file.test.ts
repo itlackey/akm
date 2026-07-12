@@ -182,6 +182,25 @@ describe("writeImproveResultFile", () => {
     }
   });
 
+  test("redacts even a one-character engine secret before durable result persistence", () => {
+    const stash = makeStashDir();
+    const dataSb = sandboxXdgDataHome();
+    try {
+      writeImproveResultFile(
+        stash,
+        "test-run-redacted",
+        { ...baseResult, guidance: "credential x echoed" },
+        undefined,
+        ["x"],
+      );
+      const persisted = JSON.stringify(readImproveRuns(dataSb.dir));
+      expect(persisted).not.toContain("credential x echoed");
+      expect(persisted).toContain("credential [REDACTED] echoed");
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
   test("started_at uses the explicit startedAt parameter and differs from completed_at", () => {
     const stash = makeStashDir();
     const runId = buildImproveRunId(new Date("2026-05-01T10:00:00.000Z"));

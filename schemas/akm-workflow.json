@@ -74,10 +74,38 @@
         "temperature": { "type": "number" },
         "max_tokens": { "type": "integer", "minimum": 1 },
         "supports_json_schema": { "type": "boolean" },
-        "extra_params": { "type": "object" },
+        "extra_params": { "$ref": "#/definitions/extraParams" },
         "context_length": { "type": "integer", "minimum": 1 },
         "enable_thinking": { "type": "boolean" }
       }
+    },
+    "extraParams": {
+      "type": "object",
+      "description": "Provider-specific request fields. Top-level AKM-owned fields are forbidden; credential-shaped keys are forbidden recursively after lowercase/non-alphanumeric normalization.",
+      "propertyNames": {
+        "not": {
+          "enum": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking", "authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+        }
+      },
+      "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
+      "x-akm-protectedTopLevelNormalizedKeys": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking"],
+      "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+    },
+    "extraParamValue": {
+      "anyOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array", "items": { "$ref": "#/definitions/extraParamValue" } },
+        {
+          "type": "object",
+          "propertyNames": {
+            "not": {
+              "enum": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+            }
+          },
+          "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
+          "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+        }
+      ]
     },
     "reducer": {
       "description": "How a map step folds per-item unit results into the step artifact.",

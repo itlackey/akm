@@ -21,6 +21,7 @@ import type {
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
+import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../indexer/db/db";
@@ -29,6 +30,7 @@ import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexe
 import { akmIndex } from "../../indexer/indexer";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -407,6 +409,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const _earlyConfig = options.config ?? loadConfig();
   const resolvedPlan = resolveImprovePlan(options.strategy, _earlyConfig);
   const selectedStrategy = resolvedPlan.strategy;
+  const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
   const improveProfile = selectedStrategy.config;
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
@@ -1226,7 +1229,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
         metadata: {
           strategy: selectedStrategy.name,
-          error: errMessage(err),
+          error: redactSensitiveText(errMessage(err), improveSensitiveValues),
           durationMs: Date.now() - startMs,
         },
       },

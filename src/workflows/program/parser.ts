@@ -26,6 +26,7 @@
 
 import { createRequire } from "node:module";
 import { isMap, isScalar, LineCounter, parseDocument } from "yaml";
+import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
 import type { SourceRef, WorkflowError } from "../schema";
 import {
@@ -788,8 +789,13 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
     else ctx.err([...path, "supports_json_schema"], `${label}.supports_json_schema must be a boolean.`);
   }
   if (raw.extra_params !== undefined) {
-    if (isPlainRecord(raw.extra_params)) result.extraParams = raw.extra_params;
-    else ctx.err([...path, "extra_params"], `${label}.extra_params must be a JSON object.`);
+    const issues = validateExtraParams(raw.extra_params);
+    if (issues.length === 0) result.extraParams = raw.extra_params as Record<string, unknown>;
+    else {
+      for (const issue of issues) {
+        ctx.err([...path, "extra_params", ...issue.path], `${formatExtraParamsIssue(`${label}.extra_params`, issue)}.`);
+      }
+    }
   }
   if (raw.context_length !== undefined) {
     if (typeof raw.context_length === "number" && Number.isInteger(raw.context_length) && raw.context_length > 0) {

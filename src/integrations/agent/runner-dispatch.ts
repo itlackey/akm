@@ -31,7 +31,7 @@
 
 import { assertNever } from "../../core/assert";
 import { type LlmConnectionConfig, resolveSecret } from "../../core/config/config";
-import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText } from "../../core/redaction";
+import { ENV_PASSTHROUGH_REDACTION_ALLOWLIST, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk";
 import type { AgentProfile } from "./profiles";
 import type { RunnerSpec } from "./runner";
@@ -86,20 +86,12 @@ export function collectDispatchSensitiveValues(
 }
 
 function redactResult(result: AgentRunResult, sensitiveValues: readonly string[]): AgentRunResult {
-  const redactValue = (value: unknown): unknown => {
-    if (typeof value === "string") return redactSensitiveText(value, sensitiveValues);
-    if (Array.isArray(value)) return value.map(redactValue);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redactValue(child)]));
-    }
-    return value;
-  };
   return {
     ...result,
     stdout: redactSensitiveText(result.stdout, sensitiveValues),
     stderr: redactSensitiveText(result.stderr, sensitiveValues),
     ...(result.error !== undefined ? { error: redactSensitiveText(result.error, sensitiveValues) } : {}),
-    ...(result.parsed !== undefined ? { parsed: redactValue(result.parsed) } : {}),
+    ...(result.parsed !== undefined ? { parsed: redactSensitiveValue(result.parsed, sensitiveValues) } : {}),
   };
 }
 

@@ -50,10 +50,38 @@
         "temperature": { "type": "number" },
         "maxTokens": { "type": "integer", "minimum": 1 },
         "supportsJsonSchema": { "type": "boolean" },
-        "extraParams": { "type": "object" },
+        "extraParams": { "$ref": "#/definitions/extraParams" },
         "contextLength": { "type": "integer", "minimum": 1 },
         "enableThinking": { "type": "boolean" }
       }
+    },
+    "extraParams": {
+      "type": "object",
+      "description": "Provider-specific request fields. Top-level AKM-owned fields are forbidden; credential-shaped keys are forbidden recursively after lowercase/non-alphanumeric normalization.",
+      "propertyNames": {
+        "not": {
+          "enum": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking", "authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+        }
+      },
+      "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
+      "x-akm-protectedTopLevelNormalizedKeys": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking"],
+      "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+    },
+    "extraParamValue": {
+      "anyOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array", "items": { "$ref": "#/definitions/extraParamValue" } },
+        {
+          "type": "object",
+          "propertyNames": {
+            "not": {
+              "enum": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+            }
+          },
+          "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
+          "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+        }
+      ]
     }
   }
 }

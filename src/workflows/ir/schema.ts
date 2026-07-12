@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import { UsageError } from "../../core/errors";
+import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
 import { HARNESS_BY_ID } from "../../integrations/harnesses";
 import { listReferences, parseTemplate } from "../program/expressions";
@@ -304,8 +305,10 @@ function validateEngine(key: string, engine: unknown, references: Set<string>): 
       fail(`LLM engine ${key} supportsJsonSchema must be boolean`);
     if (engine.enableThinking !== undefined && typeof engine.enableThinking !== "boolean")
       fail(`LLM engine ${key} enableThinking must be boolean`);
-    if (engine.extraParams !== undefined && !isRecord(engine.extraParams))
-      fail(`LLM engine ${key} extraParams must be an object`);
+    if (engine.extraParams !== undefined) {
+      const issue = validateExtraParams(engine.extraParams)[0];
+      if (issue) fail(formatExtraParamsIssue(`LLM engine ${key} extraParams`, issue));
+    }
     if (engine.credential !== undefined) {
       if (
         !isRecord(engine.credential) ||
@@ -593,8 +596,10 @@ function validateLlmOverrides(value: unknown): void {
     fail("invocation.llm.supportsJsonSchema must be boolean");
   if (value.enableThinking !== undefined && typeof value.enableThinking !== "boolean")
     fail("invocation.llm.enableThinking must be boolean");
-  if (value.extraParams !== undefined && !isRecord(value.extraParams))
-    fail("invocation.llm.extraParams must be an object");
+  if (value.extraParams !== undefined) {
+    const issue = validateExtraParams(value.extraParams)[0];
+    if (issue) fail(formatExtraParamsIssue("invocation.llm.extraParams", issue));
+  }
 }
 
 function validateStepExpressions(step: IrStepPlan, index: number, steps: Map<string, number>): void {

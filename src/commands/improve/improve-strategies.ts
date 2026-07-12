@@ -16,6 +16,10 @@ import synthesize from "../../assets/improve-strategies/synthesize.json" with { 
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
+import {
+  BUILTIN_IMPROVE_STRATEGY_NAMES,
+  IMPROVE_PROCESS_ENGINE_CAPABILITIES,
+} from "../../core/config/engine-semantics";
 import { ConfigError } from "../../core/errors";
 import {
   type RunnerSpec,
@@ -47,6 +51,10 @@ const BUILTIN_STRATEGIES: Record<string, ImproveStrategyConfig> = {
   "recombine-only": recombineOnly as ImproveStrategyConfig,
 };
 
+if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))) {
+  throw new Error("Built-in improve strategy names are out of sync with their assets");
+}
+
 export function resolveImproveStrategy(name: string | undefined, config: AkmConfig): SelectedStrategy {
   const selectedName = name ?? config.defaults?.improveStrategy ?? "default";
   const userStrategies = config.improve?.strategies ?? {};
@@ -69,17 +77,9 @@ export function resolveStrategyProcessEnabled(strategy: SelectedStrategy, proces
   return resolveProcessEnabled(processName, strategy.config);
 }
 
-const LLM_PROCESS_NAMES = [
-  "reflect",
-  "distill",
-  "consolidate",
-  "memoryInference",
-  "graphExtraction",
-  "extract",
-  "validation",
-  "recombine",
-  "procedural",
-] as const;
+const LLM_PROCESS_NAMES = Object.entries(IMPROVE_PROCESS_ENGINE_CAPABILITIES)
+  .filter(([, capability]) => capability === "llm")
+  .map(([name]) => name) as Array<keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES>;
 
 export type ImproveLlmProcessName = (typeof LLM_PROCESS_NAMES)[number];
 export type ImproveLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
